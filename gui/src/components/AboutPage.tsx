@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { getVersion } from "@tauri-apps/api/app";
 
 interface Props {
   initialTab?: "help" | "about";
@@ -246,6 +248,12 @@ function ReqCard({ name, tag, tagColor, description }: { name: string; tag: stri
 // --- About page ---
 
 function AboutContent() {
+  const [version, setVersion] = useState<string>("");
+
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => setVersion(""));
+  }, []);
+
   return (
     <div className="flex items-center justify-center py-12">
       <div className="text-center">
@@ -256,7 +264,7 @@ function AboutContent() {
             <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider mb-1">
               Version
             </p>
-            <p className="font-mono">1.0.0</p>
+            <p className="font-mono">{version || "—"}</p>
           </div>
           <div>
             <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider mb-1">
