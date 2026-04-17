@@ -1,6 +1,6 @@
 [package]
 name = "pipeline-gui"
-version = "1.0.3"
+version = "1.0.0"
 description = "Tool for processing documents with chains of LLM prompts"
 license = "MIT"
 edition = "2021"
