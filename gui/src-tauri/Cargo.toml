@@ -1,6 +1,6 @@
 [package]
 name = "pipeline-gui"
-version = "1.0.1"
+version = "1.0.2"
 description = "Multi-pass referee report generator for academic economics papers"
 license = "MIT"
 edition = "2021"
