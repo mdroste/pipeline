@@ -1,0 +1,397 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth dark/light mode transition — applied temporarily during toggle */
+html.theme-transitioning,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, fill 0.3s ease, stroke 0.3s ease !important;
+}
+
+/* ── Table of Contents sidebar ──────────────────────────────────── */
+
+.toc-nav {
+  width: 15rem;
+  border-right: 1px solid theme("colors.gray.200");
+  padding: 1.5rem 1rem 1.5rem 1.25rem;
+  overflow-y: auto;
+  flex-shrink: 0;
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .toc-nav {
+    display: block;
+  }
+}
+
+.dark .toc-nav {
+  border-right-color: theme("colors.gray.800");
+}
+
+.toc-link {
+  display: block;
+  font-size: 0.8125rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  color: theme("colors.gray.500");
+  text-decoration: none;
+  transition: color 0.15s, background-color 0.15s;
+  line-height: 1.4;
+}
+
+.toc-link:hover {
+  color: theme("colors.gray.900");
+  background-color: theme("colors.gray.100");
+}
+
+.dark .toc-link:hover {
+  color: theme("colors.gray.100");
+  background-color: theme("colors.gray.800");
+}
+
+.toc-h1 {
+  font-weight: 600;
+  color: theme("colors.gray.700");
+}
+
+.dark .toc-h1 {
+  color: theme("colors.gray.300");
+}
+
+.toc-h2 {
+  padding-left: 1.25rem;
+  color: theme("colors.gray.400");
+}
+
+.dark .toc-h2 {
+  color: theme("colors.gray.500");
+}
+
+/* ── Report content typography ──────────────────────────────────── */
+
+.report-content {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2.5rem 3rem 4rem;
+  color: theme("colors.gray.800");
+  line-height: 1.7;
+}
+
+.dark .report-content {
+  color: theme("colors.gray.200");
+}
+
+/* KaTeX */
+.report-content .katex {
+  font-size: 1em;
+}
+
+/* ── Title ──────────────────────────────────────────────────────── */
+
+.report-content h1 {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  margin: 0 0 0.75rem;
+  color: theme("colors.gray.900");
+}
+
+.dark .report-content h1 {
+  color: theme("colors.gray.50");
+}
+
+/* Metadata paragraph (immediately after title) */
+.report-content h1 + p {
+  font-size: 0.8125rem;
+  color: theme("colors.gray.500");
+  line-height: 1.7;
+  margin-bottom: 0.25rem;
+}
+
+.report-content h1 + p strong {
+  font-weight: 600;
+  color: theme("colors.gray.600");
+}
+
+.dark .report-content h1 + p {
+  color: theme("colors.gray.400");
+}
+
+.dark .report-content h1 + p strong {
+  color: theme("colors.gray.300");
+}
+
+/* ── Section headings ───────────────────────────────────────────── */
+
+.report-content h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 3rem 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid theme("colors.gray.200");
+  color: theme("colors.gray.900");
+}
+
+.dark .report-content h2 {
+  border-bottom-color: theme("colors.gray.700");
+  color: theme("colors.gray.100");
+}
+
+.report-content h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 2rem 0 0.75rem;
+  color: theme("colors.gray.800");
+}
+
+.dark .report-content h3 {
+  color: theme("colors.gray.200");
+}
+
+/* ── Comment headers (#N. Title) ────────────────────────────────── */
+
+.comment-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin: 2rem 0 0.625rem;
+  padding: 0.625rem 1rem;
+  background: theme("colors.gray.50");
+  border-left: 3px solid theme("colors.blue.500");
+  border-radius: 0 0.375rem 0.375rem 0;
+}
+
+.dark .comment-header {
+  background: rgba(59, 130, 246, 0.06);
+  border-left-color: theme("colors.blue.400");
+}
+
+.comment-num {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: theme("colors.blue.600");
+  flex-shrink: 0;
+  min-width: 1.25rem;
+}
+
+.dark .comment-num {
+  color: theme("colors.blue.400");
+}
+
+.comment-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: theme("colors.gray.900");
+  line-height: 1.4;
+}
+
+.dark .comment-title {
+  color: theme("colors.gray.100");
+}
+
+/* ── Body elements ──────────────────────────────────────────────── */
+
+.report-content p {
+  margin-bottom: 0.75rem;
+  line-height: 1.7;
+}
+
+.report-content ul,
+.report-content ol {
+  margin-bottom: 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.report-content ul {
+  list-style-type: disc;
+}
+
+.report-content ol {
+  list-style-type: decimal;
+}
+
+.report-content li {
+  margin-bottom: 0.375rem;
+  line-height: 1.6;
+}
+
+.report-content li > p {
+  margin-bottom: 0.375rem;
+}
+
+.report-content hr {
+  border: none;
+  border-top: 1px solid theme("colors.gray.200");
+  margin: 2rem 0;
+}
+
+.dark .report-content hr {
+  border-top-color: theme("colors.gray.700");
+}
+
+.report-content blockquote {
+  border-left: 3px solid theme("colors.gray.300");
+  padding-left: 1rem;
+  margin: 1rem 0;
+  color: theme("colors.gray.600");
+  font-style: italic;
+}
+
+.dark .report-content blockquote {
+  border-left-color: theme("colors.gray.600");
+  color: theme("colors.gray.400");
+}
+
+.report-content code {
+  font-family: theme("fontFamily.mono");
+  font-size: 0.8125rem;
+  background: theme("colors.gray.100");
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  color: theme("colors.gray.700");
+}
+
+.dark .report-content code {
+  background: theme("colors.gray.800");
+  color: theme("colors.gray.300");
+}
+
+.report-content pre {
+  background: theme("colors.gray.100");
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.dark .report-content pre {
+  background: theme("colors.gray.800");
+}
+
+.report-content pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.report-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.875rem;
+}
+
+.report-content th,
+.report-content td {
+  border: 1px solid theme("colors.gray.200");
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.dark .report-content th,
+.dark .report-content td {
+  border-color: theme("colors.gray.700");
+}
+
+.report-content th {
+  background: theme("colors.gray.50");
+  font-weight: 600;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  color: theme("colors.gray.600");
+}
+
+.dark .report-content th {
+  background: theme("colors.gray.800");
+  color: theme("colors.gray.400");
+}
+
+.report-content strong {
+  font-weight: 600;
+}
+
+.report-content em {
+  font-style: italic;
+}
+
+/* Footer */
+.report-content > :last-child {
+  color: theme("colors.gray.400");
+  font-size: 0.8125rem;
+}
+
+.dark .report-content > :last-child {
+  color: theme("colors.gray.500");
+}
+
+/* ── Print styles ───────────────────────────────────────────────── */
+
+@media print {
+  header,
+  aside,
+  nav,
+  .toc-nav,
+  .console-panel,
+  button {
+    display: none !important;
+  }
+
+  main {
+    display: block !important;
+  }
+
+  main > div {
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  .report-content {
+    max-width: none;
+    padding: 0;
+    font-size: 11pt;
+    line-height: 1.6;
+  }
+
+  .report-content h1 {
+    font-size: 18pt;
+    margin-top: 0;
+  }
+
+  .report-content h2 {
+    font-size: 14pt;
+    margin-top: 1.5rem;
+    page-break-after: avoid;
+  }
+
+  .comment-header {
+    page-break-after: avoid;
+    background: none;
+    border-left: 2pt solid #333;
+    padding: 0.25rem 0.625rem;
+    margin-top: 1.25rem;
+  }
+
+  .comment-num {
+    color: #333;
+  }
+
+  .comment-title {
+    color: #000;
+  }
+
+  .report-content li,
+  .report-content p {
+    page-break-inside: avoid;
+  }
+
+  .report-content hr {
+    border-top: 0.5pt solid #999;
+    margin: 1rem 0;
+  }
+}

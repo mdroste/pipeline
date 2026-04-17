@@ -1,0 +1,208 @@
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+use tempfile::NamedTempFile;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use std::io::Write;
+use tauri::{AppHandle, Emitter};
+
+use super::claude::build_silent_command;
+
+/// Maximum characters to pass as a direct CLI argument.
+/// Beyond this we write to a temp file and tell Gemini to read it.
+const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
+
+fn log(app: &AppHandle, line: impl Into<String>) {
+    app.emit("pipeline:log", serde_json::json!({ "line": line.into() })).ok();
+}
+
+fn verbose_log(app: &AppHandle, line: impl Into<String>) {
+    if crate::settings::load().verbose_logging {
+        log(app, line);
+    }
+}
+
+/// Call `gemini -p` and return the text output.
+/// Streams stderr and stdout back to the frontend as `pipeline:log` events.
+pub async fn call_gemini(
+    app: &AppHandle,
+    prompt: &str,
+    _allowed_tools: &[&str],
+    _system_prompt: Option<&str>,
+    _output_format: &str,
+    timeout_secs: u64,
+    label: &str,
+    cwd: Option<&str>,
+) -> Result<String, String> {
+    let mut cmd_args: Vec<String> = Vec::new();
+    let mut _temp_file: Option<NamedTempFile> = None;
+
+    // Read-only mode: the pipeline only needs file reads and text output.
+    // "plan" auto-approves reads but blocks writes and shell commands.
+    cmd_args.push("--approval-mode".to_string());
+    cmd_args.push("plan".to_string());
+
+    // Output as plain text
+    cmd_args.push("-o".to_string());
+    cmd_args.push("text".to_string());
+
+    // Apply Gemini settings (model)
+    let settings = crate::settings::load();
+    let model = crate::settings::sanitize_cli_arg(&settings.gemini_model);
+    if !model.is_empty() {
+        cmd_args.push("-m".to_string());
+        cmd_args.push(model);
+    }
+
+    // Build the prompt argument. Gemini uses -p "prompt" for non-interactive mode.
+    // Handle large prompts by writing to a temp file.
+    if prompt.len() > MAX_DIRECT_PROMPT_LENGTH {
+        let mut tmp = NamedTempFile::with_prefix("pipeline_prompt_")
+            .map_err(|e| format!("Failed to create temp file: {e}"))?;
+        tmp.write_all(prompt.as_bytes())
+            .map_err(|e| format!("Failed to write temp file: {e}"))?;
+        tmp.flush()
+            .map_err(|e| format!("Failed to flush temp file: {e}"))?;
+
+        let path = tmp.path().to_string_lossy().replace('\\', "/");
+        let bytes = prompt.len();
+        log(app, format!("Wrote {bytes} chars to temp file: {path}"));
+
+        cmd_args.push("-p".to_string());
+        cmd_args.push(format!(
+            "Read the instructions at {path} and follow them exactly."
+        ));
+
+        _temp_file = Some(tmp);
+    } else {
+        cmd_args.push("-p".to_string());
+        cmd_args.push(prompt.to_string());
+    }
+
+    // Log the command (truncated)
+    let display_args: String = cmd_args.iter()
+        .map(|a| if a.len() > 80 { format!("{}...", a.chars().take(80).collect::<String>()) } else { a.clone() })
+        .collect::<Vec<_>>()
+        .join(" ");
+    verbose_log(app, format!("$ gemini {display_args}"));
+
+    let mut cmd = build_silent_command("gemini", cwd);
+    cmd.args(&cmd_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn()
+        .map_err(|e| format!("Failed to spawn gemini: {e}. Is Gemini CLI installed?"))?;
+
+    let pid = child.id().unwrap_or(0);
+    if pid > 0 { crate::commands::register_child_pid(pid); }
+    let start_time = Instant::now();
+    log(app, format!("{label} started (PID {pid})"));
+
+    // Stream stderr to the frontend
+    let stderr = child.stderr.take();
+    let app_stderr = app.clone();
+    let stderr_task = tokio::spawn(async move {
+        if let Some(stderr) = stderr {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                if !line.trim().is_empty() {
+                    verbose_log(&app_stderr, format!("[stderr] {line}"));
+                }
+            }
+        }
+    });
+
+    // Stream stdout to the frontend
+    let stdout = child.stdout.take();
+    let app_stdout = app.clone();
+    let stdout_task = tokio::spawn(async move {
+        let mut collected = String::new();
+        if let Some(stdout) = stdout {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                collected.push_str(&line);
+                collected.push('\n');
+                if collected.len() > super::claude::MAX_STDOUT_BYTES {
+                    log(&app_stdout, format!(
+                        "WARNING: stdout exceeded {} MB, truncating",
+                        super::claude::MAX_STDOUT_BYTES / 1_000_000
+                    ));
+                    break;
+                }
+                if collected.lines().count() <= 5 {
+                    verbose_log(&app_stdout, format!("[out] {line}"));
+                }
+            }
+        }
+        if collected.lines().count() > 5 {
+            verbose_log(&app_stdout, format!("[out] ... ({} total lines)", collected.lines().count()));
+        }
+        collected
+    });
+
+    let status = tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        child.wait(),
+    )
+    .await;
+
+    let status = match status {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+            if pid > 0 { crate::commands::unregister_child_pid(pid); }
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            if crate::commands::is_cancelled() {
+                log(app, format!("{label} cancelled"));
+                return Err("Pipeline cancelled".into());
+            }
+            log(app, format!("ERROR: Gemini call timed out after {timeout_secs}s (PID {pid}), killing process"));
+            return Err(format!("Gemini call timed out after {timeout_secs}s"));
+        }
+    }
+        .map_err(|e| {
+            if pid > 0 { crate::commands::unregister_child_pid(pid); }
+            format!("Failed waiting for gemini: {e}")
+        })?;
+
+    // Process has exited — unregister PID before joining I/O tasks
+    // so cancel cleanup can't miss it if a join fails
+    if pid > 0 { crate::commands::unregister_child_pid(pid); }
+
+    let text = stdout_task.await
+        .map_err(|e| format!("stdout reader failed: {e}"))?
+        .trim()
+        .to_string();
+
+    stderr_task.await.ok();
+
+    let exit_code = status.code().unwrap_or(-1);
+    let elapsed = start_time.elapsed().as_secs();
+    log(app, format!("{label} finished ({elapsed}s, exit code {exit_code}, {} chars output)", text.len()));
+
+    if !status.success() {
+        if crate::commands::is_cancelled() || exit_code == 143 || status.code().is_none() {
+            log(app, format!("{label} cancelled"));
+            return Err("Pipeline cancelled".into());
+        }
+        let hint = super::claude::extract_error_hint(&text);
+        let msg = if let Some(hint) = hint {
+            format!("Gemini call failed (exit {exit_code}): {hint}")
+        } else {
+            format!("Gemini call failed (exit {exit_code}). Check the console log for details.")
+        };
+        log(app, format!("ERROR: {msg}"));
+        return Err(msg);
+    }
+
+    if text.is_empty() {
+        let msg = "Gemini returned empty output.";
+        log(app, format!("ERROR: {msg}"));
+        return Err(msg.to_string());
+    }
+
+    Ok(text)
+}

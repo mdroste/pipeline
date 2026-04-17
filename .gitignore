@@ -1,0 +1,44 @@
+# Rust / Cargo
+/gui/src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# Tauri generated
+/gui/src-tauri/gen/schemas/
+
+# Node
+/gui/node_modules/
+/gui/dist/
+/gui/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs / bundles
+*.app
+*.dmg
+*.msi
+*.exe
+*.deb
+*.AppImage
+*.rpm
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+
+# Local test fixtures
+/gui/test.pdf
+
+# Local environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Agent instruction files (local only)
+CLAUDE.md
+AGENTS.md
