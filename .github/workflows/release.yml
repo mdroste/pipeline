@@ -131,13 +131,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Note: /releases/tags/{tag} does NOT return draft releases,
+          # so we list all releases and filter by tag in jq.
           rename_asset() {
             local old_name="$1"
             local new_name="$2"
             local asset_id
-            asset_id=$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-              --jq ".assets[] | select(.name == \"${old_name}\") | .id" || true)
-            if [ -n "${asset_id}" ]; then
+            asset_id=$(gh api "/repos/${GITHUB_REPOSITORY}/releases" \
+              --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[] | select(.name == \"${old_name}\") | .id" \
+              2>/dev/null || true)
+            if [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
               echo "Renaming ${old_name} → ${new_name}"
               gh api -X PATCH "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
                 -f name="${new_name}" > /dev/null
