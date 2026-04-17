@@ -15,7 +15,7 @@ jobs:
         include:
           - os: macos-latest
             label: macOS-arm64
-          - os: macos-13
+          - os: macos-15-intel
             label: macOS-x64
           - os: ubuntu-22.04
             label: Linux
@@ -57,6 +57,11 @@ jobs:
         working-directory: gui
         run: npm ci
 
+      - name: Extract version number
+        id: version
+        shell: bash
+        run: echo "num=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
@@ -75,6 +80,99 @@ jobs:
           projectPath: gui
           tagName: ${{ github.ref_name }}
           releaseName: "Pipeline ${{ github.ref_name }}"
-          releaseBody: "See the [README](https://github.com/${{ github.repository }}#readme) for installation instructions."
+          releaseBody: |
+            ## Download
+
+            Pick the file for your platform, then see the instructions below.
+
+            ### macOS
+            - **Apple Silicon** (M1 / M2 / M3 / M4) → `Pipeline-${{ steps.version.outputs.num }}-macOS-AppleSilicon.dmg`
+            - **Intel** → `Pipeline-${{ steps.version.outputs.num }}-macOS-Intel.dmg`
+
+            Not sure which? Apple menu → About This Mac → look at **Chip**.
+
+            Open the `.dmg` and drag Pipeline into your Applications folder, then launch from Applications.
+
+            ### Windows
+            Download `Pipeline-${{ steps.version.outputs.num }}-Windows.exe` and double-click to install.
+
+            The `.msi` file is an alternative installer for system administrators deploying Pipeline across many machines. Most users should use the `.exe`.
+
+            **Windows SmartScreen / Smart App Control:** Pipeline is not yet signed for Windows, so Windows will block the installer. Older guides say to click "More info → Run anyway", but on current Windows 11 that button is often missing.
+
+            Try these in order:
+
+            1. **Unblock the file.** Right-click the downloaded `.exe` → **Properties** → tick **Unblock** at the bottom of the *General* tab → **OK**. Then run the installer. This usually clears the warning.
+            2. **If it's still blocked, turn off Smart App Control.** Open **Windows Security → App & browser control → Smart App Control** and switch it to **Off**. Install Pipeline, then turn Smart App Control back on.
+
+            Only do this for software you trust.
+
+            ### Linux
+            - **Ubuntu / Debian** → `Pipeline-${{ steps.version.outputs.num }}-Linux-Debian.deb` — install with `sudo dpkg -i <file>`
+            - **Other distros** → `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage` — `chmod +x <file>` then run it
+
+            ---
+
+            ### Requirements
+            Pipeline uses [Claude Code](https://claude.com/claude-code) under the hood. Install Claude Code first; then launch Pipeline.
+
+            ### What are the `.app.tar.gz` and `.sig` files?
+            These are auto-update payloads reserved for a future in-app updater. You don't need them for a fresh install — ignore.
           releaseDraft: true
           prerelease: false
+
+      - name: Rename release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.num }}
+          TAG: ${{ github.ref_name }}
+          LABEL: ${{ matrix.label }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rename_asset() {
+            local old_name="$1"
+            local new_name="$2"
+            local asset_id
+            asset_id=$(gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+              --jq ".assets[] | select(.name == \"${old_name}\") | .id" || true)
+            if [ -n "${asset_id}" ]; then
+              echo "Renaming ${old_name} → ${new_name}"
+              gh api -X PATCH "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+                -f name="${new_name}" > /dev/null
+            else
+              echo "Skip: ${old_name} not found on release (may not exist for this platform)"
+            fi
+          }
+
+          case "${LABEL}" in
+            "macOS-arm64")
+              rename_asset "Pipeline_${VERSION}_aarch64.dmg" \
+                           "Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
+              rename_asset "Pipeline_${VERSION}_aarch64.app.tar.gz" \
+                           "Pipeline-${VERSION}-macOS-AppleSilicon.app.tar.gz"
+              rename_asset "Pipeline_${VERSION}_aarch64.app.tar.gz.sig" \
+                           "Pipeline-${VERSION}-macOS-AppleSilicon.app.tar.gz.sig"
+              ;;
+            "macOS-x64")
+              rename_asset "Pipeline_${VERSION}_x64.dmg" \
+                           "Pipeline-${VERSION}-macOS-Intel.dmg"
+              rename_asset "Pipeline_${VERSION}_x64.app.tar.gz" \
+                           "Pipeline-${VERSION}-macOS-Intel.app.tar.gz"
+              rename_asset "Pipeline_${VERSION}_x64.app.tar.gz.sig" \
+                           "Pipeline-${VERSION}-macOS-Intel.app.tar.gz.sig"
+              ;;
+            "Windows")
+              rename_asset "Pipeline_${VERSION}_x64-setup.exe" \
+                           "Pipeline-${VERSION}-Windows.exe"
+              rename_asset "Pipeline_${VERSION}_x64_en-US.msi" \
+                           "Pipeline-${VERSION}-Windows.msi"
+              ;;
+            "Linux")
+              rename_asset "pipeline-gui_${VERSION}_amd64.deb" \
+                           "Pipeline-${VERSION}-Linux-Debian.deb"
+              rename_asset "pipeline-gui_${VERSION}_amd64.AppImage" \
+                           "Pipeline-${VERSION}-Linux.AppImage"
+              ;;
+          esac

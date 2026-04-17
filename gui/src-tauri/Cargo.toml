@@ -1,7 +1,7 @@
 [package]
 name = "pipeline-gui"
-version = "1.0.2"
-description = "Multi-pass referee report generator for academic economics papers"
+version = "1.0.3"
+description = "Tool for processing documents with chains of LLM prompts"
 license = "MIT"
 edition = "2021"
 rust-version = "1.77"

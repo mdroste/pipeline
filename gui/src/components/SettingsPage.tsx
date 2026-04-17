@@ -271,18 +271,17 @@ function LLMSection({
             </p>
           </Field>
           <Field label="Model">
-            <select
+            <input
+              type="text"
               value={settings.claude_model}
               onChange={(e) =>
                 setSettings({ ...settings, claude_model: e.target.value })
               }
-              className={selectClass}
-            >
-              <option value="">Default (Sonnet)</option>
-              <option value="opus">Opus</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="haiku">Haiku</option>
-            </select>
+              placeholder="e.g. sonnet, opus, claude-sonnet-4-6 (empty = CLI default)"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </Field>
           <Field label="Thinking Effort">
             <select
@@ -319,18 +318,17 @@ function LLMSection({
             </p>
           </Field>
           <Field label="Model">
-            <select
+            <input
+              type="text"
               value={settings.codex_model}
               onChange={(e) =>
                 setSettings({ ...settings, codex_model: e.target.value })
               }
-              className={selectClass}
-            >
-              <option value="">Default (GPT-4.1)</option>
-              <option value="o3">o3</option>
-              <option value="o4-mini">o4-mini</option>
-              <option value="gpt-4.1">GPT-4.1</option>
-            </select>
+              placeholder="e.g. gpt-5.4, gpt-5.3-codex (empty = CLI default)"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </Field>
           <Field label="Reasoning Effort">
             <select
@@ -366,18 +364,17 @@ function LLMSection({
             </p>
           </Field>
           <Field label="Model">
-            <select
+            <input
+              type="text"
               value={settings.gemini_model}
               onChange={(e) =>
                 setSettings({ ...settings, gemini_model: e.target.value })
               }
-              className={selectClass}
-            >
-              <option value="">Default (Flash)</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
-            </select>
+              placeholder="e.g. pro, flash, gemini-2.5-pro (empty = CLI default)"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+              spellCheck={false}
+            />
           </Field>
         </ProviderGroup>
 
