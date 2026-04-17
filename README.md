@@ -1,5 +1,11 @@
 # Pipeline
 
+[![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
+[![Latest release](https://img.shields.io/github/v/release/mdroste/pipeline?label=release)](https://github.com/mdroste/pipeline/releases/latest)
+[![Release date](https://img.shields.io/github/release-date/mdroste/pipeline)](https://github.com/mdroste/pipeline/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue)](https://github.com/mdroste/pipeline/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
+
 Pipeline generates referee reports for academic papers. It takes a PDF or LaTeX source, runs several independent analyses in parallel (contribution, technical correctness, empirical strategy, internal consistency, exposition), then consolidates the results into a single structured report.
 
 It is a desktop app for macOS, Windows, and Linux. No API key is required if you have a Claude subscription.
