@@ -205,9 +205,7 @@ jobs:
             Only do this for software you trust.
 
             ### Linux
-            - **Ubuntu / Debian** → `Pipeline-${{ steps.version.outputs.num }}-Linux-Debian.deb` — install with `sudo dpkg -i <file>`
-            - **Fedora / RHEL** → `Pipeline-${{ steps.version.outputs.num }}-Linux-RedHat.rpm` — install with `sudo rpm -i <file>`
-            - **Other distros** → `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage` — `chmod +x <file>` then run it
+            Download `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage`, make it executable (`chmod +x <file>`), then run it. Works on any modern Linux distro — no package manager needed.
 
             ---
 
@@ -267,11 +265,7 @@ jobs:
                            "Pipeline-${VERSION}-Windows.exe"
               ;;
             "Linux")
-              rename_asset "Pipeline_${VERSION}_amd64.deb" \
-                           "Pipeline-${VERSION}-Linux-Debian.deb"
               rename_asset "Pipeline_${VERSION}_amd64.AppImage" \
                            "Pipeline-${VERSION}-Linux.AppImage"
-              rename_asset "Pipeline-${VERSION}-1.x86_64.rpm" \
-                           "Pipeline-${VERSION}-Linux-RedHat.rpm"
               ;;
           esac
