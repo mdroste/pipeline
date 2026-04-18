@@ -278,28 +278,52 @@ jobs:
 
           # Note: /releases/tags/{tag} does NOT return draft releases,
           # so we list all releases and filter by tag in jq. Also retry
-          # up to ~15s because freshly-uploaded assets sometimes take a
-          # few seconds to appear in the release listing (observed on
-          # the Windows runner).
-          rename_asset() {
-            local old_name="$1"
-            local new_name="$2"
+          # up to ~60s because freshly-uploaded assets sometimes take
+          # tens of seconds to appear in the release listing on the
+          # Windows runner (the GitHub Releases API appears to be
+          # eventually consistent).
+          lookup_asset_id() {
+            local name="$1"
             local asset_id=""
-            for attempt in 1 2 3 4 5; do
+            for attempt in $(seq 1 20); do
               asset_id=$(gh api "/repos/${GITHUB_REPOSITORY}/releases" \
-                --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[] | select(.name == \"${old_name}\") | .id" \
+                --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[] | select(.name == \"${name}\") | .id" \
                 2>/dev/null || true)
               if [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
-                break
+                echo "${asset_id}"
+                return 0
               fi
               sleep 3
             done
-            if [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
+            return 1
+          }
+
+          rename_asset() {
+            local old_name="$1"
+            local new_name="$2"
+            local asset_id
+            if asset_id=$(lookup_asset_id "${old_name}"); then
               echo "Renaming ${old_name} → ${new_name}"
               gh api -X PATCH "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
                 -f name="${new_name}" > /dev/null
             else
-              echo "Skip: ${old_name} not found after retries (may not exist for this platform)"
+              echo "Skip rename: ${old_name} not found after retries (may not exist for this platform)"
+            fi
+          }
+
+          # Tauri produces updater tarballs (.app.tar.gz and .sig) on
+          # macOS whenever signing is configured, regardless of whether
+          # "updater" is in bundle.targets. Since we don't ship an
+          # in-app updater, these files just clutter the release page.
+          # Each macOS job deletes its own.
+          delete_asset() {
+            local name="$1"
+            local asset_id
+            if asset_id=$(lookup_asset_id "${name}"); then
+              echo "Deleting ${name}"
+              gh api -X DELETE "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > /dev/null
+            else
+              echo "Skip delete: ${name} not found (already gone or never created)"
             fi
           }
 
@@ -307,10 +331,14 @@ jobs:
             "macOS-arm64")
               rename_asset "Pipeline_${VERSION}_aarch64.dmg" \
                            "Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
+              delete_asset "Pipeline_aarch64.app.tar.gz"
+              delete_asset "Pipeline_aarch64.app.tar.gz.sig"
               ;;
             "macOS-x64")
               rename_asset "Pipeline_${VERSION}_x64.dmg" \
                            "Pipeline-${VERSION}-macOS-Intel.dmg"
+              delete_asset "Pipeline_x64.app.tar.gz"
+              delete_asset "Pipeline_x64.app.tar.gz.sig"
               ;;
             "Windows")
               rename_asset "Pipeline_${VERSION}_x64-setup.exe" \
