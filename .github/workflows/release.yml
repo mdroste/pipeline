@@ -109,6 +109,7 @@ jobs:
 
             ### Linux
             - **Ubuntu / Debian** → `Pipeline-${{ steps.version.outputs.num }}-Linux-Debian.deb` — install with `sudo dpkg -i <file>`
+            - **Fedora / RHEL** → `Pipeline-${{ steps.version.outputs.num }}-Linux-RedHat.rpm` — install with `sudo rpm -i <file>`
             - **Other distros** → `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage` — `chmod +x <file>` then run it
 
             ---
@@ -132,20 +133,29 @@ jobs:
           set -euo pipefail
 
           # Note: /releases/tags/{tag} does NOT return draft releases,
-          # so we list all releases and filter by tag in jq.
+          # so we list all releases and filter by tag in jq. Also retry
+          # up to ~15s because freshly-uploaded assets sometimes take a
+          # few seconds to appear in the release listing (observed on
+          # the Windows runner).
           rename_asset() {
             local old_name="$1"
             local new_name="$2"
-            local asset_id
-            asset_id=$(gh api "/repos/${GITHUB_REPOSITORY}/releases" \
-              --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[] | select(.name == \"${old_name}\") | .id" \
-              2>/dev/null || true)
+            local asset_id=""
+            for attempt in 1 2 3 4 5; do
+              asset_id=$(gh api "/repos/${GITHUB_REPOSITORY}/releases" \
+                --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[] | select(.name == \"${old_name}\") | .id" \
+                2>/dev/null || true)
+              if [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
+                break
+              fi
+              sleep 3
+            done
             if [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
               echo "Renaming ${old_name} → ${new_name}"
               gh api -X PATCH "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
                 -f name="${new_name}" > /dev/null
             else
-              echo "Skip: ${old_name} not found on release (may not exist for this platform)"
+              echo "Skip: ${old_name} not found after retries (may not exist for this platform)"
             fi
           }
 
@@ -153,17 +163,17 @@ jobs:
             "macOS-arm64")
               rename_asset "Pipeline_${VERSION}_aarch64.dmg" \
                            "Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
-              rename_asset "Pipeline_${VERSION}_aarch64.app.tar.gz" \
+              rename_asset "Pipeline_aarch64.app.tar.gz" \
                            "Pipeline-${VERSION}-macOS-AppleSilicon.app.tar.gz"
-              rename_asset "Pipeline_${VERSION}_aarch64.app.tar.gz.sig" \
+              rename_asset "Pipeline_aarch64.app.tar.gz.sig" \
                            "Pipeline-${VERSION}-macOS-AppleSilicon.app.tar.gz.sig"
               ;;
             "macOS-x64")
               rename_asset "Pipeline_${VERSION}_x64.dmg" \
                            "Pipeline-${VERSION}-macOS-Intel.dmg"
-              rename_asset "Pipeline_${VERSION}_x64.app.tar.gz" \
+              rename_asset "Pipeline_x64.app.tar.gz" \
                            "Pipeline-${VERSION}-macOS-Intel.app.tar.gz"
-              rename_asset "Pipeline_${VERSION}_x64.app.tar.gz.sig" \
+              rename_asset "Pipeline_x64.app.tar.gz.sig" \
                            "Pipeline-${VERSION}-macOS-Intel.app.tar.gz.sig"
               ;;
             "Windows")
@@ -173,9 +183,11 @@ jobs:
                            "Pipeline-${VERSION}-Windows.msi"
               ;;
             "Linux")
-              rename_asset "pipeline-gui_${VERSION}_amd64.deb" \
+              rename_asset "Pipeline_${VERSION}_amd64.deb" \
                            "Pipeline-${VERSION}-Linux-Debian.deb"
-              rename_asset "pipeline-gui_${VERSION}_amd64.AppImage" \
+              rename_asset "Pipeline_${VERSION}_amd64.AppImage" \
                            "Pipeline-${VERSION}-Linux.AppImage"
+              rename_asset "Pipeline-${VERSION}-1.x86_64.rpm" \
+                           "Pipeline-${VERSION}-Linux-RedHat.rpm"
               ;;
           esac
