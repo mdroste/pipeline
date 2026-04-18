@@ -57,6 +57,21 @@ jobs:
         working-directory: gui
         run: npm ci
 
+      # Import the Apple signing cert early on macOS so the Bundle
+      # poppler step can sign its Mach-O files with --timestamp before
+      # Tauri picks them up. Without this, notarization rejects the
+      # bundle ("binary is not signed with a valid Developer ID
+      # certificate / secure timestamp") because Homebrew's poppler
+      # binaries are unsigned and dylibbundler invalidates what was
+      # there. tauri-action imports the cert again into its own
+      # keychain for the main build; the two coexist fine.
+      - name: Import Apple code-signing cert (macOS)
+        if: startsWith(matrix.label, 'macOS')
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
       # Bundle a slimmed poppler so Claude Code's Read tool (which uses
       # pdftoppm to render PDFs) and Pipeline's pdftotext fallback work
       # out of the box. Source binaries are downloaded per-platform and
@@ -106,12 +121,28 @@ jobs:
           mkdir -p "$dest/lib"
           cp "$work/pdftoppm" "$work/pdftotext" "$dest/"
           cp "$work/lib/"*.dylib "$dest/lib/"
+          # Sign every Mach-O with Developer ID + hardened runtime +
+          # secure timestamp. The cert was imported in a prior step.
+          # Without this, notarization rejects the app because the
+          # Homebrew originals are unsigned and dylibbundler's rewrites
+          # invalidate any existing signatures.
+          find "$dest" -type f | while read -r f; do
+            if file "$f" | grep -q 'Mach-O'; then
+              codesign --remove-signature "$f" 2>/dev/null || true
+              codesign --force --options runtime --timestamp \
+                --sign "${APPLE_SIGNING_IDENTITY}" "$f"
+            fi
+          done
           echo "Bundled poppler files:"
           ls -la "$dest"
           ls -la "$dest/lib"
           du -sh "$dest"
-          # Sanity: confirm install names point at @loader_path
+          # Sanity: confirm install names point at @loader_path and
+          # that signatures are in place.
           otool -L "$dest/pdftoppm"
+          codesign -dv "$dest/pdftoppm" 2>&1 | head -5 || true
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
 
       - name: Bundle poppler (Linux)
         if: matrix.label == 'Linux' && steps.cache_poppler.outputs.cache-hit != 'true'
