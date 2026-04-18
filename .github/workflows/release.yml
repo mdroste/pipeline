@@ -57,6 +57,105 @@ jobs:
         working-directory: gui
         run: npm ci
 
+      # Bundle a slimmed poppler so Claude Code's Read tool (which uses
+      # pdftoppm to render PDFs) and Pipeline's pdftotext fallback work
+      # out of the box. Source binaries are downloaded per-platform and
+      # dropped into gui/src-tauri/resources/poppler/, which is bundled
+      # by Tauri via tauri.conf.json `resources`.
+
+      - name: Bundle poppler (macOS)
+        if: startsWith(matrix.label, 'macOS')
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install poppler dylibbundler
+          poppler_bin="$(brew --prefix poppler)/bin"
+          work=$(mktemp -d)
+          cp "$poppler_bin/pdftoppm" "$work/"
+          cp "$poppler_bin/pdftotext" "$work/"
+          # Relocate dylib references so binaries find their deps via
+          # @loader_path/lib/, regardless of where the .app is installed.
+          (
+            cd "$work"
+            dylibbundler -od -b \
+              -x ./pdftoppm -x ./pdftotext \
+              -d ./lib -p '@loader_path/lib/'
+          )
+          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
+          mkdir -p "$dest/lib"
+          cp "$work/pdftoppm" "$work/pdftotext" "$dest/"
+          cp "$work/lib/"*.dylib "$dest/lib/"
+          echo "Bundled poppler files:"
+          ls -la "$dest"
+          ls -la "$dest/lib"
+          du -sh "$dest"
+          # Sanity: confirm install names point at @loader_path
+          otool -L "$dest/pdftoppm"
+
+      - name: Bundle poppler (Linux)
+        if: matrix.label == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y poppler-utils patchelf
+          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
+          mkdir -p "$dest/lib"
+          cp "$(which pdftoppm)" "$dest/"
+          cp "$(which pdftotext)" "$dest/"
+          # Copy each binary's dynamic deps, skipping glibc-family libs that
+          # must come from the host (bundling them across distro versions
+          # causes loader conflicts).
+          copy_deps() {
+            local bin="$1"
+            ldd "$bin" | awk '/=> \//{print $3}' | while read -r lib; do
+              local name
+              name=$(basename "$lib")
+              case "$name" in
+                ld-linux-*|libc.so.*|libdl.so.*|libpthread.so.*|libm.so.*|librt.so.*|libresolv.so.*|libnsl.so.*|libutil.so.*)
+                  continue ;;
+              esac
+              cp -L "$lib" "$dest/lib/"
+            done
+          }
+          copy_deps "$dest/pdftoppm"
+          copy_deps "$dest/pdftotext"
+          # Set rpath so the loader looks next to the binary first.
+          patchelf --set-rpath '$ORIGIN/lib' "$dest/pdftoppm"
+          patchelf --set-rpath '$ORIGIN/lib' "$dest/pdftotext"
+          echo "Bundled poppler files:"
+          ls -la "$dest"
+          ls -la "$dest/lib"
+          du -sh "$dest"
+
+      - name: Bundle poppler (Windows)
+        if: matrix.label == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="25.12.0-0"
+          url="https://github.com/oschwartz10612/poppler-windows/releases/download/v${ver}/Release-${ver}.zip"
+          curl -L -o /tmp/poppler.zip "$url"
+          mkdir -p /tmp/poppler
+          unzip -q /tmp/poppler.zip -d /tmp/poppler
+          inner=$(ls /tmp/poppler | head -1)
+          src="/tmp/poppler/${inner}/Library/bin"
+          dest="gui/src-tauri/resources/poppler"
+          mkdir -p "$dest"
+          cp "$src/pdftoppm.exe" "$dest/"
+          cp "$src/pdftotext.exe" "$dest/"
+          # Copy DLLs except Qt bindings (not used by pdftoppm/pdftotext).
+          shopt -s nullglob
+          for dll in "$src"/*.dll; do
+            name=$(basename "$dll")
+            case "$name" in
+              Qt5*|Qt6*) continue ;;
+            esac
+            cp "$dll" "$dest/"
+          done
+          echo "Bundled poppler files:"
+          ls -la "$dest"
+          du -sh "$dest"
+
       - name: Extract version number
         id: version
         shell: bash
@@ -96,9 +195,7 @@ jobs:
             ### Windows
             Download `Pipeline-${{ steps.version.outputs.num }}-Windows.exe` and double-click to install.
 
-            The `.msi` file is an alternative installer for system administrators deploying Pipeline across many machines. Most users should use the `.exe`.
-
-            **Windows SmartScreen / Smart App Control:** Pipeline is not yet signed for Windows, so Windows will block the installer. Older guides say to click "More info → Run anyway", but on current Windows 11 that button is often missing.
+            **Windows SmartScreen / Smart App Control:** Pipeline is not yet signed for Windows, so Windows will block the installer.
 
             Try these in order:
 
@@ -179,8 +276,6 @@ jobs:
             "Windows")
               rename_asset "Pipeline_${VERSION}_x64-setup.exe" \
                            "Pipeline-${VERSION}-Windows.exe"
-              rename_asset "Pipeline_${VERSION}_x64_en-US.msi" \
-                           "Pipeline-${VERSION}-Windows.msi"
               ;;
             "Linux")
               rename_asset "Pipeline_${VERSION}_amd64.deb" \
