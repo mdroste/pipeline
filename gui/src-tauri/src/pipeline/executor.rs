@@ -310,6 +310,7 @@ async fn run_parallel_wave(
                             }),
                         );
                     }
+                    let extra: Vec<&str> = task_cwd.as_deref().into_iter().collect();
                     match call_llm(
                         &app_handle,
                         &prompt,
@@ -320,6 +321,7 @@ async fn run_parallel_wave(
                         &log_label,
                         Some(&agent_name),
                         task_cwd.as_deref(),
+                        &extra,
                     )
                     .await
                     {
@@ -506,7 +508,8 @@ async fn run_sequential_step(
                 }),
             );
         }
-        match call_llm(app, &prompt, &tool_refs, None, "text", timeout, &log_label, agent, source_dir.as_deref()).await {
+        let extra: Vec<&str> = source_dir.as_deref().into_iter().collect();
+        match call_llm(app, &prompt, &tool_refs, None, "text", timeout, &log_label, agent, source_dir.as_deref(), &extra).await {
             Ok(text) => {
                 raw_text = text;
                 last_err.clear();

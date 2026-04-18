@@ -287,6 +287,16 @@ fn find_command(name: &str) -> Option<PathBuf> {
 async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<ExtractionResult, String> {
     let path_str = path.to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
+    // Normalize backslashes so the path Claude sees in the prompt matches
+    // its internal POSIX-form normalization on Windows.
+    let prompt_path = path_str.replace('\\', "/");
+    // Grant Read access to the PDF's parent directory.  The cwd defaults
+    // to the system temp dir, so without this Claude can't reach files
+    // sitting under the user's Documents/Downloads/etc.
+    let parent_dir = path.parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let extra_dirs: Vec<&str> = if parent_dir.is_empty() { vec![] } else { vec![&parent_dir] };
 
     let prompt = format!(
         "Read the PDF file at {} and convert its entire contents to well-formatted Markdown.\n\n\
@@ -298,7 +308,7 @@ async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<Extract
          - Preserve section numbering and hierarchy\n\
          - Do not summarize or skip any content — output the complete text\n\
          - Do not add commentary, analysis, or annotations — just the extracted text",
-        path_str
+        prompt_path
     );
 
     let timeout = (crate::settings::load().step_timeout_secs / 2).max(60);
@@ -312,6 +322,7 @@ async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<Extract
         "LLM PDF extraction",
         None,
         None,
+        &extra_dirs,
     )
     .await?;
 

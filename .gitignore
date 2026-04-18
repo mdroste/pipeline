@@ -34,6 +34,11 @@ Thumbs.db
 # Local test fixtures
 /gui/test.pdf
 
+# Bundled poppler binaries — populated per-platform by CI, not committed
+/gui/src-tauri/resources/poppler/*
+!/gui/src-tauri/resources/poppler/.gitkeep
+!/gui/src-tauri/resources/poppler/README.md
+
 # Local environment / secrets
 .env
 .env.local

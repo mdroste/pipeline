@@ -73,7 +73,7 @@ Rules:
 
     for attempt in 0..=MAX_RETRIES {
         let timeout = (crate::settings::load().step_timeout_secs / 2).max(60);
-        let raw = call_llm(app, &prompt, &["Read"], None, "text", timeout, "Orientation map", None, None).await?;
+        let raw = call_llm(app, &prompt, &["Read"], None, "text", timeout, "Orientation map", None, None, &[]).await?;
         let cleaned = strip_json_fences(&raw);
 
         match serde_json::from_str::<OrientationMap>(&cleaned) {

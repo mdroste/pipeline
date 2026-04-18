@@ -153,10 +153,10 @@ function HelpContent() {
             description="All LLM calls go through claude -p."
           />
           <ReqCard
-            name="pdftotext"
-            tag="Optional"
-            tagColor="text-gray-600 bg-gray-100"
-            description="For PDF text extraction. Install via brew install poppler."
+            name="poppler (pdftoppm + pdftotext)"
+            tag="Bundled"
+            tagColor="text-green-700 bg-green-50"
+            description="Bundled with Pipeline. Used by the LLM Read tool to render PDFs and as a text-extraction fallback."
           />
           <ReqCard
             name="marker-pdf"
@@ -292,6 +292,21 @@ function AboutContent() {
               License
             </p>
             <p>MIT</p>
+          </div>
+          <div>
+            <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider mb-1">
+              Bundled software
+            </p>
+            <a
+              href="https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md"
+              onClick={(e) => {
+                e.preventDefault();
+                openUrl("https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md");
+              }}
+              className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
+            >
+              Third-party licenses
+            </a>
           </div>
         </div>
       </div>

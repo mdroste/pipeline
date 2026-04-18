@@ -173,6 +173,10 @@ pub fn check_all() -> DepsReport {
             (found, ver, path, auth)
         });
 
+        // pdftoppm: used by Claude Code's Read tool to render PDF pages.
+        // Normally bundled; falls back to system poppler if present.
+        let pdftoppm_h = s.spawn(|| find_on_path("pdftoppm"));
+
         // pdftotext: just check existence (no subprocess needed)
         let pdftotext_h = s.spawn(|| find_on_path("pdftotext"));
 
@@ -237,20 +241,49 @@ pub fn check_all() -> DepsReport {
             authenticated: if has_google_key { Some(true) } else { gemini_auth },
         };
 
+        // Classify a found binary as bundled (under our resource dir) or system.
+        let bundled_dir = env::bundled_poppler_dir();
+        let classify = |p: &PathBuf| -> &'static str {
+            match bundled_dir {
+                Some(dir) if p.starts_with(dir) => "bundled",
+                _ => "system",
+            }
+        };
+        let install_hint = if cfg!(target_os = "macos") {
+            "brew install poppler"
+        } else if cfg!(target_os = "windows") {
+            "Install poppler: scoop install poppler"
+        } else {
+            "Install poppler-utils via your package manager"
+        };
+
+        let pdftoppm_path = pdftoppm_h.join().unwrap_or(None);
+        let pdftoppm = DepStatus {
+            name: "pdftoppm".into(),
+            found: pdftoppm_path.is_some(),
+            version: pdftoppm_path.as_ref().map(|p| classify(p).into()).unwrap_or_default(),
+            path: pdftoppm_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+            required: false,
+            hint: if pdftoppm_path.is_some() {
+                "Used by Claude Code to read PDFs. Bundled with Pipeline.".into()
+            } else {
+                format!("{install_hint} — needed for PDF support in the LLM Read tool.")
+            },
+            authenticated: None,
+        };
+
         let pdftotext_path = pdftotext_h.join().unwrap_or(None);
         let pdftotext = DepStatus {
             name: "pdftotext".into(),
             found: pdftotext_path.is_some(),
-            version: if pdftotext_path.is_some() { "installed".into() } else { String::new() },
-            path: pdftotext_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+            version: pdftotext_path.as_ref().map(|p| classify(p).into()).unwrap_or_default(),
+            path: pdftotext_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
             required: false,
-            hint: if cfg!(target_os = "macos") {
-                "brew install poppler (needed for PDF extraction without marker)"
-            } else if cfg!(target_os = "windows") {
-                "Install poppler: scoop install poppler (needed for PDF extraction without marker)"
+            hint: if pdftotext_path.is_some() {
+                "Native PDF text fallback. Bundled with Pipeline.".into()
             } else {
-                "Install poppler-utils via your package manager (needed for PDF extraction without marker)"
-            }.into(),
+                format!("{install_hint} — needed for the pdftotext extraction fallback.")
+            },
             authenticated: None,
         };
 
@@ -265,7 +298,7 @@ pub fn check_all() -> DepsReport {
             authenticated: None,
         };
 
-        let deps = vec![claude, codex, gemini, pdftotext, marker];
+        let deps = vec![claude, codex, gemini, pdftoppm, pdftotext, marker];
         let ready = deps.iter().all(|d| {
             if !d.required { return true; }
             if !d.found { return false; }

@@ -33,14 +33,15 @@ You need at least one LLM provider:
 - **Codex**: Install the [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`), or set an OpenAI API key in Settings.
 - **Gemini**: Install the [Gemini CLI](https://github.com/google/gemini-cli) (`npm install -g @google/gemini-cli`), or set a Google API key in Settings.
 
-### Optional: PDF extraction tools
+### PDF support
 
-By default, PDFs are extracted using the configured LLM. Two alternatives are available if preferred:
+Pipeline bundles `pdftoppm` and `pdftotext` (from [poppler](https://poppler.freedesktop.org/)) on all platforms, so PDF extraction works out of the box with no extra install. `pdftoppm` is what Claude Code uses internally to render PDF pages for the LLM; `pdftotext` is the fallback extractor.
 
-- **marker-pdf**: `pip install marker-pdf` (preserves equations as LaTeX)
-- **pdftotext**: `brew install poppler` / `sudo apt install poppler-utils` / `choco install poppler` (equations will be garbled)
+For a higher-quality alternative that preserves equations as LaTeX, optionally install [marker-pdf](https://github.com/VikParuchuri/marker): `pip install marker-pdf`.
 
 LaTeX source files are always read natively and don't need either tool.
+
+Bundled poppler is GPL-2.0+; see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ## What it does
 

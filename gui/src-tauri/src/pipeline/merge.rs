@@ -131,6 +131,7 @@ pub async fn merge_step_outputs(
                 &log_label,
                 agent_ref,
                 None,
+                &[],
             )
             .await
             {

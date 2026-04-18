@@ -28,6 +28,12 @@ fn verbose_log(app: &AppHandle, line: impl Into<String>) {
 
 /// Call `claude -p` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
+///
+/// `extra_read_dirs` are passed through as `--add-dir` flags so the Read
+/// tool can reach paths outside the cwd.  The system temp dir is always
+/// added because we routinely write prompts and orientation maps there.
+/// Paths are normalized to forward slashes so Windows backslashes don't
+/// confuse Claude's internal path normalization.
 pub async fn call_claude(
     app: &AppHandle,
     prompt: &str,
@@ -37,6 +43,7 @@ pub async fn call_claude(
     timeout_secs: u64,
     label: &str,
     cwd: Option<&str>,
+    extra_read_dirs: &[&str],
 ) -> Result<String, String> {
     let mut cmd_args: Vec<String> = vec!["-p".to_string()];
     let mut tools: Vec<String> = allowed_tools.iter().map(|s| s.to_string()).collect();
@@ -84,6 +91,23 @@ pub async fn call_claude(
     // permission prompts that would hang or fail without a TTY.
     cmd_args.push("--permission-mode".to_string());
     cmd_args.push("acceptEdits".to_string());
+
+    // Grant Read access to the system temp dir (where temp prompt files,
+    // extracted paper text, and orientation maps live) plus any caller-
+    // provided directories (typically the paper's parent dir).  Forward
+    // slashes only — Claude's internal path normalization mishandles raw
+    // Windows backslash paths.
+    let mut add_dirs: Vec<String> = Vec::with_capacity(extra_read_dirs.len() + 1);
+    add_dirs.push(std::env::temp_dir().to_string_lossy().replace('\\', "/"));
+    for dir in extra_read_dirs {
+        add_dirs.push(dir.replace('\\', "/"));
+    }
+    add_dirs.sort();
+    add_dirs.dedup();
+    for dir in &add_dirs {
+        cmd_args.push("--add-dir".to_string());
+        cmd_args.push(dir.clone());
+    }
 
     if output_format != "text" {
         cmd_args.push("--output-format".to_string());
@@ -275,6 +299,7 @@ pub async fn call_llm(
     label: &str,
     provider_override: Option<&str>,
     cwd: Option<&str>,
+    extra_read_dirs: &[&str],
 ) -> Result<String, String> {
     let settings = crate::settings::load();
     let provider = provider_override.unwrap_or(&settings.preferred_provider);
@@ -302,7 +327,9 @@ pub async fn call_llm(
         _ => {}
     }
 
-    // Subprocess fallback
+    // Subprocess fallback. extra_read_dirs is currently consumed only by
+    // call_claude — codex and gemini sandbox via --sandbox / their own
+    // mechanisms and don't accept --add-dir.
     match provider {
         "codex" => {
             super::codex::call_codex(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd).await
@@ -311,7 +338,7 @@ pub async fn call_llm(
             super::gemini::call_gemini(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd).await
         }
         _ => {
-            call_claude(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd).await
+            call_claude(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd, extra_read_dirs).await
         }
     }
 }
