@@ -62,9 +62,20 @@ jobs:
       # out of the box. Source binaries are downloaded per-platform and
       # dropped into gui/src-tauri/resources/poppler/, which is bundled
       # by Tauri via tauri.conf.json `resources`.
+      #
+      # The output directory is cached per-platform so subsequent runs
+      # skip the download/install (brew install on macOS is ~2 min by
+      # itself). Cache invalidates when the workflow file changes.
+
+      - name: Cache poppler bundle
+        id: cache_poppler
+        uses: actions/cache@v4
+        with:
+          path: gui/src-tauri/resources/poppler
+          key: poppler-${{ matrix.label }}-${{ hashFiles('.github/workflows/release.yml') }}
 
       - name: Bundle poppler (macOS)
-        if: startsWith(matrix.label, 'macOS')
+        if: startsWith(matrix.label, 'macOS') && steps.cache_poppler.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -73,13 +84,23 @@ jobs:
           work=$(mktemp -d)
           cp "$poppler_bin/pdftoppm" "$work/"
           cp "$poppler_bin/pdftotext" "$work/"
-          # Relocate dylib references so binaries find their deps via
-          # @loader_path/lib/, regardless of where the .app is installed.
+          # dylibbundler follows each dylib's dependencies, but when a
+          # reference uses @rpath (as Homebrew poppler's do for
+          # libpoppler, libcairo, etc.) it doesn't know where to look.
+          # Give it every brew opt/*/lib as a search path, and pipe
+          # /dev/null to stdin so it fails fast instead of hanging on
+          # an interactive "please specify the directory" prompt if
+          # anything is still unresolvable.
+          search_args=()
+          for lib_dir in "$(brew --prefix)"/opt/*/lib; do
+            [ -d "$lib_dir" ] && search_args+=(-s "$lib_dir")
+          done
           (
             cd "$work"
             dylibbundler -od -b \
               -x ./pdftoppm -x ./pdftotext \
-              -d ./lib -p '@loader_path/lib/'
+              -d ./lib -p '@loader_path/lib/' \
+              "${search_args[@]}" </dev/null
           )
           dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
           mkdir -p "$dest/lib"
@@ -93,7 +114,7 @@ jobs:
           otool -L "$dest/pdftoppm"
 
       - name: Bundle poppler (Linux)
-        if: matrix.label == 'Linux'
+        if: matrix.label == 'Linux' && steps.cache_poppler.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -128,7 +149,7 @@ jobs:
           du -sh "$dest"
 
       - name: Bundle poppler (Windows)
-        if: matrix.label == 'Windows'
+        if: matrix.label == 'Windows' && steps.cache_poppler.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
