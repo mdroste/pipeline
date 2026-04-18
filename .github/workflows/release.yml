@@ -213,9 +213,6 @@ jobs:
 
             ### Requirements
             Pipeline uses [Claude Code](https://claude.com/claude-code) under the hood. Install Claude Code first; then launch Pipeline.
-
-            ### What are the `.app.tar.gz` and `.sig` files?
-            These are auto-update payloads reserved for a future in-app updater. You don't need them for a fresh install — ignore.
           releaseDraft: true
           prerelease: false
 
@@ -260,18 +257,10 @@ jobs:
             "macOS-arm64")
               rename_asset "Pipeline_${VERSION}_aarch64.dmg" \
                            "Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
-              rename_asset "Pipeline_aarch64.app.tar.gz" \
-                           "Pipeline-${VERSION}-macOS-AppleSilicon.app.tar.gz"
-              rename_asset "Pipeline_aarch64.app.tar.gz.sig" \
-                           "Pipeline-${VERSION}-macOS-AppleSilicon.app.tar.gz.sig"
               ;;
             "macOS-x64")
               rename_asset "Pipeline_${VERSION}_x64.dmg" \
                            "Pipeline-${VERSION}-macOS-Intel.dmg"
-              rename_asset "Pipeline_x64.app.tar.gz" \
-                           "Pipeline-${VERSION}-macOS-Intel.app.tar.gz"
-              rename_asset "Pipeline_x64.app.tar.gz.sig" \
-                           "Pipeline-${VERSION}-macOS-Intel.app.tar.gz.sig"
               ;;
             "Windows")
               rename_asset "Pipeline_${VERSION}_x64-setup.exe" \
