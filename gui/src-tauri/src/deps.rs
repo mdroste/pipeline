@@ -180,8 +180,12 @@ pub fn check_all() -> DepsReport {
         // pdftotext: just check existence (no subprocess needed)
         let pdftotext_h = s.spawn(|| find_on_path("pdftotext"));
 
-        // marker_single: just check existence (--help would spawn Python, very slow)
-        let marker_h = s.spawn(|| find_on_path("marker_single"));
+        // marker_single: just check existence (--help would spawn Python, very
+        // slow). A managed install (~/.pipeline/bin) wins over PATH, matching
+        // the resolution order in extract.rs.
+        let marker_h = s.spawn(|| {
+            crate::engines::find_managed("marker_single").or_else(|| find_on_path("marker_single"))
+        });
 
         // Collect results
         let (found, ver, path, claude_auth) = claude_h.join()
@@ -288,13 +292,22 @@ pub fn check_all() -> DepsReport {
         };
 
         let marker_path = marker_h.join().unwrap_or(None);
+        let marker_managed = marker_path
+            .as_ref()
+            .zip(crate::engines::managed_bin_dir())
+            .map(|(p, dir)| p.starts_with(&dir))
+            .unwrap_or(false);
         let marker = DepStatus {
             name: "marker-pdf".into(),
             found: marker_path.is_some(),
-            version: if marker_path.is_some() { "installed".into() } else { String::new() },
+            version: match (&marker_path, marker_managed) {
+                (Some(_), true) => "managed".into(),
+                (Some(_), false) => "system".into(),
+                (None, _) => String::new(),
+            },
             path: marker_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
             required: false,
-            hint: "pip install marker-pdf (optional, better PDF equation extraction)".into(),
+            hint: "Optional local PDF equation extraction. Install from Settings, or pip install marker-pdf.".into(),
             authenticated: None,
         };
 

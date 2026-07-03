@@ -215,6 +215,11 @@ suggests enabling image extraction now that figures land in the explorer.
    *Implemented 2026-07-03.*
 2. **Provisioning backend** (Move 2 minus UI) — `engines.rs`, Tauri
    commands, discovery changes, tested headlessly.
+   *Implemented 2026-07-03. Deviations: uv is pinned (version + five SHA-256
+   constants in engines.rs) rather than tracking latest; the pre-warm runs
+   the engine on a generated one-page PDF and downgrades to a warning on
+   failure; uninstall keeps uv and the wheel cache (small, make reinstall
+   fast) and removes model weights only when the last engine goes.*
 3. **Engines UI + marker upgrade** (Moves 3–4).
 4. **Later, on demand** — `mineru` registry entry (MLX engine on Apple
    Silicon, richer layout JSON + figure images; AGPL noted in its card), and

@@ -867,3 +867,29 @@ pub async fn read_cached_paper_text(paper_hash: String) -> Result<serde_json::Va
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     Ok(serde_json::json!({ "cached": true, "text": text, "path": path.to_string_lossy() }))
 }
+
+// --- Managed local engines ---
+
+/// Status of every installable engine. The disk-usage walk can touch
+/// multi-GB trees, so it runs off the async runtime.
+#[tauri::command]
+pub async fn list_engines() -> Result<Vec<crate::engines::EngineStatus>, String> {
+    tokio::task::spawn_blocking(crate::engines::engine_statuses)
+        .await
+        .map_err(|e| format!("Engine status task failed: {e}"))
+}
+
+#[tauri::command]
+pub async fn install_engine(app: AppHandle, engine_id: String) -> Result<(), String> {
+    crate::engines::install_engine(&app, &engine_id).await
+}
+
+#[tauri::command]
+pub async fn uninstall_engine(app: AppHandle, engine_id: String) -> Result<(), String> {
+    crate::engines::uninstall_engine(&app, &engine_id).await
+}
+
+#[tauri::command]
+pub fn cancel_engine_install() {
+    crate::engines::cancel_install();
+}

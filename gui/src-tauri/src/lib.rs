@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod deps;
+pub mod engines;
 pub mod env;
 pub mod models;
 pub mod output;
@@ -52,6 +53,7 @@ pub fn run() {
             commands::get_pipeline_config,
             commands::save_pipeline_config,
             commands::get_default_parallel_template,
+            commands::get_default_prompt,
             commands::reset_pipeline_config,
             // Profile management
             commands::list_profiles,
@@ -72,6 +74,11 @@ pub fn run() {
             commands::check_for_update,
             // Preprocessing artifact inspection
             commands::read_cached_paper_text,
+            // Managed local engines
+            commands::list_engines,
+            commands::install_engine,
+            commands::uninstall_engine,
+            commands::cancel_engine_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

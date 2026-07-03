@@ -158,12 +158,23 @@ fn extract_marker(path: &Path, marker_disable_ocr: bool, marker_disable_images: 
     }
     let marker_bin = find_command("marker_single")
         .ok_or("marker_single not found on PATH")?;
-    let mut child = StdCommand::new(&marker_bin)
-        .env("PATH", env::full_path())
+    let mut cmd = StdCommand::new(&marker_bin);
+    cmd.env("PATH", env::full_path())
         .args(&marker_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Managed installs keep their model weights under ~/.pipeline/hf.
+    // System installs keep their own cache — don't redirect it.
+    let is_managed = crate::engines::managed_bin_dir()
+        .map(|d| marker_bin.starts_with(&d))
+        .unwrap_or(false);
+    if is_managed {
+        for (k, v) in crate::engines::tool_env() {
+            cmd.env(k, v);
+        }
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("marker_single not available: {e}"))?;
 
@@ -264,9 +275,13 @@ fn extract_pdftotext(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-/// Find a command on PATH by scanning directories directly (no subprocess).
-/// Returns the full path if found.
+/// Find a command by scanning the managed tool directory (~/.pipeline/bin),
+/// then PATH, directly (no subprocess). Managed installs win over PATH so
+/// the one-click install is the copy that actually runs.
 fn find_command(name: &str) -> Option<PathBuf> {
+    if let Some(p) = crate::engines::find_managed(name) {
+        return Some(p);
+    }
     let path_var = env::full_path();
     let sep = if cfg!(windows) { ';' } else { ':' };
     for dir in path_var.split(sep) {
