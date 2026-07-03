@@ -3,18 +3,15 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
 
 interface Props {
-  initialTab?: "help" | "about";
   onClose: () => void;
 }
 
-export default function AboutPage({ initialTab = "help", onClose }: Props) {
-  const tab = initialTab;
-
+export default function AboutPage({ onClose }: Props) {
   return (
     <div className="p-8 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-          {tab === "help" ? "Help" : "About"}
+          Help
         </h2>
         <button
           onClick={onClose}
@@ -24,7 +21,8 @@ export default function AboutPage({ initialTab = "help", onClose }: Props) {
         </button>
       </div>
 
-      {tab === "help" ? <HelpContent /> : <AboutContent />}
+      <HelpContent />
+      <AboutFooter />
     </div>
   );
 }
@@ -34,33 +32,35 @@ function HelpContent() {
     <div className="space-y-8">
       {/* Overview */}
       <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-        Pipeline generates structured feedback on academic papers by running
-        multiple independent analysis passes in parallel, then consolidating
-        the results into a single prioritized issue list.
+        Pipeline chains LLM prompts into multi-step workflows. Each step is a
+        prompt. Steps run in parallel or one after another, and later steps can
+        build on earlier results. The built-in workflows review academic papers
+        in multiple passes, but you can write workflows for any document, a
+        folder of files, or a task with no input at all.
       </p>
 
       {/* Pipeline stages */}
-      <Section title="Pipeline stages">
+      <Section title="How a run works">
         <div className="grid gap-3">
           <StageCard
             number="1"
-            title="Extract text"
-            description="Reads the paper from LaTeX source, PDF via marker, or PDF via pdftotext. LaTeX is preferred because equations come through clean."
+            title="Read the input"
+            description="Documents are converted to text. Folders are indexed so steps can open individual files as needed. Some workflows take no input."
           />
           <StageCard
             number="2"
-            title="Build orientation map"
-            description="One LLM call produces a structured inventory of the paper: sections, formal results, tables, notation, and stated contribution. This anchors all subsequent passes."
+            title="Build an orientation map (optional)"
+            description="Before the first step, one LLM call catalogs the input. For a paper, this lists the sections, results, tables, and notation. Steps use the map to stay grounded — for example, to avoid flagging something that is covered in the appendix. You can turn this off in the profile."
           />
           <StageCard
             number="3"
-            title="Referee passes"
-            description="Multiple passes run in parallel, each with its own prompt and clean context. Each produces a list of issues with severity, location, and specific critique."
+            title="Run the steps"
+            description="Steps run from top to bottom. Steps marked parallel run at the same time, each with a fresh context. Steps marked sequential wait for all steps above them and can use their outputs."
           />
           <StageCard
             number="4"
-            title="Consolidation"
-            description="A final pass reads all referee outputs and produces a single deduplicated issue list ordered by severity, with cross-references to which passes flagged each issue."
+            title="Merge and consolidate"
+            description="If a step ran on more than one model, such as Claude and Gemini, Pipeline merges the outputs into one. A final step usually removes duplicate findings and sorts the rest by severity."
           />
         </div>
       </Section>
@@ -68,78 +68,88 @@ function HelpContent() {
       {/* Profiles */}
       <Section title="Profiles">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
-          Profiles are named configurations of referee passes and post-processing
-          steps. Switch between them from the Pipeline page.
+          A profile saves a complete workflow: its steps, prompts, and settings.
+          Switch profiles from the Pipeline page. Three are built in:
         </p>
         <div className="grid gap-2">
           <ProfileCard
             name="Deep Review"
-            description="All 5 referees with feedback validation. The default."
+            description="Five parallel review steps, then consolidation and validation. The default."
           />
           <ProfileCard
             name="Quick Review"
-            description="Contribution + Internal Consistency only. Fast two-pass analysis."
+            description="Two review steps and consolidation. Fast."
           />
           <ProfileCard
             name="Empirical"
-            description="Tailored for empirical papers. Drops Technical Correctness, adds web search to Contribution."
+            description="For empirical papers. Skips Technical Correctness and adds web search to Contribution."
           />
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-          You can create, duplicate, rename, and delete custom profiles.
-          Export and import profiles to share configurations with others.
+          You can create your own profiles for any task, and export them to
+          share with others.
         </p>
       </Section>
 
       {/* Customization */}
-      <Section title="Customizing the pipeline">
+      <Section title="Customize a workflow">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
-          Click <span className="font-medium text-gray-700">Customize prompts & add referees</span> in
-          the sidebar to open the pipeline editor, where you can:
+          Click <span className="font-medium text-gray-700">Customize pipeline steps</span> in
+          the sidebar to open the editor. From there you can:
         </p>
         <ul className="space-y-1.5">
-          <CheckItem text="Edit any referee's prompt" />
-          <CheckItem text="Add new referee passes with custom instructions" />
-          <CheckItem text="Reorder passes and toggle web search" />
-          <CheckItem text="Edit the consolidation prompt or add post-processing steps" />
-          <CheckItem text="Export and import individual items, profiles, or full backups" />
+          <CheckItem text="Edit any step's prompt, or add new steps" />
+          <CheckItem text="Make a step parallel or sequential, and reorder steps by dragging" />
+          <CheckItem text="Give a step tools (Read, WebSearch) or its own model" />
+          <CheckItem text="Run one step on several models and merge the results" />
+          <CheckItem text="Set the profile's input type and PDF extraction method" />
+          <CheckItem text="Export and import steps, profiles, or a full backup" />
         </ul>
       </Section>
 
       {/* Text extraction */}
-      <Section title="Text extraction">
+      <Section title="Document extraction">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
-          Three tiers, in order of preference:
+          Pipeline converts document inputs to text before the first step runs.
+          From best to worst:
         </p>
         <div className="space-y-2">
           <TierCard
             tier="Best"
             tierColor="text-green-700 bg-green-50"
             title="LaTeX source"
-            description="Provide a .tex file for clean equations and tables. Resolves \input{} includes automatically."
+            description="Select a .tex file to get exact equations and tables. Files referenced with \input{} are included automatically."
           />
           <TierCard
-            tier="Good"
+            tier="Default"
+            tierColor="text-blue-700 bg-blue-50"
+            title="LLM extraction"
+            description="The model reads the PDF and rewrites it as Markdown, with equations in LaTeX. Works out of the box."
+          />
+          <TierCard
+            tier="Optional"
             tierColor="text-blue-700 bg-blue-50"
             title="marker-pdf"
-            description="Converts PDF to markdown with equations preserved. Requires marker-pdf to be installed."
+            description="Converts PDFs locally and preserves equations. Requires a separate install."
           />
           <TierCard
             tier="Fallback"
             tierColor="text-amber-700 bg-amber-50"
             title="pdftotext"
-            description="Equations will be garbled. Technical findings get confidence warnings."
+            description="Plain text only. Equations come out garbled, so technical findings carry a warning."
           />
         </div>
       </Section>
 
-      {/* Revision tracking */}
-      <Section title="Revision tracking">
+      {/* Results */}
+      <Section title="Results and revisions">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-          Reports are saved to <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">~/.pipeline/history/</code> keyed
-          by a hash of the paper content. When you run with the diff option on a
-          revised version, the pipeline compares against the prior report and
-          produces a structured diff of addressed, remaining, and new issues.
+          Every run is saved to <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">~/.pipeline/runs/</code>,
+          including the report and any files the steps produced. Browse them in
+          the artifact explorer after the run finishes. To check a revised
+          paper, run it with the diff option: Pipeline finds the earlier report
+          for the same paper and lists which issues were addressed, which
+          remain, and which are new.
         </p>
       </Section>
 
@@ -147,22 +157,22 @@ function HelpContent() {
       <Section title="Requirements">
         <div className="space-y-2">
           <ReqCard
-            name="Claude Code"
+            name="An LLM provider"
             tag="Required"
             tagColor="text-red-700 bg-red-50"
-            description="All LLM calls go through claude -p."
+            description="Sign in to the Claude Code, Codex, or Gemini CLI, or enter an API key in Settings. A subscription plan works through the CLI. No API key needed."
           />
           <ReqCard
             name="poppler (pdftoppm + pdftotext)"
             tag="Bundled"
             tagColor="text-green-700 bg-green-50"
-            description="Bundled with Pipeline. Used by the LLM Read tool to render PDFs and as a text-extraction fallback."
+            description="Included with Pipeline. Renders PDFs for the model and provides the pdftotext fallback."
           />
           <ReqCard
             name="marker-pdf"
             tag="Optional"
             tagColor="text-gray-600 bg-gray-100"
-            description="For better PDF equation extraction."
+            description="Install it for local PDF equation extraction."
           />
         </div>
       </Section>
@@ -245,9 +255,9 @@ function ReqCard({ name, tag, tagColor, description }: { name: string; tag: stri
   );
 }
 
-// --- About page ---
+// --- About footer ---
 
-function AboutContent() {
+function AboutFooter() {
   const [version, setVersion] = useState<string>("");
 
   useEffect(() => {
@@ -255,61 +265,34 @@ function AboutContent() {
   }, []);
 
   return (
-    <div className="flex items-center justify-center py-12">
-      <div className="text-center">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-8">Pipeline</h2>
-
-        <div className="space-y-4 text-sm text-gray-700 dark:text-gray-300">
-          <div>
-            <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider mb-1">
-              Version
-            </p>
-            <p className="font-mono">{version || "—"}</p>
-          </div>
-          <div>
-            <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider mb-1">
-              Author
-            </p>
-            <p>Michael Droste</p>
-          </div>
-          <div>
-            <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider mb-1">
-              Source
-            </p>
-            <a
-              href="https://github.com/mdroste/pipeline"
-              onClick={(e) => {
-                e.preventDefault();
-                openUrl("https://github.com/mdroste/pipeline");
-              }}
-              className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
-            >
-              github.com/mdroste/pipeline
-            </a>
-          </div>
-          <div>
-            <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider mb-1">
-              License
-            </p>
-            <p>MIT</p>
-          </div>
-          <div>
-            <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider mb-1">
-              Bundled software
-            </p>
-            <a
-              href="https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md"
-              onClick={(e) => {
-                e.preventDefault();
-                openUrl("https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md");
-              }}
-              className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
-            >
-              Third-party licenses
-            </a>
-          </div>
-        </div>
-      </div>
+    <div className="mt-10 pt-6 border-t border-gray-200 dark:border-gray-800">
+      <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+        <span className="font-medium text-gray-700 dark:text-gray-300">
+          Pipeline{version ? ` v${version}` : ""}
+        </span>
+        {" · "}Michael Droste{" · "}MIT license{" · "}
+        <a
+          href="https://github.com/mdroste/pipeline"
+          onClick={(e) => {
+            e.preventDefault();
+            openUrl("https://github.com/mdroste/pipeline");
+          }}
+          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
+        >
+          github.com/mdroste/pipeline
+        </a>
+        {" · "}
+        <a
+          href="https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md"
+          onClick={(e) => {
+            e.preventDefault();
+            openUrl("https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md");
+          }}
+          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
+        >
+          third-party licenses
+        </a>
+      </p>
     </div>
   );
 }
