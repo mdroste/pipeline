@@ -94,9 +94,12 @@ All three confirmed items below were fixed on 2026-07-02 with regression tests
 - **FIXED — `BUILTIN_PROFILES` now includes "empirical".** All three built-ins are
   recreated at startup, so deleting empirical silently undid itself; deletion is now
   blocked for all three, consistently.
-- **PARTLY DONE — test coverage.** Added `pipelineHelpers.test.ts` (waves, placeholder
-  lint, reorder — 11 tests) and `usePipeline.test.ts` (P2). Still untested: PipelineProgress,
-  ReportViewer, PromptEditor, WaveDiagram, PipelinePage, SettingsPage component rendering.
+- **DONE — test coverage.** Added `pipelineHelpers.test.ts` (waves, placeholder lint,
+  reorder), `usePipeline.test.ts` (P2), and component tests for PipelineProgress
+  (stage/pass rendering, error/cancelled states), ReportViewer (TOC threshold, comment
+  cards, KaTeX), PromptEditor (chips, insertion, lint), WaveDiagram (nodes, selection,
+  collapse), SettingsPage (load/save/warnings/error), and PipelinePage (load, dirty-save
+  cycle, diagram). Frontend suite: 77 tests across 14 files.
 - **REFUTED — `kill_process` PID validation.** Already guards pid==0 and i32 overflow;
   the register-side guard above closes the remaining theoretical gap.
 
