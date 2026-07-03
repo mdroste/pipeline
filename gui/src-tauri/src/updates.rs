@@ -50,6 +50,13 @@ pub async fn check() -> Result<UpdateInfo, String> {
         .await
         .map_err(|e| format!("request failed: {e}"))?;
 
+    // Unauthenticated GitHub API calls are rate-limited per IP; 403/429 here
+    // means "try again later", not a real failure worth alarming anyone over.
+    if resp.status() == reqwest::StatusCode::FORBIDDEN
+        || resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return Err("GitHub API rate limit reached; update check skipped".to_string());
+    }
     if !resp.status().is_success() {
         return Err(format!("GitHub returned {}", resp.status()));
     }

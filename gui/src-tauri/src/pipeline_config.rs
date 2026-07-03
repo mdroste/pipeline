@@ -462,7 +462,9 @@ fn defaults() -> PipelineConfig {
 }
 
 /// Profile IDs that cannot be deleted.
-const BUILTIN_PROFILES: &[&str] = &["deep-review", "quick-review"];
+// All three are recreated by ensure_builtin_profiles() on startup, so
+// deleting any of them would silently "undo" itself — block deletion for all.
+const BUILTIN_PROFILES: &[&str] = &["deep-review", "quick-review", "empirical"];
 
 /// Built-in profiles created on first run.
 fn create_builtin_profiles() -> Result<(), String> {
@@ -756,9 +758,27 @@ pub fn load() -> PipelineConfig {
     }
 }
 
+/// Step ids key the executor's pass events and the merge grouping
+/// (`{id}/{agent}`), so duplicates silently collide. Reject them at save and
+/// import time. Deliberately not enforced on load/migration, so an existing
+/// profile with duplicates can still be opened and repaired in the editor.
+pub fn validate_unique_step_ids(steps: &[StepConfig]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for step in steps {
+        if !seen.insert(step.id.as_str()) {
+            return Err(format!(
+                "Duplicate step id '{}' — step ids must be unique",
+                step.id
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Save to the active profile.
 pub fn save(config: &PipelineConfig) -> Result<(), String> {
     let _ = ensure_migrated();
+    validate_unique_step_ids(&config.steps)?;
     let settings = crate::settings::load();
     let name = load_profile(&settings.active_profile)
         .map(|p| p.name)
@@ -1051,6 +1071,7 @@ pub fn import_profile_data(
     parallel_context_template: String,
 ) -> Result<ProfileSummary, String> {
     let _ = ensure_migrated();
+    validate_unique_step_ids(&steps)?;
     let mut id = slugify(name);
     if id.is_empty() {
         id = format!("imported-{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
@@ -1085,6 +1106,12 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             profiles,
             active_profile,
         } => {
+            // Validate every profile before saving any, so a bad bundle
+            // doesn't leave a partial import behind.
+            for p in &profiles {
+                validate_unique_step_ids(&p.steps)
+                    .map_err(|e| format!("Profile '{}': {e}", p.name))?;
+            }
             for p in &profiles {
                 let profile = ProfileData {
                     name: p.name.clone(),
@@ -1128,6 +1155,35 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── validate_unique_step_ids ───────────────────────────────────
+
+    fn step_with_id(id: &str) -> StepConfig {
+        StepConfig {
+            id: id.to_string(),
+            label: id.to_string(),
+            prompt: String::new(),
+            enabled: true,
+            phase: Phase::Parallel,
+            tools: vec![],
+            agents: vec![],
+            model: String::new(),
+            effort: String::new(),
+        }
+    }
+
+    #[test]
+    fn unique_step_ids_pass_validation() {
+        let steps = vec![step_with_id("a"), step_with_id("b")];
+        assert!(validate_unique_step_ids(&steps).is_ok());
+    }
+
+    #[test]
+    fn duplicate_step_ids_are_rejected() {
+        let steps = vec![step_with_id("a"), step_with_id("b"), step_with_id("a")];
+        let err = validate_unique_step_ids(&steps).unwrap_err();
+        assert!(err.contains("Duplicate step id 'a'"), "{err}");
+    }
 
     // ── slugify ────────────────────────────────────────────────────
 

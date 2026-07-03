@@ -50,9 +50,10 @@ pub async fn execute_steps(
                 )
                 .ok();
 
-                let mut wave_outputs =
+                let (mut wave_outputs, wave_failures) =
                     run_parallel_wave(app, steps, &settings, &semaphore, orientation_path, paper_text_path, source_path, paper_type, &config.parallel_context_template)
                         .await?;
+                failed_steps.extend(wave_failures);
 
                 let has_multi_agent = wave_outputs.iter().any(|o| o.step_id.contains('/'));
                 if has_multi_agent && config.merge.enabled {
@@ -224,12 +225,12 @@ async fn run_parallel_wave(
     source_path: &str,
     paper_type: &str,
     context_template: &str,
-) -> Result<Vec<StepOutput>, String> {
+) -> Result<(Vec<StepOutput>, Vec<StepFailure>), String> {
     let source_dir = std::path::Path::new(source_path)
         .parent()
         .map(|p| p.to_string_lossy().to_string());
 
-    let mut tasks: JoinSet<Result<((usize, String), StepOutput), (String, String)>> =
+    let mut tasks: JoinSet<Result<((usize, String), StepOutput), StepFailure>> =
         JoinSet::new();
 
     for (idx, step) in steps.iter().enumerate() {
@@ -286,12 +287,16 @@ async fn run_parallel_wave(
             let sort_key = (idx, agent_name.clone());
             let sem = semaphore.clone();
             let task_cwd = source_dir.clone();
+            // display_label is moved into the success StepOutput; keep a copy
+            // for failure reporting.
+            let fail_label = display_label.clone();
 
             tasks.spawn(async move {
-                let _permit = sem
-                    .acquire()
-                    .await
-                    .map_err(|_| (step_key_emit.clone(), "Semaphore closed".to_string()))?;
+                let _permit = sem.acquire().await.map_err(|_| StepFailure {
+                    step_id: step_key_emit.clone(),
+                    step_label: fail_label.clone(),
+                    error: "Semaphore closed".to_string(),
+                })?;
                 let tool_refs: Vec<&str> = tools.iter().map(|s| s.as_str()).collect();
                 let settings = crate::settings::load();
                 let timeout = settings.step_timeout_secs.max(60);
@@ -357,7 +362,11 @@ async fn run_parallel_wave(
                                         "status": "error"
                                     }),
                                 );
-                                return Err((step_key, e));
+                                return Err(StepFailure {
+                                    step_id: step_key.clone(),
+                                    step_label: fail_label.clone(),
+                                    error: e,
+                                });
                             }
                             last_err = e;
                         }
@@ -371,44 +380,56 @@ async fn run_parallel_wave(
                         "status": "error"
                     }),
                 );
-                Err((step_key, last_err))
+                Err(StepFailure {
+                    step_id: step_key,
+                    step_label: fail_label,
+                    error: last_err,
+                })
             });
         }
     }
 
     let mut results = Vec::new();
-    let mut errors = Vec::new();
+    let mut failures: Vec<StepFailure> = Vec::new();
 
     while let Some(res) = tasks.join_next().await {
         match res {
             Ok(Ok(report)) => results.push(report),
-            Ok(Err((name, e))) => errors.push(format!("{name}: {e}")),
-            Err(e) => errors.push(format!("Task panicked: {e}")),
+            Ok(Err(failure)) => failures.push(failure),
+            Err(e) => failures.push(StepFailure {
+                step_id: "internal".to_string(),
+                step_label: "Internal task".to_string(),
+                error: format!("Task panicked: {e}"),
+            }),
         }
     }
 
-    if !errors.is_empty() {
-        for err in &errors {
+    if !failures.is_empty() {
+        for f in &failures {
             let _ = app.emit(
                 "pipeline:log",
-                serde_json::json!({ "line": format!("WARNING: step failed: {err}") }),
+                serde_json::json!({ "line": format!("WARNING: step failed: {}: {}", f.step_label, f.error) }),
             );
         }
         if results.is_empty() {
-            return Err(format!("All steps failed: {}", errors.join("; ")));
+            let summary: Vec<String> = failures
+                .iter()
+                .map(|f| format!("{}: {}", f.step_label, f.error))
+                .collect();
+            return Err(format!("All steps failed: {}", summary.join("; ")));
         }
         let _ = app.emit(
             "pipeline:log",
             serde_json::json!({ "line": format!(
                 "WARNING: {}/{} parallel steps succeeded. Downstream steps will receive incomplete inputs.",
-                results.len(), results.len() + errors.len()
+                results.len(), results.len() + failures.len()
             )}),
         );
     }
 
     // Sort by original config order, then agent name
     results.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(results.into_iter().map(|(_, r)| r).collect())
+    Ok((results.into_iter().map(|(_, r)| r).collect(), failures))
 }
 
 // ── Sequential execution ────────────────────────────────────────────

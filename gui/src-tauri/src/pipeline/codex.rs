@@ -110,12 +110,19 @@ pub async fn call_codex(
     let start_time = Instant::now();
     log(app, format!("{label} started (PID {pid})"));
 
-    // Drain stderr silently (in --json mode it's just TUI noise)
+    // Forward stderr to the verbose log. In --json mode it's mostly TUI
+    // noise, but auth and capacity warnings land here too — dropping them
+    // made those failures undiagnosable.
     let stderr = child.stderr.take();
+    let app_stderr = app.clone();
     let stderr_task = tokio::spawn(async move {
         if let Some(stderr) = stderr {
             let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(_)) = reader.next_line().await {}
+            while let Ok(Some(line)) = reader.next_line().await {
+                if !line.trim().is_empty() {
+                    verbose_log(&app_stderr, format!("[stderr] {line}"));
+                }
+            }
         }
     });
 

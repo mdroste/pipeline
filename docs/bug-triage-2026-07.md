@@ -74,21 +74,31 @@ All three confirmed items below were fixed on 2026-07-02 with regression tests
     "… earlier log lines dropped (showing last 8000) …"; ReportViewer shows an amber notice
     when KaTeX rendering fails and formulas fall back to raw LaTeX.
 
-## P3 — hygiene / hardening backlog
+## P3 — hygiene batch, worked 2026-07-02
 
-- Duplicate step IDs not validated on profile import (`pipeline_config.rs`) — merge grouping
-  keys on `{id}/{agent}` would collide.
-- `kill_process` PID validation is thin (`commands.rs` ~79); relies on registration always
-  being valid.
-- Codex stderr drained silently (`codex.rs` ~115) — capacity warnings lost.
-- Windows keyfile `icacls` failure is best-effort and unreported (`settings.rs` ~364).
-- `updates.rs` doesn't handle GitHub rate-limit responses distinctly.
-- Untested components: PipelineProgress, ReportViewer, PromptEditor, WaveDiagram,
-  PipelinePage, SettingsPage (no `.test.tsx`).
-- `BUILTIN_PROFILES` const (`pipeline_config.rs:465`) lists only deep-review/quick-review but
-  three built-ins are created — check what that const gates.
-- Parallel-step failures are logged but not recorded in `failed_steps` (executor.rs ~390),
-  so the report's warning banner only reflects sequential failures.
+- **FIXED — duplicate step IDs.** `validate_unique_step_ids()` in pipeline_config.rs,
+  enforced on active-profile save, profile import, and bundle import (bundle validates all
+  profiles before saving any). Deliberately not enforced on load/migration so existing
+  profiles stay openable. Tests: `unique_step_ids_pass_validation`,
+  `duplicate_step_ids_are_rejected`.
+- **FIXED — parallel failures now recorded in `failed_steps`.** `run_parallel_wave` returns
+  `(outputs, Vec<StepFailure>)`; failures (including task panics) flow into the report's
+  warning banner instead of only the log.
+- **FIXED — codex stderr forwarded** to the verbose log instead of being drained silently.
+- **FIXED — GitHub rate limits** (403/429) in `updates.rs` now produce a distinct
+  "rate limit reached; update check skipped" error instead of a generic HTTP failure.
+- **FIXED — `register_child_pid` guards pid 0** so `kill_all_children` can never signal
+  process group 0 even if a caller forgets the check.
+- **FIXED — Windows icacls failures now logged** (eprintln) instead of discarded.
+  Written blind on macOS — cfg(windows) code, verify on the next Windows CI build.
+- **FIXED — `BUILTIN_PROFILES` now includes "empirical".** All three built-ins are
+  recreated at startup, so deleting empirical silently undid itself; deletion is now
+  blocked for all three, consistently.
+- **PARTLY DONE — test coverage.** Added `pipelineHelpers.test.ts` (waves, placeholder
+  lint, reorder — 11 tests) and `usePipeline.test.ts` (P2). Still untested: PipelineProgress,
+  ReportViewer, PromptEditor, WaveDiagram, PipelinePage, SettingsPage component rendering.
+- **REFUTED — `kill_process` PID validation.** Already guards pid==0 and i32 overflow;
+  the register-side guard above closes the remaining theoretical gap.
 
 ## Baseline (run 2026-07-02)
 

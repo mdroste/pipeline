@@ -58,6 +58,11 @@ pub fn is_cancelled() -> bool {
 
 /// Register a child process PID so it can be killed on cancel.
 pub fn register_child_pid(pid: u32) {
+    // Callers already skip pid 0 (spawn without a real id), but guard here
+    // too so kill_all_children never signals pid 0 / process group 0.
+    if pid == 0 {
+        return;
+    }
     let mut pids = CHILD_PIDS.lock().unwrap_or_else(|e| e.into_inner());
     pids.push(pid);
 }

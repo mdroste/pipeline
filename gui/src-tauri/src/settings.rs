@@ -393,10 +393,20 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
                 if !username.is_empty() {
                     use std::os::windows::process::CommandExt;
                     let grant = format!("{username}:F");
-                    let _ = std::process::Command::new("icacls")
+                    let result = std::process::Command::new("icacls")
                         .args([path_str, "/inheritance:r", "/grant:r", &grant])
                         .creation_flags(0x08000000) // CREATE_NO_WINDOW
                         .output();
+                    match result {
+                        Ok(out) if !out.status.success() => eprintln!(
+                            "WARNING: icacls could not restrict keyfile permissions: {}",
+                            String::from_utf8_lossy(&out.stderr).trim()
+                        ),
+                        Err(e) => eprintln!(
+                            "WARNING: could not run icacls to restrict keyfile permissions: {e}"
+                        ),
+                        _ => {}
+                    }
                 }
             }
         }
