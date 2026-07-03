@@ -84,17 +84,27 @@ export function usePipeline() {
         }),
       ]);
 
-      // Periodically flush buffered log lines into React state.
-      flushTimer.current = setInterval(() => {
-        if (!mounted) return;
-        const pending = logBuffer.current;
-        if (pending.length === 0) return;
-        logBuffer.current = [];
-        setLogs((prev) => {
-          const next = prev.concat(pending);
-          return next.length > LOG_MAX ? next.slice(-LOG_KEEP) : next;
-        });
-      }, LOG_FLUSH_INTERVAL);
+      // Periodically flush buffered log lines into React state. Don't start
+      // the timer if the component unmounted while listener registration was
+      // in flight — cleanup has already run and nothing would clear it.
+      if (mounted) {
+        flushTimer.current = setInterval(() => {
+          if (!mounted) return;
+          const pending = logBuffer.current;
+          if (pending.length === 0) return;
+          logBuffer.current = [];
+          setLogs((prev) => {
+            const next = prev.concat(pending);
+            if (next.length > LOG_MAX) {
+              return [
+                `… earlier log lines dropped (showing last ${LOG_KEEP}) …`,
+                ...next.slice(-LOG_KEEP),
+              ];
+            }
+            return next;
+          });
+        }, LOG_FLUSH_INTERVAL);
+      }
 
       if (mounted) setListenersReady(true);
       return [u1, u2, u3];
@@ -117,7 +127,14 @@ export function usePipeline() {
     return () => {
       mounted = false;
       if (flushTimer.current) clearInterval(flushTimer.current);
-      setupPromise.then((fns) => fns.forEach((fn) => fn())).catch(() => {});
+      setupPromise
+        .then((fns) => {
+          fns.forEach((fn) => fn());
+          // Belt-and-braces: if setup managed to start the timer despite the
+          // unmount race, clear it now.
+          if (flushTimer.current) clearInterval(flushTimer.current);
+        })
+        .catch(() => {});
     };
   }, []);
 

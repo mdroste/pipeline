@@ -115,7 +115,14 @@ export default function ReportViewer({ markdown }: Props) {
         <div className="report-content">
           <MathErrorBoundary resetKey={markdown}>
             {(fallback) => (
-              <ReactMarkdown
+              <>
+                {fallback && (
+                  <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+                    Some math in this report could not be rendered — formulas
+                    are shown as raw LaTeX notation.
+                  </div>
+                )}
+                <ReactMarkdown
                 remarkPlugins={fallback ? [remarkGfm] : [remarkGfm, remarkMath]}
                 rehypePlugins={fallback ? [] : [rehypeKatex]}
                 components={{
@@ -155,7 +162,8 @@ export default function ReportViewer({ markdown }: Props) {
                 }}
               >
                 {markdown}
-              </ReactMarkdown>
+                </ReactMarkdown>
+              </>
             )}
           </MathErrorBoundary>
         </div>

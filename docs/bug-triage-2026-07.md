@@ -44,23 +44,35 @@ All three confirmed items below were fixed on 2026-07-02 with regression tests
    log warning. Minor gap → moved to P3: parallel-step failures aren't added to
    `failed_steps`, so the report banner misses them (log-only).
 
-## P2 — degraded behavior, verify second
+## P2 — verified 2026-07-02
 
-6. **Silent 50 MB stdout truncation** in `claude.rs` (~199): oversized LLM output truncated
-   with no error or warning.
-7. **usePipeline listener-registration race** (`usePipeline.ts:36-121`): unmount during
-   `Promise.all` listener setup may leak listeners.
-8. **`deps.rs` codex auth check** (~115) returns `Some(false)` when nothing was actually
-   probed — UI shows "not authenticated" instead of "unknown".
-9. **Marker/pdftotext timeout floor** (`extract.rs` ~199): timeout = max(step_timeout/2, 120s)
-   overrides a user-set short timeout.
-10. **Merge failure fallback** (`merge.rs` ~216): concatenation banner interpolates agent
-    names unsanitized. Check whether ammonia in `print_report_html` already covers this;
-    if so, refute.
-11. **Effort setting silently ignored** for Anthropic/Google direct-API calls — should at
-    least be surfaced in the UI or docs.
-12. **Log truncation** (usePipeline keeps last 8k of 10k lines) and **math-render fallback**
-    (ReportViewer drops KaTeX entirely on one bad formula) happen without user notice.
+6. **REFUTED — 50 MB stdout truncation is not silent.** `claude.rs:200` logs
+   "WARNING: stdout exceeded N MB, truncating" to the log panel. 50 MB of report text is
+   implausible for this workload; no change.
+7. **PARTLY CONFIRMED, FIXED — flush-timer leak on fast unmount.** Listeners never leaked
+   (cleanup awaits `setupPromise` and unregisters), but `setup()` started the 100ms flush
+   interval even if the component had unmounted mid-registration, and nothing cleared it.
+   Fixed: timer creation is gated on `mounted`, and the cleanup's `.then` clears it again.
+   Tests added: `usePipeline.test.ts` (flush, truncation marker, unlisten-on-unmount).
+8. **CONFIRMED (comment bug only), FIXED — codex auth check.** `check_codex_auth()` is only
+   called when the CLI is installed, and env var + `~/.codex/auth.json` are the standard
+   credential locations, so `Some(false)` is a fair verdict that drives the "run codex login"
+   hint. The defect was the stale comment claiming the function returns None; comment fixed.
+9. **REFUTED — marker timeout floor is intentional.** Documented at `extract.rs:140`
+   ("floored at 120s to accommodate first-run model downloads"); only affects user timeouts
+   below 240s. No change.
+10. **REFUTED — merge fallback banner injection.** Agent names come from the user's own
+    profile config (self-injection at worst); ReportViewer uses no rehype-raw so markdown
+    HTML isn't rendered; `print_report_html` sanitizes with ammonia. No change.
+11. **CONFIRMED, FIXED — effort now passed through in direct Anthropic API mode.** The old
+    comment ("API doesn't expose effort") was outdated: `output_config.effort` is GA on the
+    Sonnet 4.6/Opus 4.6 models the app now defaults to. `api_anthropic.rs` maps
+    low/medium/high/max to `output_config`, skipping Haiku (which rejects the parameter)
+    and unknown values. Gemini API still has no effort equivalent — remains ignored there.
+    Test: `effort_config_maps_known_values_and_skips_haiku`.
+12. **CONFIRMED, FIXED — silent truncation/fallback now surfaced.** Log truncation prepends
+    "… earlier log lines dropped (showing last 8000) …"; ReportViewer shows an amber notice
+    when KaTeX rendering fails and formulas fall back to raw LaTeX.
 
 ## P3 — hygiene / hardening backlog
 

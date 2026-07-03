@@ -24,6 +24,20 @@ fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
     }
 }
 
+/// Map the effort setting to the Messages API's `output_config`.
+/// Effort is GA on Sonnet 4.6 / Opus 4.6+ but rejected by Haiku models,
+/// so it is silently skipped there. Unknown values are skipped rather than
+/// sent, so a value tuned for the CLI path can't 400 the whole step.
+fn effort_config(model: &str, effort: &str) -> Option<serde_json::Value> {
+    if model.starts_with("claude-haiku") {
+        return None;
+    }
+    match effort {
+        "low" | "medium" | "high" | "max" => Some(serde_json::json!({ "effort": effort })),
+        _ => None,
+    }
+}
+
 /// Build Anthropic tools array from allowed tool names.
 fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     let mut tools = Vec::new();
@@ -50,9 +64,12 @@ pub async fn call_anthropic_api(
     overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let start = Instant::now();
-    // Anthropic Messages API doesn't expose a "thinking effort" field on
-    // current models, so overrides.effort is intentionally ignored here.
     let model = resolve_model(settings, overrides.model);
+    let effort = overrides
+        .effort
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(settings.claude_effort.as_str());
+    let output_config = effort_config(&model, effort.trim());
     log(app, format!("{label} started (API: Anthropic, model: {model})"));
 
     let client = &*super::api_common::HTTP_CLIENT;
@@ -69,6 +86,7 @@ pub async fn call_anthropic_api(
         system: system_prompt.map(|s| s.to_string()),
         messages,
         tools,
+        output_config,
     };
 
     let (text, usage) = anthropic_tool_loop(app, &client, &settings.anthropic_api_key, request, timeout_secs, label)
@@ -106,5 +124,22 @@ mod tests {
             resolve_model(&settings, Some("claude-opus-4-8")),
             "claude-opus-4-8"
         );
+    }
+
+    #[test]
+    fn effort_config_maps_known_values_and_skips_haiku() {
+        assert_eq!(
+            effort_config("claude-sonnet-4-6", "high"),
+            Some(serde_json::json!({ "effort": "high" }))
+        );
+        assert_eq!(
+            effort_config("claude-opus-4-6", "max"),
+            Some(serde_json::json!({ "effort": "max" }))
+        );
+        // Haiku models reject the effort parameter — never send it.
+        assert_eq!(effort_config("claude-haiku-4-5", "high"), None);
+        // Empty or unrecognized values are dropped rather than sent.
+        assert_eq!(effort_config("claude-sonnet-4-6", ""), None);
+        assert_eq!(effort_config("claude-sonnet-4-6", "xhigh"), None);
     }
 }

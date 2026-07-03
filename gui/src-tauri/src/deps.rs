@@ -108,10 +108,10 @@ fn check_codex_auth() -> Option<bool> {
             return Some(true);
         }
     }
-    // Try a quick `codex --version` style check — if login is needed,
-    // codex exec will fail at runtime with a clear error.
-    // We can't easily distinguish "no auth" from "not installed" here,
-    // so return None (unknown) if neither env var nor config found.
+    // Neither the env var nor the standard credential file is present, so
+    // report "not authenticated" — that drives the "run `codex login`" hint
+    // in the deps dialog. (This is only reached when the CLI is installed;
+    // the caller passes None for the not-installed case.)
     Some(false)
 }
 

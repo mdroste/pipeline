@@ -165,6 +165,9 @@ pub struct AnthropicRequest {
     pub messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<serde_json::Value>,
+    /// e.g. {"effort": "high"} — omitted entirely when no effort is configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
