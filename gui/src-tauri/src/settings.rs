@@ -193,9 +193,19 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
     let mut settings: Settings = match serde_json::from_str(&content) {
         Ok(s) => s,
         Err(e) => {
-            warnings.push(format!(
-                "Settings file has invalid JSON: {e}. Your saved settings were not loaded."
-            ));
+            // Move the unparseable file aside before falling back to defaults.
+            // Callers like switch_profile() do load() -> mutate -> save(); without
+            // the quarantine that save would overwrite the user's settings
+            // (including encrypted API keys) with defaults.
+            match quarantine_corrupt_file(&path) {
+                Some(backup) => warnings.push(format!(
+                    "Settings file has invalid JSON: {e}. It was moved to {} — fix and rename it back, or re-enter your settings.",
+                    backup.display()
+                )),
+                None => warnings.push(format!(
+                    "Settings file has invalid JSON: {e}. Your saved settings were not loaded."
+                )),
+            }
             Settings::default()
         }
     };
@@ -242,6 +252,24 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
 /// (pipeline execution, etc.) where fallback to defaults is fine.
 pub fn load() -> Settings {
     load_with_warnings().0
+}
+
+/// Move an unparseable settings file to `<name>.corrupt` so a subsequent
+/// save() cannot destroy the user's data. Returns the backup path on success.
+fn quarantine_corrupt_file(path: &std::path::Path) -> Option<PathBuf> {
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(".corrupt");
+    let backup = PathBuf::from(backup);
+    match fs::rename(path, &backup) {
+        Ok(()) => Some(backup),
+        Err(e) => {
+            eprintln!(
+                "WARNING: could not quarantine corrupt settings file {}: {e}",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 pub fn save(settings: &Settings) -> Result<(), String> {
@@ -484,6 +512,22 @@ mod tests {
         let key = [0u8; KEY_SIZE];
         assert_eq!(encrypt_string("", &key).unwrap(), "");
         assert_eq!(decrypt_string("", &key).unwrap(), "");
+    }
+
+    #[test]
+    fn quarantine_moves_corrupt_file_aside() {
+        // Regression: a corrupt settings.json used to be silently replaced by
+        // defaults, and the next save() (e.g. via switch_profile) overwrote the
+        // user's settings — including encrypted API keys — permanently.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, "{not json").unwrap();
+
+        let backup = quarantine_corrupt_file(&path).expect("quarantine should succeed");
+
+        assert!(!path.exists());
+        assert_eq!(backup, dir.path().join("settings.json.corrupt"));
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "{not json");
     }
 
     #[test]

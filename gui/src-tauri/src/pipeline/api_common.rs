@@ -89,8 +89,14 @@ fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf,
     let canonical = p.canonicalize()
         .map_err(|_| format!("File not found: {path}"))?;
 
-    // Validate the path is under an allowed directory
-    let temp_dir = std::env::temp_dir();
+    // Validate the path is under an allowed directory.
+    // env::temp_dir() must be canonicalized like the file path: on macOS
+    // $TMPDIR lives under /var which is a symlink to /private/var, and on
+    // Windows canonicalize() returns \\?\-prefixed paths — comparing a
+    // canonical path against the raw temp dir never matches on either.
+    let temp_dir = std::env::temp_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::temp_dir());
     let allowed = ALLOWED_DIRS.lock().unwrap_or_else(|e| e.into_inner());
     let is_allowed = canonical.starts_with(&temp_dir)
         || allowed.iter().any(|dir| {
@@ -785,5 +791,32 @@ fn format_api_error(provider: &str, status: u16, body: &str) -> String {
         429 => format!("{provider}: Rate limited. Wait a moment and try again."),
         529 | 503 => format!("{provider}: Service overloaded. Try again in a few minutes."),
         _ => format!("{provider} API error (HTTP {status}): {detail}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write as _;
+
+    #[test]
+    fn validate_tool_path_allows_temp_files() {
+        // Regression: env::temp_dir() must be canonicalized before the prefix
+        // check — on macOS $TMPDIR is under /var (a symlink to /private/var),
+        // so the raw comparison rejected every temp file in direct-API mode.
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(b"paper text").unwrap();
+        tmp.flush().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        validate_tool_path(&path, 1024).expect("temp file should be readable");
+    }
+
+    #[test]
+    fn validate_tool_path_rejects_outside_allowed_dirs() {
+        // Cargo.toml in the crate root exists but is neither in the temp dir
+        // nor in ALLOWED_DIRS, so it must be denied.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        let err = validate_tool_path(path, usize::MAX).unwrap_err();
+        assert!(err.contains("Access denied"), "{err}");
     }
 }

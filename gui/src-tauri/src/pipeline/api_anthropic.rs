@@ -12,10 +12,14 @@ fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
     let raw = override_model
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(settings.claude_model.as_str());
+    // Dateless aliases track the current model in each tier; dated snapshots
+    // get retired (the 20250514 snapshots died 2026-06-15 and broke this path).
+    // These tiers don't emit thinking blocks when `thinking` is omitted, which
+    // the tool loop in api_common.rs relies on when echoing assistant content.
     match raw {
-        "" | "sonnet" => "claude-sonnet-4-20250514".to_string(),
-        "opus" => "claude-opus-4-20250514".to_string(),
-        "haiku" => "claude-haiku-4-5-20251001".to_string(),
+        "" | "sonnet" => "claude-sonnet-4-6".to_string(),
+        "opus" => "claude-opus-4-6".to_string(),
+        "haiku" => "claude-haiku-4-5".to_string(),
         other => other.to_string(),
     }
 }
@@ -78,4 +82,29 @@ pub async fn call_anthropic_api(
     }
 
     Ok(text.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_model_uses_dateless_aliases() {
+        // Regression: the dated 20250514 snapshots were retired 2026-06-15 and
+        // started returning 404. Aliases must not carry date suffixes.
+        let settings = Settings::default();
+        for (shorthand, expected) in [
+            ("", "claude-sonnet-4-6"),
+            ("sonnet", "claude-sonnet-4-6"),
+            ("opus", "claude-opus-4-6"),
+            ("haiku", "claude-haiku-4-5"),
+        ] {
+            assert_eq!(resolve_model(&settings, Some(shorthand)), expected);
+        }
+        // Explicit full model IDs pass through untouched.
+        assert_eq!(
+            resolve_model(&settings, Some("claude-opus-4-8")),
+            "claude-opus-4-8"
+        );
+    }
 }
