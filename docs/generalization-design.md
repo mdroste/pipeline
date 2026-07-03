@@ -1,0 +1,183 @@
+# Generalizing Pipeline: from paper reviews to arbitrary LLM workflows
+
+Design notes, 2026-07-02. Not a commitment — a map of what generalization would
+take, written against the codebase as it stands after the July 2026 dust-off.
+
+## The core insight: most of the architecture is already general
+
+The unified step model was the right call and needs almost no change:
+
+| Already general | Why |
+|---|---|
+| `StepConfig` (id, label, prompt, phase, tools, agents, model, effort) | Nothing paper-specific in it |
+| Executor (waves, semaphore, retries, cancel, failed_steps) | Operates on opaque prompts and text |
+| Multi-agent + merge | Domain-agnostic synthesis |
+| Profiles + export/import envelopes | Already a workflow-definition format |
+| Template placeholders + lint | Extensible token catalog |
+| Read-tool sandbox (api_common) | Path-validated, dir-scoped — extendable to Write |
+| Settings/provider/dispatch layer | Fully generic |
+
+What is actually paper-specific is a thin layer:
+
+1. **Ingest** — `extract.rs` assumes one PDF/LaTeX file.
+2. **Orientation** — the serde schema (sections, formal results, notation) is
+   hard-coded for papers; the *mechanism* (one LLM call → validated JSON →
+   shared context) is general.
+3. **Prompts** — referee content, `{paper_path}`/`{paper_type}` tokens,
+   figure hints in the parallel-context template.
+4. **Output assumption** — `StepOutput.raw_text` is one markdown string; the
+   viewer renders everything as markdown.
+5. **Naming** — "paper", "referee passes", `SidebarReferees`, etc.
+
+Generalization = replacing those five assumptions, not the engine.
+
+## Design principles
+
+- **A workflow is a profile.** No new concept. "Paper review" becomes one
+  built-in profile among several (e.g. "Codebase review", "Grant proposal",
+  "Data-analysis writeup"). The existing export/import bundle is already the
+  sharing format.
+- **Keep the flat list + phases model.** No DAG editor. Parallel waves +
+  sequential steps cover the real use cases; the wave diagram stays readable.
+  This is the simplicity budget — spend complexity on artifacts instead.
+- **Artifacts are files, not a new abstraction.** A step's products live in a
+  per-run directory on disk. The report stays the human-readable narrative;
+  artifacts are everything else the step wrote.
+- **The viewer renders by file kind, in the webview, with zero native deps.**
+  That is what makes it robust on macOS/Windows/Linux.
+
+## The five moves
+
+### 1. Run directory + artifact manifest (foundation)
+
+Replace the scattered `history/{hash}.json` + `cache/papers/{hash}.txt` with a
+run-centric layout (keeping legacy read paths for old reports):
+
+```
+~/.pipeline/runs/{run_id}/
+├── manifest.json          # inputs, profile snapshot, timings, failed_steps
+├── report.md              # final rendered report (as today)
+├── inputs/                # copy or reference of what was ingested
+├── context/               # extracted_text.md, orientation.json
+└── artifacts/{step_id}/   # anything a step wrote (code, CSV, images, …)
+```
+
+`save_all_artifacts` already writes 80% of this shape on demand; the change is
+to make it the *default* home of a run instead of an export. The manifest
+records every artifact (relative path, byte size, sha256, detected kind) so
+the frontend never has to walk the filesystem blindly.
+
+### 2. Write-enabled steps (sandboxed)
+
+Add `Write` to the tool vocabulary (the `tools` field was designed for this):
+
+- **CLI mode**: pass `--allowedTools Read,Write`, set the subprocess cwd to
+  the step's artifact dir, and `--add-dir` it. The prompt template gains an
+  `{output_dir}` token: "Write each refactored file into {output_dir}".
+- **Direct-API mode**: implement a `Write` tool next to `Read` in
+  `api_common.rs`, reusing `validate_tool_path`-style checks but against a
+  single allowed *write* root (the step's artifact dir). Never allow writes
+  outside it — this also bounds the blast radius of prompt injection from
+  untrusted inputs.
+
+After the step completes, Rust scans the artifact dir and appends entries to
+the manifest. `StepOutput.raw_text` stays what it is — the step's prose
+summary — so the report format doesn't change and old reports keep loading.
+
+### 3. Generalized ingest
+
+`extract.rs` becomes one ingester among three input modes, selected per
+profile:
+
+- **Document** (today's behavior): PDF/LaTeX → text + hash.
+- **Folder**: record a file inventory (paths, sizes, kinds) as the context
+  document instead of inlining contents; steps use the Read tool to open files
+  on demand. This sidesteps context limits and is exactly how the CLI agents
+  already prefer to work.
+- **None**: workflow runs from the prompt alone (e.g. "draft X from these
+  instructions").
+
+The orientation stage generalizes to an optional **survey** step: same
+mechanism (one LLM call, JSON output, retry on parse failure), but the schema
+becomes per-profile — either free-form JSON (validated as JSON, not against a
+struct) or the current paper schema for the built-in review profiles. The
+hard-coded serde struct is the only thing to relax.
+
+### 4. Neutral vocabulary + token aliases
+
+`{paper_path}` → `{input_path}`, `{paper_type}` → gone (profile-specific
+context instead), "referee passes" → "steps". The codebase already has the
+alias pattern for this (`{referee_reports}` is still accepted in sequential
+prompts) — old tokens keep working, docs and UI use the new ones.
+
+### 5. Artifact explorer + multi-kind viewer
+
+Replace the single artifact dropdown in `App.tsx` with a two-pane explorer:
+a tree (run → context → steps → files, driven by the manifest) and a viewer
+pane that picks a renderer by detected kind:
+
+| Kind | Renderer | Notes |
+|---|---|---|
+| markdown | existing ReportViewer (KaTeX, TOC, comment cards) | unchanged |
+| code (rs, py, ts, tex, do, R, …) | read-only CodeMirror 6 **or** highlight.js `<pre>` | pure JS, no native deps; start with highlight.js (~40 kB core + languages), upgrade to CodeMirror if search/folding is wanted |
+| json | pretty-printed via the code renderer + collapsible tree later | orientation.json benefits immediately |
+| csv/tsv | simple virtualized table (first N rows + "open externally") | |
+| image (png/svg/jpg) | `<img>` via a backend `read_artifact` command returning base64 | avoids Tauri asset-scope/path-scheme differences across WKWebView/WebView2/WebKitGTK — the single most robust cross-platform choice |
+| pdf / binary / oversized | metadata card + "Open in system viewer" (opener plugin) | don't embed PDF renderers |
+
+Cross-platform robustness rules:
+
+- **All file bytes flow through one Tauri command** (`read_artifact(run_id,
+  rel_path) -> {kind, base64|text, truncated}`) with path validation against
+  the run dir — no `file://` URLs, no asset-protocol scope tuning per OS.
+- **Size caps with explicit truncation banners** (reuse the pattern from the
+  log-truncation fix): text >1 MB renders the head with a notice; binaries
+  never inline.
+- **Kind detection in Rust** (extension + content sniff), recorded in the
+  manifest, so the frontend never guesses.
+- **Pure-JS renderers only.** No native previewers, no shelling out except
+  the explicit "open externally" action.
+
+## Phasing (each phase ships something useful on its own)
+
+1. **Viewer first.** Artifact explorer + kind-based renderers over what runs
+   already produce (report, extracted text, orientation.json, per-step
+   outputs). Immediately improves the current paper workflow (orientation as
+   pretty JSON, extracted text as plain text, not fake-markdown). No backend
+   schema changes beyond a `read_artifact` command.
+2. **Run directory + manifest.** Move run outputs to `runs/{id}/`, keep
+   legacy history readable. Viewer switches to manifest-driven tree.
+3. **Write-enabled steps.** `{output_dir}` + sandboxed Write tool in both
+   dispatch modes. This is the moment "generate code files" workflows work.
+4. **Generalized ingest + survey + vocabulary.** Folder/none input modes,
+   per-profile survey schema, neutral tokens, 2–3 non-paper built-in
+   profiles to prove the generality (e.g. "Codebase review" is nearly free:
+   folder ingest + Read tool + review prompts).
+
+## Non-goals (the simplicity budget)
+
+- No DAG/graph editor — waves are enough, and the diagram stays legible.
+- No plugin system or embedded scripting — steps are prompts + tools, period.
+- No Bash tool by default. If ever added (test-running workflows), it must be
+  per-step opt-in, CLI-mode only, with a loud permission surface.
+- No embedded PDF viewer, no WYSIWYG editing of artifacts.
+- No server/multi-user anything.
+
+## Risks and open questions
+
+- **Prompt injection × Write tool**: an untrusted input document can tell the
+  LLM to write files. Sandboxing writes to the run's artifact dir (and never
+  executing anything) keeps this contained; the report should list written
+  artifacts so nothing lands silently.
+- **`claude -p` write behavior**: `--permission-mode acceptEdits` is already
+  set; verify Write stays confined with cwd + `--add-dir` on all three OSes
+  (the temp-dir canonicalization bug is the cautionary tale — test the
+  sandbox empirically per platform).
+- **Folder ingest context economics**: inventory-only context means steps
+  must be good at choosing what to Read; the survey step likely matters more
+  here than for papers. Needs prompt iteration.
+- **Windows paths in prompts**: keep the existing forward-slash normalization
+  for every new token (`{output_dir}` included).
+- **Back-compat**: old reports (`referee_reports`/`editor`) already load via
+  `all_outputs()`; keep that path working. Profiles gain fields with
+  `#[serde(default)]` as usual.
