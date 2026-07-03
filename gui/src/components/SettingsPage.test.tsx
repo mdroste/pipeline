@@ -6,6 +6,7 @@ import type { Settings } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 
 function makeSettings(): Settings {
   return {
@@ -26,6 +27,9 @@ function makeSettings(): Settings {
     anthropic_api_key: "",
     openai_api_key: "",
     google_api_key: "",
+    local_base_url: "http://localhost:11434/v1",
+    local_model: "",
+    local_api_key: "",
   };
 }
 
@@ -33,6 +37,7 @@ function mockLoad(settings: Settings, warnings: string[] = []) {
   invoke.mockImplementation((cmd: string) => {
     if (cmd === "get_settings") return Promise.resolve({ settings, warnings });
     if (cmd === "save_settings") return Promise.resolve();
+    if (cmd === "list_engines") return Promise.resolve([]);
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   });
 }
@@ -44,7 +49,7 @@ describe("SettingsPage", () => {
 
   it("loads settings and renders the LLM provider section", async () => {
     mockLoad(makeSettings());
-    render(<SettingsPage onClose={() => {}} />);
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
     expect(await screen.findByText("Preferred Provider")).toBeInTheDocument();
     expect(invoke).toHaveBeenCalledWith("get_settings");
   });
@@ -53,7 +58,7 @@ describe("SettingsPage", () => {
     mockLoad(makeSettings(), [
       "Settings file has invalid JSON: oops. It was moved to settings.json.corrupt",
     ]);
-    render(<SettingsPage onClose={() => {}} />);
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
     expect(
       await screen.findByText(/settings\.json\.corrupt/),
     ).toBeInTheDocument();
@@ -62,7 +67,7 @@ describe("SettingsPage", () => {
   it("saves settings and shows the saved indicator", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
-    render(<SettingsPage onClose={() => {}} />);
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
     await screen.findByText("Preferred Provider");
 
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -79,7 +84,7 @@ describe("SettingsPage", () => {
     invoke.mockRejectedValue(new Error("disk on fire"));
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<SettingsPage onClose={onClose} />);
+    render(<SettingsPage onClose={onClose} dark={false} onDarkChange={() => {}} />);
 
     expect(
       await screen.findByText(/Failed to load settings/),

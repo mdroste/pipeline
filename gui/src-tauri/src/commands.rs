@@ -242,6 +242,35 @@ async fn run_pipeline_inner(
             }
         }
     }
+
+    // When marker did the extraction, collect the figure images it emitted
+    // into the run artifacts. Best-effort.
+    if extraction.method == "marker" {
+        if let Some(w) = run_writer.as_mut() {
+            let images = crate::pipeline::extract::marker_image_files(&extraction.paper_hash);
+            if !images.is_empty() {
+                let figures_dir = w.dir().join("artifacts").join("figures");
+                if let Err(e) = std::fs::create_dir_all(&figures_dir) {
+                    let _ = app.emit("pipeline:log", serde_json::json!({
+                        "line": format!("WARNING: could not create figures dir: {e}")
+                    }));
+                } else {
+                    let mut copied = 0usize;
+                    for src in &images {
+                        let Some(name) = src.file_name().and_then(|n| n.to_str()) else { continue };
+                        if std::fs::copy(src, figures_dir.join(name)).is_ok()
+                            && w.register_existing(&format!("artifacts/figures/{name}"), name, "figures").is_ok()
+                        {
+                            copied += 1;
+                        }
+                    }
+                    let _ = app.emit("pipeline:log", serde_json::json!({
+                        "line": format!("Collected {copied} figure images from marker output")
+                    }));
+                }
+            }
+        }
+    }
     if is_cancelled() { return Err("Pipeline cancelled".into()); }
 
     // Cache the extracted text by paper hash so users can inspect it after the run.

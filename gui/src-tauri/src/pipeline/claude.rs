@@ -314,7 +314,8 @@ pub fn extract_error_hint(output: &str) -> Option<String> {
     }
 }
 
-/// Dispatch an LLM call to the configured provider (Claude, Codex, or Gemini).
+/// Dispatch an LLM call to the configured provider (Claude, Codex, Gemini, or
+/// a local OpenAI-compatible server).
 /// All pipeline code should call this instead of provider-specific functions directly.
 ///
 /// `cwd`: optional working directory for the subprocess. Pass the paper's source
@@ -352,6 +353,14 @@ pub async fn call_llm(
         }
         "gemini" if !settings.google_api_key.is_empty() => {
             return super::api_google::call_google_api(
+                app, prompt, allowed_tools, system_prompt,
+                timeout_secs, label, &settings, overrides,
+            ).await;
+        }
+        // Local OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM).
+        // Always direct HTTP — there is no CLI fallback for this provider.
+        "local" => {
+            return super::api_openai::call_local_api(
                 app, prompt, allowed_tools, system_prompt,
                 timeout_secs, label, &settings, overrides,
             ).await;

@@ -101,6 +101,27 @@ pub struct Settings {
     /// Google AI API key. When set, bypasses Gemini CLI for direct API calls.
     #[serde(default)]
     pub google_api_key: String,
+
+    /// Base URL of a local OpenAI-compatible server for the "local" provider.
+    /// Default is Ollama's endpoint; LM Studio, llama.cpp server, and vLLM
+    /// work by changing the URL.
+    #[serde(default = "default_local_base_url")]
+    pub local_base_url: String,
+
+    /// Model name on the local server (e.g. "llama3.3", "qwen2.5:14b").
+    /// Required for the local provider — there is no meaningful default.
+    #[serde(default)]
+    pub local_model: String,
+
+    /// Optional bearer token for the local server. Most local runtimes need
+    /// none; encrypted at rest like the cloud keys since users may point the
+    /// base URL at remote OpenAI-compatible services.
+    #[serde(default)]
+    pub local_api_key: String,
+}
+
+fn default_local_base_url() -> String {
+    "http://localhost:11434/v1".to_string()
 }
 
 fn default_pdf_extractor() -> String {
@@ -151,6 +172,9 @@ impl Default for Settings {
             anthropic_api_key: String::new(),
             openai_api_key: String::new(),
             google_api_key: String::new(),
+            local_base_url: default_local_base_url(),
+            local_model: String::new(),
+            local_api_key: String::new(),
         }
     }
 }
@@ -234,6 +258,13 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
                     ));
                     String::new()
                 });
+            settings.local_api_key = decrypt_string(&settings.local_api_key, &key)
+                .unwrap_or_else(|e| {
+                    warnings.push(format!(
+                        "Could not decrypt local-server API key: {e}. The key may need to be re-entered."
+                    ));
+                    String::new()
+                });
         }
         Err(e) => {
             warnings.push(format!(
@@ -242,6 +273,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
             settings.anthropic_api_key = String::new();
             settings.openai_api_key = String::new();
             settings.google_api_key = String::new();
+            settings.local_api_key = String::new();
         }
     }
 
@@ -281,6 +313,7 @@ pub fn save(settings: &Settings) -> Result<(), String> {
     to_save.anthropic_api_key = encrypt_string(&settings.anthropic_api_key, &key)?;
     to_save.openai_api_key = encrypt_string(&settings.openai_api_key, &key)?;
     to_save.google_api_key = encrypt_string(&settings.google_api_key, &key)?;
+    to_save.local_api_key = encrypt_string(&settings.local_api_key, &key)?;
 
     let json = serde_json::to_string_pretty(&to_save)
         .map_err(|e| format!("Failed to serialize: {e}"))?;

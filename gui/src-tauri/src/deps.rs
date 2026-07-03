@@ -37,7 +37,7 @@ fn cmd(program: &str) -> Command {
 }
 
 /// Find a binary on PATH by scanning directories directly (no subprocess).
-fn find_on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     let path_var = env::full_path();
     let sep = if cfg!(windows) { ';' } else { ':' };
     for dir in path_var.split(sep) {
@@ -140,6 +140,49 @@ fn check_gemini_auth() -> Option<bool> {
     Some(false)
 }
 
+/// Parse "http(s)://host[:port]/..." into (host, port) for a TCP probe.
+/// Returns None for URLs we can't parse; the probe then reports unreachable.
+fn parse_host_port(base_url: &str) -> Option<(String, u16)> {
+    let rest = base_url
+        .trim()
+        .strip_prefix("http://")
+        .or_else(|| base_url.trim().strip_prefix("https://"))?;
+    let default_port = if base_url.trim_start().starts_with("https://") { 443 } else { 80 };
+    let authority = rest.split('/').next()?;
+    if authority.is_empty() {
+        return None;
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port)) => {
+            let port = port.parse::<u16>().ok()?;
+            if host.is_empty() {
+                return None;
+            }
+            Some((host.to_string(), port))
+        }
+        None => Some((authority.to_string(), default_port)),
+    }
+}
+
+/// TCP-connect probe for the local OpenAI-compatible server.
+/// Returns (reachable, "host:port" description).
+fn probe_local_server(base_url: &str) -> (bool, String) {
+    let Some((host, port)) = parse_host_port(base_url) else {
+        return (false, String::new());
+    };
+    let desc = format!("{host}:{port}");
+    use std::net::{TcpStream, ToSocketAddrs};
+    let Ok(mut addrs) = (host.as_str(), port).to_socket_addrs() else {
+        return (false, desc);
+    };
+    let Some(addr) = addrs.next() else {
+        return (false, desc);
+    };
+    let reachable =
+        TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).is_ok();
+    (reachable, desc)
+}
+
 /// Run all dependency checks in parallel.
 /// Skips subprocess probes when an API key already covers a provider.
 /// Uses existence checks (which) instead of --version/--help for optional tools.
@@ -149,6 +192,7 @@ pub fn check_all() -> DepsReport {
     let has_anthropic_key = !settings.anthropic_api_key.is_empty();
     let has_openai_key = !settings.openai_api_key.is_empty();
     let has_google_key = !settings.google_api_key.is_empty();
+    let local_base_url = settings.local_base_url.clone();
 
     // Run all probes in parallel, skipping unnecessary work
     std::thread::scope(|s| {
@@ -186,6 +230,11 @@ pub fn check_all() -> DepsReport {
         let marker_h = s.spawn(|| {
             crate::engines::find_managed("marker_single").or_else(|| find_on_path("marker_single"))
         });
+
+        // Local OpenAI-compatible server: TCP reachability of the configured
+        // base URL (fast, no HTTP parse — a listener there is a good signal).
+        let local_url = local_base_url.clone();
+        let local_h = s.spawn(move || probe_local_server(&local_url));
 
         // Collect results
         let (found, ver, path, claude_auth) = claude_h.join()
@@ -297,6 +346,14 @@ pub fn check_all() -> DepsReport {
             .zip(crate::engines::managed_bin_dir())
             .map(|(p, dir)| p.starts_with(&dir))
             .unwrap_or(false);
+        let marker_hint = if marker_managed {
+            "Managed install (~/.pipeline) — this copy is used for extraction."
+        } else if marker_path.is_some() {
+            "System install on PATH — used only because no managed install exists. \
+             Installing from Settings → Text Extraction takes precedence."
+        } else {
+            "Optional local PDF equation extraction. Install from Settings → Text Extraction."
+        };
         let marker = DepStatus {
             name: "marker-pdf".into(),
             found: marker_path.is_some(),
@@ -307,11 +364,29 @@ pub fn check_all() -> DepsReport {
             },
             path: marker_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
             required: false,
-            hint: "Optional local PDF equation extraction. Install from Settings, or pip install marker-pdf.".into(),
+            hint: marker_hint.into(),
             authenticated: None,
         };
 
-        let deps = vec![claude, codex, gemini, pdftoppm, pdftotext, marker];
+        let (local_reachable, local_desc) = local_h.join().unwrap_or((false, String::new()));
+        let local = DepStatus {
+            name: "Local LLM server".into(),
+            found: local_reachable,
+            version: if local_reachable { "reachable".into() } else { String::new() },
+            path: local_desc,
+            required: provider == "local",
+            hint: if local_reachable {
+                "OpenAI-compatible server responding at the configured URL.".into()
+            } else {
+                "No server at the configured URL. Install Ollama (ollama.com), run it, \
+                 and pull a model (e.g. `ollama pull llama3.3`), or point Settings → Models \
+                 at another OpenAI-compatible server."
+                    .into()
+            },
+            authenticated: None,
+        };
+
+        let deps = vec![claude, codex, gemini, local, pdftoppm, pdftotext, marker];
         let ready = deps.iter().all(|d| {
             if !d.required { return true; }
             if !d.found { return false; }
@@ -319,4 +394,39 @@ pub fn check_all() -> DepsReport {
         });
         DepsReport { deps, ready }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_host_port;
+
+    #[test]
+    fn parse_ollama_default() {
+        assert_eq!(
+            parse_host_port("http://localhost:11434/v1"),
+            Some(("localhost".into(), 11434))
+        );
+    }
+
+    #[test]
+    fn parse_no_port_defaults_by_scheme() {
+        assert_eq!(parse_host_port("http://myhost/v1"), Some(("myhost".into(), 80)));
+        assert_eq!(parse_host_port("https://myhost/v1"), Some(("myhost".into(), 443)));
+    }
+
+    #[test]
+    fn parse_no_path() {
+        assert_eq!(
+            parse_host_port("http://127.0.0.1:1234"),
+            Some(("127.0.0.1".into(), 1234))
+        );
+    }
+
+    #[test]
+    fn parse_rejects_garbage() {
+        assert_eq!(parse_host_port(""), None);
+        assert_eq!(parse_host_port("localhost:11434"), None); // no scheme
+        assert_eq!(parse_host_port("http://"), None);
+        assert_eq!(parse_host_port("http://host:notaport/v1"), None);
+    }
 }

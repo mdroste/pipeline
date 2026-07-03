@@ -232,6 +232,10 @@ pub struct EngineStatus {
     pub installed: bool,
     pub version: String,
     pub entry_path: String,
+    /// A non-managed copy found on PATH (pip, anaconda, …), empty if none.
+    /// Shown on the install card: it is what extraction falls back to while
+    /// no managed install exists.
+    pub system_path: String,
     pub est_download_mb: u64,
     pub est_disk_mb: u64,
     /// Size of the whole managed stack (shared across engines), in MB.
@@ -288,6 +292,7 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
         .unwrap_or(0);
     let installing = INSTALL_RUNNING.load(Ordering::Acquire);
 
+    let managed_dir = managed_bin_dir();
     ENGINES
         .iter()
         .map(|spec| {
@@ -295,6 +300,12 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
             let version = tool_list
                 .as_deref()
                 .and_then(|out| parse_uv_tool_list(out, spec.pip_spec))
+                .unwrap_or_default();
+            // A copy elsewhere on PATH (pip/anaconda). Exclude the managed
+            // dir in case the user added ~/.pipeline/bin to PATH themselves.
+            let system_path = crate::deps::find_on_path(spec.entry_point)
+                .filter(|p| managed_dir.as_ref().map_or(true, |d| !p.starts_with(d)))
+                .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
             EngineStatus {
                 id: spec.id.to_string(),
@@ -305,6 +316,7 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
                 entry_path: entry
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default(),
+                system_path,
                 est_download_mb: spec.est_download_mb,
                 est_disk_mb: spec.est_disk_mb,
                 managed_stack_mb: stack_mb,

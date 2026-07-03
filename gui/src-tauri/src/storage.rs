@@ -120,7 +120,9 @@ pub fn list_reports() -> Result<ListReportsResult, String> {
                     Ok(report) => {
                         summaries.push(ReportSummary {
                             paper_hash: report.paper_hash.clone(),
-                            title: report.orientation.metadata.title.clone(),
+                            title: crate::models::paper_view(&report.orientation)
+                                .map(|v| v.metadata.title)
+                                .unwrap_or_default(),
                             report_date: report.report_date,
                             file_path: path.to_string_lossy().to_string(),
                         });

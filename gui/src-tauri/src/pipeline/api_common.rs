@@ -551,17 +551,30 @@ pub async fn anthropic_tool_loop(
     Err(format!("Tool loop exceeded {MAX_TOOL_ITERATIONS} iterations"))
 }
 
-/// Run the tool-use loop for OpenAI. Returns (text, usage).
+/// Run the tool-use loop for an OpenAI-compatible Chat Completions endpoint.
+/// Returns (text, usage).
+///
+/// `base_url` is the API root without the `/chat/completions` suffix
+/// (e.g. "https://api.openai.com/v1", "http://localhost:11434/v1").
+/// `provider` names the endpoint in log/error messages.
+/// When `drop_tools_on_400` is set (local servers), a 400 response to a
+/// request that declared tools retries once without tools — many local
+/// models don't support tool calling, and a hard failure would be opaque.
 pub async fn openai_tool_loop(
     app: &AppHandle,
     client: &reqwest::Client,
+    base_url: &str,
     api_key: &str,
+    provider: &str,
     mut request: OpenAIRequest,
     timeout_secs: u64,
     label: &str,
+    drop_tools_on_400: bool,
 ) -> Result<(String, Usage), String> {
     let mut usage = Usage::default();
     let start = std::time::Instant::now();
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let mut tools_retry_used = false;
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
         if crate::commands::is_cancelled() {
@@ -576,25 +589,41 @@ pub async fn openai_tool_loop(
         }
         let request_timeout = timeout_secs - elapsed;
 
-        let resp = client
-            .post("https://api.openai.com/v1/chat/completions")
-            .header("Authorization", format!("Bearer {api_key}"))
+        let mut req = client
+            .post(&url)
             .timeout(std::time::Duration::from_secs(request_timeout))
-            .json(&request)
+            .json(&request);
+        if !api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {api_key}"));
+        }
+        let resp = req
             .send()
             .await
-            .map_err(|e| format_http_error("OpenAI", &e))?;
+            .map_err(|e| format_http_error(provider, &e))?;
 
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(format_api_error("OpenAI", status.as_u16(), &body));
+            if drop_tools_on_400
+                && !tools_retry_used
+                && status.as_u16() == 400
+                && !request.tools.is_empty()
+            {
+                log(app, format!(
+                    "{label}: {provider} rejected the request with tools declared — retrying without tools. \
+                     The model won't be able to read files; consider a tool-capable model."
+                ));
+                request.tools = Vec::new();
+                tools_retry_used = true;
+                continue;
+            }
+            return Err(format_api_error(provider, status.as_u16(), &body));
         }
 
         let body: OpenAIResponse = resp
             .json()
             .await
-            .map_err(|e| format!("Failed to parse OpenAI response: {e}"))?;
+            .map_err(|e| format!("Failed to parse {provider} response: {e}"))?;
 
         if let Some(u) = &body.usage {
             let inp = u.prompt_tokens.unwrap_or(0);
@@ -603,7 +632,10 @@ pub async fn openai_tool_loop(
             verbose_log(app, format!("[api] {label}: tokens in={inp} out={out}"));
         }
 
-        let choice = body.choices.first().ok_or("OpenAI returned no choices")?;
+        let choice = body
+            .choices
+            .first()
+            .ok_or_else(|| format!("{provider} returned no choices"))?;
 
         if let Some(tool_calls) = &choice.message.tool_calls {
             if !tool_calls.is_empty() {

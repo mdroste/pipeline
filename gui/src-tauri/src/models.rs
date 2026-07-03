@@ -104,6 +104,10 @@ pub struct ExtractionQualityNote {
     pub description: String,
 }
 
+/// Typed *paper-review view* of a survey JSON. The survey itself is stored as
+/// raw `serde_json::Value` (any schema a profile's survey prompt produces);
+/// this struct is only how the built-in paper profiles interpret it for
+/// `{paper_type}`, report headers, and pretty rendering.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrientationMap {
     /// Defaulted so loosely-shaped survey JSON from non-paper workflows
@@ -162,6 +166,24 @@ impl OrientationMap {
     }
 }
 
+/// Interpret a survey JSON as a paper orientation map, if it has that shape.
+/// Returns `None` for surveys produced by custom (non-paper) survey prompts,
+/// so callers fall back to schema-agnostic handling. Detection is by the
+/// paper schema's distinctive keys rather than parse success, because every
+/// field of `OrientationMap` is defaulted and any JSON object would "parse".
+pub fn paper_view(survey: &serde_json::Value) -> Option<OrientationMap> {
+    let is_paper_shaped = survey
+        .get("metadata")
+        .map(|m| m.get("paper_type").is_some())
+        .unwrap_or(false)
+        || survey.get("formal_results").is_some()
+        || survey.get("stated_contribution").is_some();
+    if !is_paper_shaped {
+        return None;
+    }
+    serde_json::from_value(survey.clone()).ok()
+}
+
 // --- Step Output ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,7 +236,11 @@ pub struct StepFailure {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineReport {
-    pub orientation: OrientationMap,
+    /// Survey JSON built before the steps ran (raw — any schema the profile's
+    /// survey prompt produces). Old saved reports hold the paper schema here,
+    /// which loads fine as a Value; use `models::paper_view` for typed access.
+    #[serde(default)]
+    pub orientation: serde_json::Value,
     /// New unified step outputs.
     #[serde(default)]
     pub step_outputs: Vec<StepOutput>,
@@ -379,11 +405,45 @@ mod tests {
         assert_eq!(omap.metadata.paper_type, PaperType::Mixed);
     }
 
+    // ── paper_view ─────────────────────────────────────────────────
+
+    #[test]
+    fn paper_view_accepts_paper_shaped_survey() {
+        let survey = serde_json::json!({
+            "metadata": {"title": "T", "paper_type": "theory"},
+            "sections": [{"number": "1", "title": "Intro"}]
+        });
+        let view = paper_view(&survey).expect("paper-shaped survey should parse");
+        assert_eq!(view.metadata.paper_type, PaperType::Theory);
+        assert_eq!(view.sections.len(), 1);
+    }
+
+    #[test]
+    fn paper_view_accepts_serialized_empty_orientation() {
+        let survey = serde_json::to_value(OrientationMap::empty("theorem proof")).unwrap();
+        let view = paper_view(&survey).expect("placeholder orientation is paper-shaped");
+        assert_eq!(view.metadata.paper_type, PaperType::Theory);
+    }
+
+    #[test]
+    fn paper_view_rejects_custom_survey() {
+        let survey = serde_json::json!({
+            "overview": "a codebase",
+            "key_elements": [{"name": "main.rs"}]
+        });
+        assert!(paper_view(&survey).is_none());
+    }
+
+    #[test]
+    fn paper_view_rejects_null() {
+        assert!(paper_view(&serde_json::Value::Null).is_none());
+    }
+
     // ── PipelineReport::all_outputs ───────────────────────────────────
 
     fn make_report(step_outputs: Vec<StepOutput>, referees: Vec<RefereeReport>, editor: Option<EditorSynthesis>) -> PipelineReport {
         PipelineReport {
-            orientation: empty_orientation(),
+            orientation: serde_json::to_value(empty_orientation()).unwrap(),
             step_outputs,
             failed_steps: vec![],
             referee_reports: referees,

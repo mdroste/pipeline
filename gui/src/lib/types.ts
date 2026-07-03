@@ -60,7 +60,12 @@ export interface StepFailure {
 }
 
 export interface PipelineReport {
-  orientation: OrientationMap;
+  /**
+   * Survey JSON built before the steps ran. Raw — any schema the profile's
+   * survey prompt produces. Paper-review profiles produce OrientationMap;
+   * use isPaperOrientation() before treating it as one.
+   */
+  orientation: OrientationMap | Record<string, unknown> | null;
   step_outputs: StepOutput[];
   failed_steps?: StepFailure[];
   // Legacy fields for old saved reports
@@ -79,6 +84,18 @@ export interface OrientationMap {
   stated_contribution: string;
   key_references: string[];
   extraction_quality_notes: ExtractionQualityNote[];
+}
+
+/** True when a survey JSON has the paper-review orientation shape. */
+export function isPaperOrientation(o: unknown): o is OrientationMap {
+  if (!o || typeof o !== "object") return false;
+  const v = o as Record<string, unknown>;
+  const meta = v.metadata as Record<string, unknown> | undefined;
+  return (
+    (typeof meta === "object" && meta !== null && "paper_type" in meta) ||
+    "formal_results" in v ||
+    "stated_contribution" in v
+  );
 }
 
 export interface PaperMetadata {
@@ -172,6 +189,12 @@ export interface Settings {
   anthropic_api_key: string;
   openai_api_key: string;
   google_api_key: string;
+  /** Base URL of a local OpenAI-compatible server (Ollama default). */
+  local_base_url: string;
+  /** Model name on the local server; required for the local provider. */
+  local_model: string;
+  /** Optional bearer token for the local server. */
+  local_api_key: string;
 }
 
 export interface DepStatus {
@@ -224,3 +247,18 @@ export type ExportEnvelope =
       parallel_context_template?: string;
     }
   | { type: "bundle"; settings: Settings; profiles: ProfileExport[]; active_profile: string };
+
+/** Mirrors engines::EngineStatus. */
+export interface EngineStatus {
+  id: string;
+  label: string;
+  description: string;
+  installed: boolean;
+  version: string;
+  entry_path: string;
+  system_path: string;
+  est_download_mb: number;
+  est_disk_mb: number;
+  managed_stack_mb: number;
+  installing: boolean;
+}

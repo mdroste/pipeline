@@ -157,8 +157,50 @@ fn default_true() -> bool {
 
 /// Default parallel-step context template, with user override applied from
 /// ~/.pipeline/prompts/parallel_context.md if present.
+///
+/// This is the paper-review wrapper — it remains the fallback default because
+/// the built-in profiles and all pre-generalization profiles assume it.
 pub fn default_parallel_template() -> String {
     prompts::load_prompt("parallel_context").unwrap_or_default()
+}
+
+/// Generic (domain-neutral) parallel-step context template.
+pub fn generic_parallel_template() -> String {
+    prompts::load_prompt("parallel_context_generic").unwrap_or_default()
+}
+
+/// Starter steps for a brand-new profile: one parallel step to replace and a
+/// generic consolidation step. New profiles are domain-neutral; the paper
+/// machinery lives in the built-in review profiles.
+fn generic_starter_steps() -> Vec<StepConfig> {
+    vec![
+        StepConfig {
+            id: "analysis".into(),
+            label: "Analysis".into(),
+            prompt: "Replace this with instructions for the step. Adjacent parallel steps run \
+                     concurrently, each in a clean context, with the survey (orientation map) \
+                     as shared grounding."
+                .into(),
+            enabled: true,
+            phase: Phase::Parallel,
+            tools: vec!["Read".into()],
+            agents: vec![],
+            ..Default::default()
+        },
+        StepConfig {
+            id: "synthesis".into(),
+            label: "Synthesize".into(),
+            prompt: "Consolidate the outputs of all prior steps into a single report. Merge \
+                     duplicate findings, resolve contradictions, and order by importance.\n\n\
+                     {prior_outputs}"
+                .into(),
+            enabled: true,
+            phase: Phase::Sequential,
+            tools: vec![],
+            agents: vec![],
+            ..Default::default()
+        },
+    ]
 }
 
 /// Summary returned when listing profiles.
@@ -467,9 +509,65 @@ fn defaults() -> PipelineConfig {
 }
 
 /// Profile IDs that cannot be deleted.
-// All three are recreated by ensure_builtin_profiles() on startup, so
+// All are recreated by create_builtin_profiles() on startup, so
 // deleting any of them would silently "undo" itself — block deletion for all.
-const BUILTIN_PROFILES: &[&str] = &["deep-review", "quick-review", "empirical"];
+// Mirrored by BUILTIN_PROFILES in PipelinePage.tsx.
+const BUILTIN_PROFILES: &[&str] = &[
+    "deep-review",
+    "quick-review",
+    "empirical",
+    "quick-code-review",
+    "deep-code-review",
+    "replication-audit",
+    "grant-review",
+];
+
+/// Step whose prompt is a named compiled-in default. Enabled, no agents.
+fn prompt_step(id: &str, label: &str, phase: Phase, tools: &[&str], prompt_name: &str) -> StepConfig {
+    StepConfig {
+        id: id.into(),
+        label: label.into(),
+        prompt: prompts::load_prompt(prompt_name).unwrap_or_default(),
+        enabled: true,
+        phase,
+        tools: tools.iter().map(|t| t.to_string()).collect(),
+        agents: vec![],
+        ..Default::default()
+    }
+}
+
+fn folder_extraction() -> ExtractionConfig {
+    ExtractionConfig {
+        method: String::new(),
+        input_mode: "folder".into(),
+        marker_disable_ocr: None,
+        marker_disable_images: None,
+    }
+}
+
+/// Domain-neutral profile scaffold: generic wrapper + generic survey prompt.
+fn generic_profile(name: &str, steps: Vec<StepConfig>, extraction: ExtractionConfig) -> ProfileData {
+    ProfileData {
+        name: name.into(),
+        steps,
+        merge: MergeConfig::default(),
+        use_orientation: true,
+        orientation_prompt: prompts::load_prompt("orientation_generic").unwrap_or_default(),
+        extraction,
+        parallel_context_template: generic_parallel_template(),
+    }
+}
+
+/// Write a built-in profile file if it doesn't exist yet.
+fn write_builtin_if_missing(path: &PathBuf, profile: &ProfileData) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    let json =
+        serde_json::to_string_pretty(profile).map_err(|e| format!("Serialize error: {e}"))?;
+    fs::write(path, json)
+        .map_err(|e| format!("Failed to write {}: {e}", path.display()))
+}
 
 /// Built-in profiles created on first run.
 fn create_builtin_profiles() -> Result<(), String> {
@@ -602,6 +700,85 @@ fn create_builtin_profiles() -> Result<(), String> {
         fs::write(&empirical_path, json)
             .map_err(|e| format!("Failed to write empirical profile: {e}"))?;
     }
+
+    // Quick Code Review (formerly "Codebase Review") — folder input,
+    // generic wrapper + survey. Migrate away the pre-rename file.
+    let stale_codebase = profiles.join("codebase-review.json");
+    if stale_codebase.exists() {
+        let _ = fs::remove_file(&stale_codebase);
+        let mut settings = crate::settings::load();
+        if settings.active_profile == "codebase-review" {
+            settings.active_profile = "quick-code-review".into();
+            let _ = crate::settings::save(&settings);
+        }
+    }
+    write_builtin_if_missing(
+        &profiles.join("quick-code-review.json"),
+        &generic_profile(
+            "Quick Code Review",
+            vec![
+                prompt_step("code_correctness", "Correctness", Phase::Parallel, &["Read"], "code_correctness"),
+                prompt_step("code_design", "Design & Maintainability", Phase::Parallel, &["Read"], "code_design"),
+                prompt_step("code_security", "Security", Phase::Parallel, &["Read"], "code_security"),
+                prompt_step("code_synthesis", "Consolidate Findings", Phase::Sequential, &[], "code_synthesis"),
+            ],
+            folder_extraction(),
+        ),
+    )?;
+
+    // Deep Code Review — seven parallel passes, consolidate, then a
+    // sequential verify step that re-reads the code to refute findings.
+    write_builtin_if_missing(
+        &profiles.join("deep-code-review.json"),
+        &generic_profile(
+            "Deep Code Review",
+            vec![
+                prompt_step("code_correctness", "Correctness", Phase::Parallel, &["Read"], "code_correctness"),
+                prompt_step("code_security", "Security", Phase::Parallel, &["Read"], "code_security"),
+                prompt_step("code_design", "Design & Maintainability", Phase::Parallel, &["Read"], "code_design"),
+                prompt_step("code_concurrency", "Concurrency & Resources", Phase::Parallel, &["Read"], "code_concurrency"),
+                prompt_step("code_errors", "Error Handling & Edge Cases", Phase::Parallel, &["Read"], "code_errors"),
+                prompt_step("code_performance", "Performance", Phase::Parallel, &["Read"], "code_performance"),
+                prompt_step("code_tests", "Test Coverage & Quality", Phase::Parallel, &["Read"], "code_tests"),
+                prompt_step("code_synthesis", "Consolidate Findings", Phase::Sequential, &[], "code_synthesis"),
+                prompt_step("code_verify", "Verify Findings", Phase::Sequential, &["Read"], "code_verify"),
+            ],
+            folder_extraction(),
+        ),
+    )?;
+
+    // Replication Package Audit — data-editor-style check of a paper's
+    // replication package (folder input).
+    write_builtin_if_missing(
+        &profiles.join("replication-audit.json"),
+        &generic_profile(
+            "Replication Package Audit",
+            vec![
+                prompt_step("repl_completeness", "Exhibit Completeness", Phase::Parallel, &["Read"], "repl_completeness"),
+                prompt_step("repl_consistency", "Code–Paper Consistency", Phase::Parallel, &["Read"], "repl_consistency"),
+                prompt_step("repl_portability", "Portability", Phase::Parallel, &["Read"], "repl_portability"),
+                prompt_step("repl_provenance", "Data Provenance", Phase::Parallel, &["Read"], "repl_provenance"),
+                prompt_step("repl_synthesis", "Consolidate Audit", Phase::Sequential, &[], "repl_synthesis"),
+            ],
+            folder_extraction(),
+        ),
+    )?;
+
+    // Grant Proposal Review — document input, panel-reviewer framing.
+    write_builtin_if_missing(
+        &profiles.join("grant-review.json"),
+        &generic_profile(
+            "Grant Proposal Review",
+            vec![
+                prompt_step("grant_aims", "Aims & Contribution", Phase::Parallel, &["Read", "WebSearch"], "grant_aims"),
+                prompt_step("grant_feasibility", "Feasibility & Design", Phase::Parallel, &["Read"], "grant_feasibility"),
+                prompt_step("grant_clarity", "Panel Readability", Phase::Parallel, &["Read"], "grant_clarity"),
+                prompt_step("grant_consistency", "Internal Consistency", Phase::Parallel, &["Read"], "grant_consistency"),
+                prompt_step("grant_synthesis", "Consolidate Feedback", Phase::Sequential, &[], "grant_synthesis"),
+            ],
+            ExtractionConfig::default(),
+        ),
+    )?;
 
     Ok(())
 }
@@ -855,7 +1032,18 @@ pub fn create_profile(name: &str) -> Result<ProfileSummary, String> {
     if path.exists() {
         return Err(format!("A profile with ID '{id}' already exists"));
     }
-    let profile = ProfileData::new(name, default_steps(), MergeConfig::default());
+    // New profiles start domain-neutral: generic starter steps, generic
+    // context template, and an explicit generic survey prompt (empty would
+    // fall back to the paper survey at runtime).
+    let profile = ProfileData {
+        name: name.into(),
+        steps: generic_starter_steps(),
+        merge: MergeConfig::default(),
+        use_orientation: true,
+        orientation_prompt: prompts::load_prompt("orientation_generic").unwrap_or_default(),
+        extraction: ExtractionConfig::default(),
+        parallel_context_template: generic_parallel_template(),
+    };
     save_profile(&id, &profile)?;
     Ok(ProfileSummary {
         id,
@@ -963,6 +1151,7 @@ pub fn export_bundle() -> Result<String, String> {
     settings.anthropic_api_key = String::new();
     settings.openai_api_key = String::new();
     settings.google_api_key = String::new();
+    settings.local_api_key = String::new();
     let summaries = list_profiles()?;
     let mut profiles = Vec::new();
     for s in &summaries {
@@ -1132,7 +1321,7 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             // Merge imported settings with existing, preserving local API keys.
             // Validate numeric ranges and provider to prevent invalid configs.
             let mut current = crate::settings::load();
-            let valid_providers = ["claude", "codex", "gemini"];
+            let valid_providers = ["claude", "codex", "gemini", "local"];
             if valid_providers.contains(&imported_settings.preferred_provider.as_str()) {
                 current.preferred_provider = imported_settings.preferred_provider;
             }
@@ -1142,6 +1331,8 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             current.codex_model = imported_settings.codex_model;
             current.codex_effort = imported_settings.codex_effort;
             current.gemini_model = imported_settings.gemini_model;
+            current.local_base_url = imported_settings.local_base_url;
+            current.local_model = imported_settings.local_model;
             current.pdf_extractor = imported_settings.pdf_extractor;
             current.marker_disable_ocr = imported_settings.marker_disable_ocr;
             current.marker_disable_images = imported_settings.marker_disable_images;

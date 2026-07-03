@@ -1,14 +1,18 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { Settings } from "../lib/types";
+import EnginesPanel from "./EnginesPanel";
 
 interface Props {
   onClose: () => void;
+  dark: boolean;
+  onDarkChange: (v: boolean) => void;
 }
 
 type Section = "llm" | "extraction" | "general";
 
-export default function SettingsPage({ onClose }: Props) {
+export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -79,7 +83,7 @@ export default function SettingsPage({ onClose }: Props) {
   const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
     {
       id: "llm",
-      label: "LLM Provider",
+      label: "Models",
       icon: (
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
@@ -161,7 +165,7 @@ export default function SettingsPage({ onClose }: Props) {
             <ExtractionSection settings={settings} setSettings={setSettings} />
           )}
           {section === "general" && (
-            <GeneralSection settings={settings} setSettings={setSettings} />
+            <GeneralSection settings={settings} setSettings={setSettings} dark={dark} onDarkChange={onDarkChange} />
           )}
 
           {/* Save bar */}
@@ -231,7 +235,7 @@ function LLMSection({
   return (
     <>
       <SectionHeader
-        title="LLM Providers"
+        title="Models"
         description="Configure models for each provider. The preferred provider is used for steps that don't specify an agent."
       />
 
@@ -247,6 +251,7 @@ function LLMSection({
             <option value="claude">Claude</option>
             <option value="codex">Codex (OpenAI)</option>
             <option value="gemini">Gemini (Google)</option>
+            <option value="local">Local (Ollama / OpenAI-compatible)</option>
           </select>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
             Used when a pipeline step doesn't specify an explicit agent.
@@ -378,6 +383,64 @@ function LLMSection({
           </Field>
         </ProviderGroup>
 
+        {/* Local (Ollama / OpenAI-compatible) */}
+        <ProviderGroup title="Local (Ollama)" active={settings.preferred_provider === "local"}>
+          <p className="text-xs text-gray-500 dark:text-gray-400 -mt-1">
+            Runs against any local OpenAI-compatible server. With{" "}
+            <a
+              href="https://ollama.com"
+              onClick={(e) => {
+                e.preventDefault();
+                openUrl("https://ollama.com");
+              }}
+              className="underline cursor-pointer hover:text-gray-700 dark:hover:text-gray-300"
+            >
+              ollama.com
+            </a>{" "}
+            installed: <span className="font-mono">ollama pull llama3.3</span>, then enter the
+            model name below. LM Studio, llama.cpp, and vLLM work by changing the URL.
+            Local models are weaker than cloud models and may lack file-reading (tool) support.
+          </p>
+          <Field label="Server URL">
+            <input
+              type="text"
+              value={settings.local_base_url}
+              onChange={(e) =>
+                setSettings({ ...settings, local_base_url: e.target.value })
+              }
+              placeholder="http://localhost:11434/v1"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+          <Field label="Model">
+            <input
+              type="text"
+              value={settings.local_model}
+              onChange={(e) =>
+                setSettings({ ...settings, local_model: e.target.value })
+              }
+              placeholder="e.g. llama3.3, qwen2.5:14b (required)"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+          <Field label="API Key">
+            <input
+              type="password"
+              value={settings.local_api_key}
+              onChange={(e) =>
+                setSettings({ ...settings, local_api_key: e.target.value })
+              }
+              placeholder="usually empty for local servers"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+            />
+          </Field>
+        </ProviderGroup>
+
         <Field label="Max Concurrent Referee Passes">
           <div className="flex items-center gap-3">
             <input
@@ -472,9 +535,9 @@ function ExtractionSection({
           <div className="space-y-2">
             {(
               [
-                ["llm", "LLM (default)", "Uses your configured LLM provider to read and extract the PDF to Markdown. Best quality."],
-                ["marker", "marker-pdf (experimental)", "Local extraction via marker-pdf. Slower, no LLM cost."],
-                ["pdftotext", "pdftotext", "Fast but garbles equations"],
+                ["llm", "LLM (default)", "Your configured provider reads the PDF and extracts it to Markdown, verified page-by-page. Best quality."],
+                ["marker", "Local engine: marker-pdf", "Local extraction, no LLM cost. Install it below."],
+                ["pdftotext", "pdftotext (basic)", "Fast, but equations are lost."],
               ] as const
             ).map(([value, label, desc]) => (
               <label
@@ -525,7 +588,7 @@ function ExtractionSection({
               />
               <Toggle
                 label="Disable image extraction"
-                description="Skip extracting images from the PDF. Faster and uses less memory. Figures are still visible via the original PDF."
+                description="Skip extracting images from the PDF. Faster and uses less memory. When enabled, extracted figures appear in the run's artifact explorer."
                 checked={settings.marker_disable_images}
                 onChange={(v) =>
                   setSettings({ ...settings, marker_disable_images: v })
@@ -535,7 +598,7 @@ function ExtractionSection({
           </div>
         )}
 
-
+        <EnginesPanel />
       </div>
     </>
   );
@@ -544,18 +607,28 @@ function ExtractionSection({
 function GeneralSection({
   settings,
   setSettings,
+  dark,
+  onDarkChange,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
+  dark: boolean;
+  onDarkChange: (v: boolean) => void;
 }) {
   return (
     <>
       <SectionHeader
         title="General"
-        description="Storage and other application settings."
+        description="Appearance and other application settings."
       />
 
       <div className="space-y-5">
+        <Toggle
+          label="Dark mode"
+          description="Applied immediately, no save needed. Follows the system appearance until you set it here."
+          checked={dark}
+          onChange={onDarkChange}
+        />
         <Toggle
           label="Verbose console logging"
           description="Show full LLM subprocess output in the console (commands, stdout, stderr). Useful for debugging."

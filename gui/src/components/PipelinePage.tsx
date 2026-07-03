@@ -39,6 +39,16 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   // Profile state
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [activeProfile, setActiveProfile] = useState<string>("deep-review");
+  // Mirrors BUILTIN_PROFILES in pipeline_config.rs — these cannot be deleted.
+  const BUILTIN_PROFILES = [
+    "deep-review",
+    "quick-review",
+    "empirical",
+    "quick-code-review",
+    "deep-code-review",
+    "replication-audit",
+    "grant-review",
+  ];
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   // Prompt dialog state
@@ -186,7 +196,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   };
 
   const handleDeleteProfile = async () => {
-    if (["deep-review", "quick-review"].includes(activeProfile)) {
+    if (BUILTIN_PROFILES.includes(activeProfile)) {
       alert("Cannot delete a built-in profile.");
       return;
     }
@@ -422,7 +432,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
       >
         {/* Header */}
         <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Pipeline</h2>
+          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Workflow Editor</h2>
           <button onClick={() => {
             if (dirty && !confirm("You have unsaved changes. Leave and discard them?")) return;
             onClose();
@@ -462,7 +472,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
               Rename
             </button>
             <button onClick={handleDeleteProfile}
-              disabled={["deep-review", "quick-review"].includes(activeProfile)}
+              disabled={BUILTIN_PROFILES.includes(activeProfile)}
               className="flex-1 py-1 text-[11px] text-gray-500 hover:text-red-600 hover:bg-red-50
                          rounded transition-colors disabled:opacity-30 disabled:hover:text-gray-500
                          disabled:hover:bg-transparent">
@@ -764,9 +774,10 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
                     Build orientation map
                   </span>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    LLM builds a structured inventory of the paper (sections, theorems, tables, notation)
-                    before any step runs. Costs one LLM call but prevents referees from criticizing content
-                    that exists elsewhere in the paper.
+                    One LLM call surveys the input into structured JSON before any step runs.
+                    Costs one call but keeps steps grounded in what the input actually
+                    contains — e.g. it stops a review step criticizing something covered
+                    elsewhere in the document.
                   </p>
                 </div>
               </div>
@@ -777,17 +788,32 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
                   <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
                     Parallel step context template
                   </label>
-                  <button
-                    onClick={() => {
-                      invoke<string>("get_default_parallel_template").then((t) => {
-                        setConfig({ ...config, parallel_context_template: t });
-                        setDirty(true);
-                      });
-                    }}
-                    className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                  >
-                    Reset to default
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        invoke<string>("get_default_prompt", { name: "parallel_context_generic" }).then((t) => {
+                          setConfig({ ...config, parallel_context_template: t });
+                          setDirty(true);
+                        }).catch(console.error);
+                      }}
+                      className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                      title="Neutral wrapper for any input: survey + instructions + input path."
+                    >
+                      Reset to generic
+                    </button>
+                    <button
+                      onClick={() => {
+                        invoke<string>("get_default_parallel_template").then((t) => {
+                          setConfig({ ...config, parallel_context_template: t });
+                          setDirty(true);
+                        }).catch(console.error);
+                      }}
+                      className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                      title="Referee briefing for academic papers: paper type, figure hints, issue-focused framing."
+                    >
+                      Reset to paper review
+                    </button>
+                  </div>
                 </div>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
                   Wraps each parallel step's prompt. Controls what context the LLM receives.
@@ -913,8 +939,8 @@ const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   { value: "", label: "Inherit from global Settings", hint: "Use whatever PDF extractor is configured globally." },
   { value: "auto", label: "Auto", hint: "Try the global setting; same as inherit." },
   { value: "llm", label: "LLM", hint: "Have the active provider read the PDF and convert to Markdown." },
-  { value: "marker", label: "marker_single", hint: "Local Python tool — best math fidelity, requires marker-pdf installed." },
-  { value: "pdftotext", label: "pdftotext", hint: "Fast, equation rendering is poor. Requires poppler." },
+  { value: "marker", label: "Local engine: marker-pdf", hint: "Local extraction, no LLM cost. Install from Settings → Text Extraction." },
+  { value: "pdftotext", label: "pdftotext (basic)", hint: "Fast, but equations are lost. Uses bundled poppler." },
 ];
 
 function ExtractionEditor({
@@ -1079,9 +1105,10 @@ function OrientationEditor({
         <div>
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Orientation Map</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-            Stage 0b. One LLM call that builds a structured inventory of the paper (sections,
-            theorems, tables, notation) so review steps don't criticize content that exists
-            elsewhere. Output JSON is fed to every parallel step via {"{orientation}"}.
+            Stage 0b. One LLM call that builds a structured JSON survey of the input before any
+            step runs — for a paper: sections, theorems, tables, notation. Every parallel step
+            receives it via {"{orientation}"}, which keeps steps grounded in what the input
+            actually contains. The survey can use any JSON schema your prompt asks for.
           </p>
         </div>
 
@@ -1106,15 +1133,39 @@ function OrientationEditor({
         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Prompt
         </label>
-        <button
-          onClick={() => onPromptChange("")}
-          disabled={prompt.trim() === ""}
-          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
-                     disabled:opacity-40 disabled:hover:text-gray-400 transition-colors"
-          title="Clear the override; the default template will be used."
-        >
-          Use default
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              invoke<string>("get_default_prompt", { name: "orientation_generic" })
+                .then(onPromptChange)
+                .catch(console.error);
+            }}
+            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            title="Insert the generic survey prompt (works for any input)."
+          >
+            Insert generic survey
+          </button>
+          <button
+            onClick={() => {
+              invoke<string>("get_default_prompt", { name: "orientation" })
+                .then(onPromptChange)
+                .catch(console.error);
+            }}
+            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            title="Insert the paper-review survey prompt (sections, theorems, tables, notation)."
+          >
+            Insert paper survey
+          </button>
+          <button
+            onClick={() => onPromptChange("")}
+            disabled={prompt.trim() === ""}
+            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
+                       disabled:opacity-40 disabled:hover:text-gray-400 transition-colors"
+            title="Clear the override; the default template will be used."
+          >
+            Use default
+          </button>
+        </div>
       </div>
       <div className="flex-1 min-h-0 p-4 flex flex-col">
         <div className="flex-1 min-h-0">
@@ -1360,7 +1411,7 @@ function ModelOverrides({
 
 // --- Agent selector ---
 
-const PROVIDERS = ["claude", "codex", "gemini"] as const;
+const PROVIDERS = ["claude", "codex", "gemini", "local"] as const;
 
 function AgentChips({
   agents,

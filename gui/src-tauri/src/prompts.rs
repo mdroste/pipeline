@@ -8,13 +8,38 @@ const DEFAULT_TECHNICAL: &str = include_str!("../../../prompts/technical.md");
 const DEFAULT_EMPIRICAL: &str = include_str!("../../../prompts/empirical.md");
 const DEFAULT_CONSISTENCY: &str = include_str!("../../../prompts/consistency.md");
 const DEFAULT_EXPOSITION: &str = include_str!("../../../prompts/exposition.md");
+// Code review profile prompts (Quick + Deep):
+const DEFAULT_CODE_CORRECTNESS: &str = include_str!("../../../prompts/code_correctness.md");
+const DEFAULT_CODE_DESIGN: &str = include_str!("../../../prompts/code_design.md");
+const DEFAULT_CODE_SECURITY: &str = include_str!("../../../prompts/code_security.md");
+const DEFAULT_CODE_SYNTHESIS: &str = include_str!("../../../prompts/code_synthesis.md");
+const DEFAULT_CODE_CONCURRENCY: &str = include_str!("../../../prompts/code_concurrency.md");
+const DEFAULT_CODE_ERRORS: &str = include_str!("../../../prompts/code_errors.md");
+const DEFAULT_CODE_PERFORMANCE: &str = include_str!("../../../prompts/code_performance.md");
+const DEFAULT_CODE_TESTS: &str = include_str!("../../../prompts/code_tests.md");
+const DEFAULT_CODE_VERIFY: &str = include_str!("../../../prompts/code_verify.md");
+// Replication Package Audit profile prompts:
+const DEFAULT_REPL_COMPLETENESS: &str = include_str!("../../../prompts/repl_completeness.md");
+const DEFAULT_REPL_CONSISTENCY: &str = include_str!("../../../prompts/repl_consistency.md");
+const DEFAULT_REPL_PORTABILITY: &str = include_str!("../../../prompts/repl_portability.md");
+const DEFAULT_REPL_PROVENANCE: &str = include_str!("../../../prompts/repl_provenance.md");
+const DEFAULT_REPL_SYNTHESIS: &str = include_str!("../../../prompts/repl_synthesis.md");
+// Grant Proposal Review profile prompts:
+const DEFAULT_GRANT_AIMS: &str = include_str!("../../../prompts/grant_aims.md");
+const DEFAULT_GRANT_FEASIBILITY: &str = include_str!("../../../prompts/grant_feasibility.md");
+const DEFAULT_GRANT_CLARITY: &str = include_str!("../../../prompts/grant_clarity.md");
+const DEFAULT_GRANT_CONSISTENCY: &str = include_str!("../../../prompts/grant_consistency.md");
+const DEFAULT_GRANT_SYNTHESIS: &str = include_str!("../../../prompts/grant_synthesis.md");
 // Pipeline-level prompts (wrap, merge, consolidate, validate):
 const DEFAULT_PARALLEL_CONTEXT: &str = include_str!("../../../prompts/parallel_context.md");
+const DEFAULT_PARALLEL_CONTEXT_GENERIC: &str =
+    include_str!("../../../prompts/parallel_context_generic.md");
 const DEFAULT_MERGE: &str = include_str!("../../../prompts/merge.md");
 const DEFAULT_EDITOR_SYNTHESIS: &str = include_str!("../../../prompts/editor_synthesis.md");
 const DEFAULT_VALIDATE_FEEDBACK: &str = include_str!("../../../prompts/validate_feedback.md");
 // Preprocessing prompts:
 const DEFAULT_ORIENTATION: &str = include_str!("../../../prompts/orientation.md");
+const DEFAULT_ORIENTATION_GENERIC: &str = include_str!("../../../prompts/orientation_generic.md");
 
 /// Get the user prompts directory (~/.pipeline/prompts/).
 fn user_prompts_dir() -> Option<PathBuf> {
@@ -29,13 +54,41 @@ fn default_content(name: &str) -> Option<&'static str> {
         "empirical" => Some(DEFAULT_EMPIRICAL),
         "consistency" => Some(DEFAULT_CONSISTENCY),
         "exposition" => Some(DEFAULT_EXPOSITION),
+        "code_correctness" => Some(DEFAULT_CODE_CORRECTNESS),
+        "code_design" => Some(DEFAULT_CODE_DESIGN),
+        "code_security" => Some(DEFAULT_CODE_SECURITY),
+        "code_synthesis" => Some(DEFAULT_CODE_SYNTHESIS),
+        "code_concurrency" => Some(DEFAULT_CODE_CONCURRENCY),
+        "code_errors" => Some(DEFAULT_CODE_ERRORS),
+        "code_performance" => Some(DEFAULT_CODE_PERFORMANCE),
+        "code_tests" => Some(DEFAULT_CODE_TESTS),
+        "code_verify" => Some(DEFAULT_CODE_VERIFY),
+        "repl_completeness" => Some(DEFAULT_REPL_COMPLETENESS),
+        "repl_consistency" => Some(DEFAULT_REPL_CONSISTENCY),
+        "repl_portability" => Some(DEFAULT_REPL_PORTABILITY),
+        "repl_provenance" => Some(DEFAULT_REPL_PROVENANCE),
+        "repl_synthesis" => Some(DEFAULT_REPL_SYNTHESIS),
+        "grant_aims" => Some(DEFAULT_GRANT_AIMS),
+        "grant_feasibility" => Some(DEFAULT_GRANT_FEASIBILITY),
+        "grant_clarity" => Some(DEFAULT_GRANT_CLARITY),
+        "grant_consistency" => Some(DEFAULT_GRANT_CONSISTENCY),
+        "grant_synthesis" => Some(DEFAULT_GRANT_SYNTHESIS),
         "parallel_context" => Some(DEFAULT_PARALLEL_CONTEXT),
+        "parallel_context_generic" => Some(DEFAULT_PARALLEL_CONTEXT_GENERIC),
         "merge" => Some(DEFAULT_MERGE),
         "editor_synthesis" => Some(DEFAULT_EDITOR_SYNTHESIS),
         "validate_feedback" => Some(DEFAULT_VALIDATE_FEEDBACK),
         "orientation" => Some(DEFAULT_ORIENTATION),
+        "orientation_generic" => Some(DEFAULT_ORIENTATION_GENERIC),
         _ => None,
     }
+}
+
+/// Compiled-in default for a named prompt, ignoring user overrides.
+/// Used by "reset to default" actions in the editor, where the user's
+/// intent is the shipped template, not their override.
+pub fn compiled_default(name: &str) -> Option<&'static str> {
+    default_content(name)
 }
 
 /// Load a prompt by name. Checks ~/.pipeline/prompts/ first, falls back to compiled default.

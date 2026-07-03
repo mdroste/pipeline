@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import PaperSelector from "./components/PaperSelector";
 import ArtifactExplorer from "./components/ArtifactExplorer";
 import PipelineProgress from "./components/PipelineProgress";
-import SidebarReferees from "./components/SidebarReferees";
+import WorkflowPanel from "./components/WorkflowPanel";
 import ReportViewer from "./components/ReportViewer";
 import ExportControls from "./components/ExportControls";
 import DepsCheck from "./components/DepsCheck";
@@ -12,16 +12,19 @@ import PipelinePage from "./components/PipelinePage";
 import AboutPage from "./components/AboutPage";
 import UpdateBanner from "./components/UpdateBanner";
 import { usePipeline } from "./hooks/usePipeline";
-import type { PipelineReport, DepsReport, OrientationMap } from "./lib/types";
+import { isMac } from "./lib/platform";
+import { isPaperOrientation } from "./lib/types";
+import type { PipelineReport, DepsReport, OrientationMap, PaperMetadata } from "./lib/types";
 
-type Page = "main" | "pipeline" | "settings" | "help" | "about";
+type Page = "main" | "pipeline" | "settings" | "help";
 
 function renderOrientationMap(o: OrientationMap): string {
-  const m = o.metadata;
+  // Defensive: paper-shaped surveys may omit fields the schema defaults.
+  const m = (o.metadata ?? {}) as Partial<PaperMetadata>;
   let md = `# Orientation Map\n\n`;
-  md += `**Title**: ${m.title}  \n`;
-  if (m.authors.length) md += `**Authors**: ${m.authors.join(", ")}  \n`;
-  md += `**Type**: ${m.paper_type}`;
+  md += `**Title**: ${m.title ?? ""}  \n`;
+  if (m.authors?.length) md += `**Authors**: ${m.authors.join(", ")}  \n`;
+  md += `**Type**: ${m.paper_type ?? "unknown"}`;
   if (m.page_count) md += ` · **Pages**: ${m.page_count}`;
   md += `  \n`;
   if (m.has_appendix) md += `**Appendix**: yes  \n`;
@@ -32,7 +35,7 @@ function renderOrientationMap(o: OrientationMap): string {
     md += `## Stated Contribution\n\n${o.stated_contribution}\n\n`;
   }
 
-  if (o.sections.length) {
+  if (o.sections?.length) {
     md += `## Sections\n\n| # | Title | Pages |\n|---|-------|-------|\n`;
     for (const s of o.sections) {
       const pages = s.page_start ? (s.page_end ? `${s.page_start}–${s.page_end}` : `${s.page_start}`) : "";
@@ -41,7 +44,7 @@ function renderOrientationMap(o: OrientationMap): string {
     md += `\n`;
   }
 
-  if (o.formal_results.length) {
+  if (o.formal_results?.length) {
     md += `## Formal Results\n\n`;
     for (const r of o.formal_results) {
       md += `- **${r.kind} ${r.number}**${r.page ? ` (p. ${r.page})` : ""}: ${r.summary}`;
@@ -51,7 +54,7 @@ function renderOrientationMap(o: OrientationMap): string {
     md += `\n`;
   }
 
-  if (o.tables_figures.length) {
+  if (o.tables_figures?.length) {
     md += `## Tables & Figures\n\n`;
     for (const t of o.tables_figures) {
       md += `- **${t.kind} ${t.number}**${t.page ? ` (p. ${t.page})` : ""}: ${t.caption_summary}`;
@@ -61,7 +64,7 @@ function renderOrientationMap(o: OrientationMap): string {
     md += `\n`;
   }
 
-  if (o.notation.length) {
+  if (o.notation?.length) {
     md += `## Notation\n\n| Symbol | Definition | Introduced |\n|--------|------------|------------|\n`;
     for (const n of o.notation) {
       md += `| ${n.symbol} | ${n.definition} | ${n.page_introduced ? `p. ${n.page_introduced}` : ""} |\n`;
@@ -69,7 +72,7 @@ function renderOrientationMap(o: OrientationMap): string {
     md += `\n`;
   }
 
-  if (o.key_references.length) {
+  if (o.key_references?.length) {
     md += `## Key References\n\n`;
     for (const r of o.key_references) {
       md += `- ${r}\n`;
@@ -77,7 +80,7 @@ function renderOrientationMap(o: OrientationMap): string {
     md += `\n`;
   }
 
-  if (o.extraction_quality_notes.length) {
+  if (o.extraction_quality_notes?.length) {
     md += `## Extraction Quality Notes\n\n`;
     for (const n of o.extraction_quality_notes) {
       md += `- **${n.page_range}**: ${n.description}\n`;
@@ -88,6 +91,12 @@ function renderOrientationMap(o: OrientationMap): string {
   return md;
 }
 
+/** Render any survey JSON: pretty view when paper-shaped, raw JSON otherwise. */
+function renderSurvey(orientation: PipelineReport["orientation"]): string {
+  if (isPaperOrientation(orientation)) return renderOrientationMap(orientation);
+  return `# Survey\n\n\`\`\`json\n${JSON.stringify(orientation, null, 2)}\n\`\`\`\n`;
+}
+
 function getArtifactMarkdown(
   artifact: string,
   reportMarkdown: string,
@@ -96,7 +105,7 @@ function getArtifactMarkdown(
 ): string {
   if (artifact === "report") return reportMarkdown;
   if (artifact === "extracted_text") return extractedText;
-  if (artifact === "orientation") return renderOrientationMap(report.orientation);
+  if (artifact === "orientation") return renderSurvey(report.orientation);
   if (artifact.startsWith("step:")) {
     const stepId = artifact.slice(5);
     const output = report.step_outputs.find((s) => s.step_id === stepId);
@@ -121,9 +130,18 @@ function App() {
   // whenever the pipeline config may have changed. "none" workflows can run
   // without selecting an input.
   const [inputMode, setInputMode] = useState<string>("document");
-  const [dark, setDark] = useState(() =>
-    window.matchMedia("(prefers-color-scheme: dark)").matches
-  );
+  // Theme: explicit choice in Settings is persisted; otherwise follow the OS.
+  const [dark, setDark] = useState(() => {
+    const stored = localStorage.getItem("theme");
+    if (stored === "dark") return true;
+    if (stored === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+
+  const handleDarkChange = useCallback((v: boolean) => {
+    localStorage.setItem("theme", v ? "dark" : "light");
+    setDark(v);
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.add("theme-transitioning");
@@ -134,10 +152,12 @@ function App() {
     return () => clearTimeout(timer);
   }, [dark]);
 
-  // Listen for OS theme changes
+  // Follow OS theme changes unless the user set an explicit preference
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = (e: MediaQueryListEvent) => setDark(e.matches);
+    const handler = (e: MediaQueryListEvent) => {
+      if (!localStorage.getItem("theme")) setDark(e.matches);
+    };
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
@@ -195,87 +215,13 @@ function App() {
         />
       )}
 
-      <UpdateBanner />
-
-      {/* Header */}
-      <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-1.5 shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <img src="/icon.png" alt="Pipeline" className="w-6 h-6 rounded-md" />
-            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100 tracking-tight">
-              Pipeline
-            </h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setPage(page === "help" ? "main" : "help")}
-              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                page === "help"
-                  ? "bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800"
-              }`}
-            >
-              Help
-            </button>
-            <button
-              onClick={() => setPage(page === "about" ? "main" : "about")}
-              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                page === "about"
-                  ? "bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800"
-              }`}
-            >
-              About
-            </button>
-            <button
-              onClick={() => setDark(!dark)}
-              className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50
-                         dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800 transition-colors"
-              title={dark ? "Light mode" : "Dark mode"}
-            >
-              {dark ? (
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />
-                </svg>
-              ) : (
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />
-                </svg>
-              )}
-            </button>
-            <button
-              onClick={() => setPage(page === "settings" ? "main" : "settings")}
-              className={`p-2 rounded-lg transition-colors ${
-                page === "settings"
-                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
-                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
-              }`}
-              title="Settings"
-            >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </header>
+      {/* Title-bar strip (macOS): hosts the traffic lights, sole drag region */}
+      {isMac && (
+        <div
+          data-tauri-drag-region
+          className="h-7 shrink-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800"
+        />
+      )}
 
       <main className="flex-1 flex min-h-0">
         {/* Sidebar */}
@@ -296,9 +242,11 @@ function App() {
             </p>
           )}
 
-          <SidebarReferees
+          <WorkflowPanel
             disabled={isRunning}
+            editorOpen={page === "pipeline"}
             onConfigure={() => setPage("pipeline")}
+            onProfileChange={() => setConfigVersion((v) => v + 1)}
             refreshKey={configVersion}
           />
 
@@ -332,32 +280,74 @@ function App() {
             </div>
           )}
 
-          {depsReport && !depsLoading && (
-            <div className="mt-auto pt-4 border-t border-gray-100 dark:border-gray-800">
+          {/* Footer: app navigation + dependency status */}
+          <div className="mt-auto pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center gap-1 -mx-2 -mb-2">
+            <button
+              onClick={() => setPage(page === "help" ? "main" : "help")}
+              className={`p-2 rounded-lg transition-colors ${
+                page === "help"
+                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
+              }`}
+              title="Help"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setPage(page === "settings" ? "main" : "settings")}
+              className={`p-2 rounded-lg transition-colors ${
+                page === "settings"
+                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
+              }`}
+              title="Settings"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                />
+              </svg>
+            </button>
+            {depsReport && !depsLoading && (
               <button
                 onClick={() => setShowDeps(true)}
-                className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                className="ml-auto px-2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors text-right"
               >
                 {depsReport.ready
                   ? "All dependencies OK"
                   : `${depsReport.deps.filter((d) => !d.found).length} missing deps`}
               </button>
-            </div>
-          )}
+            )}
+          </div>
           <ResizeHandle onResize={setSidebarWidth} min={240} max={480} />
         </aside>
 
         {/* Main content */}
         <div className="flex-1 flex flex-col min-h-0">
+          <UpdateBanner />
           <div className="flex-1 overflow-auto">
             {page === "pipeline" ? (
               <PipelinePage onClose={() => { setPage("main"); setConfigVersion((v) => v + 1); }} onProfileChange={() => setConfigVersion((v) => v + 1)} />
             ) : page === "help" ? (
-              <AboutPage initialTab="help" onClose={() => setPage("main")} />
-            ) : page === "about" ? (
-              <AboutPage initialTab="about" onClose={() => setPage("main")} />
+              <AboutPage onClose={() => setPage("main")} />
             ) : page === "settings" ? (
-              <SettingsPage onClose={() => setPage("main")} />
+              <SettingsPage onClose={() => setPage("main")} dark={dark} onDarkChange={handleDarkChange} />
             ) : state.kind === "done" ? (
               <div className="flex flex-col h-full">
                 {/* Warning banner for failed steps */}

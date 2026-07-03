@@ -69,12 +69,12 @@ function HelpContent() {
       <Section title="Profiles">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
           A profile saves a complete workflow: its steps, prompts, and settings.
-          Switch profiles from the Pipeline page. Three are built in:
+          Switch profiles from the sidebar. Built in:
         </p>
         <div className="grid gap-2">
           <ProfileCard
             name="Deep Review"
-            description="Five parallel review steps, then consolidation and validation. The default."
+            description="Five parallel review steps on a paper, then consolidation and validation. The default."
           />
           <ProfileCard
             name="Quick Review"
@@ -83,6 +83,22 @@ function HelpContent() {
           <ProfileCard
             name="Empirical"
             description="For empirical papers. Skips Technical Correctness and adds web search to Contribution."
+          />
+          <ProfileCard
+            name="Quick Code Review"
+            description="Correctness, design, and security passes over a code folder, then consolidation."
+          />
+          <ProfileCard
+            name="Deep Code Review"
+            description="Seven passes (adds concurrency, error handling, performance, tests), then consolidation and a verification step that re-reads the code to confirm each finding."
+          />
+          <ProfileCard
+            name="Replication Package Audit"
+            description="Checks a replication package the way a journal data editor would: exhibit completeness, code–paper consistency, portability, and data documentation."
+          />
+          <ProfileCard
+            name="Grant Proposal Review"
+            description="Panel-style review of a proposal: aims and novelty (with web search), feasibility, readability, and internal consistency."
           />
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">

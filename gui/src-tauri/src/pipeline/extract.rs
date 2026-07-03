@@ -136,9 +136,68 @@ fn extract_latex(path: &Path, depth: usize, root_dir: &Path, warnings: &mut Vec<
     Ok(result)
 }
 
+/// Where marker writes its output for a given paper, so the run can pick up
+/// extracted figure images afterwards: ~/.pipeline/cache/marker/{hash}/.
+pub fn marker_output_dir(paper_hash: &str) -> Option<PathBuf> {
+    // Hashes are 16 lowercase hex chars (compute_hash); reject anything else
+    // before using it as a path component.
+    if paper_hash.len() != 16 || !paper_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(
+        dirs::home_dir()?
+            .join(".pipeline")
+            .join("cache")
+            .join("marker")
+            .join(paper_hash),
+    )
+}
+
+/// Image files marker emitted for a paper (figures/tables extracted from the
+/// PDF), for registration as run artifacts.
+pub fn marker_image_files(paper_hash: &str) -> Vec<PathBuf> {
+    let Some(root) = marker_output_dir(paper_hash) else { return Vec::new() };
+    let mut images = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if ["png", "jpg", "jpeg", "gif", "webp"]
+                .iter()
+                .any(|ext| ext_eq(&p, ext))
+            {
+                images.push(p);
+            }
+        }
+    }
+    images.sort();
+    images
+}
+
+/// Find the markdown file marker wrote under its output dir (layout is
+/// {output_dir}/{pdf_stem}/{pdf_stem}.md, but search defensively).
+fn find_marker_markdown(root: &Path) -> Option<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if ext_eq(&p, "md") {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 /// Extract text from PDF using marker_single.
 /// Timeout is half the user's step timeout, floored at 120s to accommodate first-run model downloads.
-fn extract_marker(path: &Path, marker_disable_ocr: bool, marker_disable_images: bool) -> Result<String, String> {
+fn extract_marker(path: &Path, paper_hash: &str, marker_disable_ocr: bool, marker_disable_images: bool) -> Result<String, String> {
     use std::io::Read;
     use std::process::Stdio;
 
@@ -150,6 +209,17 @@ fn extract_marker(path: &Path, marker_disable_ocr: bool, marker_disable_images: 
         "--output_format".to_string(),
         "markdown".to_string(),
     ];
+    // Write into the per-paper cache dir so the emitted markdown and figure
+    // images land somewhere the run can collect them. Cleared first so a
+    // prior run's files can't leak into this one.
+    let out_dir = marker_output_dir(paper_hash);
+    if let Some(dir) = &out_dir {
+        let _ = fs::remove_dir_all(dir);
+        if fs::create_dir_all(dir).is_ok() {
+            marker_args.push("--output_dir".to_string());
+            marker_args.push(dir.to_string_lossy().to_string());
+        }
+    }
     if marker_disable_images {
         marker_args.push("--disable_image_extraction".to_string());
     }
@@ -244,6 +314,19 @@ fn extract_marker(path: &Path, marker_disable_ocr: bool, marker_disable_images: 
         return Err(format!("marker_single failed: {}", stderr.trim()));
     }
 
+    // Prefer the markdown file marker wrote to the output dir — stdout mixes
+    // in log lines. Fall back to stdout for marker versions that don't write
+    // the file where expected.
+    if let Some(dir) = &out_dir {
+        if let Some(md) = find_marker_markdown(dir) {
+            if let Ok(content) = fs::read_to_string(&md) {
+                let content = content.trim().to_string();
+                if !content.is_empty() {
+                    return Ok(content);
+                }
+            }
+        }
+    }
     let text = String::from_utf8_lossy(&stdout_buf).trim().to_string();
     if text.is_empty() {
         return Err("marker_single returned empty output".to_string());
@@ -279,10 +362,15 @@ fn extract_pdftotext(path: &Path) -> Result<String, String> {
 /// then PATH, directly (no subprocess). Managed installs win over PATH so
 /// the one-click install is the copy that actually runs.
 fn find_command(name: &str) -> Option<PathBuf> {
-    if let Some(p) = crate::engines::find_managed(name) {
+    resolve_command(crate::engines::find_managed(name), &env::full_path(), name)
+}
+
+/// Pure resolution order: a managed install always beats anything on PATH.
+/// Split from find_command so the precedence is unit-testable.
+fn resolve_command(managed: Option<PathBuf>, path_var: &str, name: &str) -> Option<PathBuf> {
+    if let Some(p) = managed {
         return Some(p);
     }
-    let path_var = env::full_path();
     let sep = if cfg!(windows) { ';' } else { ':' };
     for dir in path_var.split(sep) {
         if dir.is_empty() { continue; }
@@ -717,9 +805,9 @@ fn extract_pdf_native(
     if try_marker {
         if find_command("marker_single").is_none() {
             return Err("PDF extractor is set to 'marker' but marker_single is not installed. \
-                        Install marker-pdf (pip install marker-pdf) or change the setting.".to_string());
+                        Install it from Settings → Text Extraction, or change the setting.".to_string());
         }
-        let text = extract_marker(path, marker_disable_ocr, marker_disable_images)?;
+        let text = extract_marker(path, &hash, marker_disable_ocr, marker_disable_images)?;
         let quality_notes = scan_math_quality(&text);
         return Ok(ExtractionResult {
             text,
@@ -1172,6 +1260,30 @@ mod tests {
         let two_pos = out.find("<!-- PAGE 2 -->").unwrap();
         assert!(one_pos < two_pos);
         assert!(out.contains("one") && out.contains("two"));
+    }
+
+    #[test]
+    fn managed_install_beats_system_path() {
+        // Regression guard for the engine-resolution contract: a marker
+        // installed from Settings (~/.pipeline/bin) must be the copy that
+        // runs, even when a system marker_single is on PATH.
+        let dir = tempfile::tempdir().unwrap();
+        let system = dir.path().join("marker_single");
+        fs::write(&system, "#!/bin/sh\n").unwrap();
+        let path_var = dir.path().to_string_lossy().to_string();
+
+        // No managed install: PATH resolution finds the system copy.
+        assert_eq!(
+            resolve_command(None, &path_var, "marker_single"),
+            Some(system.clone())
+        );
+
+        // Managed install present: it wins despite the system copy on PATH.
+        let managed = PathBuf::from("/managed/bin/marker_single");
+        assert_eq!(
+            resolve_command(Some(managed.clone()), &path_var, "marker_single"),
+            Some(managed)
+        );
     }
 
     #[test]

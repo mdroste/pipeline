@@ -46,11 +46,11 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
     case "parallel_template":
       return [
         { token: "{step_prompt}", description: "The individual step's prompt" },
-        { token: "{paper_type}", description: "theory / empirical / mixed" },
-        { token: "{orientation}", description: "Orientation map reference block" },
+        { token: "{orientation}", description: "Survey / orientation map reference block" },
         { token: "{input_path}", description: "Path to the extracted input text" },
-        { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
+        { token: "{paper_type}", description: "theory / empirical / mixed (paper surveys only; empty otherwise)" },
         { token: "{figure_hint}", description: "Figure/table access instructions" },
+        { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
       ];
     case "merge":
       return [
@@ -59,7 +59,8 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
       ];
     case "orientation":
       return [
-        { token: "{paper_text}", description: "The extracted paper text (truncated to 250k chars)" },
+        { token: "{input_text}", description: "The extracted input text (truncated to 250k chars)" },
+        { token: "{paper_text}", description: "Alias of {input_text} (legacy)" },
       ];
   }
 }

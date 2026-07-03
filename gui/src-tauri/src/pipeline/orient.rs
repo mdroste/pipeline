@@ -1,21 +1,26 @@
 use super::claude::{call_llm, LlmOverrides};
-use crate::models::{ExtractionQualityNote, ExtractionResult, OrientationMap};
+use crate::models::ExtractionResult;
 use tauri::AppHandle;
 
 const MAX_PAPER_TEXT: usize = 250_000;
 const MAX_RETRIES: usize = 2;
 
-/// Build the orientation map by calling Claude and validating the JSON output, retrying up to MAX_RETRIES times on parse failure.
+/// Build the survey (orientation map) by calling the LLM and validating that the
+/// output is a JSON object, retrying up to MAX_RETRIES times on parse failure.
 ///
-/// `prompt_template` is the orientation prompt to use; `{paper_text}` is substituted
-/// with the (possibly truncated) extracted paper text. Pass `None` to use the default
-/// template loaded from prompts/orientation.md (or the user override at
-/// ~/.pipeline/prompts/orientation.md).
+/// The result is returned as raw JSON — profiles may use any survey schema, so
+/// no struct validation happens here. The paper-review profiles produce the
+/// paper schema, which callers interpret via `models::paper_view`.
+///
+/// `prompt_template` is the survey prompt to use; `{input_text}` (and the legacy
+/// alias `{paper_text}`) is substituted with the (possibly truncated) extracted
+/// input text. Pass `None` to use the default template loaded from
+/// prompts/orientation.md (or the user override at ~/.pipeline/prompts/orientation.md).
 pub async fn build_orientation_map(
     app: &AppHandle,
     extraction: &ExtractionResult,
     prompt_template: Option<&str>,
-) -> Result<OrientationMap, String> {
+) -> Result<serde_json::Value, String> {
     let paper_text = if extraction.text.len() > MAX_PAPER_TEXT {
         // Find a valid UTF-8 char boundary at or before MAX_PAPER_TEXT
         let mut boundary = MAX_PAPER_TEXT;
@@ -37,7 +42,9 @@ pub async fn build_orientation_map(
             template_owned.as_str()
         }
     };
-    let base_prompt = template.replace("{paper_text}", paper_text);
+    let base_prompt = template
+        .replace("{input_text}", paper_text)
+        .replace("{paper_text}", paper_text);
 
     let mut prompt = base_prompt.clone();
     let mut last_error = String::new();
@@ -47,15 +54,19 @@ pub async fn build_orientation_map(
         let raw = call_llm(app, &prompt, &["Read"], None, "text", timeout, "Orientation map", None, None, &[], &LlmOverrides::default()).await?;
         let cleaned = strip_json_fences(&raw);
 
-        match serde_json::from_str::<OrientationMap>(&cleaned) {
-            Ok(mut omap) => {
-                for note in &extraction.quality_notes {
-                    omap.extraction_quality_notes.push(ExtractionQualityNote {
-                        page_range: "global".to_string(),
-                        description: note.clone(),
-                    });
+        match serde_json::from_str::<serde_json::Value>(&cleaned) {
+            Ok(mut value) if value.is_object() => {
+                append_quality_notes(&mut value, &extraction.quality_notes);
+                return Ok(value);
+            }
+            Ok(_) => {
+                last_error = "top-level JSON value is not an object".to_string();
+                if attempt < MAX_RETRIES {
+                    prompt = format!(
+                        "Your previous response was not a JSON object. \
+                         Please try again. Return ONLY a single JSON object, no markdown fences.\n\n{base_prompt}"
+                    );
                 }
-                return Ok(omap);
             }
             Err(e) => {
                 last_error = format!("{e}");
@@ -73,6 +84,27 @@ pub async fn build_orientation_map(
         "Failed to build orientation map after {} attempts. Last error: {last_error}",
         MAX_RETRIES + 1
     ))
+}
+
+/// Append extraction-quality warnings to the survey's `extraction_quality_notes`
+/// array (creating it if the survey schema doesn't have one), so garbled-input
+/// warnings reach the steps regardless of survey shape.
+fn append_quality_notes(survey: &mut serde_json::Value, notes: &[String]) {
+    if notes.is_empty() {
+        return;
+    }
+    let Some(obj) = survey.as_object_mut() else { return };
+    let entry = obj
+        .entry("extraction_quality_notes")
+        .or_insert_with(|| serde_json::Value::Array(vec![]));
+    if let Some(arr) = entry.as_array_mut() {
+        for note in notes {
+            arr.push(serde_json::json!({
+                "page_range": "global",
+                "description": note,
+            }));
+        }
+    }
 }
 
 /// Extract a JSON object from LLM output that may contain preamble text or markdown fences.
@@ -149,5 +181,36 @@ mod tests {
         // First brace starts invalid JSON, second starts valid
         let input = "text with {broken then {\"valid\": true}";
         assert_eq!(strip_json_fences(input), r#"{"valid": true}"#);
+    }
+
+    // ── append_quality_notes ───────────────────────────────────────
+
+    #[test]
+    fn quality_notes_appended_to_existing_array() {
+        let mut survey = serde_json::json!({
+            "extraction_quality_notes": [{"page_range": "p. 3", "description": "garbled"}]
+        });
+        append_quality_notes(&mut survey, &["math broken".to_string()]);
+        let notes = survey["extraction_quality_notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[1]["page_range"], "global");
+        assert_eq!(notes[1]["description"], "math broken");
+    }
+
+    #[test]
+    fn quality_notes_create_key_on_custom_survey() {
+        // Custom (non-paper) survey schemas still receive extraction warnings.
+        let mut survey = serde_json::json!({"overview": "a codebase"});
+        append_quality_notes(&mut survey, &["ligatures mangled".to_string()]);
+        let notes = survey["extraction_quality_notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(survey["overview"], "a codebase");
+    }
+
+    #[test]
+    fn quality_notes_noop_when_empty() {
+        let mut survey = serde_json::json!({"overview": "x"});
+        append_quality_notes(&mut survey, &[]);
+        assert!(survey.get("extraction_quality_notes").is_none());
     }
 }

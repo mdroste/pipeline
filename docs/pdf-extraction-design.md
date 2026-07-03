@@ -221,6 +221,11 @@ suggests enabling image extraction now that figures land in the explorer.
    failure; uninstall keeps uv and the wheel cache (small, make reinstall
    fast) and removes model weights only when the last engine goes.*
 3. **Engines UI + marker upgrade** (Moves 3–4).
+   *Implemented 2026-07-03. The Local Engines cards live inside Settings →
+   Text Extraction (EnginesPanel.tsx) rather than a separate nav section;
+   marker output goes to `~/.pipeline/cache/marker/{hash}/` and figure
+   images are copied into the run's artifacts after the run dir exists,
+   since extraction runs before the run id is known.*
 4. **Later, on demand** — `mineru` registry entry (MLX engine on Apple
    Silicon, richer layout JSON + figure images; AGPL noted in its card), and
    a private ~20-paper eval to settle local-engine ranking if it ever
