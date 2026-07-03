@@ -12,7 +12,7 @@ export type PipelineState =
   | { kind: "dispatching"; passes: Record<string, PassStatus> }
   | { kind: "merging"; passes: Record<string, PassStatus> }
   | { kind: "synthesizing"; passes: Record<string, PassStatus> }
-  | { kind: "done"; markdown: string; report: PipelineReport; extractedText: string }
+  | { kind: "done"; markdown: string; report: PipelineReport; extractedText: string; runId: string | null }
   | { kind: "error"; message: string; failedAt?: string };
 
 /** Interval (ms) at which buffered log lines are flushed to state. */
@@ -152,6 +152,7 @@ export function usePipeline() {
           markdown: result.markdown,
           report: result.report,
           extractedText: result.extracted_text,
+          runId: result.run_id ?? null,
         });
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);

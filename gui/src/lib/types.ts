@@ -29,6 +29,8 @@ export interface ExtractionConfig {
   /** null = inherit; true/false = override. */
   marker_disable_ocr: boolean | null;
   marker_disable_images: boolean | null;
+  /** "" or "document" | "folder" | "none". Empty = document. */
+  input_mode?: string;
 }
 
 export interface PipelineConfig {
@@ -148,6 +150,8 @@ export interface PipelineResult {
   report: PipelineReport;
   markdown: string;
   extracted_text: string;
+  /** Present when the run directory was written; keys the artifact explorer. */
+  run_id?: string | null;
 }
 
 export interface Settings {

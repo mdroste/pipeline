@@ -85,6 +85,16 @@ describe("findUnknownPlaceholders", () => {
 });
 
 describe("placeholdersFor", () => {
+  it("offers {input_path} with {paper_path} kept as a legacy alias", () => {
+    const seq = placeholdersFor({ kind: "sequential", otherStepIds: [] }).map((p) => p.token);
+    expect(seq).toContain("{input_path}");
+    expect(seq).toContain("{paper_path}");
+    const tmpl = placeholdersFor({ kind: "parallel_template" }).map((p) => p.token);
+    expect(tmpl).toContain("{input_path}");
+    expect(tmpl).toContain("{paper_path}");
+  });
+
+
   it("returns no placeholders for parallel step prompts", () => {
     expect(placeholdersFor({ kind: "parallel" })).toEqual([]);
   });

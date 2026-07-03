@@ -927,17 +927,45 @@ function ExtractionEditor({
   const method = extraction.method ?? "";
   const hint = EXTRACTION_METHODS.find((m) => m.value === method)?.hint;
   const showMarker = method === "marker";
+  const inputMode = extraction.input_mode || "document";
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
       <div className="p-4 space-y-5">
         <div>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Text Extraction</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Input & Text Extraction</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-            Stage 0a. Pulls plain text from the paper before any LLM call. LaTeX projects always
-            extract via the native parser; these settings only apply when the input is a PDF.
+            Stage 0a. What the workflow takes as input, and how text is pulled from it before
+            any LLM call.
           </p>
         </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+            Input mode (per profile)
+          </label>
+          <select
+            value={inputMode}
+            onChange={(e) => onChange({ input_mode: e.target.value })}
+            className="w-full py-1.5 px-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
+                       text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
+                       focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
+          >
+            <option value="document">Document — a single PDF or LaTeX file</option>
+            <option value="folder">Folder — inventory a directory; steps Read files on demand</option>
+            <option value="none">None — run from the step prompts alone</option>
+          </select>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5 leading-relaxed">
+            Selecting a folder in the main window uses folder mode automatically, whatever this
+            is set to.
+          </p>
+        </div>
+
+        {inputMode !== "document" ? (
+          <div className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
+            Extraction settings below apply only to document inputs.
+          </div>
+        ) : null}
 
         <div>
           <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">

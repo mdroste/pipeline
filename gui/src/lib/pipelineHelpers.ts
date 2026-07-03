@@ -33,8 +33,9 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
         { token: "{orientation}", description: "Path to orientation map JSON" },
         { token: "{prior_outputs}", description: "All prior step outputs concatenated" },
         { token: "{last_output}", description: "Most recent prior step's output" },
-        { token: "{paper_path}", description: "Path to extracted paper text" },
-        { token: "{source_path}", description: "Path to original PDF or .tex" },
+        { token: "{input_path}", description: "Path to the extracted input text" },
+        { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
+        { token: "{source_path}", description: "Path to the original input (PDF, .tex, folder)" },
       ];
       const stepRefs: PlaceholderEntry[] = ctx.otherStepIds.map((id) => ({
         token: `{step:${id}}`,
@@ -47,7 +48,8 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
         { token: "{step_prompt}", description: "The individual step's prompt" },
         { token: "{paper_type}", description: "theory / empirical / mixed" },
         { token: "{orientation}", description: "Orientation map reference block" },
-        { token: "{paper_path}", description: "Path to extracted paper text" },
+        { token: "{input_path}", description: "Path to the extracted input text" },
+        { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
         { token: "{figure_hint}", description: "Figure/table access instructions" },
       ];
     case "merge":

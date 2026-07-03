@@ -25,6 +25,7 @@ impl std::fmt::Display for PaperType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperMetadata {
+    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub authors: Vec<String>,
@@ -38,6 +39,20 @@ pub struct PaperMetadata {
     pub has_appendix: bool,
     #[serde(default)]
     pub has_online_appendix: bool,
+}
+
+impl Default for PaperMetadata {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            authors: Vec::new(),
+            date: None,
+            paper_type: default_paper_type(),
+            page_count: None,
+            has_appendix: false,
+            has_online_appendix: false,
+        }
+    }
 }
 
 fn default_paper_type() -> PaperType {
@@ -91,6 +106,9 @@ pub struct ExtractionQualityNote {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrientationMap {
+    /// Defaulted so loosely-shaped survey JSON from non-paper workflows
+    /// still validates; the typed fields simply stay empty.
+    #[serde(default)]
     pub metadata: PaperMetadata,
     #[serde(default)]
     pub sections: Vec<SectionEntry>,

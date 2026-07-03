@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PaperSelector from "./components/PaperSelector";
+import ArtifactExplorer from "./components/ArtifactExplorer";
 import PipelineProgress from "./components/PipelineProgress";
 import SidebarReferees from "./components/SidebarReferees";
 import ReportViewer from "./components/ReportViewer";
@@ -116,6 +117,10 @@ function App() {
   const [configVersion, setConfigVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [artifact, setArtifact] = useState<string>("report");
+  // Active profile's input mode ("document" | "folder" | "none") — refetched
+  // whenever the pipeline config may have changed. "none" workflows can run
+  // without selecting an input.
+  const [inputMode, setInputMode] = useState<string>("document");
   const [dark, setDark] = useState(() =>
     window.matchMedia("(prefers-color-scheme: dark)").matches
   );
@@ -155,11 +160,17 @@ function App() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
+  useEffect(() => {
+    invoke<{ extraction?: { input_mode?: string } }>("get_pipeline_config")
+      .then((c) => setInputMode(c.extraction?.input_mode || "document"))
+      .catch(() => setInputMode("document"));
+  }, [configVersion]);
+
   const handleGenerate = () => {
-    if (paperPath) {
+    if (paperPath || inputMode === "none") {
       setPage("main");
       setArtifact("report");
-      startPipeline(paperPath);
+      startPipeline(paperPath ?? "");
     }
   };
 
@@ -279,6 +290,11 @@ function App() {
             }}
             disabled={isRunning}
           />
+          {inputMode === "none" && (
+            <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
+              This workflow needs no input — you can generate directly.
+            </p>
+          )}
 
           <SidebarReferees
             disabled={isRunning}
@@ -288,7 +304,7 @@ function App() {
 
           <button
             onClick={handleGenerate}
-            disabled={!paperPath || isRunning || depsLoading || !listenersReady}
+            disabled={(!paperPath && inputMode !== "none") || isRunning || depsLoading || !listenersReady}
             className="w-full py-2.5 px-4 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg font-medium
                        hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed
                        transition-colors"
@@ -353,8 +369,10 @@ function App() {
                 )}
                 {/* Artifact selector */}
                 <div className="flex items-center gap-3 px-6 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
-                  <label className="text-xs text-gray-500 dark:text-gray-400 shrink-0">Viewing:</label>
-                  <select
+                  <label className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
+                    {state.runId ? "Run artifacts" : "Viewing:"}
+                  </label>
+                  {!state.runId && <select
                     value={artifact}
                     onChange={(e) => setArtifact(e.target.value)}
                     className="py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
@@ -368,7 +386,7 @@ function App() {
                         Step: {s.step_label}
                       </option>
                     ))}
-                  </select>
+                  </select>}
                   <div className="ml-auto">
                     <ExportControls
                       markdown={state.markdown}
@@ -377,8 +395,12 @@ function App() {
                     />
                   </div>
                 </div>
-                <div className="flex-1 overflow-auto">
-                  <ReportViewer markdown={getArtifactMarkdown(artifact, state.markdown, state.extractedText, state.report)} />
+                <div className="flex-1 overflow-auto min-h-0">
+                  {state.runId ? (
+                    <ArtifactExplorer runId={state.runId} fallbackMarkdown={state.markdown} />
+                  ) : (
+                    <ReportViewer markdown={getArtifactMarkdown(artifact, state.markdown, state.extractedText, state.report)} />
+                  )}
                 </div>
               </div>
             ) : state.kind === "idle" ? (

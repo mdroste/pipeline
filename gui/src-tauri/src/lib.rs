@@ -6,6 +6,7 @@ pub mod output;
 pub mod pipeline;
 pub mod pipeline_config;
 pub mod prompts;
+pub mod runs;
 pub mod settings;
 pub mod storage;
 pub mod updates;
@@ -43,6 +44,8 @@ pub fn run() {
             commands::print_report_html,
             commands::list_history,
             commands::cancel_pipeline,
+            commands::get_run_manifest,
+            commands::read_artifact,
             commands::check_deps,
             commands::get_settings,
             commands::save_settings,

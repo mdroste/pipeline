@@ -751,3 +751,158 @@ mod tests {
         assert!(notes.iter().any(|n| n.contains("ligature")));
     }
 }
+
+// ── Generalized ingest modes ────────────────────────────────────────
+//
+// "folder" and "none" input modes for non-document workflows. Folder mode
+// records an inventory of the directory as the context text — file contents
+// are never inlined; steps open files on demand with the Read tool. None
+// mode runs the pipeline from the prompts alone.
+
+/// Directories that never belong in an inventory.
+const SKIP_DIRS: &[&str] = &[
+    ".git", "node_modules", "target", "__pycache__", ".venv", "venv", "dist", "build",
+];
+/// Inventory size cap — beyond this the listing notes the truncation.
+const MAX_INVENTORY_FILES: usize = 2000;
+
+/// Resolve the effective input mode from the profile setting and the path.
+/// A directory path implies folder mode even if the profile says document,
+/// so picking a folder in the UI "just works" with any profile.
+pub fn effective_input_mode(configured: &str, input_path: &str) -> &'static str {
+    match configured {
+        "none" => "none",
+        "folder" => "folder",
+        _ => {
+            if !input_path.is_empty() && Path::new(input_path).is_dir() {
+                "folder"
+            } else {
+                "document"
+            }
+        }
+    }
+}
+
+/// Build a file-inventory context for a folder input.
+pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
+    let root_path = PathBuf::from(root);
+    if !root_path.is_dir() {
+        return Err(format!("Not a directory: {root}"));
+    }
+
+    let mut files: Vec<(String, u64)> = Vec::new();
+    let mut stack = vec![root_path.clone()];
+    let mut truncated = false;
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue, // unreadable subdir: skip, don't fail the run
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                if !SKIP_DIRS.contains(&name.as_str()) {
+                    stack.push(path);
+                }
+            } else if let Ok(meta) = entry.metadata() {
+                if files.len() >= MAX_INVENTORY_FILES {
+                    truncated = true;
+                    continue;
+                }
+                let rel = path
+                    .strip_prefix(&root_path)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                files.push((rel, meta.len()));
+            }
+        }
+    }
+    files.sort();
+
+    let root_display = root.replace('\\', "/");
+    let mut text = format!(
+        "# Input folder inventory\n\nRoot: {root_display}\n\n{} files. File contents are NOT included here — use the Read tool with paths under the root to open any file you need.\n\n| File | Bytes |\n|---|---|\n",
+        files.len()
+    );
+    for (rel, size) in &files {
+        text.push_str(&format!("| {rel} | {size} |\n"));
+    }
+    if truncated {
+        text.push_str(&format!(
+            "\n> Inventory truncated at {MAX_INVENTORY_FILES} files.\n"
+        ));
+    }
+
+    let hash = format!("{:x}", Sha256::digest(text.as_bytes()))[..16].to_string();
+    Ok(ExtractionResult {
+        text,
+        method: "folder".to_string(),
+        source_path: root.to_string(),
+        paper_hash: hash,
+        quality_notes: vec![],
+    })
+}
+
+/// Context for a workflow that takes no input at all.
+pub fn ingest_none() -> ExtractionResult {
+    let stamp = chrono::Local::now().to_rfc3339();
+    let hash = format!("{:x}", Sha256::digest(stamp.as_bytes()))[..16].to_string();
+    ExtractionResult {
+        text: "(This workflow runs from its step prompts alone; there is no input document.)"
+            .to_string(),
+        method: "none".to_string(),
+        source_path: String::new(),
+        paper_hash: hash,
+        quality_notes: vec![],
+    }
+}
+
+#[cfg(test)]
+mod ingest_tests {
+    use super::*;
+
+    #[test]
+    fn effective_mode_resolution() {
+        assert_eq!(effective_input_mode("none", ""), "none");
+        assert_eq!(effective_input_mode("folder", "/x"), "folder");
+        assert_eq!(effective_input_mode("", "/definitely/not/a/dir.pdf"), "document");
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            effective_input_mode("", dir.path().to_str().unwrap()),
+            "folder"
+        );
+    }
+
+    #[test]
+    fn folder_inventory_lists_files_and_skips_junk() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("main.py"), "print(1)").unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub/data.csv"), "a,b\n1,2").unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join(".git/config"), "x").unwrap();
+        fs::create_dir(dir.path().join("node_modules")).unwrap();
+        fs::write(dir.path().join("node_modules/junk.js"), "x").unwrap();
+
+        let result = ingest_folder(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.method, "folder");
+        assert!(result.text.contains("main.py"));
+        assert!(result.text.contains("sub/data.csv"));
+        assert!(!result.text.contains("junk.js"));
+        assert!(!result.text.contains(".git/config"));
+        assert_eq!(result.paper_hash.len(), 16);
+    }
+
+    #[test]
+    fn none_mode_produces_placeholder_context() {
+        let result = ingest_none();
+        assert_eq!(result.method, "none");
+        assert!(result.source_path.is_empty());
+        assert_eq!(result.paper_hash.len(), 16);
+    }
+}

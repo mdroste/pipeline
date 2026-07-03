@@ -149,7 +149,12 @@ async fn run_pipeline_inner(
         "status": "running",
     })).ok();
     let extract_start = std::time::Instant::now();
-    let extraction = extract::extract(app, paper_path, &config.extraction).await?;
+    let input_mode = extract::effective_input_mode(&config.extraction.input_mode, paper_path);
+    let extraction = match input_mode {
+        "folder" => extract::ingest_folder(paper_path)?,
+        "none" => extract::ingest_none(),
+        _ => extract::extract(app, paper_path, &config.extraction).await?,
+    };
     let extract_secs = extract_start.elapsed().as_secs();
     app.emit("pipeline:log", serde_json::json!({
         "line": format!("Extracted via {} ({} chars, {}s)", extraction.method, extraction.text.len(), extract_secs)
@@ -158,6 +163,35 @@ async fn run_pipeline_inner(
         app.emit("pipeline:log", serde_json::json!({
             "line": format!("WARNING: {note}")
         })).ok();
+    }
+
+    // Persist this run's outputs under ~/.pipeline/runs/{run_id}/.
+    // Best-effort throughout: persistence failures are logged, never fatal.
+    let run_id = format!(
+        "{}_{}",
+        extraction.paper_hash,
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    );
+    let mut run_writer = match crate::runs::RunWriter::create(&run_id) {
+        Ok(w) => Some(w),
+        Err(e) => {
+            let _ = app.emit("pipeline:log", serde_json::json!({
+                "line": format!("WARNING: could not create run directory: {e}")
+            }));
+            None
+        }
+    };
+    if let Some(w) = run_writer.as_mut() {
+        if let Err(e) = w.add_text(
+            "context/extracted_text.md",
+            "Extracted text",
+            "context",
+            &extraction.text,
+        ) {
+            let _ = app.emit("pipeline:log", serde_json::json!({
+                "line": format!("WARNING: {e}")
+            }));
+        }
     }
     if is_cancelled() { return Err("Pipeline cancelled".into()); }
 
@@ -231,6 +265,18 @@ async fn run_pipeline_inner(
         orient_file.flush()
             .map_err(|e| format!("Failed to flush orientation temp file: {e}"))?;
         orientation_path = orient_file.path().to_string_lossy().replace('\\', "/");
+        if let Some(w) = run_writer.as_mut() {
+            if let Err(e) = w.add_text(
+                "context/orientation.json",
+                "Orientation map",
+                "context",
+                &orientation_json,
+            ) {
+                let _ = app.emit("pipeline:log", serde_json::json!({
+                    "line": format!("WARNING: {e}")
+                }));
+            }
+        }
         let orient_bytes = orientation_json.len();
         app.emit("pipeline:log", serde_json::json!({
             "line": format!("Orientation map written to temp file ({orient_bytes} bytes)")
@@ -298,13 +344,82 @@ async fn run_pipeline_inner(
     let settings = crate::settings::load();
     let markdown = output::render_markdown(&report, diff_text.as_deref(), elapsed, &settings);
 
+    // Finish the run directory: per-step artifacts, report, manifest.
+    let mut finished_run_id: Option<String> = None;
+    if let Some(mut w) = run_writer.take() {
+        let outputs = report.all_outputs();
+        for (i, output) in outputs.iter().enumerate() {
+            let slug = output
+                .step_id
+                .replace('/', "_")
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+                .collect::<String>();
+            let header = format!(
+                "# {}\n\n**Phase**: {} · **Agent**: {}\n\n---\n\n",
+                output.step_label,
+                output.phase,
+                if output.agent.is_empty() { "default" } else { &output.agent },
+            );
+            let rel = format!("artifacts/{:02}_{}.md", i + 1, slug);
+            if let Err(e) = w.add_text(
+                &rel,
+                &output.step_label,
+                "step",
+                &format!("{}{}", header, output.raw_text),
+            ) {
+                let _ = app.emit("pipeline:log", serde_json::json!({
+                    "line": format!("WARNING: {e}")
+                }));
+            }
+        }
+        if let Err(e) = w.add_text("report.md", "Report", "report", &markdown) {
+            let _ = app.emit("pipeline:log", serde_json::json!({
+                "line": format!("WARNING: {e}")
+            }));
+        }
+        let profile_name = pipeline_config::load_profile(&settings.active_profile)
+            .map(|p| p.name)
+            .unwrap_or_default();
+        match w.finish(
+            paper_path,
+            input_mode,
+            &settings.active_profile,
+            &profile_name,
+            &settings.preferred_provider,
+        ) {
+            Ok(manifest) => finished_run_id = Some(manifest.run_id),
+            Err(e) => {
+                let _ = app.emit("pipeline:log", serde_json::json!({
+                    "line": format!("WARNING: could not write run manifest: {e}")
+                }));
+            }
+        }
+    }
+
     app.emit("pipeline:stage", serde_json::json!({"stage": "done"})).ok();
 
     Ok(serde_json::json!({
         "report": report,
         "markdown": markdown,
         "extracted_text": extraction.text,
+        "run_id": finished_run_id,
     }))
+}
+
+// --- Run artifacts ---
+
+#[tauri::command]
+pub async fn get_run_manifest(run_id: String) -> Result<crate::runs::RunManifest, String> {
+    crate::runs::load_manifest(&run_id)
+}
+
+#[tauri::command]
+pub async fn read_artifact(
+    run_id: String,
+    rel_path: String,
+) -> Result<crate::runs::ArtifactContent, String> {
+    crate::runs::read_artifact(&run_id, &rel_path)
 }
 
 #[tauri::command]

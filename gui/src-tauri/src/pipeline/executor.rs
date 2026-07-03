@@ -211,6 +211,7 @@ fn build_parallel_prompt(
         .replace("{paper_type}", paper_type)
         .replace("{orientation}", &orientation_block)
         .replace("{paper_path}", &normalized_path)
+        .replace("{input_path}", &normalized_path) // vocabulary-neutral alias
         .replace("{figure_hint}", &figure_hint)
 }
 
@@ -470,6 +471,7 @@ fn expand_template(
         .replace("{last_output}", last_output_text)
         .replace("{editor_synthesis}", last_output_text) // backward-compatible alias
         .replace("{paper_path}", paper_text_path)
+        .replace("{input_path}", paper_text_path) // vocabulary-neutral alias
         .replace("{source_path}", source_path);
 
     expanded = substitute_named_step_refs(&expanded, prior_outputs);
@@ -696,6 +698,15 @@ mod tests {
         assert!(result.contains("/tmp/orient.json"));
         assert!(result.contains("/tmp/paper.txt"));
         assert!(result.contains("original PDF"));
+    }
+
+    #[test]
+    fn input_path_alias_substitutes_like_paper_path() {
+        let step = make_step("test", Phase::Parallel);
+        let template = "old={paper_path} new={input_path}";
+        let result = build_parallel_prompt(&step, "empirical", "", "/tmp/paper.txt", "/tmp/p.pdf", template);
+        assert!(result.contains("old=/tmp/paper.txt"));
+        assert!(result.contains("new=/tmp/paper.txt"));
     }
 
     #[test]

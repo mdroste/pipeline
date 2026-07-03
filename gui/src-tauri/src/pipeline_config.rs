@@ -78,6 +78,11 @@ pub struct ExtractionConfig {
     /// "auto" | "llm" | "marker" | "pdftotext" | "" (= inherit global).
     #[serde(default)]
     pub method: String,
+    /// Input mode for the workflow: "" or "document" (single file, default),
+    /// "folder" (inventory of a directory; steps Read files on demand), or
+    /// "none" (runs from the prompts alone).
+    #[serde(default)]
+    pub input_mode: String,
     /// `Some` overrides the global setting; `None` inherits.
     #[serde(default)]
     pub marker_disable_ocr: Option<bool>,
@@ -675,7 +680,7 @@ fn ensure_migrated() -> Result<(), String> {
 
 // ── Profile I/O ─────────────────────────────────────────────────────
 
-fn load_profile(id: &str) -> Result<ProfileData, String> {
+pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
     let path = profile_path(id)?;
     let content =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read profile '{id}': {e}"))?;
