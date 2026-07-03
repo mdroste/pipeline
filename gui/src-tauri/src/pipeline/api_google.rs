@@ -63,11 +63,25 @@ pub async fn call_google_api(
         }],
     });
 
+    // With a PDF attachment, the user content is [inline PDF, text] parts;
+    // otherwise just text. Google's inline-data path has a smaller request
+    // cap than the other providers (see MAX_ATTACH_PDF_GOOGLE).
+    let mut parts = Vec::new();
+    if let Some(pdf) = overrides.pdf_attachment {
+        let data = pdf_attachment_base64(pdf, MAX_ATTACH_PDF_GOOGLE)?;
+        parts.push(GooglePart::InlineData {
+            inline_data: GoogleInlineData {
+                mime_type: "application/pdf".to_string(),
+                data,
+            },
+        });
+    }
+    parts.push(GooglePart::Text {
+        text: prompt.to_string(),
+    });
     let contents = vec![GoogleContent {
         role: "user".to_string(),
-        parts: vec![GooglePart::Text {
-            text: prompt.to_string(),
-        }],
+        parts,
     }];
 
     let request = GoogleRequest {
@@ -75,7 +89,7 @@ pub async fn call_google_api(
         system_instruction,
         tools,
         generation_config: Some(serde_json::json!({
-            "maxOutputTokens": 16384,
+            "maxOutputTokens": overrides.max_output_tokens.unwrap_or(16384),
         })),
     };
 

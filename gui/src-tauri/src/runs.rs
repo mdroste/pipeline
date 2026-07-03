@@ -147,6 +147,10 @@ impl RunWriter {
         &self.run_id
     }
 
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// Write a text artifact at `rel_path` (forward slashes) and record it.
     pub fn add_text(
         &mut self,
@@ -167,6 +171,27 @@ impl RunWriter {
             kind: detect_kind(rel_path, &bytes[..bytes.len().min(512)]).to_string(),
             bytes: bytes.len() as u64,
             sha256: short_sha256(bytes),
+            group: group.to_string(),
+        });
+        Ok(())
+    }
+
+    /// Record a file that already exists inside the run directory (e.g.
+    /// page images rendered by pdftoppm) without rewriting it.
+    pub fn register_existing(
+        &mut self,
+        rel_path: &str,
+        label: &str,
+        group: &str,
+    ) -> Result<(), String> {
+        let path = self.dir.join(rel_path);
+        let bytes = fs::read(&path).map_err(|e| format!("Failed to read {rel_path}: {e}"))?;
+        self.artifacts.push(ArtifactEntry {
+            rel_path: rel_path.to_string(),
+            label: label.to_string(),
+            kind: detect_kind(rel_path, &bytes[..bytes.len().min(512)]).to_string(),
+            bytes: bytes.len() as u64,
+            sha256: short_sha256(&bytes),
             group: group.to_string(),
         });
         Ok(())

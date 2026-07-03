@@ -18,6 +18,14 @@ const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
 pub struct LlmOverrides<'a> {
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
+    /// PDF to attach to the request on direct-API paths. CLI paths ignore
+    /// this — there the prompt references the file path and the CLI's Read
+    /// tool handles PDFs natively.
+    pub pdf_attachment: Option<&'a std::path::Path>,
+    /// Max output tokens on direct-API paths. The default (16384) suits
+    /// analysis steps; full-document transcription needs more. CLI paths
+    /// ignore this.
+    pub max_output_tokens: Option<u32>,
 }
 
 impl<'a> LlmOverrides<'a> {
@@ -25,6 +33,7 @@ impl<'a> LlmOverrides<'a> {
         Self {
             model: if model.trim().is_empty() { None } else { Some(model) },
             effort: if effort.trim().is_empty() { None } else { Some(effort) },
+            ..Default::default()
         }
     }
 }

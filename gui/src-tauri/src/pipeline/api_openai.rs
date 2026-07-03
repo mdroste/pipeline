@@ -57,14 +57,36 @@ pub async fn call_openai_api(
     if let Some(sys) = system_prompt {
         messages.push(OpenAIMessage {
             role: "system".to_string(),
-            content: Some(sys.to_string()),
+            content: Some(serde_json::Value::String(sys.to_string())),
             tool_calls: None,
             tool_call_id: None,
         });
     }
+    // With a PDF attachment, the user message is [file, text] content parts;
+    // otherwise a plain string.
+    let user_content = match overrides.pdf_attachment {
+        Some(pdf) => {
+            let data = pdf_attachment_base64(pdf, MAX_ATTACH_PDF)?;
+            let filename = pdf
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "document.pdf".to_string());
+            serde_json::json!([
+                {
+                    "type": "file",
+                    "file": {
+                        "filename": filename,
+                        "file_data": format!("data:application/pdf;base64,{data}")
+                    }
+                },
+                { "type": "text", "text": prompt }
+            ])
+        }
+        None => serde_json::Value::String(prompt.to_string()),
+    };
     messages.push(OpenAIMessage {
         role: "user".to_string(),
-        content: Some(prompt.to_string()),
+        content: Some(user_content),
         tool_calls: None,
         tool_call_id: None,
     });
@@ -84,6 +106,7 @@ pub async fn call_openai_api(
         messages,
         tools,
         reasoning_effort,
+        max_completion_tokens: overrides.max_output_tokens,
     };
 
     let (text, usage) = openai_tool_loop(app, &client, &settings.openai_api_key, request, timeout_secs, label)

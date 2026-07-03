@@ -144,6 +144,31 @@ fn read_pdf_for_tool(path: &str) -> Result<String, String> {
     Ok(STANDARD.encode(&bytes))
 }
 
+/// Read a PDF the app itself is attaching to a request (as opposed to one the
+/// model asked for via the Read tool — that path goes through the allowed-dir
+/// sandbox above). Only a size cap applies: the path comes from our own
+/// extraction code, not from model output.
+pub fn pdf_attachment_base64(path: &std::path::Path, max_size: usize) -> Result<String, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("Cannot read PDF metadata: {e}"))?;
+    if metadata.len() as usize > max_size {
+        return Err(format!(
+            "PDF too large to attach ({} MB, limit {} MB). Use a CLI provider or a native extraction method.",
+            metadata.len() / 1_000_000,
+            max_size / 1_000_000
+        ));
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    Ok(STANDARD.encode(&bytes))
+}
+
+/// Attachment size caps. Anthropic and OpenAI accept requests up to 32 MB;
+/// Google's inline-data path caps the whole request at 20 MB, and base64
+/// inflates by 4/3, so the raw PDF must stay under ~14 MB there.
+pub const MAX_ATTACH_PDF: usize = MAX_PDF_SIZE;
+pub const MAX_ATTACH_PDF_GOOGLE: usize = 14 * 1024 * 1024;
+
 /// Result of executing a tool call.
 pub enum ToolResult {
     /// Plain text content.
@@ -239,13 +264,17 @@ pub struct OpenAIRequest {
     pub tools: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAIMessage {
     pub role: String,
+    /// A plain string for normal messages, or an array of content parts
+    /// (text + file attachments) for multimodal user messages.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
+    pub content: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<OpenAIToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -317,6 +346,17 @@ pub enum GooglePart {
         #[serde(rename = "functionResponse")]
         function_response: GoogleFunctionResponse,
     },
+    InlineData {
+        #[serde(rename = "inlineData")]
+        inline_data: GoogleInlineData,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleInlineData {
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub data: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -584,7 +624,7 @@ pub async fn openai_tool_loop(
                     };
                     request.messages.push(OpenAIMessage {
                         role: "tool".to_string(),
-                        content: Some(content),
+                        content: Some(serde_json::Value::String(content)),
                         tool_calls: None,
                         tool_call_id: Some(tc.id.clone()),
                     });
@@ -593,7 +633,14 @@ pub async fn openai_tool_loop(
             }
         }
 
-        return Ok((choice.message.content.clone().unwrap_or_default(), usage));
+        let text = choice
+            .message
+            .content
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        return Ok((text, usage));
     }
 
     Err(format!("Tool loop exceeded {MAX_TOOL_ITERATIONS} iterations"))

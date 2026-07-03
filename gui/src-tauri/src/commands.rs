@@ -193,6 +193,55 @@ async fn run_pipeline_inner(
             }));
         }
     }
+
+    // Render page images for PDF inputs so the artifact explorer can show
+    // them. Deliberately independent of the extraction method; best-effort.
+    if input_mode == "document" && extraction.source_path.to_lowercase().ends_with(".pdf") {
+        if let Some(w) = run_writer.as_mut() {
+            let pdf = std::path::PathBuf::from(&extraction.source_path);
+            let out_dir = w.dir().join("artifacts").join("pages");
+            let rendered = tokio::task::spawn_blocking(move || {
+                crate::pipeline::extract::render_pdf_pages(&pdf, &out_dir, 300)
+            })
+            .await;
+            match rendered {
+                Ok(Ok(names)) => {
+                    let count = names.len();
+                    for name in &names {
+                        let page_num = name
+                            .trim_end_matches(".png")
+                            .rsplit('-')
+                            .next()
+                            .and_then(|n| n.parse::<u32>().ok());
+                        let label = match page_num {
+                            Some(n) => format!("Page {n}"),
+                            None => name.clone(),
+                        };
+                        if let Err(e) =
+                            w.register_existing(&format!("artifacts/pages/{name}"), &label, "pages")
+                        {
+                            let _ = app.emit("pipeline:log", serde_json::json!({
+                                "line": format!("WARNING: {e}")
+                            }));
+                        }
+                    }
+                    let _ = app.emit("pipeline:log", serde_json::json!({
+                        "line": format!("Rendered {count} page images into the run artifacts")
+                    }));
+                }
+                Ok(Err(e)) => {
+                    let _ = app.emit("pipeline:log", serde_json::json!({
+                        "line": format!("WARNING: page image rendering skipped: {e}")
+                    }));
+                }
+                Err(e) => {
+                    let _ = app.emit("pipeline:log", serde_json::json!({
+                        "line": format!("WARNING: page image rendering task failed: {e}")
+                    }));
+                }
+            }
+        }
+    }
     if is_cancelled() { return Err("Pipeline cancelled".into()); }
 
     // Cache the extracted text by paper hash so users can inspect it after the run.
@@ -296,11 +345,15 @@ async fn run_pipeline_inner(
             "phase": "orient",
             "status": "skipped",
         })).ok();
-        orientation = crate::models::OrientationMap::empty(&extraction.text);
+        orientation = serde_json::to_value(crate::models::OrientationMap::empty(&extraction.text))
+            .map_err(|e| format!("Failed to build orientation placeholder: {e}"))?;
         orientation_path = String::new();
     }
 
-    let paper_type = orientation.metadata.paper_type.to_string();
+    // {paper_type} resolves only for paper-shaped surveys; empty otherwise.
+    let paper_type = crate::models::paper_view(&orientation)
+        .map(|v| v.metadata.paper_type.to_string())
+        .unwrap_or_default();
 
     let result = executor::execute_steps(
         app,
@@ -658,6 +711,16 @@ pub async fn save_pipeline_config(config: PipelineConfig) -> Result<(), String> 
 #[tauri::command]
 pub async fn get_default_parallel_template() -> String {
     pipeline_config::default_parallel_template()
+}
+
+/// Compiled-in default text for a named prompt (no user overrides applied).
+/// Backs the editor's "reset to …" actions, e.g. the generic vs paper-review
+/// context templates and survey prompts.
+#[tauri::command]
+pub async fn get_default_prompt(name: String) -> Result<String, String> {
+    crate::prompts::compiled_default(&name)
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("Unknown prompt: {name}"))
 }
 
 #[tauri::command]

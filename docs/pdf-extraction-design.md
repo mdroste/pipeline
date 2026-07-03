@@ -86,17 +86,21 @@ Verification (the actual fix for silent truncation/summarization):
 2. After the call, deterministically verify: every page marker present, and
    per-page text length sane against a `pdftotext` baseline (poppler is
    bundled; the baseline is free). A page that's missing or suspiciously
-   short gets one targeted follow-up call for just that page range —
-   split from the original with a pure-Rust PDF library (`lopdf`), attached
-   natively. Pages that still fail become extraction-quality notes naming
-   the page numbers, feeding the existing quality-notes path.
+   short gets one targeted follow-up call for just that page range — the
+   same PDF is attached again with a "transcribe ONLY pages N–M"
+   instruction. (Implemented this way instead of splitting the PDF with a
+   library like `lopdf`: page extraction that preserves shared fonts and
+   resources is error-prone, and re-sending the input for the rare repair
+   call costs pennies.) Pages that still fail become extraction-quality
+   notes naming the page numbers, feeding the existing quality-notes path.
 3. `scan_math_quality` runs on the result as today; final markdown lands in
    `cache/papers/{hash}.txt` and the run's `context/` as usual.
 
-Splitting is therefore **reactive, not proactive** — a paper that extracts
-cleanly in one call costs one call. The only proactive split is when the PDF
-exceeds a provider's hard request limit (page count or bytes), in which case
-the same `lopdf` range-split machinery sends sequential ranges.
+Repair is therefore **reactive, not proactive** — a paper that extracts
+cleanly in one call costs one call. A PDF that exceeds a provider's hard
+request limit fails the attachment with a clear message and falls back to
+native extraction; range-splitting oversized PDFs is deferred until someone
+actually hits it.
 
 Page PNGs (the PDF → PNG requirement) are decoupled from extraction: bundled
 `pdftoppm` renders `runs/{id}/artifacts/pages/page-NNN.png` as run artifacts
@@ -105,8 +109,8 @@ deterministic, fast, and has nothing to do with what the model sees.
 
 Touches: `extract.rs` (`extract_llm` transport + verification loop),
 `api_anthropic.rs`/`api_openai.rs`/`api_google.rs` (up-front PDF attachment),
-`runs.rs` (`RunWriter::add_file` for binary artifacts — today only
-`add_text` exists), new `lopdf` dependency for page-range splits.
+`runs.rs` (`RunWriter::register_existing` for binary artifacts — today only
+`add_text` exists). No new dependencies.
 
 ## Move 2: managed local engines via uv (new module `engines.rs`)
 
@@ -207,8 +211,8 @@ suggests enabling image extraction now that figures land in the explorer.
 
 1. **Native PDF extraction + verification** (Move 1) — removes a provider
    limitation, makes truncation detectable instead of silent, and ships page
-   PNGs as artifacts. One new pure-Rust dependency (`lopdf`). Independent of
-   everything else.
+   PNGs as artifacts. No new dependencies. Independent of everything else.
+   *Implemented 2026-07-03.*
 2. **Provisioning backend** (Move 2 minus UI) — `engines.rs`, Tauri
    commands, discovery changes, tested headlessly.
 3. **Engines UI + marker upgrade** (Moves 3–4).

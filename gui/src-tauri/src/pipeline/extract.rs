@@ -282,8 +282,247 @@ fn find_command(name: &str) -> Option<PathBuf> {
     None
 }
 
+// ── LLM extraction: transport, verification, repair ─────────────────
+
+/// Max output tokens for extraction calls on direct-API paths. Analysis
+/// steps keep the smaller default; transcribing a whole paper needs more.
+const EXTRACTION_MAX_OUTPUT_TOKENS: u32 = 32_768;
+
+/// Give up on targeted repair after this many page ranges per run; anything
+/// left becomes a quality note instead of more LLM calls.
+const MAX_REPAIR_RANGES: usize = 3;
+
+/// A page's extraction is suspect when the pdftotext baseline has at least
+/// this many characters but the LLM produced less than a quarter of it.
+/// The floor keeps figure-heavy pages (thin text layer) from tripping it.
+const SUSPECT_BASELINE_MIN_CHARS: usize = 200;
+
+/// True when call_llm() will take a direct-API path for the preferred
+/// provider — mirrors the dispatch in pipeline::claude::call_llm. Direct
+/// API calls get the PDF attached to the request; CLI calls read it via
+/// the Read tool.
+fn provider_uses_direct_api(settings: &crate::settings::Settings) -> bool {
+    match settings.preferred_provider.as_str() {
+        "codex" => !settings.openai_api_key.is_empty(),
+        "gemini" => !settings.google_api_key.is_empty(),
+        _ => !settings.anthropic_api_key.is_empty(),
+    }
+}
+
+/// Per-page character counts from pdftotext output (pages are separated by
+/// form feeds). None when pdftotext is missing or fails — verification is
+/// then skipped, not the extraction.
+fn pdftotext_page_baseline(path: &Path) -> Option<Vec<usize>> {
+    let bin = find_command("pdftotext")?;
+    let output = StdCommand::new(&bin)
+        .env("PATH", env::full_path())
+        .args(["-layout", path.to_str()?, "-"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let pages = baseline_page_lengths(&text);
+    if pages.is_empty() { None } else { Some(pages) }
+}
+
+/// Split pdftotext output on form feeds and return trimmed char counts.
+fn baseline_page_lengths(text: &str) -> Vec<usize> {
+    let mut pages: Vec<usize> = text.split('\u{0C}').map(|p| p.trim().len()).collect();
+    // pdftotext terminates every page with a form feed, leaving a trailing
+    // empty segment.
+    if pages.last() == Some(&0) {
+        pages.pop();
+    }
+    pages
+}
+
+fn page_marker_regex() -> Regex {
+    Regex::new(r"(?i)<!--\s*page\s+(\d+)\s*-->").expect("page marker regex is invalid")
+}
+
+/// Split extracted text on `<!-- PAGE n -->` markers into (preamble,
+/// page → content). Returns None when the text has no markers at all, in
+/// which case completeness cannot be verified. Content under a repeated
+/// marker is appended, not replaced.
+fn parse_page_sections(
+    text: &str,
+) -> Option<(String, std::collections::BTreeMap<u32, String>)> {
+    let re = page_marker_regex();
+    let mut sections: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+    let mut preamble = String::new();
+    let mut current: Option<u32> = None;
+    let mut seg_start = 0usize;
+    let mut found = false;
+
+    let push_segment = |current: Option<u32>,
+                            segment: &str,
+                            sections: &mut std::collections::BTreeMap<u32, String>,
+                            preamble: &mut String| {
+        match current {
+            Some(page) => sections.entry(page).or_default().push_str(segment),
+            None => preamble.push_str(segment),
+        }
+    };
+
+    for cap in re.captures_iter(text) {
+        let m = cap.get(0).expect("regex match has group 0");
+        push_segment(current, &text[seg_start..m.start()], &mut sections, &mut preamble);
+        current = cap[1].parse::<u32>().ok();
+        seg_start = m.end();
+        found = true;
+    }
+    push_segment(current, &text[seg_start..], &mut sections, &mut preamble);
+
+    if !found {
+        return None;
+    }
+    Some((preamble.trim().to_string(), sections))
+}
+
+/// Pages that are missing entirely or came back far shorter than the
+/// pdftotext baseline says they should be.
+fn find_suspect_pages(
+    sections: &std::collections::BTreeMap<u32, String>,
+    baseline: &[usize],
+) -> Vec<u32> {
+    let mut suspects = Vec::new();
+    for (i, &base_len) in baseline.iter().enumerate() {
+        let page = (i + 1) as u32;
+        match sections.get(&page) {
+            None => suspects.push(page),
+            Some(content) => {
+                if base_len >= SUSPECT_BASELINE_MIN_CHARS && content.trim().len() < base_len / 4 {
+                    suspects.push(page);
+                }
+            }
+        }
+    }
+    suspects
+}
+
+/// Group sorted page numbers into contiguous (start, end) ranges.
+fn group_into_ranges(pages: &[u32]) -> Vec<(u32, u32)> {
+    let mut ranges: Vec<(u32, u32)> = Vec::new();
+    for &p in pages {
+        match ranges.last_mut() {
+            Some((_, end)) if *end + 1 == p => *end = p,
+            _ => ranges.push((p, p)),
+        }
+    }
+    ranges
+}
+
+/// Reassemble the extraction from its page sections, in page order.
+fn rebuild_from_sections(
+    preamble: &str,
+    sections: &std::collections::BTreeMap<u32, String>,
+) -> String {
+    let mut out = String::new();
+    if !preamble.is_empty() {
+        out.push_str(preamble);
+        out.push_str("\n\n");
+    }
+    for (page, content) in sections {
+        out.push_str(&format!("<!-- PAGE {page} -->\n"));
+        out.push_str(content.trim());
+        out.push_str("\n\n");
+    }
+    out.trim().to_string()
+}
+
+/// Strip a wrapping code fence (```markdown … ```) if the model emitted one.
+fn strip_markdown_fence(text: &str) -> &str {
+    let t = text.trim();
+    if !t.starts_with("```") {
+        return t;
+    }
+    let Some(first_newline) = t.find('\n') else { return t };
+    if t[3..first_newline].trim().chars().any(|c| !c.is_ascii_alphanumeric()) {
+        return t;
+    }
+    let rest = &t[first_newline + 1..];
+    match rest.rfind("```") {
+        Some(end) if rest[end + 3..].trim().is_empty() => rest[..end].trim(),
+        _ => t,
+    }
+}
+
+/// The shared requirements block for extraction and repair prompts.
+fn extraction_requirements() -> &'static str {
+    "- Start each page's content with the marker <!-- PAGE n --> (1-based page number)\n\
+     - Reproduce ALL text content, including abstract, all sections, footnotes, references, and appendices\n\
+     - Preserve mathematical notation using LaTeX syntax (inline $...$ and display $$...$$)\n\
+     - Format tables using markdown table syntax\n\
+     - Note figure/table captions and their numbers\n\
+     - Preserve section numbering and hierarchy\n\
+     - Drop running headers, footers, and page numbers\n\
+     - Do not summarize or skip any content — output the complete text\n\
+     - Do not add commentary, analysis, or annotations — just the extracted text"
+}
+
+/// How the prompt tells the model where the document is, depending on
+/// whether it will be attached to the request or read via the Read tool.
+fn source_line(attach: bool, prompt_path: &str) -> String {
+    if attach {
+        "The document is attached to this message as a PDF.".to_string()
+    } else {
+        format!("Read the PDF file at {prompt_path}.")
+    }
+}
+
+/// Re-request a specific page range that verification flagged.
+async fn repair_pages(
+    app: &AppHandle,
+    path: &Path,
+    prompt_path: &str,
+    start: u32,
+    end: u32,
+    attach: bool,
+    timeout_secs: u64,
+    extra_dirs: &[&str],
+) -> Result<Vec<(u32, String)>, String> {
+    let span = if start == end {
+        format!("page {start}")
+    } else {
+        format!("pages {start} through {end}")
+    };
+    let prompt = format!(
+        "{} Transcribe ONLY {span} to well-formatted Markdown.\n\nRequirements:\n{}",
+        source_line(attach, prompt_path),
+        extraction_requirements()
+    );
+    let overrides = super::claude::LlmOverrides {
+        pdf_attachment: attach.then_some(path),
+        max_output_tokens: Some(EXTRACTION_MAX_OUTPUT_TOKENS),
+        ..Default::default()
+    };
+    let label = format!("LLM extraction repair (pages {start}-{end})");
+    let raw = super::claude::call_llm(
+        app, &prompt, &["Read"], None, "text", timeout_secs, &label,
+        None, None, extra_dirs, &overrides,
+    )
+    .await?;
+    let text = strip_markdown_fence(&raw).to_string();
+    match parse_page_sections(&text) {
+        Some((_, sections)) if !sections.is_empty() => Ok(sections
+            .into_iter()
+            .filter(|(p, _)| *p >= start && *p <= end)
+            .collect()),
+        // A single-page repair without markers is still usable as-is.
+        _ if start == end && !text.is_empty() => Ok(vec![(start, text)]),
+        _ => Err("repair response contained no page markers".to_string()),
+    }
+}
+
 /// Extract from a PDF using an LLM (Claude, Codex, or Gemini).
-/// The LLM reads the PDF directly and outputs well-formatted Markdown.
+///
+/// Direct-API providers get the PDF attached to the request; CLI providers
+/// read it with their multimodal Read tool. The output is verified against
+/// a pdftotext per-page baseline: pages that are missing or far too short
+/// are re-requested once, and anything still failing becomes an
+/// extraction-quality note instead of a silent gap.
 async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<ExtractionResult, String> {
     let path_str = path.to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
@@ -298,46 +537,151 @@ async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<Extract
         .unwrap_or_default();
     let extra_dirs: Vec<&str> = if parent_dir.is_empty() { vec![] } else { vec![&parent_dir] };
 
+    let settings = crate::settings::load();
+    let attach = provider_uses_direct_api(&settings);
+    let timeout = (settings.step_timeout_secs / 2).max(60);
+
+    // Completeness baseline (best-effort; poppler is bundled so this is
+    // normally available).
+    let baseline = {
+        let p = path.to_path_buf();
+        tokio::task::spawn_blocking(move || pdftotext_page_baseline(&p))
+            .await
+            .unwrap_or(None)
+    };
+
+    let pages_line = baseline
+        .as_ref()
+        .map(|b| format!("The document has {} pages.\n\n", b.len()))
+        .unwrap_or_default();
     let prompt = format!(
-        "Read the PDF file at {} and convert its entire contents to well-formatted Markdown.\n\n\
-         Requirements:\n\
-         - Reproduce ALL text content from the paper, including abstract, all sections, footnotes, references, and appendices\n\
-         - Preserve mathematical notation using LaTeX syntax (inline $...$ and display $$...$$)\n\
-         - Format tables using markdown table syntax\n\
-         - Note figure/table captions and their numbers\n\
-         - Preserve section numbering and hierarchy\n\
-         - Do not summarize or skip any content — output the complete text\n\
-         - Do not add commentary, analysis, or annotations — just the extracted text",
-        prompt_path
+        "{} Convert its entire contents to well-formatted Markdown.\n\n{pages_line}Requirements:\n{}\n\
+         - If the full text cannot fit in your output, stop cleanly at a page boundary; the remaining pages will be requested separately",
+        source_line(attach, &prompt_path),
+        extraction_requirements()
     );
 
-    let timeout = (crate::settings::load().step_timeout_secs / 2).max(60);
-    let text = super::claude::call_llm(
-        app,
-        &prompt,
-        &["Read"],
-        None,
-        "text",
-        timeout,
-        "LLM PDF extraction",
-        None,
-        None,
-        &extra_dirs,
-        &super::claude::LlmOverrides::default(),
+    let overrides = super::claude::LlmOverrides {
+        pdf_attachment: attach.then_some(path),
+        max_output_tokens: Some(EXTRACTION_MAX_OUTPUT_TOKENS),
+        ..Default::default()
+    };
+    let raw = super::claude::call_llm(
+        app, &prompt, &["Read"], None, "text", timeout, "LLM PDF extraction",
+        None, None, &extra_dirs, &overrides,
     )
     .await?;
-
+    let text = strip_markdown_fence(&raw).to_string();
     if text.is_empty() {
         return Err("LLM returned empty output for PDF extraction".to_string());
     }
 
+    let mut quality_notes = Vec::new();
+    let final_text = match (&baseline, parse_page_sections(&text)) {
+        (Some(bl), Some((preamble, mut sections))) => {
+            let suspects = find_suspect_pages(&sections, bl);
+            if !suspects.is_empty() {
+                let ranges = group_into_ranges(&suspects);
+                if ranges.len() > MAX_REPAIR_RANGES {
+                    let _ = app.emit("pipeline:log", serde_json::json!({
+                        "line": format!(
+                            "Extraction verification: {} suspect ranges, repairing the first {MAX_REPAIR_RANGES}",
+                            ranges.len()
+                        )
+                    }));
+                }
+                for &(start, end) in ranges.iter().take(MAX_REPAIR_RANGES) {
+                    if crate::commands::is_cancelled() {
+                        return Err("Pipeline cancelled".into());
+                    }
+                    let _ = app.emit("pipeline:log", serde_json::json!({
+                        "line": format!("Extraction verification: pages {start}-{end} missing or short, re-requesting")
+                    }));
+                    match repair_pages(app, path, &prompt_path, start, end, attach, timeout, &extra_dirs).await {
+                        Ok(repaired) => {
+                            for (page, content) in repaired {
+                                sections.insert(page, content);
+                            }
+                        }
+                        Err(e) => {
+                            let _ = app.emit("pipeline:log", serde_json::json!({
+                                "line": format!("WARNING: repair of pages {start}-{end} failed: {e}")
+                            }));
+                        }
+                    }
+                }
+                let still = find_suspect_pages(&sections, bl);
+                if !still.is_empty() {
+                    let list = still
+                        .iter()
+                        .map(|p| p.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    quality_notes.push(format!(
+                        "Extraction may be incomplete on page(s) {list}. \
+                         Findings that depend on those pages should be verified against the original PDF."
+                    ));
+                }
+            }
+            rebuild_from_sections(&preamble, &sections)
+        }
+        (Some(_), None) => {
+            quality_notes.push(
+                "The extraction has no page markers, so completeness could not be verified against the PDF."
+                    .to_string(),
+            );
+            text
+        }
+        (None, _) => {
+            quality_notes.push(
+                "pdftotext is unavailable, so extraction completeness was not verified.".to_string(),
+            );
+            text
+        }
+    };
+    quality_notes.extend(scan_math_quality(&final_text));
+
     Ok(ExtractionResult {
-        text,
+        text: final_text,
         method: "llm".to_string(),
         source_path: path.to_string_lossy().to_string(),
         paper_hash: hash.to_string(),
-        quality_notes: vec![],
+        quality_notes,
     })
+}
+
+/// Render each page of a PDF to a PNG in `out_dir` using bundled pdftoppm.
+/// Returns the sorted file names. Used to populate the run's page-image
+/// artifacts; independent of which extraction method ran.
+pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Vec<String>, String> {
+    let bin = find_command("pdftoppm").ok_or("pdftoppm not found on PATH")?;
+    let pdf_str = pdf.to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", pdf.display()))?;
+    fs::create_dir_all(out_dir)
+        .map_err(|e| format!("Failed to create {}: {e}", out_dir.display()))?;
+    let prefix = out_dir.join("page");
+    let prefix_str = prefix.to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
+    let output = StdCommand::new(&bin)
+        .env("PATH", env::full_path())
+        .args(["-png", "-r", "150", "-l", &max_pages.to_string(), pdf_str, prefix_str])
+        .output()
+        .map_err(|e| format!("pdftoppm not available: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("pdftoppm failed: {}", stderr.trim()));
+    }
+    let mut names: Vec<String> = fs::read_dir(out_dir)
+        .map_err(|e| format!("Failed to list {}: {e}", out_dir.display()))?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+        .filter(|n| n.starts_with("page") && n.ends_with(".png"))
+        .collect();
+    names.sort();
+    if names.is_empty() {
+        return Err("pdftoppm produced no page images".to_string());
+    }
+    Ok(names)
 }
 
 /// Extract from a PDF file using marker or pdftotext.
@@ -523,22 +867,10 @@ pub async fn extract(
         return Err(format!("File not found: {paper_path}"));
     }
 
-    // Determine if this is a PDF that should use LLM extraction.
-    // LLM extraction relies on the Read tool returning PDF content, which
-    // only works for Anthropic (document blocks) and CLI subprocesses
-    // (native multimodal Read).  OpenAI and Google direct-API paths cannot
-    // return binary content in tool results, so we fall back to native
-    // extraction for those providers.
-    let settings = crate::settings::load();
-    let pdf_read_supported = match settings.preferred_provider.as_str() {
-        "codex" if !settings.openai_api_key.is_empty() => false,
-        "gemini" if !settings.google_api_key.is_empty() => false,
-        _ => true,
-    };
-
     // Resolve the effective extraction method: profile override beats global.
     // An explicit "auto" or empty string falls through to whatever the global
     // setting says.
+    let settings = crate::settings::load();
     let cfg_method = extraction_cfg.method.trim();
     let effective_method = if cfg_method.is_empty() || cfg_method == "auto" {
         settings.pdf_extractor.clone()
@@ -552,17 +884,9 @@ pub async fn extract(
         .marker_disable_images
         .unwrap_or(settings.marker_disable_images);
 
-    let use_llm = effective_method == "llm" && pdf_read_supported;
-
-    if effective_method == "llm" && !pdf_read_supported {
-        let _ = app.emit("pipeline:log", serde_json::json!({
-            "line": format!(
-                "NOTE: LLM PDF extraction is not available with the {} direct API. Using native extraction. \
-                 To use LLM extraction, switch to the CLI provider or use the Anthropic API.",
-                settings.preferred_provider
-            )
-        }));
-    }
+    // All providers can extract PDFs now: direct APIs get the PDF attached
+    // to the request, CLIs read it with their multimodal Read tool.
+    let use_llm = effective_method == "llm";
 
     // For LLM PDF extraction, identify the PDF path and run async
     if use_llm {
@@ -586,14 +910,31 @@ pub async fn extract(
                     .await
                     .map_err(|e| format!("Hash computation failed: {e}"))??
             };
-            return extract_llm(app, &pdf, &hash).await;
+            match extract_llm(app, &pdf, &hash).await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    // Fall back to native extraction unless the run was
+                    // cancelled or there is nothing to fall back to.
+                    if crate::commands::is_cancelled() || find_command("pdftotext").is_none() {
+                        return Err(e);
+                    }
+                    let _ = app.emit("pipeline:log", serde_json::json!({
+                        "line": format!("WARNING: LLM extraction failed: {e}. Falling back to pdftotext.")
+                    }));
+                    let p = pdf.clone();
+                    return tokio::task::spawn_blocking(move || {
+                        extract_pdf_native(&p, "pdftotext", false, false)
+                    })
+                    .await
+                    .map_err(|e| format!("Extraction task failed: {e}"))?;
+                }
+            }
         }
     }
 
     // Identify the PDF path (if any) before entering spawn_blocking, so we
     // can fall back to LLM extraction if the native extractor fails.
-    // Only set the fallback when the provider actually supports PDF reads.
-    let fallback_pdf: Option<PathBuf> = if !use_llm && pdf_read_supported {
+    let fallback_pdf: Option<PathBuf> = if !use_llm {
         if path.is_dir() {
             if find_main_tex(&path).is_some() {
                 None // LaTeX takes priority
@@ -749,6 +1090,83 @@ mod tests {
         }
         let notes = scan_math_quality(&text);
         assert!(notes.iter().any(|n| n.contains("ligature")));
+    }
+
+    // ── LLM extraction verification helpers ───────────────────────
+
+    #[test]
+    fn baseline_splits_on_form_feeds_and_drops_trailing_empty() {
+        let text = "page one text\u{0C}page two\u{0C}";
+        let pages = baseline_page_lengths(text);
+        assert_eq!(pages, vec!["page one text".len(), "page two".len()]);
+    }
+
+    #[test]
+    fn parse_sections_returns_none_without_markers() {
+        assert!(parse_page_sections("just some markdown, no markers").is_none());
+    }
+
+    #[test]
+    fn parse_sections_splits_preamble_and_pages() {
+        let text = "intro\n<!-- PAGE 1 -->\nfirst page\n<!-- page 2 -->\nsecond page";
+        let (preamble, sections) = parse_page_sections(text).unwrap();
+        assert_eq!(preamble, "intro");
+        assert_eq!(sections.len(), 2);
+        assert!(sections[&1].contains("first page"));
+        // Marker matching is case-insensitive.
+        assert!(sections[&2].contains("second page"));
+    }
+
+    #[test]
+    fn parse_sections_appends_repeated_markers() {
+        let text = "<!-- PAGE 1 -->\nstart\n<!-- PAGE 1 -->\ncontinued";
+        let (_, sections) = parse_page_sections(text).unwrap();
+        assert!(sections[&1].contains("start"));
+        assert!(sections[&1].contains("continued"));
+    }
+
+    #[test]
+    fn suspects_flags_missing_and_short_pages() {
+        let mut sections = std::collections::BTreeMap::new();
+        sections.insert(1, "x".repeat(500));
+        sections.insert(3, "tiny".to_string());
+        sections.insert(4, "y".repeat(50));
+        // page 2 missing; page 3 short vs a 1000-char baseline;
+        // page 4 short but baseline below the 200-char floor → not suspect.
+        let baseline = vec![500, 800, 1000, 150];
+        assert_eq!(find_suspect_pages(&sections, &baseline), vec![2, 3]);
+    }
+
+    #[test]
+    fn ranges_group_contiguous_pages() {
+        assert_eq!(
+            group_into_ranges(&[2, 3, 4, 7, 9, 10]),
+            vec![(2, 4), (7, 7), (9, 10)]
+        );
+        assert!(group_into_ranges(&[]).is_empty());
+    }
+
+    #[test]
+    fn rebuild_orders_pages_and_keeps_preamble() {
+        let mut sections = std::collections::BTreeMap::new();
+        sections.insert(2, "two".to_string());
+        sections.insert(1, "one".to_string());
+        let out = rebuild_from_sections("title", &sections);
+        assert!(out.starts_with("title"));
+        let one_pos = out.find("<!-- PAGE 1 -->").unwrap();
+        let two_pos = out.find("<!-- PAGE 2 -->").unwrap();
+        assert!(one_pos < two_pos);
+        assert!(out.contains("one") && out.contains("two"));
+    }
+
+    #[test]
+    fn fence_stripping() {
+        assert_eq!(strip_markdown_fence("```markdown\n# Title\n```"), "# Title");
+        assert_eq!(strip_markdown_fence("```\ntext\n```"), "text");
+        // Not a wrapping fence — inner fences stay untouched.
+        let mixed = "prose\n```python\ncode\n```\nmore";
+        assert_eq!(strip_markdown_fence(mixed), mixed);
+        assert_eq!(strip_markdown_fence("plain"), "plain");
     }
 }
 

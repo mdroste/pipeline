@@ -75,14 +75,33 @@ pub async fn call_anthropic_api(
     let client = &*super::api_common::HTTP_CLIENT;
     let tools = build_tools(allowed_tools);
 
+    // With a PDF attachment, the user message is [document, text] content
+    // blocks; otherwise a plain string.
+    let content = match overrides.pdf_attachment {
+        Some(pdf) => {
+            let data = pdf_attachment_base64(pdf, MAX_ATTACH_PDF)?;
+            serde_json::json!([
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": data
+                    }
+                },
+                { "type": "text", "text": prompt }
+            ])
+        }
+        None => serde_json::Value::String(prompt.to_string()),
+    };
     let messages = vec![AnthropicMessage {
         role: "user".to_string(),
-        content: serde_json::Value::String(prompt.to_string()),
+        content,
     }];
 
     let request = AnthropicRequest {
         model,
-        max_tokens: 16384,
+        max_tokens: overrides.max_output_tokens.unwrap_or(16384),
         system: system_prompt.map(|s| s.to_string()),
         messages,
         tools,
