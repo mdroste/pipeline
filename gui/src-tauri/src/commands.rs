@@ -134,10 +134,17 @@ async fn run_pipeline_inner(
     };
     crate::pipeline::api_common::set_allowed_dirs(vec![source_dir]);
 
+    // Load profile config first so extraction overrides apply.
+    let config = pipeline_config::load();
+
     // Extract paper text
     app.emit("pipeline:stage", serde_json::json!({"stage": "extracting"})).ok();
+    app.emit("pipeline:preprocess", serde_json::json!({
+        "phase": "extract",
+        "status": "running",
+    })).ok();
     let extract_start = std::time::Instant::now();
-    let extraction = extract::extract(app, paper_path).await?;
+    let extraction = extract::extract(app, paper_path, &config.extraction).await?;
     let extract_secs = extract_start.elapsed().as_secs();
     app.emit("pipeline:log", serde_json::json!({
         "line": format!("Extracted via {} ({} chars, {}s)", extraction.method, extraction.text.len(), extract_secs)
@@ -148,6 +155,19 @@ async fn run_pipeline_inner(
         })).ok();
     }
     if is_cancelled() { return Err("Pipeline cancelled".into()); }
+
+    // Cache the extracted text by paper hash so users can inspect it after the run.
+    // Temp files vanish when the process exits; the cache persists until deleted.
+    let cached_paper_path = match cache_paper_text(&extraction.paper_hash, &extraction.text) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            // Caching is best-effort; a failure here shouldn't stop the run.
+            let _ = app.emit("pipeline:log", serde_json::json!({
+                "line": format!("WARNING: failed to cache extracted text: {e}")
+            }));
+            None
+        }
+    };
 
     let mut tmp = tempfile::Builder::new()
         .prefix("pipeline_paper_")
@@ -160,7 +180,15 @@ async fn run_pipeline_inner(
         .map_err(|e| format!("Failed to flush temp file: {e}"))?;
     let paper_text_path = tmp.path().to_string_lossy().replace('\\', "/");
 
-    let config = pipeline_config::load();
+    app.emit("pipeline:preprocess", serde_json::json!({
+        "phase": "extract",
+        "status": "done",
+        "method": extraction.method,
+        "chars": extraction.text.len(),
+        "elapsed_secs": extract_secs,
+        "paper_hash": extraction.paper_hash,
+        "cached_path": cached_paper_path,
+    })).ok();
 
     // Build orientation map (optional)
     let mut _orient_tmp = None; // hold tempfile alive
@@ -169,8 +197,17 @@ async fn run_pipeline_inner(
 
     if config.use_orientation {
         app.emit("pipeline:stage", serde_json::json!({"stage": "orienting"})).ok();
+        app.emit("pipeline:preprocess", serde_json::json!({
+            "phase": "orient",
+            "status": "running",
+        })).ok();
         let orient_start = std::time::Instant::now();
-        orientation = orient::build_orientation_map(app, &extraction).await?;
+        let custom_orient_prompt = if config.orientation_prompt.trim().is_empty() {
+            None
+        } else {
+            Some(config.orientation_prompt.as_str())
+        };
+        orientation = orient::build_orientation_map(app, &extraction, custom_orient_prompt).await?;
         let orient_secs = orient_start.elapsed().as_secs();
         app.emit("pipeline:log", serde_json::json!({
             "line": format!("Orientation map built ({}s)", orient_secs)
@@ -193,10 +230,20 @@ async fn run_pipeline_inner(
         app.emit("pipeline:log", serde_json::json!({
             "line": format!("Orientation map written to temp file ({orient_bytes} bytes)")
         })).ok();
+        app.emit("pipeline:preprocess", serde_json::json!({
+            "phase": "orient",
+            "status": "done",
+            "bytes": orient_bytes,
+            "elapsed_secs": orient_secs,
+        })).ok();
         _orient_tmp = Some(orient_file);
     } else {
         app.emit("pipeline:log", serde_json::json!({
             "line": "Orientation map disabled for this profile"
+        })).ok();
+        app.emit("pipeline:preprocess", serde_json::json!({
+            "phase": "orient",
+            "status": "skipped",
         })).ok();
         orientation = crate::models::OrientationMap::empty(&extraction.text);
         orientation_path = String::new();
@@ -558,8 +605,8 @@ pub async fn import_profile(path: String) -> Result<ProfileSummary, String> {
     let content = read_import_file(&path)?;
     let envelope = pipeline_config::import_envelope(&content)?;
     match envelope {
-        pipeline_config::ExportEnvelope::Profile { name, steps, merge, use_orientation, parallel_context_template } => {
-            pipeline_config::import_profile_data(&name, steps, merge, use_orientation, parallel_context_template)
+        pipeline_config::ExportEnvelope::Profile { name, steps, merge, use_orientation, orientation_prompt, extraction, parallel_context_template } => {
+            pipeline_config::import_profile_data(&name, steps, merge, use_orientation, orientation_prompt, extraction, parallel_context_template)
         }
         pipeline_config::ExportEnvelope::Step { .. } => {
             Err("This file contains a single step, not a profile. Use Import on the pipeline page to add it to the current profile.".into())
@@ -585,4 +632,55 @@ pub async fn import_bundle(path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn check_for_update() -> Result<crate::updates::UpdateInfo, String> {
     crate::updates::check().await
+}
+
+// ── Preprocessing artifact cache ────────────────────────────────────
+//
+// The extracted paper text is cached at ~/.pipeline/cache/papers/{hash}.txt
+// so users can inspect the exact text the LLMs received, even after the
+// pipeline run completes and the temp files are gone. Inspecting helps
+// catch extraction failures (garbled equations, missing pages) before they
+// confuse the referees.
+
+fn paper_cache_dir() -> Result<std::path::PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let dir = home.join(".pipeline").join("cache").join("papers");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create cache dir {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+fn validate_paper_hash(hash: &str) -> Result<(), String> {
+    if hash.is_empty() {
+        return Err("Empty paper hash".into());
+    }
+    if !hash.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("Invalid paper hash".into());
+    }
+    Ok(())
+}
+
+/// Write the extracted text to ~/.pipeline/cache/papers/{hash}.txt and return
+/// the absolute path. Best-effort: callers should not abort on failure.
+fn cache_paper_text(paper_hash: &str, text: &str) -> Result<String, String> {
+    validate_paper_hash(paper_hash)?;
+    let dir = paper_cache_dir()?;
+    let path = dir.join(format!("{paper_hash}.txt"));
+    std::fs::write(&path, text).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+    Ok(path.to_string_lossy().replace('\\', "/"))
+}
+
+/// Read the cached extracted text for a given paper hash. Returns an empty
+/// result with `cached: false` when the cache miss is expected (no prior run).
+#[tauri::command]
+pub async fn read_cached_paper_text(paper_hash: String) -> Result<serde_json::Value, String> {
+    validate_paper_hash(&paper_hash)?;
+    let dir = paper_cache_dir()?;
+    let path = dir.join(format!("{paper_hash}.txt"));
+    if !path.exists() {
+        return Ok(serde_json::json!({ "cached": false, "text": "" }));
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    Ok(serde_json::json!({ "cached": true, "text": text, "path": path.to_string_lossy() }))
 }

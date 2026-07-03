@@ -67,6 +67,8 @@ pub fn run() {
             commands::import_bundle,
             // Update check
             commands::check_for_update,
+            // Preprocessing artifact inspection
+            commands::read_cached_paper_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

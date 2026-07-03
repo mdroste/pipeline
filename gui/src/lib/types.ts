@@ -10,6 +10,10 @@ export interface StepConfig {
   phase: Phase;
   tools: string[];
   agents: string[];
+  /** Per-step model override; empty/undefined = use the global setting. */
+  model?: string;
+  /** Per-step effort override; empty/undefined = use the global setting. */
+  effort?: string;
 }
 
 export interface MergeConfig {
@@ -18,10 +22,22 @@ export interface MergeConfig {
   agents: string[];
 }
 
+/** Per-profile extraction overrides. Empty/null fields inherit from global Settings. */
+export interface ExtractionConfig {
+  /** "" | "auto" | "llm" | "marker" | "pdftotext". Empty = inherit. */
+  method: string;
+  /** null = inherit; true/false = override. */
+  marker_disable_ocr: boolean | null;
+  marker_disable_images: boolean | null;
+}
+
 export interface PipelineConfig {
   steps: StepConfig[];
   merge: MergeConfig;
   use_orientation: boolean;
+  /** Custom orientation-map prompt. Empty = use the default (prompts/orientation.md). */
+  orientation_prompt: string;
+  extraction: ExtractionConfig;
   parallel_context_template: string;
 }
 
@@ -193,5 +209,14 @@ export interface ProfileExport {
 
 export type ExportEnvelope =
   | { type: "step"; data: StepConfig }
-  | { type: "profile"; name: string; steps: StepConfig[]; merge: MergeConfig }
+  | {
+      type: "profile";
+      name: string;
+      steps: StepConfig[];
+      merge: MergeConfig;
+      use_orientation?: boolean;
+      orientation_prompt?: string;
+      extraction?: ExtractionConfig;
+      parallel_context_template?: string;
+    }
   | { type: "bundle"; settings: Settings; profiles: ProfileExport[]; active_profile: string };

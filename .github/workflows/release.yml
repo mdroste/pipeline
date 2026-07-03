@@ -13,14 +13,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-15
             label: macOS-arm64
+            rust_target: aarch64-apple-darwin
+            tauri_args: --target aarch64-apple-darwin
+            expected_arch: arm64
+            asset_arch: aarch64
+            max_minos: "11.0"
           - os: macos-15-intel
             label: macOS-x64
+            rust_target: x86_64-apple-darwin
+            tauri_args: --target x86_64-apple-darwin
+            expected_arch: x86_64
+            asset_arch: x64
+            max_minos: "10.15"
           - os: ubuntu-22.04
             label: Linux
+            rust_target: ""
+            tauri_args: ""
+            expected_arch: ""
+            asset_arch: ""
+            max_minos: ""
           - os: windows-latest
             label: Windows
+            rust_target: ""
+            tauri_args: ""
+            expected_arch: ""
+            asset_arch: ""
+            max_minos: ""
 
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
@@ -30,6 +50,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -265,6 +287,125 @@ jobs:
             Pipeline uses [Claude Code](https://claude.com/claude-code) under the hood. Install Claude Code first; then launch Pipeline.
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.tauri_args }}
+
+      - name: Verify macOS artifact architecture
+        if: startsWith(matrix.label, 'macOS')
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+          EXPECTED_ARCH: ${{ matrix.expected_arch }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+          MAX_MINOS: ${{ matrix.max_minos }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_dir="gui/src-tauri/target/${RUST_TARGET}/release"
+          app_path="${release_dir}/bundle/macos/Pipeline.app"
+          if [ ! -d "${app_path}" ]; then
+            echo "Pipeline.app was not produced at ${app_path}"
+            find gui/src-tauri/target -path '*/release/bundle/macos/Pipeline.app' -type d -print
+            exit 1
+          fi
+
+          exe="${app_path}/Contents/MacOS/pipeline-gui"
+          actual_arch="$(lipo -archs "${exe}")"
+          if [ "${actual_arch}" != "${EXPECTED_ARCH}" ]; then
+            echo "Expected ${EXPECTED_ARCH} executable, got: ${actual_arch}"
+            file "${exe}"
+            exit 1
+          fi
+
+          minos="$(otool -l "${exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /minos/{print $2; exit}')"
+          if ! awk -v actual="${minos}" -v max="${MAX_MINOS}" 'BEGIN { split(actual,a,"."); split(max,m,"."); exit ! ((a[1] < m[1]) || (a[1] == m[1] && a[2] <= m[2])) }'; then
+            echo "Executable minimum macOS ${minos} is higher than expected ${MAX_MINOS}"
+            otool -l "${exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /(platform|minos|sdk)/{print} show && /sdk/{exit}'
+            exit 1
+          fi
+
+          if ! plutil -p "${app_path}/Contents/Info.plist" | grep -q '"LSRequiresCarbon" => false'; then
+            echo "Info.plist must not require Carbon"
+            plutil -p "${app_path}/Contents/Info.plist"
+            exit 1
+          fi
+
+          dmg_dir="${release_dir}/bundle/dmg"
+          if [ ! -d "${dmg_dir}" ]; then
+            echo "DMG output directory was not produced at ${dmg_dir}"
+            find gui/src-tauri/target -path '*/release/bundle/dmg' -type d -print
+            exit 1
+          fi
+
+          dmg_path="$(find "${dmg_dir}" -name "Pipeline_*_${ASSET_ARCH}.dmg" -type f | head -1)"
+          if [ -z "${dmg_path}" ]; then
+            echo "Expected Pipeline_*_${ASSET_ARCH}.dmg was not produced"
+            find gui/src-tauri/target -maxdepth 6 -type f -name '*.dmg' -print
+            exit 1
+          fi
+
+          echo "Notarizing and stapling ${dmg_path}"
+          xcrun notarytool submit "${dmg_path}" \
+            --apple-id "${APPLE_ID}" \
+            --password "${APPLE_PASSWORD}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --wait
+          xcrun stapler staple "${dmg_path}"
+          xcrun stapler validate "${dmg_path}"
+
+          spctl_output="$(spctl -a -vvv -t open --context context:primary-signature "${dmg_path}" 2>&1 || true)"
+          echo "${spctl_output}"
+          if ! grep -q 'source=Notarized Developer ID' <<<"${spctl_output}"; then
+            echo "DMG was not accepted as a notarized Developer ID disk image"
+            exit 1
+          fi
+
+          # tauri-action uploads the DMG before this post-build check runs.
+          # Replace that uploaded asset with the notarized and stapled copy
+          # before the later rename step gives it its public download name.
+          gh release upload "${TAG}" "${dmg_path}#$(basename "${dmg_path}")" --clobber
+
+          mount_dir="$(mktemp -d)"
+          hdiutil attach -readonly -nobrowse -mountpoint "${mount_dir}" "${dmg_path}"
+          trap 'hdiutil detach "${mount_dir}" >/dev/null 2>&1 || true; rmdir "${mount_dir}" >/dev/null 2>&1 || true' EXIT
+
+          dmg_exe="${mount_dir}/Pipeline.app/Contents/MacOS/pipeline-gui"
+          if [ ! -f "${dmg_exe}" ]; then
+            echo "Pipeline.app executable was not found inside the DMG"
+            find "${mount_dir}" -maxdepth 4 -print
+            exit 1
+          fi
+
+          dmg_arch="$(lipo -archs "${dmg_exe}")"
+          if [ "${dmg_arch}" != "${EXPECTED_ARCH}" ]; then
+            echo "Expected ${EXPECTED_ARCH} executable inside DMG, got: ${dmg_arch}"
+            file "${dmg_exe}"
+            exit 1
+          fi
+
+          dmg_minos="$(otool -l "${dmg_exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /minos/{print $2; exit}')"
+          if ! awk -v actual="${dmg_minos}" -v max="${MAX_MINOS}" 'BEGIN { split(actual,a,"."); split(max,m,"."); exit ! ((a[1] < m[1]) || (a[1] == m[1] && a[2] <= m[2])) }'; then
+            echo "DMG executable minimum macOS ${dmg_minos} is higher than expected ${MAX_MINOS}"
+            otool -l "${dmg_exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /(platform|minos|sdk)/{print} show && /sdk/{exit}'
+            exit 1
+          fi
+
+          if ! plutil -p "${mount_dir}/Pipeline.app/Contents/Info.plist" | grep -q '"LSRequiresCarbon" => false'; then
+            echo "Info.plist inside DMG must not require Carbon"
+            plutil -p "${mount_dir}/Pipeline.app/Contents/Info.plist"
+            exit 1
+          fi
+
+          echo "Verified ${app_path}"
+          file "${exe}"
+          otool -l "${exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /(platform|minos|sdk)/{print} show && /sdk/{exit}'
+          plutil -p "${app_path}/Contents/Info.plist" | grep LSMinimumSystemVersion
+          echo "Verified ${dmg_path}"
+          file "${dmg_exe}"
 
       - name: Rename release assets
         env:

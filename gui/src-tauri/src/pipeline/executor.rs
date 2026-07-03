@@ -5,7 +5,7 @@
 //! Merge auto-triggers between a parallel wave and the next step when
 //! any parallel step used multiple agents.
 
-use super::claude::call_llm;
+use super::claude::{call_llm, LlmOverrides};
 use super::merge;
 use crate::models::{StepFailure, StepOutput};
 use crate::output::{capitalize, strip_to_report};
@@ -253,6 +253,8 @@ async fn run_parallel_wave(
             let label = step.label.clone();
             let agent_name = agent.clone();
             let tools = step.tools.clone();
+            let model_override = step.model.clone();
+            let effort_override = step.effort.clone();
 
             // For multi-agent, use composite key
             let step_key = if multi {
@@ -311,6 +313,7 @@ async fn run_parallel_wave(
                         );
                     }
                     let extra: Vec<&str> = task_cwd.as_deref().into_iter().collect();
+                    let overrides = LlmOverrides::from_step_strings(&model_override, &effort_override);
                     match call_llm(
                         &app_handle,
                         &prompt,
@@ -322,6 +325,7 @@ async fn run_parallel_wave(
                         Some(&agent_name),
                         task_cwd.as_deref(),
                         &extra,
+                        &overrides,
                     )
                     .await
                     {
@@ -438,14 +442,71 @@ fn expand_template(
         .map(|o| o.raw_text.as_str())
         .unwrap_or("(not yet generated)");
 
-    template
+    let mut expanded = template
         .replace("{orientation}", &orientation_ref)
         .replace("{prior_outputs}", &prior_text)
         .replace("{referee_reports}", &prior_text) // backward-compatible alias
         .replace("{last_output}", last_output_text)
         .replace("{editor_synthesis}", last_output_text) // backward-compatible alias
         .replace("{paper_path}", paper_text_path)
-        .replace("{source_path}", source_path)
+        .replace("{source_path}", source_path);
+
+    expanded = substitute_named_step_refs(&expanded, prior_outputs);
+    expanded
+}
+
+/// Replace `{step:<id>}` placeholders with the matching prior step's raw_text.
+/// Multi-agent runs produce composite IDs like "technical/claude"; both the base
+/// id ("technical") and the full id ("technical/claude") are matchable. When a
+/// base id has multiple agents, their outputs are joined with a separator.
+/// Unknown ids are replaced with a parenthesized notice so the prompt remains
+/// readable rather than leaking the literal `{step:foo}` to the LLM.
+fn substitute_named_step_refs(template: &str, prior_outputs: &[StepOutput]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    let needle = "{step:";
+
+    while let Some(start) = rest.find(needle) {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start + needle.len()..];
+        let Some(end_rel) = after_open.find('}') else {
+            // No closing brace — emit the rest verbatim.
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let id = after_open[..end_rel].trim();
+        let resolved = resolve_step_ref(id, prior_outputs);
+        out.push_str(&resolved);
+        rest = &after_open[end_rel + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn resolve_step_ref(id: &str, prior_outputs: &[StepOutput]) -> String {
+    if id.is_empty() {
+        return "(empty step reference)".to_string();
+    }
+    // Exact id match wins (covers both "technical" and "technical/claude").
+    if let Some(o) = prior_outputs.iter().find(|o| o.step_id == id) {
+        return o.raw_text.clone();
+    }
+    // Otherwise, gather all step outputs whose base id (before any '/') matches.
+    let matches: Vec<&StepOutput> = prior_outputs
+        .iter()
+        .filter(|o| o.step_id.split('/').next() == Some(id))
+        .collect();
+    if matches.is_empty() {
+        return format!("(no output for step '{id}')");
+    }
+    if matches.len() == 1 {
+        return matches[0].raw_text.clone();
+    }
+    matches
+        .iter()
+        .map(|o| format!("### {}\n\n{}", o.step_label, o.raw_text))
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n")
 }
 
 /// Run a single sequential step.
@@ -509,7 +570,8 @@ async fn run_sequential_step(
             );
         }
         let extra: Vec<&str> = source_dir.as_deref().into_iter().collect();
-        match call_llm(app, &prompt, &tool_refs, None, "text", timeout, &log_label, agent, source_dir.as_deref(), &extra).await {
+        let overrides = LlmOverrides::from_step_strings(&step.model, &step.effort);
+        match call_llm(app, &prompt, &tool_refs, None, "text", timeout, &log_label, agent, source_dir.as_deref(), &extra, &overrides).await {
             Ok(text) => {
                 raw_text = text;
                 last_err.clear();
@@ -545,11 +607,8 @@ mod tests {
         StepConfig {
             id: id.into(),
             label: id.into(),
-            prompt: String::new(),
-            enabled: true,
             phase,
-            tools: vec![],
-            agents: vec![],
+            ..Default::default()
         }
     }
 
@@ -666,5 +725,72 @@ mod tests {
         let template = "Last: {last_output}";
         let result = expand_template(template, "", &[], "/paper.txt", "/source.tex");
         assert!(result.contains("(not yet generated)"));
+    }
+
+    // ── named step references ──────────────────────────────────────
+
+    fn out(id: &str, label: &str, text: &str) -> StepOutput {
+        StepOutput {
+            step_id: id.into(),
+            step_label: label.into(),
+            phase: "parallel".into(),
+            agent: String::new(),
+            raw_text: text.into(),
+        }
+    }
+
+    #[test]
+    fn step_ref_exact_match() {
+        let prior = vec![
+            out("technical", "Technical", "tech body"),
+            out("empirical", "Empirical", "emp body"),
+        ];
+        let result = expand_template("Tech: {step:technical}", "", &prior, "p", "s");
+        assert!(result.contains("Tech: tech body"));
+        assert!(!result.contains("emp body"));
+    }
+
+    #[test]
+    fn step_ref_multi_agent_base_id_joins() {
+        let prior = vec![
+            out("technical/claude", "Technical (Claude)", "claude says"),
+            out("technical/gemini", "Technical (Gemini)", "gemini says"),
+        ];
+        let result = expand_template("All: {step:technical}", "", &prior, "p", "s");
+        assert!(result.contains("claude says"));
+        assert!(result.contains("gemini says"));
+        assert!(result.contains("---"));
+    }
+
+    #[test]
+    fn step_ref_multi_agent_specific_id() {
+        let prior = vec![
+            out("technical/claude", "Technical (Claude)", "claude says"),
+            out("technical/gemini", "Technical (Gemini)", "gemini says"),
+        ];
+        let result = expand_template("Just one: {step:technical/claude}", "", &prior, "p", "s");
+        assert!(result.contains("claude says"));
+        assert!(!result.contains("gemini says"));
+    }
+
+    #[test]
+    fn step_ref_unknown_id_emits_notice() {
+        let prior = vec![out("technical", "Technical", "tech body")];
+        let result = expand_template("Missing: {step:nonexistent}", "", &prior, "p", "s");
+        assert!(result.contains("(no output for step 'nonexistent')"));
+    }
+
+    #[test]
+    fn step_ref_unclosed_brace_passes_through() {
+        let prior = vec![out("a", "A", "aa")];
+        let result = expand_template("Broken: {step:a", "", &prior, "p", "s");
+        assert!(result.contains("{step:a"));
+    }
+
+    #[test]
+    fn step_ref_empty_id() {
+        let prior = vec![out("a", "A", "aa")];
+        let result = expand_template("{step:}", "", &prior, "p", "s");
+        assert!(result.contains("(empty step reference)"));
     }
 }

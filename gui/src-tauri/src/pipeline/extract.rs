@@ -138,7 +138,7 @@ fn extract_latex(path: &Path, depth: usize, root_dir: &Path, warnings: &mut Vec<
 
 /// Extract text from PDF using marker_single.
 /// Timeout is half the user's step timeout, floored at 120s to accommodate first-run model downloads.
-fn extract_marker(path: &Path) -> Result<String, String> {
+fn extract_marker(path: &Path, marker_disable_ocr: bool, marker_disable_images: bool) -> Result<String, String> {
     use std::io::Read;
     use std::process::Stdio;
 
@@ -150,10 +150,10 @@ fn extract_marker(path: &Path) -> Result<String, String> {
         "--output_format".to_string(),
         "markdown".to_string(),
     ];
-    if settings.marker_disable_images {
+    if marker_disable_images {
         marker_args.push("--disable_image_extraction".to_string());
     }
-    if settings.marker_disable_ocr {
+    if marker_disable_ocr {
         marker_args.push("--disable_ocr".to_string());
     }
     let marker_bin = find_command("marker_single")
@@ -323,6 +323,7 @@ async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<Extract
         None,
         None,
         &extra_dirs,
+        &super::claude::LlmOverrides::default(),
     )
     .await?;
 
@@ -341,20 +342,25 @@ async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<Extract
 
 /// Extract from a PDF file using marker or pdftotext.
 /// The "llm" setting is handled separately in `extract()` since it's async.
-fn extract_pdf_native(path: &Path) -> Result<ExtractionResult, String> {
+/// `method` should be the resolved effective extractor ("marker" or "pdftotext");
+/// callers are expected to translate "auto" / "llm" upstream.
+fn extract_pdf_native(
+    path: &Path,
+    method: &str,
+    marker_disable_ocr: bool,
+    marker_disable_images: bool,
+) -> Result<ExtractionResult, String> {
     let hash = compute_hash(path)?;
-    let settings = crate::settings::load();
-    let pref = settings.pdf_extractor.as_str();
 
-    let try_marker = pref == "marker";
-    let try_pdftotext = pref == "pdftotext";
+    let try_marker = method == "marker";
+    let try_pdftotext = method == "pdftotext";
 
     if try_marker {
         if find_command("marker_single").is_none() {
             return Err("PDF extractor is set to 'marker' but marker_single is not installed. \
                         Install marker-pdf (pip install marker-pdf) or change the setting.".to_string());
         }
-        let text = extract_marker(path)?;
+        let text = extract_marker(path, marker_disable_ocr, marker_disable_images)?;
         let quality_notes = scan_math_quality(&text);
         return Ok(ExtractionResult {
             text,
@@ -506,7 +512,11 @@ fn find_pdf_in_dir(dir: &Path) -> Option<PathBuf> {
 /// Extract text from a paper file or directory.
 /// When `app` is provided and the pdf_extractor setting is "llm", uses the
 /// configured LLM provider to read and extract the PDF to Markdown.
-pub async fn extract(app: &AppHandle, paper_path: &str) -> Result<ExtractionResult, String> {
+pub async fn extract(
+    app: &AppHandle,
+    paper_path: &str,
+    extraction_cfg: &crate::pipeline_config::ExtractionConfig,
+) -> Result<ExtractionResult, String> {
     let path = PathBuf::from(paper_path);
 
     if !path.exists() {
@@ -525,9 +535,26 @@ pub async fn extract(app: &AppHandle, paper_path: &str) -> Result<ExtractionResu
         "gemini" if !settings.google_api_key.is_empty() => false,
         _ => true,
     };
-    let use_llm = settings.pdf_extractor == "llm" && pdf_read_supported;
 
-    if settings.pdf_extractor == "llm" && !pdf_read_supported {
+    // Resolve the effective extraction method: profile override beats global.
+    // An explicit "auto" or empty string falls through to whatever the global
+    // setting says.
+    let cfg_method = extraction_cfg.method.trim();
+    let effective_method = if cfg_method.is_empty() || cfg_method == "auto" {
+        settings.pdf_extractor.clone()
+    } else {
+        cfg_method.to_string()
+    };
+    let effective_marker_disable_ocr = extraction_cfg
+        .marker_disable_ocr
+        .unwrap_or(settings.marker_disable_ocr);
+    let effective_marker_disable_images = extraction_cfg
+        .marker_disable_images
+        .unwrap_or(settings.marker_disable_images);
+
+    let use_llm = effective_method == "llm" && pdf_read_supported;
+
+    if effective_method == "llm" && !pdf_read_supported {
         let _ = app.emit("pipeline:log", serde_json::json!({
             "line": format!(
                 "NOTE: LLM PDF extraction is not available with the {} direct API. Using native extraction. \
@@ -581,7 +608,10 @@ pub async fn extract(app: &AppHandle, paper_path: &str) -> Result<ExtractionResu
     } else {
         None
     };
-    let extractor_name = settings.pdf_extractor.clone();
+    let extractor_name = effective_method.clone();
+    let blocking_method = effective_method.clone();
+    let blocking_disable_ocr = effective_marker_disable_ocr;
+    let blocking_disable_images = effective_marker_disable_images;
 
     // Non-LLM paths: run blocking I/O on a separate thread
     let native_result = tokio::task::spawn_blocking(move || {
@@ -608,7 +638,7 @@ pub async fn extract(app: &AppHandle, paper_path: &str) -> Result<ExtractionResu
             }
 
             if let Some(pdf) = find_pdf_in_dir(&path) {
-                return extract_pdf_native(&pdf);
+                return extract_pdf_native(&pdf, &blocking_method, blocking_disable_ocr, blocking_disable_images);
             }
 
             return Err(format!(
@@ -638,7 +668,7 @@ pub async fn extract(app: &AppHandle, paper_path: &str) -> Result<ExtractionResu
                 quality_notes: warnings,
             })
         } else if ext_eq(&path, "pdf") {
-            extract_pdf_native(&path)
+            extract_pdf_native(&path, &blocking_method, blocking_disable_ocr, blocking_disable_images)
         } else {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("(none)");
             Err(format!("Unsupported file type: .{ext}"))

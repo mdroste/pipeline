@@ -5,7 +5,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use std::io::Write;
 use tauri::{AppHandle, Emitter};
 
-use super::claude::build_silent_command;
+use super::claude::{build_silent_command, LlmOverrides};
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Codex to read it.
@@ -32,6 +32,7 @@ pub async fn call_codex(
     timeout_secs: u64,
     label: &str,
     cwd: Option<&str>,
+    overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let mut cmd_args: Vec<String> = vec!["exec".to_string()];
     let mut _temp_file: Option<NamedTempFile> = None;
@@ -51,14 +52,16 @@ pub async fn call_codex(
         cmd_args.push(format!("instructions={}", sys));
     }
 
-    // Apply Codex settings (model, reasoning effort)
+    // Apply Codex settings (model, reasoning effort) with optional per-step overrides.
     let settings = crate::settings::load();
-    let model = crate::settings::sanitize_cli_arg(&settings.codex_model);
+    let model_src = overrides.model.unwrap_or(settings.codex_model.as_str());
+    let model = crate::settings::sanitize_cli_arg(model_src);
     if !model.is_empty() {
         cmd_args.push("--model".to_string());
         cmd_args.push(model);
     }
-    let effort = crate::settings::sanitize_cli_arg(&settings.codex_effort);
+    let effort_src = overrides.effort.unwrap_or(settings.codex_effort.as_str());
+    let effort = crate::settings::sanitize_cli_arg(effort_src);
     if !effort.is_empty() {
         cmd_args.push("-c".to_string());
         cmd_args.push(format!("model_reasoning_effort={}", effort));

@@ -1,4 +1,4 @@
-use super::claude::call_llm;
+use super::claude::{call_llm, LlmOverrides};
 use crate::models::{ExtractionQualityNote, ExtractionResult, OrientationMap};
 use tauri::AppHandle;
 
@@ -6,9 +6,15 @@ const MAX_PAPER_TEXT: usize = 250_000;
 const MAX_RETRIES: usize = 2;
 
 /// Build the orientation map by calling Claude and validating the JSON output, retrying up to MAX_RETRIES times on parse failure.
+///
+/// `prompt_template` is the orientation prompt to use; `{paper_text}` is substituted
+/// with the (possibly truncated) extracted paper text. Pass `None` to use the default
+/// template loaded from prompts/orientation.md (or the user override at
+/// ~/.pipeline/prompts/orientation.md).
 pub async fn build_orientation_map(
     app: &AppHandle,
     extraction: &ExtractionResult,
+    prompt_template: Option<&str>,
 ) -> Result<OrientationMap, String> {
     let paper_text = if extraction.text.len() > MAX_PAPER_TEXT {
         // Find a valid UTF-8 char boundary at or before MAX_PAPER_TEXT
@@ -21,59 +27,24 @@ pub async fn build_orientation_map(
         &extraction.text
     };
 
-    let base_prompt = format!(
-        r#"Build a structured orientation map of this academic paper. This map will be used by multiple independent referees.
-
-Produce a JSON object with exactly this structure:
-
-{{
-  "metadata": {{
-    "title": "...",
-    "authors": ["..."],
-    "date": "...",
-    "paper_type": "theory" | "empirical" | "mixed",
-    "page_count": null,
-    "has_appendix": true,
-    "has_online_appendix": false
-  }},
-  "sections": [
-    {{"number": "1", "title": "Introduction", "page_start": 1, "page_end": 4}}
-  ],
-  "formal_results": [
-    {{"kind": "theorem", "number": "1", "page": 10, "summary": "...", "proof_location": "Appendix A, pp. 30-33"}}
-  ],
-  "tables_figures": [
-    {{"kind": "table", "number": "1", "page": 14, "caption_summary": "...", "what_it_shows": "..."}}
-  ],
-  "notation": [
-    {{"symbol": "β", "definition": "strategic interaction parameter", "page_introduced": 5}}
-  ],
-  "stated_contribution": "Quoted or paraphrased from the introduction...",
-  "key_references": ["Author1 and Author2 (2020)", "Author3 et al. (2019)"],
-  "extraction_quality_notes": [
-    {{"page_range": "pp. 10-15", "description": "equations garbled, subscripts missing"}}
-  ]
-}}
-
-Rules:
-- "paper_type": "theory" if theorems/proofs dominate, "empirical" if regressions/data dominate, "mixed" otherwise.
-- "formal_results": list every proposition, theorem, lemma, corollary, definition, and assumption.
-- "notation": list every explicitly defined symbol. Do not invent definitions.
-- "stated_contribution": quote the sentences where the authors state their contribution.
-- "extraction_quality_notes": flag sections where the text looks garbled or incomplete.
-- Return ONLY valid JSON. No markdown fences, no commentary.
-
-<paper>
-{paper_text}
-</paper>"#
-    );
+    // Resolve the template from caller, then user prompts dir, then compiled default.
+    let template_owned;
+    let template = match prompt_template {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => {
+            template_owned = crate::prompts::load_prompt("orientation")
+                .map_err(|e| format!("Failed to load orientation prompt: {e}"))?;
+            template_owned.as_str()
+        }
+    };
+    let base_prompt = template.replace("{paper_text}", paper_text);
 
     let mut prompt = base_prompt.clone();
     let mut last_error = String::new();
 
     for attempt in 0..=MAX_RETRIES {
         let timeout = (crate::settings::load().step_timeout_secs / 2).max(60);
-        let raw = call_llm(app, &prompt, &["Read"], None, "text", timeout, "Orientation map", None, None, &[]).await?;
+        let raw = call_llm(app, &prompt, &["Read"], None, "text", timeout, "Orientation map", None, None, &[], &LlmOverrides::default()).await?;
         let cleaned = strip_json_fences(&raw);
 
         match serde_json::from_str::<OrientationMap>(&cleaned) {

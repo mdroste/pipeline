@@ -1,13 +1,18 @@
 //! Direct Anthropic Messages API client.
 
 use super::api_common::*;
+use super::claude::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 use tauri::AppHandle;
 
 /// Map settings model shorthand to full Anthropic model ID.
-fn resolve_model(settings: &Settings) -> String {
-    match settings.claude_model.as_str() {
+/// `override_model` (when non-empty) takes precedence over the global setting.
+fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
+    let raw = override_model
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(settings.claude_model.as_str());
+    match raw {
         "" | "sonnet" => "claude-sonnet-4-20250514".to_string(),
         "opus" => "claude-opus-4-20250514".to_string(),
         "haiku" => "claude-haiku-4-5-20251001".to_string(),
@@ -38,9 +43,12 @@ pub async fn call_anthropic_api(
     timeout_secs: u64,
     label: &str,
     settings: &Settings,
+    overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let start = Instant::now();
-    let model = resolve_model(settings);
+    // Anthropic Messages API doesn't expose a "thinking effort" field on
+    // current models, so overrides.effort is intentionally ignored here.
+    let model = resolve_model(settings, overrides.model);
     log(app, format!("{label} started (API: Anthropic, model: {model})"));
 
     let client = &*super::api_common::HTTP_CLIENT;

@@ -10,6 +10,25 @@ use tauri::{AppHandle, Emitter};
 /// Beyond this we write to a temp file and tell Claude to read it.
 const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
 
+/// Per-call model/effort overrides. When fields are `Some(non-empty)`, they
+/// take precedence over the corresponding global settings for this single call.
+/// Empty strings are treated as "no override" so callers can pass
+/// step.model.as_str() directly.
+#[derive(Default, Clone, Debug)]
+pub struct LlmOverrides<'a> {
+    pub model: Option<&'a str>,
+    pub effort: Option<&'a str>,
+}
+
+impl<'a> LlmOverrides<'a> {
+    pub fn from_step_strings(model: &'a str, effort: &'a str) -> Self {
+        Self {
+            model: if model.trim().is_empty() { None } else { Some(model) },
+            effort: if effort.trim().is_empty() { None } else { Some(effort) },
+        }
+    }
+}
+
 /// Safety cap on collected subprocess stdout (50 MB).
 /// LLM outputs are bounded by token limits (~500 KB typical), so this
 /// only guards against pathological cases (e.g. broken binary on PATH).
@@ -44,6 +63,7 @@ pub async fn call_claude(
     label: &str,
     cwd: Option<&str>,
     extra_read_dirs: &[&str],
+    overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let mut cmd_args: Vec<String> = vec!["-p".to_string()];
     let mut tools: Vec<String> = allowed_tools.iter().map(|s| s.to_string()).collect();
@@ -114,14 +134,16 @@ pub async fn call_claude(
         cmd_args.push(output_format.to_string());
     }
 
-    // Apply Claude Code settings (model, effort)
+    // Apply Claude Code settings (model, effort) with optional per-step overrides.
     let settings = crate::settings::load();
-    let model = crate::settings::sanitize_cli_arg(&settings.claude_model);
+    let model_src = overrides.model.unwrap_or(settings.claude_model.as_str());
+    let model = crate::settings::sanitize_cli_arg(model_src);
     if !model.is_empty() {
         cmd_args.push("--model".to_string());
         cmd_args.push(model);
     }
-    let effort = crate::settings::sanitize_cli_arg(&settings.claude_effort);
+    let effort_src = overrides.effort.unwrap_or(settings.claude_effort.as_str());
+    let effort = crate::settings::sanitize_cli_arg(effort_src);
     if !effort.is_empty() {
         cmd_args.push("--effort".to_string());
         cmd_args.push(effort);
@@ -300,6 +322,7 @@ pub async fn call_llm(
     provider_override: Option<&str>,
     cwd: Option<&str>,
     extra_read_dirs: &[&str],
+    overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let settings = crate::settings::load();
     let provider = provider_override.unwrap_or(&settings.preferred_provider);
@@ -309,19 +332,19 @@ pub async fn call_llm(
         "claude" | "" if !settings.anthropic_api_key.is_empty() => {
             return super::api_anthropic::call_anthropic_api(
                 app, prompt, allowed_tools, system_prompt,
-                timeout_secs, label, &settings,
+                timeout_secs, label, &settings, overrides,
             ).await;
         }
         "codex" if !settings.openai_api_key.is_empty() => {
             return super::api_openai::call_openai_api(
                 app, prompt, allowed_tools, system_prompt,
-                timeout_secs, label, &settings,
+                timeout_secs, label, &settings, overrides,
             ).await;
         }
         "gemini" if !settings.google_api_key.is_empty() => {
             return super::api_google::call_google_api(
                 app, prompt, allowed_tools, system_prompt,
-                timeout_secs, label, &settings,
+                timeout_secs, label, &settings, overrides,
             ).await;
         }
         _ => {}
@@ -332,13 +355,13 @@ pub async fn call_llm(
     // mechanisms and don't accept --add-dir.
     match provider {
         "codex" => {
-            super::codex::call_codex(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd).await
+            super::codex::call_codex(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd, overrides).await
         }
         "gemini" => {
-            super::gemini::call_gemini(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd).await
+            super::gemini::call_gemini(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd, overrides).await
         }
         _ => {
-            call_claude(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd, extra_read_dirs).await
+            call_claude(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd, extra_read_dirs, overrides).await
         }
     }
 }

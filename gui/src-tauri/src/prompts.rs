@@ -13,6 +13,8 @@ const DEFAULT_PARALLEL_CONTEXT: &str = include_str!("../../../prompts/parallel_c
 const DEFAULT_MERGE: &str = include_str!("../../../prompts/merge.md");
 const DEFAULT_EDITOR_SYNTHESIS: &str = include_str!("../../../prompts/editor_synthesis.md");
 const DEFAULT_VALIDATE_FEEDBACK: &str = include_str!("../../../prompts/validate_feedback.md");
+// Preprocessing prompts:
+const DEFAULT_ORIENTATION: &str = include_str!("../../../prompts/orientation.md");
 
 /// Get the user prompts directory (~/.pipeline/prompts/).
 fn user_prompts_dir() -> Option<PathBuf> {
@@ -31,6 +33,7 @@ fn default_content(name: &str) -> Option<&'static str> {
         "merge" => Some(DEFAULT_MERGE),
         "editor_synthesis" => Some(DEFAULT_EDITOR_SYNTHESIS),
         "validate_feedback" => Some(DEFAULT_VALIDATE_FEEDBACK),
+        "orientation" => Some(DEFAULT_ORIENTATION),
         _ => None,
     }
 }

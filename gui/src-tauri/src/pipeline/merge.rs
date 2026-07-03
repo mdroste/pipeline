@@ -1,4 +1,4 @@
-use super::claude::call_llm;
+use super::claude::{call_llm, LlmOverrides};
 use crate::models::StepOutput;
 use crate::output::{capitalize, strip_to_report};
 use crate::pipeline_config::MergeConfig;
@@ -132,6 +132,7 @@ pub async fn merge_step_outputs(
                 agent_ref,
                 None,
                 &[],
+                &LlmOverrides::default(),
             )
             .await
             {

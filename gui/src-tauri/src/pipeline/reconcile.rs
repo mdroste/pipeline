@@ -1,4 +1,4 @@
-use super::claude::call_llm;
+use super::claude::{call_llm, LlmOverrides};
 use crate::models::PipelineReport;
 use crate::output::strip_to_report;
 use tauri::AppHandle;
@@ -76,6 +76,6 @@ Include ONLY your markdown report between those markers — no preamble, no comm
     );
 
     let timeout = crate::settings::load().step_timeout_secs.max(60);
-    let raw = call_llm(app, &prompt, &[], None, "text", timeout, "Revision reconciliation", None, None, &[]).await?;
+    let raw = call_llm(app, &prompt, &[], None, "text", timeout, "Revision reconciliation", None, None, &[], &LlmOverrides::default()).await?;
     Ok(strip_to_report(&raw))
 }

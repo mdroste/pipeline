@@ -40,6 +40,8 @@ function makeConfig(): PipelineConfig {
     ],
     merge: { enabled: true, prompt: "", agents: ["claude"] },
     use_orientation: true,
+    orientation_prompt: "",
+    extraction: { method: "", marker_disable_ocr: null, marker_disable_images: null },
     parallel_context_template: "",
   };
 }

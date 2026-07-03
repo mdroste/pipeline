@@ -1,13 +1,18 @@
 //! Direct OpenAI Chat Completions API client.
 
 use super::api_common::*;
+use super::claude::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 use tauri::AppHandle;
 
 /// Map settings model shorthand to OpenAI model ID.
-fn resolve_model(settings: &Settings) -> String {
-    match settings.codex_model.as_str() {
+/// `override_model` (when non-empty) takes precedence over the global setting.
+fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
+    let raw = override_model
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(settings.codex_model.as_str());
+    match raw {
         "" => "gpt-4.1".to_string(),
         other => other.to_string(),
     }
@@ -39,9 +44,10 @@ pub async fn call_openai_api(
     timeout_secs: u64,
     label: &str,
     settings: &Settings,
+    overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let start = Instant::now();
-    let model = resolve_model(settings);
+    let model = resolve_model(settings, overrides.model);
     log(app, format!("{label} started (API: OpenAI, model: {model})"));
 
     let client = &*super::api_common::HTTP_CLIENT;
@@ -63,8 +69,12 @@ pub async fn call_openai_api(
         tool_call_id: None,
     });
 
-    let reasoning_effort = if !settings.codex_effort.is_empty() {
-        Some(settings.codex_effort.clone())
+    let effort_src = overrides
+        .effort
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(settings.codex_effort.as_str());
+    let reasoning_effort = if !effort_src.is_empty() {
+        Some(effort_src.to_string())
     } else {
         None
     };

@@ -1,13 +1,18 @@
 //! Direct Google Gemini API client.
 
 use super::api_common::*;
+use super::claude::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 use tauri::AppHandle;
 
 /// Map settings model shorthand to Google model ID.
-fn resolve_model(settings: &Settings) -> String {
-    match settings.gemini_model.as_str() {
+/// `override_model` (when non-empty) takes precedence over the global setting.
+fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
+    let raw = override_model
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(settings.gemini_model.as_str());
+    match raw {
         "" => "gemini-2.5-flash".to_string(),
         other => other.to_string(),
     }
@@ -40,9 +45,12 @@ pub async fn call_google_api(
     timeout_secs: u64,
     label: &str,
     settings: &Settings,
+    overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let start = Instant::now();
-    let model = resolve_model(settings);
+    // Google's Gemini API doesn't expose an effort/thinking flag in this client,
+    // so overrides.effort is ignored here.
+    let model = resolve_model(settings, overrides.model);
     log(app, format!("{label} started (API: Google, model: {model})"));
 
     let client = &*super::api_common::HTTP_CLIENT;

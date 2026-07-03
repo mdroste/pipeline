@@ -5,7 +5,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use std::io::Write;
 use tauri::{AppHandle, Emitter};
 
-use super::claude::build_silent_command;
+use super::claude::{build_silent_command, LlmOverrides};
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Gemini to read it.
@@ -32,6 +32,7 @@ pub async fn call_gemini(
     timeout_secs: u64,
     label: &str,
     cwd: Option<&str>,
+    overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let mut cmd_args: Vec<String> = Vec::new();
     let mut _temp_file: Option<NamedTempFile> = None;
@@ -45,9 +46,11 @@ pub async fn call_gemini(
     cmd_args.push("-o".to_string());
     cmd_args.push("text".to_string());
 
-    // Apply Gemini settings (model)
+    // Apply Gemini settings (model) with optional per-step override.
+    // Gemini CLI doesn't expose an effort flag, so overrides.effort is ignored here.
     let settings = crate::settings::load();
-    let model = crate::settings::sanitize_cli_arg(&settings.gemini_model);
+    let model_src = overrides.model.unwrap_or(settings.gemini_model.as_str());
+    let model = crate::settings::sanitize_cli_arg(model_src);
     if !model.is_empty() {
         cmd_args.push("-m".to_string());
         cmd_args.push(model);

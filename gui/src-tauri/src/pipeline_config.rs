@@ -31,6 +31,28 @@ pub struct StepConfig {
     pub tools: Vec<String>,
     #[serde(default)]
     pub agents: Vec<String>,
+    /// Per-step model override. Empty = use the global setting for this step's provider.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    /// Per-step effort override (low/medium/high/max). Empty = use the global setting.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub effort: String,
+}
+
+impl Default for StepConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            prompt: String::new(),
+            enabled: true,
+            phase: Phase::Parallel,
+            tools: Vec::new(),
+            agents: Vec::new(),
+            model: String::new(),
+            effort: String::new(),
+        }
+    }
 }
 
 /// Configuration for the cross-agent merge step.
@@ -48,6 +70,21 @@ pub struct MergeConfig {
     pub agents: Vec<String>,
 }
 
+/// Per-profile extraction overrides. When `method` is empty, the global
+/// Settings value is used; same for the marker flags (which fall back to
+/// the global toggle when this struct is absent on a profile).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExtractionConfig {
+    /// "auto" | "llm" | "marker" | "pdftotext" | "" (= inherit global).
+    #[serde(default)]
+    pub method: String,
+    /// `Some` overrides the global setting; `None` inherits.
+    #[serde(default)]
+    pub marker_disable_ocr: Option<bool>,
+    #[serde(default)]
+    pub marker_disable_images: Option<bool>,
+}
+
 /// Combined config returned to callers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
@@ -57,6 +94,16 @@ pub struct PipelineConfig {
     /// Whether to build an orientation map before running steps.
     #[serde(default = "default_true")]
     pub use_orientation: bool,
+    /// Per-profile orientation prompt. Empty = use the default template loaded
+    /// from prompts/orientation.md (or the user override at
+    /// ~/.pipeline/prompts/orientation.md). The placeholder `{paper_text}` is
+    /// substituted with the extracted paper at runtime.
+    #[serde(default)]
+    pub orientation_prompt: String,
+    /// Per-profile extraction overrides. When unset (default), the global
+    /// Settings values are used.
+    #[serde(default)]
+    pub extraction: ExtractionConfig,
     /// Template wrapping each parallel step's prompt. Placeholders:
     ///   {step_prompt}  — the step's own instructions
     ///   {paper_type}   — theory / empirical / mixed
@@ -76,6 +123,10 @@ pub struct ProfileData {
     pub merge: MergeConfig,
     #[serde(default = "default_true")]
     pub use_orientation: bool,
+    #[serde(default)]
+    pub orientation_prompt: String,
+    #[serde(default)]
+    pub extraction: ExtractionConfig,
     #[serde(default = "default_parallel_template")]
     pub parallel_context_template: String,
 }
@@ -88,6 +139,8 @@ impl ProfileData {
             steps,
             merge,
             use_orientation: true,
+            orientation_prompt: String::new(),
+            extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
         }
     }
@@ -126,6 +179,10 @@ pub enum ExportEnvelope {
         merge: MergeConfig,
         #[serde(default = "default_true")]
         use_orientation: bool,
+        #[serde(default)]
+        orientation_prompt: String,
+        #[serde(default)]
+        extraction: ExtractionConfig,
         #[serde(default = "default_parallel_template")]
         parallel_context_template: String,
     },
@@ -146,6 +203,10 @@ pub struct ProfileExport {
     pub merge: MergeConfig,
     #[serde(default = "default_true")]
     pub use_orientation: bool,
+    #[serde(default)]
+    pub orientation_prompt: String,
+    #[serde(default)]
+    pub extraction: ExtractionConfig,
     #[serde(default = "default_parallel_template")]
     pub parallel_context_template: String,
 }
@@ -199,6 +260,7 @@ fn referee_to_step(r: LegacyRefereeConfig) -> StepConfig {
         phase: Phase::Parallel,
         tools,
         agents: r.agents,
+        ..Default::default()
     }
 }
 
@@ -211,6 +273,7 @@ fn post_step_to_step(p: LegacyPostStepConfig) -> StepConfig {
         phase: Phase::Sequential,
         tools: vec![],
         agents: p.agents,
+        ..Default::default()
     }
 }
 
@@ -322,6 +385,7 @@ fn default_steps() -> Vec<StepConfig> {
             phase: Phase::Parallel,
             tools: vec!["WebSearch".into()],
             agents: vec![],
+            ..Default::default()
         },
         StepConfig {
             id: "technical".into(),
@@ -331,6 +395,7 @@ fn default_steps() -> Vec<StepConfig> {
             phase: Phase::Parallel,
             tools: vec![],
             agents: vec![],
+            ..Default::default()
         },
         StepConfig {
             id: "empirical".into(),
@@ -340,6 +405,7 @@ fn default_steps() -> Vec<StepConfig> {
             phase: Phase::Parallel,
             tools: vec![],
             agents: vec![],
+            ..Default::default()
         },
         StepConfig {
             id: "consistency".into(),
@@ -349,6 +415,7 @@ fn default_steps() -> Vec<StepConfig> {
             phase: Phase::Parallel,
             tools: vec![],
             agents: vec![],
+            ..Default::default()
         },
         StepConfig {
             id: "exposition".into(),
@@ -358,6 +425,7 @@ fn default_steps() -> Vec<StepConfig> {
             phase: Phase::Parallel,
             tools: vec![],
             agents: vec![],
+            ..Default::default()
         },
         StepConfig {
             id: "editor_synthesis".into(),
@@ -367,6 +435,7 @@ fn default_steps() -> Vec<StepConfig> {
             phase: Phase::Sequential,
             tools: vec![],
             agents: vec![],
+            ..Default::default()
         },
         StepConfig {
             id: "validate_feedback".into(),
@@ -376,6 +445,7 @@ fn default_steps() -> Vec<StepConfig> {
             phase: Phase::Sequential,
             tools: vec![],
             agents: vec![],
+            ..Default::default()
         },
     ]
 }
@@ -385,6 +455,8 @@ fn defaults() -> PipelineConfig {
         steps: default_steps(),
         merge: MergeConfig::default(),
         use_orientation: true,
+        orientation_prompt: String::new(),
+        extraction: ExtractionConfig::default(),
         parallel_context_template: default_parallel_template(),
     }
 }
@@ -410,6 +482,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Parallel,
                     tools: vec![],
                     agents: vec![],
+                    ..Default::default()
                 },
                 StepConfig {
                     id: "consistency".into(),
@@ -419,6 +492,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Parallel,
                     tools: vec![],
                     agents: vec![],
+                    ..Default::default()
                 },
                 StepConfig {
                     id: "editor_synthesis".into(),
@@ -428,10 +502,13 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Sequential,
                     tools: vec![],
                     agents: vec![],
+                    ..Default::default()
                 },
             ],
             merge: MergeConfig::default(),
             use_orientation: true,
+            orientation_prompt: String::new(),
+            extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
         };
         let json = serde_json::to_string_pretty(&profile)
@@ -454,6 +531,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Parallel,
                     tools: vec!["WebSearch".into()],
                     agents: vec![],
+                    ..Default::default()
                 },
                 StepConfig {
                     id: "empirical".into(),
@@ -463,6 +541,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Parallel,
                     tools: vec![],
                     agents: vec![],
+                    ..Default::default()
                 },
                 StepConfig {
                     id: "consistency".into(),
@@ -472,6 +551,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Parallel,
                     tools: vec![],
                     agents: vec![],
+                    ..Default::default()
                 },
                 StepConfig {
                     id: "exposition".into(),
@@ -481,6 +561,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Parallel,
                     tools: vec![],
                     agents: vec![],
+                    ..Default::default()
                 },
                 StepConfig {
                     id: "editor_synthesis".into(),
@@ -490,6 +571,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Sequential,
                     tools: vec![],
                     agents: vec![],
+                    ..Default::default()
                 },
                 StepConfig {
                     id: "validate_feedback".into(),
@@ -499,10 +581,13 @@ fn create_builtin_profiles() -> Result<(), String> {
                     phase: Phase::Sequential,
                     tools: vec![],
                     agents: vec![],
+                    ..Default::default()
                 },
             ],
             merge: MergeConfig::default(),
             use_orientation: true,
+            orientation_prompt: String::new(),
+            extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
         };
         let json = serde_json::to_string_pretty(&profile)
@@ -644,6 +729,8 @@ pub fn load() -> PipelineConfig {
             steps: profile.steps,
             merge: profile.merge,
             use_orientation: profile.use_orientation,
+            orientation_prompt: profile.orientation_prompt,
+            extraction: profile.extraction,
             parallel_context_template: profile.parallel_context_template,
         },
         Err(e) => {
@@ -681,6 +768,8 @@ pub fn save(config: &PipelineConfig) -> Result<(), String> {
         steps: config.steps.clone(),
         merge: config.merge.clone(),
         use_orientation: config.use_orientation,
+        orientation_prompt: config.orientation_prompt.clone(),
+        extraction: config.extraction.clone(),
         parallel_context_template: config.parallel_context_template.clone(),
     };
     save_profile(&settings.active_profile, &profile)
@@ -763,6 +852,8 @@ pub fn duplicate_profile(source_id: &str, new_name: &str) -> Result<ProfileSumma
     }
     let mut profile = ProfileData::new(new_name, source.steps, source.merge);
     profile.use_orientation = source.use_orientation;
+    profile.orientation_prompt = source.orientation_prompt;
+    profile.extraction = source.extraction;
     profile.parallel_context_template = source.parallel_context_template;
     save_profile(&new_id, &profile)?;
     Ok(ProfileSummary {
@@ -813,6 +904,8 @@ pub fn switch_profile(id: &str) -> Result<PipelineConfig, String> {
         steps: profile.steps,
         merge: profile.merge,
         use_orientation: profile.use_orientation,
+        orientation_prompt: profile.orientation_prompt,
+        extraction: profile.extraction,
         parallel_context_template: profile.parallel_context_template,
     })
 }
@@ -831,6 +924,8 @@ pub fn export_profile_data(id: &str) -> Result<String, String> {
         steps: profile.steps,
         merge: profile.merge,
         use_orientation: profile.use_orientation,
+        orientation_prompt: profile.orientation_prompt,
+        extraction: profile.extraction,
         parallel_context_template: profile.parallel_context_template,
     };
     serde_json::to_string_pretty(&envelope).map_err(|e| format!("Serialize error: {e}"))
@@ -853,6 +948,8 @@ pub fn export_bundle() -> Result<String, String> {
             steps: profile.steps,
             merge: profile.merge,
             use_orientation: profile.use_orientation,
+            orientation_prompt: profile.orientation_prompt,
+            extraction: profile.extraction,
             parallel_context_template: profile.parallel_context_template,
         });
     }
@@ -910,6 +1007,8 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
                 steps: convert_legacy_steps(referees, post_steps),
                 merge,
                 use_orientation: true,
+                orientation_prompt: String::new(),
+                extraction: ExtractionConfig::default(),
                 parallel_context_template: default_parallel_template(),
             });
         }
@@ -933,6 +1032,8 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
             steps: convert_legacy_steps(referees, post_steps),
             merge,
             use_orientation: true,
+            orientation_prompt: String::new(),
+            extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
         });
     }
@@ -945,6 +1046,8 @@ pub fn import_profile_data(
     steps: Vec<StepConfig>,
     merge: MergeConfig,
     use_orientation: bool,
+    orientation_prompt: String,
+    extraction: ExtractionConfig,
     parallel_context_template: String,
 ) -> Result<ProfileSummary, String> {
     let _ = ensure_migrated();
@@ -962,6 +1065,8 @@ pub fn import_profile_data(
     let sc = steps.len();
     let mut profile = ProfileData::new(name, steps, merge);
     profile.use_orientation = use_orientation;
+    profile.orientation_prompt = orientation_prompt;
+    profile.extraction = extraction;
     profile.parallel_context_template = parallel_context_template;
     save_profile(&id, &profile)?;
     Ok(ProfileSummary {
@@ -986,6 +1091,8 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                     steps: p.steps.clone(),
                     merge: p.merge.clone(),
                     use_orientation: p.use_orientation,
+                    orientation_prompt: p.orientation_prompt.clone(),
+                    extraction: p.extraction.clone(),
                     parallel_context_template: p.parallel_context_template.clone(),
                 };
                 save_profile(&p.id, &profile)?;
