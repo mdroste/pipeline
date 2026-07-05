@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PaperSelector from "./components/PaperSelector";
 import ArtifactExplorer from "./components/ArtifactExplorer";
@@ -11,9 +11,17 @@ import SettingsPage from "./components/SettingsPage";
 import PipelinePage from "./components/PipelinePage";
 import AboutPage from "./components/AboutPage";
 import UpdateBanner from "./components/UpdateBanner";
-import { usePipeline } from "./hooks/usePipeline";
+import { usePipeline, type LogEntry } from "./hooks/usePipeline";
+
+// Compact token count: 1_234_567 → "1.2M", 45_678 → "45.7k", 832 → "832".
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
+  return String(n);
+}
 import { isMac } from "./lib/platform";
 import { isPaperOrientation } from "./lib/types";
+import { renderGenericSurvey } from "./lib/surveyMarkdown";
 import type { PipelineReport, DepsReport, OrientationMap, PaperMetadata } from "./lib/types";
 
 type Page = "main" | "pipeline" | "settings" | "help";
@@ -91,10 +99,10 @@ function renderOrientationMap(o: OrientationMap): string {
   return md;
 }
 
-/** Render any survey JSON: pretty view when paper-shaped, raw JSON otherwise. */
+/** Render any survey JSON: paper view when paper-shaped, generic sections otherwise. */
 function renderSurvey(orientation: PipelineReport["orientation"]): string {
   if (isPaperOrientation(orientation)) return renderOrientationMap(orientation);
-  return `# Survey\n\n\`\`\`json\n${JSON.stringify(orientation, null, 2)}\n\`\`\`\n`;
+  return renderGenericSurvey(orientation);
 }
 
 function getArtifactMarkdown(
@@ -116,13 +124,28 @@ function getArtifactMarkdown(
   return reportMarkdown;
 }
 
+// Console line color: trust the backend `level` when it's meaningful, and fall
+// back to prefix-sniffing for orchestration lines that carry no level.
+function logLineClass(entry: LogEntry): string {
+  if (entry.level === "error" || entry.line.startsWith("ERROR")) return "text-red-400";
+  if (entry.level === "warn" || entry.line.startsWith("WARNING")) return "text-yellow-500";
+  if (entry.level === "stderr" || entry.line.startsWith("[stderr]")) return "text-orange-400";
+  if (entry.line.startsWith("Still waiting")) return "text-yellow-600";
+  if (entry.level === "stdout" || entry.line.startsWith("$") || entry.line.startsWith("Wrote"))
+    return "text-gray-500";
+  return "text-gray-400";
+}
+
 function App() {
-  const { state, logs, startPipeline, cancel, reset, listenersReady } = usePipeline();
+  const { state, logs, usage, startPipeline, cancel, reset, listenersReady } = usePipeline();
   const [paperPath, setPaperPath] = useState<string | null>(null);
   const [depsReport, setDepsReport] = useState<DepsReport | null>(null);
   const [depsLoading, setDepsLoading] = useState(true);
   const [page, setPage] = useState<Page>("main");
   const [logOpen, setLogOpen] = useState(true);
+  // Which headless session's console to show: "master" = all lines.
+  const [selectedSession, setSelectedSession] = useState<number | "master">("master");
+  const [copiedLog, setCopiedLog] = useState(false);
   const [configVersion, setConfigVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [artifact, setArtifact] = useState<string>("report");
@@ -197,6 +220,61 @@ function App() {
   const isRunning =
     state.kind !== "idle" && state.kind !== "done" && state.kind !== "error";
 
+  // Group console lines by headless session for the per-session selector.
+  const sessions = useMemo(() => {
+    const map = new Map<
+      number,
+      { id: number; label: string; count: number; hasError: boolean }
+    >();
+    for (const e of logs) {
+      if (e.session == null) continue;
+      let s = map.get(e.session);
+      if (!s) {
+        s = { id: e.session, label: e.label || `Session ${e.session}`, count: 0, hasError: false };
+        map.set(e.session, s);
+      }
+      s.count++;
+      if (s.label.startsWith("Session ") && e.label) s.label = e.label;
+      if (e.level === "error" || e.line.startsWith("ERROR")) s.hasError = true;
+    }
+    return Array.from(map.values()).sort((a, b) => a.id - b.id);
+  }, [logs]);
+
+  // A stale selection (previous run's session id) falls back to the master view.
+  const activeSession =
+    selectedSession !== "master" && !sessions.some((s) => s.id === selectedSession)
+      ? "master"
+      : selectedSession;
+
+  const visibleLogs = useMemo(
+    () => (activeSession === "master" ? logs : logs.filter((e) => e.session === activeSession)),
+    [logs, activeSession]
+  );
+
+  // Copy the currently shown console lines (respecting the session filter).
+  const copyLogs = useCallback(async () => {
+    const text = visibleLogs.map((e) => e.line).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for webviews without async clipboard access.
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        // give up silently
+      }
+      document.body.removeChild(ta);
+    }
+    setCopiedLog(true);
+    setTimeout(() => setCopiedLog(false), 1500);
+  }, [visibleLogs]);
+
   const [showDeps, setShowDeps] = useState(false);
 
   // Auto-show deps modal on startup if required deps are missing
@@ -215,20 +293,26 @@ function App() {
         />
       )}
 
-      {/* Title-bar strip (macOS): hosts the traffic lights, sole drag region */}
+      {/* Invisible window-wide drag strip along the very top edge (macOS).
+          Thin (16px) so it stays above the content panels' own controls,
+          which start at 8px padding — grab the top edge anywhere to drag. */}
       {isMac && (
-        <div
-          data-tauri-drag-region
-          className="h-7 shrink-0 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800"
-        />
+        <div data-tauri-drag-region className="fixed top-0 inset-x-0 h-4 z-30" />
       )}
 
       <main className="flex-1 flex min-h-0">
-        {/* Sidebar */}
+        {/* Sidebar — on macOS it extends to the window top and hosts the
+            traffic lights; the padding above the content is the drag region */}
         <aside
-          className="border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 flex flex-col gap-4 overflow-y-auto shrink-0 relative"
+          className={`border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 flex flex-col gap-4 overflow-y-auto shrink-0 relative ${isMac ? "pt-12" : ""}`}
           style={{ width: sidebarWidth }}
         >
+          {isMac && (
+            <div
+              data-tauri-drag-region
+              className="absolute top-0 left-0 right-0 h-12 z-10"
+            />
+          )}
           <PaperSelector
             onPathChange={(p) => {
               setPaperPath(p);
@@ -261,7 +345,7 @@ function App() {
               ? "Checking dependencies..."
               : isRunning
                 ? "Running..."
-                : "Generate Report"}
+                : "Run"}
           </button>
 
           {isRunning && (
@@ -396,7 +480,7 @@ function App() {
             ) : state.kind === "idle" ? (
               <div className="flex items-center justify-center h-full text-gray-400">
                 <div className="text-center">
-                  <p className="text-lg">Select a paper to get started</p>
+                  <p className="text-lg">Select input file(s) to get started</p>
                   <p className="text-sm mt-1">
                     Supports .tex, .pdf, or directories
                   </p>
@@ -420,34 +504,77 @@ function App() {
               className="border-t border-gray-300 dark:border-gray-700 bg-gray-900 flex flex-col"
               style={{ height: logOpen ? "12rem" : undefined }}
             >
-              <button
-                onClick={() => setLogOpen(!logOpen)}
+              <div
                 className="flex items-center justify-between px-4 py-1.5 bg-gray-800
-                           text-gray-400 text-xs font-mono hover:bg-gray-700
-                           transition-colors shrink-0 cursor-pointer select-none"
+                           text-gray-400 text-xs font-mono shrink-0"
               >
-                <span>Console ({logs.length} lines)</span>
-                <span>{logOpen ? "\u25BC" : "\u25B2"}</span>
-              </button>
+                <div className="flex items-center gap-3 min-w-0">
+                  <button
+                    onClick={() => setLogOpen(!logOpen)}
+                    className="flex items-center gap-1.5 hover:text-gray-200
+                               transition-colors cursor-pointer select-none shrink-0"
+                  >
+                    <span>{logOpen ? "\u25BC" : "\u25B2"}</span>
+                    <span>Console</span>
+                  </button>
+                  {sessions.length > 0 && (
+                    <select
+                      value={activeSession === "master" ? "master" : String(activeSession)}
+                      onChange={(e) =>
+                        setSelectedSession(
+                          e.target.value === "master" ? "master" : Number(e.target.value)
+                        )
+                      }
+                      className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5
+                                 text-xs text-gray-300 max-w-[18rem] cursor-pointer"
+                      title="Show a single headless session's log, or all of them"
+                    >
+                      <option value="master">All sessions</option>
+                      {sessions.map((s) => {
+                        const u = usage.bySession[s.id];
+                        const tok = u ? ` \u00b7 ${fmtTokens(u.input)}\u2192${fmtTokens(u.output)}` : "";
+                        return (
+                          <option key={s.id} value={String(s.id)}>
+                            {(s.hasError ? "\u2715 " : "") + s.label + ` (${s.count})` + tok}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {usage.total.input + usage.total.output > 0 && (
+                    <span
+                      className="text-gray-500"
+                      title={`${usage.total.input.toLocaleString()} input + ${usage.total.output.toLocaleString()} output tokens (providers that report usage)`}
+                    >
+                      {fmtTokens(usage.total.input)} in / {fmtTokens(usage.total.output)} out
+                    </span>
+                  )}
+                  <span>{visibleLogs.length} lines</span>
+                  <button
+                    onClick={copyLogs}
+                    disabled={visibleLogs.length === 0}
+                    className="border border-gray-700 rounded px-1.5 py-0.5 text-xs
+                               text-gray-300 hover:bg-gray-700 hover:text-gray-100
+                               transition-colors cursor-pointer disabled:opacity-40
+                               disabled:cursor-default"
+                    title={
+                      activeSession === "master"
+                        ? "Copy all console lines"
+                        : "Copy this session's console lines"
+                    }
+                  >
+                    {copiedLog ? "Copied ✓" : "Copy"}
+                  </button>
+                </div>
+              </div>
               {logOpen && (
                 <div className="flex-1 overflow-auto px-4 py-2 min-h-0">
                   <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                    {logs.map((line, i) => (
-                      <div
-                        key={i}
-                        className={
-                          line.startsWith("ERROR")
-                            ? "text-red-400"
-                            : line.startsWith("$") || line.startsWith("Wrote")
-                              ? "text-gray-500"
-                              : line.startsWith("Still waiting")
-                                ? "text-yellow-600"
-                                : line.startsWith("[stderr]")
-                                  ? "text-orange-400"
-                                  : "text-gray-400"
-                        }
-                      >
-                        {line}
+                    {visibleLogs.map((entry, i) => (
+                      <div key={i} className={logLineClass(entry)}>
+                        {entry.line}
                       </div>
                     ))}
                     <div ref={logEndRef} />

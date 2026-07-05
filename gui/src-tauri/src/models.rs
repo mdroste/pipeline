@@ -184,6 +184,28 @@ pub fn paper_view(survey: &serde_json::Value) -> Option<OrientationMap> {
     serde_json::from_value(survey.clone()).ok()
 }
 
+/// One-line instruction telling a step what to look for in the survey JSON.
+/// Paper-shaped surveys keep the referee vocabulary; any other survey gets a
+/// neutral sentence listing its actual top-level keys, so steps learn what
+/// the map offers without the engine assuming a schema.
+pub fn survey_hint(survey: &serde_json::Value) -> String {
+    if paper_view(survey).is_some() {
+        return "Read it for the paper's structure, sections, formal results, tables, figures, and notation.".to_string();
+    }
+    let keys: Vec<&str> = survey
+        .as_object()
+        .map(|o| o.keys().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+    if keys.is_empty() {
+        "Read it for a structured map of the input before you begin.".to_string()
+    } else {
+        format!(
+            "Read it for a structured map of the input; it covers: {}.",
+            keys.join(", ")
+        )
+    }
+}
+
 // --- Step Output ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -437,6 +459,38 @@ mod tests {
     #[test]
     fn paper_view_rejects_null() {
         assert!(paper_view(&serde_json::Value::Null).is_none());
+    }
+
+    // ── survey_hint ────────────────────────────────────────────────
+
+    #[test]
+    fn survey_hint_paper_shaped_keeps_referee_vocabulary() {
+        let survey = serde_json::json!({
+            "metadata": {"title": "T", "paper_type": "theory"},
+            "sections": []
+        });
+        assert!(survey_hint(&survey).contains("formal results"));
+    }
+
+    #[test]
+    fn survey_hint_generic_lists_actual_keys() {
+        let survey = serde_json::json!({
+            "overview": "a codebase",
+            "components": [],
+            "entry_points": []
+        });
+        let hint = survey_hint(&survey);
+        assert!(hint.contains("overview"));
+        assert!(hint.contains("components"));
+        assert!(hint.contains("entry_points"));
+        assert!(!hint.contains("paper"));
+    }
+
+    #[test]
+    fn survey_hint_empty_survey_stays_neutral() {
+        let hint = survey_hint(&serde_json::json!({}));
+        assert!(hint.contains("structured map"));
+        assert!(!hint.contains("paper"));
     }
 
     // ── PipelineReport::all_outputs ───────────────────────────────────

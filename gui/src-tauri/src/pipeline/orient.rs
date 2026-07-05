@@ -5,6 +5,30 @@ use tauri::AppHandle;
 const MAX_PAPER_TEXT: usize = 250_000;
 const MAX_RETRIES: usize = 2;
 
+/// Pick the survey template for a run, given the profile's survey prompt and
+/// the effective input mode.
+///
+/// A user-customized prompt is always used verbatim. A stock prompt (empty,
+/// or byte-equal to the compiled-in paper or generic survey template) adapts
+/// to the input: folder inputs get the folder survey, which explores the tree
+/// with the Read tool instead of surveying the file inventory text. Returns
+/// `None` to mean "use the default paper template" (build_orientation_map
+/// resolves it), matching the previous behavior for document inputs.
+pub fn resolve_survey_template(profile_prompt: &str, input_mode: &str) -> Option<String> {
+    let trimmed = profile_prompt.trim();
+    let is_stock = trimmed.is_empty()
+        || Some(trimmed) == crate::prompts::compiled_default("orientation").map(str::trim)
+        || Some(trimmed) == crate::prompts::compiled_default("orientation_generic").map(str::trim);
+    if input_mode == "folder" && is_stock {
+        return crate::prompts::load_prompt("orientation_folder").ok();
+    }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(profile_prompt.to_string())
+    }
+}
+
 /// Build the survey (orientation map) by calling the LLM and validating that the
 /// output is a JSON object, retrying up to MAX_RETRIES times on parse failure.
 ///
@@ -21,7 +45,8 @@ pub async fn build_orientation_map(
     extraction: &ExtractionResult,
     prompt_template: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    let paper_text = if extraction.text.len() > MAX_PAPER_TEXT {
+    let truncated = extraction.text.len() > MAX_PAPER_TEXT;
+    let paper_text = if truncated {
         // Find a valid UTF-8 char boundary at or before MAX_PAPER_TEXT
         let mut boundary = MAX_PAPER_TEXT;
         while boundary > 0 && !extraction.text.is_char_boundary(boundary) {
@@ -31,6 +56,14 @@ pub async fn build_orientation_map(
     } else {
         &extraction.text
     };
+
+    let mut quality_notes = extraction.quality_notes.clone();
+    if truncated {
+        quality_notes.push(format!(
+            "Survey built from the first {MAX_PAPER_TEXT} of {} characters; the survey may not cover the end of the input.",
+            extraction.text.len()
+        ));
+    }
 
     // Resolve the template from caller, then user prompts dir, then compiled default.
     let template_owned;
@@ -56,7 +89,7 @@ pub async fn build_orientation_map(
 
         match serde_json::from_str::<serde_json::Value>(&cleaned) {
             Ok(mut value) if value.is_object() => {
-                append_quality_notes(&mut value, &extraction.quality_notes);
+                append_quality_notes(&mut value, &quality_notes);
                 return Ok(value);
             }
             Ok(_) => {
@@ -212,5 +245,58 @@ mod tests {
         let mut survey = serde_json::json!({"overview": "x"});
         append_quality_notes(&mut survey, &[]);
         assert!(survey.get("extraction_quality_notes").is_none());
+    }
+
+    // ── resolve_survey_template ────────────────────────────────────
+    // Note: load_prompt checks ~/.pipeline/prompts/ overrides first, so
+    // these assert against load_prompt output rather than literal text.
+
+    #[test]
+    fn resolve_empty_prompt_document_mode_uses_default() {
+        assert!(resolve_survey_template("", "document").is_none());
+        assert!(resolve_survey_template("  \n", "document").is_none());
+    }
+
+    #[test]
+    fn resolve_empty_prompt_folder_mode_uses_folder_survey() {
+        let resolved = resolve_survey_template("", "folder").expect("folder survey should load");
+        let folder = crate::prompts::load_prompt("orientation_folder").unwrap();
+        assert_eq!(resolved, folder);
+    }
+
+    #[test]
+    fn resolve_stock_generic_prompt_swaps_in_folder_mode() {
+        let generic = crate::prompts::compiled_default("orientation_generic").unwrap();
+        let resolved =
+            resolve_survey_template(generic, "folder").expect("folder survey should load");
+        let folder = crate::prompts::load_prompt("orientation_folder").unwrap();
+        assert_eq!(resolved, folder);
+        // ...but stays generic for document inputs.
+        assert_eq!(
+            resolve_survey_template(generic, "document").as_deref(),
+            Some(generic)
+        );
+    }
+
+    #[test]
+    fn resolve_stock_paper_prompt_swaps_in_folder_mode() {
+        let paper = crate::prompts::compiled_default("orientation").unwrap();
+        let resolved =
+            resolve_survey_template(paper, "folder").expect("folder survey should load");
+        let folder = crate::prompts::load_prompt("orientation_folder").unwrap();
+        assert_eq!(resolved, folder);
+    }
+
+    #[test]
+    fn resolve_custom_prompt_wins_in_any_mode() {
+        let custom = "Survey this thing my way. {input_text}";
+        assert_eq!(
+            resolve_survey_template(custom, "folder").as_deref(),
+            Some(custom)
+        );
+        assert_eq!(
+            resolve_survey_template(custom, "document").as_deref(),
+            Some(custom)
+        );
     }
 }

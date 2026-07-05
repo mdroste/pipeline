@@ -3,16 +3,16 @@ use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use std::io::Write;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
-use super::claude::{build_silent_command, LlmOverrides};
+use super::claude::{build_silent_command, emit_stderr_tail, last_stderr_hint, LlmOverrides, STDERR_TAIL_LINES};
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Codex to read it.
 const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
 
 fn log(app: &AppHandle, line: impl Into<String>) {
-    app.emit("pipeline:log", serde_json::json!({ "line": line.into() })).ok();
+    super::logging::emit(app, line.into());
 }
 
 fn verbose_log(app: &AppHandle, line: impl Into<String>) {
@@ -40,11 +40,45 @@ pub async fn call_codex(
     // Use JSON mode for clean machine-readable output
     cmd_args.push("--json".to_string());
 
-    // Determine sandbox mode based on allowed tools
-    let needs_write = allowed_tools.iter().any(|t| *t == "Write" || *t == "Edit");
+    // codex exec refuses to run outside a "trusted" git repo unless this is
+    // set ("Not inside a trusted directory and --skip-git-repo-check was not
+    // specified."). Our subprocess cwd is the system temp dir (read-only
+    // calls) or the run's artifact dir (write calls) — neither is a git repo —
+    // so without this flag codex exits without ever calling the model, leaving
+    // empty output. Sandboxing is enforced independently via --sandbox, so
+    // skipping the git-repo check costs nothing.
+    cmd_args.push("--skip-git-repo-check".to_string());
+
+    // Determine sandbox mode: workspace-write only when the step may write
+    // AND we have an artifact dir to confine writes to (the caller sets the
+    // subprocess cwd there, which is what defines codex's workspace).
+    let needs_write = allowed_tools.iter().any(|t| *t == "Write" || *t == "Edit")
+        && overrides.write_dir.is_some();
     let sandbox = if needs_write { "workspace-write" } else { "read-only" };
     cmd_args.push("--sandbox".to_string());
     cmd_args.push(sandbox.to_string());
+
+    if needs_write {
+        // workspace-write also opens /tmp and $TMPDIR by default; close
+        // them so a step can't touch another step's temp prompt files.
+        // (Reads stay unrestricted — the sandbox governs writes only.)
+        cmd_args.push("-c".to_string());
+        cmd_args.push("sandbox_workspace_write.exclude_slash_tmp=true".to_string());
+        cmd_args.push("-c".to_string());
+        cmd_args.push("sandbox_workspace_write.exclude_tmpdir_env_var=true".to_string());
+
+        // On native Windows, workspace-write silently downgrades to
+        // read-only unless codex's (experimental) Windows sandbox is
+        // enabled. The unelevated restricted-token backend needs no admin
+        // setup and no feature flag; enabling it per-invocation keeps the
+        // user's ~/.codex/config.toml untouched. If the model still can't
+        // write, the executor falls back to stdout output.
+        #[cfg(windows)]
+        {
+            cmd_args.push("-c".to_string());
+            cmd_args.push("windows.sandbox=\"unelevated\"".to_string());
+        }
+    }
 
     // System prompt via config override
     if let Some(sys) = system_prompt {
@@ -96,7 +130,10 @@ pub async fn call_codex(
         .join(" ");
     verbose_log(app, format!("$ codex {display_args}"));
 
-    let mut cmd = build_silent_command("codex", cwd);
+    // The cwd defines codex's writable workspace, so in write mode it must
+    // be the artifact dir regardless of what the caller passed.
+    let effective_cwd = if needs_write { overrides.write_dir.or(cwd) } else { cwd };
+    let mut cmd = build_silent_command("codex", effective_cwd);
     cmd.args(&cmd_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -115,22 +152,27 @@ pub async fn call_codex(
     // made those failures undiagnosable.
     let stderr = child.stderr.take();
     let app_stderr = app.clone();
-    let stderr_task = tokio::spawn(async move {
+    let sess = super::logging::current();
+    let stderr_task = tokio::spawn(super::logging::with_session_opt(sess.clone(), async move {
+        let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         if let Some(stderr) = stderr {
             let mut reader = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 if !line.trim().is_empty() {
                     verbose_log(&app_stderr, format!("[stderr] {line}"));
+                    if tail.len() >= STDERR_TAIL_LINES { tail.pop_front(); }
+                    tail.push_back(line);
                 }
             }
         }
-    });
+        tail.into_iter().collect::<Vec<String>>()
+    }));
 
     // Parse JSONL stdout: collect agent_message text and usage info
     let stdout = child.stdout.take();
     let app_stdout = app.clone();
     let label_clone = label.to_string();
-    let stdout_task = tokio::spawn(async move {
+    let stdout_task = tokio::spawn(super::logging::with_session_opt(sess, async move {
         let mut agent_text = String::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
@@ -155,6 +197,15 @@ pub async fn call_codex(
                                 total_output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                             }
                         }
+                        // Codex reports fatal problems (bad config, auth, model)
+                        // as an error event on stdout — surface it, always.
+                        Some(t) if t.contains("error") => {
+                            let detail = event.get("message").and_then(|v| v.as_str())
+                                .or_else(|| event.get("error").and_then(|e| e.as_str()))
+                                .or_else(|| event.get("error").and_then(|e| e.get("message")).and_then(|v| v.as_str()))
+                                .unwrap_or(t);
+                            log(&app_stdout, format!("ERROR: [codex] {detail}"));
+                        }
                         _ => {}
                     }
                 } else {
@@ -176,7 +227,7 @@ pub async fn call_codex(
             ));
         }
         (agent_text, total_input_tokens, total_output_tokens)
-    });
+    }));
 
     let status = tokio::time::timeout(
         Duration::from_secs(timeout_secs),
@@ -213,7 +264,7 @@ pub async fn call_codex(
         .map_err(|e| format!("stdout reader failed: {e}"))?;
     let text = agent_text.trim().to_string();
 
-    stderr_task.await.ok();
+    let stderr_tail = stderr_task.await.unwrap_or_default();
 
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();
@@ -223,26 +274,33 @@ pub async fn call_codex(
         String::new()
     };
     log(app, format!("{label} finished ({elapsed}s, exit code {exit_code}, {} chars output{token_info})", text.len()));
+    super::logging::emit_usage(app, input_tokens, output_tokens);
 
     if !status.success() {
         if crate::commands::is_cancelled() || exit_code == 143 || status.code().is_none() {
             log(app, format!("{label} cancelled"));
             return Err("Pipeline cancelled".into());
         }
-        let hint = super::claude::extract_error_hint(&text);
+        emit_stderr_tail(app, &stderr_tail);
+        let hint = super::claude::extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
         let msg = if let Some(hint) = hint {
             format!("Codex call failed (exit {exit_code}): {hint}")
         } else {
-            format!("Codex call failed (exit {exit_code}). Check the console log for details.")
+            format!("Codex call failed (exit {exit_code}). See this call's session log for details.")
         };
         log(app, format!("ERROR: {msg}"));
         return Err(msg);
     }
 
     if text.is_empty() {
-        let msg = "Codex returned empty output.";
+        emit_stderr_tail(app, &stderr_tail);
+        let hint = last_stderr_hint(&stderr_tail);
+        let msg = match hint {
+            Some(h) => format!("Codex returned empty output. Last stderr: {h}"),
+            None => "Codex returned empty output.".to_string(),
+        };
         log(app, format!("ERROR: {msg}"));
-        return Err(msg.to_string());
+        return Err(msg);
     }
 
     Ok(text)

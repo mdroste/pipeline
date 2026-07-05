@@ -50,6 +50,7 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
         { token: "{input_path}", description: "Path to the extracted input text" },
         { token: "{paper_type}", description: "theory / empirical / mixed (paper surveys only; empty otherwise)" },
         { token: "{figure_hint}", description: "Figure/table access instructions" },
+        { token: "{output_format}", description: "Output delivery instructions (file write or markers)" },
         { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
       ];
     case "merge":

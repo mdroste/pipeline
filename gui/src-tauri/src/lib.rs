@@ -74,6 +74,7 @@ pub fn run() {
             commands::check_for_update,
             // Preprocessing artifact inspection
             commands::read_cached_paper_text,
+            commands::open_pipeline_dir,
             // Managed local engines
             commands::list_engines,
             commands::install_engine,

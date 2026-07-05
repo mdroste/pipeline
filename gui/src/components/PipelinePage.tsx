@@ -939,7 +939,7 @@ const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   { value: "", label: "Inherit from global Settings", hint: "Use whatever PDF extractor is configured globally." },
   { value: "auto", label: "Auto", hint: "Try the global setting; same as inherit." },
   { value: "llm", label: "LLM", hint: "Have the active provider read the PDF and convert to Markdown." },
-  { value: "marker", label: "Local engine: marker-pdf", hint: "Local extraction, no LLM cost. Install from Settings → Text Extraction." },
+  { value: "marker", label: "Local engine: marker-pdf", hint: "Local extraction, no LLM cost. Install from Settings → PDF Extraction." },
   { value: "pdftotext", label: "pdftotext (basic)", hint: "Fast, but equations are lost. Uses bundled poppler." },
 ];
 
@@ -959,7 +959,7 @@ function ExtractionEditor({
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
       <div className="p-4 space-y-5">
         <div>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Input & Text Extraction</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Input & PDF Extraction</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
             Stage 0a. What the workflow takes as input, and how text is pulled from it before
             any LLM call.
@@ -1147,6 +1147,17 @@ function OrientationEditor({
           </button>
           <button
             onClick={() => {
+              invoke<string>("get_default_prompt", { name: "orientation_folder" })
+                .then(onPromptChange)
+                .catch(console.error);
+            }}
+            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            title="Insert the folder survey prompt (explores the folder with the Read tool)."
+          >
+            Insert folder survey
+          </button>
+          <button
+            onClick={() => {
               invoke<string>("get_default_prompt", { name: "orientation" })
                 .then(onPromptChange)
                 .catch(console.error);
@@ -1177,8 +1188,10 @@ function OrientationEditor({
         </div>
         {prompt.trim() === "" && (
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
-            Empty — using the bundled default at <span className="font-mono">prompts/orientation.md</span>{" "}
-            (overridable at <span className="font-mono">~/.pipeline/prompts/orientation.md</span>).
+            Empty — using the bundled default: <span className="font-mono">prompts/orientation.md</span>{" "}
+            for document inputs, <span className="font-mono">prompts/orientation_folder.md</span> for
+            folder inputs (overridable at <span className="font-mono">~/.pipeline/prompts/</span>).
+            Stock prompts adapt to the input mode; a customized prompt is used as-is.
           </p>
         )}
       </div>

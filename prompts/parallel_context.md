@@ -11,6 +11,4 @@ The full paper text is at: {paper_path}
 {figure_hint}
 Read the paper text, then produce your report following the instructions above. Reference page numbers, equation numbers, and table numbers. When a finding involves a figure or table, inspect it visually before commenting.
 
-OUTPUT FORMAT:
-Begin your report with exactly `<!-- REPORT START -->` and end with exactly `<!-- REPORT END -->`.
-Include ONLY your markdown report between those markers — no preamble, no commentary, no acknowledgments outside them.
+{output_format}

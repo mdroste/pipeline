@@ -3,16 +3,16 @@ use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use std::io::Write;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
-use super::claude::{build_silent_command, LlmOverrides};
+use super::claude::{build_silent_command, emit_stderr_tail, last_stderr_hint, LlmOverrides, STDERR_TAIL_LINES};
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Gemini to read it.
 const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
 
 fn log(app: &AppHandle, line: impl Into<String>) {
-    app.emit("pipeline:log", serde_json::json!({ "line": line.into() })).ok();
+    super::logging::emit(app, line.into());
 }
 
 fn verbose_log(app: &AppHandle, line: impl Into<String>) {
@@ -26,7 +26,7 @@ fn verbose_log(app: &AppHandle, line: impl Into<String>) {
 pub async fn call_gemini(
     app: &AppHandle,
     prompt: &str,
-    _allowed_tools: &[&str],
+    allowed_tools: &[&str],
     _system_prompt: Option<&str>,
     _output_format: &str,
     timeout_secs: u64,
@@ -37,10 +37,15 @@ pub async fn call_gemini(
     let mut cmd_args: Vec<String> = Vec::new();
     let mut _temp_file: Option<NamedTempFile> = None;
 
-    // Read-only mode: the pipeline only needs file reads and text output.
-    // "plan" auto-approves reads but blocks writes and shell commands.
+    // Gemini's file tools confine writes to the workspace (cwd) at the
+    // tool layer, symlink-resolved — so write mode means: cwd = artifact
+    // dir, approval mode auto_edit (auto-approves file edits; shell stays
+    // ask_user, which non-interactive mode treats as deny).
+    // Read-only mode keeps "plan": reads auto-approved, writes blocked.
+    let needs_write = allowed_tools.iter().any(|t| *t == "Write" || *t == "Edit")
+        && overrides.write_dir.is_some();
     cmd_args.push("--approval-mode".to_string());
-    cmd_args.push("plan".to_string());
+    cmd_args.push(if needs_write { "auto_edit" } else { "plan" }.to_string());
 
     // Output as plain text
     cmd_args.push("-o".to_string());
@@ -88,7 +93,10 @@ pub async fn call_gemini(
         .join(" ");
     verbose_log(app, format!("$ gemini {display_args}"));
 
-    let mut cmd = build_silent_command("gemini", cwd);
+    // The cwd defines gemini's writable workspace, so in write mode it must
+    // be the artifact dir regardless of what the caller passed.
+    let effective_cwd = if needs_write { overrides.write_dir.or(cwd) } else { cwd };
+    let mut cmd = build_silent_command("gemini", effective_cwd);
     cmd.args(&cmd_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -102,24 +110,29 @@ pub async fn call_gemini(
     let start_time = Instant::now();
     log(app, format!("{label} started (PID {pid})"));
 
-    // Stream stderr to the frontend
+    // Stream stderr to the frontend, retaining the tail for diagnostics.
     let stderr = child.stderr.take();
     let app_stderr = app.clone();
-    let stderr_task = tokio::spawn(async move {
+    let sess = super::logging::current();
+    let stderr_task = tokio::spawn(super::logging::with_session_opt(sess.clone(), async move {
+        let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         if let Some(stderr) = stderr {
             let mut reader = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 if !line.trim().is_empty() {
                     verbose_log(&app_stderr, format!("[stderr] {line}"));
+                    if tail.len() >= STDERR_TAIL_LINES { tail.pop_front(); }
+                    tail.push_back(line);
                 }
             }
         }
-    });
+        tail.into_iter().collect::<Vec<String>>()
+    }));
 
     // Stream stdout to the frontend
     let stdout = child.stdout.take();
     let app_stdout = app.clone();
-    let stdout_task = tokio::spawn(async move {
+    let stdout_task = tokio::spawn(super::logging::with_session_opt(sess, async move {
         let mut collected = String::new();
         if let Some(stdout) = stdout {
             let mut reader = BufReader::new(stdout).lines();
@@ -142,7 +155,7 @@ pub async fn call_gemini(
             verbose_log(&app_stdout, format!("[out] ... ({} total lines)", collected.lines().count()));
         }
         collected
-    });
+    }));
 
     let status = tokio::time::timeout(
         Duration::from_secs(timeout_secs),
@@ -180,7 +193,7 @@ pub async fn call_gemini(
         .trim()
         .to_string();
 
-    stderr_task.await.ok();
+    let stderr_tail = stderr_task.await.unwrap_or_default();
 
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();
@@ -191,17 +204,19 @@ pub async fn call_gemini(
             log(app, format!("{label} cancelled"));
             return Err("Pipeline cancelled".into());
         }
-        let hint = super::claude::extract_error_hint(&text);
+        emit_stderr_tail(app, &stderr_tail);
+        let hint = super::claude::extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
         let msg = if let Some(hint) = hint {
             format!("Gemini call failed (exit {exit_code}): {hint}")
         } else {
-            format!("Gemini call failed (exit {exit_code}). Check the console log for details.")
+            format!("Gemini call failed (exit {exit_code}). See this call's session log for details.")
         };
         log(app, format!("ERROR: {msg}"));
         return Err(msg);
     }
 
     if text.is_empty() {
+        emit_stderr_tail(app, &stderr_tail);
         let msg = "Gemini returned empty output.";
         log(app, format!("ERROR: {msg}"));
         return Err(msg.to_string());

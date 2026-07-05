@@ -235,6 +235,7 @@ const GROUPS: { id: string; label: string }[] = [
   { id: "report", label: "Report" },
   { id: "context", label: "Context" },
   { id: "step", label: "Steps" },
+  { id: "files", label: "Files" },
 ];
 
 export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {

@@ -5,6 +5,31 @@ import type { PipelineReport, PipelineResult } from "../lib/types";
 
 export type PassStatus = "pending" | "running" | "done" | "error";
 
+/** One console line, tagged with the headless session (LLM call) it came from.
+ *  `session` is null for orchestration/extraction lines that belong to no
+ *  single call; those show only in the master view. */
+export interface LogEntry {
+  line: string;
+  session: number | null;
+  label: string | null;
+  level: string; // info | warn | error | stderr | stdout
+}
+
+export interface TokenTotals {
+  input: number;
+  output: number;
+}
+
+/** Token usage aggregated over a run: a grand total plus per-session counts.
+ *  Only providers that report usage (codex CLI, claude CLI JSON, and the
+ *  direct APIs) contribute; text-mode gemini CLI reports nothing. */
+export interface UsageState {
+  total: TokenTotals;
+  bySession: Record<number, TokenTotals>;
+}
+
+const EMPTY_USAGE: UsageState = { total: { input: 0, output: 0 }, bySession: {} };
+
 export type PipelineState =
   | { kind: "idle" }
   | { kind: "extracting" }
@@ -24,12 +49,13 @@ const LOG_KEEP = 8000;
 
 export function usePipeline() {
   const [state, setState] = useState<PipelineState>({ kind: "idle" });
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [usage, setUsage] = useState<UsageState>(EMPTY_USAGE);
   const [listenersReady, setListenersReady] = useState(false);
 
   // Buffer incoming log lines in a ref to avoid O(n) array copies per event.
   // A periodic timer flushes the buffer into state in a single update.
-  const logBuffer = useRef<string[]>([]);
+  const logBuffer = useRef<LogEntry[]>([]);
   const flushTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Listen to Tauri events
@@ -39,7 +65,7 @@ export function usePipeline() {
     async function setup(): Promise<UnlistenFn[]> {
       // Register all listeners concurrently so there's no window where
       // some events are captured and others aren't.
-      const [u1, u2, u3] = await Promise.all([
+      const [u1, u2, u3, u4] = await Promise.all([
         listen<{ stage: string }>("pipeline:stage", (event) => {
           if (!mounted) return;
           const { stage } = event.payload;
@@ -78,10 +104,42 @@ export function usePipeline() {
             };
           });
         }),
-        listen<{ line: string }>("pipeline:log", (event) => {
-          if (!mounted) return;
-          logBuffer.current.push(event.payload.line);
-        }),
+        listen<{ line: string; session?: number | null; label?: string | null; level?: string }>(
+          "pipeline:log",
+          (event) => {
+            if (!mounted) return;
+            logBuffer.current.push({
+              line: event.payload.line,
+              session: event.payload.session ?? null,
+              label: event.payload.label ?? null,
+              level: event.payload.level ?? "info",
+            });
+          }
+        ),
+        listen<{ session: number | null; input_tokens: number; output_tokens: number }>(
+          "pipeline:usage",
+          (event) => {
+            if (!mounted) return;
+            const { session, input_tokens, output_tokens } = event.payload;
+            // Usage events are infrequent (one per LLM call), so update state
+            // directly rather than through the log buffer.
+            setUsage((prev) => {
+              const total = {
+                input: prev.total.input + input_tokens,
+                output: prev.total.output + output_tokens,
+              };
+              const bySession = { ...prev.bySession };
+              if (session != null) {
+                const cur = bySession[session] ?? { input: 0, output: 0 };
+                bySession[session] = {
+                  input: cur.input + input_tokens,
+                  output: cur.output + output_tokens,
+                };
+              }
+              return { total, bySession };
+            });
+          }
+        ),
       ]);
 
       // Periodically flush buffered log lines into React state. Don't start
@@ -97,7 +155,12 @@ export function usePipeline() {
             const next = prev.concat(pending);
             if (next.length > LOG_MAX) {
               return [
-                `… earlier log lines dropped (showing last ${LOG_KEEP}) …`,
+                {
+                  line: `… earlier log lines dropped (showing last ${LOG_KEEP}) …`,
+                  session: null,
+                  label: null,
+                  level: "info",
+                },
                 ...next.slice(-LOG_KEEP),
               ];
             }
@@ -107,7 +170,7 @@ export function usePipeline() {
       }
 
       if (mounted) setListenersReady(true);
-      return [u1, u2, u3];
+      return [u1, u2, u3, u4];
     }
 
     const setupPromise = setup();
@@ -142,6 +205,7 @@ export function usePipeline() {
     async (paperPath: string, diff?: boolean) => {
       setState({ kind: "extracting" });
       setLogs([]);
+      setUsage(EMPTY_USAGE);
       try {
         const result = await invoke<PipelineResult>("run_pipeline", {
           paperPath,
@@ -178,5 +242,5 @@ export function usePipeline() {
     setState({ kind: "idle" });
   }, []);
 
-  return { state, logs, startPipeline, cancel, reset, listenersReady };
+  return { state, logs, usage, startPipeline, cancel, reset, listenersReady };
 }

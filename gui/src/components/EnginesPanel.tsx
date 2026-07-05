@@ -32,6 +32,14 @@ export default function EnginesPanel() {
       .catch((e) => console.error("Failed to list engines:", e));
   }, []);
 
+  const openPipelineDir = useCallback(async () => {
+    try {
+      await invoke("open_pipeline_dir");
+    } catch (e) {
+      console.error("Failed to open ~/.pipeline:", e);
+    }
+  }, []);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -110,8 +118,15 @@ export default function EnginesPanel() {
         Local Engines
       </h4>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-        One-click installs into <code className="font-mono">~/.pipeline/</code>.
-        No system Python is touched; Uninstall removes everything.
+        Installs into{" "}
+        <button
+          type="button"
+          onClick={openPipelineDir}
+          className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
+          title="Open this folder"
+        >
+          ~/.pipeline/
+        </button>
       </p>
 
       <div className="space-y-3">

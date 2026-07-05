@@ -40,6 +40,7 @@ const DEFAULT_VALIDATE_FEEDBACK: &str = include_str!("../../../prompts/validate_
 // Preprocessing prompts:
 const DEFAULT_ORIENTATION: &str = include_str!("../../../prompts/orientation.md");
 const DEFAULT_ORIENTATION_GENERIC: &str = include_str!("../../../prompts/orientation_generic.md");
+const DEFAULT_ORIENTATION_FOLDER: &str = include_str!("../../../prompts/orientation_folder.md");
 
 /// Get the user prompts directory (~/.pipeline/prompts/).
 fn user_prompts_dir() -> Option<PathBuf> {
@@ -80,6 +81,7 @@ fn default_content(name: &str) -> Option<&'static str> {
         "validate_feedback" => Some(DEFAULT_VALIDATE_FEEDBACK),
         "orientation" => Some(DEFAULT_ORIENTATION),
         "orientation_generic" => Some(DEFAULT_ORIENTATION_GENERIC),
+        "orientation_folder" => Some(DEFAULT_ORIENTATION_FOLDER),
         _ => None,
     }
 }

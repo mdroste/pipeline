@@ -45,6 +45,7 @@ impl Drop for PipelineGuard {
         kill_all_children();
         PIPELINE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
         crate::pipeline::api_common::set_allowed_dirs(vec![]);
+        crate::pipeline::api_common::set_write_dir(None);
     }
 }
 
@@ -194,6 +195,27 @@ async fn run_pipeline_inner(
         }
     }
 
+    // Artifact write sandbox: LLM steps may write files into this run's
+    // artifacts/ directory and nowhere else. Created up front so every
+    // enforcement layer (Write tool validation, CLI permission rules,
+    // codex/gemini workspaces) can resolve it. When the run dir couldn't
+    // be created, steps fall back to stdout output.
+    let artifact_write_dir: Option<String> = run_writer.as_ref().and_then(|w| {
+        let dir = w.dir().join("artifacts");
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => Some(dir.to_string_lossy().replace('\\', "/")),
+            Err(e) => {
+                let _ = app.emit("pipeline:log", serde_json::json!({
+                    "line": format!("WARNING: could not create artifact dir, steps will use stdout output: {e}")
+                }));
+                None
+            }
+        }
+    });
+    crate::pipeline::api_common::set_write_dir(
+        artifact_write_dir.as_ref().map(std::path::PathBuf::from),
+    );
+
     // Render page images for PDF inputs so the artifact explorer can show
     // them. Deliberately independent of the extraction method; best-effort.
     if input_mode == "document" && extraction.source_path.to_lowercase().ends_with(".pdf") {
@@ -319,12 +341,10 @@ async fn run_pipeline_inner(
             "status": "running",
         })).ok();
         let orient_start = std::time::Instant::now();
-        let custom_orient_prompt = if config.orientation_prompt.trim().is_empty() {
-            None
-        } else {
-            Some(config.orientation_prompt.as_str())
-        };
-        orientation = orient::build_orientation_map(app, &extraction, custom_orient_prompt).await?;
+        let survey_template =
+            orient::resolve_survey_template(&config.orientation_prompt, input_mode);
+        orientation =
+            orient::build_orientation_map(app, &extraction, survey_template.as_deref()).await?;
         let orient_secs = orient_start.elapsed().as_secs();
         app.emit("pipeline:log", serde_json::json!({
             "line": format!("Orientation map built ({}s)", orient_secs)
@@ -383,6 +403,7 @@ async fn run_pipeline_inner(
     let paper_type = crate::models::paper_view(&orientation)
         .map(|v| v.metadata.paper_type.to_string())
         .unwrap_or_default();
+    let survey_hint = crate::models::survey_hint(&orientation);
 
     let result = executor::execute_steps(
         app,
@@ -391,8 +412,13 @@ async fn run_pipeline_inner(
         &paper_text_path,
         &extraction.source_path,
         &paper_type,
+        &survey_hint,
+        artifact_write_dir.as_deref(),
     )
     .await?;
+
+    // Steps are done — close the write window before rendering/reconciling.
+    crate::pipeline::api_common::set_write_dir(None);
 
     if is_cancelled() { return Err("Pipeline cancelled".into()); }
 
@@ -458,6 +484,14 @@ async fn run_pipeline_inner(
         if let Err(e) = w.add_text("report.md", "Report", "report", &markdown) {
             let _ = app.emit("pipeline:log", serde_json::json!({
                 "line": format!("WARNING: {e}")
+            }));
+        }
+        // Pick up any supporting files the step LLMs wrote into artifacts/
+        // beyond their report (pages/figures/steps are already indexed).
+        let extra_files = w.register_unlisted("artifacts", "files");
+        if extra_files > 0 {
+            let _ = app.emit("pipeline:log", serde_json::json!({
+                "line": format!("Registered {extra_files} model-written supporting files")
             }));
         }
         let profile_name = pipeline_config::load_profile(&settings.active_profile)
@@ -680,6 +714,34 @@ pub async fn print_report_html(markdown: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     std::process::Command::new("xdg-open").arg("--").arg(&path_str).spawn()
         .map_err(|e| format!("Failed to open browser: {e}"))?;
+
+    Ok(())
+}
+
+/// Open ~/.pipeline/ in the OS file manager. The path is resolved server-side
+/// (never passed from the frontend) so there is nothing to sanitize.
+#[tauri::command]
+pub async fn open_pipeline_dir() -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let dir = home.join(".pipeline");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create .pipeline dir: {e}"))?;
+    let path_str = dir.to_string_lossy().to_string();
+
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg("--").arg(&path_str).spawn()
+        .map_err(|e| format!("Failed to open folder: {e}"))?;
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer")
+            .arg(&path_str)
+            .creation_flags(0x08000000)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open").arg("--").arg(&path_str).spawn()
+        .map_err(|e| format!("Failed to open folder: {e}"))?;
 
     Ok(())
 }

@@ -7,6 +7,7 @@ pub mod codex;
 pub mod executor;
 pub mod extract;
 pub mod gemini;
+pub mod logging;
 pub mod merge;
 pub mod orient;
 pub mod reconcile;

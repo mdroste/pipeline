@@ -32,6 +32,8 @@ pub async fn execute_steps(
     paper_text_path: &str,
     source_path: &str,
     paper_type: &str,
+    survey_hint: &str,
+    write_dir: Option<&str>,
 ) -> Result<ExecutionResult, String> {
     let settings = crate::settings::load();
     let semaphore = Arc::new(Semaphore::new(settings.max_workers.max(1) as usize));
@@ -51,7 +53,7 @@ pub async fn execute_steps(
                 .ok();
 
                 let (mut wave_outputs, wave_failures) =
-                    run_parallel_wave(app, steps, &settings, &semaphore, orientation_path, paper_text_path, source_path, paper_type, &config.parallel_context_template)
+                    run_parallel_wave(app, steps, &settings, &semaphore, orientation_path, paper_text_path, source_path, paper_type, survey_hint, &config.parallel_context_template, write_dir)
                         .await?;
                 failed_steps.extend(wave_failures);
 
@@ -89,6 +91,8 @@ pub async fn execute_steps(
                     orientation_path,
                     paper_text_path,
                     source_path,
+                    survey_hint,
+                    write_dir,
                 )
                 .await
                 {
@@ -133,6 +137,68 @@ pub async fn execute_steps(
     Ok(ExecutionResult { outputs: all_outputs, failed_steps })
 }
 
+// ── Artifact write handoff ──────────────────────────────────────────
+
+/// Filesystem-safe slug for a step key ("technical/claude" → "technical__claude").
+/// Mirrors the sanitization used for the numbered artifacts in commands.rs.
+fn step_slug(step_key: &str) -> String {
+    step_key
+        .replace('/', "__")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect()
+}
+
+/// Build the OUTPUT FORMAT block appended to every step prompt.
+///
+/// Write mode: the model saves its report into the run's artifact directory
+/// (each provider confines writes to it — our own Write tool on the direct
+/// API paths, permission rules for `claude -p`, the OS sandbox for codex,
+/// the workspace boundary for gemini). A stdout-marker escape hatch remains
+/// for models that cannot write files; the executor accepts either.
+/// Read-only mode (no run directory): markers on stdout, as before.
+fn output_format_block(write_dir: Option<&str>, report_rel: &str) -> String {
+    match write_dir {
+        Some(dir) => format!(
+            "OUTPUT FORMAT:\n\
+             Write your complete markdown report to this file (create it with your file-writing tool):\n\
+             {dir}/{report_rel}\n\
+             Supporting files (data tables, extracted figures) may be saved under {dir}/files/ and referenced from the report by relative path.\n\
+             Do not print the report to stdout — after writing the file, reply with one line confirming it was written.\n\
+             Only if you have no file-writing tool available: print the report to stdout between `<!-- REPORT START -->` and `<!-- REPORT END -->` markers instead."
+        ),
+        None => "OUTPUT FORMAT:\n\
+             Begin your report with exactly `<!-- REPORT START -->` and end with exactly `<!-- REPORT END -->`.\n\
+             Include ONLY your markdown report between those markers — no preamble, no commentary, no acknowledgments outside them."
+            .to_string(),
+    }
+}
+
+/// Read (and remove) a model-written report file. Returns `None` when the
+/// file is absent or empty — callers then fall back to stdout output. The
+/// file is removed because the canonical copy (with the step header) is
+/// written into the run artifacts when the run finishes; leaving it would
+/// duplicate every report in the artifact explorer.
+fn ingest_report_file(write_dir: Option<&str>, report_rel: &str) -> Option<String> {
+    let dir = write_dir?;
+    let path = std::path::Path::new(dir).join(report_rel);
+    let content = std::fs::read_to_string(&path).ok()?;
+    if content.trim().is_empty() {
+        return None;
+    }
+    let _ = std::fs::remove_file(&path);
+    Some(content.trim().to_string())
+}
+
+/// Step tool list, extended with Write when this run supports file handoff.
+fn tools_with_write(step_tools: &[String], write_dir: Option<&str>) -> Vec<String> {
+    let mut tools = step_tools.to_vec();
+    if write_dir.is_some() && !tools.iter().any(|t| t == "Write") {
+        tools.push("Write".to_string());
+    }
+    tools
+}
+
 // ── Wave grouping ───────────────────────────────────────────────────
 
 enum Wave<'a> {
@@ -172,9 +238,11 @@ fn build_parallel_prompt(
     step: &StepConfig,
     paper_type: &str,
     orientation_path: &str,
+    survey_hint: &str,
     paper_text_path: &str,
     source_path: &str,
     template: &str,
+    output_format: &str,
 ) -> String {
     let normalized_path = paper_text_path.replace('\\', "/");
     let normalized_source = source_path.replace('\\', "/");
@@ -200,19 +268,25 @@ fn build_parallel_prompt(
         String::new()
     } else {
         let normalized_orient = orientation_path.replace('\\', "/");
-        format!(
-            "The orientation map (JSON) is at: {normalized_orient}\n\
-             Read it for the paper's structure, sections, formal results, tables, figures, and notation."
-        )
+        format!("The orientation map (JSON) is at: {normalized_orient}\n{survey_hint}")
     };
 
-    template
+    let expanded = template
         .replace("{step_prompt}", &step.prompt)
         .replace("{paper_type}", paper_type)
         .replace("{orientation}", &orientation_block)
         .replace("{paper_path}", &normalized_path)
         .replace("{input_path}", &normalized_path) // vocabulary-neutral alias
-        .replace("{figure_hint}", &figure_hint)
+        .replace("{figure_hint}", &figure_hint);
+
+    // Templates from before the file-handoff change carry a hardcoded
+    // marker instruction instead of the placeholder; they keep working
+    // through the stdout fallback.
+    if expanded.contains("{output_format}") {
+        expanded.replace("{output_format}", output_format)
+    } else {
+        expanded
+    }
 }
 
 /// Run all parallel steps in a wave concurrently.
@@ -225,7 +299,9 @@ async fn run_parallel_wave(
     paper_text_path: &str,
     source_path: &str,
     paper_type: &str,
+    survey_hint: &str,
     context_template: &str,
+    write_dir: Option<&str>,
 ) -> Result<(Vec<StepOutput>, Vec<StepFailure>), String> {
     let source_dir = std::path::Path::new(source_path)
         .parent()
@@ -243,18 +319,10 @@ async fn run_parallel_wave(
         let multi = agents.len() > 1;
 
         for agent in &agents {
-            let prompt = build_parallel_prompt(
-                step,
-                paper_type,
-                orientation_path,
-                paper_text_path,
-                source_path,
-                context_template,
-            );
             let id = step.id.clone();
             let label = step.label.clone();
             let agent_name = agent.clone();
-            let tools = step.tools.clone();
+            let tools = tools_with_write(&step.tools, write_dir);
             let model_override = step.model.clone();
             let effort_override = step.effort.clone();
 
@@ -264,6 +332,20 @@ async fn run_parallel_wave(
             } else {
                 id.clone()
             };
+
+            let report_rel = format!("steps/{}.md", step_slug(&step_key));
+            let output_format = output_format_block(write_dir, &report_rel);
+            let prompt = build_parallel_prompt(
+                step,
+                paper_type,
+                orientation_path,
+                survey_hint,
+                paper_text_path,
+                source_path,
+                context_template,
+                &output_format,
+            );
+            let task_write_dir = write_dir.map(|s| s.to_string());
 
             let _ = app.emit(
                 "pipeline:pass",
@@ -319,7 +401,8 @@ async fn run_parallel_wave(
                         );
                     }
                     let extra: Vec<&str> = task_cwd.as_deref().into_iter().collect();
-                    let overrides = LlmOverrides::from_step_strings(&model_override, &effort_override);
+                    let mut overrides = LlmOverrides::from_step_strings(&model_override, &effort_override);
+                    overrides.write_dir = task_write_dir.as_deref();
                     match call_llm(
                         &app_handle,
                         &prompt,
@@ -336,6 +419,10 @@ async fn run_parallel_wave(
                     .await
                     {
                         Ok(raw_text) => {
+                            let text = match ingest_report_file(task_write_dir.as_deref(), &report_rel) {
+                                Some(file_text) => file_text,
+                                None => strip_to_report(&raw_text),
+                            };
                             let _ = app_handle.emit(
                                 "pipeline:pass",
                                 serde_json::json!({
@@ -350,7 +437,7 @@ async fn run_parallel_wave(
                                     step_label: display_label,
                                     phase: "parallel".to_string(),
                                     agent: agent_name,
-                                    raw_text: strip_to_report(&raw_text),
+                                    raw_text: text,
                                 },
                             ));
                         }
@@ -368,6 +455,33 @@ async fn run_parallel_wave(
                                     step_label: fail_label.clone(),
                                     error: e,
                                 });
+                            }
+                            // The call may have failed after the report was
+                            // written (e.g. the empty-stdout quirk when the
+                            // model obeyed "don't print the report"). A
+                            // non-empty report file counts as success.
+                            if let Some(file_text) = ingest_report_file(task_write_dir.as_deref(), &report_rel) {
+                                let _ = app_handle.emit(
+                                    "pipeline:log",
+                                    serde_json::json!({ "line": format!("{log_label}: call reported an error but the report file was written; using it. ({e})") }),
+                                );
+                                let _ = app_handle.emit(
+                                    "pipeline:pass",
+                                    serde_json::json!({
+                                        "name": step_key_emit,
+                                        "status": "done"
+                                    }),
+                                );
+                                return Ok((
+                                    sort_key,
+                                    StepOutput {
+                                        step_id: step_key,
+                                        step_label: display_label,
+                                        phase: "parallel".to_string(),
+                                        agent: agent_name,
+                                        raw_text: file_text,
+                                    },
+                                ));
                             }
                             last_err = e;
                         }
@@ -439,6 +553,7 @@ async fn run_parallel_wave(
 fn expand_template(
     template: &str,
     orientation_path: &str,
+    survey_hint: &str,
     prior_outputs: &[StepOutput],
     paper_text_path: &str,
     source_path: &str,
@@ -447,10 +562,7 @@ fn expand_template(
         String::new()
     } else {
         let normalized_orient = orientation_path.replace('\\', "/");
-        format!(
-            "The orientation map (JSON) is at: {normalized_orient}\n\
-             Read it for the paper's structure, sections, formal results, tables, figures, and notation."
-        )
+        format!("The orientation map (JSON) is at: {normalized_orient}\n{survey_hint}")
     };
 
     let prior_text: String = prior_outputs
@@ -540,6 +652,8 @@ async fn run_sequential_step(
     orientation_path: &str,
     paper_text_path: &str,
     source_path: &str,
+    survey_hint: &str,
+    write_dir: Option<&str>,
 ) -> Result<StepOutput, String> {
     let _ = app.emit(
         "pipeline:pass",
@@ -552,19 +666,17 @@ async fn run_sequential_step(
     let base_prompt = expand_template(
         &step.prompt,
         orientation_path,
+        survey_hint,
         prior_outputs,
         paper_text_path,
         source_path,
     );
 
-    let prompt = format!(
-        "{base_prompt}\n\n\
-         OUTPUT FORMAT:\n\
-         Begin your report with exactly `<!-- REPORT START -->` and end with exactly `<!-- REPORT END -->`.\n\
-         Include ONLY your markdown report between those markers — no preamble, no commentary, no acknowledgments outside them."
-    );
+    let report_rel = format!("steps/{}.md", step_slug(&step.id));
+    let prompt = format!("{base_prompt}\n\n{}", output_format_block(write_dir, &report_rel));
 
-    let tool_refs: Vec<&str> = step.tools.iter().map(|s| s.as_str()).collect();
+    let tools = tools_with_write(&step.tools, write_dir);
+    let tool_refs: Vec<&str> = tools.iter().map(|s| s.as_str()).collect();
     let agent = step.agents.first().map(|s| s.as_str());
     let log_label = format!("Step: {}", step.label);
 
@@ -578,6 +690,7 @@ async fn run_sequential_step(
 
     let mut last_err = String::new();
     let mut raw_text = String::new();
+    let mut file_text: Option<String> = None;
     for attempt in 0..=max_retries {
         if attempt > 0 {
             let _ = app.emit(
@@ -593,7 +706,8 @@ async fn run_sequential_step(
             );
         }
         let extra: Vec<&str> = source_dir.as_deref().into_iter().collect();
-        let overrides = LlmOverrides::from_step_strings(&step.model, &step.effort);
+        let mut overrides = LlmOverrides::from_step_strings(&step.model, &step.effort);
+        overrides.write_dir = write_dir;
         match call_llm(app, &prompt, &tool_refs, None, "text", timeout, &log_label, agent, source_dir.as_deref(), &extra, &overrides).await {
             Ok(text) => {
                 raw_text = text;
@@ -604,6 +718,17 @@ async fn run_sequential_step(
                 if e.contains("cancelled") {
                     return Err(e);
                 }
+                // A non-empty report file counts as success even when the
+                // call errored (e.g. empty stdout after an obedient write).
+                if let Some(t) = ingest_report_file(write_dir, &report_rel) {
+                    let _ = app.emit(
+                        "pipeline:log",
+                        serde_json::json!({ "line": format!("{log_label}: call reported an error but the report file was written; using it. ({e})") }),
+                    );
+                    file_text = Some(t);
+                    last_err.clear();
+                    break;
+                }
                 last_err = e;
             }
         }
@@ -612,12 +737,16 @@ async fn run_sequential_step(
         return Err(last_err);
     }
 
+    let text = file_text
+        .or_else(|| ingest_report_file(write_dir, &report_rel))
+        .unwrap_or_else(|| strip_to_report(&raw_text));
+
     Ok(StepOutput {
         step_id: step.id.clone(),
         step_label: step.label.clone(),
         phase: "sequential".to_string(),
         agent: agent.unwrap_or("").to_string(),
-        raw_text: strip_to_report(&raw_text),
+        raw_text: text,
     })
 }
 
@@ -693,9 +822,10 @@ mod tests {
     fn build_parallel_prompt_pdf() {
         let step = make_step("test", Phase::Parallel);
         let template = "{paper_type}\n{orientation}\n{step_prompt}\n{paper_path}\n{figure_hint}";
-        let result = build_parallel_prompt(&step, "empirical", "/tmp/orient.json", "/tmp/paper.txt", "/tmp/paper.pdf", template);
+        let result = build_parallel_prompt(&step, "empirical", "/tmp/orient.json", "Read it for the paper's structure.", "/tmp/paper.txt", "/tmp/paper.pdf", template, "");
         assert!(result.contains("empirical"));
         assert!(result.contains("/tmp/orient.json"));
+        assert!(result.contains("Read it for the paper's structure."));
         assert!(result.contains("/tmp/paper.txt"));
         assert!(result.contains("original PDF"));
     }
@@ -704,7 +834,7 @@ mod tests {
     fn input_path_alias_substitutes_like_paper_path() {
         let step = make_step("test", Phase::Parallel);
         let template = "old={paper_path} new={input_path}";
-        let result = build_parallel_prompt(&step, "empirical", "", "/tmp/paper.txt", "/tmp/p.pdf", template);
+        let result = build_parallel_prompt(&step, "empirical", "", "", "/tmp/paper.txt", "/tmp/p.pdf", template, "");
         assert!(result.contains("old=/tmp/paper.txt"));
         assert!(result.contains("new=/tmp/paper.txt"));
     }
@@ -713,7 +843,7 @@ mod tests {
     fn build_parallel_prompt_latex() {
         let step = make_step("test", Phase::Parallel);
         let template = "{figure_hint}";
-        let result = build_parallel_prompt(&step, "theory", "", "/tmp/paper.txt", "/home/user/papers/main.tex", template);
+        let result = build_parallel_prompt(&step, "theory", "", "", "/tmp/paper.txt", "/home/user/papers/main.tex", template, "");
         assert!(result.contains("LaTeX source directory"));
     }
 
@@ -721,8 +851,71 @@ mod tests {
     fn build_parallel_prompt_empty_orientation() {
         let step = make_step("test", Phase::Parallel);
         let template = "[{orientation}]";
-        let result = build_parallel_prompt(&step, "mixed", "", "/tmp/paper.txt", "/tmp/paper.pdf", template);
+        let result = build_parallel_prompt(&step, "mixed", "", "unused hint", "/tmp/paper.txt", "/tmp/paper.pdf", template, "");
         assert_eq!(result, "[]");
+    }
+
+    #[test]
+    fn build_parallel_prompt_output_format_substitution() {
+        let step = make_step("test", Phase::Parallel);
+        let template = "{step_prompt}\n{output_format}";
+        let block = output_format_block(Some("/runs/r1/artifacts"), "steps/test.md");
+        let result = build_parallel_prompt(&step, "", "", "", "/tmp/p.txt", "/tmp/p.pdf", template, &block);
+        assert!(result.contains("/runs/r1/artifacts/steps/test.md"));
+        // Old templates without the placeholder pass through untouched.
+        let old = "{step_prompt}\nREPORT START markers here";
+        let result = build_parallel_prompt(&step, "", "", "", "/tmp/p.txt", "/tmp/p.pdf", old, &block);
+        assert!(!result.contains("{output_format}"));
+        assert!(result.contains("REPORT START markers here"));
+    }
+
+    // ── write handoff helpers ──────────────────────────────────────
+
+    #[test]
+    fn step_slug_sanitizes() {
+        assert_eq!(step_slug("technical"), "technical");
+        assert_eq!(step_slug("technical/claude"), "technical__claude");
+        assert_eq!(step_slug("a b:c"), "a_b_c");
+    }
+
+    #[test]
+    fn output_format_block_modes() {
+        let write = output_format_block(Some("/runs/x/artifacts"), "steps/s.md");
+        assert!(write.contains("/runs/x/artifacts/steps/s.md"));
+        assert!(write.contains("REPORT START")); // escape hatch stays available
+        let markers = output_format_block(None, "steps/s.md");
+        assert!(markers.contains("REPORT START"));
+        assert!(!markers.contains("steps/s.md"));
+    }
+
+    #[test]
+    fn ingest_report_file_reads_and_removes() {
+        let dir = tempfile::tempdir().unwrap();
+        let wd = dir.path().to_string_lossy().to_string();
+
+        // Absent file → None.
+        assert!(ingest_report_file(Some(&wd), "steps/a.md").is_none());
+        // Disabled write dir → None.
+        assert!(ingest_report_file(None, "steps/a.md").is_none());
+
+        // Present file → content, and the file is consumed.
+        std::fs::create_dir_all(dir.path().join("steps")).unwrap();
+        std::fs::write(dir.path().join("steps/a.md"), "# Report\nbody\n").unwrap();
+        assert_eq!(ingest_report_file(Some(&wd), "steps/a.md").unwrap(), "# Report\nbody");
+        assert!(!dir.path().join("steps/a.md").exists());
+
+        // Empty file → None (falls back to stdout), file left in place.
+        std::fs::write(dir.path().join("steps/b.md"), "  \n").unwrap();
+        assert!(ingest_report_file(Some(&wd), "steps/b.md").is_none());
+    }
+
+    #[test]
+    fn tools_with_write_appends_once() {
+        let base = vec!["Read".to_string()];
+        assert_eq!(tools_with_write(&base, Some("/d")), vec!["Read", "Write"]);
+        assert_eq!(tools_with_write(&base, None), vec!["Read"]);
+        let with = vec!["Read".to_string(), "Write".to_string()];
+        assert_eq!(tools_with_write(&with, Some("/d")), vec!["Read", "Write"]);
     }
 
     // ── expand_template ────────────────────────────────────────────
@@ -734,7 +927,7 @@ mod tests {
             StepOutput { step_id: "s2".into(), step_label: "Step 2".into(), phase: "parallel".into(), agent: String::new(), raw_text: "output2".into() },
         ];
         let template = "Prior:\n{prior_outputs}\n\nLast: {last_output}";
-        let result = expand_template(template, "/orient.json", &prior, "/paper.txt", "/source.tex");
+        let result = expand_template(template, "/orient.json", "Read it.", &prior, "/paper.txt", "/source.tex");
         assert!(result.contains("## Step 1"));
         assert!(result.contains("output1"));
         assert!(result.contains("output2"));
@@ -747,7 +940,7 @@ mod tests {
             StepOutput { step_id: "s1".into(), step_label: "S1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "text".into() },
         ];
         let template = "{referee_reports} | {editor_synthesis}";
-        let result = expand_template(template, "", &prior, "/paper.txt", "/source.tex");
+        let result = expand_template(template, "", "", &prior, "/paper.txt", "/source.tex");
         assert!(result.contains("## S1"));
         assert!(result.contains("text | text"));
     }
@@ -755,7 +948,7 @@ mod tests {
     #[test]
     fn expand_template_no_prior() {
         let template = "Last: {last_output}";
-        let result = expand_template(template, "", &[], "/paper.txt", "/source.tex");
+        let result = expand_template(template, "", "", &[], "/paper.txt", "/source.tex");
         assert!(result.contains("(not yet generated)"));
     }
 
@@ -777,7 +970,7 @@ mod tests {
             out("technical", "Technical", "tech body"),
             out("empirical", "Empirical", "emp body"),
         ];
-        let result = expand_template("Tech: {step:technical}", "", &prior, "p", "s");
+        let result = expand_template("Tech: {step:technical}", "", "", &prior, "p", "s");
         assert!(result.contains("Tech: tech body"));
         assert!(!result.contains("emp body"));
     }
@@ -788,7 +981,7 @@ mod tests {
             out("technical/claude", "Technical (Claude)", "claude says"),
             out("technical/gemini", "Technical (Gemini)", "gemini says"),
         ];
-        let result = expand_template("All: {step:technical}", "", &prior, "p", "s");
+        let result = expand_template("All: {step:technical}", "", "", &prior, "p", "s");
         assert!(result.contains("claude says"));
         assert!(result.contains("gemini says"));
         assert!(result.contains("---"));
@@ -800,7 +993,7 @@ mod tests {
             out("technical/claude", "Technical (Claude)", "claude says"),
             out("technical/gemini", "Technical (Gemini)", "gemini says"),
         ];
-        let result = expand_template("Just one: {step:technical/claude}", "", &prior, "p", "s");
+        let result = expand_template("Just one: {step:technical/claude}", "", "", &prior, "p", "s");
         assert!(result.contains("claude says"));
         assert!(!result.contains("gemini says"));
     }
@@ -808,21 +1001,21 @@ mod tests {
     #[test]
     fn step_ref_unknown_id_emits_notice() {
         let prior = vec![out("technical", "Technical", "tech body")];
-        let result = expand_template("Missing: {step:nonexistent}", "", &prior, "p", "s");
+        let result = expand_template("Missing: {step:nonexistent}", "", "", &prior, "p", "s");
         assert!(result.contains("(no output for step 'nonexistent')"));
     }
 
     #[test]
     fn step_ref_unclosed_brace_passes_through() {
         let prior = vec![out("a", "A", "aa")];
-        let result = expand_template("Broken: {step:a", "", &prior, "p", "s");
+        let result = expand_template("Broken: {step:a", "", "", &prior, "p", "s");
         assert!(result.contains("{step:a"));
     }
 
     #[test]
     fn step_ref_empty_id() {
         let prior = vec![out("a", "A", "aa")];
-        let result = expand_template("{step:}", "", &prior, "p", "s");
+        let result = expand_template("{step:}", "", "", &prior, "p", "s");
         assert!(result.contains("(empty step reference)"));
     }
 }

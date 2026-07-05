@@ -29,6 +29,14 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
             "parameters": def.input_schema,
         }));
     }
+    if allowed_tools.iter().any(|t| *t == "Write") {
+        let def = WriteToolDef::default();
+        declarations.push(serde_json::json!({
+            "name": def.name,
+            "description": def.description,
+            "parameters": def.input_schema,
+        }));
+    }
     if declarations.is_empty() {
         Vec::new()
     } else {
@@ -106,6 +114,7 @@ pub async fn call_google_api(
 
     let elapsed = start.elapsed().as_secs();
     log(app, format!("{label} finished ({elapsed}s, {} chars output{})", text.len(), usage.summary()));
+    super::logging::emit_usage(app, usage.input_tokens, usage.output_tokens);
 
     if text.trim().is_empty() {
         return Err(format!("{label}: Google API returned empty output"));

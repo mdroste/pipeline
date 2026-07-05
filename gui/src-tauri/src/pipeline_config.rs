@@ -546,13 +546,20 @@ fn folder_extraction() -> ExtractionConfig {
 }
 
 /// Domain-neutral profile scaffold: generic wrapper + generic survey prompt.
+/// Folder-input profiles get the folder survey, which explores the tree with
+/// the Read tool instead of surveying the file inventory text.
 fn generic_profile(name: &str, steps: Vec<StepConfig>, extraction: ExtractionConfig) -> ProfileData {
+    let survey = if extraction.input_mode == "folder" {
+        "orientation_folder"
+    } else {
+        "orientation_generic"
+    };
     ProfileData {
         name: name.into(),
         steps,
         merge: MergeConfig::default(),
         use_orientation: true,
-        orientation_prompt: prompts::load_prompt("orientation_generic").unwrap_or_default(),
+        orientation_prompt: prompts::load_prompt(survey).unwrap_or_default(),
         extraction,
         parallel_context_template: generic_parallel_template(),
     }

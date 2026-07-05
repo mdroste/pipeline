@@ -197,6 +197,53 @@ impl RunWriter {
         Ok(())
     }
 
+    /// Register files under `subdir` (relative to the run dir) that aren't
+    /// already in the artifact index. Model-written supporting files land
+    /// on disk without going through `add_text`; this picks them up at the
+    /// end of the run. Symlinks are skipped, oversized files are skipped,
+    /// and the walk is capped defensively. Returns how many were added.
+    pub fn register_unlisted(&mut self, subdir: &str, group: &str) -> usize {
+        const MAX_UNLISTED: usize = 500;
+        const MAX_UNLISTED_BYTES: u64 = 50_000_000;
+        let known: std::collections::HashSet<String> =
+            self.artifacts.iter().map(|a| a.rel_path.clone()).collect();
+        let mut added = 0usize;
+        let mut stack = vec![self.dir.join(subdir)];
+        while let Some(d) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&d) else { continue };
+            for entry in entries.flatten() {
+                if added >= MAX_UNLISTED {
+                    return added;
+                }
+                let path = entry.path();
+                let Ok(ft) = entry.file_type() else { continue };
+                if ft.is_symlink() {
+                    continue;
+                }
+                if ft.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if entry.metadata().map(|m| m.len() > MAX_UNLISTED_BYTES).unwrap_or(true) {
+                    continue;
+                }
+                let Ok(rel) = path.strip_prefix(&self.dir) else { continue };
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                if known.contains(&rel_str) {
+                    continue;
+                }
+                let label = rel_str
+                    .strip_prefix(&format!("{subdir}/"))
+                    .unwrap_or(&rel_str)
+                    .to_string();
+                if self.register_existing(&rel_str, &label, group).is_ok() {
+                    added += 1;
+                }
+            }
+        }
+        added
+    }
+
     /// Write manifest.json. Call once, last.
     pub fn finish(
         self,

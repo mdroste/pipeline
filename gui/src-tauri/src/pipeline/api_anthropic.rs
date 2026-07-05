@@ -49,6 +49,14 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
             "input_schema": def.input_schema,
         }));
     }
+    if allowed_tools.iter().any(|t| *t == "Write") {
+        let def = WriteToolDef::default();
+        tools.push(serde_json::json!({
+            "name": def.name,
+            "description": def.description,
+            "input_schema": def.input_schema,
+        }));
+    }
     tools
 }
 
@@ -113,6 +121,7 @@ pub async fn call_anthropic_api(
 
     let elapsed = start.elapsed().as_secs();
     log(app, format!("{label} finished ({elapsed}s, {} chars output{})", text.len(), usage.summary()));
+    super::logging::emit_usage(app, usage.input_tokens, usage.output_tokens);
 
     if text.trim().is_empty() {
         return Err(format!("{label}: Anthropic API returned empty output"));

@@ -3,7 +3,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 /// Maximum tool-call round-trips before giving up.
 const MAX_TOOL_ITERATIONS: usize = 15;
@@ -25,10 +25,18 @@ const MAX_READ_SIZE: usize = 5 * 1024 * 1024;
 /// Maximum PDF file size for Read tool calls (32 MB — matches Anthropic's document limit).
 const MAX_PDF_SIZE: usize = 32 * 1024 * 1024;
 
+/// Maximum size of a single Write tool call (5 MB — reports are ~100 KB;
+/// this leaves room for data artifacts without letting a runaway model
+/// fill the disk).
+const MAX_WRITE_SIZE: usize = 5 * 1024 * 1024;
+
+/// Maximum number of Write tool calls per pipeline run.
+const MAX_WRITES_PER_RUN: usize = 200;
+
 // ── Logging ────────────────────────────────────────────────────────
 
 pub fn log(app: &AppHandle, line: impl Into<String>) {
-    app.emit("pipeline:log", serde_json::json!({ "line": line.into() })).ok();
+    super::logging::emit(app, line.into());
 }
 
 pub fn verbose_log(app: &AppHandle, line: impl Into<String>) {
@@ -66,6 +74,38 @@ impl Default for ReadToolDef {
     }
 }
 
+/// The Write tool schema sent to APIs. Confined to the run's artifact
+/// directory by `write_file_for_tool`.
+#[derive(Debug, Clone, Serialize)]
+pub struct WriteToolDef {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl Default for WriteToolDef {
+    fn default() -> Self {
+        Self {
+            name: "Write".to_string(),
+            description: "Write a UTF-8 text file inside the run's artifact directory. Paths outside that directory are rejected.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Destination path. Either absolute (must be inside the artifact directory) or relative to it."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full file content to write"
+                    }
+                },
+                "required": ["file_path", "content"]
+            }),
+        }
+    }
+}
+
 // ── Tool execution ─────────────────────────────────────────────────
 
 /// Allowed directories for API tool reads, set before each pipeline run.
@@ -78,6 +118,108 @@ pub fn set_allowed_dirs(dirs: Vec<String>) {
     if let Ok(mut allowed) = ALLOWED_DIRS.lock() {
         *allowed = dirs;
     }
+}
+
+/// The single directory Write tool calls may target, set before each run
+/// (the run's `artifacts/` dir). `None` disables the Write tool entirely.
+static WRITE_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// Write calls consumed this run, reset by `set_write_dir`.
+static WRITE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Set (or clear) the directory Write tool calls are confined to.
+/// Call this before starting a pipeline run; pass `None` to disable writes.
+pub fn set_write_dir(dir: Option<std::path::PathBuf>) {
+    if let Ok(mut wd) = WRITE_DIR.lock() {
+        *wd = dir;
+    }
+    WRITE_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Validate and perform a Write tool call. The destination must resolve
+/// inside the configured write dir; `..` components, absolute paths outside
+/// the dir, and symlinked destinations are rejected. Parent subdirectories
+/// are created as needed.
+pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> {
+    let root = WRITE_DIR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or("File writing is not enabled for this run")?;
+    // The run dir is created before any LLM call, so this canonicalizes.
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("Artifact directory unavailable: {e}"))?;
+
+    if content.len() > MAX_WRITE_SIZE {
+        return Err(format!(
+            "Content too large ({} bytes, max {MAX_WRITE_SIZE})",
+            content.len()
+        ));
+    }
+    if WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= MAX_WRITES_PER_RUN {
+        return Err(format!("Write limit reached ({MAX_WRITES_PER_RUN} files per run)"));
+    }
+
+    // Resolve to a path relative to the artifact root. Absolute paths must
+    // already point inside it (accepting both the raw and canonical spelling
+    // of the root, since models echo back whichever form the prompt used).
+    let p = std::path::Path::new(path);
+    let rel = if p.is_absolute() {
+        let raw = WRITE_DIR
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_default();
+        p.strip_prefix(&root)
+            .or_else(|_| p.strip_prefix(&raw))
+            .map(|r| r.to_path_buf())
+            .map_err(|_| format!("Access denied: {path} is outside the artifact directory"))?
+    } else {
+        p.to_path_buf()
+    };
+
+    // No traversal components, no re-rooting, and a sane depth.
+    if rel.as_os_str().is_empty() {
+        return Err("Destination path is empty".into());
+    }
+    if !rel
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(format!("Access denied: {path} contains path traversal"));
+    }
+    if rel.components().count() > 8 {
+        return Err("Destination path too deep".into());
+    }
+
+    let dest = root.join(&rel);
+    // Refuse to write through a pre-existing symlink (e.g. planted by an
+    // earlier shell command in a CLI-mode step of the same run).
+    if let Ok(meta) = std::fs::symlink_metadata(&dest) {
+        if meta.file_type().is_symlink() {
+            return Err(format!("Access denied: {path} is a symlink"));
+        }
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory for {path}: {e}"))?;
+        // A symlinked intermediate directory could redirect the write even
+        // though every component is Normal; canonicalize and re-check.
+        let canon_parent = parent
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve directory for {path}: {e}"))?;
+        if !canon_parent.starts_with(&root) {
+            return Err(format!("Access denied: {path} resolves outside the artifact directory"));
+        }
+    }
+    std::fs::write(&dest, content).map_err(|e| format!("Failed to write {path}: {e}"))?;
+
+    Ok(format!(
+        "Wrote {} bytes to {}",
+        content.len(),
+        dest.to_string_lossy().replace('\\', "/")
+    ))
 }
 
 /// Validate a tool-read path: resolve symlinks, check it's under an allowed
@@ -839,6 +981,22 @@ fn execute_tool(
                 }
             }
         }
+        "Write" => {
+            let path = input
+                .get("file_path")
+                .or_else(|| input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let content = input
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            verbose_log(app, format!("[api] {label}: Write tool call #{} -> {path} ({} bytes)", iteration + 1, content.len()));
+            match write_file_for_tool(path, content) {
+                Ok(msg) => ToolResult::Text(msg),
+                Err(e) => ToolResult::Error(e),
+            }
+        }
         _ => {
             verbose_log(app, format!("[api] {label}: unknown tool '{name}', skipping"));
             ToolResult::Error(format!("Tool '{name}' is not available"))
@@ -900,5 +1058,51 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
         let err = validate_tool_path(path, usize::MAX).unwrap_err();
         assert!(err.contains("Access denied"), "{err}");
+    }
+
+    // Write-tool tests share the WRITE_DIR static, so they run under one
+    // test to avoid interleaving set_write_dir calls across threads.
+    #[test]
+    fn write_tool_confinement() {
+        let dir = tempfile::tempdir().unwrap();
+        set_write_dir(Some(dir.path().to_path_buf()));
+
+        // Relative path lands inside the dir, subdirs created.
+        let msg = write_file_for_tool("steps/report.md", "# hi").unwrap();
+        assert!(msg.contains("report.md"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("steps/report.md")).unwrap(),
+            "# hi"
+        );
+
+        // Absolute path inside the dir is accepted (raw, non-canonical form).
+        let abs = dir.path().join("notes.md");
+        write_file_for_tool(&abs.to_string_lossy(), "n").unwrap();
+        assert!(abs.exists());
+
+        // Traversal and outside-absolute paths are rejected.
+        assert!(write_file_for_tool("../escape.md", "x").unwrap_err().contains("Access denied"));
+        assert!(write_file_for_tool("a/../../escape.md", "x").unwrap_err().contains("Access denied"));
+        let outside = std::env::temp_dir().join("pipeline_write_escape.md");
+        assert!(write_file_for_tool(&outside.to_string_lossy(), "x").is_err());
+        assert!(!outside.exists());
+
+        // Oversized content is rejected.
+        let big = "x".repeat(MAX_WRITE_SIZE + 1);
+        assert!(write_file_for_tool("big.md", &big).unwrap_err().contains("too large"));
+
+        // Symlinked destination is refused.
+        #[cfg(unix)]
+        {
+            let target = dir.path().join("target.md");
+            std::fs::write(&target, "t").unwrap();
+            let link = dir.path().join("link.md");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            assert!(write_file_for_tool("link.md", "x").unwrap_err().contains("symlink"));
+        }
+
+        // Disabled state rejects everything.
+        set_write_dir(None);
+        assert!(write_file_for_tool("steps/report.md", "x").is_err());
     }
 }
