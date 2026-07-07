@@ -4,7 +4,6 @@ use super::api_common::*;
 use super::claude::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
-use tauri::AppHandle;
 
 /// Map settings model shorthand to OpenAI model ID.
 /// `override_model` (when non-empty) takes precedence over the global setting.
@@ -94,7 +93,7 @@ fn build_messages(
 
 /// Call the OpenAI API directly, with tool-use loop for Read.
 pub async fn call_openai_api(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     prompt: &str,
     allowed_tools: &[&str],
     system_prompt: Option<&str>,
@@ -161,7 +160,7 @@ pub async fn call_openai_api(
 /// file content part — extraction should use pdftotext/marker instead), and
 /// a retry-without-tools fallback for models without tool-calling support.
 pub async fn call_local_api(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     prompt: &str,
     allowed_tools: &[&str],
     system_prompt: Option<&str>,

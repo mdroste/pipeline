@@ -4,7 +4,6 @@ use super::api_common::*;
 use super::claude::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
-use tauri::AppHandle;
 
 /// Map settings model shorthand to Google model ID.
 /// `override_model` (when non-empty) takes precedence over the global setting.
@@ -46,7 +45,7 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
 
 /// Call the Google Gemini API directly, with tool-use loop for Read.
 pub async fn call_google_api(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     prompt: &str,
     allowed_tools: &[&str],
     system_prompt: Option<&str>,

@@ -5,7 +5,6 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
-use tauri::{AppHandle, Emitter};
 
 /// Case-insensitive extension check (handles .PDF, .Tex, etc.).
 fn ext_eq(path: &Path, expected: &str) -> bool {
@@ -577,7 +576,7 @@ fn source_line(attach: bool, prompt_path: &str) -> String {
 
 /// Re-request a specific page range that verification flagged.
 async fn repair_pages(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     path: &Path,
     prompt_path: &str,
     start: u32,
@@ -626,7 +625,7 @@ async fn repair_pages(
 /// a pdftotext per-page baseline: pages that are missing or far too short
 /// are re-requested once, and anything still failing becomes an
 /// extraction-quality note instead of a silent gap.
-async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<ExtractionResult, String> {
+async fn extract_llm(app: &crate::emit::EventBus, path: &Path, hash: &str) -> Result<ExtractionResult, String> {
     let path_str = path.to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
     // Normalize backslashes so the path Claude sees in the prompt matches
@@ -686,7 +685,7 @@ async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<Extract
             if !suspects.is_empty() {
                 let ranges = group_into_ranges(&suspects);
                 if ranges.len() > MAX_REPAIR_RANGES {
-                    let _ = app.emit("pipeline:log", serde_json::json!({
+                    let _ = app.emit_event("pipeline:log", serde_json::json!({
                         "line": format!(
                             "Extraction verification: {} suspect ranges, repairing the first {MAX_REPAIR_RANGES}",
                             ranges.len()
@@ -697,7 +696,7 @@ async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<Extract
                     if crate::commands::is_cancelled() {
                         return Err("Pipeline cancelled".into());
                     }
-                    let _ = app.emit("pipeline:log", serde_json::json!({
+                    let _ = app.emit_event("pipeline:log", serde_json::json!({
                         "line": format!("Extraction verification: pages {start}-{end} missing or short, re-requesting")
                     }));
                     match repair_pages(app, path, &prompt_path, start, end, attach, timeout, &extra_dirs).await {
@@ -707,7 +706,7 @@ async fn extract_llm(app: &AppHandle, path: &Path, hash: &str) -> Result<Extract
                             }
                         }
                         Err(e) => {
-                            let _ = app.emit("pipeline:log", serde_json::json!({
+                            let _ = app.emit_event("pipeline:log", serde_json::json!({
                                 "line": format!("WARNING: repair of pages {start}-{end} failed: {e}")
                             }));
                         }
@@ -960,7 +959,7 @@ fn find_pdf_in_dir(dir: &Path) -> Option<PathBuf> {
 /// When `app` is provided and the pdf_extractor setting is "llm", uses the
 /// configured LLM provider to read and extract the PDF to Markdown.
 pub async fn extract(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     paper_path: &str,
     extraction_cfg: &crate::pipeline_config::ExtractionConfig,
 ) -> Result<ExtractionResult, String> {
@@ -1021,7 +1020,7 @@ pub async fn extract(
                     if crate::commands::is_cancelled() || find_command("pdftotext").is_none() {
                         return Err(e);
                     }
-                    let _ = app.emit("pipeline:log", serde_json::json!({
+                    let _ = app.emit_event("pipeline:log", serde_json::json!({
                         "line": format!("WARNING: LLM extraction failed: {e}. Falling back to pdftotext.")
                     }));
                     let p = pdf.clone();
@@ -1126,7 +1125,7 @@ pub async fn extract(
         Ok(result) => Ok(result),
         Err(e) if fallback_pdf.is_some() => {
             let pdf = fallback_pdf.unwrap();
-            let _ = app.emit("pipeline:log", serde_json::json!({
+            let _ = app.emit_event("pipeline:log", serde_json::json!({
                 "line": format!("WARNING: {extractor_name} failed: {e}. Falling back to LLM extraction.")
             }));
             let hash = {

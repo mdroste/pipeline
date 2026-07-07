@@ -43,13 +43,21 @@ describe("usePipeline log buffering", () => {
     await waitFor(() => expect(result.current.logs).toHaveLength(2));
     const logs = result.current.logs;
     // Line with no session metadata defaults to a null/master entry.
-    expect(logs[0]).toEqual({ line: "line one", session: null, label: null, level: "info" });
+    // (`t` is a client arrival timestamp — present but not asserted exactly.)
+    expect(logs[0]).toEqual({
+      line: "line one",
+      session: null,
+      label: null,
+      level: "info",
+      t: expect.any(Number),
+    });
     // Structured metadata is carried through verbatim.
     expect(logs[1]).toEqual({
       line: "line two",
       session: 3,
       label: "Orientation map",
       level: "info",
+      t: expect.any(Number),
     });
     unmount();
   });

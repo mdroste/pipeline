@@ -1,10 +1,9 @@
 use super::claude::{call_llm, LlmOverrides};
 use crate::models::PipelineReport;
 use crate::output::strip_to_report;
-use tauri::AppHandle;
 
 /// Produce a markdown diff between two reports on the same paper.
-pub async fn reconcile(app: &AppHandle, prior: &PipelineReport, current: &PipelineReport) -> Result<String, String> {
+pub async fn reconcile(app: &crate::emit::EventBus, prior: &PipelineReport, current: &PipelineReport) -> Result<String, String> {
     let prior_outputs = prior.all_outputs();
     let current_outputs = current.all_outputs();
 

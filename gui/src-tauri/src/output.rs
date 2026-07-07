@@ -57,7 +57,10 @@ fn strip_preamble(text: &str) -> String {
 }
 
 fn format_duration(d: Duration) -> String {
-    let total_secs = d.as_secs();
+    format_secs(d.as_secs())
+}
+
+fn format_secs(total_secs: u64) -> String {
     let mins = total_secs / 60;
     let secs = total_secs % 60;
     if mins > 0 {
@@ -65,6 +68,149 @@ fn format_duration(d: Duration) -> String {
     } else {
         format!("{secs}s")
     }
+}
+
+/// Published API list price for a model, as (input, output) US dollars per
+/// million tokens. Matched by substring so aliases ("opus") and full ids
+/// ("claude-opus-4-8") both resolve. Deliberately coarse and approximate —
+/// used only for a labelled *estimate* in the run summary, never billing.
+/// Order matters: more specific names are checked before broad ones.
+pub fn model_price(model: &str) -> Option<(f64, f64)> {
+    let m = model.to_ascii_lowercase();
+    // (needle, input $/Mtok, output $/Mtok)
+    const TABLE: &[(&str, f64, f64)] = &[
+        ("haiku", 0.80, 4.0),
+        ("sonnet", 3.0, 15.0),
+        ("opus", 15.0, 75.0),
+        ("o4-mini", 1.10, 4.40),
+        ("o3-mini", 1.10, 4.40),
+        ("o3", 2.0, 8.0),
+        ("gpt-4.1-mini", 0.40, 1.60),
+        ("gpt-4.1", 2.0, 8.0),
+        ("gpt-4o-mini", 0.15, 0.60),
+        ("gpt-4o", 2.50, 10.0),
+        ("gemini-2.5-flash", 0.30, 2.50),
+        ("gemini-2.5-pro", 1.25, 10.0),
+        ("gemini-1.5-flash", 0.075, 0.30),
+        ("gemini-1.5-pro", 1.25, 5.0),
+    ];
+    TABLE
+        .iter()
+        .find(|(needle, _, _)| m.contains(needle))
+        .map(|(_, i, o)| (*i, *o))
+}
+
+/// Whether a provider ran through a direct API (metered, priceable) rather than
+/// a subscription CLI. Cost estimates are only meaningful in API mode; on a
+/// subscription plan the run is billed by the plan, not per token.
+fn provider_in_api_mode(settings: &Settings, provider: &str) -> bool {
+    match provider {
+        "codex" => !settings.openai_api_key.trim().is_empty(),
+        "gemini" => !settings.google_api_key.trim().is_empty(),
+        "local" => true,
+        // "claude" and the empty/default provider both map to Anthropic.
+        _ => !settings.anthropic_api_key.trim().is_empty(),
+    }
+}
+
+/// Estimated cost of a call at list prices, or None when the model is unknown.
+fn estimate_cost(model: &str, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+    let (pin, pout) = model_price(model)?;
+    Some((input_tokens as f64 / 1_000_000.0) * pin + (output_tokens as f64 / 1_000_000.0) * pout)
+}
+
+fn format_cost(cost: f64) -> String {
+    if cost >= 1.0 {
+        format!("${cost:.2}")
+    } else {
+        format!("${cost:.4}")
+    }
+}
+
+/// Compact token count for the summary table: 1_234_567 → "1.2M".
+fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// A per-step run summary table (time, model, tokens, estimated cost), or None
+/// when there is nothing worth showing (e.g. a legacy report with no metrics).
+fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<String> {
+    let outputs = report.all_outputs();
+    let has_metrics = outputs
+        .iter()
+        .any(|o| o.duration_secs > 0 || o.input_tokens > 0 || o.output_tokens > 0);
+    if !has_metrics {
+        return None;
+    }
+
+    let mut total_in = 0u64;
+    let mut total_out = 0u64;
+    let mut total_cost = 0f64;
+    let mut any_cost = false;
+
+    let mut rows = String::new();
+    for o in &outputs {
+        total_in += o.input_tokens;
+        total_out += o.output_tokens;
+
+        let model = if o.model.trim().is_empty() { "default".to_string() } else { o.model.clone() };
+        let provider = if o.provider.trim().is_empty() { "default".to_string() } else { capitalize(&o.provider) };
+        let tokens = if o.input_tokens == 0 && o.output_tokens == 0 {
+            "—".to_string()
+        } else {
+            format!("{} / {}", fmt_tokens(o.input_tokens), fmt_tokens(o.output_tokens))
+        };
+        let cost_cell = if provider_in_api_mode(settings, &o.provider) {
+            match estimate_cost(&o.model, o.input_tokens, o.output_tokens) {
+                Some(c) => {
+                    total_cost += c;
+                    any_cost = true;
+                    format_cost(c)
+                }
+                None => "—".to_string(),
+            }
+        } else {
+            "—".to_string()
+        };
+        rows.push_str(&format!(
+            "| {} | {} · {} | {} | {} | {} |\n",
+            o.step_label,
+            provider,
+            model,
+            format_secs(o.duration_secs),
+            tokens,
+            cost_cell,
+        ));
+    }
+
+    let total_tokens = if total_in == 0 && total_out == 0 {
+        "—".to_string()
+    } else {
+        format!("{} / {}", fmt_tokens(total_in), fmt_tokens(total_out))
+    };
+    let total_cost_cell = if any_cost { format_cost(total_cost) } else { "—".to_string() };
+
+    let mut md = String::new();
+    md.push_str("## Run summary\n\n");
+    md.push_str("| Step | Provider · Model | Time | Tokens (in / out) | Est. cost |\n");
+    md.push_str("|------|------------------|------|-------------------|-----------|\n");
+    md.push_str(&rows);
+    md.push_str(&format!(
+        "| **Total** | | | **{total_tokens}** | **{total_cost_cell}** |\n\n"
+    ));
+    if any_cost {
+        md.push_str(
+            "*Cost is an estimate at published API list prices for steps run through a direct API. \
+             It does not reflect subscription-plan billing.*\n\n",
+        );
+    }
+    Some(md)
 }
 
 /// Render a PipelineReport to a markdown string.
@@ -134,6 +280,12 @@ pub fn render_markdown(report: &PipelineReport, diff_text: Option<&str>, elapsed
         md.push_str("## Revision Diff\n\n");
         md.push_str(&strip_to_report(diff));
         md.push_str("\n\n");
+    }
+
+    // Per-step timing / tokens / cost, when the run recorded any.
+    if let Some(summary) = render_run_summary(report, settings) {
+        md.push_str("---\n\n");
+        md.push_str(&summary);
     }
 
     md.push_str("---\n");
@@ -254,5 +406,99 @@ mod tests {
     #[test]
     fn capitalize_multibyte() {
         assert_eq!(capitalize("über"), "Über");
+    }
+
+    // ── pricing / run summary ──────────────────────────────────────
+
+    #[test]
+    fn model_price_matches_aliases_and_ids() {
+        assert_eq!(model_price("opus"), Some((15.0, 75.0)));
+        assert_eq!(model_price("claude-opus-4-8"), Some((15.0, 75.0)));
+        assert_eq!(model_price("sonnet"), Some((3.0, 15.0)));
+        assert_eq!(model_price("gemini-2.5-flash"), Some((0.30, 2.50)));
+        // Specific-before-broad: the mini variant must not match plain gpt-4.1.
+        assert_eq!(model_price("gpt-4.1-mini"), Some((0.40, 1.60)));
+        assert_eq!(model_price("gpt-4.1"), Some((2.0, 8.0)));
+        assert_eq!(model_price("some-unknown-model"), None);
+        assert_eq!(model_price(""), None);
+    }
+
+    #[test]
+    fn estimate_cost_computes_from_tokens() {
+        // 1M input + 1M output on opus = 15 + 75 = 90.
+        let c = estimate_cost("opus", 1_000_000, 1_000_000).unwrap();
+        assert!((c - 90.0).abs() < 1e-9);
+        assert!(estimate_cost("unknown", 100, 100).is_none());
+    }
+
+    #[test]
+    fn format_cost_precision() {
+        assert_eq!(format_cost(2.5), "$2.50");
+        assert_eq!(format_cost(0.0123), "$0.0123");
+    }
+
+    #[test]
+    fn provider_api_mode_follows_keys() {
+        let mut s = Settings::default();
+        assert!(!provider_in_api_mode(&s, "claude"));
+        assert!(provider_in_api_mode(&s, "local"));
+        s.anthropic_api_key = "sk-x".into();
+        assert!(provider_in_api_mode(&s, "claude"));
+        assert!(provider_in_api_mode(&s, "")); // empty provider = Anthropic
+        assert!(!provider_in_api_mode(&s, "gemini"));
+    }
+
+    fn metric_output(label: &str, model: &str, provider: &str, secs: u64, tin: u64, tout: u64) -> crate::models::StepOutput {
+        crate::models::StepOutput {
+            step_id: label.into(),
+            step_label: label.into(),
+            phase: "parallel".into(),
+            provider: provider.into(),
+            agent: provider.into(),
+            raw_text: String::new(),
+            duration_secs: secs,
+            input_tokens: tin,
+            output_tokens: tout,
+            model: model.into(),
+            ..Default::default()
+        }
+    }
+
+    fn report_with(outputs: Vec<crate::models::StepOutput>) -> PipelineReport {
+        PipelineReport {
+            orientation: serde_json::json!({}),
+            step_outputs: outputs,
+            failed_steps: vec![],
+            referee_reports: vec![],
+            editor: None,
+            report_date: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            paper_hash: "hash".into(),
+        }
+    }
+
+    #[test]
+    fn run_summary_absent_without_metrics() {
+        let report = report_with(vec![metric_output("Step", "opus", "claude", 0, 0, 0)]);
+        assert!(render_run_summary(&report, &Settings::default()).is_none());
+    }
+
+    #[test]
+    fn run_summary_shows_tokens_and_gates_cost_on_api_mode() {
+        let report = report_with(vec![metric_output("Technical", "opus", "claude", 90, 500_000, 100_000)]);
+
+        // Subscription mode (no key): tokens shown, cost withheld.
+        let sub = render_run_summary(&report, &Settings::default()).unwrap();
+        assert!(sub.contains("Run summary"));
+        assert!(sub.contains("Technical"));
+        assert!(sub.contains("500.0k / 100.0k"));
+        assert!(sub.contains("1m 30s"));
+        assert!(!sub.contains("$"));
+
+        // API mode: cost estimated (0.5*15 + 0.1*75 = 7.5 + 7.5 = 15.00).
+        let mut s = Settings::default();
+        s.anthropic_api_key = "sk-x".into();
+        let api = render_run_summary(&report, &s).unwrap();
+        assert!(api.contains("$15.00"));
+        assert!(api.contains("list prices"));
     }
 }

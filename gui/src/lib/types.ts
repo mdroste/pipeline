@@ -2,6 +2,11 @@
 
 export type Phase = "parallel" | "sequential";
 
+/** Deterministic guard controlling whether a step runs (mirrors RunCondition). */
+export type RunCondition =
+  | { kind: "output_matches"; step: string; pattern: string; negate?: boolean }
+  | { kind: "survey_path"; pointer: string; equals?: unknown; exists?: boolean };
+
 export interface StepConfig {
   id: string;
   label: string;
@@ -14,12 +19,35 @@ export interface StepConfig {
   model?: string;
   /** Per-step effort override; empty/undefined = use the global setting. */
   effort?: string;
+  /** Explicit upstream dependencies (step ids). Empty = implicit adjacency schedule. */
+  inputs?: string[];
+  /** Optional guard: skip the step unless this condition holds. */
+  run_if?: RunCondition | null;
+  /** Optional JSON-shape contract the step's output must satisfy (with retry). */
+  output_schema?: Record<string, unknown> | null;
+  /** Fan-out: run this step once per file matching the glob, with {item} bound. */
+  for_each?: ForEach | null;
+}
+
+/** Fan-out (map) config for a step (mirrors ForEach). */
+export interface ForEach {
+  glob: string;
+  max: number;
 }
 
 export interface MergeConfig {
   enabled: boolean;
   prompt: string;
   agents: string[];
+}
+
+/** An additional named input a profile accepts (mirrors InputSlot). */
+export interface InputSlot {
+  key: string;
+  label?: string;
+  /** "document" | "folder". */
+  mode?: string;
+  required?: boolean;
 }
 
 /** Per-profile extraction overrides. Empty/null fields inherit from global Settings. */
@@ -31,6 +59,18 @@ export interface ExtractionConfig {
   marker_disable_images: boolean | null;
   /** "" or "document" | "folder" | "none". Empty = document. */
   input_mode?: string;
+  /** Extra named inputs exposed to prompts as {input:key}. */
+  extra_inputs?: InputSlot[];
+}
+
+/** A run-time variable a profile declares (mirrors VarSpec). */
+export interface VarSpec {
+  key: string;
+  label?: string;
+  /** "text" | "choice" | "file". */
+  kind?: string;
+  default?: string;
+  choices?: string[];
 }
 
 export interface PipelineConfig {
@@ -41,6 +81,8 @@ export interface PipelineConfig {
   orientation_prompt: string;
   extraction: ExtractionConfig;
   parallel_context_template: string;
+  /** Run-time variables the profile declares; referenced in prompts as {var:key}. */
+  variables?: VarSpec[];
 }
 
 export interface StepOutput {
@@ -49,6 +91,16 @@ export interface StepOutput {
   phase: string;
   agent: string;
   raw_text: string;
+  /** Wall-clock seconds the step's LLM call took (0 for pre-1.1 reports). */
+  duration_secs?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  /** Effective model id/alias used for this step. */
+  model?: string;
+  /** Provider that ran this step. */
+  provider?: string;
+  /** True when the step was skipped by its run_if guard. */
+  skipped?: boolean;
 }
 
 // --- Report types ---
@@ -163,6 +215,50 @@ export interface ReportSummary {
   file_path: string;
 }
 
+/** Mirrors runs::RunSummary — one row in the run-history list. */
+export interface RunSummary {
+  run_id: string;
+  created: string;
+  input_name: string;
+  input_path: string;
+  input_mode: string;
+  profile_id: string;
+  profile_name: string;
+  provider: string;
+  status: string;
+  duration_secs: number;
+  input_tokens: number;
+  output_tokens: number;
+  step_count: number;
+  artifact_count: number;
+  failed_steps: string[];
+  title: string;
+  tags: string[];
+}
+
+/** Mirrors runs::RunsDiskUsage. */
+export interface RunsDiskUsage {
+  count: number;
+  bytes: number;
+}
+
+/** Mirrors commands::BatchJob — one input in a batch run. */
+export interface BatchJob {
+  path: string;
+  name: string;
+  status: string; // pending | running | done | failed | cancelled
+  run_id: string | null;
+  error: string | null;
+  duration_secs: number;
+}
+
+/** Mirrors commands::WatchStatus. */
+export interface WatchStatus {
+  active: boolean;
+  folder: string;
+  processed: BatchJob[];
+}
+
 export interface PipelineResult {
   report: PipelineReport;
   markdown: string;
@@ -186,6 +282,8 @@ export interface Settings {
   verbose_logging: boolean;
   step_timeout_secs: number;
   max_retries: number;
+  /** Max past runs to keep on disk; 0 = keep all. */
+  max_saved_runs: number;
   anthropic_api_key: string;
   openai_api_key: string;
   google_api_key: string;
@@ -238,6 +336,7 @@ export type ExportEnvelope =
   | { type: "step"; data: StepConfig }
   | {
       type: "profile";
+      schema_version?: number;
       name: string;
       steps: StepConfig[];
       merge: MergeConfig;

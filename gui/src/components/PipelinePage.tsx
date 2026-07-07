@@ -9,6 +9,8 @@ import type {
   ExtractionConfig,
   ProfileSummary,
   ExportEnvelope,
+  VarSpec,
+  InputSlot,
 } from "../lib/types";
 import { reorderSteps } from "../lib/pipelineHelpers";
 import WaveDiagram, { type WaveSelection } from "./WaveDiagram";
@@ -48,6 +50,9 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
     "deep-code-review",
     "replication-audit",
     "grant-review",
+    "revision-response",
+    "rubric-grading",
+    "thesis-review",
   ];
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
@@ -93,6 +98,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
       extraction: c.extraction ?? DEFAULT_EXTRACTION,
       orientation_prompt: c.orientation_prompt ?? "",
       parallel_context_template: c.parallel_context_template ?? "",
+      variables: c.variables ?? [],
     };
   }
 
@@ -296,6 +302,18 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
         if (dirty) await invoke("save_pipeline_config", { config });
         await invoke("export_bundle", { path });
       } catch (e) { alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+  };
+
+  const handleImportUrl = async () => {
+    const url = window.prompt("Profile URL (a shared profile JSON):");
+    if (!url) return;
+    try {
+      const summary = await invoke<ProfileSummary>("import_profile_from_url", { url: url.trim() });
+      await refreshProfiles();
+      await handleSwitchProfile(summary.id);
+    } catch (e) {
+      alert(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -688,6 +706,14 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
             >
               Import
             </button>
+            <button
+              onClick={handleImportUrl}
+              title="Import a shared profile from a URL"
+              className="flex-1 py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
+                         hover:bg-gray-50 transition-colors"
+            >
+              From URL…
+            </button>
           </div>
           {saved && <p className="text-xs text-green-600 text-center">Saved.</p>}
         </div>
@@ -781,6 +807,23 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
                   </p>
                 </div>
               </div>
+
+              {/* Run-time variables */}
+              <VariablesEditor
+                variables={config.variables ?? []}
+                onChange={(variables) => { setConfig({ ...config, variables }); setDirty(true); }}
+              />
+
+              {/* Calibrate from rejected issues */}
+              <CalibrateSection
+                onAppend={(stepId, text) => {
+                  setConfig({
+                    ...config,
+                    steps: config.steps.map((s) => (s.id === stepId ? { ...s, prompt: `${s.prompt}\n\n${text}` } : s)),
+                  });
+                  setDirty(true);
+                }}
+              />
 
               {/* Parallel context template */}
               <div>
@@ -896,6 +939,11 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
                 step={editingStep}
                 onChange={(patch) => updateStep(editingStep.id, patch)}
               />
+              <AdvancedStepOptions
+                step={editingStep}
+                otherStepIds={config.steps.filter((s) => s.id !== editingStep.id).map((s) => s.id)}
+                onChange={(patch) => updateStep(editingStep.id, patch)}
+              />
             </div>
             <div className="flex-1 min-h-0 p-4">
               <PromptEditor
@@ -986,6 +1034,12 @@ function ExtractionEditor({
             is set to.
           </p>
         </div>
+
+        {/* Extra named inputs */}
+        <ExtraInputsEditor
+          slots={extraction.extra_inputs ?? []}
+          onChange={(extra_inputs) => onChange({ extra_inputs })}
+        />
 
         {inputMode !== "document" ? (
           <div className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
@@ -1415,6 +1469,520 @@ function ModelOverrides({
                          text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
                          focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-transparent"
             />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Calibrate a synthesis step from rejected issues (Release 1.4) ---
+
+interface CalibrationDraft {
+  addendum: string;
+  target_step_id: string;
+  target_label: string;
+  rejected_count: number;
+}
+
+function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: string) => void }) {
+  const [draft, setDraft] = useState<CalibrationDraft | null>(null);
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const d = await invoke<CalibrationDraft>("draft_calibration");
+      setDraft(d);
+      setText(d.addendum);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Calibrate from feedback</label>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2 leading-relaxed">
+        Draft an instruction from the issues you've rejected (in the Issues view) so this profile stops
+        flagging them, and append it to the synthesis step.
+      </p>
+      <button
+        onClick={run}
+        disabled={loading}
+        className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+      >
+        {loading ? "Drafting…" : "Draft from my rejected issues"}
+      </button>
+      {error && <p className="text-xs text-red-500 mt-1.5">{error}</p>}
+
+      {draft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setDraft(null)}>
+          <div className="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Calibration draft</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              From {draft.rejected_count} rejected issue{draft.rejected_count === 1 ? "" : "s"}. Will be appended to
+              step <span className="font-medium">{draft.target_label}</span>. Edit before applying.
+            </p>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={6}
+              className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setDraft(null)}
+                className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { if (text.trim()) onAppend(draft.target_step_id, text.trim()); setDraft(null); }}
+                disabled={!text.trim()}
+                className="px-4 py-2 text-sm rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40"
+              >
+                Append &amp; keep
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-2">Save the profile to persist the change.</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Extra named inputs (profile-level) ---
+//
+// Additional inputs beyond the primary one; each is extracted at run time and
+// exposed to prompts as {input:key} (a path to Read).
+
+function ExtraInputsEditor({
+  slots,
+  onChange,
+}: {
+  slots: InputSlot[];
+  onChange: (s: InputSlot[]) => void;
+}) {
+  const update = (i: number, patch: Partial<InputSlot>) =>
+    onChange(slots.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  const remove = (i: number) => onChange(slots.filter((_, j) => j !== i));
+  const add = () =>
+    onChange([...slots, { key: `input${slots.length + 1}`, label: "", mode: "document", required: false }]);
+
+  const inputClass =
+    "py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400";
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+        Extra inputs
+      </label>
+      <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
+        Additional files/folders the Run action asks for, exposed to prompts as{" "}
+        <code className="font-mono">{"{input:key}"}</code> (a path to Read). Useful for a response
+        letter, a rubric, or a prior report alongside the main input.
+      </p>
+      <div className="space-y-2">
+        {slots.map((s, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-1.5 p-2 border border-gray-200 dark:border-gray-700 rounded">
+            <input
+              value={s.key}
+              onChange={(e) => update(i, { key: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
+              placeholder="key"
+              className={`${inputClass} w-24 font-mono`}
+            />
+            <input
+              value={s.label ?? ""}
+              onChange={(e) => update(i, { label: e.target.value })}
+              placeholder="label"
+              className={`${inputClass} flex-1 min-w-[6rem]`}
+            />
+            <select
+              value={s.mode ?? "document"}
+              onChange={(e) => update(i, { mode: e.target.value })}
+              className={inputClass}
+            >
+              <option value="document">document</option>
+              <option value="folder">folder</option>
+            </select>
+            <label className="flex items-center gap-1 text-[10px] text-gray-500">
+              <input
+                type="checkbox"
+                checked={!!s.required}
+                onChange={(e) => update(i, { required: e.target.checked })}
+              />
+              required
+            </label>
+            <button
+              onClick={() => remove(i)}
+              className="text-xs text-red-500 hover:text-red-700 px-1"
+              title="Remove"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={add}
+        className="mt-2 text-xs text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-dashed border-gray-300 dark:border-gray-600 rounded px-2 py-1"
+      >
+        + Add input
+      </button>
+    </div>
+  );
+}
+
+// --- Run-time variables (profile-level) ---
+//
+// Declared variables turn a profile into a template: the Run action prompts for
+// values, and steps reference them as {var:key}.
+
+function VariablesEditor({
+  variables,
+  onChange,
+}: {
+  variables: VarSpec[];
+  onChange: (v: VarSpec[]) => void;
+}) {
+  const update = (i: number, patch: Partial<VarSpec>) =>
+    onChange(variables.map((v, j) => (j === i ? { ...v, ...patch } : v)));
+  const remove = (i: number) => onChange(variables.filter((_, j) => j !== i));
+  const add = () =>
+    onChange([...variables, { key: `var${variables.length + 1}`, label: "", kind: "text", default: "" }]);
+
+  const inputClass =
+    "py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400";
+
+  return (
+    <div>
+      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Variables</label>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
+        Values the Run action asks for, substituted into prompts as{" "}
+        <code className="font-mono">{"{var:key}"}</code>.
+      </p>
+      <div className="space-y-2">
+        {variables.map((v, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-1.5 p-2 border border-gray-200 dark:border-gray-700 rounded">
+            <input
+              value={v.key}
+              onChange={(e) => update(i, { key: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
+              placeholder="key"
+              className={`${inputClass} w-24 font-mono`}
+            />
+            <input
+              value={v.label ?? ""}
+              onChange={(e) => update(i, { label: e.target.value })}
+              placeholder="label"
+              className={`${inputClass} flex-1 min-w-[6rem]`}
+            />
+            <select
+              value={v.kind ?? "text"}
+              onChange={(e) => update(i, { kind: e.target.value })}
+              className={inputClass}
+            >
+              <option value="text">text</option>
+              <option value="choice">choice</option>
+              <option value="file">file</option>
+            </select>
+            <input
+              value={v.default ?? ""}
+              onChange={(e) => update(i, { default: e.target.value })}
+              placeholder="default"
+              className={`${inputClass} w-24`}
+            />
+            <button
+              onClick={() => remove(i)}
+              className="text-xs text-red-500 hover:text-red-700 px-1"
+              title="Remove"
+            >
+              ✕
+            </button>
+            {v.kind === "choice" && (
+              <input
+                value={(v.choices ?? []).join(", ")}
+                onChange={(e) => update(i, { choices: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+                placeholder="choices, comma-separated"
+                className={`${inputClass} w-full`}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={add}
+        className="mt-2 text-xs text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-dashed border-gray-300 dark:border-gray-600 rounded px-2 py-1"
+      >
+        + Add variable
+      </button>
+    </div>
+  );
+}
+
+// --- Advanced step options: dependencies, run_if condition, output schema ---
+//
+// These drive the generalized engine (Release 1.2). All optional; collapsed by
+// default so the common case stays uncluttered. Backend enforces cycle/unknown
+// dependency validation on save, so bad graphs surface as a save error.
+
+/** Schema that makes a step emit a list of issues, enabling the Issues table +
+ *  annotations in the report view (Release 1.4). Pair it with the issues
+ *  synthesis prompt. */
+const ISSUES_SCHEMA = {
+  type: "object",
+  required: ["issues"],
+  properties: {
+    issues: {
+      type: "array",
+      items: { type: "object", required: ["title", "severity", "body"] },
+    },
+  },
+};
+
+function AdvancedStepOptions({
+  step,
+  otherStepIds,
+  onChange,
+}: {
+  step: StepConfig;
+  otherStepIds: string[];
+  onChange: (patch: Partial<StepConfig>) => void;
+}) {
+  const hasAny = !!(step.inputs?.length || step.run_if || step.output_schema);
+  const [open, setOpen] = useState(hasAny);
+  const [schemaText, setSchemaText] = useState(
+    step.output_schema ? JSON.stringify(step.output_schema, null, 2) : ""
+  );
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+
+  const cond = step.run_if ?? null;
+  const condKind = cond?.kind ?? "none";
+
+  const setCondKind = (kind: string) => {
+    if (kind === "none") return onChange({ run_if: null });
+    if (kind === "output_matches")
+      return onChange({ run_if: { kind: "output_matches", step: otherStepIds[0] ?? "", pattern: "" } });
+    return onChange({ run_if: { kind: "survey_path", pointer: "", exists: true } });
+  };
+
+  const applySchema = (text: string) => {
+    setSchemaText(text);
+    if (!text.trim()) {
+      setSchemaError(null);
+      onChange({ output_schema: null });
+      return;
+    }
+    try {
+      const parsed = JSON.parse(text);
+      setSchemaError(null);
+      onChange({ output_schema: parsed });
+    } catch (e) {
+      setSchemaError(e instanceof Error ? e.message : "invalid JSON");
+    }
+  };
+
+  const inputClass =
+    "w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs font-mono text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400";
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="text-[11px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1"
+      >
+        <span>{open ? "▾" : "▸"}</span>
+        <span>Dependencies &amp; conditions</span>
+        {hasAny && !open && <span className="text-[10px] text-gray-400 ml-1">set</span>}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
+          {/* Dependencies */}
+          <div>
+            <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
+              Depends on (step ids, comma-separated)
+            </label>
+            <input
+              type="text"
+              value={(step.inputs ?? []).join(", ")}
+              onChange={(e) =>
+                onChange({
+                  inputs: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                })
+              }
+              placeholder="(implicit schedule) e.g. contribution, technical"
+              className={inputClass}
+            />
+            {otherStepIds.length > 0 && (
+              <p className="text-[10px] text-gray-400 mt-0.5">
+                Available: {otherStepIds.join(", ")}
+              </p>
+            )}
+          </div>
+
+          {/* run_if condition */}
+          <div>
+            <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
+              Run only if…
+            </label>
+            <select
+              value={condKind}
+              onChange={(e) => setCondKind(e.target.value)}
+              className={inputClass}
+            >
+              <option value="none">Always run</option>
+              <option value="output_matches">A prior step's output matches a pattern</option>
+              <option value="survey_path">The survey (orientation) JSON matches</option>
+            </select>
+            {cond?.kind === "output_matches" && (
+              <div className="mt-1.5 space-y-1.5">
+                <select
+                  value={cond.step}
+                  onChange={(e) => onChange({ run_if: { ...cond, step: e.target.value } })}
+                  className={inputClass}
+                >
+                  {otherStepIds.map((id) => (
+                    <option key={id} value={id}>{id}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={cond.pattern}
+                  onChange={(e) => onChange({ run_if: { ...cond, pattern: e.target.value } })}
+                  placeholder="regular expression, e.g. SEVERITY:\s*high"
+                  className={inputClass}
+                />
+                <label className="flex items-center gap-1.5 text-[10px] text-gray-500">
+                  <input
+                    type="checkbox"
+                    checked={!!cond.negate}
+                    onChange={(e) => onChange({ run_if: { ...cond, negate: e.target.checked } })}
+                  />
+                  Invert (run when it does NOT match)
+                </label>
+              </div>
+            )}
+            {cond?.kind === "survey_path" && (
+              <div className="mt-1.5 space-y-1.5">
+                <input
+                  type="text"
+                  value={cond.pointer}
+                  onChange={(e) => onChange({ run_if: { ...cond, pointer: e.target.value } })}
+                  placeholder="JSON pointer, e.g. /metadata/paper_type"
+                  className={inputClass}
+                />
+                <input
+                  type="text"
+                  value={
+                    cond.equals === undefined
+                      ? ""
+                      : typeof cond.equals === "string"
+                        ? cond.equals
+                        : JSON.stringify(cond.equals)
+                  }
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (!raw) {
+                      const { equals: _drop, ...rest } = cond;
+                      onChange({ run_if: { ...rest, exists: true } });
+                      return;
+                    }
+                    let val: unknown = raw;
+                    try {
+                      val = JSON.parse(raw);
+                    } catch {
+                      /* keep as string */
+                    }
+                    onChange({ run_if: { kind: "survey_path", pointer: cond.pointer, equals: val } });
+                  }}
+                  placeholder='equals (optional), e.g. "empirical" or true'
+                  className={inputClass}
+                />
+                <p className="text-[10px] text-gray-400">
+                  Leave "equals" blank to require only that the pointer exists.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* output_schema */}
+          <div>
+            <div className="flex items-center justify-between mb-0.5">
+              <label className="block text-[10px] font-medium text-gray-500">
+                Output JSON schema (optional)
+              </label>
+              <button
+                type="button"
+                onClick={() => applySchema(JSON.stringify(ISSUES_SCHEMA, null, 2))}
+                className="text-[10px] text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 underline"
+                title="Fill with the issues schema, which enables the Issues table + annotations in the report view"
+              >
+                Use issues schema
+              </button>
+            </div>
+            <textarea
+              value={schemaText}
+              onChange={(e) => applySchema(e.target.value)}
+              rows={4}
+              placeholder='{ "type": "array", "items": { "type": "object", "required": ["id", "severity"] } }'
+              className={`${inputClass} resize-y`}
+            />
+            {schemaError ? (
+              <p className="text-[10px] text-red-500 mt-0.5">Invalid JSON: {schemaError}</p>
+            ) : (
+              <p className="text-[10px] text-gray-400 mt-0.5">
+                When set, the step must emit JSON matching this shape (with one retry).
+              </p>
+            )}
+          </div>
+
+          {/* Fan-out (map) */}
+          <div>
+            <label className="flex items-center gap-1.5 text-[10px] font-medium text-gray-500 mb-1">
+              <input
+                type="checkbox"
+                checked={!!step.for_each}
+                onChange={(e) =>
+                  onChange({ for_each: e.target.checked ? { glob: "*", max: 20 } : null })
+                }
+              />
+              Fan out (run once per matching file)
+            </label>
+            {step.for_each && (
+              <div className="space-y-1.5 pl-4">
+                <input
+                  type="text"
+                  value={step.for_each.glob}
+                  onChange={(e) => onChange({ for_each: { glob: e.target.value, max: step.for_each!.max } })}
+                  placeholder="glob, e.g. chapters/*.tex or **/*.py"
+                  className={inputClass}
+                />
+                <label className="flex items-center gap-2 text-[10px] text-gray-500">
+                  Max files
+                  <input
+                    type="number"
+                    min={1}
+                    value={step.for_each.max}
+                    onChange={(e) =>
+                      onChange({ for_each: { glob: step.for_each!.glob, max: Math.max(1, parseInt(e.target.value, 10) || 1) } })
+                    }
+                    className={`${inputClass} w-20`}
+                  />
+                </label>
+                <p className="text-[10px] text-gray-400">
+                  Bind <code className="font-mono">{"{item}"}</code> in the prompt to each file. Outputs
+                  are merged (enable merge) or read together downstream via{" "}
+                  <code className="font-mono">{"{step:" + step.id + "}"}</code>.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

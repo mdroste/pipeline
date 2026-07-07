@@ -63,15 +63,38 @@ Pipeline processes a paper in three stages:
 | Consolidate | Sequential | Merges parallel outputs, deduplicates, orders by severity. |
 | Validate | Sequential | Re-reads the paper to verify each comment. Disabled by default. |
 
-Two other built-in profiles are included: **Quick Review** (2 parallel steps + consolidation) and **Empirical** (4 parallel steps + consolidation + validation).
-
 Each parallel step receives only the paper text, the orientation map, and its own prompt. The prompts instruct the LLM to identify issues, not to summarize or praise. The consolidation step deduplicates across all parallel outputs and ranks by severity.
+
+### Built-in profiles
+
+Beyond Deep Review, the app ships several profiles you can use as-is or copy and edit:
+
+- **Quick Review** and **Empirical** — shorter and empirically-focused paper reviews.
+- **Quick / Deep Code Review**, **Replication Package Audit** — for a folder of source or a replication package.
+- **Grant Proposal Review** — aims, feasibility, panel readability, consistency.
+- **Revision Response Check** — give it the revised paper plus the authors' response letter (and, optionally, the prior report); it verifies each claimed change against the paper.
+- **Rubric Grading** — grade a submission against a rubric file, criterion by criterion (asks for the course name when you run it).
+- **Thesis Review** — reviews each chapter of a folder separately, then adds a cross-chapter pass for inconsistent notation, redundancy, and gaps.
 
 ## Configuration
 
 The pipeline editor in the GUI lets you add, remove, reorder, enable, and disable steps. Each step has a phase (Parallel or Sequential), a prompt, optional tools (e.g., WebSearch), and one or more LLM agents. Assigning multiple agents to a step (e.g., Claude + Gemini) runs them independently; their outputs are merged automatically.
 
-Custom profiles can be created, exported, and imported. Settings and profiles are stored in `~/.pipeline/`.
+Steps also support a few optional controls for building your own workflows: **dependencies** (make a step wait for specific earlier steps), **conditions** (run a step only when the survey or an earlier step matches), a **JSON output shape** (which turns the report into a sortable, annotatable issues table), **variables** (values the app asks for at run time, referenced as `{var:name}`), **extra named inputs** (a response letter, rubric, or prior report, referenced as `{input:name}`), and **fan-out** (run a step once per file matching a glob, with `{item}` bound to each file).
+
+Custom profiles can be created, exported, imported from a file or a URL, and shared. Settings and profiles are stored in `~/.pipeline/`.
+
+## Batch, watch, and command line
+
+The **Batch** panel runs the active profile over many papers, or a whole folder, one at a time. **Watch a folder** does the same automatically as files are added. A separate **run history** lets you reopen, re-run (reusing prior work), compare, and annotate past runs.
+
+A headless CLI (`pipeline-cli`) runs the same engine with no window — useful for scripts and CI:
+
+```bash
+pipeline-cli run --input paper.pdf --profile deep-review --out report.md
+pipeline-cli batch --input-dir ./papers
+pipeline-cli profiles
+```
 
 ## Revision tracking
 

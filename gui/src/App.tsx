@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PaperSelector from "./components/PaperSelector";
 import ArtifactExplorer from "./components/ArtifactExplorer";
@@ -10,21 +10,20 @@ import DepsCheck from "./components/DepsCheck";
 import SettingsPage from "./components/SettingsPage";
 import PipelinePage from "./components/PipelinePage";
 import AboutPage from "./components/AboutPage";
+import HistoryPage from "./components/HistoryPage";
+import BatchPanel from "./components/BatchPanel";
+import Console from "./components/Console";
+import VariablePrompt from "./components/VariablePrompt";
+import IssuesTable from "./components/IssuesTable";
 import UpdateBanner from "./components/UpdateBanner";
-import { usePipeline, type LogEntry } from "./hooks/usePipeline";
-
-// Compact token count: 1_234_567 → "1.2M", 45_678 → "45.7k", 832 → "832".
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
-  return String(n);
-}
+import { usePipeline } from "./hooks/usePipeline";
 import { isMac } from "./lib/platform";
 import { isPaperOrientation } from "./lib/types";
+import { detectReportIssues } from "./lib/issues";
 import { renderGenericSurvey } from "./lib/surveyMarkdown";
-import type { PipelineReport, DepsReport, OrientationMap, PaperMetadata } from "./lib/types";
+import type { PipelineReport, DepsReport, OrientationMap, PaperMetadata, VarSpec, InputSlot } from "./lib/types";
 
-type Page = "main" | "pipeline" | "settings" | "help";
+type Page = "main" | "pipeline" | "settings" | "help" | "history" | "batch";
 
 function renderOrientationMap(o: OrientationMap): string {
   // Defensive: paper-shaped surveys may omit fields the schema defaults.
@@ -124,35 +123,28 @@ function getArtifactMarkdown(
   return reportMarkdown;
 }
 
-// Console line color: trust the backend `level` when it's meaningful, and fall
-// back to prefix-sniffing for orchestration lines that carry no level.
-function logLineClass(entry: LogEntry): string {
-  if (entry.level === "error" || entry.line.startsWith("ERROR")) return "text-red-400";
-  if (entry.level === "warn" || entry.line.startsWith("WARNING")) return "text-yellow-500";
-  if (entry.level === "stderr" || entry.line.startsWith("[stderr]")) return "text-orange-400";
-  if (entry.line.startsWith("Still waiting")) return "text-yellow-600";
-  if (entry.level === "stdout" || entry.line.startsWith("$") || entry.line.startsWith("Wrote"))
-    return "text-gray-500";
-  return "text-gray-400";
-}
-
 function App() {
-  const { state, logs, usage, startPipeline, cancel, reset, listenersReady } = usePipeline();
+  const { state, logs, usage, startPipeline, rerunPipeline, cancel, reset, listenersReady, runStartedAt, passTimes } = usePipeline();
   const [paperPath, setPaperPath] = useState<string | null>(null);
   const [depsReport, setDepsReport] = useState<DepsReport | null>(null);
   const [depsLoading, setDepsLoading] = useState(true);
   const [page, setPage] = useState<Page>("main");
-  const [logOpen, setLogOpen] = useState(true);
-  // Which headless session's console to show: "master" = all lines.
-  const [selectedSession, setSelectedSession] = useState<number | "master">("master");
-  const [copiedLog, setCopiedLog] = useState(false);
   const [configVersion, setConfigVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [artifact, setArtifact] = useState<string>("report");
+  // Report vs. structured-issues view (shown only when issues are detected).
+  const [reportView, setReportView] = useState<"report" | "issues">("report");
   // Active profile's input mode ("document" | "folder" | "none") — refetched
   // whenever the pipeline config may have changed. "none" workflows can run
   // without selecting an input.
   const [inputMode, setInputMode] = useState<string>("document");
+  // Variables and extra input slots the active profile declares; both drive
+  // the pre-run options modal.
+  const [profileVars, setProfileVars] = useState<VarSpec[]>([]);
+  const [inputSlots, setInputSlots] = useState<InputSlot[]>([]);
+  const [varModalOpen, setVarModalOpen] = useState(false);
+  // A run id to open in History (e.g. from a batch job's "Open" link).
+  const [historyRunId, setHistoryRunId] = useState<string | null>(null);
   // Theme: explicit choice in Settings is persisted; otherwise follow the OS.
   const [dark, setDark] = useState(() => {
     const stored = localStorage.getItem("theme");
@@ -184,7 +176,6 @@ function App() {
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
-  const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     invoke<DepsReport>("check_deps")
@@ -200,80 +191,41 @@ function App() {
   }, []);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
-
-  useEffect(() => {
-    invoke<{ extraction?: { input_mode?: string } }>("get_pipeline_config")
-      .then((c) => setInputMode(c.extraction?.input_mode || "document"))
-      .catch(() => setInputMode("document"));
+    invoke<{ extraction?: { input_mode?: string; extra_inputs?: InputSlot[] }; variables?: VarSpec[] }>("get_pipeline_config")
+      .then((c) => {
+        setInputMode(c.extraction?.input_mode || "document");
+        setProfileVars(c.variables ?? []);
+        setInputSlots(c.extraction?.extra_inputs ?? []);
+      })
+      .catch(() => {
+        setInputMode("document");
+        setProfileVars([]);
+        setInputSlots([]);
+      });
   }, [configVersion]);
 
+  const launch = (variables?: Record<string, string>, extraInputs?: Record<string, string>) => {
+    setPage("main");
+    setArtifact("report");
+    startPipeline(paperPath ?? "", false, variables, extraInputs);
+  };
+
   const handleGenerate = () => {
-    if (paperPath || inputMode === "none") {
-      setPage("main");
-      setArtifact("report");
-      startPipeline(paperPath ?? "");
+    if (!(paperPath || inputMode === "none")) return;
+    // Collect run-time variables and/or extra inputs first if the profile
+    // declares any.
+    if (profileVars.length > 0 || inputSlots.length > 0) {
+      setVarModalOpen(true);
+      return;
     }
+    launch();
   };
 
   const isRunning =
     state.kind !== "idle" && state.kind !== "done" && state.kind !== "error";
 
-  // Group console lines by headless session for the per-session selector.
-  const sessions = useMemo(() => {
-    const map = new Map<
-      number,
-      { id: number; label: string; count: number; hasError: boolean }
-    >();
-    for (const e of logs) {
-      if (e.session == null) continue;
-      let s = map.get(e.session);
-      if (!s) {
-        s = { id: e.session, label: e.label || `Session ${e.session}`, count: 0, hasError: false };
-        map.set(e.session, s);
-      }
-      s.count++;
-      if (s.label.startsWith("Session ") && e.label) s.label = e.label;
-      if (e.level === "error" || e.line.startsWith("ERROR")) s.hasError = true;
-    }
-    return Array.from(map.values()).sort((a, b) => a.id - b.id);
-  }, [logs]);
-
-  // A stale selection (previous run's session id) falls back to the master view.
-  const activeSession =
-    selectedSession !== "master" && !sessions.some((s) => s.id === selectedSession)
-      ? "master"
-      : selectedSession;
-
-  const visibleLogs = useMemo(
-    () => (activeSession === "master" ? logs : logs.filter((e) => e.session === activeSession)),
-    [logs, activeSession]
-  );
-
-  // Copy the currently shown console lines (respecting the session filter).
-  const copyLogs = useCallback(async () => {
-    const text = visibleLogs.map((e) => e.line).join("\n");
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Fallback for webviews without async clipboard access.
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-      } catch {
-        // give up silently
-      }
-      document.body.removeChild(ta);
-    }
-    setCopiedLog(true);
-    setTimeout(() => setCopiedLog(false), 1500);
-  }, [visibleLogs]);
+  // Structured issues detected in a finished report (enables the Issues view).
+  const doneIssues = state.kind === "done" ? detectReportIssues(state.report) : null;
 
   const [showDeps, setShowDeps] = useState(false);
 
@@ -290,6 +242,18 @@ function App() {
         <DepsCheck
           report={depsReport}
           onDismiss={() => setShowDeps(false)}
+        />
+      )}
+
+      {varModalOpen && (
+        <VariablePrompt
+          variables={profileVars}
+          inputSlots={inputSlots}
+          onCancel={() => setVarModalOpen(false)}
+          onSubmit={(values, inputs) => {
+            setVarModalOpen(false);
+            launch(values, inputs);
+          }}
         />
       )}
 
@@ -367,6 +331,34 @@ function App() {
           {/* Footer: app navigation + dependency status */}
           <div className="mt-auto pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center gap-1 -mx-2 -mb-2">
             <button
+              onClick={() => { setHistoryRunId(null); setPage(page === "history" ? "main" : "history"); }}
+              className={`p-2 rounded-lg transition-colors ${
+                page === "history"
+                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
+              }`}
+              title="Run history"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setPage(page === "batch" ? "main" : "batch")}
+              className={`p-2 rounded-lg transition-colors ${
+                page === "batch"
+                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
+              }`}
+              title="Batch run"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+              </svg>
+            </button>
+            <button
               onClick={() => setPage(page === "help" ? "main" : "help")}
               className={`p-2 rounded-lg transition-colors ${
                 page === "help"
@@ -432,6 +424,21 @@ function App() {
               <AboutPage onClose={() => setPage("main")} />
             ) : page === "settings" ? (
               <SettingsPage onClose={() => setPage("main")} dark={dark} onDarkChange={handleDarkChange} />
+            ) : page === "history" ? (
+              <HistoryPage
+                onClose={() => setPage("main")}
+                initialRunId={historyRunId}
+                onRerun={(runId, onlyFailed) => {
+                  setPage("main");
+                  setArtifact("report");
+                  rerunPipeline(runId, { onlyFailed });
+                }}
+              />
+            ) : page === "batch" ? (
+              <BatchPanel
+                onClose={() => setPage("main")}
+                onOpenRun={(runId) => { setHistoryRunId(runId); setPage("history"); }}
+              />
             ) : state.kind === "done" ? (
               <div className="flex flex-col h-full">
                 {/* Warning banner for failed steps */}
@@ -446,6 +453,22 @@ function App() {
                   <label className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
                     {state.runId ? "Run artifacts" : "Viewing:"}
                   </label>
+                  {doneIssues && (
+                    <div className="flex items-center rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden shrink-0">
+                      <button
+                        onClick={() => setReportView("report")}
+                        className={`px-2 py-1 text-xs transition-colors ${reportView === "report" ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900" : "text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"}`}
+                      >
+                        Report
+                      </button>
+                      <button
+                        onClick={() => setReportView("issues")}
+                        className={`px-2 py-1 text-xs transition-colors ${reportView === "issues" ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900" : "text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"}`}
+                      >
+                        Issues ({doneIssues.length})
+                      </button>
+                    </div>
+                  )}
                   {!state.runId && <select
                     value={artifact}
                     onChange={(e) => setArtifact(e.target.value)}
@@ -470,7 +493,9 @@ function App() {
                   </div>
                 </div>
                 <div className="flex-1 overflow-auto min-h-0">
-                  {state.runId ? (
+                  {doneIssues && reportView === "issues" ? (
+                    <IssuesTable issues={doneIssues} runId={state.runId} />
+                  ) : state.runId ? (
                     <ArtifactExplorer runId={state.runId} fallbackMarkdown={state.markdown} />
                   ) : (
                     <ReportViewer markdown={getArtifactMarkdown(artifact, state.markdown, state.extractedText, state.report)} />
@@ -489,7 +514,7 @@ function App() {
             ) : (
               <div className="flex items-center justify-center h-full">
                 <div className="w-full max-w-sm">
-                  <PipelineProgress state={state} />
+                  <PipelineProgress state={state} runStartedAt={runStartedAt} passTimes={passTimes} />
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-6 text-center leading-relaxed">
                     This may take 15–60 minutes depending on<br />
                     paper length, number of agents, and LLM load.
@@ -499,90 +524,7 @@ function App() {
             )}
           </div>
 
-          {logs.length > 0 && (
-            <div
-              className="border-t border-gray-300 dark:border-gray-700 bg-gray-900 flex flex-col"
-              style={{ height: logOpen ? "12rem" : undefined }}
-            >
-              <div
-                className="flex items-center justify-between px-4 py-1.5 bg-gray-800
-                           text-gray-400 text-xs font-mono shrink-0"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <button
-                    onClick={() => setLogOpen(!logOpen)}
-                    className="flex items-center gap-1.5 hover:text-gray-200
-                               transition-colors cursor-pointer select-none shrink-0"
-                  >
-                    <span>{logOpen ? "\u25BC" : "\u25B2"}</span>
-                    <span>Console</span>
-                  </button>
-                  {sessions.length > 0 && (
-                    <select
-                      value={activeSession === "master" ? "master" : String(activeSession)}
-                      onChange={(e) =>
-                        setSelectedSession(
-                          e.target.value === "master" ? "master" : Number(e.target.value)
-                        )
-                      }
-                      className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5
-                                 text-xs text-gray-300 max-w-[18rem] cursor-pointer"
-                      title="Show a single headless session's log, or all of them"
-                    >
-                      <option value="master">All sessions</option>
-                      {sessions.map((s) => {
-                        const u = usage.bySession[s.id];
-                        const tok = u ? ` \u00b7 ${fmtTokens(u.input)}\u2192${fmtTokens(u.output)}` : "";
-                        return (
-                          <option key={s.id} value={String(s.id)}>
-                            {(s.hasError ? "\u2715 " : "") + s.label + ` (${s.count})` + tok}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {usage.total.input + usage.total.output > 0 && (
-                    <span
-                      className="text-gray-500"
-                      title={`${usage.total.input.toLocaleString()} input + ${usage.total.output.toLocaleString()} output tokens (providers that report usage)`}
-                    >
-                      {fmtTokens(usage.total.input)} in / {fmtTokens(usage.total.output)} out
-                    </span>
-                  )}
-                  <span>{visibleLogs.length} lines</span>
-                  <button
-                    onClick={copyLogs}
-                    disabled={visibleLogs.length === 0}
-                    className="border border-gray-700 rounded px-1.5 py-0.5 text-xs
-                               text-gray-300 hover:bg-gray-700 hover:text-gray-100
-                               transition-colors cursor-pointer disabled:opacity-40
-                               disabled:cursor-default"
-                    title={
-                      activeSession === "master"
-                        ? "Copy all console lines"
-                        : "Copy this session's console lines"
-                    }
-                  >
-                    {copiedLog ? "Copied ✓" : "Copy"}
-                  </button>
-                </div>
-              </div>
-              {logOpen && (
-                <div className="flex-1 overflow-auto px-4 py-2 min-h-0">
-                  <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                    {visibleLogs.map((entry, i) => (
-                      <div key={i} className={logLineClass(entry)}>
-                        {entry.line}
-                      </div>
-                    ))}
-                    <div ref={logEndRef} />
-                  </pre>
-                </div>
-              )}
-            </div>
-          )}
+          {logs.length > 0 && <Console logs={logs} usage={usage} />}
         </div>
       </main>
     </div>

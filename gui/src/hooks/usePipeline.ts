@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { PipelineReport, PipelineResult } from "../lib/types";
 
-export type PassStatus = "pending" | "running" | "done" | "error";
+export type PassStatus = "pending" | "running" | "done" | "error" | "skipped";
 
 /** One console line, tagged with the headless session (LLM call) it came from.
  *  `session` is null for orchestration/extraction lines that belong to no
@@ -13,6 +13,14 @@ export interface LogEntry {
   session: number | null;
   label: string | null;
   level: string; // info | warn | error | stderr | stdout
+  /** Client arrival time (ms epoch), used for optional console timestamps. */
+  t: number;
+}
+
+/** Start/end times (ms epoch) of a single pass, for elapsed-time display. */
+export interface PassTiming {
+  start: number;
+  end?: number;
 }
 
 export interface TokenTotals {
@@ -52,6 +60,9 @@ export function usePipeline() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [usage, setUsage] = useState<UsageState>(EMPTY_USAGE);
   const [listenersReady, setListenersReady] = useState(false);
+  // Run-elapsed clock and per-pass timings, for the progress view.
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [passTimes, setPassTimes] = useState<Record<string, PassTiming>>({});
 
   // Buffer incoming log lines in a ref to avoid O(n) array copies per event.
   // A periodic timer flushes the buffer into state in a single update.
@@ -96,6 +107,17 @@ export function usePipeline() {
         listen<{ name: string; status: string }>("pipeline:pass", (event) => {
           if (!mounted) return;
           const { name, status } = event.payload;
+          const now = Date.now();
+          setPassTimes((prev) => {
+            const cur = prev[name];
+            if (status === "running") {
+              // First "running" marks the start; retries keep the original start.
+              if (cur && cur.end === undefined) return prev;
+              return { ...prev, [name]: { start: now } };
+            }
+            // done / error close out the pass.
+            return { ...prev, [name]: { start: cur?.start ?? now, end: now } };
+          });
           setState((prev) => {
             if (prev.kind !== "dispatching" && prev.kind !== "merging" && prev.kind !== "synthesizing") return prev;
             return {
@@ -113,6 +135,7 @@ export function usePipeline() {
               session: event.payload.session ?? null,
               label: event.payload.label ?? null,
               level: event.payload.level ?? "info",
+              t: Date.now(),
             });
           }
         ),
@@ -160,6 +183,7 @@ export function usePipeline() {
                   session: null,
                   label: null,
                   level: "info",
+                  t: Date.now(),
                 },
                 ...next.slice(-LOG_KEEP),
               ];
@@ -202,14 +226,55 @@ export function usePipeline() {
   }, []);
 
   const startPipeline = useCallback(
-    async (paperPath: string, diff?: boolean) => {
+    async (
+      paperPath: string,
+      diff?: boolean,
+      variables?: Record<string, string>,
+      extraInputs?: Record<string, string>
+    ) => {
       setState({ kind: "extracting" });
       setLogs([]);
       setUsage(EMPTY_USAGE);
+      setRunStartedAt(Date.now());
+      setPassTimes({});
       try {
         const result = await invoke<PipelineResult>("run_pipeline", {
           paperPath,
           diff: diff ?? false,
+          variables: variables ?? null,
+          extraInputs: extraInputs ?? null,
+        });
+        setState({
+          kind: "done",
+          markdown: result.markdown,
+          report: result.report,
+          extractedText: result.extracted_text,
+          runId: result.run_id ?? null,
+        });
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        setState((prev) => ({
+          kind: "error" as const,
+          message,
+          failedAt: prev.kind === "error" ? undefined : prev.kind,
+        }));
+      }
+    },
+    []
+  );
+
+  const rerunPipeline = useCallback(
+    async (runId: string, opts?: { fromStep?: string; onlyFailed?: boolean }) => {
+      setState({ kind: "extracting" });
+      setLogs([]);
+      setUsage(EMPTY_USAGE);
+      setRunStartedAt(Date.now());
+      setPassTimes({});
+      try {
+        const result = await invoke<PipelineResult>("rerun_run", {
+          runId,
+          fromStep: opts?.fromStep ?? null,
+          onlyFailed: opts?.onlyFailed ?? false,
         });
         setState({
           kind: "done",
@@ -242,5 +307,5 @@ export function usePipeline() {
     setState({ kind: "idle" });
   }, []);
 
-  return { state, logs, usage, startPipeline, cancel, reset, listenersReady };
+  return { state, logs, usage, startPipeline, rerunPipeline, cancel, reset, listenersReady, runStartedAt, passTimes };
 }

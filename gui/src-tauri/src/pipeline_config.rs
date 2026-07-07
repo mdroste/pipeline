@@ -37,6 +37,67 @@ pub struct StepConfig {
     /// Per-step effort override (low/medium/high/max). Empty = use the global setting.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub effort: String,
+    /// Explicit upstream dependencies (step ids). Empty = the implicit
+    /// adjacency schedule (parallel steps run in their wave; sequential steps
+    /// wait for everything before them). Non-empty = this step waits for
+    /// exactly these steps, and its `{prior_outputs}`/`{step:id}` placeholders
+    /// resolve against them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<String>,
+    /// Optional guard: when present and its condition is not met, the step is
+    /// skipped (a skip placeholder is recorded so dependents can proceed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_if: Option<RunCondition>,
+    /// Optional JSON-shape contract for the step's output. When set, the step's
+    /// report must parse as JSON and satisfy the schema, with a retry on
+    /// failure (see `structured::validate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
+    /// Fan-out (map): run this step once per file matching a glob under the
+    /// input, with `{item}` bound to each file. Parallel steps only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_each: Option<ForEach>,
+}
+
+/// Fan-out configuration for a step: run its prompt once per matching file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForEach {
+    /// Glob relative to the input root (e.g. "chapters/*.tex", "**/*.py").
+    pub glob: String,
+    /// Hard cap on the number of items, to bound cost. Defaults to 20.
+    #[serde(default = "default_for_each_max")]
+    pub max: u32,
+}
+
+fn default_for_each_max() -> u32 {
+    20
+}
+
+/// A deterministic, engine-evaluated condition gating whether a step runs.
+/// Deliberately not an LLM call and not a general expression language — two
+/// concrete checks that cover "only run X when the survey says Y" and
+/// "only run X when an earlier step flagged Z".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunCondition {
+    /// Run only if a prior step's output text matches (or, with `negate`, does
+    /// not match) the given regular expression.
+    OutputMatches {
+        step: String,
+        pattern: String,
+        #[serde(default)]
+        negate: bool,
+    },
+    /// Run only based on a JSON-pointer into the survey (orientation) JSON.
+    /// With `equals`, run iff the pointed-to value equals it. With `exists`,
+    /// run iff presence matches the boolean. If both are set, both must hold.
+    SurveyPath {
+        pointer: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exists: Option<bool>,
+    },
 }
 
 impl Default for StepConfig {
@@ -51,6 +112,10 @@ impl Default for StepConfig {
             agents: Vec::new(),
             model: String::new(),
             effort: String::new(),
+            inputs: Vec::new(),
+            run_if: None,
+            output_schema: None,
+            for_each: None,
         }
     }
 }
@@ -68,6 +133,46 @@ pub struct MergeConfig {
     /// Which provider runs the merge calls. Empty = global setting.
     #[serde(default)]
     pub agents: Vec<String>,
+}
+
+/// A run-time variable a profile declares. When present, the Run action
+/// prompts for values (pre-filled with `default`) and steps reference them as
+/// `{var:key}`. Turns a profile into a reusable template.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VarSpec {
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    /// "text" | "choice" | "file". Advisory — the value is always a string.
+    #[serde(default = "default_var_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub default: String,
+    /// Options for `kind == "choice"`.
+    #[serde(default)]
+    pub choices: Vec<String>,
+}
+
+fn default_var_kind() -> String {
+    "text".to_string()
+}
+
+/// An additional named input a profile accepts beyond the primary one. Its
+/// extracted text is exposed to prompts as `{input:key}` (a path to Read).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputSlot {
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    /// "document" (single file) or "folder". Defaults to document.
+    #[serde(default = "default_slot_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+fn default_slot_mode() -> String {
+    "document".to_string()
 }
 
 /// Per-profile extraction overrides. When `method` is empty, the global
@@ -88,6 +193,9 @@ pub struct ExtractionConfig {
     pub marker_disable_ocr: Option<bool>,
     #[serde(default)]
     pub marker_disable_images: Option<bool>,
+    /// Extra named inputs (beyond the primary one) this profile accepts.
+    #[serde(default)]
+    pub extra_inputs: Vec<InputSlot>,
 }
 
 /// Combined config returned to callers.
@@ -117,6 +225,9 @@ pub struct PipelineConfig {
     ///   {figure_hint}  — figure/table access instructions
     #[serde(default = "default_parallel_template")]
     pub parallel_context_template: String,
+    /// Run-time variables the profile declares; empty for most profiles.
+    #[serde(default)]
+    pub variables: Vec<VarSpec>,
 }
 
 /// On-disk profile format stored in ~/.pipeline/profiles/{id}.json.
@@ -134,6 +245,8 @@ pub struct ProfileData {
     pub extraction: ExtractionConfig,
     #[serde(default = "default_parallel_template")]
     pub parallel_context_template: String,
+    #[serde(default)]
+    pub variables: Vec<VarSpec>,
 }
 
 impl ProfileData {
@@ -147,6 +260,7 @@ impl ProfileData {
             orientation_prompt: String::new(),
             extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
+            variables: Vec::new(),
         }
     }
 }
@@ -213,6 +327,17 @@ pub struct ProfileSummary {
 
 // ── Export/Import envelope ──────────────────────────────────────────
 
+/// Current profile/export schema version. v2 is the generalized-engine format
+/// (Release 1.2+): step dependencies, conditions, variables, named inputs,
+/// output schemas, and fan-out. v1 (unversioned) profiles read fine because
+/// every added field is `#[serde(default)]`; exports are tagged with the
+/// version so a future format change can migrate or reject gracefully.
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+
+fn default_schema_version() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ExportEnvelope {
@@ -220,6 +345,8 @@ pub enum ExportEnvelope {
     Step { data: StepConfig },
     #[serde(rename = "profile")]
     Profile {
+        #[serde(default = "default_schema_version")]
+        schema_version: u32,
         name: String,
         steps: Vec<StepConfig>,
         #[serde(default)]
@@ -232,6 +359,8 @@ pub enum ExportEnvelope {
         extraction: ExtractionConfig,
         #[serde(default = "default_parallel_template")]
         parallel_context_template: String,
+        #[serde(default)]
+        variables: Vec<VarSpec>,
     },
     #[serde(rename = "bundle")]
     Bundle {
@@ -256,6 +385,8 @@ pub struct ProfileExport {
     pub extraction: ExtractionConfig,
     #[serde(default = "default_parallel_template")]
     pub parallel_context_template: String,
+    #[serde(default)]
+    pub variables: Vec<VarSpec>,
 }
 
 // ── Legacy types (deserialization only) ────────────────────────────
@@ -505,6 +636,7 @@ fn defaults() -> PipelineConfig {
         orientation_prompt: String::new(),
         extraction: ExtractionConfig::default(),
         parallel_context_template: default_parallel_template(),
+        variables: Vec::new(),
     }
 }
 
@@ -520,6 +652,9 @@ const BUILTIN_PROFILES: &[&str] = &[
     "deep-code-review",
     "replication-audit",
     "grant-review",
+    "revision-response",
+    "rubric-grading",
+    "thesis-review",
 ];
 
 /// Step whose prompt is a named compiled-in default. Enabled, no agents.
@@ -538,11 +673,44 @@ fn prompt_step(id: &str, label: &str, phase: Phase, tools: &[&str], prompt_name:
 
 fn folder_extraction() -> ExtractionConfig {
     ExtractionConfig {
-        method: String::new(),
         input_mode: "folder".into(),
-        marker_disable_ocr: None,
-        marker_disable_images: None,
+        ..Default::default()
     }
+}
+
+/// A step with an inline prompt (not a compiled-in named default).
+fn inline_step(id: &str, label: &str, phase: Phase, tools: &[&str], prompt: &str) -> StepConfig {
+    StepConfig {
+        id: id.into(),
+        label: label.into(),
+        prompt: prompt.into(),
+        enabled: true,
+        phase,
+        tools: tools.iter().map(|t| t.to_string()).collect(),
+        agents: vec![],
+        ..Default::default()
+    }
+}
+
+/// The issues schema that enables the Issues table + annotations in the report.
+fn issues_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["issues"],
+        "properties": {
+            "issues": {
+                "type": "array",
+                "items": { "type": "object", "required": ["title", "severity", "body"] }
+            }
+        }
+    })
+}
+
+/// A sequential consolidation step that emits structured issues.
+fn issues_synthesis_step(id: &str, label: &str) -> StepConfig {
+    let mut s = prompt_step(id, label, Phase::Sequential, &[], "editor_synthesis_issues");
+    s.output_schema = Some(issues_schema());
+    s
 }
 
 /// Domain-neutral profile scaffold: generic wrapper + generic survey prompt.
@@ -562,6 +730,7 @@ fn generic_profile(name: &str, steps: Vec<StepConfig>, extraction: ExtractionCon
         orientation_prompt: prompts::load_prompt(survey).unwrap_or_default(),
         extraction,
         parallel_context_template: generic_parallel_template(),
+        variables: Vec::new(),
     }
 }
 
@@ -622,6 +791,7 @@ fn create_builtin_profiles() -> Result<(), String> {
             orientation_prompt: String::new(),
             extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
+            variables: Vec::new(),
         };
         let json = serde_json::to_string_pretty(&profile)
             .map_err(|e| format!("Serialize error: {e}"))?;
@@ -701,6 +871,7 @@ fn create_builtin_profiles() -> Result<(), String> {
             orientation_prompt: String::new(),
             extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
+            variables: Vec::new(),
         };
         let json = serde_json::to_string_pretty(&profile)
             .map_err(|e| format!("Serialize error: {e}"))?;
@@ -784,6 +955,87 @@ fn create_builtin_profiles() -> Result<(), String> {
                 prompt_step("grant_synthesis", "Consolidate Feedback", Phase::Sequential, &[], "grant_synthesis"),
             ],
             ExtractionConfig::default(),
+        ),
+    )?;
+
+    // ── Release 2.0 profiles: exercise the generalized engine ──────
+
+    // Revision Response Check — revised paper + response letter + prior report.
+    write_builtin_if_missing(&profiles.join("revision-response.json"), &{
+        let mut extraction = ExtractionConfig::default();
+        extraction.extra_inputs = vec![
+            InputSlot { key: "response".into(), label: "Response letter".into(), mode: "document".into(), required: true },
+            InputSlot { key: "prior_report".into(), label: "Prior referee report".into(), mode: "document".into(), required: false },
+        ];
+        let mut p = generic_profile(
+            "Revision Response Check",
+            vec![
+                inline_step("verify_changes", "Verify Claimed Changes", Phase::Parallel, &["Read"],
+                    "You are checking a revised paper against the authors' response to referees.\n\n\
+                     The revised paper text is provided. The response letter is at {input:response}. \
+                     A prior referee report, if available, is at {input:prior_report}.\n\n\
+                     For each change the authors claim to have made, verify whether the revised paper actually \
+                     reflects it. Flag: claims not supported by the paper, changes that introduce new problems, \
+                     and prior concerns the response fails to address. Do not praise or summarize."),
+                issues_synthesis_step("consolidate", "Consolidate Verdicts"),
+            ],
+            extraction,
+        );
+        p.orientation_prompt = prompts::load_prompt("orientation_generic").unwrap_or_default();
+        p
+    })?;
+
+    // Rubric Grading — grade a document against a rubric, with course variables.
+    write_builtin_if_missing(&profiles.join("rubric-grading.json"), &{
+        let mut extraction = ExtractionConfig::default();
+        extraction.extra_inputs = vec![
+            InputSlot { key: "rubric".into(), label: "Grading rubric".into(), mode: "document".into(), required: true },
+        ];
+        let mut p = generic_profile(
+            "Rubric Grading",
+            vec![
+                inline_step("grade", "Grade Against Rubric", Phase::Parallel, &["Read"],
+                    "Grade this submission for the course \"{var:course}\" against the rubric at {input:rubric}.\n\n\
+                     Go criterion by criterion: state the criterion, the score or level you assign, and one or two \
+                     sentences of specific, evidence-based justification citing the submission. End with the total \
+                     and the two highest-leverage improvements."),
+                inline_step("summary", "Grade Summary", Phase::Sequential, &[],
+                    "Produce the final graded feedback: the per-criterion scores and justifications, the total, \
+                     and a short overall comment.\n\n{prior_outputs}"),
+            ],
+            extraction,
+        );
+        p.variables = vec![VarSpec {
+            key: "course".into(),
+            label: "Course".into(),
+            kind: "text".into(),
+            default: String::new(),
+            choices: vec![],
+        }];
+        p
+    })?;
+
+    // Thesis Review — fan out per chapter, then a cross-chapter synthesis.
+    write_builtin_if_missing(
+        &profiles.join("thesis-review.json"),
+        &generic_profile(
+            "Thesis Review",
+            vec![
+                {
+                    let mut s = inline_step("chapter_review", "Chapter Review", Phase::Parallel, &["Read"],
+                        "Review the chapter/section file at {item}. Identify substantive issues: gaps in the \
+                         argument, unclear or unsupported claims, methodological problems, and exposition that \
+                         would confuse a reader. Reference the file. Do not praise or summarize.");
+                    s.for_each = Some(ForEach { glob: "**/*.tex".into(), max: 20 });
+                    s
+                },
+                inline_step("cross_chapter", "Cross-Chapter Synthesis", Phase::Sequential, &[],
+                    "You have per-chapter reviews of a thesis below. Synthesize them into a single ordered list \
+                     of the most important issues, and add cross-chapter problems the per-chapter reviews could \
+                     not see: inconsistent notation or terminology across chapters, redundancy, contradictory \
+                     claims, and gaps between chapters.\n\n{prior_outputs}"),
+            ],
+            folder_extraction(),
         ),
     )?;
 
@@ -923,6 +1175,7 @@ pub fn load() -> PipelineConfig {
             orientation_prompt: profile.orientation_prompt,
             extraction: profile.extraction,
             parallel_context_template: profile.parallel_context_template,
+            variables: profile.variables,
         },
         Err(e) => {
             // Always warn when a profile fails to load so the user knows
@@ -964,10 +1217,78 @@ pub fn validate_unique_step_ids(steps: &[StepConfig]) -> Result<(), String> {
     Ok(())
 }
 
+/// Reject explicit `inputs` graphs that can't run: an unknown dependency id or
+/// a dependency cycle. Only enabled steps participate (a disabled upstream is
+/// simply ignored by the executor, so it isn't an error here). Steps with no
+/// explicit `inputs` use the implicit adjacency schedule and can't form cycles.
+pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
+    use std::collections::{HashMap, HashSet};
+    let ids: HashSet<&str> = steps.iter().map(|s| s.id.as_str()).collect();
+
+    // Unknown / self dependencies.
+    for s in steps {
+        for dep in &s.inputs {
+            if dep == &s.id {
+                return Err(format!("Step '{}' lists itself as a dependency.", s.id));
+            }
+            if !ids.contains(dep.as_str()) {
+                return Err(format!(
+                    "Step '{}' depends on unknown step '{}'.",
+                    s.id, dep
+                ));
+            }
+        }
+    }
+
+    // Cycle detection over the explicit-inputs graph (DFS with a colour map).
+    let graph: HashMap<&str, Vec<&str>> = steps
+        .iter()
+        .map(|s| (s.id.as_str(), s.inputs.iter().map(|d| d.as_str()).collect()))
+        .collect();
+    #[derive(PartialEq, Clone, Copy)]
+    enum Mark {
+        Visiting,
+        Done,
+    }
+    let mut marks: HashMap<&str, Mark> = HashMap::new();
+    // Iterative DFS so deep graphs can't blow the stack.
+    for start in graph.keys().copied() {
+        if marks.get(start).is_some() {
+            continue;
+        }
+        let mut stack: Vec<(&str, usize)> = vec![(start, 0)];
+        marks.insert(start, Mark::Visiting);
+        while let Some((node, idx)) = stack.last().copied() {
+            let neighbours = graph.get(node).map(|v| v.as_slice()).unwrap_or(&[]);
+            if idx < neighbours.len() {
+                stack.last_mut().unwrap().1 += 1;
+                let next = neighbours[idx];
+                match marks.get(next) {
+                    Some(Mark::Visiting) => {
+                        return Err(format!(
+                            "Step dependencies form a cycle involving '{next}'."
+                        ));
+                    }
+                    Some(Mark::Done) => {}
+                    None => {
+                        marks.insert(next, Mark::Visiting);
+                        stack.push((next, 0));
+                    }
+                }
+            } else {
+                marks.insert(node, Mark::Done);
+                stack.pop();
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Save to the active profile.
 pub fn save(config: &PipelineConfig) -> Result<(), String> {
     let _ = ensure_migrated();
     validate_unique_step_ids(&config.steps)?;
+    validate_dependencies(&config.steps)?;
     let settings = crate::settings::load();
     let name = load_profile(&settings.active_profile)
         .map(|p| p.name)
@@ -980,6 +1301,7 @@ pub fn save(config: &PipelineConfig) -> Result<(), String> {
         orientation_prompt: config.orientation_prompt.clone(),
         extraction: config.extraction.clone(),
         parallel_context_template: config.parallel_context_template.clone(),
+        variables: config.variables.clone(),
     };
     save_profile(&settings.active_profile, &profile)
 }
@@ -1050,6 +1372,7 @@ pub fn create_profile(name: &str) -> Result<ProfileSummary, String> {
         orientation_prompt: prompts::load_prompt("orientation_generic").unwrap_or_default(),
         extraction: ExtractionConfig::default(),
         parallel_context_template: generic_parallel_template(),
+        variables: Vec::new(),
     };
     save_profile(&id, &profile)?;
     Ok(ProfileSummary {
@@ -1127,6 +1450,7 @@ pub fn switch_profile(id: &str) -> Result<PipelineConfig, String> {
         orientation_prompt: profile.orientation_prompt,
         extraction: profile.extraction,
         parallel_context_template: profile.parallel_context_template,
+        variables: profile.variables,
     })
 }
 
@@ -1140,6 +1464,7 @@ pub fn export_step_data(step: &StepConfig) -> Result<String, String> {
 pub fn export_profile_data(id: &str) -> Result<String, String> {
     let profile = load_profile(id)?;
     let envelope = ExportEnvelope::Profile {
+        schema_version: CURRENT_SCHEMA_VERSION,
         name: profile.name,
         steps: profile.steps,
         merge: profile.merge,
@@ -1147,6 +1472,7 @@ pub fn export_profile_data(id: &str) -> Result<String, String> {
         orientation_prompt: profile.orientation_prompt,
         extraction: profile.extraction,
         parallel_context_template: profile.parallel_context_template,
+        variables: profile.variables,
     };
     serde_json::to_string_pretty(&envelope).map_err(|e| format!("Serialize error: {e}"))
 }
@@ -1172,6 +1498,7 @@ pub fn export_bundle() -> Result<String, String> {
             orientation_prompt: profile.orientation_prompt,
             extraction: profile.extraction,
             parallel_context_template: profile.parallel_context_template,
+            variables: profile.variables,
         });
     }
     let envelope = ExportEnvelope::Bundle {
@@ -1224,6 +1551,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or_default();
             return Ok(ExportEnvelope::Profile {
+                schema_version: 1,
                 name,
                 steps: convert_legacy_steps(referees, post_steps),
                 merge,
@@ -1231,6 +1559,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
                 orientation_prompt: String::new(),
                 extraction: ExtractionConfig::default(),
                 parallel_context_template: default_parallel_template(),
+                variables: Vec::new(),
             });
         }
         _ => {}
@@ -1249,6 +1578,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
         return Ok(ExportEnvelope::Profile {
+            schema_version: 1,
             name: "Imported".into(),
             steps: convert_legacy_steps(referees, post_steps),
             merge,
@@ -1256,12 +1586,14 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
             orientation_prompt: String::new(),
             extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
+            variables: Vec::new(),
         });
     }
 
     Err("Unrecognized file format".into())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn import_profile_data(
     name: &str,
     steps: Vec<StepConfig>,
@@ -1270,9 +1602,11 @@ pub fn import_profile_data(
     orientation_prompt: String,
     extraction: ExtractionConfig,
     parallel_context_template: String,
+    variables: Vec<VarSpec>,
 ) -> Result<ProfileSummary, String> {
     let _ = ensure_migrated();
     validate_unique_step_ids(&steps)?;
+    validate_dependencies(&steps)?;
     let mut id = slugify(name);
     if id.is_empty() {
         id = format!("imported-{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
@@ -1290,6 +1624,7 @@ pub fn import_profile_data(
     profile.orientation_prompt = orientation_prompt;
     profile.extraction = extraction;
     profile.parallel_context_template = parallel_context_template;
+    profile.variables = variables;
     save_profile(&id, &profile)?;
     Ok(ProfileSummary {
         id,
@@ -1322,6 +1657,7 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                     orientation_prompt: p.orientation_prompt.clone(),
                     extraction: p.extraction.clone(),
                     parallel_context_template: p.parallel_context_template.clone(),
+                    variables: p.variables.clone(),
                 };
                 save_profile(&p.id, &profile)?;
             }
@@ -1365,13 +1701,8 @@ mod tests {
         StepConfig {
             id: id.to_string(),
             label: id.to_string(),
-            prompt: String::new(),
-            enabled: true,
             phase: Phase::Parallel,
-            tools: vec![],
-            agents: vec![],
-            model: String::new(),
-            effort: String::new(),
+            ..Default::default()
         }
     }
 
@@ -1386,6 +1717,64 @@ mod tests {
         let steps = vec![step_with_id("a"), step_with_id("b"), step_with_id("a")];
         let err = validate_unique_step_ids(&steps).unwrap_err();
         assert!(err.contains("Duplicate step id 'a'"), "{err}");
+    }
+
+    // ── validate_dependencies ──────────────────────────────────────
+
+    fn step_dep(id: &str, deps: &[&str]) -> StepConfig {
+        StepConfig {
+            id: id.to_string(),
+            label: id.to_string(),
+            inputs: deps.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn deps_no_explicit_inputs_always_valid() {
+        let steps = vec![step_with_id("a"), step_with_id("b"), step_with_id("c")];
+        assert!(validate_dependencies(&steps).is_ok());
+    }
+
+    #[test]
+    fn deps_valid_dag_passes() {
+        let steps = vec![
+            step_dep("a", &[]),
+            step_dep("b", &["a"]),
+            step_dep("c", &["a", "b"]),
+        ];
+        assert!(validate_dependencies(&steps).is_ok());
+    }
+
+    #[test]
+    fn deps_unknown_id_rejected() {
+        let steps = vec![step_dep("a", &["ghost"])];
+        let err = validate_dependencies(&steps).unwrap_err();
+        assert!(err.contains("unknown step 'ghost'"), "{err}");
+    }
+
+    #[test]
+    fn deps_self_dependency_rejected() {
+        let steps = vec![step_dep("a", &["a"])];
+        let err = validate_dependencies(&steps).unwrap_err();
+        assert!(err.contains("itself"), "{err}");
+    }
+
+    #[test]
+    fn deps_cycle_rejected() {
+        let steps = vec![step_dep("a", &["b"]), step_dep("b", &["a"])];
+        let err = validate_dependencies(&steps).unwrap_err();
+        assert!(err.contains("cycle"), "{err}");
+    }
+
+    #[test]
+    fn deps_longer_cycle_rejected() {
+        let steps = vec![
+            step_dep("a", &["c"]),
+            step_dep("b", &["a"]),
+            step_dep("c", &["b"]),
+        ];
+        assert!(validate_dependencies(&steps).is_err());
     }
 
     // ── slugify ────────────────────────────────────────────────────

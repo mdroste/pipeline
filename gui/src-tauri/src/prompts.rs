@@ -36,6 +36,8 @@ const DEFAULT_PARALLEL_CONTEXT_GENERIC: &str =
     include_str!("../../../prompts/parallel_context_generic.md");
 const DEFAULT_MERGE: &str = include_str!("../../../prompts/merge.md");
 const DEFAULT_EDITOR_SYNTHESIS: &str = include_str!("../../../prompts/editor_synthesis.md");
+const DEFAULT_EDITOR_SYNTHESIS_ISSUES: &str =
+    include_str!("../../../prompts/editor_synthesis_issues.md");
 const DEFAULT_VALIDATE_FEEDBACK: &str = include_str!("../../../prompts/validate_feedback.md");
 // Preprocessing prompts:
 const DEFAULT_ORIENTATION: &str = include_str!("../../../prompts/orientation.md");
@@ -78,6 +80,7 @@ fn default_content(name: &str) -> Option<&'static str> {
         "parallel_context_generic" => Some(DEFAULT_PARALLEL_CONTEXT_GENERIC),
         "merge" => Some(DEFAULT_MERGE),
         "editor_synthesis" => Some(DEFAULT_EDITOR_SYNTHESIS),
+        "editor_synthesis_issues" => Some(DEFAULT_EDITOR_SYNTHESIS_ISSUES),
         "validate_feedback" => Some(DEFAULT_VALIDATE_FEEDBACK),
         "orientation" => Some(DEFAULT_ORIENTATION),
         "orientation_generic" => Some(DEFAULT_ORIENTATION_GENERIC),

@@ -14,6 +14,10 @@ crate-type = ["lib", "cdylib", "staticlib"]
 name = "pipeline-gui"
 path = "src/main.rs"
 
+[[bin]]
+name = "pipeline-cli"
+path = "src/bin/cli.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

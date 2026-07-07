@@ -4,7 +4,6 @@ use tempfile::NamedTempFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use std::io::Write;
-use tauri::AppHandle;
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Claude to read it.
@@ -48,12 +47,12 @@ impl<'a> LlmOverrides<'a> {
 /// only guards against pathological cases (e.g. broken binary on PATH).
 pub const MAX_STDOUT_BYTES: usize = 50_000_000;
 
-fn log(app: &AppHandle, line: impl Into<String>) {
+fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
     super::logging::emit(app, line.into());
 }
 
 /// Log only when verbose_logging is enabled in settings.
-fn verbose_log(app: &AppHandle, line: impl Into<String>) {
+fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     if crate::settings::load().verbose_logging {
         log(app, line);
     }
@@ -74,7 +73,7 @@ pub fn last_stderr_hint(tail: &[String]) -> Option<String> {
 /// Surface captured stderr on failure, always (not gated on verbose_logging).
 /// This is where CLIs report auth/config errors, and it is the only clue when
 /// stdout is empty — dropping it made those failures undiagnosable.
-pub fn emit_stderr_tail(app: &AppHandle, tail: &[String]) {
+pub fn emit_stderr_tail(app: &crate::emit::EventBus, tail: &[String]) {
     if tail.is_empty() {
         return;
     }
@@ -93,7 +92,7 @@ pub fn emit_stderr_tail(app: &AppHandle, tail: &[String]) {
 /// Paths are normalized to forward slashes so Windows backslashes don't
 /// confuse Claude's internal path normalization.
 pub async fn call_claude(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     prompt: &str,
     allowed_tools: &[&str],
     system_prompt: Option<&str>,
@@ -441,7 +440,7 @@ pub fn extract_error_hint(output: &str) -> Option<String> {
 /// directory when the LLM needs to read figures or other assets alongside the paper.
 /// When `None`, the subprocess runs in the system temp dir.
 pub async fn call_llm(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     prompt: &str,
     allowed_tools: &[&str],
     system_prompt: Option<&str>,

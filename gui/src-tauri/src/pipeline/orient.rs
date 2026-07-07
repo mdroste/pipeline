@@ -1,6 +1,5 @@
 use super::claude::{call_llm, LlmOverrides};
 use crate::models::ExtractionResult;
-use tauri::AppHandle;
 
 const MAX_PAPER_TEXT: usize = 250_000;
 const MAX_RETRIES: usize = 2;
@@ -41,7 +40,7 @@ pub fn resolve_survey_template(profile_prompt: &str, input_mode: &str) -> Option
 /// input text. Pass `None` to use the default template loaded from
 /// prompts/orientation.md (or the user override at ~/.pipeline/prompts/orientation.md).
 pub async fn build_orientation_map(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     extraction: &ExtractionResult,
     prompt_template: Option<&str>,
 ) -> Result<serde_json::Value, String> {

@@ -3,7 +3,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
-use tauri::AppHandle;
 
 /// Maximum tool-call round-trips before giving up.
 const MAX_TOOL_ITERATIONS: usize = 15;
@@ -35,11 +34,11 @@ const MAX_WRITES_PER_RUN: usize = 200;
 
 // ── Logging ────────────────────────────────────────────────────────
 
-pub fn log(app: &AppHandle, line: impl Into<String>) {
+pub fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
     super::logging::emit(app, line.into());
 }
 
-pub fn verbose_log(app: &AppHandle, line: impl Into<String>) {
+pub fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     if crate::settings::load().verbose_logging {
         log(app, line);
     }
@@ -585,7 +584,7 @@ pub fn anthropic_has_tool_use(blocks: &[AnthropicContentBlock]) -> bool {
 
 /// Run the tool-use loop for Anthropic. Returns (text, usage).
 pub async fn anthropic_tool_loop(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     client: &reqwest::Client,
     api_key: &str,
     mut request: AnthropicRequest,
@@ -703,7 +702,7 @@ pub async fn anthropic_tool_loop(
 /// request that declared tools retries once without tools — many local
 /// models don't support tool calling, and a hard failure would be opaque.
 pub async fn openai_tool_loop(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     client: &reqwest::Client,
     base_url: &str,
     api_key: &str,
@@ -822,7 +821,7 @@ pub async fn openai_tool_loop(
 
 /// Run the tool-use loop for Google. Returns (text, usage).
 pub async fn google_tool_loop(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     client: &reqwest::Client,
     api_key: &str,
     model: &str,
@@ -955,7 +954,7 @@ pub async fn google_tool_loop(
 
 /// Execute a tool call.
 fn execute_tool(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     name: &str,
     input: &serde_json::Value,
     label: &str,

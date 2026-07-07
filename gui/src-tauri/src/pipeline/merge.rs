@@ -4,7 +4,6 @@ use crate::output::{capitalize, strip_to_report};
 use crate::pipeline_config::MergeConfig;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -19,7 +18,7 @@ use tokio::task::JoinSet;
 ///
 /// Returns one StepOutput per step, in original config order.
 pub async fn merge_step_outputs(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     outputs: Vec<StepOutput>,
     merge_config: &MergeConfig,
     semaphore: &Arc<Semaphore>,
@@ -104,7 +103,7 @@ pub async fn merge_step_outputs(
             .to_string();
         let merge_key = format!("merge/{}", base_id);
 
-        let _ = app.emit(
+        let _ = app.emit_event(
             "pipeline:pass",
             serde_json::json!({ "name": merge_key, "status": "running" }),
         );
@@ -137,7 +136,7 @@ pub async fn merge_step_outputs(
             .await
             {
                 Ok(raw_text) => {
-                    let _ = app_handle.emit(
+                    let _ = app_handle.emit_event(
                         "pipeline:pass",
                         serde_json::json!({ "name": merge_key_done, "status": "done" }),
                     );
@@ -149,11 +148,12 @@ pub async fn merge_step_outputs(
                             phase: "parallel".to_string(),
                             agent: agents_joined,
                             raw_text: strip_to_report(&raw_text),
+                            ..Default::default()
                         },
                     ))
                 }
                 Err(e) => {
-                    let _ = app_handle.emit(
+                    let _ = app_handle.emit_event(
                         "pipeline:pass",
                         serde_json::json!({ "name": merge_key_done, "status": "error" }),
                     );
@@ -177,7 +177,7 @@ pub async fn merge_step_outputs(
 
     if !errors.is_empty() {
         for (idx, err) in &errors {
-            let _ = app.emit(
+            let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({ "line": format!("WARNING: merge failed: {err}") }),
             );
@@ -221,8 +221,9 @@ pub async fn merge_step_outputs(
                         phase: "parallel".to_string(),
                         agent: agents_joined,
                         raw_text: combined_text,
+                        ..Default::default()
                     });
-                    let _ = app.emit(
+                    let _ = app.emit_event(
                         "pipeline:log",
                         serde_json::json!({ "line": format!(
                             "INFO: Using unmerged agent outputs for step '{}'",

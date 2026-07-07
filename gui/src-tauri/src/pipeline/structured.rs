@@ -1,0 +1,239 @@
+//! Lightweight validation of a step's JSON output against a declared shape.
+//!
+//! This is intentionally NOT a full JSON Schema implementation (that would pull
+//! in a heavy dependency). It supports the subset the pipeline actually uses:
+//!
+//! - top-level `type`: "object" | "array" | "string" | "number" | "integer" |
+//!   "boolean"
+//! - for objects: `required` (a list of keys that must be present) and
+//!   `properties` (each property's `type` is checked, one level deep)
+//! - for arrays: `items` with a `type` (and, if the item type is object, its
+//!   `required` keys are checked on every element)
+//!
+//! Enough to enforce "an array of issue objects each with id/severity/body"
+//! without a schema engine. Unknown schema keywords are ignored, so a stricter
+//! validator could be swapped in later without breaking stored schemas.
+
+/// Pull a JSON value out of a model's text response: the whole string if it
+/// parses, else the contents of the first ```json fence, else the first
+/// balanced `{...}` or `[...]` span. Returns None if nothing parses.
+pub fn extract_json(text: &str) -> Option<serde_json::Value> {
+    let trimmed = text.trim();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return Some(v);
+    }
+    // Fenced code block ```json ... ``` (or a bare ``` ... ```).
+    if let Some(inner) = fenced_block(trimmed) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(inner.trim()) {
+            return Some(v);
+        }
+    }
+    // First balanced object or array span.
+    if let Some(span) = first_balanced_span(trimmed) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(span) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn fenced_block(text: &str) -> Option<&str> {
+    let start = text.find("```")?;
+    let after = &text[start + 3..];
+    // Skip an optional language tag on the same line (e.g. ```json).
+    let body_start = after.find('\n').map(|i| i + 1).unwrap_or(0);
+    let body = &after[body_start..];
+    let end = body.find("```")?;
+    Some(&body[..end])
+}
+
+fn first_balanced_span(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let (open, close) = {
+        let obj = text.find('{');
+        let arr = text.find('[');
+        match (obj, arr) {
+            (Some(o), Some(a)) => {
+                if o < a {
+                    (o, b'}')
+                } else {
+                    (a, b']')
+                }
+            }
+            (Some(o), None) => (o, b'}'),
+            (None, Some(a)) => (a, b']'),
+            (None, None) => return None,
+        }
+    };
+    let open_ch = bytes[open];
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escaped = false;
+    for i in open..bytes.len() {
+        let c = bytes[i];
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            x if x == open_ch => depth += 1,
+            x if x == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[open..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Validate `value` against the supported subset of `schema`. Returns Ok(()) or
+/// a human-readable reason on the first violation.
+pub fn validate(schema: &serde_json::Value, value: &serde_json::Value) -> Result<(), String> {
+    validate_at(schema, value, "$")
+}
+
+fn validate_at(schema: &serde_json::Value, value: &serde_json::Value, path: &str) -> Result<(), String> {
+    if let Some(ty) = schema.get("type").and_then(|t| t.as_str()) {
+        if !type_matches(ty, value) {
+            return Err(format!("{path}: expected type {ty}, got {}", json_type(value)));
+        }
+    }
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(req) = schema.get("required").and_then(|r| r.as_array()) {
+                for key in req.iter().filter_map(|k| k.as_str()) {
+                    if !map.contains_key(key) {
+                        return Err(format!("{path}: missing required property '{key}'"));
+                    }
+                }
+            }
+            if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
+                for (key, subschema) in props {
+                    if let Some(v) = map.get(key) {
+                        validate_at(subschema, v, &format!("{path}.{key}"))?;
+                    }
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            if let Some(item_schema) = schema.get("items") {
+                for (i, v) in items.iter().enumerate() {
+                    validate_at(item_schema, v, &format!("{path}[{i}]"))?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn type_matches(ty: &str, value: &serde_json::Value) -> bool {
+    match ty {
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "string" => value.is_string(),
+        "number" => value.is_number(),
+        "integer" => value.is_i64() || value.is_u64(),
+        "boolean" => value.is_boolean(),
+        "null" => value.is_null(),
+        _ => true, // unknown declared type — don't reject
+    }
+}
+
+fn json_type(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Object(_) => "object",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Null => "null",
+    }
+}
+
+/// Convenience: extract JSON from `text` and validate it against `schema`.
+pub fn check(schema: &serde_json::Value, text: &str) -> Result<(), String> {
+    let value = extract_json(text).ok_or_else(|| "output is not valid JSON".to_string())?;
+    validate(schema, &value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_plain_json() {
+        assert_eq!(extract_json("{\"a\":1}"), Some(serde_json::json!({"a":1})));
+        assert_eq!(extract_json("[1,2,3]"), Some(serde_json::json!([1, 2, 3])));
+    }
+
+    #[test]
+    fn extract_from_fence_and_prose() {
+        let fenced = "Here you go:\n```json\n{\"a\": 1}\n```\nDone.";
+        assert_eq!(extract_json(fenced), Some(serde_json::json!({"a":1})));
+
+        let prose = "The result is {\"ok\": true} as requested.";
+        assert_eq!(extract_json(prose), Some(serde_json::json!({"ok":true})));
+    }
+
+    #[test]
+    fn extract_balanced_span_ignores_braces_in_strings() {
+        let text = "prefix {\"note\": \"a } brace in a string\"} suffix";
+        assert_eq!(
+            extract_json(text),
+            Some(serde_json::json!({"note": "a } brace in a string"}))
+        );
+    }
+
+    #[test]
+    fn extract_returns_none_for_non_json() {
+        assert!(extract_json("just some prose, no json here").is_none());
+    }
+
+    #[test]
+    fn validate_object_required_and_types() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["issues"],
+            "properties": { "issues": { "type": "array" } }
+        });
+        assert!(validate(&schema, &serde_json::json!({"issues": []})).is_ok());
+        let err = validate(&schema, &serde_json::json!({"other": 1})).unwrap_err();
+        assert!(err.contains("missing required property 'issues'"));
+        let err2 = validate(&schema, &serde_json::json!({"issues": "nope"})).unwrap_err();
+        assert!(err2.contains("expected type array"));
+    }
+
+    #[test]
+    fn validate_array_items_required_keys() {
+        let schema = serde_json::json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "severity"]
+            }
+        });
+        let good = serde_json::json!([{"id": "1", "severity": "high"}]);
+        assert!(validate(&schema, &good).is_ok());
+        let bad = serde_json::json!([{"id": "1"}]);
+        assert!(validate(&schema, &bad).unwrap_err().contains("severity"));
+    }
+
+    #[test]
+    fn check_end_to_end() {
+        let schema = serde_json::json!({ "type": "object", "required": ["ok"] });
+        assert!(check(&schema, "```json\n{\"ok\": true}\n```").is_ok());
+        assert!(check(&schema, "not json").is_err());
+        assert!(check(&schema, "{\"nope\": 1}").is_err());
+    }
+}

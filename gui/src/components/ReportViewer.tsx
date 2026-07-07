@@ -1,8 +1,9 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { useFindBar } from "../hooks/useFindBar";
 
 interface Props {
   markdown: string;
@@ -73,6 +74,9 @@ function slugify(text: string): string {
 }
 
 export default function ReportViewer({ markdown }: Props) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const find = useFindBar(contentRef, markdown);
+
   // Extract headings for table of contents
   const headings = useMemo(() => {
     const matches = markdown.matchAll(/^(#{1,3})\s+(.+)$/gm);
@@ -84,7 +88,28 @@ export default function ReportViewer({ markdown }: Props) {
   }, [markdown]);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full relative">
+      {find.open && (
+        <div className="absolute top-2 right-3 z-20 flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg px-2 py-1">
+          <input
+            autoFocus
+            value={find.query}
+            onChange={(e) => find.setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? find.prev() : find.next(); }
+              if (e.key === "Escape") find.close();
+            }}
+            placeholder="Find in report…"
+            className="w-44 py-0.5 px-1.5 text-sm bg-transparent text-gray-900 dark:text-gray-100 focus:outline-none"
+          />
+          <span className="text-xs text-gray-400 tabular-nums min-w-[3rem] text-right">
+            {find.count > 0 ? `${find.current + 1}/${find.count}` : "0/0"}
+          </span>
+          <button onClick={find.prev} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Previous (Shift+Enter)">↑</button>
+          <button onClick={find.next} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Next (Enter)">↓</button>
+          <button onClick={find.close} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100" title="Close (Esc)">✕</button>
+        </div>
+      )}
       {/* Table of contents */}
       {headings.length > 3 && (
         <nav className="toc-nav">
@@ -112,7 +137,7 @@ export default function ReportViewer({ markdown }: Props) {
 
       {/* Report content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="report-content">
+        <div className="report-content" ref={contentRef}>
           <MathErrorBoundary resetKey={markdown}>
             {(fallback) => (
               <>

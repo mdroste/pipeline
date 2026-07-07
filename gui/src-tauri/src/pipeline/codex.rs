@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use std::io::Write;
-use tauri::AppHandle;
 
 use super::claude::{build_silent_command, emit_stderr_tail, last_stderr_hint, LlmOverrides, STDERR_TAIL_LINES};
 
@@ -11,11 +10,11 @@ use super::claude::{build_silent_command, emit_stderr_tail, last_stderr_hint, Ll
 /// Beyond this we write to a temp file and tell Codex to read it.
 const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
 
-fn log(app: &AppHandle, line: impl Into<String>) {
+fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
     super::logging::emit(app, line.into());
 }
 
-fn verbose_log(app: &AppHandle, line: impl Into<String>) {
+fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     if crate::settings::load().verbose_logging {
         log(app, line);
     }
@@ -24,7 +23,7 @@ fn verbose_log(app: &AppHandle, line: impl Into<String>) {
 /// Call `codex exec` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
 pub async fn call_codex(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     prompt: &str,
     allowed_tools: &[&str],
     system_prompt: Option<&str>,

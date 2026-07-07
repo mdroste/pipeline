@@ -637,8 +637,83 @@ function GeneralSection({
             setSettings({ ...settings, verbose_logging: v })
           }
         />
+        <RunRetention settings={settings} setSettings={setSettings} />
       </div>
     </>
+  );
+}
+
+function RunRetention({
+  settings,
+  setSettings,
+}: {
+  settings: Settings;
+  setSettings: (s: Settings) => void;
+}) {
+  const [usage, setUsage] = useState<{ count: number; bytes: number } | null>(null);
+  const [purging, setPurging] = useState(false);
+
+  const loadUsage = () => {
+    invoke<{ count: number; bytes: number }>("runs_disk_usage")
+      .then(setUsage)
+      .catch(() => setUsage(null));
+  };
+  useEffect(loadUsage, []);
+
+  const fmtBytes = (n: number) =>
+    n >= 1_000_000_000
+      ? (n / 1_000_000_000).toFixed(1) + " GB"
+      : n >= 1_000_000
+        ? (n / 1_000_000).toFixed(0) + " MB"
+        : (n / 1_000).toFixed(0) + " KB";
+
+  const purgeNow = async () => {
+    setPurging(true);
+    try {
+      // Passing the configured cap (0 keeps everything, so purge to a large
+      // default only when unlimited) — here we honour the user's setting.
+      await invoke("purge_runs", { keep: settings.max_saved_runs });
+      loadUsage();
+    } finally {
+      setPurging(false);
+    }
+  };
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        Run history retention
+      </label>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+        Past runs are stored under <code>~/.pipeline/runs/</code> with their artifacts and page
+        images, which add up. Keep at most this many; the oldest are removed after each run.
+        0 keeps everything.
+        {usage && (
+          <>
+            {" "}Currently {usage.count} run{usage.count === 1 ? "" : "s"}, {fmtBytes(usage.bytes)}.
+          </>
+        )}
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          value={settings.max_saved_runs}
+          onChange={(e) =>
+            setSettings({ ...settings, max_saved_runs: Math.max(0, parseInt(e.target.value, 10) || 0) })
+          }
+          className="w-24 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
+        />
+        <button
+          onClick={purgeNow}
+          disabled={purging || settings.max_saved_runs === 0}
+          className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          title={settings.max_saved_runs === 0 ? "Set a limit above 0 to purge" : "Delete runs beyond the limit now"}
+        >
+          {purging ? "Purging…" : "Purge now"}
+        </button>
+      </div>
+    </div>
   );
 }
 

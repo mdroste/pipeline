@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod deps;
+pub mod emit;
 pub mod engines;
 pub mod env;
 pub mod models;
@@ -45,8 +46,31 @@ pub fn run() {
             commands::print_report_html,
             commands::list_history,
             commands::cancel_pipeline,
+            commands::cancel_pass,
             commands::get_run_manifest,
             commands::read_artifact,
+            commands::list_runs,
+            commands::get_run_report,
+            commands::reconcile_runs,
+            commands::update_run_meta,
+            commands::delete_run,
+            commands::runs_disk_usage,
+            commands::purge_runs,
+            commands::save_text_file,
+            // Batch queue
+            commands::start_batch,
+            commands::get_batch_status,
+            commands::cancel_batch,
+            commands::list_input_files,
+            commands::start_watch,
+            commands::stop_watch,
+            commands::get_watch_status,
+            // Resume / partial re-run
+            commands::rerun_run,
+            // Annotations
+            commands::get_annotations,
+            commands::save_annotations,
+            commands::draft_calibration,
             commands::check_deps,
             commands::get_settings,
             commands::save_settings,
@@ -68,6 +92,7 @@ pub fn run() {
             commands::import_item,
             commands::export_profile,
             commands::import_profile,
+            commands::import_profile_from_url,
             commands::export_bundle,
             commands::import_bundle,
             // Update check

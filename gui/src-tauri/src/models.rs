@@ -208,7 +208,7 @@ pub fn survey_hint(survey: &serde_json::Value) -> String {
 
 // --- Step Output ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StepOutput {
     pub step_id: String,
     pub step_label: String,
@@ -218,6 +218,26 @@ pub struct StepOutput {
     pub agent: String,
     #[serde(default)]
     pub raw_text: String,
+    /// Wall-clock time the step's LLM call took, in seconds. 0 for old reports.
+    #[serde(default)]
+    pub duration_secs: u64,
+    /// Input tokens the call reported (0 when the provider reports no usage).
+    #[serde(default)]
+    pub input_tokens: u64,
+    /// Output tokens the call reported.
+    #[serde(default)]
+    pub output_tokens: u64,
+    /// Effective model id/alias used for this step (resolved override or global).
+    #[serde(default)]
+    pub model: String,
+    /// Provider that ran this step ("claude", "codex", "gemini", "local").
+    #[serde(default)]
+    pub provider: String,
+    /// True when the step was skipped by its `run_if` guard. The entry is kept
+    /// (so dependents' `{step:id}` placeholders resolve) but is not real report
+    /// content.
+    #[serde(default)]
+    pub skipped: bool,
 }
 
 fn default_phase() -> String {
@@ -297,6 +317,7 @@ impl PipelineReport {
                 phase: "parallel".to_string(),
                 agent: r.agent.clone(),
                 raw_text: r.raw_text.clone(),
+                ..Default::default()
             })
             .collect();
         if let Some(ref editor) = self.editor {
@@ -306,20 +327,22 @@ impl PipelineReport {
                 phase: "sequential".to_string(),
                 agent: String::new(),
                 raw_text: editor.overall_assessment.clone(),
+                ..Default::default()
             });
         }
         outputs
     }
 
     /// Get the final output text (last sequential step, or last step if none sequential).
+    /// Skipped steps are never the final output.
     pub fn final_output(&self) -> Option<&str> {
         if !self.step_outputs.is_empty() {
             return self
                 .step_outputs
                 .iter()
                 .rev()
-                .find(|s| s.phase == "sequential")
-                .or_else(|| self.step_outputs.last())
+                .find(|s| s.phase == "sequential" && !s.skipped)
+                .or_else(|| self.step_outputs.iter().rev().find(|s| !s.skipped))
                 .map(|s| s.raw_text.as_str());
         }
         // Legacy
@@ -515,6 +538,7 @@ mod tests {
             phase: "parallel".into(),
             agent: "claude".into(),
             raw_text: "content".into(),
+            ..Default::default()
         }];
         let report = make_report(outputs.clone(), vec![], None);
         assert_eq!(report.all_outputs().len(), 1);
@@ -556,8 +580,8 @@ mod tests {
     #[test]
     fn final_output_prefers_sequential() {
         let outputs = vec![
-            StepOutput { step_id: "s1".into(), step_label: "P1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "parallel text".into() },
-            StepOutput { step_id: "s2".into(), step_label: "Seq".into(), phase: "sequential".into(), agent: String::new(), raw_text: "sequential text".into() },
+            StepOutput { step_id: "s1".into(), step_label: "P1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "parallel text".into(), ..Default::default() },
+            StepOutput { step_id: "s2".into(), step_label: "Seq".into(), phase: "sequential".into(), agent: String::new(), raw_text: "sequential text".into(), ..Default::default() },
         ];
         let report = make_report(outputs, vec![], None);
         assert_eq!(report.final_output(), Some("sequential text"));
@@ -566,7 +590,7 @@ mod tests {
     #[test]
     fn final_output_falls_back_to_last() {
         let outputs = vec![
-            StepOutput { step_id: "s1".into(), step_label: "P1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "only parallel".into() },
+            StepOutput { step_id: "s1".into(), step_label: "P1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "only parallel".into(), ..Default::default() },
         ];
         let report = make_report(outputs, vec![], None);
         assert_eq!(report.final_output(), Some("only parallel"));

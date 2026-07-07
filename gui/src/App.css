@@ -84,6 +84,24 @@ html.theme-transitioning *::after {
   color: theme("colors.gray.200");
 }
 
+/* In-report search highlights */
+mark.search-hit {
+  background: theme("colors.yellow.200");
+  color: inherit;
+  border-radius: 2px;
+}
+.dark mark.search-hit {
+  background: theme("colors.yellow.700");
+}
+mark.search-hit.current {
+  background: theme("colors.orange.400");
+  box-shadow: 0 0 0 2px theme("colors.orange.400");
+}
+.dark mark.search-hit.current {
+  background: theme("colors.orange.500");
+  box-shadow: 0 0 0 2px theme("colors.orange.500");
+}
+
 /* KaTeX */
 .report-content .katex {
   font-size: 1em;

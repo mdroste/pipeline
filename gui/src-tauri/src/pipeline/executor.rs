@@ -11,7 +11,6 @@ use crate::models::{StepFailure, StepOutput};
 use crate::output::{capitalize, strip_to_report};
 use crate::pipeline_config::{Phase, PipelineConfig, StepConfig};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -23,16 +22,27 @@ pub struct ExecutionResult {
 
 /// Execute all enabled steps in the pipeline.
 ///
-/// Returns successful outputs and a list of any steps that failed.
-/// A failed sequential step stops further execution but does not discard prior outputs.
+/// Steps run on a dependency schedule: each step becomes "ready" once its
+/// upstream steps have completed, and all ready parallel steps run as one wave
+/// under the `max_workers` semaphore. With no explicit `inputs`, the implicit
+/// adjacency dependencies reproduce the original wave behaviour exactly
+/// (parallel steps run together; a sequential step waits for everything before
+/// it). A step's `run_if` guard can skip it; a skipped step still "completes"
+/// so its dependents proceed. A failed sequential step stops further execution
+/// but does not discard prior outputs.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_steps(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     config: &PipelineConfig,
     orientation_path: &str,
+    orientation_value: &serde_json::Value,
     paper_text_path: &str,
     source_path: &str,
     paper_type: &str,
     survey_hint: &str,
+    variables: &std::collections::HashMap<String, String>,
+    extra_inputs: &std::collections::HashMap<String, String>,
+    preloaded: &std::collections::HashMap<String, StepOutput>,
     write_dir: Option<&str>,
 ) -> Result<ExecutionResult, String> {
     let settings = crate::settings::load();
@@ -41,100 +51,244 @@ pub async fn execute_steps(
     let mut failed_steps: Vec<StepFailure> = Vec::new();
 
     let enabled: Vec<&StepConfig> = config.steps.iter().filter(|s| s.enabled).collect();
-    let waves = group_into_waves(&enabled);
+    let deps = resolve_dependencies(&enabled);
 
-    for wave in waves {
-        match wave {
-            Wave::Parallel(steps) => {
-                app.emit(
-                    "pipeline:stage",
-                    serde_json::json!({"stage": "dispatching"}),
+    // Ids that have completed (including skipped) so dependents can start.
+    let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut remaining: Vec<usize> = (0..enabled.len()).collect();
+
+    while !remaining.is_empty() {
+        let ready: Vec<usize> = remaining
+            .iter()
+            .copied()
+            .filter(|&i| deps[i].iter().all(|d| done.contains(d)))
+            .collect();
+        if ready.is_empty() {
+            let stuck: Vec<&str> = remaining.iter().map(|&i| enabled[i].label.as_str()).collect();
+            return Err(format!(
+                "Pipeline stalled — steps have unsatisfiable dependencies (a cycle or a disabled upstream step): {}",
+                stuck.join(", ")
+            ));
+        }
+
+        let ready_parallel: Vec<usize> = ready
+            .iter()
+            .copied()
+            .filter(|&i| enabled[i].phase == Phase::Parallel)
+            .collect();
+
+        if !ready_parallel.is_empty() {
+            // Partition into steps whose run_if guard passes (dispatch) and
+            // those it skips (record a placeholder so dependents proceed).
+            let mut to_run: Vec<&StepConfig> = Vec::new();
+            for &i in &ready_parallel {
+                let step = enabled[i];
+                // Resume: a preloaded step reuses the parent run's output.
+                if let Some(cached) = preloaded.get(&step.id) {
+                    let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "done"}));
+                    all_outputs.push(cached.clone());
+                    done.insert(step.id.clone());
+                    continue;
+                }
+                if let Some(cond) = &step.run_if {
+                    if !crate::pipeline::conditions::condition_met(cond, orientation_value, &all_outputs) {
+                        emit_skip(app, step);
+                        all_outputs.push(skip_output(step));
+                        done.insert(step.id.clone());
+                        continue;
+                    }
+                }
+                to_run.push(step);
+            }
+            remaining.retain(|i| !ready_parallel.contains(i));
+
+            if !to_run.is_empty() {
+                app.emit_event("pipeline:stage", serde_json::json!({"stage": "dispatching"})).ok();
+                let (mut wave_outputs, wave_failures) = run_parallel_wave(
+                    app, to_run, &settings, &semaphore, orientation_path, paper_text_path,
+                    source_path, paper_type, survey_hint, &config.parallel_context_template, variables, extra_inputs, write_dir,
                 )
-                .ok();
-
-                let (mut wave_outputs, wave_failures) =
-                    run_parallel_wave(app, steps, &settings, &semaphore, orientation_path, paper_text_path, source_path, paper_type, survey_hint, &config.parallel_context_template, write_dir)
-                        .await?;
+                .await?;
                 failed_steps.extend(wave_failures);
 
                 let has_multi_agent = wave_outputs.iter().any(|o| o.step_id.contains('/'));
                 if has_multi_agent && config.merge.enabled {
-                    app.emit(
-                        "pipeline:stage",
-                        serde_json::json!({"stage": "merging"}),
-                    )
-                    .ok();
+                    app.emit_event("pipeline:stage", serde_json::json!({"stage": "merging"})).ok();
                     match merge::merge_step_outputs(app, wave_outputs.clone(), &config.merge, &semaphore).await {
                         Ok(merged) => wave_outputs = merged,
                         Err(e) => {
-                            let _ = app.emit(
+                            let _ = app.emit_event(
                                 "pipeline:log",
                                 serde_json::json!({ "line": format!("WARNING: merge failed: {e}. Using unmerged outputs.") }),
                             );
                         }
                     }
                 }
-
+                for o in &wave_outputs {
+                    done.insert(base_id(&o.step_id).to_string());
+                }
                 all_outputs.extend(wave_outputs);
             }
-            Wave::Sequential(step) => {
-                app.emit(
-                    "pipeline:stage",
-                    serde_json::json!({"stage": "synthesizing"}),
-                )
-                .ok();
+            continue;
+        }
 
-                match run_sequential_step(
-                    app,
-                    step,
-                    &all_outputs,
-                    orientation_path,
-                    paper_text_path,
-                    source_path,
-                    survey_hint,
-                    write_dir,
-                )
-                .await
-                {
-                    Ok(output) => {
-                        let _ = app.emit(
-                            "pipeline:pass",
-                            serde_json::json!({
-                                "name": step.id,
-                                "status": "done"
-                            }),
-                        );
-                        all_outputs.push(output);
-                    }
-                    Err(e) => {
-                        let _ = app.emit(
-                            "pipeline:pass",
-                            serde_json::json!({
-                                "name": step.id,
-                                "status": "error"
-                            }),
-                        );
-                        let _ = app.emit(
-                            "pipeline:log",
-                            serde_json::json!({ "line": format!("WARNING: step '{}' failed: {e}. Returning prior outputs.", step.label) }),
-                        );
-                        failed_steps.push(StepFailure {
-                            step_id: step.id.clone(),
-                            step_label: step.label.clone(),
-                            error: e,
-                        });
-                        break;
-                    }
-                }
+        // No parallel steps ready — run one sequential step (lowest index).
+        let i = *ready.iter().min().unwrap();
+        let step = enabled[i];
+        remaining.retain(|&j| j != i);
+
+        // Resume: a preloaded step reuses the parent run's output.
+        if let Some(cached) = preloaded.get(&step.id) {
+            let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "done"}));
+            done.insert(step.id.clone());
+            all_outputs.push(cached.clone());
+            continue;
+        }
+
+        if let Some(cond) = &step.run_if {
+            if !crate::pipeline::conditions::condition_met(cond, orientation_value, &all_outputs) {
+                emit_skip(app, step);
+                all_outputs.push(skip_output(step));
+                done.insert(step.id.clone());
+                continue;
+            }
+        }
+
+        app.emit_event("pipeline:stage", serde_json::json!({"stage": "synthesizing"})).ok();
+        // A step with explicit inputs sees only those upstream outputs; the
+        // implicit-schedule case (empty inputs) sees everything prior, as before.
+        let prior: Vec<StepOutput> = if step.inputs.is_empty() {
+            all_outputs.clone()
+        } else {
+            all_outputs
+                .iter()
+                .filter(|o| deps[i].contains(base_id(&o.step_id)))
+                .cloned()
+                .collect()
+        };
+        match run_sequential_step(
+            app, step, &prior, orientation_path, paper_text_path, source_path, survey_hint, variables, extra_inputs, write_dir,
+        )
+        .await
+        {
+            Ok(output) => {
+                let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "done"}));
+                done.insert(step.id.clone());
+                all_outputs.push(output);
+            }
+            Err(e) => {
+                let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "error"}));
+                let _ = app.emit_event(
+                    "pipeline:log",
+                    serde_json::json!({ "line": format!("WARNING: step '{}' failed: {e}. Returning prior outputs.", step.label) }),
+                );
+                failed_steps.push(StepFailure {
+                    step_id: step.id.clone(),
+                    step_label: step.label.clone(),
+                    error: e,
+                });
+                break;
             }
         }
     }
 
-    if all_outputs.is_empty() {
-        return Err("No steps produced output. Enable at least one step.".into());
+    // A run whose only outputs are skips produced no report content.
+    if all_outputs.iter().all(|o| o.skipped) {
+        return Err("No steps produced output. Enable at least one step (or check that run_if conditions can pass).".into());
     }
 
     Ok(ExecutionResult { outputs: all_outputs, failed_steps })
+}
+
+/// Base id of a (possibly composite) step key: "technical/claude" → "technical".
+fn base_id(step_key: &str) -> &str {
+    step_key.split('/').next().unwrap_or(step_key)
+}
+
+/// Compute each enabled step's dependency set (of enabled step ids). Explicit
+/// `inputs` win; otherwise the implicit adjacency schedule is used: a parallel
+/// step waits for the most recent sequential step, a sequential step waits for
+/// every step before it. Dependency ids that aren't enabled steps are dropped
+/// (a disabled upstream can't be waited on).
+fn resolve_dependencies(enabled: &[&StepConfig]) -> Vec<std::collections::HashSet<String>> {
+    let enabled_ids: std::collections::HashSet<&str> =
+        enabled.iter().map(|s| s.id.as_str()).collect();
+    let mut deps = Vec::with_capacity(enabled.len());
+    let mut all_prior: Vec<String> = Vec::new();
+    let mut last_sequential: Option<String> = None;
+    for s in enabled {
+        let d: std::collections::HashSet<String> = if !s.inputs.is_empty() {
+            s.inputs
+                .iter()
+                .filter(|id| enabled_ids.contains(id.as_str()) && id.as_str() != s.id)
+                .cloned()
+                .collect()
+        } else {
+            match s.phase {
+                Phase::Parallel => last_sequential.iter().cloned().collect(),
+                Phase::Sequential => all_prior.iter().cloned().collect(),
+            }
+        };
+        deps.push(d);
+        all_prior.push(s.id.clone());
+        if s.phase == Phase::Sequential {
+            last_sequential = Some(s.id.clone());
+        }
+    }
+    deps
+}
+
+/// The set of enabled steps that transitively depend on any of `seeds`
+/// (i.e. everything downstream of the seeds, seeds excluded). Used by resume to
+/// decide what must re-run when some upstream steps are re-executed.
+pub fn dependents_of(
+    config: &PipelineConfig,
+    seeds: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let enabled: Vec<&StepConfig> = config.steps.iter().filter(|s| s.enabled).collect();
+    let deps = resolve_dependencies(&enabled);
+    // Reverse edges: dep -> steps that depend on it.
+    let mut dependents: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for (i, s) in enabled.iter().enumerate() {
+        for d in &deps[i] {
+            dependents.entry(d.as_str()).or_default().push(s.id.as_str());
+        }
+    }
+    let mut out: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stack: Vec<String> = seeds.iter().cloned().collect();
+    while let Some(node) = stack.pop() {
+        if let Some(children) = dependents.get(node.as_str()) {
+            for c in children {
+                if out.insert(c.to_string()) {
+                    stack.push(c.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Placeholder output for a step skipped by its run_if guard.
+fn skip_output(step: &StepConfig) -> StepOutput {
+    StepOutput {
+        step_id: step.id.clone(),
+        step_label: step.label.clone(),
+        phase: match step.phase {
+            Phase::Parallel => "parallel".into(),
+            Phase::Sequential => "sequential".into(),
+        },
+        raw_text: "_(skipped: run_if condition not met)_".to_string(),
+        skipped: true,
+        ..Default::default()
+    }
+}
+
+fn emit_skip(app: &crate::emit::EventBus, step: &StepConfig) {
+    let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "skipped"}));
+    let _ = app.emit_event(
+        "pipeline:log",
+        serde_json::json!({ "line": format!("Step '{}' skipped (run_if condition not met)", step.label) }),
+    );
 }
 
 // ── Artifact write handoff ──────────────────────────────────────────
@@ -199,37 +353,22 @@ fn tools_with_write(step_tools: &[String], write_dir: Option<&str>) -> Vec<Strin
     tools
 }
 
-// ── Wave grouping ───────────────────────────────────────────────────
-
-enum Wave<'a> {
-    Parallel(Vec<&'a StepConfig>),
-    Sequential(&'a StepConfig),
+/// The model that will actually run a step: the per-step override when set,
+/// otherwise the provider's global model ("" means the provider's own default).
+/// Recorded on the StepOutput so the run summary can show what ran.
+fn resolve_model(settings: &crate::settings::Settings, provider: &str, model_override: &str) -> String {
+    let ov = model_override.trim();
+    if !ov.is_empty() {
+        return ov.to_string();
+    }
+    match provider {
+        "codex" => settings.codex_model.clone(),
+        "gemini" => settings.gemini_model.clone(),
+        "local" => settings.local_model.clone(),
+        _ => settings.claude_model.clone(),
+    }
 }
 
-fn group_into_waves<'a>(steps: &[&'a StepConfig]) -> Vec<Wave<'a>> {
-    let mut waves = Vec::new();
-    let mut current_parallel: Vec<&'a StepConfig> = Vec::new();
-
-    for step in steps {
-        match step.phase {
-            Phase::Parallel => {
-                current_parallel.push(step);
-            }
-            Phase::Sequential => {
-                if !current_parallel.is_empty() {
-                    waves.push(Wave::Parallel(std::mem::take(&mut current_parallel)));
-                }
-                waves.push(Wave::Sequential(step));
-            }
-        }
-    }
-
-    if !current_parallel.is_empty() {
-        waves.push(Wave::Parallel(current_parallel));
-    }
-
-    waves
-}
 
 // ── Parallel execution ──────────────────────────────────────────────
 
@@ -289,9 +428,101 @@ fn build_parallel_prompt(
     }
 }
 
+/// One dispatch of a parallel step: either an agent (normal / multi-agent) or a
+/// fan-out item (a file, with `{item}` bound). `suffix` is the composite-key
+/// suffix ("" for a single plain run).
+struct Unit {
+    agent: String,
+    item: Option<String>,
+    suffix: String,
+    display: String,
+}
+
+/// The directory a fan-out glob is resolved against: the input folder itself,
+/// or the parent directory of a single-file input.
+fn fan_out_root(source_path: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(source_path);
+    if p.is_dir() {
+        p.to_path_buf()
+    } else {
+        p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."))
+    }
+}
+
+/// Build the units to run for a step: one per matching file (fan-out) or one
+/// per agent (normal). Fan-out with no matches returns empty (a warning is
+/// logged) so the step is simply skipped.
+fn build_units(
+    step: &StepConfig,
+    settings: &crate::settings::Settings,
+    source_path: &str,
+    app: &crate::emit::EventBus,
+) -> Vec<Unit> {
+    let provider = step
+        .agents
+        .first()
+        .cloned()
+        .unwrap_or_else(|| settings.preferred_provider.clone());
+
+    if let Some(fe) = &step.for_each {
+        let root = fan_out_root(source_path);
+        let (items, truncated) = crate::pipeline::glob::expand(&root, &fe.glob, fe.max.max(1) as usize);
+        if items.is_empty() {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "WARNING: fan-out step '{}' matched no files for glob '{}'", step.label, fe.glob
+                )}),
+            );
+            return Vec::new();
+        }
+        if truncated {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "Fan-out step '{}' capped at {} files (glob '{}')", step.label, fe.max, fe.glob
+                )}),
+            );
+        }
+        let mut used = std::collections::HashSet::new();
+        items
+            .into_iter()
+            .map(|path| {
+                let base = std::path::Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.clone());
+                let mut suffix = step_slug(&base);
+                let mut n = 2;
+                while !used.insert(suffix.clone()) {
+                    suffix = format!("{}_{}", step_slug(&base), n);
+                    n += 1;
+                }
+                Unit { agent: provider.clone(), item: Some(path), suffix, display: base }
+            })
+            .collect()
+    } else {
+        let agents: Vec<String> = if step.agents.is_empty() {
+            vec![provider]
+        } else {
+            step.agents.clone()
+        };
+        let multi = agents.len() > 1;
+        agents
+            .into_iter()
+            .map(|a| Unit {
+                suffix: if multi { a.clone() } else { String::new() },
+                display: capitalize(&a),
+                agent: a,
+                item: None,
+            })
+            .collect()
+    }
+}
+
 /// Run all parallel steps in a wave concurrently.
 async fn run_parallel_wave(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     steps: Vec<&StepConfig>,
     settings: &crate::settings::Settings,
     semaphore: &Arc<Semaphore>,
@@ -301,6 +532,8 @@ async fn run_parallel_wave(
     paper_type: &str,
     survey_hint: &str,
     context_template: &str,
+    variables: &std::collections::HashMap<String, String>,
+    extra_inputs: &std::collections::HashMap<String, String>,
     write_dir: Option<&str>,
 ) -> Result<(Vec<StepOutput>, Vec<StepFailure>), String> {
     let source_dir = std::path::Path::new(source_path)
@@ -311,26 +544,23 @@ async fn run_parallel_wave(
         JoinSet::new();
 
     for (idx, step) in steps.iter().enumerate() {
-        let agents: Vec<String> = if step.agents.is_empty() {
-            vec![settings.preferred_provider.clone()]
-        } else {
-            step.agents.clone()
-        };
-        let multi = agents.len() > 1;
+        let units = build_units(step, settings, source_path, app);
 
-        for agent in &agents {
+        for unit in &units {
             let id = step.id.clone();
             let label = step.label.clone();
-            let agent_name = agent.clone();
+            let agent_name = unit.agent.clone();
             let tools = tools_with_write(&step.tools, write_dir);
             let model_override = step.model.clone();
             let effort_override = step.effort.clone();
+            let output_schema = step.output_schema.clone();
 
-            // For multi-agent, use composite key
-            let step_key = if multi {
-                format!("{}/{}", id, agent_name)
-            } else {
+            // Composite key when this is one of several units (multi-agent or
+            // fan-out); the bare step id when it's a single plain run.
+            let step_key = if unit.suffix.is_empty() {
                 id.clone()
+            } else {
+                format!("{}/{}", id, unit.suffix)
             };
 
             let report_rel = format!("steps/{}.md", step_slug(&step_key));
@@ -345,9 +575,12 @@ async fn run_parallel_wave(
                 context_template,
                 &output_format,
             );
+            let prompt = substitute_run_context(&prompt, variables, extra_inputs);
+            // Fan-out: bind {item} to this unit's file (empty otherwise).
+            let prompt = prompt.replace("{item}", unit.item.as_deref().unwrap_or(""));
             let task_write_dir = write_dir.map(|s| s.to_string());
 
-            let _ = app.emit(
+            let _ = app.emit_event(
                 "pipeline:pass",
                 serde_json::json!({
                     "name": step_key,
@@ -357,17 +590,17 @@ async fn run_parallel_wave(
 
             let app_handle = app.clone();
             let step_key_emit = step_key.clone();
-            let log_label = if multi {
-                format!("Step: {} ({})", label, capitalize(&agent_name))
-            } else {
+            let log_label = if unit.suffix.is_empty() {
                 format!("Step: {}", label)
-            };
-            let display_label = if multi {
-                format!("{} ({})", label, capitalize(&agent_name))
             } else {
-                label.clone()
+                format!("Step: {} [{}]", label, unit.display)
             };
-            let sort_key = (idx, agent_name.clone());
+            let display_label = if unit.suffix.is_empty() {
+                label.clone()
+            } else {
+                format!("{} [{}]", label, unit.display)
+            };
+            let sort_key = (idx, unit.suffix.clone());
             let sem = semaphore.clone();
             let task_cwd = source_dir.clone();
             // display_label is moved into the success StepOutput; keep a copy
@@ -384,15 +617,17 @@ async fn run_parallel_wave(
                 let settings = crate::settings::load();
                 let timeout = settings.step_timeout_secs.max(60);
                 let max_retries = settings.max_retries;
+                let provider = agent_name.clone();
+                let effective_model = resolve_model(&settings, &provider, &model_override);
 
                 let mut last_err = String::new();
                 for attempt in 0..=max_retries {
                     if attempt > 0 {
-                        let _ = app_handle.emit(
+                        let _ = app_handle.emit_event(
                             "pipeline:log",
                             serde_json::json!({ "line": format!("{log_label}: retry {attempt}/{max_retries} after failure: {last_err}") }),
                         );
-                        let _ = app_handle.emit(
+                        let _ = app_handle.emit_event(
                             "pipeline:pass",
                             serde_json::json!({
                                 "name": step_key_emit,
@@ -403,27 +638,59 @@ async fn run_parallel_wave(
                     let extra: Vec<&str> = task_cwd.as_deref().into_iter().collect();
                     let mut overrides = LlmOverrides::from_step_strings(&model_override, &effort_override);
                     overrides.write_dir = task_write_dir.as_deref();
-                    match call_llm(
-                        &app_handle,
-                        &prompt,
-                        &tool_refs,
-                        None,
-                        "text",
-                        timeout,
-                        &log_label,
-                        Some(&agent_name),
-                        task_cwd.as_deref(),
-                        &extra,
-                        &overrides,
+                    let call_start = std::time::Instant::now();
+                    let (call_result, usage) = crate::pipeline::logging::with_pass(
+                        step_key_emit.clone(),
+                        crate::pipeline::logging::measure_usage(call_llm(
+                            &app_handle,
+                            &prompt,
+                            &tool_refs,
+                            None,
+                            "text",
+                            timeout,
+                            &log_label,
+                            Some(&agent_name),
+                            task_cwd.as_deref(),
+                            &extra,
+                            &overrides,
+                        )),
                     )
-                    .await
-                    {
+                    .await;
+                    let duration_secs = call_start.elapsed().as_secs();
+                    // Per-pass cancel: stop retrying and fail this pass only.
+                    if crate::commands::is_pass_cancelled(&step_key_emit) {
+                        let _ = app_handle.emit_event(
+                            "pipeline:pass",
+                            serde_json::json!({ "name": step_key_emit, "status": "error" }),
+                        );
+                        return Err(StepFailure {
+                            step_id: step_key.clone(),
+                            step_label: fail_label.clone(),
+                            error: "Cancelled by user".to_string(),
+                        });
+                    }
+                    match call_result {
                         Ok(raw_text) => {
                             let text = match ingest_report_file(task_write_dir.as_deref(), &report_rel) {
                                 Some(file_text) => file_text,
                                 None => strip_to_report(&raw_text),
                             };
-                            let _ = app_handle.emit(
+                            // Structured-output contract: on a mismatch, retry
+                            // (the log carries the reason); after the last
+                            // attempt, keep the output but warn.
+                            if let Some(schema) = &output_schema {
+                                if let Err(why) = crate::pipeline::structured::check(schema, &text) {
+                                    if attempt < max_retries {
+                                        last_err = format!("output did not satisfy schema: {why}");
+                                        continue;
+                                    }
+                                    let _ = app_handle.emit_event(
+                                        "pipeline:log",
+                                        serde_json::json!({ "line": format!("WARNING: {log_label}: output still did not satisfy schema after {max_retries} retries ({why}); keeping it.") }),
+                                    );
+                                }
+                            }
+                            let _ = app_handle.emit_event(
                                 "pipeline:pass",
                                 serde_json::json!({
                                     "name": step_key_emit,
@@ -436,14 +703,20 @@ async fn run_parallel_wave(
                                     step_id: step_key,
                                     step_label: display_label,
                                     phase: "parallel".to_string(),
+                                    provider,
                                     agent: agent_name,
                                     raw_text: text,
+                                    duration_secs,
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                    model: effective_model,
+                                    ..Default::default()
                                 },
                             ));
                         }
                         Err(e) => {
                             if e.contains("cancelled") {
-                                let _ = app_handle.emit(
+                                let _ = app_handle.emit_event(
                                     "pipeline:pass",
                                     serde_json::json!({
                                         "name": step_key_emit,
@@ -461,11 +734,11 @@ async fn run_parallel_wave(
                             // model obeyed "don't print the report"). A
                             // non-empty report file counts as success.
                             if let Some(file_text) = ingest_report_file(task_write_dir.as_deref(), &report_rel) {
-                                let _ = app_handle.emit(
+                                let _ = app_handle.emit_event(
                                     "pipeline:log",
                                     serde_json::json!({ "line": format!("{log_label}: call reported an error but the report file was written; using it. ({e})") }),
                                 );
-                                let _ = app_handle.emit(
+                                let _ = app_handle.emit_event(
                                     "pipeline:pass",
                                     serde_json::json!({
                                         "name": step_key_emit,
@@ -478,8 +751,14 @@ async fn run_parallel_wave(
                                         step_id: step_key,
                                         step_label: display_label,
                                         phase: "parallel".to_string(),
+                                        provider,
                                         agent: agent_name,
                                         raw_text: file_text,
+                                        duration_secs,
+                                        input_tokens: usage.input_tokens,
+                                        output_tokens: usage.output_tokens,
+                                        model: effective_model,
+                                        ..Default::default()
                                     },
                                 ));
                             }
@@ -488,7 +767,7 @@ async fn run_parallel_wave(
                     }
                 }
 
-                let _ = app_handle.emit(
+                let _ = app_handle.emit_event(
                     "pipeline:pass",
                     serde_json::json!({
                         "name": step_key_emit,
@@ -521,7 +800,7 @@ async fn run_parallel_wave(
 
     if !failures.is_empty() {
         for f in &failures {
-            let _ = app.emit(
+            let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({ "line": format!("WARNING: step failed: {}: {}", f.step_label, f.error) }),
             );
@@ -533,7 +812,7 @@ async fn run_parallel_wave(
                 .collect();
             return Err(format!("All steps failed: {}", summary.join("; ")));
         }
-        let _ = app.emit(
+        let _ = app.emit_event(
             "pipeline:log",
             serde_json::json!({ "line": format!(
                 "WARNING: {}/{} parallel steps succeeded. Downstream steps will receive incomplete inputs.",
@@ -644,18 +923,60 @@ fn resolve_step_ref(id: &str, prior_outputs: &[StepOutput]) -> String {
         .join("\n\n---\n\n")
 }
 
+/// Replace `{<prefix>key}` placeholders using `map`. Unknown keys become an
+/// empty string. `prefix` includes the trailing colon, e.g. "{var:".
+fn substitute_placeholders(
+    text: &str,
+    needle: &str,
+    map: &std::collections::HashMap<String, String>,
+) -> String {
+    if !text.contains(needle) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(needle) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + needle.len()..];
+        if let Some(end) = after.find('}') {
+            let key = after[..end].trim();
+            out.push_str(map.get(key).map(|s| s.as_str()).unwrap_or(""));
+            rest = &after[end + 1..];
+        } else {
+            out.push_str(&rest[start..]);
+            return out;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Apply both run-time substitutions to a prompt: `{var:key}` (values) and
+/// `{input:key}` (paths to extra named inputs' extracted text).
+fn substitute_run_context(
+    text: &str,
+    vars: &std::collections::HashMap<String, String>,
+    inputs: &std::collections::HashMap<String, String>,
+) -> String {
+    let t = substitute_placeholders(text, "{var:", vars);
+    substitute_placeholders(&t, "{input:", inputs)
+}
+
 /// Run a single sequential step.
+#[allow(clippy::too_many_arguments)]
 async fn run_sequential_step(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     step: &StepConfig,
     prior_outputs: &[StepOutput],
     orientation_path: &str,
     paper_text_path: &str,
     source_path: &str,
     survey_hint: &str,
+    variables: &std::collections::HashMap<String, String>,
+    extra_inputs: &std::collections::HashMap<String, String>,
     write_dir: Option<&str>,
 ) -> Result<StepOutput, String> {
-    let _ = app.emit(
+    let _ = app.emit_event(
         "pipeline:pass",
         serde_json::json!({
             "name": step.id,
@@ -672,6 +993,7 @@ async fn run_sequential_step(
         source_path,
     );
 
+    let base_prompt = substitute_run_context(&base_prompt, variables, extra_inputs);
     let report_rel = format!("steps/{}.md", step_slug(&step.id));
     let prompt = format!("{base_prompt}\n\n{}", output_format_block(write_dir, &report_rel));
 
@@ -687,17 +1009,22 @@ async fn run_sequential_step(
     let settings = crate::settings::load();
     let timeout = settings.step_timeout_secs.max(60);
     let max_retries = settings.max_retries;
+    let provider = agent
+        .map(|a| a.to_string())
+        .unwrap_or_else(|| settings.preferred_provider.clone());
+    let effective_model = resolve_model(&settings, &provider, &step.model);
 
     let mut last_err = String::new();
-    let mut raw_text = String::new();
-    let mut file_text: Option<String> = None;
+    let mut final_text: Option<String> = None;
+    let mut usage = crate::pipeline::logging::CallUsage::default();
+    let mut duration_secs = 0u64;
     for attempt in 0..=max_retries {
         if attempt > 0 {
-            let _ = app.emit(
+            let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({ "line": format!("{log_label}: retry {attempt}/{max_retries} after failure: {last_err}") }),
             );
-            let _ = app.emit(
+            let _ = app.emit_event(
                 "pipeline:pass",
                 serde_json::json!({
                     "name": step.id,
@@ -708,12 +1035,23 @@ async fn run_sequential_step(
         let extra: Vec<&str> = source_dir.as_deref().into_iter().collect();
         let mut overrides = LlmOverrides::from_step_strings(&step.model, &step.effort);
         overrides.write_dir = write_dir;
-        match call_llm(app, &prompt, &tool_refs, None, "text", timeout, &log_label, agent, source_dir.as_deref(), &extra, &overrides).await {
-            Ok(text) => {
-                raw_text = text;
-                last_err.clear();
-                break;
-            }
+        let call_start = std::time::Instant::now();
+        let (call_result, call_usage) = crate::pipeline::logging::with_pass(
+            step.id.clone(),
+            crate::pipeline::logging::measure_usage(call_llm(
+                app, &prompt, &tool_refs, None, "text", timeout, &log_label, agent, source_dir.as_deref(), &extra, &overrides,
+            )),
+        )
+        .await;
+        if crate::commands::is_pass_cancelled(&step.id) {
+            return Err("Cancelled by user".to_string());
+        }
+        // Resolve this attempt's text (from the report file or stdout), or None
+        // if the call failed with nothing written.
+        let candidate: Option<String> = match call_result {
+            Ok(text) => Some(
+                ingest_report_file(write_dir, &report_rel).unwrap_or_else(|| strip_to_report(&text)),
+            ),
             Err(e) => {
                 if e.contains("cancelled") {
                     return Err(e);
@@ -721,32 +1059,63 @@ async fn run_sequential_step(
                 // A non-empty report file counts as success even when the
                 // call errored (e.g. empty stdout after an obedient write).
                 if let Some(t) = ingest_report_file(write_dir, &report_rel) {
-                    let _ = app.emit(
+                    let _ = app.emit_event(
                         "pipeline:log",
                         serde_json::json!({ "line": format!("{log_label}: call reported an error but the report file was written; using it. ({e})") }),
                     );
-                    file_text = Some(t);
-                    last_err.clear();
-                    break;
+                    Some(t)
+                } else {
+                    last_err = e;
+                    None
                 }
-                last_err = e;
             }
+        };
+        if let Some(text) = candidate {
+            // Structured-output contract: retry on mismatch, keep-and-warn on
+            // the final attempt.
+            if let Some(schema) = &step.output_schema {
+                if let Err(why) = crate::pipeline::structured::check(schema, &text) {
+                    if attempt < max_retries {
+                        last_err = format!("output did not satisfy schema: {why}");
+                        continue;
+                    }
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({ "line": format!("WARNING: {log_label}: output still did not satisfy schema after {max_retries} retries ({why}); keeping it.") }),
+                    );
+                }
+            }
+            final_text = Some(text);
+            usage = call_usage;
+            duration_secs = call_start.elapsed().as_secs();
+            last_err.clear();
+            break;
         }
     }
-    if !last_err.is_empty() {
-        return Err(last_err);
-    }
 
-    let text = file_text
-        .or_else(|| ingest_report_file(write_dir, &report_rel))
-        .unwrap_or_else(|| strip_to_report(&raw_text));
+    let text = match final_text {
+        Some(t) => t,
+        None => {
+            return Err(if last_err.is_empty() {
+                "step produced no output".to_string()
+            } else {
+                last_err
+            });
+        }
+    };
 
     Ok(StepOutput {
         step_id: step.id.clone(),
         step_label: step.label.clone(),
         phase: "sequential".to_string(),
+        provider,
         agent: agent.unwrap_or("").to_string(),
         raw_text: text,
+        duration_secs,
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        model: effective_model,
+        ..Default::default()
     })
 }
 
@@ -764,56 +1133,160 @@ mod tests {
         }
     }
 
-    // ── group_into_waves ───────────────────────────────────────────
+    // ── resolve_dependencies (implicit adjacency schedule) ─────────
+    //
+    // With no explicit `inputs`, the dependency sets must reproduce the old
+    // wave behaviour: parallel steps wait only for the most recent sequential
+    // step; a sequential step waits for everything before it.
+
+    fn deps_of(steps: &[StepConfig]) -> Vec<std::collections::HashSet<String>> {
+        let refs: Vec<&StepConfig> = steps.iter().collect();
+        resolve_dependencies(&refs)
+    }
 
     #[test]
-    fn waves_all_parallel() {
+    fn implicit_parallel_wave_has_no_deps() {
+        let steps = [make_step("a", Phase::Parallel), make_step("b", Phase::Parallel)];
+        let deps = deps_of(&steps);
+        assert!(deps[0].is_empty());
+        assert!(deps[1].is_empty());
+    }
+
+    #[test]
+    fn implicit_sequential_waits_for_all_prior() {
         let steps = [
             make_step("a", Phase::Parallel),
             make_step("b", Phase::Parallel),
+            make_step("s", Phase::Sequential),
         ];
-        let refs: Vec<&StepConfig> = steps.iter().collect();
-        let waves = group_into_waves(&refs);
-        assert_eq!(waves.len(), 1);
-        assert!(matches!(&waves[0], Wave::Parallel(s) if s.len() == 2));
+        let deps = deps_of(&steps);
+        assert_eq!(deps[2], ["a".to_string(), "b".to_string()].into_iter().collect());
     }
 
     #[test]
-    fn waves_all_sequential() {
-        let steps = [
-            make_step("a", Phase::Sequential),
-            make_step("b", Phase::Sequential),
-        ];
-        let refs: Vec<&StepConfig> = steps.iter().collect();
-        let waves = group_into_waves(&refs);
-        assert_eq!(waves.len(), 2);
-        assert!(matches!(&waves[0], Wave::Sequential(_)));
-        assert!(matches!(&waves[1], Wave::Sequential(_)));
-    }
-
-    #[test]
-    fn waves_mixed() {
+    fn implicit_second_wave_waits_for_last_sequential_only() {
         let steps = [
             make_step("p1", Phase::Parallel),
-            make_step("p2", Phase::Parallel),
             make_step("s1", Phase::Sequential),
             make_step("p3", Phase::Parallel),
             make_step("s2", Phase::Sequential),
         ];
-        let refs: Vec<&StepConfig> = steps.iter().collect();
-        let waves = group_into_waves(&refs);
-        assert_eq!(waves.len(), 4);
-        assert!(matches!(&waves[0], Wave::Parallel(s) if s.len() == 2));
-        assert!(matches!(&waves[1], Wave::Sequential(s) if s.id == "s1"));
-        assert!(matches!(&waves[2], Wave::Parallel(s) if s.len() == 1));
-        assert!(matches!(&waves[3], Wave::Sequential(s) if s.id == "s2"));
+        let deps = deps_of(&steps);
+        assert!(deps[0].is_empty()); // p1
+        assert_eq!(deps[1], ["p1".to_string()].into_iter().collect()); // s1 waits for p1
+        assert_eq!(deps[2], ["s1".to_string()].into_iter().collect()); // p3 waits for s1 only
+        assert_eq!(deps[3], ["p1".to_string(), "s1".to_string(), "p3".to_string()].into_iter().collect());
     }
 
     #[test]
-    fn waves_empty() {
-        let refs: Vec<&StepConfig> = vec![];
-        let waves = group_into_waves(&refs);
-        assert!(waves.is_empty());
+    fn explicit_inputs_override_and_drop_unknown() {
+        let mut a = make_step("a", Phase::Parallel);
+        let mut b = make_step("b", Phase::Sequential);
+        b.inputs = vec!["a".into(), "ghost".into(), "b".into()]; // ghost unknown, b is self
+        a.inputs = vec![];
+        let deps = deps_of(&[a, b]);
+        assert!(deps[0].is_empty());
+        // Only the real, non-self dependency survives.
+        assert_eq!(deps[1], ["a".to_string()].into_iter().collect());
+    }
+
+    #[test]
+    fn resolve_dependencies_empty() {
+        let deps = deps_of(&[]);
+        assert!(deps.is_empty());
+    }
+
+    #[test]
+    fn base_id_strips_agent() {
+        assert_eq!(base_id("technical"), "technical");
+        assert_eq!(base_id("technical/claude"), "technical");
+    }
+
+    // ── build_units (non-fan-out) ──────────────────────────────────
+
+    #[test]
+    fn build_units_single_agent_has_empty_suffix() {
+        let step = make_step("s", Phase::Parallel);
+        let settings = crate::settings::Settings::default();
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        let units = build_units(&step, &settings, "/tmp/x.pdf", &bus);
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].suffix, ""); // bare step id, no composite key
+        assert_eq!(units[0].agent, settings.preferred_provider);
+    }
+
+    #[test]
+    fn build_units_multi_agent_keys_by_agent() {
+        let mut step = make_step("s", Phase::Parallel);
+        step.agents = vec!["claude".into(), "gemini".into()];
+        let settings = crate::settings::Settings::default();
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        let units = build_units(&step, &settings, "/tmp/x.pdf", &bus);
+        assert_eq!(units.len(), 2);
+        assert_eq!(units[0].suffix, "claude");
+        assert_eq!(units[1].suffix, "gemini");
+    }
+
+    // ── dependents_of ──────────────────────────────────────────────
+
+    #[test]
+    fn dependents_of_finds_transitive_downstream() {
+        use crate::pipeline_config::{MergeConfig, PipelineConfig};
+        let config = PipelineConfig {
+            steps: vec![
+                make_step("a", Phase::Parallel),
+                make_step("b", Phase::Parallel),
+                make_step("s", Phase::Sequential), // implicitly depends on a, b
+            ],
+            merge: MergeConfig::default(),
+            use_orientation: true,
+            orientation_prompt: String::new(),
+            extraction: Default::default(),
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        };
+        // Re-running 'a' means 's' (which consumes it) must re-run; 'b' need not.
+        let seeds: std::collections::HashSet<String> = ["a".to_string()].into_iter().collect();
+        let deps = dependents_of(&config, &seeds);
+        assert!(deps.contains("s"));
+        assert!(!deps.contains("b"));
+        assert!(!deps.contains("a")); // seeds excluded
+    }
+
+    // ── substitution ───────────────────────────────────────────────
+
+    #[test]
+    fn substitute_replaces_known_and_blanks_unknown() {
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("journal".to_string(), "AER".to_string());
+        let out = substitute_placeholders("Review for {var:journal}; persona {var:persona}.", "{var:", &vars);
+        assert_eq!(out, "Review for AER; persona .");
+    }
+
+    #[test]
+    fn substitute_no_placeholders_is_unchanged() {
+        let vars = std::collections::HashMap::new();
+        assert_eq!(substitute_placeholders("plain prompt", "{var:", &vars), "plain prompt");
+    }
+
+    #[test]
+    fn substitute_unclosed_brace_passes_through() {
+        let vars = std::collections::HashMap::new();
+        assert_eq!(substitute_placeholders("oops {var:x", "{var:", &vars), "oops {var:x");
+    }
+
+    #[test]
+    fn substitute_run_context_applies_vars_and_inputs() {
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("journal".to_string(), "QJE".to_string());
+        let mut inputs = std::collections::HashMap::new();
+        inputs.insert("letter".to_string(), "/tmp/letter.txt".to_string());
+        let out = substitute_run_context(
+            "Journal {var:journal}; read the response at {input:letter}.",
+            &vars,
+            &inputs,
+        );
+        assert_eq!(out, "Journal QJE; read the response at /tmp/letter.txt.");
     }
 
     // ── build_parallel_prompt ──────────────────────────────────────
@@ -923,8 +1396,8 @@ mod tests {
     #[test]
     fn expand_template_basic() {
         let prior = vec![
-            StepOutput { step_id: "s1".into(), step_label: "Step 1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "output1".into() },
-            StepOutput { step_id: "s2".into(), step_label: "Step 2".into(), phase: "parallel".into(), agent: String::new(), raw_text: "output2".into() },
+            StepOutput { step_id: "s1".into(), step_label: "Step 1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "output1".into(), ..Default::default() },
+            StepOutput { step_id: "s2".into(), step_label: "Step 2".into(), phase: "parallel".into(), agent: String::new(), raw_text: "output2".into(), ..Default::default() },
         ];
         let template = "Prior:\n{prior_outputs}\n\nLast: {last_output}";
         let result = expand_template(template, "/orient.json", "Read it.", &prior, "/paper.txt", "/source.tex");
@@ -937,7 +1410,7 @@ mod tests {
     #[test]
     fn expand_template_backward_compat_aliases() {
         let prior = vec![
-            StepOutput { step_id: "s1".into(), step_label: "S1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "text".into() },
+            StepOutput { step_id: "s1".into(), step_label: "S1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "text".into(), ..Default::default() },
         ];
         let template = "{referee_reports} | {editor_synthesis}";
         let result = expand_template(template, "", "", &prior, "/paper.txt", "/source.tex");
@@ -961,6 +1434,7 @@ mod tests {
             phase: "parallel".into(),
             agent: String::new(),
             raw_text: text.into(),
+            ..Default::default()
         }
     }
 

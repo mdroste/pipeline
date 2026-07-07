@@ -1,7 +1,19 @@
-import type { PipelineState, PassStatus } from "../hooks/usePipeline";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { PipelineState, PassStatus, PassTiming } from "../hooks/usePipeline";
 
 interface Props {
   state: PipelineState;
+  runStartedAt?: number | null;
+  passTimes?: Record<string, PassTiming>;
+}
+
+/** Human elapsed time from a millisecond span: 5 → "5s", 125 → "2m 5s". */
+function fmtElapsed(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 const BASE_STAGES = [
@@ -73,15 +85,36 @@ function PassStatusIcon({ status }: { status: PassStatus }) {
       return <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse">running</span>;
     case "error":
       return <span className="text-red-500 text-xs">failed</span>;
+    case "skipped":
+      return <span className="text-gray-400 dark:text-gray-500 text-xs italic">skipped</span>;
     default:
       return <span className="text-gray-300 dark:text-gray-600 text-xs">pending</span>;
   }
 }
 
-export default function PipelineProgress({ state }: Props) {
+export default function PipelineProgress({ state, runStartedAt, passTimes }: Props) {
   const isError = state.kind === "error";
   const isCancelled = isError && state.message?.toLowerCase().includes("cancelled");
   const failedAtKey = isError ? (state.failedAt ?? "done") : state.kind;
+
+  // Tick once a second while the run is active so elapsed clocks update live.
+  const running = !isError && state.kind !== "done";
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  const runElapsed = runStartedAt != null ? fmtElapsed(now - runStartedAt) : null;
+
+  // Elapsed time for one pass: end−start if finished, else now−start if active.
+  const passElapsed = (name: string): string | null => {
+    const t = passTimes?.[name];
+    if (!t) return null;
+    const end = t.end ?? now;
+    return fmtElapsed(end - t.start);
+  };
 
   const mergeStageOrder = stageIndex("merging", BASE_STAGES);
   const currentBaseIdx = stageIndex(isError ? failedAtKey : state.kind, BASE_STAGES);
@@ -96,7 +129,12 @@ export default function PipelineProgress({ state }: Props) {
 
   return (
     <div className="space-y-1">
-      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Progress</h3>
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Progress</h3>
+        {runElapsed && (
+          <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums">{runElapsed}</span>
+        )}
+      </div>
       <div className="space-y-3">
         {STAGES.map((stage, i) => {
           let status: "done" | "active" | "pending" | "failed";
@@ -145,15 +183,30 @@ export default function PipelineProgress({ state }: Props) {
                 (stage.key === "synthesizing" && state.kind === "synthesizing")) &&
                 "passes" in state && Object.keys(state.passes).length > 0 && (
                   <div className="ml-7 mt-1.5 space-y-1">
-                    {Object.entries(state.passes).map(([name, passStatus]) => (
-                      <div
-                        key={name}
-                        className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400"
-                      >
-                        <span>{formatPassName(name)}</span>
-                        <PassStatusIcon status={passStatus} />
-                      </div>
-                    ))}
+                    {Object.entries(state.passes).map(([name, passStatus]) => {
+                      const el = passElapsed(name);
+                      return (
+                        <div
+                          key={name}
+                          className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400"
+                        >
+                          <span>{formatPassName(name)}</span>
+                          <span className="flex items-center gap-2">
+                            {el && <span className="text-gray-400 dark:text-gray-600 tabular-nums">{el}</span>}
+                            <PassStatusIcon status={passStatus} />
+                            {passStatus === "running" && (
+                              <button
+                                onClick={() => invoke("cancel_pass", { passKey: name }).catch(() => {})}
+                                className="text-gray-400 hover:text-red-500 transition-colors"
+                                title="Cancel this step"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
             </div>

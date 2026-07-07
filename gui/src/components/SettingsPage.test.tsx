@@ -24,6 +24,7 @@ function makeSettings(): Settings {
     verbose_logging: false,
     step_timeout_secs: 1200,
     max_retries: 1,
+    max_saved_runs: 0,
     anthropic_api_key: "",
     openai_api_key: "",
     google_api_key: "",

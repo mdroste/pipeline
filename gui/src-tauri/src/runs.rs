@@ -50,6 +50,117 @@ pub struct RunManifest {
     pub profile_name: String,
     pub provider: String,
     pub artifacts: Vec<ArtifactEntry>,
+    // ── Run-level metadata (all defaulted so pre-1.1 manifests still load) ──
+    /// Outcome: "done" | "partial" (some steps failed) | "failed" | "cancelled".
+    #[serde(default)]
+    pub status: String,
+    /// Wall-clock time the whole run took, in seconds.
+    #[serde(default)]
+    pub duration_secs: u64,
+    /// Total token usage across the run (steps, orientation, merge, extraction).
+    #[serde(default)]
+    pub usage: crate::pipeline::logging::CallUsage,
+    /// Number of steps that produced output.
+    #[serde(default)]
+    pub step_count: u32,
+    /// Labels of steps that failed, for the history list.
+    #[serde(default)]
+    pub failed_steps: Vec<String>,
+    /// User-assigned title (empty = fall back to the input name).
+    #[serde(default)]
+    pub title: String,
+    /// User-assigned tags for filtering the history list.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Run-time variable values the run was launched with.
+    #[serde(default)]
+    pub variables: std::collections::HashMap<String, String>,
+    /// The run this one was re-run from, if any (resume / partial re-run).
+    #[serde(default)]
+    pub parent_run_id: Option<String>,
+}
+
+/// Metadata recorded when a run finishes. Grouped into a struct so `finish`
+/// doesn't take a dozen positional arguments.
+#[derive(Debug, Clone, Default)]
+pub struct RunFinishMeta {
+    pub input_path: String,
+    pub input_mode: String,
+    pub profile_id: String,
+    pub profile_name: String,
+    pub provider: String,
+    pub status: String,
+    pub duration_secs: u64,
+    pub usage: crate::pipeline::logging::CallUsage,
+    pub step_count: u32,
+    pub failed_steps: Vec<String>,
+    pub variables: std::collections::HashMap<String, String>,
+    pub parent_run_id: Option<String>,
+}
+
+/// A lightweight row for the run-history list: everything except the (possibly
+/// large) artifact index.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunSummary {
+    pub run_id: String,
+    pub created: String,
+    /// Basename of the input path, or "(no input)" for input-free runs.
+    pub input_name: String,
+    pub input_path: String,
+    pub input_mode: String,
+    pub profile_id: String,
+    pub profile_name: String,
+    pub provider: String,
+    pub status: String,
+    pub duration_secs: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub step_count: u32,
+    pub artifact_count: u32,
+    pub failed_steps: Vec<String>,
+    pub title: String,
+    pub tags: Vec<String>,
+}
+
+/// Total number of runs on disk and the bytes they occupy.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunsDiskUsage {
+    pub count: u32,
+    pub bytes: u64,
+}
+
+fn input_basename(input_path: &str) -> String {
+    if input_path.trim().is_empty() {
+        return "(no input)".to_string();
+    }
+    Path::new(input_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| input_path.to_string())
+}
+
+impl RunManifest {
+    fn to_summary(&self) -> RunSummary {
+        RunSummary {
+            run_id: self.run_id.clone(),
+            created: self.created.clone(),
+            input_name: input_basename(&self.input_path),
+            input_path: self.input_path.clone(),
+            input_mode: self.input_mode.clone(),
+            profile_id: self.profile_id.clone(),
+            profile_name: self.profile_name.clone(),
+            provider: self.provider.clone(),
+            status: if self.status.is_empty() { "done".to_string() } else { self.status.clone() },
+            duration_secs: self.duration_secs,
+            input_tokens: self.usage.input_tokens,
+            output_tokens: self.usage.output_tokens,
+            step_count: self.step_count,
+            artifact_count: self.artifacts.len() as u32,
+            failed_steps: self.failed_steps.clone(),
+            title: self.title.clone(),
+            tags: self.tags.clone(),
+        }
+    }
 }
 
 /// What `read_artifact` returns to the frontend.
@@ -245,30 +356,37 @@ impl RunWriter {
     }
 
     /// Write manifest.json. Call once, last.
-    pub fn finish(
-        self,
-        input_path: &str,
-        input_mode: &str,
-        profile_id: &str,
-        profile_name: &str,
-        provider: &str,
-    ) -> Result<RunManifest, String> {
+    pub fn finish(self, meta: RunFinishMeta) -> Result<RunManifest, String> {
         let manifest = RunManifest {
             run_id: self.run_id,
             created: chrono::Local::now().to_rfc3339(),
-            input_path: input_path.to_string(),
-            input_mode: input_mode.to_string(),
-            profile_id: profile_id.to_string(),
-            profile_name: profile_name.to_string(),
-            provider: provider.to_string(),
+            input_path: meta.input_path,
+            input_mode: meta.input_mode,
+            profile_id: meta.profile_id,
+            profile_name: meta.profile_name,
+            provider: meta.provider,
             artifacts: self.artifacts,
+            status: meta.status,
+            duration_secs: meta.duration_secs,
+            usage: meta.usage,
+            step_count: meta.step_count,
+            failed_steps: meta.failed_steps,
+            title: String::new(),
+            tags: Vec::new(),
+            variables: meta.variables,
+            parent_run_id: meta.parent_run_id,
         };
-        let json = serde_json::to_string_pretty(&manifest)
-            .map_err(|e| format!("Failed to serialize manifest: {e}"))?;
-        fs::write(self.dir.join("manifest.json"), json)
-            .map_err(|e| format!("Failed to write manifest: {e}"))?;
+        write_manifest(&self.dir, &manifest)?;
         Ok(manifest)
     }
+}
+
+/// Serialize a manifest to `{dir}/manifest.json`.
+fn write_manifest(dir: &Path, manifest: &RunManifest) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(manifest)
+        .map_err(|e| format!("Failed to serialize manifest: {e}"))?;
+    fs::write(dir.join("manifest.json"), json)
+        .map_err(|e| format!("Failed to write manifest: {e}"))
 }
 
 pub fn load_manifest(run_id: &str) -> Result<RunManifest, String> {
@@ -277,6 +395,143 @@ pub fn load_manifest(run_id: &str) -> Result<RunManifest, String> {
     let content =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read manifest: {e}"))?;
     serde_json::from_str(&content).map_err(|e| format!("Invalid manifest: {e}"))
+}
+
+/// List every run on disk as a summary row, newest first. Unreadable or
+/// malformed manifests are skipped rather than failing the whole listing.
+pub fn list_runs() -> Result<Vec<RunSummary>, String> {
+    let dir = runs_dir()?;
+    let mut summaries = Vec::new();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(summaries);
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let manifest_path = entry.path().join("manifest.json");
+        let Ok(content) = fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        if let Ok(manifest) = serde_json::from_str::<RunManifest>(&content) {
+            summaries.push(manifest.to_summary());
+        }
+    }
+    // Sort by created timestamp (RFC3339 sorts lexically), newest first.
+    summaries.sort_by(|a, b| b.created.cmp(&a.created));
+    Ok(summaries)
+}
+
+/// Update a run's user-assigned title and tags in place. Tags are trimmed and
+/// de-duplicated; empties are dropped.
+pub fn update_run_meta(run_id: &str, title: &str, tags: &[String]) -> Result<(), String> {
+    validate_run_id(run_id)?;
+    let mut manifest = load_manifest(run_id)?;
+    manifest.title = title.trim().to_string();
+    let mut seen = std::collections::HashSet::new();
+    manifest.tags = tags
+        .iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty() && seen.insert(t.clone()))
+        .collect();
+    let dir = runs_dir()?.join(run_id);
+    write_manifest(&dir, &manifest)
+}
+
+/// Delete a run directory and everything under it. The run id is validated and
+/// the resolved path is confirmed to sit inside the runs directory before any
+/// removal, so a crafted id can't escape the sandbox.
+pub fn delete_run(run_id: &str) -> Result<(), String> {
+    validate_run_id(run_id)?;
+    let base = runs_dir()?
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve runs dir: {e}"))?;
+    let dir = base.join(run_id);
+    let canonical = dir
+        .canonicalize()
+        .map_err(|_| "Run not found".to_string())?;
+    if !canonical.starts_with(&base) || canonical == base {
+        return Err("Invalid run id".into());
+    }
+    fs::remove_dir_all(&canonical).map_err(|e| format!("Failed to delete run: {e}"))
+}
+
+/// Count of runs on disk and total bytes they occupy (best-effort walk).
+pub fn disk_usage() -> Result<RunsDiskUsage, String> {
+    let dir = runs_dir()?;
+    let mut count = 0u32;
+    let mut bytes = 0u64;
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(RunsDiskUsage { count: 0, bytes: 0 });
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        count += 1;
+        bytes += dir_size(&entry.path());
+    }
+    Ok(RunsDiskUsage { count, bytes })
+}
+
+fn dir_size(path: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&d) else { continue };
+        for entry in entries.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                stack.push(entry.path());
+            } else if let Ok(meta) = entry.metadata() {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
+/// Read a run's annotations (per-issue accept/reject/note), or "{}" if none.
+/// Annotations live beside the run in `annotations.json` and never touch the
+/// report artifact.
+pub fn read_annotations(run_id: &str) -> Result<String, String> {
+    validate_run_id(run_id)?;
+    let path = runs_dir()?.join(run_id).join("annotations.json");
+    Ok(fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string()))
+}
+
+/// Write a run's annotations. `content` must be valid JSON and under 1 MB.
+pub fn write_annotations(run_id: &str, content: &str) -> Result<(), String> {
+    validate_run_id(run_id)?;
+    if content.len() > 1_000_000 {
+        return Err("Annotations are too large".into());
+    }
+    serde_json::from_str::<serde_json::Value>(content)
+        .map_err(|e| format!("Annotations are not valid JSON: {e}"))?;
+    let dir = runs_dir()?.join(run_id);
+    fs::create_dir_all(&dir).map_err(|e| format!("Cannot create run dir: {e}"))?;
+    fs::write(dir.join("annotations.json"), content)
+        .map_err(|e| format!("Cannot write annotations: {e}"))
+}
+
+/// Delete the oldest runs beyond `keep`, returning how many were removed.
+/// `keep == 0` means unlimited (no purge). Best-effort: a delete failure on one
+/// run doesn't stop the rest.
+pub fn purge_old_runs(keep: usize) -> Result<usize, String> {
+    if keep == 0 {
+        return Ok(0);
+    }
+    let summaries = list_runs()?; // already newest-first
+    let mut removed = 0usize;
+    for summary in summaries.into_iter().skip(keep) {
+        if delete_run(&summary.run_id).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 /// Read an artifact for display. The single choke point for file bytes
@@ -394,5 +649,67 @@ mod tests {
         assert!(read_artifact("some-run", "../other/file.md").is_err());
         assert!(read_artifact("some-run", "/etc/passwd").is_err());
         assert!(read_artifact("some-run", "a/../../b").is_err());
+    }
+
+    #[test]
+    fn old_manifest_without_metadata_loads() {
+        // A pre-1.1 manifest has none of the run-level metadata fields.
+        let json = r#"{
+            "run_id": "abc_20260101-000000",
+            "created": "2026-01-01T00:00:00+00:00",
+            "input_path": "/papers/main.pdf",
+            "input_mode": "document",
+            "profile_id": "deep-review",
+            "profile_name": "Deep Review",
+            "provider": "claude",
+            "artifacts": []
+        }"#;
+        let m: RunManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(m.status, "");
+        assert_eq!(m.duration_secs, 0);
+        assert_eq!(m.usage.input_tokens, 0);
+        assert!(m.tags.is_empty());
+        // Summary fills a sensible default status and derives the input name.
+        let s = m.to_summary();
+        assert_eq!(s.status, "done");
+        assert_eq!(s.input_name, "main.pdf");
+    }
+
+    #[test]
+    fn summary_carries_metrics_and_basename() {
+        let m = RunManifest {
+            run_id: "r1".into(),
+            created: "2026-07-07T10:00:00+00:00".into(),
+            input_path: "/home/u/paper.tex".into(),
+            input_mode: "document".into(),
+            profile_id: "deep-review".into(),
+            profile_name: "Deep Review".into(),
+            provider: "claude".into(),
+            artifacts: vec![],
+            status: "partial".into(),
+            duration_secs: 125,
+            usage: crate::pipeline::logging::CallUsage { input_tokens: 1000, output_tokens: 200 },
+            step_count: 6,
+            failed_steps: vec!["Empirical".into()],
+            title: "My run".into(),
+            tags: vec!["urgent".into()],
+            variables: std::collections::HashMap::new(),
+            parent_run_id: None,
+        };
+        let s = m.to_summary();
+        assert_eq!(s.input_name, "paper.tex");
+        assert_eq!(s.status, "partial");
+        assert_eq!(s.input_tokens, 1000);
+        assert_eq!(s.step_count, 6);
+        assert_eq!(s.failed_steps, vec!["Empirical".to_string()]);
+        assert_eq!(s.title, "My run");
+    }
+
+    #[test]
+    fn input_basename_handles_empty_and_paths() {
+        assert_eq!(input_basename(""), "(no input)");
+        assert_eq!(input_basename("   "), "(no input)");
+        assert_eq!(input_basename("/a/b/c.pdf"), "c.pdf");
+        assert_eq!(input_basename("relative.tex"), "relative.tex");
     }
 }

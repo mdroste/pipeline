@@ -90,6 +90,11 @@ pub struct Settings {
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
 
+    /// Maximum number of past runs to keep on disk. The oldest are purged after
+    /// each run once the count exceeds this. 0 = keep everything (default).
+    #[serde(default)]
+    pub max_saved_runs: u32,
+
     /// Anthropic API key. When set, bypasses Claude CLI for direct API calls.
     #[serde(default)]
     pub anthropic_api_key: String,
@@ -169,6 +174,7 @@ impl Default for Settings {
             verbose_logging: false,
             step_timeout_secs: 1200,
             max_retries: 1,
+            max_saved_runs: 0,
             anthropic_api_key: String::new(),
             openai_api_key: String::new(),
             google_api_key: String::new(),
