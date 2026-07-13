@@ -5,6 +5,8 @@ description = "Tool for processing documents with chains of LLM prompts"
 license = "MIT"
 edition = "2021"
 rust-version = "1.77"
+# Two bins (pipeline-gui + pipeline-cli); disambiguate `cargo run` / `tauri dev`.
+default-run = "pipeline-gui"
 
 [lib]
 name = "pipeline_gui_lib"
