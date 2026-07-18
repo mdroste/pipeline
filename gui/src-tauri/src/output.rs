@@ -23,7 +23,9 @@ pub fn strip_to_report(text: &str) -> String {
     if let Some(start_pos) = trimmed.find(START) {
         let content_start = start_pos + START.len();
         if let Some(end_pos) = trimmed[content_start..].find(END) {
-            return trimmed[content_start..content_start + end_pos].trim().to_string();
+            return trimmed[content_start..content_start + end_pos]
+                .trim()
+                .to_string();
         }
         // START found but no END — take everything after START
         return trimmed[content_start..].trim().to_string();
@@ -159,12 +161,24 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
         total_in += o.input_tokens;
         total_out += o.output_tokens;
 
-        let model = if o.model.trim().is_empty() { "default".to_string() } else { o.model.clone() };
-        let provider = if o.provider.trim().is_empty() { "default".to_string() } else { capitalize(&o.provider) };
+        let model = if o.model.trim().is_empty() {
+            "default".to_string()
+        } else {
+            o.model.clone()
+        };
+        let provider = if o.provider.trim().is_empty() {
+            "default".to_string()
+        } else {
+            capitalize(&o.provider)
+        };
         let tokens = if o.input_tokens == 0 && o.output_tokens == 0 {
             "—".to_string()
         } else {
-            format!("{} / {}", fmt_tokens(o.input_tokens), fmt_tokens(o.output_tokens))
+            format!(
+                "{} / {}",
+                fmt_tokens(o.input_tokens),
+                fmt_tokens(o.output_tokens)
+            )
         };
         let cost_cell = if provider_in_api_mode(settings, &o.provider) {
             match estimate_cost(&o.model, o.input_tokens, o.output_tokens) {
@@ -194,7 +208,11 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
     } else {
         format!("{} / {}", fmt_tokens(total_in), fmt_tokens(total_out))
     };
-    let total_cost_cell = if any_cost { format_cost(total_cost) } else { "—".to_string() };
+    let total_cost_cell = if any_cost {
+        format_cost(total_cost)
+    } else {
+        "—".to_string()
+    };
 
     let mut md = String::new();
     md.push_str("## Run summary\n\n");
@@ -214,7 +232,12 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
 }
 
 /// Render a PipelineReport to a markdown string.
-pub fn render_markdown(report: &PipelineReport, diff_text: Option<&str>, elapsed: Duration, settings: &Settings) -> String {
+pub fn render_markdown(
+    report: &PipelineReport,
+    diff_text: Option<&str>,
+    elapsed: Duration,
+    settings: &Settings,
+) -> String {
     // Paper-shaped surveys get title/authors/type headers; custom surveys
     // get a generic header.
     let meta = crate::models::paper_view(&report.orientation).map(|v| v.metadata);
@@ -237,14 +260,44 @@ pub fn render_markdown(report: &PipelineReport, diff_text: Option<&str>, elapsed
 
     let provider = capitalize(&settings.preferred_provider);
     let model = match settings.preferred_provider.as_str() {
-        "codex" => if settings.codex_model.is_empty() { "default".to_string() } else { settings.codex_model.clone() },
-        "gemini" => if settings.gemini_model.is_empty() { "default".to_string() } else { settings.gemini_model.clone() },
-        _ => if settings.claude_model.is_empty() { "default".to_string() } else { settings.claude_model.clone() },
+        "codex" => {
+            if settings.codex_model.is_empty() {
+                "default".to_string()
+            } else {
+                settings.codex_model.clone()
+            }
+        }
+        "gemini" => {
+            if settings.gemini_model.is_empty() {
+                "default".to_string()
+            } else {
+                settings.gemini_model.clone()
+            }
+        }
+        _ => {
+            if settings.claude_model.is_empty() {
+                "default".to_string()
+            } else {
+                settings.claude_model.clone()
+            }
+        }
     };
     let effort = match settings.preferred_provider.as_str() {
-        "codex" => if settings.codex_effort.is_empty() { "default".to_string() } else { settings.codex_effort.clone() },
+        "codex" => {
+            if settings.codex_effort.is_empty() {
+                "default".to_string()
+            } else {
+                settings.codex_effort.clone()
+            }
+        }
         "gemini" => "n/a".to_string(),
-        _ => if settings.claude_effort.is_empty() { "default".to_string() } else { settings.claude_effort.clone() },
+        _ => {
+            if settings.claude_effort.is_empty() {
+                "default".to_string()
+            } else {
+                settings.claude_effort.clone()
+            }
+        }
     };
 
     let type_prefix = meta
@@ -259,7 +312,11 @@ pub fn render_markdown(report: &PipelineReport, diff_text: Option<&str>, elapsed
 
     // Warning for failed steps
     if !report.failed_steps.is_empty() {
-        let labels: Vec<&str> = report.failed_steps.iter().map(|f| f.step_label.as_str()).collect();
+        let labels: Vec<&str> = report
+            .failed_steps
+            .iter()
+            .map(|f| f.step_label.as_str())
+            .collect();
         md.push_str(&format!(
             "> **Incomplete report.** The following steps failed and are not reflected below: {}.\n\n",
             labels.join(", ")
@@ -312,7 +369,8 @@ mod tests {
 
     #[test]
     fn strip_to_report_extracts_between_markers() {
-        let input = "preamble\n<!-- REPORT START -->\nActual report.\n<!-- REPORT END -->\ntrailing";
+        let input =
+            "preamble\n<!-- REPORT START -->\nActual report.\n<!-- REPORT END -->\ntrailing";
         assert_eq!(strip_to_report(input), "Actual report.");
     }
 
@@ -448,7 +506,14 @@ mod tests {
         assert!(!provider_in_api_mode(&s, "gemini"));
     }
 
-    fn metric_output(label: &str, model: &str, provider: &str, secs: u64, tin: u64, tout: u64) -> crate::models::StepOutput {
+    fn metric_output(
+        label: &str,
+        model: &str,
+        provider: &str,
+        secs: u64,
+        tin: u64,
+        tout: u64,
+    ) -> crate::models::StepOutput {
         crate::models::StepOutput {
             step_id: label.into(),
             step_label: label.into(),
@@ -484,7 +549,14 @@ mod tests {
 
     #[test]
     fn run_summary_shows_tokens_and_gates_cost_on_api_mode() {
-        let report = report_with(vec![metric_output("Technical", "opus", "claude", 90, 500_000, 100_000)]);
+        let report = report_with(vec![metric_output(
+            "Technical",
+            "opus",
+            "claude",
+            90,
+            500_000,
+            100_000,
+        )]);
 
         // Subscription mode (no key): tokens shown, cost withheld.
         let sub = render_run_summary(&report, &Settings::default()).unwrap();
@@ -495,8 +567,10 @@ mod tests {
         assert!(!sub.contains("$"));
 
         // API mode: cost estimated (0.5*15 + 0.1*75 = 7.5 + 7.5 = 15.00).
-        let mut s = Settings::default();
-        s.anthropic_api_key = "sk-x".into();
+        let s = Settings {
+            anthropic_api_key: "sk-x".into(),
+            ..Default::default()
+        };
         let api = render_run_summary(&report, &s).unwrap();
         assert!(api.contains("$15.00"));
         assert!(api.contains("list prices"));

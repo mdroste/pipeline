@@ -19,7 +19,11 @@ pub fn condition_met(
     prior: &[StepOutput],
 ) -> bool {
     match cond {
-        RunCondition::OutputMatches { step, pattern, negate } => {
+        RunCondition::OutputMatches {
+            step,
+            pattern,
+            negate,
+        } => {
             let text = resolve_step_text(step, prior);
             let matched = match Regex::new(pattern) {
                 Ok(re) => text.as_deref().map(|t| re.is_match(t)).unwrap_or(false),
@@ -28,7 +32,11 @@ pub fn condition_met(
             };
             matched ^ *negate
         }
-        RunCondition::SurveyPath { pointer, equals, exists } => {
+        RunCondition::SurveyPath {
+            pointer,
+            equals,
+            exists,
+        } => {
             let found = orientation.pointer(pointer);
             let mut ok = true;
             if let Some(want_exists) = exists {

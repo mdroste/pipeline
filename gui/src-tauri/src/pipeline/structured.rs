@@ -102,10 +102,17 @@ pub fn validate(schema: &serde_json::Value, value: &serde_json::Value) -> Result
     validate_at(schema, value, "$")
 }
 
-fn validate_at(schema: &serde_json::Value, value: &serde_json::Value, path: &str) -> Result<(), String> {
+fn validate_at(
+    schema: &serde_json::Value,
+    value: &serde_json::Value,
+    path: &str,
+) -> Result<(), String> {
     if let Some(ty) = schema.get("type").and_then(|t| t.as_str()) {
         if !type_matches(ty, value) {
-            return Err(format!("{path}: expected type {ty}, got {}", json_type(value)));
+            return Err(format!(
+                "{path}: expected type {ty}, got {}",
+                json_type(value)
+            ));
         }
     }
     match value {

@@ -114,7 +114,13 @@ pub fn next_session_id() -> u64 {
 /// future is polled on the current task is tagged with `id` and `label`.
 pub async fn with_session<F: Future>(id: u64, label: impl Into<String>, fut: F) -> F::Output {
     LOG_SESSION
-        .scope(LogSession { id, label: label.into() }, fut)
+        .scope(
+            LogSession {
+                id,
+                label: label.into(),
+            },
+            fut,
+        )
         .await
 }
 
@@ -141,7 +147,8 @@ fn classify(line: &str) -> &'static str {
         "warn"
     } else if line.starts_with("[stderr]") {
         "stderr"
-    } else if line.starts_with("[out]") || line.starts_with("[codex]") || line.starts_with("[api]") {
+    } else if line.starts_with("[out]") || line.starts_with("[codex]") || line.starts_with("[api]")
+    {
         "stdout"
     } else {
         "info"

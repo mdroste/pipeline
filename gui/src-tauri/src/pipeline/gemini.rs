@@ -1,10 +1,12 @@
+use std::io::Write;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use std::io::Write;
 
-use super::claude::{build_silent_command, emit_stderr_tail, last_stderr_hint, LlmOverrides, STDERR_TAIL_LINES};
+use super::claude::{
+    build_silent_command, emit_stderr_tail, last_stderr_hint, LlmOverrides, STDERR_TAIL_LINES,
+};
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Gemini to read it.
@@ -22,6 +24,7 @@ fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
 
 /// Call `gemini -p` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
+#[allow(clippy::too_many_arguments)]
 pub async fn call_gemini(
     app: &crate::emit::EventBus,
     prompt: &str,
@@ -86,26 +89,40 @@ pub async fn call_gemini(
     }
 
     // Log the command (truncated)
-    let display_args: String = cmd_args.iter()
-        .map(|a| if a.len() > 80 { format!("{}...", a.chars().take(80).collect::<String>()) } else { a.clone() })
+    let display_args: String = cmd_args
+        .iter()
+        .map(|a| {
+            if a.len() > 80 {
+                format!("{}...", a.chars().take(80).collect::<String>())
+            } else {
+                a.clone()
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ");
     verbose_log(app, format!("$ gemini {display_args}"));
 
     // The cwd defines gemini's writable workspace, so in write mode it must
     // be the artifact dir regardless of what the caller passed.
-    let effective_cwd = if needs_write { overrides.write_dir.or(cwd) } else { cwd };
+    let effective_cwd = if needs_write {
+        overrides.write_dir.or(cwd)
+    } else {
+        cwd
+    };
     let mut cmd = build_silent_command("gemini", effective_cwd);
     cmd.args(&cmd_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn gemini: {e}. Is Gemini CLI installed?"))?;
 
     let pid = child.id().unwrap_or(0);
-    if pid > 0 { crate::commands::register_child_pid(pid); }
+    if pid > 0 {
+        crate::commands::register_child_pid(pid);
+    }
     let start_time = Instant::now();
     log(app, format!("{label} started (PID {pid})"));
 
@@ -120,7 +137,9 @@ pub async fn call_gemini(
             while let Ok(Some(line)) = reader.next_line().await {
                 if !line.trim().is_empty() {
                     verbose_log(&app_stderr, format!("[stderr] {line}"));
-                    if tail.len() >= STDERR_TAIL_LINES { tail.pop_front(); }
+                    if tail.len() >= STDERR_TAIL_LINES {
+                        tail.pop_front();
+                    }
                     tail.push_back(line);
                 }
             }
@@ -139,10 +158,13 @@ pub async fn call_gemini(
                 collected.push_str(&line);
                 collected.push('\n');
                 if collected.len() > super::claude::MAX_STDOUT_BYTES {
-                    log(&app_stdout, format!(
-                        "WARNING: stdout exceeded {} MB, truncating",
-                        super::claude::MAX_STDOUT_BYTES / 1_000_000
-                    ));
+                    log(
+                        &app_stdout,
+                        format!(
+                            "WARNING: stdout exceeded {} MB, truncating",
+                            super::claude::MAX_STDOUT_BYTES / 1_000_000
+                        ),
+                    );
                     break;
                 }
                 if collected.lines().count() <= 5 {
@@ -151,20 +173,20 @@ pub async fn call_gemini(
             }
         }
         if collected.lines().count() > 5 {
-            verbose_log(&app_stdout, format!("[out] ... ({} total lines)", collected.lines().count()));
+            verbose_log(
+                &app_stdout,
+                format!("[out] ... ({} total lines)", collected.lines().count()),
+            );
         }
         collected
     }));
 
-    let status = tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        child.wait(),
-    )
-    .await;
+    let status = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await;
 
     let status = match status {
         Ok(s) => s,
         Err(_) => {
+            if pid > 0 { crate::commands::kill_process(pid); }
             let _ = child.kill().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
             if pid > 0 { crate::commands::unregister_child_pid(pid); }
@@ -185,9 +207,12 @@ pub async fn call_gemini(
 
     // Process has exited — unregister PID before joining I/O tasks
     // so cancel cleanup can't miss it if a join fails
-    if pid > 0 { crate::commands::unregister_child_pid(pid); }
+    if pid > 0 {
+        crate::commands::unregister_child_pid(pid);
+    }
 
-    let text = stdout_task.await
+    let text = stdout_task
+        .await
         .map_err(|e| format!("stdout reader failed: {e}"))?
         .trim()
         .to_string();
@@ -196,7 +221,13 @@ pub async fn call_gemini(
 
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();
-    log(app, format!("{label} finished ({elapsed}s, exit code {exit_code}, {} chars output)", text.len()));
+    log(
+        app,
+        format!(
+            "{label} finished ({elapsed}s, exit code {exit_code}, {} chars output)",
+            text.len()
+        ),
+    );
 
     if !status.success() {
         if crate::commands::is_cancelled() || exit_code == 143 || status.code().is_none() {
@@ -204,11 +235,14 @@ pub async fn call_gemini(
             return Err("Pipeline cancelled".into());
         }
         emit_stderr_tail(app, &stderr_tail);
-        let hint = super::claude::extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
+        let hint =
+            super::claude::extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
         let msg = if let Some(hint) = hint {
             format!("Gemini call failed (exit {exit_code}): {hint}")
         } else {
-            format!("Gemini call failed (exit {exit_code}). See this call's session log for details.")
+            format!(
+                "Gemini call failed (exit {exit_code}). See this call's session log for details."
+            )
         };
         log(app, format!("ERROR: {msg}"));
         return Err(msg);

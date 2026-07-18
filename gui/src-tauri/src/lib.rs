@@ -22,7 +22,11 @@ pub mod updates;
 fn locate_bundled_poppler(app: &tauri::App) -> Option<std::path::PathBuf> {
     use tauri::Manager;
     let base = app.path().resource_dir().ok()?;
-    let bin = if cfg!(windows) { "pdftoppm.exe" } else { "pdftoppm" };
+    let bin = if cfg!(windows) {
+        "pdftoppm.exe"
+    } else {
+        "pdftoppm"
+    };
     let candidates = [
         base.join("resources").join("poppler"),
         base.join("poppler"),

@@ -35,4 +35,20 @@ describe("lineDiff", () => {
     expect(lineDiff("", "a\nb").every((o) => o.type === "add" || o.text === "")).toBe(true);
     expect(lineDiff("a\nb", "").filter((o) => o.type === "del")).toHaveLength(2);
   });
+
+  it("uses a bounded fallback for oversized comparisons", () => {
+    const before = Array.from({ length: 5000 }, (_, i) => `old ${i}`).join("\n");
+    const after = Array.from({ length: 5000 }, (_, i) => `new ${i}`).join("\n");
+    const ops = lineDiff(before, after);
+    expect(ops).toHaveLength(3);
+    expect(ops[1].text).toContain("omitted");
+    expect(hasChanges(ops)).toBe(true);
+  });
+
+  it("does not allocate per-line state for a huge identical output", () => {
+    const text = "same line\n".repeat(100_000);
+    const ops = lineDiff(text, text);
+    expect(ops).toHaveLength(1);
+    expect(hasChanges(ops)).toBe(false);
+  });
 });

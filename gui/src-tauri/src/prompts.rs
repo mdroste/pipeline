@@ -98,8 +98,7 @@ pub fn compiled_default(name: &str) -> Option<&'static str> {
 
 /// Load a prompt by name. Checks ~/.pipeline/prompts/ first, falls back to compiled default.
 pub fn load_prompt(filename: &str) -> Result<String, String> {
-    let base = filename
-        .trim_end_matches(".md");
+    let base = filename.trim_end_matches(".md");
 
     // Reject filenames with path separators or parent directory references
     if base.contains('/') || base.contains('\\') || base.contains("..") {
@@ -111,7 +110,9 @@ pub fn load_prompt(filename: &str) -> Result<String, String> {
         let user_path = dir.join(format!("{base}.md"));
         if user_path.is_file() {
             // Verify resolved path stays within the prompts directory
-            if let (Ok(canonical), Ok(canonical_dir)) = (user_path.canonicalize(), dir.canonicalize()) {
+            if let (Ok(canonical), Ok(canonical_dir)) =
+                (user_path.canonicalize(), dir.canonicalize())
+            {
                 if !canonical.starts_with(&canonical_dir) {
                     return Err(format!("Prompt path escapes prompts directory: {filename}"));
                 }

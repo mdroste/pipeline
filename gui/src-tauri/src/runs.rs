@@ -19,11 +19,22 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Text artifacts larger than this are truncated when read for display.
 const MAX_TEXT_BYTES: usize = 1_000_000;
 /// Images larger than this are not inlined (metadata only).
 const MAX_IMAGE_BYTES: u64 = 10_000_000;
+static RUN_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+pub fn new_run_id(paper_hash: &str) -> String {
+    let sequence = RUN_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "{}_{}-{sequence:016x}",
+        paper_hash,
+        chrono::Local::now().format("%Y%m%d-%H%M%S-%9f")
+    )
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactEntry {
@@ -75,6 +86,10 @@ pub struct RunManifest {
     /// Run-time variable values the run was launched with.
     #[serde(default)]
     pub variables: std::collections::HashMap<String, String>,
+    /// Named extra inputs captured inside the run, keyed by profile slot. Values
+    /// are paths relative to the run directory.
+    #[serde(default)]
+    pub extra_inputs: std::collections::HashMap<String, String>,
     /// The run this one was re-run from, if any (resume / partial re-run).
     #[serde(default)]
     pub parent_run_id: Option<String>,
@@ -95,6 +110,7 @@ pub struct RunFinishMeta {
     pub step_count: u32,
     pub failed_steps: Vec<String>,
     pub variables: std::collections::HashMap<String, String>,
+    pub extra_inputs: std::collections::HashMap<String, String>,
     pub parent_run_id: Option<String>,
 }
 
@@ -150,7 +166,11 @@ impl RunManifest {
             profile_id: self.profile_id.clone(),
             profile_name: self.profile_name.clone(),
             provider: self.provider.clone(),
-            status: if self.status.is_empty() { "done".to_string() } else { self.status.clone() },
+            status: if self.status.is_empty() {
+                "done".to_string()
+            } else {
+                self.status.clone()
+            },
             duration_secs: self.duration_secs,
             input_tokens: self.usage.input_tokens,
             output_tokens: self.usage.output_tokens,
@@ -233,6 +253,49 @@ fn short_sha256(bytes: &[u8]) -> String {
     format!("{:x}", digest)[..16].to_string()
 }
 
+fn inspect_file(path: &Path) -> Result<(Vec<u8>, u64, String), String> {
+    use std::io::Read as _;
+    let file = fs::File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut head = Vec::with_capacity(512);
+    let mut total = 0u64;
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let count = reader
+            .read(&mut chunk)
+            .map_err(|e| format!("Failed to read file: {e}"))?;
+        if count == 0 {
+            break;
+        }
+        if head.len() < 512 {
+            let take = count.min(512 - head.len());
+            head.extend_from_slice(&chunk[..take]);
+        }
+        total += count as u64;
+        hasher.update(&chunk[..count]);
+    }
+    Ok((
+        head,
+        total,
+        format!("{:x}", hasher.finalize())[..16].to_string(),
+    ))
+}
+
+fn read_at_most(path: &Path, limit: usize) -> Result<(Vec<u8>, bool), String> {
+    use std::io::Read as _;
+    let file = fs::File::open(path).map_err(|e| format!("Cannot open artifact: {e}"))?;
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024) + 1);
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Cannot read artifact: {e}"))?;
+    let truncated = bytes.len() > limit;
+    if truncated {
+        bytes.truncate(limit);
+    }
+    Ok((bytes, truncated))
+}
+
 /// Accumulates artifacts for a run and writes the manifest at the end.
 /// All writes are best-effort from the pipeline's perspective — callers log
 /// failures but never fail the run because persistence failed.
@@ -240,18 +303,49 @@ pub struct RunWriter {
     dir: PathBuf,
     run_id: String,
     artifacts: Vec<ArtifactEntry>,
+    created: String,
+    meta: RunFinishMeta,
+    finished: bool,
 }
 
 impl RunWriter {
     pub fn create(run_id: &str) -> Result<Self, String> {
+        Self::create_in(&runs_dir()?, run_id)
+    }
+
+    pub fn create_unique(paper_hash: &str) -> Result<Self, String> {
+        let base = runs_dir()?;
+        for _ in 0..16 {
+            let run_id = new_run_id(paper_hash);
+            match Self::create_in(&base, &run_id) {
+                Ok(writer) => return Ok(writer),
+                Err(_) if base.join(&run_id).exists() => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err("Could not allocate a unique run id".to_string())
+    }
+
+    fn create_in(base: &Path, run_id: &str) -> Result<Self, String> {
         validate_run_id(run_id)?;
-        let dir = runs_dir()?.join(run_id);
-        fs::create_dir_all(&dir).map_err(|e| format!("Failed to create run dir: {e}"))?;
-        Ok(Self {
+        let dir = base.join(run_id);
+        fs::create_dir(&dir).map_err(|e| format!("Failed to create run dir: {e}"))?;
+        let writer = Self {
             dir,
             run_id: run_id.to_string(),
             artifacts: Vec::new(),
-        })
+            created: chrono::Local::now().to_rfc3339(),
+            meta: RunFinishMeta {
+                status: "running".to_string(),
+                ..Default::default()
+            },
+            finished: false,
+        };
+        // A manifest is created before any artifacts. If a later stage fails,
+        // the run remains visible to history and retention instead of becoming
+        // an orphan directory.
+        writer.persist_current()?;
+        Ok(writer)
     }
 
     pub fn run_id(&self) -> &str {
@@ -260,6 +354,21 @@ impl RunWriter {
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// Fill the pending manifest with information known at run start. The
+    /// outcome remains `running` until `finish` or `Drop` finalizes it.
+    pub fn set_pending_meta(&mut self, mut meta: RunFinishMeta) -> Result<(), String> {
+        meta.status = "running".to_string();
+        self.meta = meta;
+        self.persist_current().map(|_| ())
+    }
+
+    pub fn record_extra_input(&mut self, key: &str, rel_path: &str) -> Result<(), String> {
+        self.meta
+            .extra_inputs
+            .insert(key.to_string(), rel_path.to_string());
+        self.persist_current().map(|_| ())
     }
 
     /// Write a text artifact at `rel_path` (forward slashes) and record it.
@@ -272,7 +381,8 @@ impl RunWriter {
     ) -> Result<(), String> {
         let path = self.dir.join(rel_path);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create {rel_path} parent: {e}"))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create {rel_path} parent: {e}"))?;
         }
         fs::write(&path, content).map_err(|e| format!("Failed to write {rel_path}: {e}"))?;
         let bytes = content.as_bytes();
@@ -296,13 +406,14 @@ impl RunWriter {
         group: &str,
     ) -> Result<(), String> {
         let path = self.dir.join(rel_path);
-        let bytes = fs::read(&path).map_err(|e| format!("Failed to read {rel_path}: {e}"))?;
+        let (head, bytes, sha256) =
+            inspect_file(&path).map_err(|e| format!("Failed to inspect {rel_path}: {e}"))?;
         self.artifacts.push(ArtifactEntry {
             rel_path: rel_path.to_string(),
             label: label.to_string(),
-            kind: detect_kind(rel_path, &bytes[..bytes.len().min(512)]).to_string(),
-            bytes: bytes.len() as u64,
-            sha256: short_sha256(&bytes),
+            kind: detect_kind(rel_path, &head).to_string(),
+            bytes,
+            sha256,
             group: group.to_string(),
         });
         Ok(())
@@ -321,7 +432,9 @@ impl RunWriter {
         let mut added = 0usize;
         let mut stack = vec![self.dir.join(subdir)];
         while let Some(d) = stack.pop() {
-            let Ok(entries) = fs::read_dir(&d) else { continue };
+            let Ok(entries) = fs::read_dir(&d) else {
+                continue;
+            };
             for entry in entries.flatten() {
                 if added >= MAX_UNLISTED {
                     return added;
@@ -335,10 +448,16 @@ impl RunWriter {
                     stack.push(path);
                     continue;
                 }
-                if entry.metadata().map(|m| m.len() > MAX_UNLISTED_BYTES).unwrap_or(true) {
+                if entry
+                    .metadata()
+                    .map(|m| m.len() > MAX_UNLISTED_BYTES)
+                    .unwrap_or(true)
+                {
                     continue;
                 }
-                let Ok(rel) = path.strip_prefix(&self.dir) else { continue };
+                let Ok(rel) = path.strip_prefix(&self.dir) else {
+                    continue;
+                };
                 let rel_str = rel.to_string_lossy().replace('\\', "/");
                 if known.contains(&rel_str) {
                     continue;
@@ -356,28 +475,56 @@ impl RunWriter {
     }
 
     /// Write manifest.json. Call once, last.
-    pub fn finish(self, meta: RunFinishMeta) -> Result<RunManifest, String> {
-        let manifest = RunManifest {
-            run_id: self.run_id,
-            created: chrono::Local::now().to_rfc3339(),
-            input_path: meta.input_path,
-            input_mode: meta.input_mode,
-            profile_id: meta.profile_id,
-            profile_name: meta.profile_name,
-            provider: meta.provider,
-            artifacts: self.artifacts,
-            status: meta.status,
-            duration_secs: meta.duration_secs,
-            usage: meta.usage,
-            step_count: meta.step_count,
-            failed_steps: meta.failed_steps,
+    pub fn finish(mut self, meta: RunFinishMeta) -> Result<RunManifest, String> {
+        self.meta = meta;
+        let manifest = self.current_manifest();
+        write_manifest(&self.dir, &manifest)?;
+        self.finished = true;
+        Ok(manifest)
+    }
+
+    fn current_manifest(&self) -> RunManifest {
+        RunManifest {
+            run_id: self.run_id.clone(),
+            created: self.created.clone(),
+            input_path: self.meta.input_path.clone(),
+            input_mode: self.meta.input_mode.clone(),
+            profile_id: self.meta.profile_id.clone(),
+            profile_name: self.meta.profile_name.clone(),
+            provider: self.meta.provider.clone(),
+            artifacts: self.artifacts.clone(),
+            status: self.meta.status.clone(),
+            duration_secs: self.meta.duration_secs,
+            usage: self.meta.usage,
+            step_count: self.meta.step_count,
+            failed_steps: self.meta.failed_steps.clone(),
             title: String::new(),
             tags: Vec::new(),
-            variables: meta.variables,
-            parent_run_id: meta.parent_run_id,
-        };
+            variables: self.meta.variables.clone(),
+            extra_inputs: self.meta.extra_inputs.clone(),
+            parent_run_id: self.meta.parent_run_id.clone(),
+        }
+    }
+
+    fn persist_current(&self) -> Result<RunManifest, String> {
+        let manifest = self.current_manifest();
         write_manifest(&self.dir, &manifest)?;
         Ok(manifest)
+    }
+}
+
+impl Drop for RunWriter {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.meta.status = if crate::commands::is_cancelled() {
+            "cancelled".to_string()
+        } else {
+            "failed".to_string()
+        };
+        self.meta.usage = crate::pipeline::logging::run_usage();
+        let _ = self.persist_current();
     }
 }
 
@@ -385,15 +532,13 @@ impl RunWriter {
 fn write_manifest(dir: &Path, manifest: &RunManifest) -> Result<(), String> {
     let json = serde_json::to_string_pretty(manifest)
         .map_err(|e| format!("Failed to serialize manifest: {e}"))?;
-    fs::write(dir.join("manifest.json"), json)
-        .map_err(|e| format!("Failed to write manifest: {e}"))
+    fs::write(dir.join("manifest.json"), json).map_err(|e| format!("Failed to write manifest: {e}"))
 }
 
 pub fn load_manifest(run_id: &str) -> Result<RunManifest, String> {
     validate_run_id(run_id)?;
     let path = runs_dir()?.join(run_id).join("manifest.json");
-    let content =
-        fs::read_to_string(&path).map_err(|e| format!("Failed to read manifest: {e}"))?;
+    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read manifest: {e}"))?;
     serde_json::from_str(&content).map_err(|e| format!("Invalid manifest: {e}"))
 }
 
@@ -410,16 +555,60 @@ pub fn list_runs() -> Result<Vec<RunSummary>, String> {
             continue;
         }
         let manifest_path = entry.path().join("manifest.json");
-        let Ok(content) = fs::read_to_string(&manifest_path) else {
-            continue;
-        };
-        if let Ok(manifest) = serde_json::from_str::<RunManifest>(&content) {
+        let manifest = fs::read_to_string(&manifest_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<RunManifest>(&content).ok())
+            .or_else(|| {
+                if manifest_path.exists() {
+                    None
+                } else {
+                    recover_orphan_manifest(&entry.path())
+                }
+            });
+        if let Some(manifest) = manifest {
             summaries.push(manifest.to_summary());
         }
     }
     // Sort by created timestamp (RFC3339 sorts lexically), newest first.
     summaries.sort_by(|a, b| b.created.cmp(&a.created));
     Ok(summaries)
+}
+
+/// Make a pre-fix manifest-less run visible and eligible for normal retention.
+/// The artifacts are left untouched; users can inspect the directory externally
+/// or delete it from history.
+fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
+    let run_id = dir.file_name()?.to_str()?.to_string();
+    validate_run_id(&run_id).ok()?;
+    let created = dir
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(chrono::DateTime::<chrono::Local>::from)
+        .unwrap_or_else(chrono::Local::now)
+        .to_rfc3339();
+    let manifest = RunManifest {
+        run_id,
+        created,
+        input_path: String::new(),
+        input_mode: String::new(),
+        profile_id: String::new(),
+        profile_name: String::new(),
+        provider: String::new(),
+        artifacts: Vec::new(),
+        status: "failed".to_string(),
+        duration_secs: 0,
+        usage: Default::default(),
+        step_count: 0,
+        failed_steps: vec!["Run ended before manifest finalization".to_string()],
+        title: String::new(),
+        tags: Vec::new(),
+        variables: Default::default(),
+        extra_inputs: Default::default(),
+        parent_run_id: None,
+    };
+    write_manifest(dir, &manifest).ok()?;
+    Some(manifest)
 }
 
 /// Update a run's user-assigned title and tags in place. Tags are trimmed and
@@ -478,7 +667,9 @@ fn dir_size(path: &Path) -> u64 {
     let mut total = 0u64;
     let mut stack = vec![path.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&d) else { continue };
+        let Ok(entries) = fs::read_dir(&d) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let Ok(ft) = entry.file_type() else { continue };
             if ft.is_symlink() {
@@ -512,9 +703,16 @@ pub fn write_annotations(run_id: &str, content: &str) -> Result<(), String> {
     serde_json::from_str::<serde_json::Value>(content)
         .map_err(|e| format!("Annotations are not valid JSON: {e}"))?;
     let dir = runs_dir()?.join(run_id);
-    fs::create_dir_all(&dir).map_err(|e| format!("Cannot create run dir: {e}"))?;
-    fs::write(dir.join("annotations.json"), content)
-        .map_err(|e| format!("Cannot write annotations: {e}"))
+    // A delayed frontend save must not recreate a run that was just deleted.
+    load_manifest(run_id)?;
+    let mut temp = tempfile::NamedTempFile::new_in(&dir)
+        .map_err(|e| format!("Cannot create annotation temp file: {e}"))?;
+    use std::io::Write as _;
+    temp.write_all(content.as_bytes())
+        .map_err(|e| format!("Cannot write annotations: {e}"))?;
+    temp.persist(dir.join("annotations.json"))
+        .map_err(|e| format!("Cannot save annotations: {}", e.error))?;
+    Ok(())
 }
 
 /// Delete the oldest runs beyond `keep`, returning how many were removed.
@@ -566,7 +764,9 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
         use std::io::Read as _;
         let mut buf = vec![0u8; 512];
         let mut f = fs::File::open(&path).map_err(|e| format!("Cannot open artifact: {e}"))?;
-        let n = f.read(&mut buf).map_err(|e| format!("Cannot read artifact: {e}"))?;
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| format!("Cannot read artifact: {e}"))?;
         buf.truncate(n);
         buf
     };
@@ -584,7 +784,17 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
                     abs_path,
                 });
             }
-            let bytes = fs::read(&path).map_err(|e| format!("Cannot read artifact: {e}"))?;
+            let (bytes, grew_too_large) = read_at_most(&path, MAX_IMAGE_BYTES as usize)?;
+            if grew_too_large {
+                return Ok(ArtifactContent {
+                    kind: kind.into(),
+                    bytes: size,
+                    text: None,
+                    base64: None,
+                    truncated: false,
+                    abs_path,
+                });
+            }
             use base64::Engine as _;
             Ok(ArtifactContent {
                 kind: kind.into(),
@@ -604,13 +814,11 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
             abs_path,
         }),
         _ => {
-            let bytes = fs::read(&path).map_err(|e| format!("Cannot read artifact: {e}"))?;
-            let truncated = bytes.len() > MAX_TEXT_BYTES;
-            let slice = if truncated { &bytes[..MAX_TEXT_BYTES] } else { &bytes[..] };
+            let (bytes, truncated) = read_at_most(&path, MAX_TEXT_BYTES)?;
             Ok(ArtifactContent {
                 kind: kind.into(),
                 bytes: size,
-                text: Some(String::from_utf8_lossy(slice).into_owned()),
+                text: Some(String::from_utf8_lossy(&bytes).into_owned()),
                 base64: None,
                 truncated,
                 abs_path,
@@ -688,12 +896,16 @@ mod tests {
             artifacts: vec![],
             status: "partial".into(),
             duration_secs: 125,
-            usage: crate::pipeline::logging::CallUsage { input_tokens: 1000, output_tokens: 200 },
+            usage: crate::pipeline::logging::CallUsage {
+                input_tokens: 1000,
+                output_tokens: 200,
+            },
             step_count: 6,
             failed_steps: vec!["Empirical".into()],
             title: "My run".into(),
             tags: vec!["urgent".into()],
             variables: std::collections::HashMap::new(),
+            extra_inputs: std::collections::HashMap::new(),
             parent_run_id: None,
         };
         let s = m.to_summary();
@@ -711,5 +923,75 @@ mod tests {
         assert_eq!(input_basename("   "), "(no input)");
         assert_eq!(input_basename("/a/b/c.pdf"), "c.pdf");
         assert_eq!(input_basename("relative.tex"), "relative.tex");
+    }
+
+    #[test]
+    fn unfinished_writer_keeps_a_failed_manifest_and_artifact_index() {
+        let temp = tempfile::tempdir().unwrap();
+        {
+            let mut writer = RunWriter::create_in(temp.path(), "run-1").unwrap();
+            writer
+                .add_text("context/input.md", "Input", "context", "hello")
+                .unwrap();
+            writer
+                .record_extra_input("letter", "context/input.md")
+                .unwrap();
+        }
+
+        let content = fs::read_to_string(temp.path().join("run-1/manifest.json")).unwrap();
+        let manifest: RunManifest = serde_json::from_str(&content).unwrap();
+        assert_eq!(manifest.status, "failed");
+        assert_eq!(manifest.artifacts.len(), 1);
+        assert_eq!(
+            manifest.extra_inputs.get("letter").map(String::as_str),
+            Some("context/input.md")
+        );
+    }
+
+    #[test]
+    fn finished_writer_is_not_overwritten_by_drop() {
+        let temp = tempfile::tempdir().unwrap();
+        let writer = RunWriter::create_in(temp.path(), "run-2").unwrap();
+        writer
+            .finish(RunFinishMeta {
+                status: "done".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let content = fs::read_to_string(temp.path().join("run-2/manifest.json")).unwrap();
+        let manifest: RunManifest = serde_json::from_str(&content).unwrap();
+        assert_eq!(manifest.status, "done");
+    }
+
+    #[test]
+    fn manifestless_directory_is_recovered_as_failed() {
+        let temp = tempfile::tempdir().unwrap();
+        let orphan = temp.path().join("old-run");
+        fs::create_dir(&orphan).unwrap();
+        fs::write(orphan.join("partial.log"), "unfinished").unwrap();
+
+        let manifest = recover_orphan_manifest(&orphan).unwrap();
+        assert_eq!(manifest.status, "failed");
+        assert!(orphan.join("manifest.json").is_file());
+    }
+
+    #[test]
+    fn capped_artifact_reader_never_loads_past_limit() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        use std::io::Write as _;
+        file.write_all(&vec![b'x'; 4096]).unwrap();
+        let (bytes, truncated) = read_at_most(file.path(), 128).unwrap();
+        assert_eq!(bytes.len(), 128);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn run_ids_are_unique_and_directories_are_exclusive() {
+        assert_ne!(new_run_id("abc"), new_run_id("abc"));
+        let temp = tempfile::tempdir().unwrap();
+        let writer = RunWriter::create_in(temp.path(), "same-id").unwrap();
+        assert!(RunWriter::create_in(temp.path(), "same-id").is_err());
+        drop(writer);
     }
 }

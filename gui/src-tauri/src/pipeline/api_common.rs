@@ -1,7 +1,8 @@
 //! Shared types and the tool-use loop for direct API calls.
 
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::sync::LazyLock;
 
 /// Maximum tool-call round-trips before giving up.
@@ -10,13 +11,14 @@ const MAX_TOOL_ITERATIONS: usize = 15;
 /// Minimum remaining seconds before starting another API request.
 /// Avoids wasting tokens on a request that will almost certainly time out.
 const MIN_REMAINING_SECS: u64 = 10;
+const MAX_API_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_API_ERROR_BYTES: usize = 1024 * 1024;
 
 /// Shared HTTP client for all direct API calls.
 /// `reqwest::Client` wraps an `Arc` internally, so cloning is cheap.
 /// Reusing a single client enables TCP/TLS connection pooling across
 /// pipeline steps that hit the same API host.
-pub static HTTP_CLIENT: LazyLock<reqwest::Client> =
-    LazyLock::new(reqwest::Client::new);
+pub static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 /// Maximum text file size for Read tool calls (5 MB).
 const MAX_READ_SIZE: usize = 5 * 1024 * 1024;
@@ -42,6 +44,64 @@ pub fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     if crate::settings::load().verbose_logging {
         log(app, line);
     }
+}
+
+async fn await_or_cancel<F, T>(future: F, pass_key: Option<&str>) -> Result<T, String>
+where
+    F: std::future::Future<Output = T>,
+{
+    let mut operation = std::pin::pin!(future);
+    let mut cancellation = std::pin::pin!(crate::commands::wait_for_cancellation(pass_key));
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(value) = operation.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Ok(value));
+        }
+        if cancellation.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(Err(match pass_key {
+                Some(key) => format!("Pass '{key}' cancelled"),
+                None => "Pipeline cancelled".to_string(),
+            }));
+        }
+        std::task::Poll::Pending
+    })
+    .await
+}
+
+fn append_api_chunk(buffer: &mut Vec<u8>, chunk: &[u8], limit: usize) -> Result<(), String> {
+    if chunk.len() > limit.saturating_sub(buffer.len()) {
+        return Err(format!(
+            "API response exceeded the {} MB safety limit",
+            limit / 1024 / 1024
+        ));
+    }
+    buffer.extend_from_slice(chunk);
+    Ok(())
+}
+
+async fn response_bytes_limited(
+    mut response: reqwest::Response,
+    limit: usize,
+    pass_key: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(format!(
+            "API response exceeded the {} MB safety limit",
+            limit / 1024 / 1024
+        ));
+    }
+    let mut bytes =
+        Vec::with_capacity(response.content_length().unwrap_or(0).min(limit as u64) as usize);
+    loop {
+        let chunk = await_or_cancel(response.chunk(), pass_key)
+            .await?
+            .map_err(|e| format!("Failed to read API response: {e}"))?;
+        let Some(chunk) = chunk else { break };
+        append_api_chunk(&mut bytes, &chunk, limit)?;
+    }
+    Ok(bytes)
 }
 
 // ── Tool definitions ───────────────────────────────────────────────
@@ -157,7 +217,9 @@ pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> 
         ));
     }
     if WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= MAX_WRITES_PER_RUN {
-        return Err(format!("Write limit reached ({MAX_WRITES_PER_RUN} files per run)"));
+        return Err(format!(
+            "Write limit reached ({MAX_WRITES_PER_RUN} files per run)"
+        ));
     }
 
     // Resolve to a path relative to the artifact root. Absolute paths must
@@ -209,7 +271,9 @@ pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> 
             .canonicalize()
             .map_err(|e| format!("Cannot resolve directory for {path}: {e}"))?;
         if !canon_parent.starts_with(&root) {
-            return Err(format!("Access denied: {path} resolves outside the artifact directory"));
+            return Err(format!(
+                "Access denied: {path} resolves outside the artifact directory"
+            ));
         }
     }
     std::fs::write(&dest, content).map_err(|e| format!("Failed to write {path}: {e}"))?;
@@ -227,7 +291,8 @@ fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf,
     let p = std::path::Path::new(path);
 
     // Resolve to canonical path to prevent traversal via symlinks or ..
-    let canonical = p.canonicalize()
+    let canonical = p
+        .canonicalize()
         .map_err(|_| format!("File not found: {path}"))?;
 
     // Validate the path is under an allowed directory.
@@ -249,11 +314,13 @@ fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf,
     drop(allowed);
 
     if !is_allowed {
-        return Err(format!("Access denied: {path} is outside allowed directories"));
+        return Err(format!(
+            "Access denied: {path} is outside allowed directories"
+        ));
     }
 
-    let metadata = std::fs::metadata(&canonical)
-        .map_err(|e| format!("Cannot read file metadata: {e}"))?;
+    let metadata =
+        std::fs::metadata(&canonical).map_err(|e| format!("Cannot read file metadata: {e}"))?;
     if metadata.len() as usize > max_size {
         return Err(format!(
             "File too large ({} bytes, max {})",
@@ -273,15 +340,13 @@ pub fn read_file_for_tool(path: &str) -> Result<String, String> {
         return Err("Cannot read PDF as text. Use the extracted paper text instead.".into());
     }
 
-    std::fs::read_to_string(&canonical)
-        .map_err(|e| format!("Failed to read {path}: {e}"))
+    std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read {path}: {e}"))
 }
 
 /// Read a PDF file and return its contents as base64-encoded bytes.
 fn read_pdf_for_tool(path: &str) -> Result<String, String> {
     let canonical = validate_tool_path(path, MAX_PDF_SIZE)?;
-    let bytes = std::fs::read(&canonical)
-        .map_err(|e| format!("Failed to read {path}: {e}"))?;
+    let bytes = std::fs::read(&canonical).map_err(|e| format!("Failed to read {path}: {e}"))?;
     Ok(STANDARD.encode(&bytes))
 }
 
@@ -290,8 +355,7 @@ fn read_pdf_for_tool(path: &str) -> Result<String, String> {
 /// sandbox above). Only a size cap applies: the path comes from our own
 /// extraction code, not from model output.
 pub fn pdf_attachment_base64(path: &std::path::Path, max_size: usize) -> Result<String, String> {
-    let metadata = std::fs::metadata(path)
-        .map_err(|e| format!("Cannot read PDF metadata: {e}"))?;
+    let metadata = std::fs::metadata(path).map_err(|e| format!("Cannot read PDF metadata: {e}"))?;
     if metadata.len() as usize > max_size {
         return Err(format!(
             "PDF too large to attach ({} MB, limit {} MB). Use a CLI provider or a native extraction method.",
@@ -299,8 +363,8 @@ pub fn pdf_attachment_base64(path: &std::path::Path, max_size: usize) -> Result<
             max_size / 1_000_000
         ));
     }
-    let bytes = std::fs::read(path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     Ok(STANDARD.encode(&bytes))
 }
 
@@ -579,7 +643,9 @@ pub fn anthropic_extract_text(blocks: &[AnthropicContentBlock]) -> String {
 
 /// Check if Anthropic response wants tool calls.
 pub fn anthropic_has_tool_use(blocks: &[AnthropicContentBlock]) -> bool {
-    blocks.iter().any(|b| matches!(b, AnthropicContentBlock::ToolUse { .. }))
+    blocks
+        .iter()
+        .any(|b| matches!(b, AnthropicContentBlock::ToolUse { .. }))
 }
 
 /// Run the tool-use loop for Anthropic. Returns (text, usage).
@@ -607,25 +673,32 @@ pub async fn anthropic_tool_loop(
         }
         let request_timeout = timeout_secs - elapsed;
 
-        let resp = client
+        let pass_key = super::logging::current_pass();
+        let request_future = client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .timeout(std::time::Duration::from_secs(request_timeout))
             .json(&request)
-            .send()
-            .await
+            .send();
+        let resp = await_or_cancel(request_future, pass_key.as_deref())
+            .await?
             .map_err(|e| format_http_error("Anthropic", &e))?;
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format_api_error("Anthropic", status.as_u16(), &body));
+            let bytes =
+                response_bytes_limited(resp, MAX_API_ERROR_BYTES, pass_key.as_deref()).await?;
+            return Err(format_api_error(
+                "Anthropic",
+                status.as_u16(),
+                &String::from_utf8_lossy(&bytes),
+            ));
         }
 
-        let body: AnthropicResponse = resp
-            .json()
-            .await
+        let bytes =
+            response_bytes_limited(resp, MAX_API_RESPONSE_BYTES, pass_key.as_deref()).await?;
+        let body: AnthropicResponse = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Failed to parse Anthropic response: {e}"))?;
 
         if let Some(u) = &body.usage {
@@ -635,7 +708,8 @@ pub async fn anthropic_tool_loop(
             verbose_log(app, format!("[api] {label}: tokens in={inp} out={out}"));
         }
 
-        if !anthropic_has_tool_use(&body.content) || body.stop_reason.as_deref() != Some("tool_use") {
+        if !anthropic_has_tool_use(&body.content) || body.stop_reason.as_deref() != Some("tool_use")
+        {
             return Ok((anthropic_extract_text(&body.content), usage));
         }
 
@@ -671,7 +745,7 @@ pub async fn anthropic_tool_loop(
         let assistant_content: Vec<serde_json::Value> = body
             .content
             .iter()
-            .map(|b| serde_json::to_value(b))
+            .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("Failed to serialize content block: {e}"))?;
         request.messages.push(AnthropicMessage {
@@ -680,7 +754,7 @@ pub async fn anthropic_tool_loop(
         });
         let results_content: Vec<serde_json::Value> = tool_results
             .iter()
-            .map(|b| serde_json::to_value(b))
+            .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("Failed to serialize tool result: {e}"))?;
         request.messages.push(AnthropicMessage {
@@ -689,7 +763,9 @@ pub async fn anthropic_tool_loop(
         });
     }
 
-    Err(format!("Tool loop exceeded {MAX_TOOL_ITERATIONS} iterations"))
+    Err(format!(
+        "Tool loop exceeded {MAX_TOOL_ITERATIONS} iterations"
+    ))
 }
 
 /// Run the tool-use loop for an OpenAI-compatible Chat Completions endpoint.
@@ -701,6 +777,7 @@ pub async fn anthropic_tool_loop(
 /// When `drop_tools_on_400` is set (local servers), a 400 response to a
 /// request that declared tools retries once without tools — many local
 /// models don't support tool calling, and a hard failure would be opaque.
+#[allow(clippy::too_many_arguments)]
 pub async fn openai_tool_loop(
     app: &crate::emit::EventBus,
     client: &reqwest::Client,
@@ -737,14 +814,16 @@ pub async fn openai_tool_loop(
         if !api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {api_key}"));
         }
-        let resp = req
-            .send()
-            .await
+        let pass_key = super::logging::current_pass();
+        let resp = await_or_cancel(req.send(), pass_key.as_deref())
+            .await?
             .map_err(|e| format_http_error(provider, &e))?;
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
+            let bytes =
+                response_bytes_limited(resp, MAX_API_ERROR_BYTES, pass_key.as_deref()).await?;
+            let body = String::from_utf8_lossy(&bytes);
             if drop_tools_on_400
                 && !tools_retry_used
                 && status.as_u16() == 400
@@ -761,9 +840,9 @@ pub async fn openai_tool_loop(
             return Err(format_api_error(provider, status.as_u16(), &body));
         }
 
-        let body: OpenAIResponse = resp
-            .json()
-            .await
+        let bytes =
+            response_bytes_limited(resp, MAX_API_RESPONSE_BYTES, pass_key.as_deref()).await?;
+        let body: OpenAIResponse = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Failed to parse {provider} response: {e}"))?;
 
         if let Some(u) = &body.usage {
@@ -816,7 +895,9 @@ pub async fn openai_tool_loop(
         return Ok((text, usage));
     }
 
-    Err(format!("Tool loop exceeded {MAX_TOOL_ITERATIONS} iterations"))
+    Err(format!(
+        "Tool loop exceeded {MAX_TOOL_ITERATIONS} iterations"
+    ))
 }
 
 /// Run the tool-use loop for Google. Returns (text, usage).
@@ -849,24 +930,31 @@ pub async fn google_tool_loop(
         }
         let request_timeout = timeout_secs - elapsed;
 
-        let resp = client
+        let pass_key = super::logging::current_pass();
+        let request_future = client
             .post(&url)
             .header("x-goog-api-key", api_key)
             .timeout(std::time::Duration::from_secs(request_timeout))
             .json(&request)
-            .send()
-            .await
+            .send();
+        let resp = await_or_cancel(request_future, pass_key.as_deref())
+            .await?
             .map_err(|e| format_http_error("Google", &e))?;
 
         let status = resp.status();
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format_api_error("Google", status.as_u16(), &body));
+            let bytes =
+                response_bytes_limited(resp, MAX_API_ERROR_BYTES, pass_key.as_deref()).await?;
+            return Err(format_api_error(
+                "Google",
+                status.as_u16(),
+                &String::from_utf8_lossy(&bytes),
+            ));
         }
 
-        let body: GoogleResponse = resp
-            .json()
-            .await
+        let bytes =
+            response_bytes_limited(resp, MAX_API_RESPONSE_BYTES, pass_key.as_deref()).await?;
+        let body: GoogleResponse = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Failed to parse Google response: {e}"))?;
 
         if let Some(error) = &body.error {
@@ -875,8 +963,14 @@ pub async fn google_tool_loop(
 
         // Google returns usageMetadata at the top level
         if let Some(um) = body.usage_metadata.as_ref() {
-            let inp = um.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
-            let out = um.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);
+            let inp = um
+                .get("promptTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let out = um
+                .get("candidatesTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             usage.add(inp, out);
             verbose_log(app, format!("[api] {label}: tokens in={inp} out={out}"));
         } else {
@@ -947,7 +1041,9 @@ pub async fn google_tool_loop(
         return Ok((text, usage));
     }
 
-    Err(format!("Tool loop exceeded {MAX_TOOL_ITERATIONS} iterations"))
+    Err(format!(
+        "Tool loop exceeded {MAX_TOOL_ITERATIONS} iterations"
+    ))
 }
 
 // ── Shared helpers ─────────────────────────────────────────────────
@@ -967,7 +1063,10 @@ fn execute_tool(
                 .or_else(|| input.get("path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            verbose_log(app, format!("[api] {label}: Read tool call #{} -> {path}", iteration + 1));
+            verbose_log(
+                app,
+                format!("[api] {label}: Read tool call #{} -> {path}", iteration + 1),
+            );
             if path.to_lowercase().ends_with(".pdf") {
                 match read_pdf_for_tool(path) {
                     Ok(data) => ToolResult::PdfBase64(data),
@@ -986,18 +1085,25 @@ fn execute_tool(
                 .or_else(|| input.get("path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let content = input
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            verbose_log(app, format!("[api] {label}: Write tool call #{} -> {path} ({} bytes)", iteration + 1, content.len()));
+            let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            verbose_log(
+                app,
+                format!(
+                    "[api] {label}: Write tool call #{} -> {path} ({} bytes)",
+                    iteration + 1,
+                    content.len()
+                ),
+            );
             match write_file_for_tool(path, content) {
                 Ok(msg) => ToolResult::Text(msg),
                 Err(e) => ToolResult::Error(e),
             }
         }
         _ => {
-            verbose_log(app, format!("[api] {label}: unknown tool '{name}', skipping"));
+            verbose_log(
+                app,
+                format!("[api] {label}: unknown tool '{name}', skipping"),
+            );
             ToolResult::Error(format!("Tool '{name}' is not available"))
         }
     }
@@ -1019,7 +1125,7 @@ fn format_api_error(provider: &str, status: u16, body: &str) -> String {
         .ok()
         .and_then(|v| {
             v.get("error")
-                .and_then(|e| e.get("message").or_else(|| Some(e)))
+                .and_then(|e| e.get("message").or(Some(e)))
                 .or_else(|| v.get("message"))
                 .map(|m| m.to_string().trim_matches('"').to_string())
         })
@@ -1059,6 +1165,34 @@ mod tests {
         assert!(err.contains("Access denied"), "{err}");
     }
 
+    #[test]
+    fn in_flight_future_is_interrupted_by_pass_cancellation() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let key = "api-common-cancellation-test";
+                crate::commands::cancel_pass(key.to_string()).await.unwrap();
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    await_or_cancel(std::future::pending::<()>(), Some(key)),
+                )
+                .await
+                .expect("cancellation should resolve promptly");
+                assert!(result.unwrap_err().contains("cancelled"));
+            });
+    }
+
+    #[test]
+    fn api_body_limit_rejects_a_chunk_before_growth() {
+        let mut bytes = vec![0u8; 4];
+        assert!(append_api_chunk(&mut bytes, &[1, 2], 6).is_ok());
+        assert_eq!(bytes.len(), 6);
+        assert!(append_api_chunk(&mut bytes, &[3], 6).is_err());
+        assert_eq!(bytes.len(), 6);
+    }
+
     // Write-tool tests share the WRITE_DIR static, so they run under one
     // test to avoid interleaving set_write_dir calls across threads.
     #[test]
@@ -1080,15 +1214,21 @@ mod tests {
         assert!(abs.exists());
 
         // Traversal and outside-absolute paths are rejected.
-        assert!(write_file_for_tool("../escape.md", "x").unwrap_err().contains("Access denied"));
-        assert!(write_file_for_tool("a/../../escape.md", "x").unwrap_err().contains("Access denied"));
+        assert!(write_file_for_tool("../escape.md", "x")
+            .unwrap_err()
+            .contains("Access denied"));
+        assert!(write_file_for_tool("a/../../escape.md", "x")
+            .unwrap_err()
+            .contains("Access denied"));
         let outside = std::env::temp_dir().join("pipeline_write_escape.md");
         assert!(write_file_for_tool(&outside.to_string_lossy(), "x").is_err());
         assert!(!outside.exists());
 
         // Oversized content is rejected.
         let big = "x".repeat(MAX_WRITE_SIZE + 1);
-        assert!(write_file_for_tool("big.md", &big).unwrap_err().contains("too large"));
+        assert!(write_file_for_tool("big.md", &big)
+            .unwrap_err()
+            .contains("too large"));
 
         // Symlinked destination is refused.
         #[cfg(unix)]
@@ -1097,7 +1237,9 @@ mod tests {
             std::fs::write(&target, "t").unwrap();
             let link = dir.path().join("link.md");
             std::os::unix::fs::symlink(&target, &link).unwrap();
-            assert!(write_file_for_tool("link.md", "x").unwrap_err().contains("symlink"));
+            assert!(write_file_for_tool("link.md", "x")
+                .unwrap_err()
+                .contains("symlink"));
         }
 
         // Disabled state rejects everything.

@@ -193,7 +193,10 @@ fn settings_path() -> Result<PathBuf, String> {
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(e) = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)) {
-            eprintln!("WARNING: could not tighten permissions on {}: {e}", dir.display());
+            eprintln!(
+                "WARNING: could not tighten permissions on {}: {e}",
+                dir.display()
+            );
         }
     }
     Ok(dir.join("settings.json"))
@@ -321,15 +324,18 @@ pub fn save(settings: &Settings) -> Result<(), String> {
     to_save.google_api_key = encrypt_string(&settings.google_api_key, &key)?;
     to_save.local_api_key = encrypt_string(&settings.local_api_key, &key)?;
 
-    let json = serde_json::to_string_pretty(&to_save)
-        .map_err(|e| format!("Failed to serialize: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&to_save).map_err(|e| format!("Failed to serialize: {e}"))?;
     atomic_write(&path, &json)
 }
 
 // ── Encryption helpers ─────────────────────────────────────────────
 
-use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Key, Nonce};
-use base64::{Engine, engine::general_purpose::STANDARD};
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Key, Nonce,
+};
+use base64::{engine::general_purpose::STANDARD, Engine};
 
 const NONCE_SIZE: usize = 12;
 const KEY_SIZE: usize = 32;
@@ -359,8 +365,7 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
     let path = home.join(".pipeline").join("keyfile");
 
     if path.exists() {
-        let bytes = fs::read(&path)
-            .map_err(|e| format!("Failed to read keyfile: {e}"))?;
+        let bytes = fs::read(&path).map_err(|e| format!("Failed to read keyfile: {e}"))?;
         if bytes.len() == KEY_SIZE {
             let mut key = [0u8; KEY_SIZE];
             key.copy_from_slice(&bytes);
@@ -401,13 +406,12 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
         .map_err(|e| format!("Failed to generate encryption key: {e}"))?;
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create .pipeline dir: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create .pipeline dir: {e}"))?;
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
         use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -420,8 +424,7 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
     }
     #[cfg(windows)]
     {
-        fs::write(&path, &key)
-            .map_err(|e| format!("Failed to write keyfile: {e}"))?;
+        fs::write(&path, &key).map_err(|e| format!("Failed to write keyfile: {e}"))?;
         // Best-effort: restrict keyfile to current user via icacls.
         // Inheritance from %USERPROFILE% usually provides this already,
         // but this makes it explicit on non-standard directory layouts.
@@ -452,8 +455,7 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
     }
     #[cfg(not(any(unix, windows)))]
     {
-        fs::write(&path, &key)
-            .map_err(|e| format!("Failed to write keyfile: {e}"))?;
+        fs::write(&path, &key).map_err(|e| format!("Failed to write keyfile: {e}"))?;
     }
 
     Ok(key)
@@ -467,8 +469,7 @@ fn encrypt_string(plaintext: &str, key: &[u8; KEY_SIZE]) -> Result<String, Strin
     }
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     let mut nonce_bytes = [0u8; NONCE_SIZE];
-    getrandom::getrandom(&mut nonce_bytes)
-        .map_err(|e| format!("RNG failed: {e}"))?;
+    getrandom::getrandom(&mut nonce_bytes).map_err(|e| format!("RNG failed: {e}"))?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
@@ -507,8 +508,7 @@ fn decrypt_string(stored: &str, key: &[u8; KEY_SIZE]) -> Result<String, String> 
         .decrypt(nonce, ciphertext)
         .map_err(|_| "Decryption failed — keyfile may have been deleted or replaced".to_string())?;
 
-    String::from_utf8(plaintext)
-        .map_err(|e| format!("Decrypted text is not valid UTF-8: {e}"))
+    String::from_utf8(plaintext).map_err(|e| format!("Decrypted text is not valid UTF-8: {e}"))
 }
 
 // ── File I/O ───────────────────────────────────────────────────────
@@ -519,7 +519,9 @@ fn decrypt_string(stored: &str, key: &[u8; KEY_SIZE]) -> Result<String, String> 
 /// is what we want since settings may contain encrypted API keys.
 fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), String> {
     use std::io::Write as _;
-    let dir = path.parent().ok_or_else(|| format!("No parent dir for {}", path.display()))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| format!("No parent dir for {}", path.display()))?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)
         .map_err(|e| format!("Failed to create temp file in {}: {e}", dir.display()))?;
     tmp.write_all(content.as_bytes())
@@ -529,8 +531,12 @@ fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         // Surface failures: on filesystems that can't honor 0o600, the settings
         // file would otherwise be world-readable silently.
-        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("Failed to tighten permissions on {}: {e}", tmp.path().display()))?;
+        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o600)).map_err(|e| {
+            format!(
+                "Failed to tighten permissions on {}: {e}",
+                tmp.path().display()
+            )
+        })?;
     }
     tmp.persist(path)
         .map_err(|e| format!("Failed to save {}: {}", path.display(), e.error))?;
@@ -583,7 +589,10 @@ mod tests {
     fn test_plaintext_passthrough() {
         let key = [0u8; KEY_SIZE];
         // Legacy plaintext value (no enc: prefix) should pass through decrypt unchanged
-        assert_eq!(decrypt_string("sk-plain-key", &key).unwrap(), "sk-plain-key");
+        assert_eq!(
+            decrypt_string("sk-plain-key", &key).unwrap(),
+            "sk-plain-key"
+        );
     }
 
     #[test]

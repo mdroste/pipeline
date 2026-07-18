@@ -209,7 +209,9 @@ fn dir_size(root: &Path) -> u64 {
     let mut total = 0u64;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let Ok(meta) = entry.metadata() else { continue };
             if meta.is_dir() {
@@ -335,6 +337,7 @@ static INSTALL_CHILD_PID: Mutex<Option<u32>> = Mutex::new(None);
 /// Hard ceiling on any single install subprocess. Model downloads on slow
 /// connections are the long pole; an hour of no completion means stuck.
 const INSTALL_STEP_TIMEOUT_SECS: u64 = 3600;
+const INSTALL_LOG_DRAIN_TIMEOUT_SECS: u64 = 5;
 
 struct InstallGuard;
 
@@ -351,22 +354,7 @@ fn kill_install_child() {
         .unwrap_or_else(|e| e.into_inner())
         .take();
     if let Some(pid) = pid {
-        #[cfg(unix)]
-        {
-            if pid <= i32::MAX as u32 {
-                unsafe {
-                    libc::kill(pid as i32, libc::SIGTERM);
-                }
-            }
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            let _ = std::process::Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .creation_flags(0x08000000)
-                .status();
-        }
+        crate::commands::kill_process(pid);
     }
 }
 
@@ -379,6 +367,44 @@ pub fn cancel_install() {
 fn log(app: &AppHandle, line: impl Into<String>) {
     app.emit("engines:log", serde_json::json!({ "line": line.into() }))
         .ok();
+}
+
+async fn wait_install_child(
+    child: &mut tokio::process::Child,
+    timeout: std::time::Duration,
+) -> Result<Option<std::process::ExitStatus>, String> {
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => status
+            .map(Some)
+            .map_err(|e| format!("Failed waiting for install process: {e}")),
+        Err(_) => {
+            // Kill and reap before any stdout/stderr reader is joined. Those
+            // readers wait for EOF and would otherwise deadlock the timeout
+            // path while the child still owns its pipe handles.
+            if let Some(pid) = child.id() {
+                crate::commands::kill_process(pid);
+            }
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(INSTALL_LOG_DRAIN_TIMEOUT_SECS),
+                child.kill(),
+            )
+            .await;
+            Ok(None)
+        }
+    }
+}
+
+async fn finish_log_task(task: &mut tokio::task::JoinHandle<()>) {
+    if tokio::time::timeout(
+        std::time::Duration::from_secs(INSTALL_LOG_DRAIN_TIMEOUT_SECS),
+        &mut *task,
+    )
+    .await
+    .is_err()
+    {
+        task.abort();
+        let _ = task.await;
+    }
 }
 
 fn emit_phase(app: &AppHandle, engine_id: &str, phase: &str, status: &str) {
@@ -435,7 +461,10 @@ async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
             artifact.sha256
         ));
     }
-    log(app, format!("Verified uv archive ({} MB)", bytes.len() / 1_000_000));
+    log(
+        app,
+        format!("Verified uv archive ({} MB)", bytes.len() / 1_000_000),
+    );
 
     let bin_dir = uv_path
         .parent()
@@ -535,7 +564,7 @@ async fn run_install_step(
 
     let app_out = app.clone();
     let stdout = child.stdout.take();
-    let out_task = tokio::spawn(async move {
+    let mut out_task = tokio::spawn(async move {
         if let Some(stdout) = stdout {
             let mut lines = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = lines.next_line().await {
@@ -547,7 +576,7 @@ async fn run_install_step(
     });
     let app_err = app.clone();
     let stderr = child.stderr.take();
-    let err_task = tokio::spawn(async move {
+    let mut err_task = tokio::spawn(async move {
         if let Some(stderr) = stderr {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
@@ -558,23 +587,25 @@ async fn run_install_step(
         }
     });
 
-    let status = tokio::time::timeout(
+    let status = wait_install_child(
+        &mut child,
         std::time::Duration::from_secs(INSTALL_STEP_TIMEOUT_SECS),
-        child.wait(),
     )
     .await;
+    // Keep the PID available to cancel_install until the child has exited or
+    // the timeout path has killed and reaped it.
     *INSTALL_CHILD_PID.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    let _ = out_task.await;
-    let _ = err_task.await;
+    finish_log_task(&mut out_task).await;
+    finish_log_task(&mut err_task).await;
 
     let status = match status {
-        Ok(s) => s.map_err(|e| format!("Failed waiting for {label}: {e}"))?,
-        Err(_) => {
-            let _ = child.kill().await;
+        Ok(Some(status)) => status,
+        Ok(None) => {
             return Err(format!(
                 "{label} timed out after {INSTALL_STEP_TIMEOUT_SECS}s"
             ));
         }
+        Err(e) => return Err(format!("Failed waiting for {label}: {e}")),
     };
 
     if INSTALL_CANCEL.load(Ordering::Acquire) {
@@ -602,7 +633,10 @@ fn minimal_pdf_bytes() -> Vec<u8> {
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
         {
             let stream = "BT /F1 24 Tf 72 720 Td (Pipeline engine check) Tj ET";
-            format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len())
+            format!(
+                "<< /Length {} >>\nstream\n{stream}\nendstream",
+                stream.len()
+            )
         },
     ];
     let mut body = String::from("%PDF-1.4\n");
@@ -709,7 +743,10 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
     // Phase 3: model pre-warm. Failure here is a warning, not an install
     // failure — weights will download on first real use instead.
     emit_phase(app, engine_id, "models", "running");
-    log(app, "Downloading model weights (first-run warm-up; this is the multi-GB part)...");
+    log(
+        app,
+        "Downloading model weights (first-run warm-up; this is the multi-GB part)...",
+    );
     let warmup = tempfile::Builder::new()
         .prefix("pipeline_engine_check_")
         .suffix(".pdf")
@@ -740,22 +777,31 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
                     return Err(e);
                 }
                 Err(e) => {
-                    log(app, format!(
+                    log(
+                        app,
+                        format!(
                         "WARNING: model warm-up failed ({e}). Weights will download on first use."
-                    ));
+                    ),
+                    );
                     emit_phase(app, engine_id, "models", "done");
                 }
             }
         }
         Err(e) => {
-            log(app, format!(
+            log(
+                app,
+                format!(
                 "WARNING: could not create warm-up file ({e}). Weights will download on first use."
-            ));
+            ),
+            );
             emit_phase(app, engine_id, "models", "done");
         }
     }
 
-    log(app, format!("{} installed at {}", spec.label, entry.display()));
+    log(
+        app,
+        format!("{} installed at {}", spec.label, entry.display()),
+    );
     Ok(())
 }
 
@@ -773,8 +819,14 @@ pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), St
     let uv = uv_binary_path()?;
     if uv.is_file() {
         let env = uv_env()?;
-        run_install_step(app, &uv, &["tool", "uninstall", spec.pip_spec], &env, "uninstall")
-            .await?;
+        run_install_step(
+            app,
+            &uv,
+            &["tool", "uninstall", spec.pip_spec],
+            &env,
+            "uninstall",
+        )
+        .await?;
     }
 
     let others_installed = ENGINES
@@ -908,5 +960,25 @@ mod tests {
         std::fs::write(dir.path().join("sub/b.bin"), vec![0u8; 500]).unwrap();
         assert_eq!(dir_size(dir.path()), 1500);
         assert_eq!(dir_size(&dir.path().join("missing")), 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn timed_out_install_child_is_killed_and_reaped_before_return() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut child = tokio::process::Command::new("sleep")
+                    .arg("5")
+                    .spawn()
+                    .unwrap();
+                let result = wait_install_child(&mut child, std::time::Duration::from_millis(20))
+                    .await
+                    .unwrap();
+                assert!(result.is_none());
+                assert!(child.try_wait().unwrap().is_some());
+            });
     }
 }

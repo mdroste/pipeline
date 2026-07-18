@@ -58,7 +58,9 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> (Vec<String>, bool) {
     let mut stack = vec![root.to_path_buf()];
     let mut visited = 0usize;
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             visited += 1;
             if visited > MAX_WALK {
@@ -78,7 +80,9 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> (Vec<String>, bool) {
                 stack.push(path);
                 continue;
             }
-            let Ok(rel) = path.strip_prefix(root) else { continue };
+            let Ok(rel) = path.strip_prefix(root) else {
+                continue;
+            };
             let rel_str = rel.to_string_lossy().replace('\\', "/");
             if glob_match(pattern, &rel_str) {
                 matches.push(path.to_string_lossy().replace('\\', "/"));

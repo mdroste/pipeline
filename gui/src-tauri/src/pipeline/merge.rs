@@ -24,12 +24,10 @@ pub async fn merge_step_outputs(
     semaphore: &Arc<Semaphore>,
 ) -> Result<Vec<StepOutput>, String> {
     // Validate merge prompt has required placeholders
-    if !merge_config.prompt.contains("{topic}")
-        || !merge_config.prompt.contains("{agent_reports}")
+    if !merge_config.prompt.contains("{topic}") || !merge_config.prompt.contains("{agent_reports}")
     {
         return Err(
-            "Merge prompt is missing required placeholders ({topic} and/or {agent_reports})"
-                .into(),
+            "Merge prompt is missing required placeholders ({topic} and/or {agent_reports})".into(),
         );
     }
 
@@ -236,10 +234,16 @@ pub async fn merge_step_outputs(
 
         let missing = results.iter().filter(|r| r.is_none()).count();
         if missing == total {
-            return Err(format!("All merges failed: {}", errors.iter().map(|(_, e)| e.as_str()).collect::<Vec<_>>().join("; ")));
+            return Err(format!(
+                "All merges failed: {}",
+                errors
+                    .iter()
+                    .map(|(_, e)| e.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
         }
     }
 
     Ok(results.into_iter().flatten().collect())
 }
-

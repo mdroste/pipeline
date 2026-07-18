@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { lineDiff, hasChanges, type DiffOp } from "../lib/diff";
+import { lineDiff, type DiffOp } from "../lib/diff";
 import type { PipelineReport, StepOutput } from "../lib/types";
 
 interface Props {
@@ -49,6 +49,11 @@ function DiffBlock({ ops }: { ops: DiffOp[] }) {
       ))}
     </pre>
   );
+}
+
+function LazyDiffBlock({ before, after }: { before: string; after: string }) {
+  const ops = useMemo(() => lineDiff(before, after), [before, after]);
+  return <DiffBlock ops={ops} />;
 }
 
 export default function ComparePage({ runA, runB, onBack }: Props) {
@@ -157,8 +162,9 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
               const a = mapA.get(k);
               const b = mapB.get(k);
               const label = b?.step_label || a?.step_label || k;
-              const ops = lineDiff(a?.raw_text ?? "", b?.raw_text ?? "");
-              const changed = hasChanges(ops);
+              const before = a?.raw_text ?? "";
+              const after = b?.raw_text ?? "";
+              const changed = before !== after;
               const isOpen = expanded.has(k);
               return (
                 <div key={k} className="border border-gray-200 dark:border-gray-800 rounded-lg bg-white dark:bg-gray-900">
@@ -176,7 +182,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                   </button>
                   {isOpen && (
                     <div className="px-3 pb-3 border-t border-gray-100 dark:border-gray-800 pt-2">
-                      <DiffBlock ops={ops} />
+                      <LazyDiffBlock before={before} after={after} />
                     </div>
                   )}
                 </div>

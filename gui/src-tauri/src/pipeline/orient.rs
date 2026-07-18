@@ -83,7 +83,20 @@ pub async fn build_orientation_map(
 
     for attempt in 0..=MAX_RETRIES {
         let timeout = (crate::settings::load().step_timeout_secs / 2).max(60);
-        let raw = call_llm(app, &prompt, &["Read"], None, "text", timeout, "Orientation map", None, None, &[], &LlmOverrides::default()).await?;
+        let raw = call_llm(
+            app,
+            &prompt,
+            &["Read"],
+            None,
+            "text",
+            timeout,
+            "Orientation map",
+            None,
+            None,
+            &[],
+            &LlmOverrides::default(),
+        )
+        .await?;
         let cleaned = strip_json_fences(&raw);
 
         match serde_json::from_str::<serde_json::Value>(&cleaned) {
@@ -125,7 +138,9 @@ fn append_quality_notes(survey: &mut serde_json::Value, notes: &[String]) {
     if notes.is_empty() {
         return;
     }
-    let Some(obj) = survey.as_object_mut() else { return };
+    let Some(obj) = survey.as_object_mut() else {
+        return;
+    };
     let entry = obj
         .entry("extraction_quality_notes")
         .or_insert_with(|| serde_json::Value::Array(vec![]));
@@ -280,8 +295,7 @@ mod tests {
     #[test]
     fn resolve_stock_paper_prompt_swaps_in_folder_mode() {
         let paper = crate::prompts::compiled_default("orientation").unwrap();
-        let resolved =
-            resolve_survey_template(paper, "folder").expect("folder survey should load");
+        let resolved = resolve_survey_template(paper, "folder").expect("folder survey should load");
         let folder = crate::prompts::load_prompt("orientation_folder").unwrap();
         assert_eq!(resolved, folder);
     }

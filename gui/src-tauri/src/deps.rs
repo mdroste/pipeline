@@ -88,7 +88,7 @@ fn check_claude_auth() -> Option<bool> {
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Parse JSON response: { "loggedIn": true, ... }
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&stdout.trim()) {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
         return val.get("loggedIn").and_then(|v| v.as_bool());
     }
     None
@@ -98,7 +98,10 @@ fn check_claude_auth() -> Option<bool> {
 /// Codex uses OPENAI_API_KEY env var or its own login system.
 fn check_codex_auth() -> Option<bool> {
     // Check env var first
-    if std::env::var("OPENAI_API_KEY").map(|k| !k.is_empty()).unwrap_or(false) {
+    if std::env::var("OPENAI_API_KEY")
+        .map(|k| !k.is_empty())
+        .unwrap_or(false)
+    {
         return Some(true);
     }
     // Check for codex config directory with stored credentials
@@ -119,10 +122,16 @@ fn check_codex_auth() -> Option<bool> {
 /// Gemini uses GEMINI_API_KEY or GOOGLE_API_KEY env vars, or Google auth.
 fn check_gemini_auth() -> Option<bool> {
     // Check env vars first
-    if std::env::var("GEMINI_API_KEY").map(|k| !k.is_empty()).unwrap_or(false) {
+    if std::env::var("GEMINI_API_KEY")
+        .map(|k| !k.is_empty())
+        .unwrap_or(false)
+    {
         return Some(true);
     }
-    if std::env::var("GOOGLE_API_KEY").map(|k| !k.is_empty()).unwrap_or(false) {
+    if std::env::var("GOOGLE_API_KEY")
+        .map(|k| !k.is_empty())
+        .unwrap_or(false)
+    {
         return Some(true);
     }
     // Check for Gemini config with stored credentials
@@ -147,7 +156,11 @@ fn parse_host_port(base_url: &str) -> Option<(String, u16)> {
         .trim()
         .strip_prefix("http://")
         .or_else(|| base_url.trim().strip_prefix("https://"))?;
-    let default_port = if base_url.trim_start().starts_with("https://") { 443 } else { 80 };
+    let default_port = if base_url.trim_start().starts_with("https://") {
+        443
+    } else {
+        80
+    };
     let authority = rest.split('/').next()?;
     if authority.is_empty() {
         return None;
@@ -178,8 +191,7 @@ fn probe_local_server(base_url: &str) -> (bool, String) {
     let Some(addr) = addrs.next() else {
         return (false, desc);
     };
-    let reachable =
-        TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).is_ok();
+    let reachable = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).is_ok();
     (reachable, desc)
 }
 
@@ -237,7 +249,8 @@ pub fn check_all() -> DepsReport {
         let local_h = s.spawn(move || probe_local_server(&local_url));
 
         // Collect results
-        let (found, ver, path, claude_auth) = claude_h.join()
+        let (found, ver, path, claude_auth) = claude_h
+            .join()
             .unwrap_or_else(|_| (false, String::new(), String::new(), None));
         let claude_hint = if has_anthropic_key {
             "API key configured — CLI not required."
@@ -249,14 +262,23 @@ pub fn check_all() -> DepsReport {
         let claude = DepStatus {
             name: "Claude CLI".into(),
             found: found || has_anthropic_key,
-            version: if has_anthropic_key && !found { "direct API".into() } else { ver },
+            version: if has_anthropic_key && !found {
+                "direct API".into()
+            } else {
+                ver
+            },
             path,
             required: provider == "claude",
             hint: claude_hint.into(),
-            authenticated: if has_anthropic_key { Some(true) } else { claude_auth },
+            authenticated: if has_anthropic_key {
+                Some(true)
+            } else {
+                claude_auth
+            },
         };
 
-        let (found, ver, path, codex_auth) = codex_h.join()
+        let (found, ver, path, codex_auth) = codex_h
+            .join()
             .unwrap_or_else(|_| (false, String::new(), String::new(), None));
         let codex_hint = if has_openai_key {
             "API key configured — CLI not required."
@@ -268,14 +290,23 @@ pub fn check_all() -> DepsReport {
         let codex = DepStatus {
             name: "Codex CLI".into(),
             found: found || has_openai_key,
-            version: if has_openai_key && !found { "direct API".into() } else { ver },
+            version: if has_openai_key && !found {
+                "direct API".into()
+            } else {
+                ver
+            },
             path,
             required: provider == "codex",
             hint: codex_hint.into(),
-            authenticated: if has_openai_key { Some(true) } else { codex_auth },
+            authenticated: if has_openai_key {
+                Some(true)
+            } else {
+                codex_auth
+            },
         };
 
-        let (found, ver, path, gemini_auth) = gemini_h.join()
+        let (found, ver, path, gemini_auth) = gemini_h
+            .join()
             .unwrap_or_else(|_| (false, String::new(), String::new(), None));
         let gemini_hint = if has_google_key {
             "API key configured — CLI not required."
@@ -287,11 +318,19 @@ pub fn check_all() -> DepsReport {
         let gemini = DepStatus {
             name: "Gemini CLI".into(),
             found: found || has_google_key,
-            version: if has_google_key && !found { "direct API".into() } else { ver },
+            version: if has_google_key && !found {
+                "direct API".into()
+            } else {
+                ver
+            },
             path,
             required: provider == "gemini",
             hint: gemini_hint.into(),
-            authenticated: if has_google_key { Some(true) } else { gemini_auth },
+            authenticated: if has_google_key {
+                Some(true)
+            } else {
+                gemini_auth
+            },
         };
 
         // Classify a found binary as bundled (under our resource dir) or system.
@@ -314,8 +353,14 @@ pub fn check_all() -> DepsReport {
         let pdftoppm = DepStatus {
             name: "pdftoppm".into(),
             found: pdftoppm_path.is_some(),
-            version: pdftoppm_path.as_ref().map(|p| classify(p).into()).unwrap_or_default(),
-            path: pdftoppm_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+            version: pdftoppm_path
+                .as_ref()
+                .map(|p| classify(p).into())
+                .unwrap_or_default(),
+            path: pdftoppm_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
             required: false,
             hint: if pdftoppm_path.is_some() {
                 "Used by Claude Code to read PDFs. Bundled with Pipeline.".into()
@@ -329,8 +374,14 @@ pub fn check_all() -> DepsReport {
         let pdftotext = DepStatus {
             name: "pdftotext".into(),
             found: pdftotext_path.is_some(),
-            version: pdftotext_path.as_ref().map(|p| classify(p).into()).unwrap_or_default(),
-            path: pdftotext_path.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+            version: pdftotext_path
+                .as_ref()
+                .map(|p| classify(p).into())
+                .unwrap_or_default(),
+            path: pdftotext_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
             required: false,
             hint: if pdftotext_path.is_some() {
                 "Native PDF text fallback. Bundled with Pipeline.".into()
@@ -362,7 +413,9 @@ pub fn check_all() -> DepsReport {
                 (Some(_), false) => "system".into(),
                 (None, _) => String::new(),
             },
-            path: marker_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+            path: marker_path
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
             required: false,
             hint: marker_hint.into(),
             authenticated: None,
@@ -372,7 +425,11 @@ pub fn check_all() -> DepsReport {
         let local = DepStatus {
             name: "Local LLM server".into(),
             found: local_reachable,
-            version: if local_reachable { "reachable".into() } else { String::new() },
+            version: if local_reachable {
+                "reachable".into()
+            } else {
+                String::new()
+            },
             path: local_desc,
             required: provider == "local",
             hint: if local_reachable {
@@ -388,8 +445,12 @@ pub fn check_all() -> DepsReport {
 
         let deps = vec![claude, codex, gemini, local, pdftoppm, pdftotext, marker];
         let ready = deps.iter().all(|d| {
-            if !d.required { return true; }
-            if !d.found { return false; }
+            if !d.required {
+                return true;
+            }
+            if !d.found {
+                return false;
+            }
             d.authenticated != Some(false)
         });
         DepsReport { deps, ready }
@@ -410,8 +471,14 @@ mod tests {
 
     #[test]
     fn parse_no_port_defaults_by_scheme() {
-        assert_eq!(parse_host_port("http://myhost/v1"), Some(("myhost".into(), 80)));
-        assert_eq!(parse_host_port("https://myhost/v1"), Some(("myhost".into(), 443)));
+        assert_eq!(
+            parse_host_port("http://myhost/v1"),
+            Some(("myhost".into(), 80))
+        );
+        assert_eq!(
+            parse_host_port("https://myhost/v1"),
+            Some(("myhost".into(), 443))
+        );
     }
 
     #[test]

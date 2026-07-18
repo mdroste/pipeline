@@ -16,7 +16,10 @@ use std::sync::Arc;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("Failed to start runtime: {e}");
@@ -58,7 +61,10 @@ fn print_help() {
 
 /// Value following `--name`, if present.
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
 }
 
 /// All values for a repeatable `--name`.
@@ -98,7 +104,10 @@ async fn cmd_run(args: &[String]) -> i32 {
     }
     let vars: HashMap<String, String> = repeated(args, "--var")
         .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter_map(|kv| {
+            kv.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect();
 
     let bus: EventBus = Arc::new(CliEvents);
@@ -174,7 +183,11 @@ async fn cmd_batch(args: &[String]) -> i32 {
             }
         }
     }
-    eprintln!("\nBatch done: {} ok, {} failed", files.len() - failures, failures);
+    eprintln!(
+        "\nBatch done: {} ok, {} failed",
+        files.len() - failures,
+        failures
+    );
     if failures > 0 {
         1
     } else {

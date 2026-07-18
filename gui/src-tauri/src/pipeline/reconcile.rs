@@ -3,7 +3,11 @@ use crate::models::PipelineReport;
 use crate::output::strip_to_report;
 
 /// Produce a markdown diff between two reports on the same paper.
-pub async fn reconcile(app: &crate::emit::EventBus, prior: &PipelineReport, current: &PipelineReport) -> Result<String, String> {
+pub async fn reconcile(
+    app: &crate::emit::EventBus,
+    prior: &PipelineReport,
+    current: &PipelineReport,
+) -> Result<String, String> {
     let prior_outputs = prior.all_outputs();
     let current_outputs = current.all_outputs();
 
@@ -21,10 +25,8 @@ pub async fn reconcile(app: &crate::emit::EventBus, prior: &PipelineReport, curr
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
-    let prior_final = prior.final_output()
-        .unwrap_or("(no consolidated output)");
-    let current_final = current.final_output()
-        .unwrap_or("(no consolidated output)");
+    let prior_final = prior.final_output().unwrap_or("(no consolidated output)");
+    let current_final = current.final_output().unwrap_or("(no consolidated output)");
 
     let prior_date = prior.report_date;
     let current_date = current.report_date;
@@ -75,6 +77,19 @@ Include ONLY your markdown report between those markers — no preamble, no comm
     );
 
     let timeout = crate::settings::load().step_timeout_secs.max(60);
-    let raw = call_llm(app, &prompt, &[], None, "text", timeout, "Revision reconciliation", None, None, &[], &LlmOverrides::default()).await?;
+    let raw = call_llm(
+        app,
+        &prompt,
+        &[],
+        None,
+        "text",
+        timeout,
+        "Revision reconciliation",
+        None,
+        None,
+        &[],
+        &LlmOverrides::default(),
+    )
+    .await?;
     Ok(strip_to_report(&raw))
 }

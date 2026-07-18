@@ -6,6 +6,115 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
+#[derive(Debug)]
+struct BoundedOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+}
+
+fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Vec<u8>, bool) {
+    let mut kept = Vec::new();
+    let mut truncated = false;
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        let count = match reader.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => count,
+        };
+        let remaining = limit.saturating_sub(kept.len());
+        let take = count.min(remaining);
+        kept.extend_from_slice(&chunk[..take]);
+        truncated |= take < count;
+    }
+    (kept, truncated)
+}
+
+/// Run a blocking extraction subprocess with bounded capture, cancellation,
+/// timeout, process-tree termination, and PID cleanup.
+fn run_bounded_output(
+    mut command: StdCommand,
+    label: &str,
+    timeout: std::time::Duration,
+    output_limit: usize,
+) -> Result<BoundedOutput, String> {
+    use std::process::Stdio;
+
+    crate::pipeline::claude::configure_silent_command(&mut command);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Failed to start {label}: {e}"))?;
+    let pid = child.id();
+    if pid > 0 {
+        crate::commands::register_child_pid(pid);
+    }
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_thread = std::thread::spawn(move || {
+        stdout
+            .map(|pipe| drain_capped(pipe, output_limit))
+            .unwrap_or_default()
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        stderr
+            .map(|pipe| drain_capped(pipe, output_limit))
+            .unwrap_or_default()
+    });
+
+    let started = std::time::Instant::now();
+    let result = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if crate::commands::is_cancelled() => {
+                if pid > 0 {
+                    crate::commands::kill_process(pid);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err("Pipeline cancelled".to_string());
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                if pid > 0 {
+                    crate::commands::kill_process(pid);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(format!("{label} timed out after {}s", timeout.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(e) => {
+                if pid > 0 {
+                    crate::commands::kill_process(pid);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(format!("Failed waiting for {label}: {e}"));
+            }
+        }
+    };
+
+    if pid > 0 {
+        crate::commands::unregister_child_pid(pid);
+    }
+    let (stdout, stdout_truncated) = stdout_thread.join().unwrap_or_default();
+    let (stderr, stderr_truncated) = stderr_thread.join().unwrap_or_default();
+    let status = result?;
+    Ok(BoundedOutput {
+        status,
+        stdout,
+        stderr,
+        stdout_truncated,
+        stderr_truncated,
+    })
+}
+
 /// Case-insensitive extension check (handles .PDF, .Tex, etc.).
 fn ext_eq(path: &Path, expected: &str) -> bool {
     path.extension()
@@ -16,9 +125,20 @@ fn ext_eq(path: &Path, expected: &str) -> bool {
 
 /// Compute SHA-256 hash of file contents, first 16 hex chars.
 fn compute_hash(path: &Path) -> Result<String, String> {
-    let data = fs::read(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    let hash = Sha256::digest(&data);
-    Ok(format!("{:x}", hash)[..16].to_string())
+    let file =
+        fs::File::open(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let count = std::io::Read::read(&mut reader, &mut chunk)
+            .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&chunk[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize())[..16].to_string())
 }
 
 /// Find the main .tex file in a directory by looking for \documentclass.
@@ -68,14 +188,19 @@ fn find_main_tex(dir: &Path) -> Option<PathBuf> {
 const MAX_LATEX_SIZE: usize = 10_000_000;
 
 /// Extract text from a .tex file, resolving \input{} and \include{} recursively.
-fn extract_latex(path: &Path, depth: usize, root_dir: &Path, warnings: &mut Vec<String>) -> Result<String, String> {
+fn extract_latex(
+    path: &Path,
+    depth: usize,
+    root_dir: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<String, String> {
     if depth > 10 {
         warnings.push("LaTeX \\input{} nesting exceeds 10 levels — possible circular includes. Output may be incomplete.".to_string());
         return Ok(String::new());
     }
 
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
 
     let parent = path.parent().unwrap_or(Path::new("."));
     let re = Regex::new(r"\\(?:input|include)\{([^}]+)\}").expect("LaTeX include regex is invalid");
@@ -96,9 +221,9 @@ fn extract_latex(path: &Path, depth: usize, root_dir: &Path, warnings: &mut Vec<
         // Validate the resolved path stays within the root directory to prevent
         // path traversal via malicious \input{../../../etc/passwd}
         let canonical = include_path.canonicalize().ok();
-        let safe = canonical.as_ref().map_or(false, |resolved| {
-            resolved.starts_with(root_dir)
-        });
+        let safe = canonical
+            .as_ref()
+            .is_some_and(|resolved| resolved.starts_with(root_dir));
 
         if safe && include_path.is_file() {
             match extract_latex(&include_path, depth + 1, root_dir, warnings) {
@@ -155,11 +280,15 @@ pub fn marker_output_dir(paper_hash: &str) -> Option<PathBuf> {
 /// Image files marker emitted for a paper (figures/tables extracted from the
 /// PDF), for registration as run artifacts.
 pub fn marker_image_files(paper_hash: &str) -> Vec<PathBuf> {
-    let Some(root) = marker_output_dir(paper_hash) else { return Vec::new() };
+    let Some(root) = marker_output_dir(paper_hash) else {
+        return Vec::new();
+    };
     let mut images = Vec::new();
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
@@ -181,7 +310,9 @@ pub fn marker_image_files(paper_hash: &str) -> Vec<PathBuf> {
 fn find_marker_markdown(root: &Path) -> Option<PathBuf> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
@@ -196,11 +327,14 @@ fn find_marker_markdown(root: &Path) -> Option<PathBuf> {
 
 /// Extract text from PDF using marker_single.
 /// Timeout is half the user's step timeout, floored at 120s to accommodate first-run model downloads.
-fn extract_marker(path: &Path, paper_hash: &str, marker_disable_ocr: bool, marker_disable_images: bool) -> Result<String, String> {
-    use std::io::Read;
-    use std::process::Stdio;
-
-    let path_str = path.to_str()
+fn extract_marker(
+    path: &Path,
+    paper_hash: &str,
+    marker_disable_ocr: bool,
+    marker_disable_images: bool,
+) -> Result<String, String> {
+    let path_str = path
+        .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
     let settings = crate::settings::load();
     let mut marker_args = vec![
@@ -225,14 +359,9 @@ fn extract_marker(path: &Path, paper_hash: &str, marker_disable_ocr: bool, marke
     if marker_disable_ocr {
         marker_args.push("--disable_ocr".to_string());
     }
-    let marker_bin = find_command("marker_single")
-        .ok_or("marker_single not found on PATH")?;
+    let marker_bin = find_command("marker_single").ok_or("marker_single not found on PATH")?;
     let mut cmd = StdCommand::new(&marker_bin);
-    cmd.env("PATH", env::full_path())
-        .args(&marker_args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.env("PATH", env::full_path()).args(&marker_args);
     // Managed installs keep their model weights under ~/.pipeline/hf.
     // System installs keep their own cache — don't redirect it.
     let is_managed = crate::engines::managed_bin_dir()
@@ -243,73 +372,17 @@ fn extract_marker(path: &Path, paper_hash: &str, marker_disable_ocr: bool, marke
             cmd.env(k, v);
         }
     }
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("marker_single not available: {e}"))?;
-
-    let pid = child.id();
-    if pid > 0 { crate::commands::register_child_pid(pid); }
-
-    // Drain stdout and stderr in separate threads to prevent pipe buffer deadlocks.
-    // Blocking reads on the same thread can deadlock if the child fills one pipe
-    // while we're blocked reading the other.
-    let stdout_handle = child.stdout.take();
-    let stderr_handle = child.stderr.take();
-
-    let stdout_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(out) = stdout_handle {
-            // Safety cap: marker_single output is bounded by paper size,
-            // but guard against pathological inputs.
-            let _ = out.take(super::claude::MAX_STDOUT_BYTES as u64).read_to_end(&mut buf);
-        }
-        buf
-    });
-    let stderr_thread = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(err) = stderr_handle {
-            // Mirror stdout cap so a misbehaving marker_single can't balloon stderr.
-            let _ = err.take(super::claude::MAX_STDOUT_BYTES as u64).read_to_end(&mut buf);
-        }
-        buf
-    });
-
     // Wait with timeout — use half the user's step timeout (same convention as LLM extraction),
     // with a floor of 120s to handle first-run model downloads.
     let timeout_secs = (settings.step_timeout_secs / 2).max(120);
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-    let start = std::time::Instant::now();
-    let exit_status;
-    loop {
-        match child.try_wait() {
-            Ok(Some(s)) => { exit_status = s; break; }
-            Ok(None) => {
-                if crate::commands::is_cancelled() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    if pid > 0 { crate::commands::unregister_child_pid(pid); }
-                    return Err("Pipeline cancelled".to_string());
-                }
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    if pid > 0 { crate::commands::unregister_child_pid(pid); }
-                    return Err(format!("marker_single timed out after {}s", timeout_secs));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-            Err(e) => {
-                if pid > 0 { crate::commands::unregister_child_pid(pid); }
-                return Err(format!("Failed waiting for marker_single: {e}"));
-            }
-        }
-    }
-
-    if pid > 0 { crate::commands::unregister_child_pid(pid); }
-    let stdout_buf = stdout_thread.join().unwrap_or_default();
-    let stderr_buf = stderr_thread.join().unwrap_or_default();
-    if !exit_status.success() {
-        let stderr = String::from_utf8_lossy(&stderr_buf);
+    let output = run_bounded_output(
+        cmd,
+        "marker_single",
+        std::time::Duration::from_secs(timeout_secs),
+        super::claude::MAX_STDOUT_BYTES,
+    )?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("marker_single failed: {}", stderr.trim()));
     }
 
@@ -326,7 +399,10 @@ fn extract_marker(path: &Path, paper_hash: &str, marker_disable_ocr: bool, marke
             }
         }
     }
-    let text = String::from_utf8_lossy(&stdout_buf).trim().to_string();
+    if output.stdout_truncated {
+        return Err("marker_single output exceeded the 50 MB safety limit".to_string());
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if text.is_empty() {
         return Err("marker_single returned empty output".to_string());
     }
@@ -335,19 +411,32 @@ fn extract_marker(path: &Path, paper_hash: &str, marker_disable_ocr: bool, marke
 
 /// Extract text from PDF using pdftotext.
 fn extract_pdftotext(path: &Path) -> Result<String, String> {
-    let path_str = path.to_str()
+    let path_str = path
+        .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
-    let pdftotext_bin = find_command("pdftotext")
-        .ok_or("pdftotext not found on PATH")?;
-    let output = StdCommand::new(&pdftotext_bin)
+    let pdftotext_bin = find_command("pdftotext").ok_or("pdftotext not found on PATH")?;
+    let mut command = StdCommand::new(&pdftotext_bin);
+    command
         .env("PATH", env::full_path())
-        .args(["-layout", path_str, "-"])
-        .output()
-        .map_err(|e| format!("pdftotext not available: {e}"))?;
+        .args(["-layout", path_str, "-"]);
+    let output = run_bounded_output(
+        command,
+        "pdftotext",
+        std::time::Duration::from_secs(crate::settings::load().step_timeout_secs.max(60)),
+        super::claude::MAX_STDOUT_BYTES,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("pdftotext failed: {}", stderr.trim()));
+        let suffix = if output.stderr_truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        return Err(format!("pdftotext failed: {}{suffix}", stderr.trim()));
+    }
+    if output.stdout_truncated {
+        return Err("pdftotext output exceeded the 50 MB safety limit".to_string());
     }
 
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -372,13 +461,19 @@ fn resolve_command(managed: Option<PathBuf>, path_var: &str, name: &str) -> Opti
     }
     let sep = if cfg!(windows) { ';' } else { ':' };
     for dir in path_var.split(sep) {
-        if dir.is_empty() { continue; }
+        if dir.is_empty() {
+            continue;
+        }
         let candidate = PathBuf::from(dir).join(name);
-        if candidate.is_file() { return Some(candidate); }
+        if candidate.is_file() {
+            return Some(candidate);
+        }
         #[cfg(windows)]
         for ext in &[".exe", ".cmd", ".bat"] {
             let with_ext = PathBuf::from(format!("{}{ext}", candidate.display()));
-            if with_ext.is_file() { return Some(with_ext); }
+            if with_ext.is_file() {
+                return Some(with_ext);
+            }
         }
     }
     None
@@ -416,17 +511,27 @@ fn provider_uses_direct_api(settings: &crate::settings::Settings) -> bool {
 /// then skipped, not the extraction.
 fn pdftotext_page_baseline(path: &Path) -> Option<Vec<usize>> {
     let bin = find_command("pdftotext")?;
-    let output = StdCommand::new(&bin)
+    let mut command = StdCommand::new(&bin);
+    command
         .env("PATH", env::full_path())
-        .args(["-layout", path.to_str()?, "-"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
+        .args(["-layout", path.to_str()?, "-"]);
+    let output = run_bounded_output(
+        command,
+        "pdftotext baseline",
+        std::time::Duration::from_secs(120),
+        super::claude::MAX_STDOUT_BYTES,
+    )
+    .ok()?;
+    if !output.status.success() || output.stdout_truncated {
         return None;
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let pages = baseline_page_lengths(&text);
-    if pages.is_empty() { None } else { Some(pages) }
+    if pages.is_empty() {
+        None
+    } else {
+        Some(pages)
+    }
 }
 
 /// Split pdftotext output on form feeds and return trimmed char counts.
@@ -448,9 +553,7 @@ fn page_marker_regex() -> Regex {
 /// page → content). Returns None when the text has no markers at all, in
 /// which case completeness cannot be verified. Content under a repeated
 /// marker is appended, not replaced.
-fn parse_page_sections(
-    text: &str,
-) -> Option<(String, std::collections::BTreeMap<u32, String>)> {
+fn parse_page_sections(text: &str) -> Option<(String, std::collections::BTreeMap<u32, String>)> {
     let re = page_marker_regex();
     let mut sections: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
     let mut preamble = String::new();
@@ -459,9 +562,9 @@ fn parse_page_sections(
     let mut found = false;
 
     let push_segment = |current: Option<u32>,
-                            segment: &str,
-                            sections: &mut std::collections::BTreeMap<u32, String>,
-                            preamble: &mut String| {
+                        segment: &str,
+                        sections: &mut std::collections::BTreeMap<u32, String>,
+                        preamble: &mut String| {
         match current {
             Some(page) => sections.entry(page).or_default().push_str(segment),
             None => preamble.push_str(segment),
@@ -470,7 +573,12 @@ fn parse_page_sections(
 
     for cap in re.captures_iter(text) {
         let m = cap.get(0).expect("regex match has group 0");
-        push_segment(current, &text[seg_start..m.start()], &mut sections, &mut preamble);
+        push_segment(
+            current,
+            &text[seg_start..m.start()],
+            &mut sections,
+            &mut preamble,
+        );
         current = cap[1].parse::<u32>().ok();
         seg_start = m.end();
         found = true;
@@ -540,8 +648,14 @@ fn strip_markdown_fence(text: &str) -> &str {
     if !t.starts_with("```") {
         return t;
     }
-    let Some(first_newline) = t.find('\n') else { return t };
-    if t[3..first_newline].trim().chars().any(|c| !c.is_ascii_alphanumeric()) {
+    let Some(first_newline) = t.find('\n') else {
+        return t;
+    };
+    if t[3..first_newline]
+        .trim()
+        .chars()
+        .any(|c| !c.is_ascii_alphanumeric())
+    {
         return t;
     }
     let rest = &t[first_newline + 1..];
@@ -575,6 +689,7 @@ fn source_line(attach: bool, prompt_path: &str) -> String {
 }
 
 /// Re-request a specific page range that verification flagged.
+#[allow(clippy::too_many_arguments)]
 async fn repair_pages(
     app: &crate::emit::EventBus,
     path: &Path,
@@ -602,8 +717,17 @@ async fn repair_pages(
     };
     let label = format!("LLM extraction repair (pages {start}-{end})");
     let raw = super::claude::call_llm(
-        app, &prompt, &["Read"], None, "text", timeout_secs, &label,
-        None, None, extra_dirs, &overrides,
+        app,
+        &prompt,
+        &["Read"],
+        None,
+        "text",
+        timeout_secs,
+        &label,
+        None,
+        None,
+        extra_dirs,
+        &overrides,
     )
     .await?;
     let text = strip_markdown_fence(&raw).to_string();
@@ -625,8 +749,13 @@ async fn repair_pages(
 /// a pdftotext per-page baseline: pages that are missing or far too short
 /// are re-requested once, and anything still failing becomes an
 /// extraction-quality note instead of a silent gap.
-async fn extract_llm(app: &crate::emit::EventBus, path: &Path, hash: &str) -> Result<ExtractionResult, String> {
-    let path_str = path.to_str()
+async fn extract_llm(
+    app: &crate::emit::EventBus,
+    path: &Path,
+    hash: &str,
+) -> Result<ExtractionResult, String> {
+    let path_str = path
+        .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
     // Normalize backslashes so the path Claude sees in the prompt matches
     // its internal POSIX-form normalization on Windows.
@@ -634,10 +763,15 @@ async fn extract_llm(app: &crate::emit::EventBus, path: &Path, hash: &str) -> Re
     // Grant Read access to the PDF's parent directory.  The cwd defaults
     // to the system temp dir, so without this Claude can't reach files
     // sitting under the user's Documents/Downloads/etc.
-    let parent_dir = path.parent()
+    let parent_dir = path
+        .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let extra_dirs: Vec<&str> = if parent_dir.is_empty() { vec![] } else { vec![&parent_dir] };
+    let extra_dirs: Vec<&str> = if parent_dir.is_empty() {
+        vec![]
+    } else {
+        vec![&parent_dir]
+    };
 
     let settings = crate::settings::load();
     let attach = provider_uses_direct_api(&settings);
@@ -669,8 +803,17 @@ async fn extract_llm(app: &crate::emit::EventBus, path: &Path, hash: &str) -> Re
         ..Default::default()
     };
     let raw = super::claude::call_llm(
-        app, &prompt, &["Read"], None, "text", timeout, "LLM PDF extraction",
-        None, None, &extra_dirs, &overrides,
+        app,
+        &prompt,
+        &["Read"],
+        None,
+        "text",
+        timeout,
+        "LLM PDF extraction",
+        None,
+        None,
+        &extra_dirs,
+        &overrides,
     )
     .await?;
     let text = strip_markdown_fence(&raw).to_string();
@@ -699,7 +842,18 @@ async fn extract_llm(app: &crate::emit::EventBus, path: &Path, hash: &str) -> Re
                     let _ = app.emit_event("pipeline:log", serde_json::json!({
                         "line": format!("Extraction verification: pages {start}-{end} missing or short, re-requesting")
                     }));
-                    match repair_pages(app, path, &prompt_path, start, end, attach, timeout, &extra_dirs).await {
+                    match repair_pages(
+                        app,
+                        path,
+                        &prompt_path,
+                        start,
+                        end,
+                        attach,
+                        timeout,
+                        &extra_dirs,
+                    )
+                    .await
+                    {
                         Ok(repaired) => {
                             for (page, content) in repaired {
                                 sections.insert(page, content);
@@ -736,7 +890,8 @@ async fn extract_llm(app: &crate::emit::EventBus, path: &Path, hash: &str) -> Re
         }
         (None, _) => {
             quality_notes.push(
-                "pdftotext is unavailable, so extraction completeness was not verified.".to_string(),
+                "pdftotext is unavailable, so extraction completeness was not verified."
+                    .to_string(),
             );
             text
         }
@@ -757,21 +912,39 @@ async fn extract_llm(app: &crate::emit::EventBus, path: &Path, hash: &str) -> Re
 /// artifacts; independent of which extraction method ran.
 pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Vec<String>, String> {
     let bin = find_command("pdftoppm").ok_or("pdftoppm not found on PATH")?;
-    let pdf_str = pdf.to_str()
+    let pdf_str = pdf
+        .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", pdf.display()))?;
     fs::create_dir_all(out_dir)
         .map_err(|e| format!("Failed to create {}: {e}", out_dir.display()))?;
     let prefix = out_dir.join("page");
-    let prefix_str = prefix.to_str()
+    let prefix_str = prefix
+        .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
-    let output = StdCommand::new(&bin)
-        .env("PATH", env::full_path())
-        .args(["-png", "-r", "150", "-l", &max_pages.to_string(), pdf_str, prefix_str])
-        .output()
-        .map_err(|e| format!("pdftoppm not available: {e}"))?;
+    let mut command = StdCommand::new(&bin);
+    command.env("PATH", env::full_path()).args([
+        "-png",
+        "-r",
+        "150",
+        "-l",
+        &max_pages.to_string(),
+        pdf_str,
+        prefix_str,
+    ]);
+    let output = run_bounded_output(
+        command,
+        "pdftoppm",
+        std::time::Duration::from_secs(crate::settings::load().step_timeout_secs.max(60)),
+        1_000_000,
+    )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("pdftoppm failed: {}", stderr.trim()));
+        let suffix = if output.stderr_truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        return Err(format!("pdftoppm failed: {}{suffix}", stderr.trim()));
     }
     let mut names: Vec<String> = fs::read_dir(out_dir)
         .map_err(|e| format!("Failed to list {}: {e}", out_dir.display()))?
@@ -803,8 +976,11 @@ fn extract_pdf_native(
 
     if try_marker {
         if find_command("marker_single").is_none() {
-            return Err("PDF extractor is set to 'marker' but marker_single is not installed. \
-                        Install it from Settings → Text Extraction, or change the setting.".to_string());
+            return Err(
+                "PDF extractor is set to 'marker' but marker_single is not installed. \
+                        Install it from Settings → Text Extraction, or change the setting."
+                    .to_string(),
+            );
         }
         let text = extract_marker(path, &hash, marker_disable_ocr, marker_disable_images)?;
         let quality_notes = scan_math_quality(&text);
@@ -823,11 +999,9 @@ fn extract_pdf_native(
                         Install poppler (brew install poppler on macOS, or poppler-utils on Linux) or change the setting.".to_string());
         }
         let text = extract_pdftotext(path)?;
-        let mut quality_notes = vec![
-            "Text extracted via pdftotext. Equations will be garbled. \
+        let mut quality_notes = vec!["Text extracted via pdftotext. Equations will be garbled. \
              Technical findings should be verified against the original PDF."
-                .to_string(),
-        ];
+            .to_string()];
         quality_notes.extend(scan_math_quality(&text));
         return Ok(ExtractionResult {
             text,
@@ -838,10 +1012,7 @@ fn extract_pdf_native(
         });
     }
 
-    Err(
-        "Unknown PDF extraction method. Check your settings."
-            .to_string(),
-    )
+    Err("Unknown PDF extraction method. Check your settings.".to_string())
 }
 
 /// Heuristic scan for garbled math in extracted text.
@@ -858,7 +1029,9 @@ fn scan_math_quality(text: &str) -> Vec<String> {
     // Garbled extraction produces scattered lone symbols: β  ∈  ≥  ∀
     let isolated_non_ascii: usize = text
         .split_whitespace()
-        .filter(|w| w.chars().count() == 1 && w.chars().next().map(|c| !c.is_ascii()).unwrap_or(false))
+        .filter(|w| {
+            w.chars().count() == 1 && w.chars().next().map(|c| !c.is_ascii()).unwrap_or(false)
+        })
         .count();
     let isolated_ratio = isolated_non_ascii as f64 / total_chars * 1000.0;
 
@@ -1064,8 +1237,9 @@ pub async fn extract(
                 // Must be canonical: extract_latex compares it against canonicalized
                 // include paths via starts_with. A non-canonical root silently defeats
                 // the path-traversal check.
-                let root_dir = path.canonicalize()
-                    .map_err(|e| format!("Failed to canonicalize project dir {}: {e}", path.display()))?;
+                let root_dir = path.canonicalize().map_err(|e| {
+                    format!("Failed to canonicalize project dir {}: {e}", path.display())
+                })?;
                 let mut warnings = Vec::new();
                 let text = extract_latex(&tex_path, 0, &root_dir, &mut warnings)?;
                 if text.trim().is_empty() {
@@ -1081,13 +1255,15 @@ pub async fn extract(
             }
 
             if let Some(pdf) = find_pdf_in_dir(&path) {
-                return extract_pdf_native(&pdf, &blocking_method, blocking_disable_ocr, blocking_disable_images);
+                return extract_pdf_native(
+                    &pdf,
+                    &blocking_method,
+                    blocking_disable_ocr,
+                    blocking_disable_images,
+                );
             }
 
-            return Err(format!(
-                "No .tex or .pdf files found in {}",
-                path.display()
-            ));
+            return Err(format!("No .tex or .pdf files found in {}", path.display()));
         }
 
         if ext_eq(&path, "tex") {
@@ -1096,8 +1272,12 @@ pub async fn extract(
             // include paths via starts_with. A non-canonical root silently defeats
             // the path-traversal check.
             let parent = path.parent().unwrap_or(Path::new("."));
-            let root_dir = parent.canonicalize()
-                .map_err(|e| format!("Failed to canonicalize parent dir {}: {e}", parent.display()))?;
+            let root_dir = parent.canonicalize().map_err(|e| {
+                format!(
+                    "Failed to canonicalize parent dir {}: {e}",
+                    parent.display()
+                )
+            })?;
             let mut warnings = Vec::new();
             let text = extract_latex(&path, 0, &root_dir, &mut warnings)?;
             if text.trim().is_empty() {
@@ -1111,9 +1291,17 @@ pub async fn extract(
                 quality_notes: warnings,
             })
         } else if ext_eq(&path, "pdf") {
-            extract_pdf_native(&path, &blocking_method, blocking_disable_ocr, blocking_disable_images)
+            extract_pdf_native(
+                &path,
+                &blocking_method,
+                blocking_disable_ocr,
+                blocking_disable_images,
+            )
         } else {
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("(none)");
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("(none)");
             Err(format!("Unsupported file type: .{ext}"))
         }
     })
@@ -1143,6 +1331,30 @@ pub async fn extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn bounded_subprocess_times_out_promptly() {
+        let mut command = StdCommand::new("sleep");
+        command.arg("5");
+        let started = std::time::Instant::now();
+        let error = run_bounded_output(
+            command,
+            "sleep test",
+            std::time::Duration::from_millis(20),
+            1024,
+        )
+        .unwrap_err();
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn file_hash_is_streamed_and_matches_sha256() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, b"abc").unwrap();
+        assert_eq!(compute_hash(file.path()).unwrap(), "ba7816bf8f01cfea");
+    }
 
     // ── scan_math_quality ──────────────────────────────────────────
 
@@ -1305,7 +1517,14 @@ mod tests {
 
 /// Directories that never belong in an inventory.
 const SKIP_DIRS: &[&str] = &[
-    ".git", "node_modules", "target", "__pycache__", ".venv", "venv", "dist", "build",
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
 ];
 /// Inventory size cap — beyond this the listing notes the truncation.
 const MAX_INVENTORY_FILES: usize = 2000;
@@ -1414,7 +1633,10 @@ mod ingest_tests {
     fn effective_mode_resolution() {
         assert_eq!(effective_input_mode("none", ""), "none");
         assert_eq!(effective_input_mode("folder", "/x"), "folder");
-        assert_eq!(effective_input_mode("", "/definitely/not/a/dir.pdf"), "document");
+        assert_eq!(
+            effective_input_mode("", "/definitely/not/a/dir.pdf"),
+            "document"
+        );
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
             effective_input_mode("", dir.path().to_str().unwrap()),

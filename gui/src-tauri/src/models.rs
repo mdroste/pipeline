@@ -135,8 +135,11 @@ impl OrientationMap {
     pub fn empty(paper_text: &str) -> Self {
         // Guess paper type from text heuristics
         let lower = paper_text.to_lowercase();
-        let has_regression = lower.contains("regression") || lower.contains("standard error") || lower.contains("coefficient");
-        let has_theorem = lower.contains("theorem") || lower.contains("proof") || lower.contains("proposition");
+        let has_regression = lower.contains("regression")
+            || lower.contains("standard error")
+            || lower.contains("coefficient");
+        let has_theorem =
+            lower.contains("theorem") || lower.contains("proof") || lower.contains("proposition");
         let paper_type = if has_theorem && !has_regression {
             PaperType::Theory
         } else if has_regression && !has_theorem {
@@ -346,9 +349,7 @@ impl PipelineReport {
                 .map(|s| s.raw_text.as_str());
         }
         // Legacy
-        self.editor
-            .as_ref()
-            .map(|e| e.overall_assessment.as_str())
+        self.editor.as_ref().map(|e| e.overall_assessment.as_str())
     }
 }
 
@@ -518,7 +519,11 @@ mod tests {
 
     // ── PipelineReport::all_outputs ───────────────────────────────────
 
-    fn make_report(step_outputs: Vec<StepOutput>, referees: Vec<RefereeReport>, editor: Option<EditorSynthesis>) -> PipelineReport {
+    fn make_report(
+        step_outputs: Vec<StepOutput>,
+        referees: Vec<RefereeReport>,
+        editor: Option<EditorSynthesis>,
+    ) -> PipelineReport {
         PipelineReport {
             orientation: serde_json::to_value(empty_orientation()).unwrap(),
             step_outputs,
@@ -580,8 +585,22 @@ mod tests {
     #[test]
     fn final_output_prefers_sequential() {
         let outputs = vec![
-            StepOutput { step_id: "s1".into(), step_label: "P1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "parallel text".into(), ..Default::default() },
-            StepOutput { step_id: "s2".into(), step_label: "Seq".into(), phase: "sequential".into(), agent: String::new(), raw_text: "sequential text".into(), ..Default::default() },
+            StepOutput {
+                step_id: "s1".into(),
+                step_label: "P1".into(),
+                phase: "parallel".into(),
+                agent: String::new(),
+                raw_text: "parallel text".into(),
+                ..Default::default()
+            },
+            StepOutput {
+                step_id: "s2".into(),
+                step_label: "Seq".into(),
+                phase: "sequential".into(),
+                agent: String::new(),
+                raw_text: "sequential text".into(),
+                ..Default::default()
+            },
         ];
         let report = make_report(outputs, vec![], None);
         assert_eq!(report.final_output(), Some("sequential text"));
@@ -589,16 +608,23 @@ mod tests {
 
     #[test]
     fn final_output_falls_back_to_last() {
-        let outputs = vec![
-            StepOutput { step_id: "s1".into(), step_label: "P1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "only parallel".into(), ..Default::default() },
-        ];
+        let outputs = vec![StepOutput {
+            step_id: "s1".into(),
+            step_label: "P1".into(),
+            phase: "parallel".into(),
+            agent: String::new(),
+            raw_text: "only parallel".into(),
+            ..Default::default()
+        }];
         let report = make_report(outputs, vec![], None);
         assert_eq!(report.final_output(), Some("only parallel"));
     }
 
     #[test]
     fn final_output_legacy_editor() {
-        let editor = EditorSynthesis { overall_assessment: "legacy synthesis".into() };
+        let editor = EditorSynthesis {
+            overall_assessment: "legacy synthesis".into(),
+        };
         let report = make_report(vec![], vec![], Some(editor));
         assert_eq!(report.final_output(), Some("legacy synthesis"));
     }

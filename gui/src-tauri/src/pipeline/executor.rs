@@ -20,6 +20,8 @@ pub struct ExecutionResult {
     pub failed_steps: Vec<StepFailure>,
 }
 
+type ParallelTaskResult = Result<((usize, String), StepOutput), StepFailure>;
+
 /// Execute all enabled steps in the pipeline.
 ///
 /// Steps run on a dependency schedule: each step becomes "ready" once its
@@ -42,7 +44,7 @@ pub async fn execute_steps(
     survey_hint: &str,
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
-    preloaded: &std::collections::HashMap<String, StepOutput>,
+    preloaded: &std::collections::HashMap<String, Vec<StepOutput>>,
     write_dir: Option<&str>,
 ) -> Result<ExecutionResult, String> {
     let settings = crate::settings::load();
@@ -58,13 +60,12 @@ pub async fn execute_steps(
     let mut remaining: Vec<usize> = (0..enabled.len()).collect();
 
     while !remaining.is_empty() {
-        let ready: Vec<usize> = remaining
-            .iter()
-            .copied()
-            .filter(|&i| deps[i].iter().all(|d| done.contains(d)))
-            .collect();
+        let ready = ready_indices(&remaining, &deps, &done);
         if ready.is_empty() {
-            let stuck: Vec<&str> = remaining.iter().map(|&i| enabled[i].label.as_str()).collect();
+            let stuck: Vec<&str> = remaining
+                .iter()
+                .map(|&i| enabled[i].label.as_str())
+                .collect();
             return Err(format!(
                 "Pipeline stalled — steps have unsatisfiable dependencies (a cycle or a disabled upstream step): {}",
                 stuck.join(", ")
@@ -85,13 +86,20 @@ pub async fn execute_steps(
                 let step = enabled[i];
                 // Resume: a preloaded step reuses the parent run's output.
                 if let Some(cached) = preloaded.get(&step.id) {
-                    let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "done"}));
-                    all_outputs.push(cached.clone());
+                    let _ = app.emit_event(
+                        "pipeline:pass",
+                        serde_json::json!({"name": step.id, "status": "done"}),
+                    );
+                    all_outputs.extend(cached.iter().cloned());
                     done.insert(step.id.clone());
                     continue;
                 }
                 if let Some(cond) = &step.run_if {
-                    if !crate::pipeline::conditions::condition_met(cond, orientation_value, &all_outputs) {
+                    if !crate::pipeline::conditions::condition_met(
+                        cond,
+                        orientation_value,
+                        &all_outputs,
+                    ) {
                         emit_skip(app, step);
                         all_outputs.push(skip_output(step));
                         done.insert(step.id.clone());
@@ -103,18 +111,46 @@ pub async fn execute_steps(
             remaining.retain(|i| !ready_parallel.contains(i));
 
             if !to_run.is_empty() {
-                app.emit_event("pipeline:stage", serde_json::json!({"stage": "dispatching"})).ok();
+                app.emit_event(
+                    "pipeline:stage",
+                    serde_json::json!({"stage": "dispatching"}),
+                )
+                .ok();
                 let (mut wave_outputs, wave_failures) = run_parallel_wave(
-                    app, to_run, &settings, &semaphore, orientation_path, paper_text_path,
-                    source_path, paper_type, survey_hint, &config.parallel_context_template, variables, extra_inputs, write_dir,
+                    app,
+                    &to_run,
+                    &settings,
+                    &semaphore,
+                    orientation_path,
+                    paper_text_path,
+                    source_path,
+                    paper_type,
+                    survey_hint,
+                    &config.parallel_context_template,
+                    variables,
+                    extra_inputs,
+                    write_dir,
                 )
                 .await?;
+                // Every dispatched step is terminal once its wave returns. A
+                // failed unit and a fan-out with zero matching units both lack
+                // a StepOutput, so deriving completion from outputs alone
+                // leaves their dependents permanently blocked.
+                mark_steps_done(&mut done, &to_run);
                 failed_steps.extend(wave_failures);
 
                 let has_multi_agent = wave_outputs.iter().any(|o| o.step_id.contains('/'));
                 if has_multi_agent && config.merge.enabled {
-                    app.emit_event("pipeline:stage", serde_json::json!({"stage": "merging"})).ok();
-                    match merge::merge_step_outputs(app, wave_outputs.clone(), &config.merge, &semaphore).await {
+                    app.emit_event("pipeline:stage", serde_json::json!({"stage": "merging"}))
+                        .ok();
+                    match merge::merge_step_outputs(
+                        app,
+                        wave_outputs.clone(),
+                        &config.merge,
+                        &semaphore,
+                    )
+                    .await
+                    {
                         Ok(merged) => wave_outputs = merged,
                         Err(e) => {
                             let _ = app.emit_event(
@@ -123,9 +159,6 @@ pub async fn execute_steps(
                             );
                         }
                     }
-                }
-                for o in &wave_outputs {
-                    done.insert(base_id(&o.step_id).to_string());
                 }
                 all_outputs.extend(wave_outputs);
             }
@@ -139,9 +172,12 @@ pub async fn execute_steps(
 
         // Resume: a preloaded step reuses the parent run's output.
         if let Some(cached) = preloaded.get(&step.id) {
-            let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "done"}));
+            let _ = app.emit_event(
+                "pipeline:pass",
+                serde_json::json!({"name": step.id, "status": "done"}),
+            );
             done.insert(step.id.clone());
-            all_outputs.push(cached.clone());
+            all_outputs.extend(cached.iter().cloned());
             continue;
         }
 
@@ -154,7 +190,11 @@ pub async fn execute_steps(
             }
         }
 
-        app.emit_event("pipeline:stage", serde_json::json!({"stage": "synthesizing"})).ok();
+        app.emit_event(
+            "pipeline:stage",
+            serde_json::json!({"stage": "synthesizing"}),
+        )
+        .ok();
         // A step with explicit inputs sees only those upstream outputs; the
         // implicit-schedule case (empty inputs) sees everything prior, as before.
         let prior: Vec<StepOutput> = if step.inputs.is_empty() {
@@ -167,17 +207,32 @@ pub async fn execute_steps(
                 .collect()
         };
         match run_sequential_step(
-            app, step, &prior, orientation_path, paper_text_path, source_path, survey_hint, variables, extra_inputs, write_dir,
+            app,
+            step,
+            &prior,
+            orientation_path,
+            paper_text_path,
+            source_path,
+            survey_hint,
+            variables,
+            extra_inputs,
+            write_dir,
         )
         .await
         {
             Ok(output) => {
-                let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "done"}));
+                let _ = app.emit_event(
+                    "pipeline:pass",
+                    serde_json::json!({"name": step.id, "status": "done"}),
+                );
                 done.insert(step.id.clone());
                 all_outputs.push(output);
             }
             Err(e) => {
-                let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "error"}));
+                let _ = app.emit_event(
+                    "pipeline:pass",
+                    serde_json::json!({"name": step.id, "status": "error"}),
+                );
                 let _ = app.emit_event(
                     "pipeline:log",
                     serde_json::json!({ "line": format!("WARNING: step '{}' failed: {e}. Returning prior outputs.", step.label) }),
@@ -197,7 +252,26 @@ pub async fn execute_steps(
         return Err("No steps produced output. Enable at least one step (or check that run_if conditions can pass).".into());
     }
 
-    Ok(ExecutionResult { outputs: all_outputs, failed_steps })
+    Ok(ExecutionResult {
+        outputs: all_outputs,
+        failed_steps,
+    })
+}
+
+fn ready_indices(
+    remaining: &[usize],
+    deps: &[std::collections::HashSet<String>],
+    done: &std::collections::HashSet<String>,
+) -> Vec<usize> {
+    remaining
+        .iter()
+        .copied()
+        .filter(|&i| deps[i].iter().all(|d| done.contains(d)))
+        .collect()
+}
+
+fn mark_steps_done(done: &mut std::collections::HashSet<String>, steps: &[&StepConfig]) {
+    done.extend(steps.iter().map(|step| step.id.clone()));
 }
 
 /// Base id of a (possibly composite) step key: "technical/claude" → "technical".
@@ -248,10 +322,14 @@ pub fn dependents_of(
     let enabled: Vec<&StepConfig> = config.steps.iter().filter(|s| s.enabled).collect();
     let deps = resolve_dependencies(&enabled);
     // Reverse edges: dep -> steps that depend on it.
-    let mut dependents: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    let mut dependents: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
     for (i, s) in enabled.iter().enumerate() {
         for d in &deps[i] {
-            dependents.entry(d.as_str()).or_default().push(s.id.as_str());
+            dependents
+                .entry(d.as_str())
+                .or_default()
+                .push(s.id.as_str());
         }
     }
     let mut out: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -284,7 +362,10 @@ fn skip_output(step: &StepConfig) -> StepOutput {
 }
 
 fn emit_skip(app: &crate::emit::EventBus, step: &StepConfig) {
-    let _ = app.emit_event("pipeline:pass", serde_json::json!({"name": step.id, "status": "skipped"}));
+    let _ = app.emit_event(
+        "pipeline:pass",
+        serde_json::json!({"name": step.id, "status": "skipped"}),
+    );
     let _ = app.emit_event(
         "pipeline:log",
         serde_json::json!({ "line": format!("Step '{}' skipped (run_if condition not met)", step.label) }),
@@ -299,7 +380,13 @@ fn step_slug(step_key: &str) -> String {
     step_key
         .replace('/', "__")
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -356,7 +443,11 @@ fn tools_with_write(step_tools: &[String], write_dir: Option<&str>) -> Vec<Strin
 /// The model that will actually run a step: the per-step override when set,
 /// otherwise the provider's global model ("" means the provider's own default).
 /// Recorded on the StepOutput so the run summary can show what ran.
-fn resolve_model(settings: &crate::settings::Settings, provider: &str, model_override: &str) -> String {
+fn resolve_model(
+    settings: &crate::settings::Settings,
+    provider: &str,
+    model_override: &str,
+) -> String {
     let ov = model_override.trim();
     if !ov.is_empty() {
         return ov.to_string();
@@ -369,10 +460,10 @@ fn resolve_model(settings: &crate::settings::Settings, provider: &str, model_ove
     }
 }
 
-
 // ── Parallel execution ──────────────────────────────────────────────
 
 /// Build the prompt for a parallel step (referee-style).
+#[allow(clippy::too_many_arguments)]
 fn build_parallel_prompt(
     step: &StepConfig,
     paper_type: &str,
@@ -445,7 +536,9 @@ fn fan_out_root(source_path: &str) -> std::path::PathBuf {
     if p.is_dir() {
         p.to_path_buf()
     } else {
-        p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."))
+        p.parent()
+            .map(|d| d.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
     }
 }
 
@@ -466,7 +559,8 @@ fn build_units(
 
     if let Some(fe) = &step.for_each {
         let root = fan_out_root(source_path);
-        let (items, truncated) = crate::pipeline::glob::expand(&root, &fe.glob, fe.max.max(1) as usize);
+        let (items, truncated) =
+            crate::pipeline::glob::expand(&root, &fe.glob, fe.max.max(1) as usize);
         if items.is_empty() {
             let _ = app.emit_event(
                 "pipeline:log",
@@ -498,7 +592,12 @@ fn build_units(
                     suffix = format!("{}_{}", step_slug(&base), n);
                     n += 1;
                 }
-                Unit { agent: provider.clone(), item: Some(path), suffix, display: base }
+                Unit {
+                    agent: provider.clone(),
+                    item: Some(path),
+                    suffix,
+                    display: base,
+                }
             })
             .collect()
     } else {
@@ -521,9 +620,10 @@ fn build_units(
 }
 
 /// Run all parallel steps in a wave concurrently.
+#[allow(clippy::too_many_arguments)]
 async fn run_parallel_wave(
     app: &crate::emit::EventBus,
-    steps: Vec<&StepConfig>,
+    steps: &[&StepConfig],
     settings: &crate::settings::Settings,
     semaphore: &Arc<Semaphore>,
     orientation_path: &str,
@@ -540,8 +640,7 @@ async fn run_parallel_wave(
         .parent()
         .map(|p| p.to_string_lossy().to_string());
 
-    let mut tasks: JoinSet<Result<((usize, String), StepOutput), StepFailure>> =
-        JoinSet::new();
+    let mut tasks: JoinSet<ParallelTaskResult> = JoinSet::new();
 
     for (idx, step) in steps.iter().enumerate() {
         let units = build_units(step, settings, source_path, app);
@@ -995,7 +1094,10 @@ async fn run_sequential_step(
 
     let base_prompt = substitute_run_context(&base_prompt, variables, extra_inputs);
     let report_rel = format!("steps/{}.md", step_slug(&step.id));
-    let prompt = format!("{base_prompt}\n\n{}", output_format_block(write_dir, &report_rel));
+    let prompt = format!(
+        "{base_prompt}\n\n{}",
+        output_format_block(write_dir, &report_rel)
+    );
 
     let tools = tools_with_write(&step.tools, write_dir);
     let tool_refs: Vec<&str> = tools.iter().map(|s| s.as_str()).collect();
@@ -1039,7 +1141,17 @@ async fn run_sequential_step(
         let (call_result, call_usage) = crate::pipeline::logging::with_pass(
             step.id.clone(),
             crate::pipeline::logging::measure_usage(call_llm(
-                app, &prompt, &tool_refs, None, "text", timeout, &log_label, agent, source_dir.as_deref(), &extra, &overrides,
+                app,
+                &prompt,
+                &tool_refs,
+                None,
+                "text",
+                timeout,
+                &log_label,
+                agent,
+                source_dir.as_deref(),
+                &extra,
+                &overrides,
             )),
         )
         .await;
@@ -1050,7 +1162,8 @@ async fn run_sequential_step(
         // if the call failed with nothing written.
         let candidate: Option<String> = match call_result {
             Ok(text) => Some(
-                ingest_report_file(write_dir, &report_rel).unwrap_or_else(|| strip_to_report(&text)),
+                ingest_report_file(write_dir, &report_rel)
+                    .unwrap_or_else(|| strip_to_report(&text)),
             ),
             Err(e) => {
                 if e.contains("cancelled") {
@@ -1146,7 +1259,10 @@ mod tests {
 
     #[test]
     fn implicit_parallel_wave_has_no_deps() {
-        let steps = [make_step("a", Phase::Parallel), make_step("b", Phase::Parallel)];
+        let steps = [
+            make_step("a", Phase::Parallel),
+            make_step("b", Phase::Parallel),
+        ];
         let deps = deps_of(&steps);
         assert!(deps[0].is_empty());
         assert!(deps[1].is_empty());
@@ -1160,7 +1276,10 @@ mod tests {
             make_step("s", Phase::Sequential),
         ];
         let deps = deps_of(&steps);
-        assert_eq!(deps[2], ["a".to_string(), "b".to_string()].into_iter().collect());
+        assert_eq!(
+            deps[2],
+            ["a".to_string(), "b".to_string()].into_iter().collect()
+        );
     }
 
     #[test]
@@ -1175,7 +1294,12 @@ mod tests {
         assert!(deps[0].is_empty()); // p1
         assert_eq!(deps[1], ["p1".to_string()].into_iter().collect()); // s1 waits for p1
         assert_eq!(deps[2], ["s1".to_string()].into_iter().collect()); // p3 waits for s1 only
-        assert_eq!(deps[3], ["p1".to_string(), "s1".to_string(), "p3".to_string()].into_iter().collect());
+        assert_eq!(
+            deps[3],
+            ["p1".to_string(), "s1".to_string(), "p3".to_string()]
+                .into_iter()
+                .collect()
+        );
     }
 
     #[test]
@@ -1227,6 +1351,49 @@ mod tests {
         assert_eq!(units[1].suffix, "gemini");
     }
 
+    #[test]
+    fn terminal_parallel_failure_unblocks_dependent_step() {
+        let mut downstream = make_step("downstream", Phase::Sequential);
+        downstream.inputs = vec!["ok".into(), "failed".into()];
+        let steps = [
+            make_step("ok", Phase::Parallel),
+            make_step("failed", Phase::Parallel),
+            downstream,
+        ];
+        let refs: Vec<&StepConfig> = steps.iter().collect();
+        let deps = resolve_dependencies(&refs);
+        let mut done = std::collections::HashSet::new();
+
+        // A returned wave is terminal even when only one member produced an
+        // output. Completion must follow dispatch, not StepOutput presence.
+        mark_steps_done(&mut done, &refs[..2]);
+
+        assert_eq!(ready_indices(&[2], &deps, &done), vec![2]);
+    }
+
+    #[test]
+    fn zero_match_fan_out_is_terminal_and_unblocks_dependent_step() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut fan = make_step("fan", Phase::Parallel);
+        fan.for_each = Some(crate::pipeline_config::ForEach {
+            glob: "**/*.does-not-exist".into(),
+            max: 20,
+        });
+        let mut downstream = make_step("downstream", Phase::Sequential);
+        downstream.inputs = vec!["fan".into()];
+        let steps = [fan, downstream];
+        let refs: Vec<&StepConfig> = steps.iter().collect();
+        let settings = crate::settings::Settings::default();
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+
+        assert!(build_units(&steps[0], &settings, temp.path().to_str().unwrap(), &bus).is_empty());
+
+        let deps = resolve_dependencies(&refs);
+        let mut done = std::collections::HashSet::new();
+        mark_steps_done(&mut done, &refs[..1]);
+        assert_eq!(ready_indices(&[1], &deps, &done), vec![1]);
+    }
+
     // ── dependents_of ──────────────────────────────────────────────
 
     #[test]
@@ -1259,20 +1426,30 @@ mod tests {
     fn substitute_replaces_known_and_blanks_unknown() {
         let mut vars = std::collections::HashMap::new();
         vars.insert("journal".to_string(), "AER".to_string());
-        let out = substitute_placeholders("Review for {var:journal}; persona {var:persona}.", "{var:", &vars);
+        let out = substitute_placeholders(
+            "Review for {var:journal}; persona {var:persona}.",
+            "{var:",
+            &vars,
+        );
         assert_eq!(out, "Review for AER; persona .");
     }
 
     #[test]
     fn substitute_no_placeholders_is_unchanged() {
         let vars = std::collections::HashMap::new();
-        assert_eq!(substitute_placeholders("plain prompt", "{var:", &vars), "plain prompt");
+        assert_eq!(
+            substitute_placeholders("plain prompt", "{var:", &vars),
+            "plain prompt"
+        );
     }
 
     #[test]
     fn substitute_unclosed_brace_passes_through() {
         let vars = std::collections::HashMap::new();
-        assert_eq!(substitute_placeholders("oops {var:x", "{var:", &vars), "oops {var:x");
+        assert_eq!(
+            substitute_placeholders("oops {var:x", "{var:", &vars),
+            "oops {var:x"
+        );
     }
 
     #[test]
@@ -1295,7 +1472,16 @@ mod tests {
     fn build_parallel_prompt_pdf() {
         let step = make_step("test", Phase::Parallel);
         let template = "{paper_type}\n{orientation}\n{step_prompt}\n{paper_path}\n{figure_hint}";
-        let result = build_parallel_prompt(&step, "empirical", "/tmp/orient.json", "Read it for the paper's structure.", "/tmp/paper.txt", "/tmp/paper.pdf", template, "");
+        let result = build_parallel_prompt(
+            &step,
+            "empirical",
+            "/tmp/orient.json",
+            "Read it for the paper's structure.",
+            "/tmp/paper.txt",
+            "/tmp/paper.pdf",
+            template,
+            "",
+        );
         assert!(result.contains("empirical"));
         assert!(result.contains("/tmp/orient.json"));
         assert!(result.contains("Read it for the paper's structure."));
@@ -1307,7 +1493,16 @@ mod tests {
     fn input_path_alias_substitutes_like_paper_path() {
         let step = make_step("test", Phase::Parallel);
         let template = "old={paper_path} new={input_path}";
-        let result = build_parallel_prompt(&step, "empirical", "", "", "/tmp/paper.txt", "/tmp/p.pdf", template, "");
+        let result = build_parallel_prompt(
+            &step,
+            "empirical",
+            "",
+            "",
+            "/tmp/paper.txt",
+            "/tmp/p.pdf",
+            template,
+            "",
+        );
         assert!(result.contains("old=/tmp/paper.txt"));
         assert!(result.contains("new=/tmp/paper.txt"));
     }
@@ -1316,7 +1511,16 @@ mod tests {
     fn build_parallel_prompt_latex() {
         let step = make_step("test", Phase::Parallel);
         let template = "{figure_hint}";
-        let result = build_parallel_prompt(&step, "theory", "", "", "/tmp/paper.txt", "/home/user/papers/main.tex", template, "");
+        let result = build_parallel_prompt(
+            &step,
+            "theory",
+            "",
+            "",
+            "/tmp/paper.txt",
+            "/home/user/papers/main.tex",
+            template,
+            "",
+        );
         assert!(result.contains("LaTeX source directory"));
     }
 
@@ -1324,7 +1528,16 @@ mod tests {
     fn build_parallel_prompt_empty_orientation() {
         let step = make_step("test", Phase::Parallel);
         let template = "[{orientation}]";
-        let result = build_parallel_prompt(&step, "mixed", "", "unused hint", "/tmp/paper.txt", "/tmp/paper.pdf", template, "");
+        let result = build_parallel_prompt(
+            &step,
+            "mixed",
+            "",
+            "unused hint",
+            "/tmp/paper.txt",
+            "/tmp/paper.pdf",
+            template,
+            "",
+        );
         assert_eq!(result, "[]");
     }
 
@@ -1333,11 +1546,21 @@ mod tests {
         let step = make_step("test", Phase::Parallel);
         let template = "{step_prompt}\n{output_format}";
         let block = output_format_block(Some("/runs/r1/artifacts"), "steps/test.md");
-        let result = build_parallel_prompt(&step, "", "", "", "/tmp/p.txt", "/tmp/p.pdf", template, &block);
+        let result = build_parallel_prompt(
+            &step,
+            "",
+            "",
+            "",
+            "/tmp/p.txt",
+            "/tmp/p.pdf",
+            template,
+            &block,
+        );
         assert!(result.contains("/runs/r1/artifacts/steps/test.md"));
         // Old templates without the placeholder pass through untouched.
         let old = "{step_prompt}\nREPORT START markers here";
-        let result = build_parallel_prompt(&step, "", "", "", "/tmp/p.txt", "/tmp/p.pdf", old, &block);
+        let result =
+            build_parallel_prompt(&step, "", "", "", "/tmp/p.txt", "/tmp/p.pdf", old, &block);
         assert!(!result.contains("{output_format}"));
         assert!(result.contains("REPORT START markers here"));
     }
@@ -1374,7 +1597,10 @@ mod tests {
         // Present file → content, and the file is consumed.
         std::fs::create_dir_all(dir.path().join("steps")).unwrap();
         std::fs::write(dir.path().join("steps/a.md"), "# Report\nbody\n").unwrap();
-        assert_eq!(ingest_report_file(Some(&wd), "steps/a.md").unwrap(), "# Report\nbody");
+        assert_eq!(
+            ingest_report_file(Some(&wd), "steps/a.md").unwrap(),
+            "# Report\nbody"
+        );
         assert!(!dir.path().join("steps/a.md").exists());
 
         // Empty file → None (falls back to stdout), file left in place.
@@ -1396,11 +1622,32 @@ mod tests {
     #[test]
     fn expand_template_basic() {
         let prior = vec![
-            StepOutput { step_id: "s1".into(), step_label: "Step 1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "output1".into(), ..Default::default() },
-            StepOutput { step_id: "s2".into(), step_label: "Step 2".into(), phase: "parallel".into(), agent: String::new(), raw_text: "output2".into(), ..Default::default() },
+            StepOutput {
+                step_id: "s1".into(),
+                step_label: "Step 1".into(),
+                phase: "parallel".into(),
+                agent: String::new(),
+                raw_text: "output1".into(),
+                ..Default::default()
+            },
+            StepOutput {
+                step_id: "s2".into(),
+                step_label: "Step 2".into(),
+                phase: "parallel".into(),
+                agent: String::new(),
+                raw_text: "output2".into(),
+                ..Default::default()
+            },
         ];
         let template = "Prior:\n{prior_outputs}\n\nLast: {last_output}";
-        let result = expand_template(template, "/orient.json", "Read it.", &prior, "/paper.txt", "/source.tex");
+        let result = expand_template(
+            template,
+            "/orient.json",
+            "Read it.",
+            &prior,
+            "/paper.txt",
+            "/source.tex",
+        );
         assert!(result.contains("## Step 1"));
         assert!(result.contains("output1"));
         assert!(result.contains("output2"));
@@ -1409,9 +1656,14 @@ mod tests {
 
     #[test]
     fn expand_template_backward_compat_aliases() {
-        let prior = vec![
-            StepOutput { step_id: "s1".into(), step_label: "S1".into(), phase: "parallel".into(), agent: String::new(), raw_text: "text".into(), ..Default::default() },
-        ];
+        let prior = vec![StepOutput {
+            step_id: "s1".into(),
+            step_label: "S1".into(),
+            phase: "parallel".into(),
+            agent: String::new(),
+            raw_text: "text".into(),
+            ..Default::default()
+        }];
         let template = "{referee_reports} | {editor_synthesis}";
         let result = expand_template(template, "", "", &prior, "/paper.txt", "/source.tex");
         assert!(result.contains("## S1"));
@@ -1467,7 +1719,14 @@ mod tests {
             out("technical/claude", "Technical (Claude)", "claude says"),
             out("technical/gemini", "Technical (Gemini)", "gemini says"),
         ];
-        let result = expand_template("Just one: {step:technical/claude}", "", "", &prior, "p", "s");
+        let result = expand_template(
+            "Just one: {step:technical/claude}",
+            "",
+            "",
+            &prior,
+            "p",
+            "s",
+        );
         assert!(result.contains("claude says"));
         assert!(!result.contains("gemini says"));
     }

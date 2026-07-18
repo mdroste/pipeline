@@ -474,7 +474,10 @@ fn profiles_dir() -> Result<PathBuf, String> {
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(e) = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)) {
-            eprintln!("WARNING: could not tighten permissions on {}: {e}", dir.display());
+            eprintln!(
+                "WARNING: could not tighten permissions on {}: {e}",
+                dir.display()
+            );
         }
     }
     Ok(dir)
@@ -517,7 +520,13 @@ pub fn slugify(name: &str) -> String {
 pub fn sanitize_step_id(id: &str) -> String {
     let sanitized: String = id
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     // Collapse consecutive dashes and trim leading/trailing
     sanitized
@@ -658,7 +667,13 @@ const BUILTIN_PROFILES: &[&str] = &[
 ];
 
 /// Step whose prompt is a named compiled-in default. Enabled, no agents.
-fn prompt_step(id: &str, label: &str, phase: Phase, tools: &[&str], prompt_name: &str) -> StepConfig {
+fn prompt_step(
+    id: &str,
+    label: &str,
+    phase: Phase,
+    tools: &[&str],
+    prompt_name: &str,
+) -> StepConfig {
     StepConfig {
         id: id.into(),
         label: label.into(),
@@ -716,7 +731,11 @@ fn issues_synthesis_step(id: &str, label: &str) -> StepConfig {
 /// Domain-neutral profile scaffold: generic wrapper + generic survey prompt.
 /// Folder-input profiles get the folder survey, which explores the tree with
 /// the Read tool instead of surveying the file inventory text.
-fn generic_profile(name: &str, steps: Vec<StepConfig>, extraction: ExtractionConfig) -> ProfileData {
+fn generic_profile(
+    name: &str,
+    steps: Vec<StepConfig>,
+    extraction: ExtractionConfig,
+) -> ProfileData {
     let survey = if extraction.input_mode == "folder" {
         "orientation_folder"
     } else {
@@ -741,8 +760,7 @@ fn write_builtin_if_missing(path: &PathBuf, profile: &ProfileData) -> Result<(),
     }
     let json =
         serde_json::to_string_pretty(profile).map_err(|e| format!("Serialize error: {e}"))?;
-    fs::write(path, json)
-        .map_err(|e| format!("Failed to write {}: {e}", path.display()))
+    fs::write(path, json).map_err(|e| format!("Failed to write {}: {e}", path.display()))
 }
 
 /// Built-in profiles created on first run.
@@ -793,8 +811,8 @@ fn create_builtin_profiles() -> Result<(), String> {
             parallel_context_template: default_parallel_template(),
             variables: Vec::new(),
         };
-        let json = serde_json::to_string_pretty(&profile)
-            .map_err(|e| format!("Serialize error: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(&profile).map_err(|e| format!("Serialize error: {e}"))?;
         fs::write(&quick_path, json)
             .map_err(|e| format!("Failed to write quick-review profile: {e}"))?;
     }
@@ -873,8 +891,8 @@ fn create_builtin_profiles() -> Result<(), String> {
             parallel_context_template: default_parallel_template(),
             variables: Vec::new(),
         };
-        let json = serde_json::to_string_pretty(&profile)
-            .map_err(|e| format!("Serialize error: {e}"))?;
+        let json =
+            serde_json::to_string_pretty(&profile).map_err(|e| format!("Serialize error: {e}"))?;
         fs::write(&empirical_path, json)
             .map_err(|e| format!("Failed to write empirical profile: {e}"))?;
     }
@@ -895,10 +913,34 @@ fn create_builtin_profiles() -> Result<(), String> {
         &generic_profile(
             "Quick Code Review",
             vec![
-                prompt_step("code_correctness", "Correctness", Phase::Parallel, &["Read"], "code_correctness"),
-                prompt_step("code_design", "Design & Maintainability", Phase::Parallel, &["Read"], "code_design"),
-                prompt_step("code_security", "Security", Phase::Parallel, &["Read"], "code_security"),
-                prompt_step("code_synthesis", "Consolidate Findings", Phase::Sequential, &[], "code_synthesis"),
+                prompt_step(
+                    "code_correctness",
+                    "Correctness",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_correctness",
+                ),
+                prompt_step(
+                    "code_design",
+                    "Design & Maintainability",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_design",
+                ),
+                prompt_step(
+                    "code_security",
+                    "Security",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_security",
+                ),
+                prompt_step(
+                    "code_synthesis",
+                    "Consolidate Findings",
+                    Phase::Sequential,
+                    &[],
+                    "code_synthesis",
+                ),
             ],
             folder_extraction(),
         ),
@@ -911,15 +953,69 @@ fn create_builtin_profiles() -> Result<(), String> {
         &generic_profile(
             "Deep Code Review",
             vec![
-                prompt_step("code_correctness", "Correctness", Phase::Parallel, &["Read"], "code_correctness"),
-                prompt_step("code_security", "Security", Phase::Parallel, &["Read"], "code_security"),
-                prompt_step("code_design", "Design & Maintainability", Phase::Parallel, &["Read"], "code_design"),
-                prompt_step("code_concurrency", "Concurrency & Resources", Phase::Parallel, &["Read"], "code_concurrency"),
-                prompt_step("code_errors", "Error Handling & Edge Cases", Phase::Parallel, &["Read"], "code_errors"),
-                prompt_step("code_performance", "Performance", Phase::Parallel, &["Read"], "code_performance"),
-                prompt_step("code_tests", "Test Coverage & Quality", Phase::Parallel, &["Read"], "code_tests"),
-                prompt_step("code_synthesis", "Consolidate Findings", Phase::Sequential, &[], "code_synthesis"),
-                prompt_step("code_verify", "Verify Findings", Phase::Sequential, &["Read"], "code_verify"),
+                prompt_step(
+                    "code_correctness",
+                    "Correctness",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_correctness",
+                ),
+                prompt_step(
+                    "code_security",
+                    "Security",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_security",
+                ),
+                prompt_step(
+                    "code_design",
+                    "Design & Maintainability",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_design",
+                ),
+                prompt_step(
+                    "code_concurrency",
+                    "Concurrency & Resources",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_concurrency",
+                ),
+                prompt_step(
+                    "code_errors",
+                    "Error Handling & Edge Cases",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_errors",
+                ),
+                prompt_step(
+                    "code_performance",
+                    "Performance",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_performance",
+                ),
+                prompt_step(
+                    "code_tests",
+                    "Test Coverage & Quality",
+                    Phase::Parallel,
+                    &["Read"],
+                    "code_tests",
+                ),
+                prompt_step(
+                    "code_synthesis",
+                    "Consolidate Findings",
+                    Phase::Sequential,
+                    &[],
+                    "code_synthesis",
+                ),
+                prompt_step(
+                    "code_verify",
+                    "Verify Findings",
+                    Phase::Sequential,
+                    &["Read"],
+                    "code_verify",
+                ),
             ],
             folder_extraction(),
         ),
@@ -932,11 +1028,41 @@ fn create_builtin_profiles() -> Result<(), String> {
         &generic_profile(
             "Replication Package Audit",
             vec![
-                prompt_step("repl_completeness", "Exhibit Completeness", Phase::Parallel, &["Read"], "repl_completeness"),
-                prompt_step("repl_consistency", "Code–Paper Consistency", Phase::Parallel, &["Read"], "repl_consistency"),
-                prompt_step("repl_portability", "Portability", Phase::Parallel, &["Read"], "repl_portability"),
-                prompt_step("repl_provenance", "Data Provenance", Phase::Parallel, &["Read"], "repl_provenance"),
-                prompt_step("repl_synthesis", "Consolidate Audit", Phase::Sequential, &[], "repl_synthesis"),
+                prompt_step(
+                    "repl_completeness",
+                    "Exhibit Completeness",
+                    Phase::Parallel,
+                    &["Read"],
+                    "repl_completeness",
+                ),
+                prompt_step(
+                    "repl_consistency",
+                    "Code–Paper Consistency",
+                    Phase::Parallel,
+                    &["Read"],
+                    "repl_consistency",
+                ),
+                prompt_step(
+                    "repl_portability",
+                    "Portability",
+                    Phase::Parallel,
+                    &["Read"],
+                    "repl_portability",
+                ),
+                prompt_step(
+                    "repl_provenance",
+                    "Data Provenance",
+                    Phase::Parallel,
+                    &["Read"],
+                    "repl_provenance",
+                ),
+                prompt_step(
+                    "repl_synthesis",
+                    "Consolidate Audit",
+                    Phase::Sequential,
+                    &[],
+                    "repl_synthesis",
+                ),
             ],
             folder_extraction(),
         ),
@@ -948,11 +1074,41 @@ fn create_builtin_profiles() -> Result<(), String> {
         &generic_profile(
             "Grant Proposal Review",
             vec![
-                prompt_step("grant_aims", "Aims & Contribution", Phase::Parallel, &["Read", "WebSearch"], "grant_aims"),
-                prompt_step("grant_feasibility", "Feasibility & Design", Phase::Parallel, &["Read"], "grant_feasibility"),
-                prompt_step("grant_clarity", "Panel Readability", Phase::Parallel, &["Read"], "grant_clarity"),
-                prompt_step("grant_consistency", "Internal Consistency", Phase::Parallel, &["Read"], "grant_consistency"),
-                prompt_step("grant_synthesis", "Consolidate Feedback", Phase::Sequential, &[], "grant_synthesis"),
+                prompt_step(
+                    "grant_aims",
+                    "Aims & Contribution",
+                    Phase::Parallel,
+                    &["Read", "WebSearch"],
+                    "grant_aims",
+                ),
+                prompt_step(
+                    "grant_feasibility",
+                    "Feasibility & Design",
+                    Phase::Parallel,
+                    &["Read"],
+                    "grant_feasibility",
+                ),
+                prompt_step(
+                    "grant_clarity",
+                    "Panel Readability",
+                    Phase::Parallel,
+                    &["Read"],
+                    "grant_clarity",
+                ),
+                prompt_step(
+                    "grant_consistency",
+                    "Internal Consistency",
+                    Phase::Parallel,
+                    &["Read"],
+                    "grant_consistency",
+                ),
+                prompt_step(
+                    "grant_synthesis",
+                    "Consolidate Feedback",
+                    Phase::Sequential,
+                    &[],
+                    "grant_synthesis",
+                ),
             ],
             ExtractionConfig::default(),
         ),
@@ -962,11 +1118,23 @@ fn create_builtin_profiles() -> Result<(), String> {
 
     // Revision Response Check — revised paper + response letter + prior report.
     write_builtin_if_missing(&profiles.join("revision-response.json"), &{
-        let mut extraction = ExtractionConfig::default();
-        extraction.extra_inputs = vec![
-            InputSlot { key: "response".into(), label: "Response letter".into(), mode: "document".into(), required: true },
-            InputSlot { key: "prior_report".into(), label: "Prior referee report".into(), mode: "document".into(), required: false },
-        ];
+        let extraction = ExtractionConfig {
+            extra_inputs: vec![
+                InputSlot {
+                    key: "response".into(),
+                    label: "Response letter".into(),
+                    mode: "document".into(),
+                    required: true,
+                },
+                InputSlot {
+                    key: "prior_report".into(),
+                    label: "Prior referee report".into(),
+                    mode: "document".into(),
+                    required: false,
+                },
+            ],
+            ..Default::default()
+        };
         let mut p = generic_profile(
             "Revision Response Check",
             vec![
@@ -987,10 +1155,15 @@ fn create_builtin_profiles() -> Result<(), String> {
 
     // Rubric Grading — grade a document against a rubric, with course variables.
     write_builtin_if_missing(&profiles.join("rubric-grading.json"), &{
-        let mut extraction = ExtractionConfig::default();
-        extraction.extra_inputs = vec![
-            InputSlot { key: "rubric".into(), label: "Grading rubric".into(), mode: "document".into(), required: true },
-        ];
+        let extraction = ExtractionConfig {
+            extra_inputs: vec![InputSlot {
+                key: "rubric".into(),
+                label: "Grading rubric".into(),
+                mode: "document".into(),
+                required: true,
+            }],
+            ..Default::default()
+        };
         let mut p = generic_profile(
             "Rubric Grading",
             vec![
@@ -1057,7 +1230,11 @@ fn ensure_migrated() -> Result<(), String> {
             if let Ok(content) = fs::read_to_string(&old_path) {
                 // Try legacy format with referees/post_steps
                 if let Ok(legacy) = serde_json::from_str::<LegacyProfileData>(&content) {
-                    let profile = ProfileData::new("Migrated", convert_legacy_steps(legacy.referees, legacy.post_steps), legacy.merge);
+                    let profile = ProfileData::new(
+                        "Migrated",
+                        convert_legacy_steps(legacy.referees, legacy.post_steps),
+                        legacy.merge,
+                    );
                     let migrated_path = profiles.join("migrated.json");
                     let json = serde_json::to_string_pretty(&profile)
                         .map_err(|e| format!("Serialize error: {e}"))?;
@@ -1073,7 +1250,11 @@ fn ensure_migrated() -> Result<(), String> {
         if old_referees.exists() {
             if let Ok(content) = fs::read_to_string(&old_referees) {
                 if let Ok(referees) = serde_json::from_str::<Vec<LegacyRefereeConfig>>(&content) {
-                    let profile = ProfileData::new("Migrated", convert_legacy_steps(referees, vec![]), MergeConfig::default());
+                    let profile = ProfileData::new(
+                        "Migrated",
+                        convert_legacy_steps(referees, vec![]),
+                        MergeConfig::default(),
+                    );
                     let migrated_path = profiles.join("migrated.json");
                     if !migrated_path.exists() {
                         let json = serde_json::to_string_pretty(&profile)
@@ -1093,15 +1274,19 @@ fn ensure_migrated() -> Result<(), String> {
         }
 
         // Create Deep Review as the primary profile
-        let profile = ProfileData::new("Deep Review", {
-            let mut s = default_steps();
-            if let Some(step) = s.iter_mut().find(|s| s.id == "validate_feedback") {
-                step.enabled = true;
-            }
-            s
-        }, MergeConfig::default());
-        let json = serde_json::to_string_pretty(&profile)
-            .map_err(|e| format!("Serialize error: {e}"))?;
+        let profile = ProfileData::new(
+            "Deep Review",
+            {
+                let mut s = default_steps();
+                if let Some(step) = s.iter_mut().find(|s| s.id == "validate_feedback") {
+                    step.enabled = true;
+                }
+                s
+            },
+            MergeConfig::default(),
+        );
+        let json =
+            serde_json::to_string_pretty(&profile).map_err(|e| format!("Serialize error: {e}"))?;
         fs::write(&deep_review_path, json)
             .map_err(|e| format!("Failed to write deep-review profile: {e}"))?;
     } else if old_path.exists() {
@@ -1121,18 +1306,21 @@ pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
     let content =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read profile '{id}': {e}"))?;
 
-    // Try new format (has steps array)
+    // Try the current format. `steps` may legitimately be empty; serde's
+    // required current-format fields distinguish it from the legacy shape.
     if let Ok(mut profile) = serde_json::from_str::<ProfileData>(&content) {
-        if !profile.steps.is_empty() {
-            sanitize_steps(&mut profile.steps);
-            return Ok(profile);
-        }
+        sanitize_steps(&mut profile.steps);
+        return Ok(profile);
     }
 
     // Try legacy format (has referees/post_steps arrays)
     if let Ok(legacy) = serde_json::from_str::<LegacyProfileData>(&content) {
         if !legacy.referees.is_empty() || !legacy.post_steps.is_empty() {
-            let profile = ProfileData::new(legacy.name, convert_legacy_steps(legacy.referees, legacy.post_steps), legacy.merge);
+            let profile = ProfileData::new(
+                legacy.name,
+                convert_legacy_steps(legacy.referees, legacy.post_steps),
+                legacy.merge,
+            );
             // Write back in new format
             let _ = save_profile(id, &profile);
             return Ok(profile);
@@ -1151,7 +1339,9 @@ pub fn save_profile(id: &str, profile: &ProfileData) -> Result<(), String> {
         serde_json::to_string_pretty(&clean).map_err(|e| format!("Failed to serialize: {e}"))?;
     // Atomic write with a unique temp name so concurrent writers for the same
     // profile can't clobber each other's .tmp file.
-    let dir = path.parent().ok_or_else(|| format!("No parent dir for {}", path.display()))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| format!("No parent dir for {}", path.display()))?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)
         .map_err(|e| format!("Failed to create temp file in {}: {e}", dir.display()))?;
     tmp.write_all(json.as_bytes())
@@ -1253,7 +1443,7 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
     let mut marks: HashMap<&str, Mark> = HashMap::new();
     // Iterative DFS so deep graphs can't blow the stack.
     for start in graph.keys().copied() {
-        if marks.get(start).is_some() {
+        if marks.contains_key(start) {
             continue;
         }
         let mut stack: Vec<(&str, usize)> = vec![(start, 0)];
@@ -1393,17 +1583,18 @@ pub fn duplicate_profile(source_id: &str, new_name: &str) -> Result<ProfileSumma
     if path.exists() {
         return Err(format!("A profile with ID '{new_id}' already exists"));
     }
-    let mut profile = ProfileData::new(new_name, source.steps, source.merge);
-    profile.use_orientation = source.use_orientation;
-    profile.orientation_prompt = source.orientation_prompt;
-    profile.extraction = source.extraction;
-    profile.parallel_context_template = source.parallel_context_template;
+    let profile = duplicate_profile_data(source, new_name);
     save_profile(&new_id, &profile)?;
     Ok(ProfileSummary {
         id: new_id,
         name: new_name.to_string(),
         step_count: profile.steps.len(),
     })
+}
+
+fn duplicate_profile_data(mut source: ProfileData, new_name: &str) -> ProfileData {
+    source.name = new_name.to_string();
+    source
 }
 
 pub fn rename_profile(id: &str, new_name: &str) -> Result<ProfileSummary, String> {
@@ -1642,32 +1833,18 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             profiles,
             active_profile,
         } => {
-            // Validate every profile before saving any, so a bad bundle
-            // doesn't leave a partial import behind.
-            for p in &profiles {
-                validate_unique_step_ids(&p.steps)
-                    .map_err(|e| format!("Profile '{}': {e}", p.name))?;
-            }
-            for p in &profiles {
-                let profile = ProfileData {
-                    name: p.name.clone(),
-                    steps: p.steps.clone(),
-                    merge: p.merge.clone(),
-                    use_orientation: p.use_orientation,
-                    orientation_prompt: p.orientation_prompt.clone(),
-                    extraction: p.extraction.clone(),
-                    parallel_context_template: p.parallel_context_template.clone(),
-                    variables: p.variables.clone(),
-                };
-                save_profile(&p.id, &profile)?;
-            }
+            let validated = validate_bundle_profiles(&profiles, &active_profile)?;
             // Merge imported settings with existing, preserving local API keys.
             // Validate numeric ranges and provider to prevent invalid configs.
             let mut current = crate::settings::load();
             let valid_providers = ["claude", "codex", "gemini", "local"];
-            if valid_providers.contains(&imported_settings.preferred_provider.as_str()) {
-                current.preferred_provider = imported_settings.preferred_provider;
+            if !valid_providers.contains(&imported_settings.preferred_provider.as_str()) {
+                return Err(format!(
+                    "Invalid preferred provider '{}'",
+                    imported_settings.preferred_provider
+                ));
             }
+            current.preferred_provider = imported_settings.preferred_provider;
             current.max_workers = imported_settings.max_workers.clamp(1, 10);
             current.claude_model = imported_settings.claude_model;
             current.claude_effort = imported_settings.claude_effort;
@@ -1683,11 +1860,103 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             current.step_timeout_secs = imported_settings.step_timeout_secs.clamp(60, 7200);
             current.max_retries = imported_settings.max_retries.clamp(0, 10);
             current.active_profile = active_profile;
+
+            // Snapshot every destination before the first mutation. If any
+            // profile or the final settings write fails, restore the exact
+            // previous bytes (or remove a newly-created file).
+            let snapshots: Vec<(PathBuf, Option<Vec<u8>>)> = validated
+                .iter()
+                .map(|(id, _)| {
+                    let path = profile_path(id)?;
+                    let prior = fs::read(&path).ok();
+                    Ok((path, prior))
+                })
+                .collect::<Result<_, String>>()?;
+            for (id, profile) in &validated {
+                if let Err(error) = save_profile(id, profile) {
+                    let rollback = restore_profile_snapshots(&snapshots);
+                    return Err(match rollback {
+                        Ok(()) => error,
+                        Err(rollback_error) => {
+                            format!("{error}; rollback also failed: {rollback_error}")
+                        }
+                    });
+                }
+            }
             // API keys are intentionally NOT overwritten from the import
-            crate::settings::save(&current)?;
+            if let Err(error) = crate::settings::save(&current) {
+                let rollback = restore_profile_snapshots(&snapshots);
+                return Err(match rollback {
+                    Ok(()) => error,
+                    Err(rollback_error) => {
+                        format!("{error}; rollback also failed: {rollback_error}")
+                    }
+                });
+            }
             Ok(())
         }
         _ => Err("Expected a bundle export file".into()),
+    }
+}
+
+fn validate_bundle_profiles(
+    profiles: &[ProfileExport],
+    active_profile: &str,
+) -> Result<Vec<(String, ProfileData)>, String> {
+    let mut ids = std::collections::HashSet::new();
+    let mut validated = Vec::with_capacity(profiles.len());
+    for profile in profiles {
+        validate_profile_id(&profile.id)?;
+        if !ids.insert(profile.id.clone()) {
+            return Err(format!("Duplicate profile id '{}'", profile.id));
+        }
+        validate_unique_step_ids(&profile.steps)
+            .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
+        validate_dependencies(&profile.steps)
+            .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
+        validated.push((
+            profile.id.clone(),
+            ProfileData {
+                name: profile.name.clone(),
+                steps: profile.steps.clone(),
+                merge: profile.merge.clone(),
+                use_orientation: profile.use_orientation,
+                orientation_prompt: profile.orientation_prompt.clone(),
+                extraction: profile.extraction.clone(),
+                parallel_context_template: profile.parallel_context_template.clone(),
+                variables: profile.variables.clone(),
+            },
+        ));
+    }
+    if !ids.contains(active_profile) {
+        return Err(format!(
+            "Active profile '{active_profile}' is not present in the bundle"
+        ));
+    }
+    Ok(validated)
+}
+
+fn restore_profile_snapshots(snapshots: &[(PathBuf, Option<Vec<u8>>)]) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for (path, prior) in snapshots {
+        let result = match prior {
+            Some(bytes) => fs::write(path, bytes),
+            None => {
+                if path.exists() {
+                    fs::remove_file(path)
+                } else {
+                    Ok(())
+                }
+            }
+        };
+        if let Err(error) = result {
+            errors.push(format!("{}: {error}", path.display()));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }
 
@@ -1777,11 +2046,67 @@ mod tests {
         assert!(validate_dependencies(&steps).is_err());
     }
 
+    fn bundle_profile(id: &str, steps: Vec<StepConfig>) -> ProfileExport {
+        ProfileExport {
+            id: id.into(),
+            name: id.into(),
+            steps,
+            merge: MergeConfig::default(),
+            use_orientation: true,
+            orientation_prompt: String::new(),
+            extraction: ExtractionConfig::default(),
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bundle_preflight_rejects_bad_graphs_duplicates_and_missing_active_profile() {
+        let cycle = vec![step_dep("a", &["b"]), step_dep("b", &["a"])];
+        assert!(validate_bundle_profiles(&[bundle_profile("one", cycle)], "one").is_err());
+
+        let duplicate_ids = vec![
+            bundle_profile("same", Vec::new()),
+            bundle_profile("same", Vec::new()),
+        ];
+        assert!(validate_bundle_profiles(&duplicate_ids, "same").is_err());
+
+        let valid = vec![bundle_profile("one", Vec::new())];
+        assert!(validate_bundle_profiles(&valid, "missing").is_err());
+        assert!(validate_bundle_profiles(&valid, "one").is_ok());
+    }
+
     // ── slugify ────────────────────────────────────────────────────
 
     #[test]
     fn slugify_normal() {
         assert_eq!(slugify("Deep Review"), "deep-review");
+    }
+
+    #[test]
+    fn duplicated_profile_preserves_variable_declarations() {
+        let mut source = ProfileData::new("Source", vec![], MergeConfig::default());
+        source.variables.push(VarSpec {
+            key: "journal".into(),
+            label: "Journal".into(),
+            kind: "choice".into(),
+            default: "AER".into(),
+            choices: vec!["AER".into(), "QJE".into()],
+        });
+        let duplicate = duplicate_profile_data(source, "Copy");
+        assert_eq!(duplicate.name, "Copy");
+        assert_eq!(duplicate.variables.len(), 1);
+        assert_eq!(duplicate.variables[0].key, "journal");
+        assert_eq!(duplicate.variables[0].choices.len(), 2);
+    }
+
+    #[test]
+    fn empty_current_profile_round_trips() {
+        let profile = ProfileData::new("Empty", Vec::new(), MergeConfig::default());
+        let json = serde_json::to_string(&profile).unwrap();
+        let decoded: ProfileData = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.name, "Empty");
+        assert!(decoded.steps.is_empty());
     }
 
     #[test]
@@ -1878,12 +2203,30 @@ mod tests {
     #[test]
     fn convert_legacy_preserves_order() {
         let referees = vec![
-            LegacyRefereeConfig { id: "r1".into(), label: "R1".into(), prompt: "p".into(), enabled: true, web_search: false, agents: vec![] },
-            LegacyRefereeConfig { id: "r2".into(), label: "R2".into(), prompt: "p".into(), enabled: true, web_search: false, agents: vec![] },
+            LegacyRefereeConfig {
+                id: "r1".into(),
+                label: "R1".into(),
+                prompt: "p".into(),
+                enabled: true,
+                web_search: false,
+                agents: vec![],
+            },
+            LegacyRefereeConfig {
+                id: "r2".into(),
+                label: "R2".into(),
+                prompt: "p".into(),
+                enabled: true,
+                web_search: false,
+                agents: vec![],
+            },
         ];
-        let post_steps = vec![
-            LegacyPostStepConfig { id: "s1".into(), label: "S1".into(), prompt: "p".into(), enabled: true, agents: vec![] },
-        ];
+        let post_steps = vec![LegacyPostStepConfig {
+            id: "s1".into(),
+            label: "S1".into(),
+            prompt: "p".into(),
+            enabled: true,
+            agents: vec![],
+        }];
         let steps = convert_legacy_steps(referees, post_steps);
         assert_eq!(steps.len(), 3);
         assert_eq!(steps[0].id, "r1");

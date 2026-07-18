@@ -61,10 +61,7 @@ pub async fn check() -> Result<UpdateInfo, String> {
         return Err(format!("GitHub returned {}", resp.status()));
     }
 
-    let release: GithubRelease = resp
-        .json()
-        .await
-        .map_err(|e| format!("parse error: {e}"))?;
+    let release: GithubRelease = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
 
     // Skip drafts and prereleases — we only care about shipped stable builds.
     if release.draft || release.prerelease {

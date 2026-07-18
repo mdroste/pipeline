@@ -40,7 +40,7 @@ fn effort_config(model: &str, effort: &str) -> Option<serde_json::Value> {
 /// Build Anthropic tools array from allowed tool names.
 fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     let mut tools = Vec::new();
-    if allowed_tools.iter().any(|t| *t == "Read") {
+    if allowed_tools.contains(&"Read") {
         let def = ReadToolDef::default();
         tools.push(serde_json::json!({
             "name": def.name,
@@ -48,7 +48,7 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
             "input_schema": def.input_schema,
         }));
     }
-    if allowed_tools.iter().any(|t| *t == "Write") {
+    if allowed_tools.contains(&"Write") {
         let def = WriteToolDef::default();
         tools.push(serde_json::json!({
             "name": def.name,
@@ -60,6 +60,7 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
 }
 
 /// Call the Anthropic API directly, with tool-use loop for Read.
+#[allow(clippy::too_many_arguments)]
 pub async fn call_anthropic_api(
     app: &crate::emit::EventBus,
     prompt: &str,
@@ -77,7 +78,10 @@ pub async fn call_anthropic_api(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(settings.claude_effort.as_str());
     let output_config = effort_config(&model, effort.trim());
-    log(app, format!("{label} started (API: Anthropic, model: {model})"));
+    log(
+        app,
+        format!("{label} started (API: Anthropic, model: {model})"),
+    );
 
     let client = &*super::api_common::HTTP_CLIENT;
     let tools = build_tools(allowed_tools);
@@ -115,11 +119,25 @@ pub async fn call_anthropic_api(
         output_config,
     };
 
-    let (text, usage) = anthropic_tool_loop(app, &client, &settings.anthropic_api_key, request, timeout_secs, label)
-        .await?;
+    let (text, usage) = anthropic_tool_loop(
+        app,
+        client,
+        &settings.anthropic_api_key,
+        request,
+        timeout_secs,
+        label,
+    )
+    .await?;
 
     let elapsed = start.elapsed().as_secs();
-    log(app, format!("{label} finished ({elapsed}s, {} chars output{})", text.len(), usage.summary()));
+    log(
+        app,
+        format!(
+            "{label} finished ({elapsed}s, {} chars output{})",
+            text.len(),
+            usage.summary()
+        ),
+    );
     super::logging::emit_usage(app, usage.input_tokens, usage.output_tokens);
 
     if text.trim().is_empty() {

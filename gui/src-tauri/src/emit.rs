@@ -7,11 +7,14 @@
 
 use std::sync::Arc;
 
+#[derive(Debug)]
+pub struct EmitError;
+
 /// Anything the pipeline can emit events to. `emit_event` returns a `Result` so
 /// existing call sites (`app.emit_event(...).ok()`, `let _ = app.emit_event(...)`)
 /// keep working unchanged after the AppHandle→trait migration.
 pub trait Events: Send + Sync {
-    fn emit_event(&self, event: &str, payload: serde_json::Value) -> Result<(), ()>;
+    fn emit_event(&self, event: &str, payload: serde_json::Value) -> Result<(), EmitError>;
 }
 
 /// Shared handle to an event sink. Cloneable (it's an `Arc`), so spawned tasks
@@ -19,9 +22,9 @@ pub trait Events: Send + Sync {
 pub type EventBus = Arc<dyn Events>;
 
 impl Events for tauri::AppHandle {
-    fn emit_event(&self, event: &str, payload: serde_json::Value) -> Result<(), ()> {
+    fn emit_event(&self, event: &str, payload: serde_json::Value) -> Result<(), EmitError> {
         use tauri::Emitter;
-        self.emit(event, payload).map_err(|_| ())
+        self.emit(event, payload).map_err(|_| EmitError)
     }
 }
 
@@ -36,7 +39,7 @@ pub fn from_app(app: tauri::AppHandle) -> EventBus {
 pub struct CliEvents;
 
 impl Events for CliEvents {
-    fn emit_event(&self, event: &str, payload: serde_json::Value) -> Result<(), ()> {
+    fn emit_event(&self, event: &str, payload: serde_json::Value) -> Result<(), EmitError> {
         match event {
             "pipeline:log" => {
                 if let Some(line) = payload.get("line").and_then(|v| v.as_str()) {
@@ -63,7 +66,7 @@ impl Events for CliEvents {
 pub struct NullEvents;
 
 impl Events for NullEvents {
-    fn emit_event(&self, _event: &str, _payload: serde_json::Value) -> Result<(), ()> {
+    fn emit_event(&self, _event: &str, _payload: serde_json::Value) -> Result<(), EmitError> {
         Ok(())
     }
 }

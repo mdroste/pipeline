@@ -39,47 +39,103 @@ export default function IssuesTable({ issues, runId }: Props) {
   const [annotations, setAnnotations] = useState<Annotations>({});
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const loadedRef = useRef(false);
+  const annotationsRef = useRef<Annotations>({});
+  const loadedRunRef = useRef<string | null>(null);
+  const dirtyRunRef = useRef<string | null>(null);
+  const loadVersionRef = useRef(0);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
+
+  const enqueueSave = (targetRun: string, value: Annotations) => {
+    const content = JSON.stringify(value);
+    const request = saveChainRef.current
+      .catch(() => undefined)
+      .then(() => invoke<void>("save_annotations", { runId: targetRun, content }));
+    saveChainRef.current = request.catch(() => undefined);
+    return { request, content };
+  };
 
   // Load saved annotations for this run.
   useEffect(() => {
+    const version = ++loadVersionRef.current;
+    loadedRunRef.current = null;
+    dirtyRunRef.current = null;
+    annotationsRef.current = {};
+    setAnnotations({});
     if (!runId) {
-      loadedRef.current = true;
       return;
     }
     invoke<string>("get_annotations", { runId })
       .then((s) => {
+        if (loadVersionRef.current !== version) return;
         try {
-          setAnnotations(JSON.parse(s) as Annotations);
+          const loaded = JSON.parse(s) as Annotations;
+          annotationsRef.current = loaded;
+          setAnnotations(loaded);
         } catch {
           /* ignore */
         }
       })
       .catch(() => {})
       .finally(() => {
-        loadedRef.current = true;
+        if (loadVersionRef.current === version) loadedRunRef.current = runId;
       });
+    return () => {
+      if (loadVersionRef.current === version) loadVersionRef.current++;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (dirtyRunRef.current === runId) {
+        enqueueSave(runId, annotationsRef.current);
+        dirtyRunRef.current = null;
+      }
+    };
   }, [runId]);
 
-  // Debounced persist after the initial load.
+  // Debounced, serialized persistence after a user edit.
   useEffect(() => {
-    if (!runId || !loadedRef.current) return;
-    const t = setTimeout(() => {
-      invoke("save_annotations", { runId, content: JSON.stringify(annotations) })
+    if (!runId || loadedRunRef.current !== runId || dirtyRunRef.current !== runId) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    const snapshot = JSON.stringify(annotations);
+    saveTimerRef.current = setTimeout(() => {
+      const { request } = enqueueSave(runId, annotations);
+      request
         .then(() => {
+          if (runId === loadedRunRef.current && JSON.stringify(annotationsRef.current) === snapshot) {
+            dirtyRunRef.current = null;
+          }
           setSaved(true);
-          setTimeout(() => setSaved(false), 1200);
+          if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+          savedTimerRef.current = setTimeout(() => setSaved(false), 1200);
         })
         .catch(() => {});
     }, 600);
-    return () => clearTimeout(t);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
   }, [annotations, runId]);
 
-  const setVerdict = (id: string, status: Verdict) =>
+  useEffect(
+    () => () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    },
+    [],
+  );
+
+  const setVerdict = (id: string, status: Verdict) => {
+    if (runId && loadedRunRef.current !== runId) return;
+    if (runId) dirtyRunRef.current = runId;
     setAnnotations((prev) => ({ ...prev, [id]: { status: prev[id]?.status === status ? "" : status, note: prev[id]?.note ?? "" } }));
-  const setNote = (id: string, note: string) =>
+  };
+  const setNote = (id: string, note: string) => {
+    if (runId && loadedRunRef.current !== runId) return;
+    if (runId) dirtyRunRef.current = runId;
     setAnnotations((prev) => ({ ...prev, [id]: { status: prev[id]?.status ?? "", note } }));
+  };
 
   const toggleExpand = (id: string) =>
     setExpanded((prev) => {

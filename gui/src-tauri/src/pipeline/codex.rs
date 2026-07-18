@@ -1,10 +1,12 @@
+use std::io::Write;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use std::io::Write;
 
-use super::claude::{build_silent_command, emit_stderr_tail, last_stderr_hint, LlmOverrides, STDERR_TAIL_LINES};
+use super::claude::{
+    build_silent_command, emit_stderr_tail, last_stderr_hint, LlmOverrides, STDERR_TAIL_LINES,
+};
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Codex to read it.
@@ -22,6 +24,7 @@ fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
 
 /// Call `codex exec` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
+#[allow(clippy::too_many_arguments)]
 pub async fn call_codex(
     app: &crate::emit::EventBus,
     prompt: &str,
@@ -53,7 +56,11 @@ pub async fn call_codex(
     // subprocess cwd there, which is what defines codex's workspace).
     let needs_write = allowed_tools.iter().any(|t| *t == "Write" || *t == "Edit")
         && overrides.write_dir.is_some();
-    let sandbox = if needs_write { "workspace-write" } else { "read-only" };
+    let sandbox = if needs_write {
+        "workspace-write"
+    } else {
+        "read-only"
+    };
     cmd_args.push("--sandbox".to_string());
     cmd_args.push(sandbox.to_string());
 
@@ -123,26 +130,40 @@ pub async fn call_codex(
     }
 
     // Log the command (truncated)
-    let display_args: String = cmd_args.iter()
-        .map(|a| if a.len() > 80 { format!("{}...", a.chars().take(80).collect::<String>()) } else { a.clone() })
+    let display_args: String = cmd_args
+        .iter()
+        .map(|a| {
+            if a.len() > 80 {
+                format!("{}...", a.chars().take(80).collect::<String>())
+            } else {
+                a.clone()
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ");
     verbose_log(app, format!("$ codex {display_args}"));
 
     // The cwd defines codex's writable workspace, so in write mode it must
     // be the artifact dir regardless of what the caller passed.
-    let effective_cwd = if needs_write { overrides.write_dir.or(cwd) } else { cwd };
+    let effective_cwd = if needs_write {
+        overrides.write_dir.or(cwd)
+    } else {
+        cwd
+    };
     let mut cmd = build_silent_command("codex", effective_cwd);
     cmd.args(&cmd_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn codex: {e}. Is Codex CLI installed?"))?;
 
     let pid = child.id().unwrap_or(0);
-    if pid > 0 { crate::commands::register_child_pid(pid); }
+    if pid > 0 {
+        crate::commands::register_child_pid(pid);
+    }
     let start_time = Instant::now();
     log(app, format!("{label} started (PID {pid})"));
 
@@ -159,7 +180,9 @@ pub async fn call_codex(
             while let Ok(Some(line)) = reader.next_line().await {
                 if !line.trim().is_empty() {
                     verbose_log(&app_stderr, format!("[stderr] {line}"));
-                    if tail.len() >= STDERR_TAIL_LINES { tail.pop_front(); }
+                    if tail.len() >= STDERR_TAIL_LINES {
+                        tail.pop_front();
+                    }
                     tail.push_back(line);
                 }
             }
@@ -178,12 +201,16 @@ pub async fn call_codex(
         if let Some(stdout) = stdout {
             let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                if line.trim().is_empty() { continue; }
+                if line.trim().is_empty() {
+                    continue;
+                }
                 if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
                     match event.get("type").and_then(|t| t.as_str()) {
                         Some("item.completed") => {
                             if let Some(item) = event.get("item") {
-                                if item.get("type").and_then(|t| t.as_str()) == Some("agent_message") {
+                                if item.get("type").and_then(|t| t.as_str())
+                                    == Some("agent_message")
+                                {
                                     if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
                                         agent_text.push_str(text);
                                     }
@@ -192,16 +219,29 @@ pub async fn call_codex(
                         }
                         Some("turn.completed") => {
                             if let Some(usage) = event.get("usage") {
-                                total_input_tokens += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                total_output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                total_input_tokens += usage
+                                    .get("input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                total_output_tokens += usage
+                                    .get("output_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
                             }
                         }
                         // Codex reports fatal problems (bad config, auth, model)
                         // as an error event on stdout — surface it, always.
                         Some(t) if t.contains("error") => {
-                            let detail = event.get("message").and_then(|v| v.as_str())
+                            let detail = event
+                                .get("message")
+                                .and_then(|v| v.as_str())
                                 .or_else(|| event.get("error").and_then(|e| e.as_str()))
-                                .or_else(|| event.get("error").and_then(|e| e.get("message")).and_then(|v| v.as_str()))
+                                .or_else(|| {
+                                    event
+                                        .get("error")
+                                        .and_then(|e| e.get("message"))
+                                        .and_then(|v| v.as_str())
+                                })
                                 .unwrap_or(t);
                             log(&app_stdout, format!("ERROR: [codex] {detail}"));
                         }
@@ -211,32 +251,35 @@ pub async fn call_codex(
                     verbose_log(&app_stdout, format!("[codex] {line}"));
                 }
                 if agent_text.len() > super::claude::MAX_STDOUT_BYTES {
-                    log(&app_stdout, format!(
-                        "WARNING: stdout exceeded {} MB, truncating",
-                        super::claude::MAX_STDOUT_BYTES / 1_000_000
-                    ));
+                    log(
+                        &app_stdout,
+                        format!(
+                            "WARNING: stdout exceeded {} MB, truncating",
+                            super::claude::MAX_STDOUT_BYTES / 1_000_000
+                        ),
+                    );
                     break;
                 }
             }
         }
         if total_input_tokens > 0 || total_output_tokens > 0 {
-            verbose_log(&app_stdout, format!(
-                "[codex] {}: tokens in={total_input_tokens} out={total_output_tokens}",
-                label_clone
-            ));
+            verbose_log(
+                &app_stdout,
+                format!(
+                    "[codex] {}: tokens in={total_input_tokens} out={total_output_tokens}",
+                    label_clone
+                ),
+            );
         }
         (agent_text, total_input_tokens, total_output_tokens)
     }));
 
-    let status = tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        child.wait(),
-    )
-    .await;
+    let status = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await;
 
     let status = match status {
         Ok(s) => s,
         Err(_) => {
+            if pid > 0 { crate::commands::kill_process(pid); }
             let _ = child.kill().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
             if pid > 0 { crate::commands::unregister_child_pid(pid); }
@@ -257,9 +300,12 @@ pub async fn call_codex(
 
     // Process has exited — unregister PID before joining I/O tasks
     // so cancel cleanup can't miss it if a join fails
-    if pid > 0 { crate::commands::unregister_child_pid(pid); }
+    if pid > 0 {
+        crate::commands::unregister_child_pid(pid);
+    }
 
-    let (agent_text, input_tokens, output_tokens) = stdout_task.await
+    let (agent_text, input_tokens, output_tokens) = stdout_task
+        .await
         .map_err(|e| format!("stdout reader failed: {e}"))?;
     let text = agent_text.trim().to_string();
 
@@ -272,7 +318,13 @@ pub async fn call_codex(
     } else {
         String::new()
     };
-    log(app, format!("{label} finished ({elapsed}s, exit code {exit_code}, {} chars output{token_info})", text.len()));
+    log(
+        app,
+        format!(
+            "{label} finished ({elapsed}s, exit code {exit_code}, {} chars output{token_info})",
+            text.len()
+        ),
+    );
     super::logging::emit_usage(app, input_tokens, output_tokens);
 
     if !status.success() {
@@ -281,11 +333,14 @@ pub async fn call_codex(
             return Err("Pipeline cancelled".into());
         }
         emit_stderr_tail(app, &stderr_tail);
-        let hint = super::claude::extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
+        let hint =
+            super::claude::extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
         let msg = if let Some(hint) = hint {
             format!("Codex call failed (exit {exit_code}): {hint}")
         } else {
-            format!("Codex call failed (exit {exit_code}). See this call's session log for details.")
+            format!(
+                "Codex call failed (exit {exit_code}). See this call's session log for details."
+            )
         };
         log(app, format!("ERROR: {msg}"));
         return Err(msg);

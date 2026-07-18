@@ -2,11 +2,11 @@
 
 use crate::models::PipelineReport;
 use crate::models::ReportSummary;
+use crate::output;
 use crate::pipeline::{executor, extract, orient, reconcile};
 use crate::pipeline_config::{self, PipelineConfig, ProfileSummary};
-use crate::output;
 use crate::storage;
-use std::io::Write;
+use std::io::{Read, Write};
 use tauri::AppHandle;
 
 /// Maximum file size for imported configs (10 MB). Pipeline configs are
@@ -15,27 +15,59 @@ const MAX_IMPORT_SIZE: u64 = 10_000_000;
 
 /// Read a file for import, rejecting files above the size limit.
 fn read_import_file(path: &str) -> Result<String, String> {
-    let meta = std::fs::metadata(path)
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_IMPORT_SIZE + 1)
+        .read_to_end(&mut bytes)
         .map_err(|e| format!("Failed to read {path}: {e}"))?;
-    if meta.len() > MAX_IMPORT_SIZE {
+    if bytes.len() as u64 > MAX_IMPORT_SIZE {
         return Err(format!(
-            "File is too large ({:.1} MB). Import files should be under {} MB.",
-            meta.len() as f64 / 1_000_000.0,
+            "File is too large. Import files should be under {} MB.",
             MAX_IMPORT_SIZE / 1_000_000,
         ));
     }
-    std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read: {e}"))
+    String::from_utf8(bytes).map_err(|e| format!("Import file is not valid UTF-8: {e}"))
+}
+
+fn append_limited(buffer: &mut Vec<u8>, chunk: &[u8], limit: usize) -> Result<(), String> {
+    if chunk.len() > limit.saturating_sub(buffer.len()) {
+        return Err("The fetched file is too large to be a profile.".to_string());
+    }
+    buffer.extend_from_slice(chunk);
+    Ok(())
+}
+
+async fn read_response_limited(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err("The fetched file is too large to be a profile.".to_string());
+    }
+    let mut bytes =
+        Vec::with_capacity(response.content_length().unwrap_or(0).min(limit as u64) as usize);
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Fetch failed: {e}"))?
+    {
+        append_limited(&mut bytes, &chunk, limit)?;
+    }
+    Ok(bytes)
 }
 
 // --- Pipeline ---
 
-static CANCEL_FLAG: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static CANCEL_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CANCEL_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CANCEL_SIGNAL: std::sync::OnceLock<tokio::sync::watch::Sender<u64>> =
+    std::sync::OnceLock::new();
 
 /// Guard: true while a pipeline is running. Prevents concurrent runs.
-static PIPELINE_RUNNING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static PIPELINE_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// RAII guard that cleans up pipeline state on drop (including panics).
 struct PipelineGuard;
@@ -74,7 +106,10 @@ pub fn is_pass_cancelled(pass_key: &str) -> bool {
 
 /// Clear per-pass cancellation state (called at run start/end).
 fn reset_pass_cancels() {
-    CANCELLED_PASSES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    CANCELLED_PASSES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
     PASS_PIDS.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
@@ -116,6 +151,7 @@ pub struct WatchStatus {
 }
 
 static WATCH_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const MAX_WATCH_HISTORY: usize = 200;
 static WATCH_STATE: std::sync::Mutex<WatchStatus> = std::sync::Mutex::new(WatchStatus {
     active: false,
     folder: String::new(),
@@ -129,13 +165,56 @@ fn basename(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+fn extra_input_artifact_path(index: usize, key: &str) -> String {
+    let slug: String = key
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!(
+        "context/inputs/{index:02}_{}.txt",
+        if slug.is_empty() { "input" } else { &slug }
+    )
+}
+
 fn emit_batch(app: &crate::emit::EventBus) {
     let jobs = BATCH.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let _ = app.emit_event("batch:progress", serde_json::to_value(&jobs).unwrap_or_default());
+    let _ = app.emit_event(
+        "batch:progress",
+        serde_json::to_value(&jobs).unwrap_or_default(),
+    );
 }
 
 pub fn is_cancelled() -> bool {
     CANCEL_FLAG.load(std::sync::atomic::Ordering::Acquire)
+}
+
+fn cancellation_signal() -> &'static tokio::sync::watch::Sender<u64> {
+    CANCEL_SIGNAL.get_or_init(|| tokio::sync::watch::channel(0).0)
+}
+
+fn signal_cancellation() {
+    let epoch = CANCEL_EPOCH.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+    cancellation_signal().send_replace(epoch);
+}
+
+/// Resolve when the current run or the supplied pass is cancelled. A watch
+/// channel avoids lost wakeups if cancellation races with request dispatch.
+pub async fn wait_for_cancellation(pass_key: Option<&str>) {
+    let mut signal = cancellation_signal().subscribe();
+    loop {
+        if is_cancelled() || pass_key.is_some_and(is_pass_cancelled) {
+            return;
+        }
+        if signal.changed().await.is_err() {
+            return;
+        }
+    }
 }
 
 /// Register a child process PID so it can be killed on cancel. Also attributes
@@ -146,23 +225,39 @@ pub fn register_child_pid(pid: u32) {
     if pid == 0 {
         return;
     }
-    CHILD_PIDS.lock().unwrap_or_else(|e| e.into_inner()).push(pid);
+    CHILD_PIDS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(pid);
     if let Some(pass) = crate::pipeline::logging::current_pass() {
-        PASS_PIDS.lock().unwrap_or_else(|e| e.into_inner()).push((pass, pid));
+        PASS_PIDS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((pass, pid));
     }
 }
 
 /// Unregister a child process PID after it exits.
 pub fn unregister_child_pid(pid: u32) {
-    CHILD_PIDS.lock().unwrap_or_else(|e| e.into_inner()).retain(|&p| p != pid);
-    PASS_PIDS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(_, p)| *p != pid);
+    CHILD_PIDS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|&p| p != pid);
+    PASS_PIDS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(_, p)| *p != pid);
 }
 
 /// Cancel one pass: mark it cancelled (so it won't retry) and kill its
 /// subprocesses. Other passes in the wave keep running.
 #[tauri::command]
 pub async fn cancel_pass(pass_key: String) -> Result<(), String> {
-    CANCELLED_PASSES.lock().unwrap_or_else(|e| e.into_inner()).push(pass_key.clone());
+    CANCELLED_PASSES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(pass_key.clone());
+    signal_cancellation();
     let pids: Vec<u32> = PASS_PIDS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -178,18 +273,22 @@ pub async fn cancel_pass(pass_key: String) -> Result<(), String> {
 
 /// Kill all registered child processes.
 fn kill_all_children() {
-    let pids = CHILD_PIDS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let pids = std::mem::take(&mut *CHILD_PIDS.lock().unwrap_or_else(|e| e.into_inner()));
     for pid in pids {
         kill_process(pid);
     }
 }
 
-fn kill_process(pid: u32) {
-    if pid == 0 { return; }
+pub(crate) fn kill_process(pid: u32) {
+    if pid == 0 {
+        return;
+    }
     #[cfg(unix)]
     {
         // Validate PID fits in a positive i32 to prevent overflow when negating
-        if pid > i32::MAX as u32 { return; }
+        if pid > i32::MAX as u32 {
+            return;
+        }
         let pid_i32 = pid as i32;
         unsafe {
             libc::kill(-pid_i32, libc::SIGTERM);
@@ -225,21 +324,42 @@ fn finalize_run(
             .step_id
             .replace('/', "_")
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect::<String>();
         let header = format!(
             "# {}\n\n**Phase**: {} · **Agent**: {}\n\n---\n\n",
             output.step_label,
             output.phase,
-            if output.agent.is_empty() { "default" } else { &output.agent },
+            if output.agent.is_empty() {
+                "default"
+            } else {
+                &output.agent
+            },
         );
         let rel = format!("artifacts/{:02}_{}.md", i + 1, slug);
-        if let Err(e) = w.add_text(&rel, &output.step_label, "step", &format!("{}{}", header, output.raw_text)) {
-            let _ = app.emit_event("pipeline:log", serde_json::json!({ "line": format!("WARNING: {e}") }));
+        if let Err(e) = w.add_text(
+            &rel,
+            &output.step_label,
+            "step",
+            &format!("{}{}", header, output.raw_text),
+        ) {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!("WARNING: {e}") }),
+            );
         }
     }
     if let Err(e) = w.add_text("report.md", "Report", "report", markdown) {
-        let _ = app.emit_event("pipeline:log", serde_json::json!({ "line": format!("WARNING: {e}") }));
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": format!("WARNING: {e}") }),
+        );
     }
     // Structured report, so a re-run can reload prior step outputs.
     if let Ok(json) = serde_json::to_string_pretty(report) {
@@ -247,9 +367,12 @@ fn finalize_run(
     }
     let extra_files = w.register_unlisted("artifacts", "files");
     if extra_files > 0 {
-        let _ = app.emit_event("pipeline:log", serde_json::json!({
-            "line": format!("Registered {extra_files} model-written supporting files")
-        }));
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({
+                "line": format!("Registered {extra_files} model-written supporting files")
+            }),
+        );
     }
     // Close the console transcript before registering it so the file is complete.
     crate::pipeline::logging::set_log_sink(None);
@@ -258,9 +381,12 @@ fn finalize_run(
     match w.finish(meta) {
         Ok(manifest) => Some(manifest.run_id),
         Err(e) => {
-            let _ = app.emit_event("pipeline:log", serde_json::json!({
-                "line": format!("WARNING: could not write run manifest: {e}")
-            }));
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: could not write run manifest: {e}")
+                }),
+            );
             None
         }
     }
@@ -273,9 +399,12 @@ fn enforce_retention(app: &crate::emit::EventBus, keep: usize) {
     }
     if let Ok(n) = crate::runs::purge_old_runs(keep) {
         if n > 0 {
-            let _ = app.emit_event("pipeline:log", serde_json::json!({
-                "line": format!("Removed {n} old run(s) to stay within the {keep}-run limit")
-            }));
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("Removed {n} old run(s) to stay within the {keep}-run limit")
+                }),
+            );
         }
     }
 }
@@ -338,7 +467,8 @@ async fn run_pipeline_inner(
     let source_dir = if paper.is_dir() {
         paper_path.to_string()
     } else {
-        paper.parent()
+        paper
+            .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default()
     };
@@ -358,11 +488,16 @@ async fn run_pipeline_inner(
     variables.extend(provided_vars);
 
     // Extract paper text
-    app.emit_event("pipeline:stage", serde_json::json!({"stage": "extracting"})).ok();
-    app.emit_event("pipeline:preprocess", serde_json::json!({
-        "phase": "extract",
-        "status": "running",
-    })).ok();
+    app.emit_event("pipeline:stage", serde_json::json!({"stage": "extracting"}))
+        .ok();
+    app.emit_event(
+        "pipeline:preprocess",
+        serde_json::json!({
+            "phase": "extract",
+            "status": "running",
+        }),
+    )
+    .ok();
     let extract_start = std::time::Instant::now();
     let input_mode = extract::effective_input_mode(&config.extraction.input_mode, paper_path);
     let extraction = match input_mode {
@@ -375,37 +510,62 @@ async fn run_pipeline_inner(
         "line": format!("Extracted via {} ({} chars, {}s)", extraction.method, extraction.text.len(), extract_secs)
     })).ok();
     for note in &extraction.quality_notes {
-        app.emit_event("pipeline:log", serde_json::json!({
-            "line": format!("WARNING: {note}")
-        })).ok();
+        app.emit_event(
+            "pipeline:log",
+            serde_json::json!({
+                "line": format!("WARNING: {note}")
+            }),
+        )
+        .ok();
     }
 
     // Persist this run's outputs under ~/.pipeline/runs/{run_id}/.
     // Best-effort throughout: persistence failures are logged, never fatal.
-    let run_id = format!(
-        "{}_{}",
-        extraction.paper_hash,
-        chrono::Local::now().format("%Y%m%d-%H%M%S")
-    );
-    let mut run_writer = match crate::runs::RunWriter::create(&run_id) {
+    let mut run_writer = match crate::runs::RunWriter::create_unique(&extraction.paper_hash) {
         Ok(w) => Some(w),
         Err(e) => {
-            let _ = app.emit_event("pipeline:log", serde_json::json!({
-                "line": format!("WARNING: could not create run directory: {e}")
-            }));
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: could not create run directory: {e}")
+                }),
+            );
             None
         }
     };
     if let Some(w) = run_writer.as_mut() {
+        let settings = crate::settings::load();
+        let profile_name = pipeline_config::load_profile(&settings.active_profile)
+            .map(|p| p.name)
+            .unwrap_or_default();
+        if let Err(e) = w.set_pending_meta(crate::runs::RunFinishMeta {
+            input_path: paper_path.to_string(),
+            input_mode: input_mode.to_string(),
+            profile_id: settings.active_profile,
+            profile_name,
+            provider: settings.preferred_provider,
+            variables: variables.clone(),
+            ..Default::default()
+        }) {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: could not update pending run manifest: {e}")
+                }),
+            );
+        }
         if let Err(e) = w.add_text(
             "context/extracted_text.md",
             "Extracted text",
             "context",
             &extraction.text,
         ) {
-            let _ = app.emit_event("pipeline:log", serde_json::json!({
-                "line": format!("WARNING: {e}")
-            }));
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: {e}")
+                }),
+            );
         }
     }
 
@@ -418,9 +578,12 @@ async fn run_pipeline_inner(
         {
             Ok(f) => crate::pipeline::logging::set_log_sink(Some(f)),
             Err(e) => {
-                let _ = app.emit_event("pipeline:log", serde_json::json!({
-                    "line": format!("WARNING: could not open run log file: {e}")
-                }));
+                let _ = app.emit_event(
+                    "pipeline:log",
+                    serde_json::json!({
+                        "line": format!("WARNING: could not open run log file: {e}")
+                    }),
+                );
             }
         }
     }
@@ -472,24 +635,36 @@ async fn run_pipeline_inner(
                         if let Err(e) =
                             w.register_existing(&format!("artifacts/pages/{name}"), &label, "pages")
                         {
-                            let _ = app.emit_event("pipeline:log", serde_json::json!({
-                                "line": format!("WARNING: {e}")
-                            }));
+                            let _ = app.emit_event(
+                                "pipeline:log",
+                                serde_json::json!({
+                                    "line": format!("WARNING: {e}")
+                                }),
+                            );
                         }
                     }
-                    let _ = app.emit_event("pipeline:log", serde_json::json!({
-                        "line": format!("Rendered {count} page images into the run artifacts")
-                    }));
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!("Rendered {count} page images into the run artifacts")
+                        }),
+                    );
                 }
                 Ok(Err(e)) => {
-                    let _ = app.emit_event("pipeline:log", serde_json::json!({
-                        "line": format!("WARNING: page image rendering skipped: {e}")
-                    }));
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!("WARNING: page image rendering skipped: {e}")
+                        }),
+                    );
                 }
                 Err(e) => {
-                    let _ = app.emit_event("pipeline:log", serde_json::json!({
-                        "line": format!("WARNING: page image rendering task failed: {e}")
-                    }));
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!("WARNING: page image rendering task failed: {e}")
+                        }),
+                    );
                 }
             }
         }
@@ -503,27 +678,42 @@ async fn run_pipeline_inner(
             if !images.is_empty() {
                 let figures_dir = w.dir().join("artifacts").join("figures");
                 if let Err(e) = std::fs::create_dir_all(&figures_dir) {
-                    let _ = app.emit_event("pipeline:log", serde_json::json!({
-                        "line": format!("WARNING: could not create figures dir: {e}")
-                    }));
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!("WARNING: could not create figures dir: {e}")
+                        }),
+                    );
                 } else {
                     let mut copied = 0usize;
                     for src in &images {
-                        let Some(name) = src.file_name().and_then(|n| n.to_str()) else { continue };
+                        let Some(name) = src.file_name().and_then(|n| n.to_str()) else {
+                            continue;
+                        };
                         if std::fs::copy(src, figures_dir.join(name)).is_ok()
-                            && w.register_existing(&format!("artifacts/figures/{name}"), name, "figures").is_ok()
+                            && w.register_existing(
+                                &format!("artifacts/figures/{name}"),
+                                name,
+                                "figures",
+                            )
+                            .is_ok()
                         {
                             copied += 1;
                         }
                     }
-                    let _ = app.emit_event("pipeline:log", serde_json::json!({
-                        "line": format!("Collected {copied} figure images from marker output")
-                    }));
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!("Collected {copied} figure images from marker output")
+                        }),
+                    );
                 }
             }
         }
     }
-    if is_cancelled() { return Err("Pipeline cancelled".into()); }
+    if is_cancelled() {
+        return Err("Pipeline cancelled".into());
+    }
 
     // Cache the extracted text by paper hash so users can inspect it after the run.
     // Temp files vanish when the process exits; the cache persists until deleted.
@@ -531,9 +721,12 @@ async fn run_pipeline_inner(
         Ok(p) => Some(p),
         Err(e) => {
             // Caching is best-effort; a failure here shouldn't stop the run.
-            let _ = app.emit_event("pipeline:log", serde_json::json!({
-                "line": format!("WARNING: failed to cache extracted text: {e}")
-            }));
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: failed to cache extracted text: {e}")
+                }),
+            );
             None
         }
     };
@@ -549,15 +742,19 @@ async fn run_pipeline_inner(
         .map_err(|e| format!("Failed to flush temp file: {e}"))?;
     let paper_text_path = tmp.path().to_string_lossy().replace('\\', "/");
 
-    app.emit_event("pipeline:preprocess", serde_json::json!({
-        "phase": "extract",
-        "status": "done",
-        "method": extraction.method,
-        "chars": extraction.text.len(),
-        "elapsed_secs": extract_secs,
-        "paper_hash": extraction.paper_hash,
-        "cached_path": cached_paper_path,
-    })).ok();
+    app.emit_event(
+        "pipeline:preprocess",
+        serde_json::json!({
+            "phase": "extract",
+            "status": "done",
+            "method": extraction.method,
+            "chars": extraction.text.len(),
+            "elapsed_secs": extract_secs,
+            "paper_hash": extraction.paper_hash,
+            "cached_path": cached_paper_path,
+        }),
+    )
+    .ok();
 
     // Build orientation map (optional)
     let mut _orient_tmp = None; // hold tempfile alive
@@ -565,21 +762,32 @@ async fn run_pipeline_inner(
     let orientation_path;
 
     if config.use_orientation {
-        app.emit_event("pipeline:stage", serde_json::json!({"stage": "orienting"})).ok();
-        app.emit_event("pipeline:preprocess", serde_json::json!({
-            "phase": "orient",
-            "status": "running",
-        })).ok();
+        app.emit_event("pipeline:stage", serde_json::json!({"stage": "orienting"}))
+            .ok();
+        app.emit_event(
+            "pipeline:preprocess",
+            serde_json::json!({
+                "phase": "orient",
+                "status": "running",
+            }),
+        )
+        .ok();
         let orient_start = std::time::Instant::now();
         let survey_template =
             orient::resolve_survey_template(&config.orientation_prompt, input_mode);
         orientation =
             orient::build_orientation_map(app, &extraction, survey_template.as_deref()).await?;
         let orient_secs = orient_start.elapsed().as_secs();
-        app.emit_event("pipeline:log", serde_json::json!({
-            "line": format!("Orientation map built ({}s)", orient_secs)
-        })).ok();
-        if is_cancelled() { return Err("Pipeline cancelled".into()); }
+        app.emit_event(
+            "pipeline:log",
+            serde_json::json!({
+                "line": format!("Orientation map built ({}s)", orient_secs)
+            }),
+        )
+        .ok();
+        if is_cancelled() {
+            return Err("Pipeline cancelled".into());
+        }
 
         let orientation_json = serde_json::to_string(&orientation)
             .map_err(|e| format!("Failed to serialize orientation map: {e}"))?;
@@ -588,9 +796,11 @@ async fn run_pipeline_inner(
             .suffix(".json")
             .tempfile()
             .map_err(|e| format!("Failed to create orientation temp file: {e}"))?;
-        orient_file.write_all(orientation_json.as_bytes())
+        orient_file
+            .write_all(orientation_json.as_bytes())
             .map_err(|e| format!("Failed to write orientation temp file: {e}"))?;
-        orient_file.flush()
+        orient_file
+            .flush()
             .map_err(|e| format!("Failed to flush orientation temp file: {e}"))?;
         orientation_path = orient_file.path().to_string_lossy().replace('\\', "/");
         if let Some(w) = run_writer.as_mut() {
@@ -600,30 +810,49 @@ async fn run_pipeline_inner(
                 "context",
                 &orientation_json,
             ) {
-                let _ = app.emit_event("pipeline:log", serde_json::json!({
-                    "line": format!("WARNING: {e}")
-                }));
+                let _ = app.emit_event(
+                    "pipeline:log",
+                    serde_json::json!({
+                        "line": format!("WARNING: {e}")
+                    }),
+                );
             }
         }
         let orient_bytes = orientation_json.len();
-        app.emit_event("pipeline:log", serde_json::json!({
-            "line": format!("Orientation map written to temp file ({orient_bytes} bytes)")
-        })).ok();
-        app.emit_event("pipeline:preprocess", serde_json::json!({
-            "phase": "orient",
-            "status": "done",
-            "bytes": orient_bytes,
-            "elapsed_secs": orient_secs,
-        })).ok();
+        app.emit_event(
+            "pipeline:log",
+            serde_json::json!({
+                "line": format!("Orientation map written to temp file ({orient_bytes} bytes)")
+            }),
+        )
+        .ok();
+        app.emit_event(
+            "pipeline:preprocess",
+            serde_json::json!({
+                "phase": "orient",
+                "status": "done",
+                "bytes": orient_bytes,
+                "elapsed_secs": orient_secs,
+            }),
+        )
+        .ok();
         _orient_tmp = Some(orient_file);
     } else {
-        app.emit_event("pipeline:log", serde_json::json!({
-            "line": "Orientation map disabled for this profile"
-        })).ok();
-        app.emit_event("pipeline:preprocess", serde_json::json!({
-            "phase": "orient",
-            "status": "skipped",
-        })).ok();
+        app.emit_event(
+            "pipeline:log",
+            serde_json::json!({
+                "line": "Orientation map disabled for this profile"
+            }),
+        )
+        .ok();
+        app.emit_event(
+            "pipeline:preprocess",
+            serde_json::json!({
+                "phase": "orient",
+                "status": "skipped",
+            }),
+        )
+        .ok();
         orientation = serde_json::to_value(crate::models::OrientationMap::empty(&extraction.text))
             .map_err(|e| format!("Failed to build orientation placeholder: {e}"))?;
         orientation_path = String::new();
@@ -638,16 +867,26 @@ async fn run_pipeline_inner(
     // Extra named inputs (1.2.4): extract each declared slot's file through the
     // same cascade, write the text to a temp file, and expose its path to
     // prompts as {input:key}. Temp files are held alive until the run finishes.
-    let mut resolved_inputs: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut resolved_inputs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut persisted_inputs: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     let mut extra_tmps: Vec<tempfile::NamedTempFile> = Vec::new();
     let mut extra_dirs: Vec<String> = Vec::new();
-    for slot in &config.extraction.extra_inputs {
-        let provided = provided_inputs.get(&slot.key).map(|s| s.trim()).filter(|s| !s.is_empty());
+    for (input_index, slot) in config.extraction.extra_inputs.iter().enumerate() {
+        let provided = provided_inputs
+            .get(&slot.key)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
         let path = match provided {
             Some(p) => p,
             None => {
                 if slot.required {
-                    let name = if slot.label.is_empty() { &slot.key } else { &slot.label };
+                    let name = if slot.label.is_empty() {
+                        &slot.key
+                    } else {
+                        &slot.label
+                    };
                     return Err(format!("Missing required input '{name}'"));
                 }
                 continue;
@@ -660,6 +899,19 @@ async fn run_pipeline_inner(
             "folder" => extract::ingest_folder(path)?,
             _ => extract::extract(app, path, &config.extraction).await?,
         };
+        if let Some(w) = run_writer.as_mut() {
+            let rel_path = extra_input_artifact_path(input_index, &slot.key);
+            let label = if slot.label.is_empty() {
+                &slot.key
+            } else {
+                &slot.label
+            };
+            if w.add_text(&rel_path, label, "context", &ex.text).is_ok()
+                && w.record_extra_input(&slot.key, &rel_path).is_ok()
+            {
+                persisted_inputs.insert(slot.key.clone(), rel_path);
+            }
+        }
         let mut tf = tempfile::Builder::new()
             .prefix("pipeline_input_")
             .suffix(".txt")
@@ -681,7 +933,9 @@ async fn run_pipeline_inner(
         dirs.extend(extra_dirs);
         crate::pipeline::api_common::set_allowed_dirs(dirs);
     }
-    if is_cancelled() { return Err("Pipeline cancelled".into()); }
+    if is_cancelled() {
+        return Err("Pipeline cancelled".into());
+    }
 
     let result = executor::execute_steps(
         app,
@@ -703,7 +957,9 @@ async fn run_pipeline_inner(
     // Steps are done — close the write window before rendering/reconciling.
     crate::pipeline::api_common::set_write_dir(None);
 
-    if is_cancelled() { return Err("Pipeline cancelled".into()); }
+    if is_cancelled() {
+        return Err("Pipeline cancelled".into());
+    }
 
     let report = PipelineReport {
         orientation,
@@ -739,7 +995,11 @@ async fn run_pipeline_inner(
     let profile_name = pipeline_config::load_profile(&settings.active_profile)
         .map(|p| p.name)
         .unwrap_or_default();
-    let status = if report.failed_steps.is_empty() { "done" } else { "partial" };
+    let status = if report.failed_steps.is_empty() {
+        "done"
+    } else {
+        "partial"
+    };
     let meta = crate::runs::RunFinishMeta {
         input_path: paper_path.to_string(),
         input_mode: input_mode.to_string(),
@@ -750,8 +1010,13 @@ async fn run_pipeline_inner(
         duration_secs: elapsed.as_secs(),
         usage: crate::pipeline::logging::run_usage(),
         step_count: report.all_outputs().len() as u32,
-        failed_steps: report.failed_steps.iter().map(|f| f.step_label.clone()).collect(),
+        failed_steps: report
+            .failed_steps
+            .iter()
+            .map(|f| f.step_label.clone())
+            .collect(),
         variables: variables.clone(),
+        extra_inputs: persisted_inputs,
         parent_run_id: None,
     };
     let mut finished_run_id: Option<String> = None;
@@ -760,7 +1025,8 @@ async fn run_pipeline_inner(
     }
     enforce_retention(app, settings.max_saved_runs as usize);
 
-    app.emit_event("pipeline:stage", serde_json::json!({"stage": "done"})).ok();
+    app.emit_event("pipeline:stage", serde_json::json!({"stage": "done"}))
+        .ok();
 
     Ok(serde_json::json!({
         "report": report,
@@ -797,6 +1063,12 @@ pub async fn rerun_run(
 
 fn read_run_file(run_id: &str, rel: &str) -> Result<String, String> {
     crate::runs::validate_run_id(run_id)?;
+    if rel.is_empty()
+        || std::path::Path::new(rel).is_absolute()
+        || rel.split(['/', '\\']).any(|part| part == "..")
+    {
+        return Err("Invalid run-relative path".to_string());
+    }
     let path = crate::runs::runs_dir()?.join(run_id).join(rel);
     std::fs::read_to_string(&path).map_err(|e| format!("Cannot read {rel} from run: {e}"))
 }
@@ -805,6 +1077,31 @@ fn load_run_report(run_id: &str) -> Result<PipelineReport, String> {
     let json = read_run_file(run_id, "report.json")
         .map_err(|_| "This run predates comparison support (no report.json).".to_string())?;
     serde_json::from_str(&json).map_err(|e| format!("Invalid report.json: {e}"))
+}
+
+fn base_step_id(step_id: &str) -> String {
+    step_id.split('/').next().unwrap_or(step_id).to_string()
+}
+
+fn failed_base_ids(failures: &[crate::models::StepFailure]) -> std::collections::HashSet<String> {
+    failures
+        .iter()
+        .map(|failure| base_step_id(&failure.step_id))
+        .collect()
+}
+
+fn collect_preloaded_outputs(
+    outputs: &[crate::models::StepOutput],
+    rerun: &std::collections::HashSet<String>,
+) -> std::collections::HashMap<String, Vec<crate::models::StepOutput>> {
+    let mut preloaded = std::collections::HashMap::<String, Vec<crate::models::StepOutput>>::new();
+    for output in outputs.iter().filter(|output| !output.skipped) {
+        let base = base_step_id(&output.step_id);
+        if !rerun.contains(&base) {
+            preloaded.entry(base).or_default().push(output.clone());
+        }
+    }
+    preloaded
 }
 
 async fn rerun_run_inner(
@@ -829,8 +1126,12 @@ async fn rerun_run_inner(
     let source_path = parent.input_path.clone();
     let source_dir = {
         let p = std::path::Path::new(&source_path);
-        if p.is_dir() { source_path.clone() } else {
-            p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default()
+        if p.is_dir() {
+            source_path.clone()
+        } else {
+            p.parent()
+                .map(|d| d.to_string_lossy().to_string())
+                .unwrap_or_default()
         }
     };
     crate::pipeline::api_common::set_allowed_dirs(vec![source_dir]);
@@ -839,15 +1140,19 @@ async fn rerun_run_inner(
     let config = pipeline_config::load();
 
     // Determine which steps to re-run vs. reuse.
-    let enabled_ids: Vec<String> = config.steps.iter().filter(|s| s.enabled).map(|s| s.id.clone()).collect();
+    let enabled_ids: Vec<String> = config
+        .steps
+        .iter()
+        .filter(|s| s.enabled)
+        .map(|s| s.id.clone())
+        .collect();
     let rerun: std::collections::HashSet<String> = if let Some(fs) = &from_step {
         match enabled_ids.iter().position(|id| id == fs) {
             Some(k) => enabled_ids[k..].iter().cloned().collect(),
             None => enabled_ids.iter().cloned().collect(), // unknown step → full re-run
         }
     } else if only_failed {
-        let seeds: std::collections::HashSet<String> =
-            parent_report.failed_steps.iter().map(|f| f.step_id.clone()).collect();
+        let seeds = failed_base_ids(&parent_report.failed_steps);
         let mut set = seeds.clone();
         set.extend(crate::pipeline::executor::dependents_of(&config, &seeds));
         set
@@ -856,49 +1161,133 @@ async fn rerun_run_inner(
     };
 
     // Preload the reused steps' outputs (keyed by base id).
-    let mut preloaded: std::collections::HashMap<String, crate::models::StepOutput> = std::collections::HashMap::new();
-    for o in &parent_report.step_outputs {
-        if o.skipped { continue; }
-        let base = o.step_id.split('/').next().unwrap_or(&o.step_id).to_string();
-        if !rerun.contains(&base) {
-            preloaded.insert(base, o.clone());
-        }
-    }
+    let preloaded = collect_preloaded_outputs(&parent_report.step_outputs, &rerun);
     app.emit_event("pipeline:log", serde_json::json!({
         "line": format!("Re-run of {parent_run_id}: reusing {} step(s), re-running the rest", preloaded.len())
     })).ok();
 
     // New run directory.
-    let run_id = format!("{}_{}", parent_report.paper_hash, chrono::Local::now().format("%Y%m%d-%H%M%S"));
-    let mut run_writer = crate::runs::RunWriter::create(&run_id).ok();
+    let mut run_writer = crate::runs::RunWriter::create_unique(&parent_report.paper_hash).ok();
+    if let Some(w) = run_writer.as_mut() {
+        let settings = crate::settings::load();
+        let profile_name = pipeline_config::load_profile(&settings.active_profile)
+            .map(|p| p.name)
+            .unwrap_or_default();
+        let _ = w.set_pending_meta(crate::runs::RunFinishMeta {
+            input_path: parent.input_path.clone(),
+            input_mode: parent.input_mode.clone(),
+            profile_id: settings.active_profile,
+            profile_name,
+            provider: settings.preferred_provider,
+            variables: parent.variables.clone(),
+            parent_run_id: Some(parent_run_id.to_string()),
+            ..Default::default()
+        });
+    }
     let artifact_write_dir: Option<String> = run_writer.as_ref().and_then(|w| {
         let dir = w.dir().join("artifacts");
-        std::fs::create_dir_all(&dir).ok().map(|_| dir.to_string_lossy().replace('\\', "/"))
+        std::fs::create_dir_all(&dir)
+            .ok()
+            .map(|_| dir.to_string_lossy().replace('\\', "/"))
     });
-    crate::pipeline::api_common::set_write_dir(artifact_write_dir.as_ref().map(std::path::PathBuf::from));
+    crate::pipeline::api_common::set_write_dir(
+        artifact_write_dir.as_ref().map(std::path::PathBuf::from),
+    );
     if let Some(w) = run_writer.as_mut() {
-        let _ = w.add_text("context/extracted_text.md", "Extracted text", "context", &extracted_text);
+        let _ = w.add_text(
+            "context/extracted_text.md",
+            "Extracted text",
+            "context",
+            &extracted_text,
+        );
         let orient_json = serde_json::to_string_pretty(&orientation_value).unwrap_or_default();
-        let _ = w.add_text("context/orientation.json", "Orientation map", "context", &orient_json);
+        let _ = w.add_text(
+            "context/orientation.json",
+            "Orientation map",
+            "context",
+            &orient_json,
+        );
         let logs_dir = w.dir().join("logs");
-        if let Ok(f) = std::fs::create_dir_all(&logs_dir).and_then(|_| std::fs::File::create(logs_dir.join("run.log"))) {
+        if let Ok(f) = std::fs::create_dir_all(&logs_dir)
+            .and_then(|_| std::fs::File::create(logs_dir.join("run.log")))
+        {
             crate::pipeline::logging::set_log_sink(Some(f));
         }
     }
 
     // Extracted-text + orientation temp files for the steps to Read.
-    let mut text_tmp = tempfile::Builder::new().prefix("pipeline_paper_").suffix(".txt").tempfile()
+    let mut text_tmp = tempfile::Builder::new()
+        .prefix("pipeline_paper_")
+        .suffix(".txt")
+        .tempfile()
         .map_err(|e| format!("Failed to create temp file: {e}"))?;
-    text_tmp.write_all(extracted_text.as_bytes()).map_err(|e| format!("Failed to write temp file: {e}"))?;
+    text_tmp
+        .write_all(extracted_text.as_bytes())
+        .map_err(|e| format!("Failed to write temp file: {e}"))?;
     text_tmp.flush().ok();
     let paper_text_path = text_tmp.path().to_string_lossy().replace('\\', "/");
 
     let orient_json = serde_json::to_string(&orientation_value).unwrap_or_default();
-    let mut orient_tmp = tempfile::Builder::new().prefix("pipeline_orient_").suffix(".json").tempfile()
+    let mut orient_tmp = tempfile::Builder::new()
+        .prefix("pipeline_orient_")
+        .suffix(".json")
+        .tempfile()
         .map_err(|e| format!("Failed to create orientation temp file: {e}"))?;
-    orient_tmp.write_all(orient_json.as_bytes()).map_err(|e| format!("Failed to write orientation temp file: {e}"))?;
+    orient_tmp
+        .write_all(orient_json.as_bytes())
+        .map_err(|e| format!("Failed to write orientation temp file: {e}"))?;
     orient_tmp.flush().ok();
     let orientation_path = orient_tmp.path().to_string_lossy().replace('\\', "/");
+
+    // Rehydrate named inputs from the parent run's captured copies. Required
+    // inputs from older runs that predate capture fail explicitly instead of
+    // silently substituting an empty string into the prompt.
+    let mut resolved_inputs = std::collections::HashMap::new();
+    let mut persisted_inputs = std::collections::HashMap::new();
+    let mut extra_tmps: Vec<tempfile::NamedTempFile> = Vec::new();
+    for (input_index, slot) in config.extraction.extra_inputs.iter().enumerate() {
+        let Some(parent_rel) = parent.extra_inputs.get(&slot.key) else {
+            if slot.required {
+                let label = if slot.label.is_empty() {
+                    &slot.key
+                } else {
+                    &slot.label
+                };
+                return Err(format!(
+                    "Re-run requires named input '{label}', but the parent run did not capture it. Start a new run and select the input again."
+                ));
+            }
+            continue;
+        };
+        let content = read_run_file(parent_run_id, parent_rel)
+            .map_err(|e| format!("Cannot restore named input '{}': {e}", slot.key))?;
+        let rel_path = extra_input_artifact_path(input_index, &slot.key);
+        if let Some(w) = run_writer.as_mut() {
+            let label = if slot.label.is_empty() {
+                &slot.key
+            } else {
+                &slot.label
+            };
+            if w.add_text(&rel_path, label, "context", &content).is_ok()
+                && w.record_extra_input(&slot.key, &rel_path).is_ok()
+            {
+                persisted_inputs.insert(slot.key.clone(), rel_path);
+            }
+        }
+        let mut temp = tempfile::Builder::new()
+            .prefix("pipeline_input_")
+            .suffix(".txt")
+            .tempfile()
+            .map_err(|e| format!("Failed to restore input '{}': {e}", slot.key))?;
+        temp.write_all(content.as_bytes())
+            .map_err(|e| format!("Failed to restore input '{}': {e}", slot.key))?;
+        temp.flush().ok();
+        resolved_inputs.insert(
+            slot.key.clone(),
+            temp.path().to_string_lossy().replace('\\', "/"),
+        );
+        extra_tmps.push(temp);
+    }
 
     let paper_type = crate::models::paper_view(&orientation_value)
         .map(|v| v.metadata.paper_type.to_string())
@@ -916,13 +1305,16 @@ async fn rerun_run_inner(
         &paper_type,
         &survey_hint,
         &variables,
-        &std::collections::HashMap::new(),
+        &resolved_inputs,
         &preloaded,
         artifact_write_dir.as_deref(),
     )
     .await?;
+    drop(extra_tmps);
     crate::pipeline::api_common::set_write_dir(None);
-    if is_cancelled() { return Err("Pipeline cancelled".into()); }
+    if is_cancelled() {
+        return Err("Pipeline cancelled".into());
+    }
 
     let report = PipelineReport {
         orientation: orientation_value,
@@ -937,8 +1329,14 @@ async fn rerun_run_inner(
     let settings = crate::settings::load();
     let markdown = output::render_markdown(&report, None, elapsed, &settings);
 
-    let profile_name = pipeline_config::load_profile(&settings.active_profile).map(|p| p.name).unwrap_or_default();
-    let status = if report.failed_steps.is_empty() { "done" } else { "partial" };
+    let profile_name = pipeline_config::load_profile(&settings.active_profile)
+        .map(|p| p.name)
+        .unwrap_or_default();
+    let status = if report.failed_steps.is_empty() {
+        "done"
+    } else {
+        "partial"
+    };
     let meta = crate::runs::RunFinishMeta {
         input_path: parent.input_path.clone(),
         input_mode: parent.input_mode.clone(),
@@ -949,8 +1347,13 @@ async fn rerun_run_inner(
         duration_secs: elapsed.as_secs(),
         usage: crate::pipeline::logging::run_usage(),
         step_count: report.all_outputs().len() as u32,
-        failed_steps: report.failed_steps.iter().map(|f| f.step_label.clone()).collect(),
+        failed_steps: report
+            .failed_steps
+            .iter()
+            .map(|f| f.step_label.clone())
+            .collect(),
         variables,
+        extra_inputs: persisted_inputs,
         parent_run_id: Some(parent_run_id.to_string()),
     };
     let mut finished_run_id: Option<String> = None;
@@ -958,7 +1361,8 @@ async fn rerun_run_inner(
         finished_run_id = finalize_run(app, w, &report, &markdown, meta);
     }
     enforce_retention(app, settings.max_saved_runs as usize);
-    app.emit_event("pipeline:stage", serde_json::json!({"stage": "done"})).ok();
+    app.emit_event("pipeline:stage", serde_json::json!({"stage": "done"}))
+        .ok();
 
     Ok(serde_json::json!({
         "report": report,
@@ -993,7 +1397,11 @@ pub async fn get_run_report(run_id: String) -> Result<PipelineReport, String> {
 /// what's new. Orders the two by creation time (older = "prior"). Guards
 /// against a concurrent pipeline run.
 #[tauri::command]
-pub async fn reconcile_runs(app: AppHandle, run_a: String, run_b: String) -> Result<String, String> {
+pub async fn reconcile_runs(
+    app: AppHandle,
+    run_a: String,
+    run_b: String,
+) -> Result<String, String> {
     if PIPELINE_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err("A pipeline is already running".into());
     }
@@ -1024,7 +1432,11 @@ pub async fn list_runs() -> Result<Vec<crate::runs::RunSummary>, String> {
 
 /// Rename / retag a past run.
 #[tauri::command]
-pub async fn update_run_meta(run_id: String, title: String, tags: Vec<String>) -> Result<(), String> {
+pub async fn update_run_meta(
+    run_id: String,
+    title: String,
+    tags: Vec<String>,
+) -> Result<(), String> {
     crate::runs::update_run_meta(&run_id, &title, &tags)
 }
 
@@ -1079,13 +1491,26 @@ fn extract_issues_from_report(report: &PipelineReport) -> Vec<(String, String, S
         };
         let mut issues = Vec::new();
         for (i, item) in arr.iter().enumerate() {
-            let Some(obj) = item.as_object() else { continue };
-            let id = obj.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+            let Some(obj) = item.as_object() else {
+                continue;
+            };
+            let id = obj
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
                 .unwrap_or_else(|| (i + 1).to_string());
-            let title = obj.get("title").or_else(|| obj.get("summary"))
-                .and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let body = obj.get("body").or_else(|| obj.get("description"))
-                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let title = obj
+                .get("title")
+                .or_else(|| obj.get("summary"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let body = obj
+                .get("body")
+                .or_else(|| obj.get("description"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if !title.is_empty() || !body.is_empty() {
                 issues.push((id, title, body));
             }
@@ -1104,7 +1529,8 @@ fn collect_rejected_issues(profile_id: &str) -> Vec<String> {
     let mut out = Vec::new();
     for r in runs.iter().filter(|r| r.profile_id == profile_id) {
         let ann_str = crate::runs::read_annotations(&r.run_id).unwrap_or_else(|_| "{}".to_string());
-        let ann: serde_json::Value = serde_json::from_str(&ann_str).unwrap_or(serde_json::json!({}));
+        let ann: serde_json::Value =
+            serde_json::from_str(&ann_str).unwrap_or(serde_json::json!({}));
         let Some(obj) = ann.as_object() else { continue };
         let rejected: Vec<String> = obj
             .iter()
@@ -1114,7 +1540,9 @@ fn collect_rejected_issues(profile_id: &str) -> Vec<String> {
         if rejected.is_empty() {
             continue;
         }
-        let Ok(report) = load_run_report(&r.run_id) else { continue };
+        let Ok(report) = load_run_report(&r.run_id) else {
+            continue;
+        };
         let issues = extract_issues_from_report(&report);
         for id in rejected {
             if let Some((_, title, body)) = issues.iter().find(|(iid, _, _)| *iid == id) {
@@ -1167,7 +1595,16 @@ pub async fn draft_calibration(app: AppHandle) -> Result<serde_json::Value, Stri
     let timeout = settings.step_timeout_secs.max(60);
     let bus = crate::emit::from_app(app);
     let raw = crate::pipeline::claude::call_llm(
-        &bus, &prompt, &[], None, "text", timeout, "Prompt calibration", None, None, &[],
+        &bus,
+        &prompt,
+        &[],
+        None,
+        "text",
+        timeout,
+        "Prompt calibration",
+        None,
+        None,
+        &[],
         &crate::pipeline::claude::LlmOverrides::default(),
     )
     .await?;
@@ -1190,6 +1627,7 @@ pub async fn save_annotations(run_id: String, content: String) -> Result<(), Str
 #[tauri::command]
 pub async fn cancel_pipeline() -> Result<(), String> {
     CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
+    signal_cancellation();
     kill_all_children();
     Ok(())
 }
@@ -1235,7 +1673,7 @@ pub async fn start_batch(
     tauri::async_runtime::spawn(async move {
         // RAII guard clears PIPELINE_RUNNING and per-run state even on panic.
         let _guard = PipelineGuard;
-        for i in 0..paths.len() {
+        for (i, path) in paths.iter().enumerate() {
             if BATCH_CANCEL.load(std::sync::atomic::Ordering::Acquire) {
                 mark_remaining_cancelled(i);
                 break;
@@ -1244,12 +1682,16 @@ pub async fn start_batch(
             emit_batch(&bus);
 
             let started = std::time::Instant::now();
-            let result = run_pipeline_inner(&bus, &paths[i], false, vars.clone(), Default::default()).await;
+            let result =
+                run_pipeline_inner(&bus, path, false, vars.clone(), Default::default()).await;
             let secs = started.elapsed().as_secs();
 
             match result {
                 Ok(v) => {
-                    let run_id = v.get("run_id").and_then(|r| r.as_str()).map(|s| s.to_string());
+                    let run_id = v
+                        .get("run_id")
+                        .and_then(|r| r.as_str())
+                        .map(|s| s.to_string());
                     set_job(i, |j| {
                         j.status = "done".to_string();
                         j.run_id = run_id.clone();
@@ -1300,6 +1742,7 @@ pub async fn get_batch_status() -> Result<Vec<BatchJob>, String> {
 pub async fn cancel_batch() -> Result<(), String> {
     BATCH_CANCEL.store(true, std::sync::atomic::Ordering::Release);
     CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
+    signal_cancellation();
     kill_all_children();
     Ok(())
 }
@@ -1340,8 +1783,22 @@ pub async fn list_input_files(dir: String) -> Result<Vec<String>, String> {
 // --- Watch folder ---
 
 fn emit_watch(app: &crate::emit::EventBus) {
-    let state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let _ = app.emit_event("watch:status", serde_json::to_value(&state).unwrap_or_default());
+    let state = WATCH_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let _ = app.emit_event(
+        "watch:status",
+        serde_json::to_value(&state).unwrap_or_default(),
+    );
+}
+
+fn push_watch_job(processed: &mut Vec<BatchJob>, job: BatchJob) {
+    processed.push(job);
+    if processed.len() > MAX_WATCH_HISTORY {
+        let excess = processed.len() - MAX_WATCH_HISTORY;
+        processed.drain(..excess);
+    }
 }
 
 /// Start watching `folder`: files that appear from now on are run through the
@@ -1352,21 +1809,26 @@ pub async fn start_watch(app: AppHandle, folder: String) -> Result<(), String> {
     if folder.trim().is_empty() {
         return Err("No folder to watch".into());
     }
-    scan_input_files(&folder)?; // validate readable
+    // Capture the baseline once. A second asynchronous scan would classify
+    // files added in between as pre-existing and silently miss them.
+    let baseline = scan_input_files(&folder)?;
     if WATCH_ACTIVE.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err("Already watching a folder".into());
     }
     {
         let mut st = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
-        *st = WatchStatus { active: true, folder: folder.clone(), processed: Vec::new() };
+        *st = WatchStatus {
+            active: true,
+            folder: folder.clone(),
+            processed: Vec::new(),
+        };
     }
     let bus = crate::emit::from_app(app);
     emit_watch(&bus);
 
     tauri::async_runtime::spawn(async move {
         // Baseline: files already present are not (re)processed.
-        let mut seen: std::collections::HashSet<String> =
-            scan_input_files(&folder).unwrap_or_default().into_iter().collect();
+        let mut seen: std::collections::HashSet<String> = baseline.into_iter().collect();
         while WATCH_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             if !WATCH_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
@@ -1388,14 +1850,19 @@ pub async fn start_watch(app: AppHandle, folder: String) -> Result<(), String> {
                 seen.insert(path.clone());
                 let guard = PipelineGuard;
                 let name = basename(&path);
-                let result = run_pipeline_inner(&bus, &path, false, Default::default(), Default::default()).await;
+                let result =
+                    run_pipeline_inner(&bus, &path, false, Default::default(), Default::default())
+                        .await;
                 drop(guard);
                 let job = match result {
                     Ok(v) => BatchJob {
                         path: path.clone(),
                         name,
                         status: "done".to_string(),
-                        run_id: v.get("run_id").and_then(|r| r.as_str()).map(|s| s.to_string()),
+                        run_id: v
+                            .get("run_id")
+                            .and_then(|r| r.as_str())
+                            .map(|s| s.to_string()),
                         error: None,
                         duration_secs: 0,
                     },
@@ -1408,7 +1875,9 @@ pub async fn start_watch(app: AppHandle, folder: String) -> Result<(), String> {
                         duration_secs: 0,
                     },
                 };
-                WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner()).processed.push(job);
+                let mut state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
+                push_watch_job(&mut state.processed, job);
+                drop(state);
                 emit_watch(&bus);
                 if !WATCH_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
                     break;
@@ -1431,7 +1900,10 @@ pub async fn stop_watch() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn get_watch_status() -> Result<WatchStatus, String> {
-    Ok(WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner()).clone())
+    Ok(WATCH_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone())
 }
 
 // --- File I/O ---
@@ -1473,19 +1945,34 @@ pub async fn save_all_artifacts(
 
     let outputs = report.all_outputs();
     for (i, output) in outputs.iter().enumerate() {
-        let slug = output.step_id
+        let slug = output
+            .step_id
             .replace('/', "_")
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect::<String>();
         let filename = format!("{:02}_{}.md", i + 1, slug);
-        let header = format!("# {}\n\n**Phase**: {} · **Agent**: {}\n\n---\n\n",
+        let header = format!(
+            "# {}\n\n**Phase**: {} · **Agent**: {}\n\n---\n\n",
             output.step_label,
             output.phase,
-            if output.agent.is_empty() { "default" } else { &output.agent },
+            if output.agent.is_empty() {
+                "default"
+            } else {
+                &output.agent
+            },
         );
-        std::fs::write(steps_dir.join(&filename), format!("{}{}", header, output.raw_text))
-            .map_err(|e| format!("Failed to write {filename}: {e}"))?;
+        std::fs::write(
+            steps_dir.join(&filename),
+            format!("{}{}", header, output.raw_text),
+        )
+        .map_err(|e| format!("Failed to write {filename}: {e}"))?;
     }
 
     Ok(())
@@ -1496,7 +1983,7 @@ static LAST_EXPORT_PATH: std::sync::Mutex<Option<String>> = std::sync::Mutex::ne
 
 #[tauri::command]
 pub async fn print_report_html(markdown: String) -> Result<(), String> {
-    use pulldown_cmark::{Parser, Options, html};
+    use pulldown_cmark::{html, Options, Parser};
 
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
@@ -1516,7 +2003,8 @@ pub async fn print_report_html(markdown: String) -> Result<(), String> {
     // online but math still renders (with fallback fonts) when offline.
     const KATEX_CSS: &str = include_str!("../../node_modules/katex/dist/katex.min.css");
     const KATEX_JS: &str = include_str!("../../node_modules/katex/dist/katex.min.js");
-    const AUTO_RENDER_JS: &str = include_str!("../../node_modules/katex/dist/contrib/auto-render.min.js");
+    const AUTO_RENDER_JS: &str =
+        include_str!("../../node_modules/katex/dist/contrib/auto-render.min.js");
 
     let katex_css = KATEX_CSS.replace(
         "url(fonts/",
@@ -1577,19 +2065,22 @@ pub async fn print_report_html(markdown: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to create temp file: {e}"))?;
     tmp.write_all(html_doc.as_bytes())
         .map_err(|e| format!("Failed to write HTML: {e}"))?;
-    tmp.flush()
-        .map_err(|e| format!("Failed to flush: {e}"))?;
+    tmp.flush().map_err(|e| format!("Failed to flush: {e}"))?;
 
     let path = tmp.into_temp_path();
     let path_str = path.to_string_lossy().to_string();
-    path.keep().map_err(|e| format!("Failed to persist temp file: {e}"))?;
+    path.keep()
+        .map_err(|e| format!("Failed to persist temp file: {e}"))?;
 
     if let Ok(mut prev) = LAST_EXPORT_PATH.lock() {
         *prev = Some(path_str.clone());
     }
 
     #[cfg(target_os = "macos")]
-    std::process::Command::new("open").arg("--").arg(&path_str).spawn()
+    std::process::Command::new("open")
+        .arg("--")
+        .arg(&path_str)
+        .spawn()
         .map_err(|e| format!("Failed to open browser: {e}"))?;
     #[cfg(target_os = "windows")]
     {
@@ -1601,7 +2092,10 @@ pub async fn print_report_html(markdown: String) -> Result<(), String> {
             .map_err(|e| format!("Failed to open browser: {e}"))?;
     }
     #[cfg(target_os = "linux")]
-    std::process::Command::new("xdg-open").arg("--").arg(&path_str).spawn()
+    std::process::Command::new("xdg-open")
+        .arg("--")
+        .arg(&path_str)
+        .spawn()
         .map_err(|e| format!("Failed to open browser: {e}"))?;
 
     Ok(())
@@ -1617,7 +2111,10 @@ pub async fn open_pipeline_dir() -> Result<(), String> {
     let path_str = dir.to_string_lossy().to_string();
 
     #[cfg(target_os = "macos")]
-    std::process::Command::new("open").arg("--").arg(&path_str).spawn()
+    std::process::Command::new("open")
+        .arg("--")
+        .arg(&path_str)
+        .spawn()
         .map_err(|e| format!("Failed to open folder: {e}"))?;
     #[cfg(target_os = "windows")]
     {
@@ -1629,7 +2126,10 @@ pub async fn open_pipeline_dir() -> Result<(), String> {
             .map_err(|e| format!("Failed to open folder: {e}"))?;
     }
     #[cfg(target_os = "linux")]
-    std::process::Command::new("xdg-open").arg("--").arg(&path_str).spawn()
+    std::process::Command::new("xdg-open")
+        .arg("--")
+        .arg(&path_str)
+        .spawn()
         .map_err(|e| format!("Failed to open folder: {e}"))?;
 
     Ok(())
@@ -1726,7 +2226,10 @@ pub async fn create_profile(name: String) -> Result<ProfileSummary, String> {
 }
 
 #[tauri::command]
-pub async fn duplicate_profile(source_id: String, new_name: String) -> Result<ProfileSummary, String> {
+pub async fn duplicate_profile(
+    source_id: String,
+    new_name: String,
+) -> Result<ProfileSummary, String> {
     pipeline_config::duplicate_profile(&source_id, &new_name)
 }
 
@@ -1765,7 +2268,9 @@ pub async fn export_profile(id: String, path: String) -> Result<(), String> {
 
 /// Import a profile from a parsed envelope, checking the schema version.
 /// Shared by file and URL import.
-fn import_profile_envelope(envelope: pipeline_config::ExportEnvelope) -> Result<ProfileSummary, String> {
+fn import_profile_envelope(
+    envelope: pipeline_config::ExportEnvelope,
+) -> Result<ProfileSummary, String> {
     match envelope {
         pipeline_config::ExportEnvelope::Profile { schema_version, name, steps, merge, use_orientation, orientation_prompt, extraction, parallel_context_template, variables } => {
             if schema_version > pipeline_config::CURRENT_SCHEMA_VERSION {
@@ -1804,10 +2309,7 @@ pub async fn import_profile_from_url(url: String) -> Result<ProfileSummary, Stri
     if !resp.status().is_success() {
         return Err(format!("Fetch failed: HTTP {}", resp.status()));
     }
-    let bytes = resp.bytes().await.map_err(|e| format!("Fetch failed: {e}"))?;
-    if bytes.len() as u64 > MAX_IMPORT_SIZE {
-        return Err("The fetched file is too large to be a profile.".into());
-    }
+    let bytes = read_response_limited(resp, MAX_IMPORT_SIZE as usize).await?;
     let content = String::from_utf8_lossy(&bytes).to_string();
     let envelope = pipeline_config::import_envelope(&content)
         .map_err(|e| format!("The URL did not contain a valid profile: {e}"))?;
@@ -1926,6 +2428,64 @@ mod tests {
         assert_eq!(basename(""), "");
     }
 
+    #[test]
+    fn rerun_cache_preserves_every_output_for_a_base_step() {
+        let outputs = vec![
+            crate::models::StepOutput {
+                step_id: "review/claude".into(),
+                raw_text: "one".into(),
+                ..Default::default()
+            },
+            crate::models::StepOutput {
+                step_id: "review/gemini".into(),
+                raw_text: "two".into(),
+                ..Default::default()
+            },
+        ];
+        let cache = collect_preloaded_outputs(&outputs, &Default::default());
+        assert_eq!(cache["review"].len(), 2);
+    }
+
+    #[test]
+    fn composite_failure_ids_normalize_to_the_base_step() {
+        let failures = vec![crate::models::StepFailure {
+            step_id: "review/gemini".into(),
+            step_label: "Review (Gemini)".into(),
+            error: "failed".into(),
+        }];
+        let seeds = failed_base_ids(&failures);
+        assert_eq!(seeds, ["review".to_string()].into_iter().collect());
+    }
+
+    #[test]
+    fn chunked_import_limit_is_enforced_before_appending() {
+        let mut buffer = vec![0u8; 8];
+        assert!(append_limited(&mut buffer, &[1, 2], 10).is_ok());
+        assert_eq!(buffer.len(), 10);
+        assert!(append_limited(&mut buffer, &[3], 10).is_err());
+        assert_eq!(buffer.len(), 10);
+    }
+
+    #[test]
+    fn watch_history_is_bounded_to_recent_jobs() {
+        let mut processed = Vec::new();
+        for index in 0..(MAX_WATCH_HISTORY + 5) {
+            push_watch_job(
+                &mut processed,
+                BatchJob {
+                    path: index.to_string(),
+                    name: index.to_string(),
+                    status: "done".into(),
+                    run_id: None,
+                    error: None,
+                    duration_secs: 0,
+                },
+            );
+        }
+        assert_eq!(processed.len(), MAX_WATCH_HISTORY);
+        assert_eq!(processed.first().unwrap().path, "5");
+    }
+
     // Exercises the batch job-status helpers over the global BATCH state. This
     // is the only test that touches BATCH, so parallel test runs can't race it.
     #[test]
@@ -1933,12 +2493,36 @@ mod tests {
         {
             let mut jobs = BATCH.lock().unwrap();
             *jobs = vec![
-                BatchJob { path: "a".into(), name: "a".into(), status: "done".into(), run_id: None, error: None, duration_secs: 0 },
-                BatchJob { path: "b".into(), name: "b".into(), status: "running".into(), run_id: None, error: None, duration_secs: 0 },
-                BatchJob { path: "c".into(), name: "c".into(), status: "pending".into(), run_id: None, error: None, duration_secs: 0 },
+                BatchJob {
+                    path: "a".into(),
+                    name: "a".into(),
+                    status: "done".into(),
+                    run_id: None,
+                    error: None,
+                    duration_secs: 0,
+                },
+                BatchJob {
+                    path: "b".into(),
+                    name: "b".into(),
+                    status: "running".into(),
+                    run_id: None,
+                    error: None,
+                    duration_secs: 0,
+                },
+                BatchJob {
+                    path: "c".into(),
+                    name: "c".into(),
+                    status: "pending".into(),
+                    run_id: None,
+                    error: None,
+                    duration_secs: 0,
+                },
             ];
         }
-        set_job(1, |j| { j.status = "done".into(); j.run_id = Some("r1".into()); });
+        set_job(1, |j| {
+            j.status = "done".into();
+            j.run_id = Some("r1".into());
+        });
         mark_remaining_cancelled(1);
         let jobs = BATCH.lock().unwrap();
         assert_eq!(jobs[0].status, "done"); // untouched

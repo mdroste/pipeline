@@ -2,19 +2,33 @@ use crate::models::{PipelineReport, ReportSummary};
 use chrono::Local;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static HISTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn history_filename(paper_hash: &str) -> String {
+    let sequence = HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "{}_{}-{sequence:016x}.json",
+        paper_hash,
+        Local::now().format("%Y-%m-%d_%H%M%S-%9f")
+    )
+}
 
 /// Get the history directory (~/.pipeline/history/), creating it if needed.
 /// Reports contain the full paper text and reviewer feedback — restrict to owner-only on Unix.
 fn history_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
     let dir = home.join(".pipeline").join("history");
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create history dir: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create history dir: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(e) = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)) {
-            eprintln!("WARNING: could not tighten permissions on {}: {e}", dir.display());
+            eprintln!(
+                "WARNING: could not tighten permissions on {}: {e}",
+                dir.display()
+            );
         }
     }
     Ok(dir)
@@ -24,8 +38,7 @@ fn history_dir() -> Result<PathBuf, String> {
 pub fn save_report(report: &PipelineReport) -> Result<String, String> {
     use std::io::Write as _;
     let dir = history_dir()?;
-    let date = Local::now().format("%Y-%m-%d_%H%M%S");
-    let filename = format!("{}_{}.json", report.paper_hash, date);
+    let filename = history_filename(&report.paper_hash);
     let path = dir.join(&filename);
 
     let json = serde_json::to_string_pretty(report)
@@ -36,7 +49,7 @@ pub fn save_report(report: &PipelineReport) -> Result<String, String> {
         .map_err(|e| format!("Failed to create temp file in {}: {e}", dir.display()))?;
     tmp.write_all(json.as_bytes())
         .map_err(|e| format!("Failed to write report: {e}"))?;
-    tmp.persist(&path)
+    tmp.persist_noclobber(&path)
         .map_err(|e| format!("Failed to save report: {}", e.error))?;
 
     Ok(path.to_string_lossy().to_string())
@@ -69,10 +82,10 @@ pub fn load_latest_report(paper_hash: &str) -> Result<Option<PipelineReport>, St
     matching.sort();
 
     if let Some(latest) = matching.last() {
-        let content = fs::read_to_string(latest)
-            .map_err(|e| format!("Failed to read report: {e}"))?;
-        let report: PipelineReport = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse report: {e}"))?;
+        let content =
+            fs::read_to_string(latest).map_err(|e| format!("Failed to read report: {e}"))?;
+        let report: PipelineReport =
+            serde_json::from_str(&content).map_err(|e| format!("Failed to parse report: {e}"))?;
         Ok(Some(report))
     } else {
         Ok(None)
@@ -91,8 +104,7 @@ pub fn list_reports() -> Result<ListReportsResult, String> {
     let mut summaries = Vec::new();
     let mut warnings = Vec::new();
 
-    let entries = fs::read_dir(&dir)
-        .map_err(|e| format!("Failed to read history dir: {e}"))?;
+    let entries = fs::read_dir(&dir).map_err(|e| format!("Failed to read history dir: {e}"))?;
 
     for entry_result in entries {
         let entry = match entry_result {
@@ -109,39 +121,47 @@ pub fn list_reports() -> Result<ListReportsResult, String> {
             continue;
         }
 
-        let filename = path.file_name()
+        let filename = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
 
         match fs::read_to_string(&path) {
-            Ok(content) => {
-                match serde_json::from_str::<PipelineReport>(&content) {
-                    Ok(report) => {
-                        summaries.push(ReportSummary {
-                            paper_hash: report.paper_hash.clone(),
-                            title: crate::models::paper_view(&report.orientation)
-                                .map(|v| v.metadata.title)
-                                .unwrap_or_default(),
-                            report_date: report.report_date,
-                            file_path: path.to_string_lossy().to_string(),
-                        });
-                    }
-                    Err(e) => {
-                        warnings.push(format!(
-                            "Skipped corrupted report {filename}: {e}"
-                        ));
-                    }
+            Ok(content) => match serde_json::from_str::<PipelineReport>(&content) {
+                Ok(report) => {
+                    summaries.push(ReportSummary {
+                        paper_hash: report.paper_hash.clone(),
+                        title: crate::models::paper_view(&report.orientation)
+                            .map(|v| v.metadata.title)
+                            .unwrap_or_default(),
+                        report_date: report.report_date,
+                        file_path: path.to_string_lossy().to_string(),
+                    });
                 }
-            }
+                Err(e) => {
+                    warnings.push(format!("Skipped corrupted report {filename}: {e}"));
+                }
+            },
             Err(e) => {
-                warnings.push(format!(
-                    "Could not read report {filename}: {e}"
-                ));
+                warnings.push(format!("Could not read report {filename}: {e}"));
             }
         }
     }
 
     summaries.sort_by(|a, b| b.report_date.cmp(&a.report_date));
-    Ok(ListReportsResult { summaries, warnings })
+    Ok(ListReportsResult {
+        summaries,
+        warnings,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_filenames_are_unique_within_the_same_clock_tick() {
+        assert_ne!(history_filename("abc"), history_filename("abc"));
+    }
 }

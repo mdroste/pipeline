@@ -33,7 +33,11 @@ pub fn bundled_poppler_dir() -> Option<&'static Path> {
         .get()
         .and_then(|opt| opt.as_deref())
         .filter(|dir| {
-            let bin = if cfg!(windows) { "pdftoppm.exe" } else { "pdftoppm" };
+            let bin = if cfg!(windows) {
+                "pdftoppm.exe"
+            } else {
+                "pdftoppm"
+            };
             dir.join(bin).is_file()
         })
 }

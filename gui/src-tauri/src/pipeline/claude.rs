@@ -1,9 +1,9 @@
+use std::io::Write;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use std::io::Write;
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Claude to read it.
@@ -35,8 +35,16 @@ pub struct LlmOverrides<'a> {
 impl<'a> LlmOverrides<'a> {
     pub fn from_step_strings(model: &'a str, effort: &'a str) -> Self {
         Self {
-            model: if model.trim().is_empty() { None } else { Some(model) },
-            effort: if effort.trim().is_empty() { None } else { Some(effort) },
+            model: if model.trim().is_empty() {
+                None
+            } else {
+                Some(model)
+            },
+            effort: if effort.trim().is_empty() {
+                None
+            } else {
+                Some(effort)
+            },
             ..Default::default()
         }
     }
@@ -77,7 +85,13 @@ pub fn emit_stderr_tail(app: &crate::emit::EventBus, tail: &[String]) {
     if tail.is_empty() {
         return;
     }
-    log(app, format!("ERROR: captured stderr from failed call ({} line(s)):", tail.len()));
+    log(
+        app,
+        format!(
+            "ERROR: captured stderr from failed call ({} line(s)):",
+            tail.len()
+        ),
+    );
     for l in tail {
         log(app, format!("[stderr] {l}"));
     }
@@ -91,6 +105,7 @@ pub fn emit_stderr_tail(app: &crate::emit::EventBus, tail: &[String]) {
 /// added because we routinely write prompts and orientation maps there.
 /// Paths are normalized to forward slashes so Windows backslashes don't
 /// confuse Claude's internal path normalization.
+#[allow(clippy::too_many_arguments)]
 pub async fn call_claude(
     app: &crate::emit::EventBus,
     prompt: &str,
@@ -146,7 +161,11 @@ pub async fn call_claude(
     // (Edit, Write, Bash, etc.). When the list is empty, pass "none"
     // to explicitly disable all tools.
     cmd_args.push("--allowedTools".to_string());
-    cmd_args.push(if tools.is_empty() { "none".to_string() } else { tools.join(",") });
+    cmd_args.push(if tools.is_empty() {
+        "none".to_string()
+    } else {
+        tools.join(",")
+    });
 
     if let Some(sys) = system_prompt {
         cmd_args.push("--append-system-prompt".to_string());
@@ -213,8 +232,15 @@ pub async fn call_claude(
     }
 
     // Log the command (truncated)
-    let display_args: String = cmd_args.iter()
-        .map(|a| if a.len() > 80 { format!("{}...", a.chars().take(80).collect::<String>()) } else { a.clone() })
+    let display_args: String = cmd_args
+        .iter()
+        .map(|a| {
+            if a.len() > 80 {
+                format!("{}...", a.chars().take(80).collect::<String>())
+            } else {
+                a.clone()
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ");
     verbose_log(app, format!("$ claude {display_args}"));
@@ -229,7 +255,8 @@ pub async fn call_claude(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn claude: {e}. Is Claude Code installed?"))?;
 
     let pid = child.id().unwrap_or(0);
@@ -251,7 +278,9 @@ pub async fn call_claude(
             while let Ok(Some(line)) = reader.next_line().await {
                 if !line.trim().is_empty() {
                     verbose_log(&app_stderr, format!("[stderr] {line}"));
-                    if tail.len() >= STDERR_TAIL_LINES { tail.pop_front(); }
+                    if tail.len() >= STDERR_TAIL_LINES {
+                        tail.pop_front();
+                    }
                     tail.push_back(line);
                 }
             }
@@ -270,10 +299,13 @@ pub async fn call_claude(
                 collected.push_str(&line);
                 collected.push('\n');
                 if collected.len() > MAX_STDOUT_BYTES {
-                    log(&app_stdout, format!(
-                        "WARNING: stdout exceeded {} MB, truncating",
-                        MAX_STDOUT_BYTES / 1_000_000
-                    ));
+                    log(
+                        &app_stdout,
+                        format!(
+                            "WARNING: stdout exceeded {} MB, truncating",
+                            MAX_STDOUT_BYTES / 1_000_000
+                        ),
+                    );
                     break;
                 }
                 if collected.lines().count() <= 5 {
@@ -282,21 +314,21 @@ pub async fn call_claude(
             }
         }
         if collected.lines().count() > 5 {
-            verbose_log(&app_stdout, format!("[out] ... ({} total lines)", collected.lines().count()));
+            verbose_log(
+                &app_stdout,
+                format!("[out] ... ({} total lines)", collected.lines().count()),
+            );
         }
         collected
     }));
 
     // Wait for the process to exit
-    let status = tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        child.wait(),
-    )
-    .await;
+    let status = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await;
 
     let status = match status {
         Ok(s) => s,
         Err(_) => {
+            if pid > 0 { crate::commands::kill_process(pid); }
             let _ = child.kill().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
             if pid > 0 { crate::commands::unregister_child_pid(pid); }
@@ -319,12 +351,15 @@ pub async fn call_claude(
 
     // Process has exited — unregister PID before joining I/O tasks
     // so cancel cleanup can't miss it if a join fails
-    if pid > 0 { crate::commands::unregister_child_pid(pid); }
+    if pid > 0 {
+        crate::commands::unregister_child_pid(pid);
+    }
 
     // Collect stdout and unwrap the JSON result envelope (see the
     // --output-format json note above). Falls back to the raw output when it
     // isn't the expected envelope, so callers/behavior are unchanged.
-    let raw_stdout = stdout_task.await
+    let raw_stdout = stdout_task
+        .await
         .map_err(|e| format!("stdout reader failed: {e}"))?;
     let (text, claude_usage) = parse_claude_result(&raw_stdout);
 
@@ -337,7 +372,13 @@ pub async fn call_claude(
         Some((i, o)) if i > 0 || o > 0 => format!(", {i}+{o} tokens"),
         _ => String::new(),
     };
-    log(app, format!("{label} finished ({elapsed}s, exit code {exit_code}, {} chars output{token_info})", text.len()));
+    log(
+        app,
+        format!(
+            "{label} finished ({elapsed}s, exit code {exit_code}, {} chars output{token_info})",
+            text.len()
+        ),
+    );
     if let Some((i, o)) = claude_usage {
         super::logging::emit_usage(app, i, o);
     }
@@ -352,7 +393,9 @@ pub async fn call_claude(
         let msg = if let Some(hint) = hint {
             format!("Claude call failed (exit {exit_code}): {hint}")
         } else {
-            format!("Claude call failed (exit {exit_code}). See this call's session log for details.")
+            format!(
+                "Claude call failed (exit {exit_code}). See this call's session log for details."
+            )
         };
         log(app, format!("ERROR: {msg}"));
         return Err(msg);
@@ -416,7 +459,12 @@ fn parse_claude_result(raw: &str) -> (String, Option<(u64, u64)>) {
 /// Looks for common auth/config error patterns in stdout/stderr.
 pub fn extract_error_hint(output: &str) -> Option<String> {
     let lower = output.to_lowercase();
-    if lower.contains("not logged in") || lower.contains("not authenticated") || lower.contains("sign in") || lower.contains("log in") || lower.contains("auth") {
+    if lower.contains("not logged in")
+        || lower.contains("not authenticated")
+        || lower.contains("sign in")
+        || lower.contains("log in")
+        || lower.contains("auth")
+    {
         Some("Not signed in. Run `claude auth login` to authenticate.".into())
     } else if lower.contains("api key") {
         Some("API key not configured. Check your API key settings.".into())
@@ -426,7 +474,8 @@ pub fn extract_error_hint(output: &str) -> Option<String> {
         Some("Service overloaded. Try again in a few minutes.".into())
     } else {
         // Return first non-empty line of output as a generic hint
-        output.lines()
+        output
+            .lines()
             .find(|l| !l.trim().is_empty())
             .map(|l| l.trim().to_string())
     }
@@ -439,6 +488,7 @@ pub fn extract_error_hint(output: &str) -> Option<String> {
 /// `cwd`: optional working directory for the subprocess. Pass the paper's source
 /// directory when the LLM needs to read figures or other assets alongside the paper.
 /// When `None`, the subprocess runs in the system temp dir.
+#[allow(clippy::too_many_arguments)]
 pub async fn call_llm(
     app: &crate::emit::EventBus,
     prompt: &str,
@@ -456,54 +506,116 @@ pub async fn call_llm(
     // frontend can separate concurrently running headless invocations.
     let session_id = super::logging::next_session_id();
     super::logging::with_session(session_id, label, async move {
-    let settings = crate::settings::load();
-    let provider = provider_override.unwrap_or(&settings.preferred_provider);
+        let settings = crate::settings::load();
+        let provider = provider_override.unwrap_or(&settings.preferred_provider);
 
-    // Direct API path: bypass CLI subprocess when an API key is configured
-    match provider {
-        "claude" | "" if !settings.anthropic_api_key.is_empty() => {
-            return super::api_anthropic::call_anthropic_api(
-                app, prompt, allowed_tools, system_prompt,
-                timeout_secs, label, &settings, overrides,
-            ).await;
+        // Direct API path: bypass CLI subprocess when an API key is configured
+        match provider {
+            "claude" | "" if !settings.anthropic_api_key.is_empty() => {
+                return super::api_anthropic::call_anthropic_api(
+                    app,
+                    prompt,
+                    allowed_tools,
+                    system_prompt,
+                    timeout_secs,
+                    label,
+                    &settings,
+                    overrides,
+                )
+                .await;
+            }
+            "codex" if !settings.openai_api_key.is_empty() => {
+                return super::api_openai::call_openai_api(
+                    app,
+                    prompt,
+                    allowed_tools,
+                    system_prompt,
+                    timeout_secs,
+                    label,
+                    &settings,
+                    overrides,
+                )
+                .await;
+            }
+            "gemini" if !settings.google_api_key.is_empty() => {
+                return super::api_google::call_google_api(
+                    app,
+                    prompt,
+                    allowed_tools,
+                    system_prompt,
+                    timeout_secs,
+                    label,
+                    &settings,
+                    overrides,
+                )
+                .await;
+            }
+            // Local OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM).
+            // Always direct HTTP — there is no CLI fallback for this provider.
+            "local" => {
+                return super::api_openai::call_local_api(
+                    app,
+                    prompt,
+                    allowed_tools,
+                    system_prompt,
+                    timeout_secs,
+                    label,
+                    &settings,
+                    overrides,
+                )
+                .await;
+            }
+            _ => {}
         }
-        "codex" if !settings.openai_api_key.is_empty() => {
-            return super::api_openai::call_openai_api(
-                app, prompt, allowed_tools, system_prompt,
-                timeout_secs, label, &settings, overrides,
-            ).await;
-        }
-        "gemini" if !settings.google_api_key.is_empty() => {
-            return super::api_google::call_google_api(
-                app, prompt, allowed_tools, system_prompt,
-                timeout_secs, label, &settings, overrides,
-            ).await;
-        }
-        // Local OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM).
-        // Always direct HTTP — there is no CLI fallback for this provider.
-        "local" => {
-            return super::api_openai::call_local_api(
-                app, prompt, allowed_tools, system_prompt,
-                timeout_secs, label, &settings, overrides,
-            ).await;
-        }
-        _ => {}
-    }
 
-    // Subprocess fallback. extra_read_dirs is currently consumed only by
-    // call_claude — codex and gemini sandbox via --sandbox / their own
-    // mechanisms and don't accept --add-dir.
-    match provider {
-        "codex" => {
-            super::codex::call_codex(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd, overrides).await
+        // Subprocess fallback. extra_read_dirs is currently consumed only by
+        // call_claude — codex and gemini sandbox via --sandbox / their own
+        // mechanisms and don't accept --add-dir.
+        match provider {
+            "codex" => {
+                super::codex::call_codex(
+                    app,
+                    prompt,
+                    allowed_tools,
+                    system_prompt,
+                    output_format,
+                    timeout_secs,
+                    label,
+                    cwd,
+                    overrides,
+                )
+                .await
+            }
+            "gemini" => {
+                super::gemini::call_gemini(
+                    app,
+                    prompt,
+                    allowed_tools,
+                    system_prompt,
+                    output_format,
+                    timeout_secs,
+                    label,
+                    cwd,
+                    overrides,
+                )
+                .await
+            }
+            _ => {
+                call_claude(
+                    app,
+                    prompt,
+                    allowed_tools,
+                    system_prompt,
+                    output_format,
+                    timeout_secs,
+                    label,
+                    cwd,
+                    extra_read_dirs,
+                    overrides,
+                )
+                .await
+            }
         }
-        "gemini" => {
-            super::gemini::call_gemini(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd, overrides).await
-        }
-        _ => {
-            call_claude(app, prompt, allowed_tools, system_prompt, output_format, timeout_secs, label, cwd, extra_read_dirs, overrides).await
-        }
-    }
     })
     .await
 }
@@ -518,22 +630,53 @@ pub async fn call_llm(
 pub fn build_silent_command(program: &str, cwd: Option<&str>) -> Command {
     #[allow(unused_mut)]
     let mut std_cmd = std::process::Command::new(program);
-    std_cmd.env("PATH", crate::env::full_path());
+    configure_silent_command(&mut std_cmd);
     match cwd {
-        Some(dir) => { std_cmd.current_dir(dir); }
-        None => { std_cmd.current_dir(std::env::temp_dir()); }
+        Some(dir) => {
+            std_cmd.current_dir(dir);
+        }
+        None => {
+            std_cmd.current_dir(std::env::temp_dir());
+        }
+    }
+    Command::from(std_cmd)
+}
+
+/// Apply the shared environment and process-isolation flags to a standard
+/// command. Extraction uses this directly because it runs on blocking worker
+/// threads; async provider and installer commands use `build_silent_command`.
+pub fn configure_silent_command(std_cmd: &mut std::process::Command) {
+    std_cmd.env("PATH", crate::env::full_path());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Make the child the leader of a new process group so cancellation can
+        // terminate every tool it spawns without signalling the app itself.
+        std_cmd.process_group(0);
     }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         std_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    Command::from(std_cmd)
 }
 
 #[cfg(test)]
 mod tests {
     use super::parse_claude_result;
+
+    #[test]
+    #[cfg(unix)]
+    fn configured_child_owns_a_dedicated_process_group() {
+        let mut command = std::process::Command::new("sleep");
+        super::configure_silent_command(&mut command);
+        let mut child = command.arg("5").spawn().unwrap();
+        let pid = child.id();
+        let process_group = unsafe { libc::getpgid(pid as i32) };
+        assert_eq!(process_group, pid as i32);
+        crate::commands::kill_process(pid);
+        let _ = child.wait();
+    }
 
     #[test]
     fn unwraps_result_envelope_and_sums_input_tokens() {
