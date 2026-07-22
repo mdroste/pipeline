@@ -1,6 +1,9 @@
 // Render an arbitrary survey JSON object (any schema a profile's survey
 // prompt produced) as readable markdown. Paper-shaped surveys have their own
-// dedicated renderer in App.tsx; this one assumes nothing about the keys.
+// dedicated renderer below; the generic renderer assumes nothing about keys.
+
+import { isPaperOrientation } from "./types";
+import type { OrientationMap, PaperMetadata, PipelineReport } from "./types";
 
 function titleCase(key: string): string {
   return key
@@ -74,4 +77,77 @@ export function renderGenericSurvey(survey: unknown): string {
     md += `## ${titleCase(key)}\n\n${body}`;
   }
   return md;
+}
+
+function renderOrientationMap(orientation: OrientationMap): string {
+  // Defensive: paper-shaped surveys may omit fields the schema defaults.
+  const metadata = (orientation.metadata ?? {}) as Partial<PaperMetadata>;
+  let md = `# Orientation Map\n\n`;
+  md += `**Title**: ${metadata.title ?? ""}  \n`;
+  if (metadata.authors?.length) md += `**Authors**: ${metadata.authors.join(", ")}  \n`;
+  md += `**Type**: ${metadata.paper_type ?? "unknown"}`;
+  if (metadata.page_count) md += ` · **Pages**: ${metadata.page_count}`;
+  md += `  \n`;
+  if (metadata.has_appendix) md += `**Appendix**: yes  \n`;
+  if (metadata.has_online_appendix) md += `**Online appendix**: yes  \n`;
+  md += `\n`;
+
+  if (orientation.stated_contribution) {
+    md += `## Stated Contribution\n\n${orientation.stated_contribution}\n\n`;
+  }
+  if (orientation.sections?.length) {
+    md += `## Sections\n\n| # | Title | Pages |\n|---|-------|-------|\n`;
+    for (const section of orientation.sections) {
+      const pages = section.page_start
+        ? (section.page_end ? `${section.page_start}–${section.page_end}` : `${section.page_start}`)
+        : "";
+      md += `| ${section.number} | ${section.title} | ${pages} |\n`;
+    }
+    md += `\n`;
+  }
+  if (orientation.formal_results?.length) {
+    md += `## Formal Results\n\n`;
+    for (const result of orientation.formal_results) {
+      md += `- **${result.kind} ${result.number}**${result.page ? ` (p. ${result.page})` : ""}: ${result.summary}`;
+      if (result.proof_location) md += ` — *Proof: ${result.proof_location}*`;
+      md += `\n`;
+    }
+    md += `\n`;
+  }
+  if (orientation.tables_figures?.length) {
+    md += `## Tables & Figures\n\n`;
+    for (const item of orientation.tables_figures) {
+      md += `- **${item.kind} ${item.number}**${item.page ? ` (p. ${item.page})` : ""}: ${item.caption_summary}`;
+      if (item.what_it_shows) md += ` — ${item.what_it_shows}`;
+      md += `\n`;
+    }
+    md += `\n`;
+  }
+  if (orientation.notation?.length) {
+    md += `## Notation\n\n| Symbol | Definition | Introduced |\n|--------|------------|------------|\n`;
+    for (const notation of orientation.notation) {
+      md += `| ${notation.symbol} | ${notation.definition} | ${notation.page_introduced ? `p. ${notation.page_introduced}` : ""} |\n`;
+    }
+    md += `\n`;
+  }
+  if (orientation.key_references?.length) {
+    md += `## Key References\n\n`;
+    for (const reference of orientation.key_references) md += `- ${reference}\n`;
+    md += `\n`;
+  }
+  if (orientation.extraction_quality_notes?.length) {
+    md += `## Extraction Quality Notes\n\n`;
+    for (const note of orientation.extraction_quality_notes) {
+      md += `- **${note.page_range}**: ${note.description}\n`;
+    }
+    md += `\n`;
+  }
+  return md;
+}
+
+/** Render any survey JSON: paper view when paper-shaped, generic sections otherwise. */
+export function renderSurvey(orientation: PipelineReport["orientation"]): string {
+  return isPaperOrientation(orientation)
+    ? renderOrientationMap(orientation)
+    : renderGenericSurvey(orientation);
 }

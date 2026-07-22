@@ -1,13 +1,93 @@
 use std::io::Write;
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tempfile::TempDir;
-use tokio::io::BufReader;
 use tokio::process::Command;
+
+pub use super::cli_process::MAX_STDOUT_BYTES;
+use super::cli_process::{
+    capture_stderr, capture_text_stdout, emit_stderr_tail, last_stderr_hint, log,
+    track_child_started, verbose_log, wait_for_child,
+};
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Claude to read it.
 pub(crate) const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
+const MAX_LIVE_ARTIFACT_FILES: usize = 1_000;
+const MAX_LIVE_ARTIFACT_BYTES: u64 = 300 * 1024 * 1024;
+const MAX_LIVE_ARTIFACT_FILE_BYTES: u64 = 50 * 1024 * 1024;
+
+fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    while let Some(directory) = stack.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|e| format!("Cannot inspect artifact directory: {e}"))?;
+        for entry in entries.flatten() {
+            let file_type = entry
+                .file_type()
+                .map_err(|e| format!("Cannot inspect artifact entry: {e}"))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                stack.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                return Err("Artifact directory contains a non-regular file".to_string());
+            }
+            let length = entry
+                .metadata()
+                .map_err(|e| format!("Cannot inspect artifact size: {e}"))?
+                .len();
+            files += 1;
+            bytes = bytes.saturating_add(length);
+            if files > MAX_LIVE_ARTIFACT_FILES
+                || length > MAX_LIVE_ARTIFACT_FILE_BYTES
+                || bytes > MAX_LIVE_ARTIFACT_BYTES
+            {
+                return Err(format!(
+                    "Artifact safety quota exceeded ({files} files, {} MB)",
+                    bytes / 1024 / 1024
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn supervise_artifact_writes<F>(
+    future: F,
+    write_dir: &str,
+    pass_key: Option<String>,
+) -> Result<String, String>
+where
+    F: std::future::Future<Output = Result<String, String>>,
+{
+    let mut operation = std::pin::pin!(future);
+    let directory = std::path::PathBuf::from(write_dir);
+    loop {
+        if let Ok(result) =
+            tokio::time::timeout(Duration::from_millis(250), operation.as_mut()).await
+        {
+            return result;
+        }
+        let path = directory.clone();
+        let check = tokio::task::spawn_blocking(move || check_live_artifact_quota(&path))
+            .await
+            .map_err(|e| format!("Artifact monitor failed: {e}"))?;
+        if let Err(error) = check {
+            if let Some(key) = &pass_key {
+                let _ = crate::commands::cancel_pass(key.clone()).await;
+            } else {
+                crate::commands::kill_all_children();
+            }
+            return Err(error);
+        }
+    }
+}
 
 /// A CLI-safe prompt argument. Long prompts live in a private temporary
 /// directory rather than directly under the process-wide temp directory, so
@@ -265,53 +345,6 @@ impl<'a> LlmOverrides<'a> {
     }
 }
 
-/// Safety cap on collected subprocess stdout (50 MB).
-/// LLM outputs are bounded by token limits (~500 KB typical), so this
-/// only guards against pathological cases (e.g. broken binary on PATH).
-pub const MAX_STDOUT_BYTES: usize = 50_000_000;
-
-fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
-    super::logging::emit(app, line.into());
-}
-
-/// Log only when verbose_logging is enabled in settings.
-fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
-    if crate::settings::load().verbose_logging {
-        log(app, line);
-    }
-}
-
-/// Number of trailing stderr lines to retain per call for failure diagnostics.
-pub const STDERR_TAIL_LINES: usize = 50;
-
-/// The last non-empty captured stderr line, used as a hint in the error message
-/// when stdout carried nothing useful.
-pub fn last_stderr_hint(tail: &[String]) -> Option<String> {
-    tail.iter()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .map(|l| l.trim().to_string())
-}
-
-/// Surface captured stderr on failure, always (not gated on verbose_logging).
-/// This is where CLIs report auth/config errors, and it is the only clue when
-/// stdout is empty — dropping it made those failures undiagnosable.
-pub fn emit_stderr_tail(app: &crate::emit::EventBus, tail: &[String]) {
-    if tail.is_empty() {
-        return;
-    }
-    log(
-        app,
-        format!(
-            "ERROR: captured stderr from failed call ({} line(s)):",
-            tail.len()
-        ),
-    );
-    for l in tail {
-        log(app, format!("[stderr] {l}"));
-    }
-}
-
 /// Call `claude -p` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
 ///
@@ -468,127 +501,52 @@ pub async fn call_claude(
         .spawn()
         .map_err(|e| format!("Failed to spawn claude: {e}. Is Claude Code installed?"))?;
 
-    let pid = child.id().unwrap_or(0);
-    if pid > 0 {
-        crate::commands::register_child_pid(pid);
-    }
-    let start_time = Instant::now();
-    log(app, format!("{label} started (PID {pid})"));
+    let (pid, start_time) = track_child_started(&child, app, label);
 
     // Stream stderr to the frontend, and retain the tail for failure
     // diagnostics regardless of the verbose setting.
-    let stderr = child.stderr.take();
-    let app_stderr = app.clone();
     let sess = super::logging::current();
-    let stderr_task = tokio::spawn(super::logging::with_session_opt(sess.clone(), async move {
-        let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-        if let Some(stderr) = stderr {
-            let mut reader = BufReader::new(stderr);
-            while let Ok(Some(record)) =
-                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
-                    .await
-            {
-                let line = if record.truncated {
-                    format!("{}… [line truncated]", record.text)
-                } else {
-                    record.text
-                };
-                if !line.trim().is_empty() {
-                    verbose_log(&app_stderr, format!("[stderr] {line}"));
-                    if tail.len() >= STDERR_TAIL_LINES {
-                        tail.pop_front();
-                    }
-                    tail.push_back(line);
-                }
-            }
-        }
-        tail.into_iter().collect::<Vec<String>>()
-    }));
+    let stderr_task = capture_stderr(child.stderr.take(), app.clone(), sess.clone());
 
     // Stream stdout to the frontend (Claude outputs result here)
-    let stdout = child.stdout.take();
-    let app_stdout = app.clone();
-    let stdout_task = tokio::spawn(super::logging::with_session_opt(sess, async move {
-        let mut collected = String::new();
-        if let Some(stdout) = stdout {
-            let mut reader = BufReader::new(stdout);
-            while let Ok(Some(record)) =
-                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
-                    .await
-            {
-                let line = record.text;
-                if record.truncated {
-                    log(&app_stdout, "WARNING: provider emitted an oversized stdout record; record was truncated");
-                }
-                collected.push_str(&line);
-                collected.push('\n');
-                if collected.len() > MAX_STDOUT_BYTES {
-                    log(
-                        &app_stdout,
-                        format!(
-                            "WARNING: stdout exceeded {} MB, truncating",
-                            MAX_STDOUT_BYTES / 1_000_000
-                        ),
-                    );
-                    break;
-                }
-                if collected.lines().count() <= 5 {
-                    verbose_log(&app_stdout, format!("[out] {line}"));
-                }
-            }
-        }
-        if collected.lines().count() > 5 {
-            verbose_log(
-                &app_stdout,
-                format!("[out] ... ({} total lines)", collected.lines().count()),
-            );
-        }
-        collected
-    }));
+    let stdout_task = capture_text_stdout(child.stdout.take(), app.clone(), sess);
 
-    // Wait for the process to exit
-    let status = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await;
-
-    let status = match status {
-        Ok(s) => s,
-        Err(_) => {
-            if pid > 0 { crate::commands::kill_process(pid); }
-            let _ = child.kill().await;
-            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-            if pid > 0 { crate::commands::unregister_child_pid(pid); }
-            // Drain the reader tasks now that their pipes are closed, so they don't
-            // linger after we return.
+    let status = match wait_for_child(
+        &mut child,
+        pid,
+        timeout_secs,
+        "Claude",
+        "claude",
+        label,
+        app,
+    )
+    .await
+    {
+        Ok(status) => status,
+        Err(error) => {
             let _ = stdout_task.await;
             let _ = stderr_task.await;
-            if crate::commands::is_cancelled() {
-                log(app, format!("{label} cancelled"));
-                return Err("Pipeline cancelled".into());
-            }
-            log(app, format!("ERROR: Claude call timed out after {timeout_secs}s (PID {pid}), killing process"));
-            return Err(format!("Claude call timed out after {timeout_secs}s"));
+            return Err(error);
         }
-    }
-        .map_err(|e| {
-            if pid > 0 { crate::commands::unregister_child_pid(pid); }
-            format!("Failed waiting for claude: {e}")
-        })?;
-
-    // Process has exited — unregister PID before joining I/O tasks
-    // so cancel cleanup can't miss it if a join fails
-    if pid > 0 {
-        crate::commands::unregister_child_pid(pid);
-    }
+    };
 
     // Collect stdout and unwrap the JSON result envelope (see the
     // --output-format json note above). Falls back to the raw output when it
     // isn't the expected envelope, so callers/behavior are unchanged.
-    let raw_stdout = stdout_task
+    let (raw_stdout, stdout_overflowed) = stdout_task
         .await
         .map_err(|e| format!("stdout reader failed: {e}"))?;
-    let (text, claude_usage) = parse_claude_result(&raw_stdout);
 
     // Let stderr finish and keep its tail for failure diagnostics.
     let stderr_tail = stderr_task.await.unwrap_or_default();
+    if stdout_overflowed {
+        emit_stderr_tail(app, &stderr_tail);
+        return Err(format!(
+            "Claude stdout exceeded the {} MB safety limit",
+            MAX_STDOUT_BYTES / 1024 / 1024
+        ));
+    }
+    let (text, claude_usage) = parse_claude_result(&raw_stdout);
 
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();
@@ -828,57 +786,64 @@ pub async fn call_llm(
         // Subprocess fallback. Claude uses --add-dir and Gemini uses
         // --include-directories for the same explicit read-root set. Codex's
         // sandbox restricts writes, not reads, so it needs no equivalent flag.
-        match provider {
-            "codex" => {
-                let codex_cwd = cwd.or_else(|| {
-                    extra_read_dirs
-                        .iter()
-                        .copied()
-                        .find(|path| !path.trim().is_empty())
-                });
-                super::codex::call_codex(
-                    app,
-                    prompt,
-                    allowed_tools,
-                    system_prompt,
-                    output_format,
-                    timeout_secs,
-                    label,
-                    codex_cwd,
-                    overrides,
-                )
-                .await
+        let cli_call = async {
+            match provider {
+                "codex" => {
+                    let codex_cwd = cwd.or_else(|| {
+                        extra_read_dirs
+                            .iter()
+                            .copied()
+                            .find(|path| !path.trim().is_empty())
+                    });
+                    super::codex::call_codex(
+                        app,
+                        prompt,
+                        allowed_tools,
+                        system_prompt,
+                        output_format,
+                        timeout_secs,
+                        label,
+                        codex_cwd,
+                        overrides,
+                    )
+                    .await
+                }
+                "gemini" => {
+                    super::gemini::call_gemini(
+                        app,
+                        prompt,
+                        allowed_tools,
+                        system_prompt,
+                        output_format,
+                        timeout_secs,
+                        label,
+                        cwd,
+                        extra_read_dirs,
+                        overrides,
+                    )
+                    .await
+                }
+                _ => {
+                    call_claude(
+                        app,
+                        prompt,
+                        allowed_tools,
+                        system_prompt,
+                        output_format,
+                        timeout_secs,
+                        label,
+                        cwd,
+                        extra_read_dirs,
+                        overrides,
+                    )
+                    .await
+                }
             }
-            "gemini" => {
-                super::gemini::call_gemini(
-                    app,
-                    prompt,
-                    allowed_tools,
-                    system_prompt,
-                    output_format,
-                    timeout_secs,
-                    label,
-                    cwd,
-                    extra_read_dirs,
-                    overrides,
-                )
-                .await
-            }
-            _ => {
-                call_claude(
-                    app,
-                    prompt,
-                    allowed_tools,
-                    system_prompt,
-                    output_format,
-                    timeout_secs,
-                    label,
-                    cwd,
-                    extra_read_dirs,
-                    overrides,
-                )
-                .await
-            }
+        };
+        if let Some(write_dir) = overrides.write_dir {
+            supervise_artifact_writes(cli_call, write_dir, super::logging::current_pass()).await
+        } else {
+            cli_call.await
         }
     })
     .await
@@ -1093,5 +1058,30 @@ mod tests {
             absolute_rule_path("C:/Users/Mike/Paper"),
             "//C:/Users/Mike/Paper"
         );
+    }
+
+    #[test]
+    fn live_artifact_monitor_rejects_oversized_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = std::fs::File::create(dir.path().join("too-large.bin")).unwrap();
+        file.set_len(MAX_LIVE_ARTIFACT_FILE_BYTES + 1).unwrap();
+        assert!(check_live_artifact_quota(dir.path())
+            .unwrap_err()
+            .contains("quota exceeded"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_artifact_monitor_rejects_special_files() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("fifo");
+        let fifo_c = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+        assert!(check_live_artifact_quota(dir.path())
+            .unwrap_err()
+            .contains("non-regular"));
     }
 }

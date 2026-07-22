@@ -3,6 +3,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
+use std::io::Write as _;
 use std::sync::LazyLock;
 
 /// Maximum tool-call round-trips before giving up.
@@ -192,6 +193,69 @@ static WRITE_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mute
 static WRITE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static WRITE_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+struct WriteReservation {
+    bytes: usize,
+    committed: bool,
+}
+
+impl WriteReservation {
+    fn reserve(bytes: usize) -> Result<Self, String> {
+        WRITE_COUNT
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |used| (used < MAX_WRITES_PER_RUN).then_some(used + 1),
+            )
+            .map_err(|_| format!("Write limit reached ({MAX_WRITES_PER_RUN} files per run)"))?;
+        if WRITE_BYTES
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |used| {
+                    used.checked_add(bytes)
+                        .filter(|next| *next <= MAX_WRITE_BYTES_PER_RUN)
+                },
+            )
+            .is_err()
+        {
+            let _ = WRITE_COUNT.fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |used| Some(used.saturating_sub(1)),
+            );
+            return Err(format!(
+                "Run artifact quota reached ({} MB)",
+                MAX_WRITE_BYTES_PER_RUN / 1024 / 1024
+            ));
+        }
+        Ok(Self {
+            bytes,
+            committed: false,
+        })
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for WriteReservation {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = WRITE_COUNT.fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |used| Some(used.saturating_sub(1)),
+            );
+            let _ = WRITE_BYTES.fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |used| Some(used.saturating_sub(self.bytes)),
+            );
+        }
+    }
+}
+
 /// Set (or clear) the directory Write tool calls are confined to.
 /// Call this before starting a pipeline run; pass `None` to disable writes.
 pub fn set_write_dir(dir: Option<std::path::PathBuf>) {
@@ -223,27 +287,6 @@ pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> 
             content.len()
         ));
     }
-    if WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= MAX_WRITES_PER_RUN {
-        return Err(format!(
-            "Write limit reached ({MAX_WRITES_PER_RUN} files per run)"
-        ));
-    }
-    WRITE_BYTES
-        .fetch_update(
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-            |used| {
-                used.checked_add(content.len())
-                    .filter(|next| *next <= MAX_WRITE_BYTES_PER_RUN)
-            },
-        )
-        .map_err(|_| {
-            format!(
-                "Run artifact quota reached ({} MB)",
-                MAX_WRITE_BYTES_PER_RUN / 1024 / 1024
-            )
-        })?;
-
     // Resolve to a path relative to the artifact root. Absolute paths must
     // already point inside it (accepting both the raw and canonical spelling
     // of the root, since models echo back whichever form the prompt used).
@@ -283,6 +326,9 @@ pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> 
         if meta.file_type().is_symlink() {
             return Err(format!("Access denied: {path} is a symlink"));
         }
+        if !meta.is_file() {
+            return Err(format!("Access denied: {path} is not a regular file"));
+        }
     }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
@@ -298,7 +344,27 @@ pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> 
             ));
         }
     }
-    std::fs::write(&dest, content).map_err(|e| format!("Failed to write {path}: {e}"))?;
+    let parent = dest.parent().ok_or("Destination has no parent directory")?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".pipeline-write-")
+        .tempfile_in(parent)
+        .map_err(|e| format!("Failed to stage {path}: {e}"))?;
+    staged
+        .write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to write {path}: {e}"))?;
+    staged
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync {path}: {e}"))?;
+
+    // Reserve only once validation and the fallible data write have
+    // succeeded. The reservation rolls back if the atomic commit fails.
+    let reservation = WriteReservation::reserve(content.len())?;
+    staged
+        .into_temp_path()
+        .persist(&dest)
+        .map_err(|e| format!("Failed to commit {path}: {}", e.error))?;
+    reservation.commit();
 
     Ok(format!(
         "Wrote {} bytes to {}",
@@ -337,6 +403,9 @@ fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf,
 
     let metadata =
         std::fs::metadata(&canonical).map_err(|e| format!("Cannot read file metadata: {e}"))?;
+    if !metadata.is_file() {
+        return Err(format!("Access denied: {path} is not a regular file"));
+    }
     if metadata.len() as usize > max_size {
         return Err(format!(
             "File too large ({} bytes, max {})",
@@ -348,25 +417,63 @@ fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf,
     Ok(canonical)
 }
 
-/// Read a text file from disk for a tool call.
-pub fn read_file_for_tool(path: &str) -> Result<String, String> {
-    read_file_for_tool_limited(path, MAX_READ_SIZE)
+fn read_bytes_limited(path: &std::path::Path, limit: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options
+        .open(path)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("Failed to inspect {}: {e}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "Access denied: {} is not a regular file",
+            path.display()
+        ));
+    }
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    if bytes.len() > limit {
+        return Err(format!(
+            "File too large (more than {limit} bytes): {}",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 fn read_file_for_tool_limited(path: &str, limit: usize) -> Result<String, String> {
-    let canonical = validate_tool_path(path, MAX_READ_SIZE.min(limit))?;
+    let limit = MAX_READ_SIZE.min(limit);
+    let canonical = validate_tool_path(path, limit)?;
 
     if path.to_lowercase().ends_with(".pdf") {
         return Err("Cannot read PDF as text. Use the extracted paper text instead.".into());
     }
 
-    std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read {path}: {e}"))
+    String::from_utf8(read_bytes_limited(&canonical, limit)?)
+        .map_err(|e| format!("Failed to read {path} as UTF-8: {e}"))
 }
 
 /// Read a PDF file and return its contents as base64-encoded bytes.
 fn read_pdf_for_tool(path: &str, limit: usize) -> Result<String, String> {
-    let canonical = validate_tool_path(path, MAX_PDF_SIZE.min(limit))?;
-    let bytes = std::fs::read(&canonical).map_err(|e| format!("Failed to read {path}: {e}"))?;
+    let limit = MAX_PDF_SIZE.min(limit);
+    let canonical = validate_tool_path(path, limit)?;
+    let bytes = read_bytes_limited(&canonical, limit)?;
     Ok(STANDARD.encode(&bytes))
 }
 
@@ -383,8 +490,7 @@ pub fn pdf_attachment_base64(path: &std::path::Path, max_size: usize) -> Result<
             max_size / 1_000_000
         ));
     }
-    let bytes =
-        std::fs::read(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let bytes = read_bytes_limited(path, max_size)?;
     Ok(STANDARD.encode(&bytes))
 }
 
@@ -464,19 +570,6 @@ pub enum AnthropicContentBlock {
         #[serde(default)]
         signature: String,
     },
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AnthropicError {
-    pub error: Option<AnthropicErrorDetail>,
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AnthropicErrorDetail {
-    #[serde(rename = "type")]
-    pub error_type: Option<String>,
-    pub message: String,
 }
 
 // ── OpenAI-specific types ──────────────────────────────────────────
@@ -755,7 +848,8 @@ pub async fn anthropic_tool_loop(
         let mut tool_results: Vec<AnthropicContentBlock> = Vec::new();
         for block in &body.content {
             if let AnthropicContentBlock::ToolUse { id, name, input } = block {
-                let result = execute_tool(app, name, input, label, iteration, &mut tool_budget);
+                let result =
+                    execute_tool(app, name, input, label, iteration, &mut tool_budget).await;
                 let (content, is_error) = match result {
                     ToolResult::Text(text) => (serde_json::Value::String(text), None),
                     ToolResult::PdfBase64(data) => (
@@ -912,7 +1006,8 @@ pub async fn openai_tool_loop(
                         label,
                         iteration,
                         &mut tool_budget,
-                    );
+                    )
+                    .await;
                     let content = match result {
                         ToolResult::Text(text) => text,
                         ToolResult::PdfBase64(_) => {
@@ -1052,32 +1147,24 @@ pub async fn google_tool_loop(
             request.contents.push(candidate.content.clone());
 
             // Build function response parts
-            let response_parts: Vec<GooglePart> = function_calls
-                .iter()
-                .map(|fc| {
-                    let result = execute_tool(
-                        app,
-                        &fc.name,
-                        &fc.args,
-                        label,
-                        iteration,
-                        &mut tool_budget,
-                    );
-                    let content = match result {
-                        ToolResult::Text(text) => text,
-                        ToolResult::PdfBase64(_) => {
-                            "Cannot read PDF visually via this API. Use the extracted paper text file instead.".to_string()
-                        }
-                        ToolResult::Error(msg) => msg,
-                    };
-                    GooglePart::FunctionResponse {
-                        function_response: GoogleFunctionResponse {
-                            name: fc.name.clone(),
-                            response: serde_json::json!({ "content": content }),
-                        },
+            let mut response_parts: Vec<GooglePart> = Vec::with_capacity(function_calls.len());
+            for fc in function_calls {
+                let result =
+                    execute_tool(app, &fc.name, &fc.args, label, iteration, &mut tool_budget).await;
+                let content = match result {
+                    ToolResult::Text(text) => text,
+                    ToolResult::PdfBase64(_) => {
+                        "Cannot read PDF visually via this API. Use the extracted paper text file instead.".to_string()
                     }
-                })
-                .collect();
+                    ToolResult::Error(msg) => msg,
+                };
+                response_parts.push(GooglePart::FunctionResponse {
+                    function_response: GoogleFunctionResponse {
+                        name: fc.name.clone(),
+                        response: serde_json::json!({ "content": content }),
+                    },
+                });
+            }
 
             request.contents.push(GoogleContent {
                 role: "user".to_string(),
@@ -1121,8 +1208,28 @@ struct ToolBudget {
     read_bytes: usize,
 }
 
-/// Execute a tool call.
-fn execute_tool(
+const TOOL_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+async fn run_blocking_tool<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let pass_key = super::logging::current_pass();
+    let task = tokio::task::spawn_blocking(operation);
+    match tokio::time::timeout(TOOL_IO_TIMEOUT, await_or_cancel(task, pass_key.as_deref())).await {
+        Ok(Ok(joined)) => joined.map_err(|e| format!("File tool task failed: {e}"))?,
+        Ok(Err(cancelled)) => Err(cancelled),
+        Err(_) => Err(format!(
+            "File tool operation exceeded the {} second limit",
+            TOOL_IO_TIMEOUT.as_secs()
+        )),
+    }
+}
+
+/// Execute a tool call. Filesystem work runs on the blocking pool so a slow
+/// or hostile filesystem entry cannot stall the async API loop.
+async fn execute_tool(
     app: &crate::emit::EventBus,
     name: &str,
     input: &serde_json::Value,
@@ -1155,7 +1262,8 @@ fn execute_tool(
             }
             budget.read_calls += 1;
             if path.to_lowercase().ends_with(".pdf") {
-                match read_pdf_for_tool(path, remaining) {
+                let owned_path = path.to_string();
+                match run_blocking_tool(move || read_pdf_for_tool(&owned_path, remaining)).await {
                     Ok(data) => {
                         budget.read_bytes += data.len().saturating_mul(3) / 4;
                         ToolResult::PdfBase64(data)
@@ -1163,7 +1271,10 @@ fn execute_tool(
                     Err(e) => ToolResult::Error(e),
                 }
             } else {
-                match read_file_for_tool_limited(path, remaining) {
+                let owned_path = path.to_string();
+                match run_blocking_tool(move || read_file_for_tool_limited(&owned_path, remaining))
+                    .await
+                {
                     Ok(content) => {
                         budget.read_bytes += content.len();
                         ToolResult::Text(content)
@@ -1187,7 +1298,10 @@ fn execute_tool(
                     content.len()
                 ),
             );
-            match write_file_for_tool(path, content) {
+            let owned_path = path.to_string();
+            let owned_content = content.to_string();
+            match run_blocking_tool(move || write_file_for_tool(&owned_path, &owned_content)).await
+            {
                 Ok(msg) => ToolResult::Text(msg),
                 Err(e) => ToolResult::Error(e),
             }
@@ -1235,7 +1349,8 @@ fn format_api_error(provider: &str, status: u16, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
+
+    static READ_DIR_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn incomplete_provider_responses_are_identified() {
@@ -1250,6 +1365,7 @@ mod tests {
 
     #[test]
     fn validate_tool_path_allows_explicit_private_temp_root() {
+        let _guard = READ_DIR_TEST_MUTEX.lock().unwrap();
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(b"paper text").unwrap();
         tmp.flush().unwrap();
@@ -1266,6 +1382,7 @@ mod tests {
 
     #[test]
     fn validate_tool_path_rejects_outside_allowed_dirs() {
+        let _guard = READ_DIR_TEST_MUTEX.lock().unwrap();
         // Cargo.toml in the crate root exists but is neither in the temp dir
         // nor in ALLOWED_DIRS, so it must be denied.
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
@@ -1300,6 +1417,30 @@ mod tests {
         assert_eq!(bytes.len(), 6);
         assert!(append_api_chunk(&mut bytes, &[3], 6).is_err());
         assert_eq!(bytes.len(), 6);
+    }
+
+    #[test]
+    fn disk_reader_enforces_limit_even_after_metadata_validation() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), b"123456789").unwrap();
+        assert_eq!(read_bytes_limited(temp.path(), 9).unwrap(), b"123456789");
+        assert!(read_bytes_limited(temp.path(), 8).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_reader_rejects_fifo_without_blocking() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe");
+        let path = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        let started = std::time::Instant::now();
+        let error = read_bytes_limited(&fifo, 1024).unwrap_err();
+        assert!(error.contains("not a regular file"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 
     // Write-tool tests share the WRITE_DIR static, so they run under one
@@ -1349,7 +1490,20 @@ mod tests {
             assert!(write_file_for_tool("link.md", "x")
                 .unwrap_err()
                 .contains("symlink"));
+
+            use std::ffi::CString;
+            use std::os::unix::ffi::OsStrExt as _;
+            let fifo = dir.path().join("fifo.md");
+            let fifo_c = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+            assert!(write_file_for_tool("fifo.md", "x")
+                .unwrap_err()
+                .contains("not a regular file"));
         }
+
+        // Rejected writes do not consume either quota.
+        assert_eq!(WRITE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(WRITE_BYTES.load(std::sync::atomic::Ordering::SeqCst), 5);
 
         // Disabled state rejects everything.
         set_write_dir(None);

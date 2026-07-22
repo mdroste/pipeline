@@ -7,6 +7,38 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const MAX_PROFILE_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_PROFILE_STEPS: usize = 100;
+pub const MAX_STEP_PROMPT_BYTES: usize = 1024 * 1024;
+pub const MAX_FAN_OUT_ITEMS: u32 = 100;
+const MAX_PROFILE_TEXT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_STEP_LABEL_CHARS: usize = 200;
+const MAX_PROFILE_NAME_CHARS: usize = 200;
+const MAX_VARIABLES: usize = 100;
+const MAX_EXTRA_INPUTS: usize = 100;
+const MAX_OUTPUT_SCHEMA_BYTES: usize = 1024 * 1024;
+const ALLOWED_TOOLS: &[&str] = &["Read", "Write", "WebSearch"];
+const ALLOWED_AGENTS: &[&str] = &["claude", "codex", "gemini", "local"];
+
+fn read_profile_file(path: &Path) -> Result<String, String> {
+    use std::io::Read as _;
+    let file = fs::File::open(path)
+        .map_err(|e| format!("Failed to read profile '{}': {e}", path.display()))?;
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(MAX_PROFILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read profile '{}': {e}", path.display()))?;
+    if bytes.len() > MAX_PROFILE_BYTES {
+        return Err(format!(
+            "Profile '{}' exceeds the {} MB safety limit",
+            path.display(),
+            MAX_PROFILE_BYTES / 1024 / 1024
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|e| format!("Profile '{}' is not valid UTF-8: {e}", path.display()))
+}
+
 // ── Data types ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -305,6 +337,33 @@ impl ProfileData {
             variables: Vec::new(),
         }
     }
+
+    fn from_config(name: impl Into<String>, config: &PipelineConfig) -> Self {
+        Self {
+            name: name.into(),
+            steps: config.steps.clone(),
+            merge: config.merge.clone(),
+            use_orientation: config.use_orientation,
+            orientation_prompt: config.orientation_prompt.clone(),
+            extraction: config.extraction.clone(),
+            parallel_context_template: config.parallel_context_template.clone(),
+            variables: config.variables.clone(),
+        }
+    }
+}
+
+impl From<ProfileData> for PipelineConfig {
+    fn from(profile: ProfileData) -> Self {
+        Self {
+            steps: profile.steps,
+            merge: profile.merge,
+            use_orientation: profile.use_orientation,
+            orientation_prompt: profile.orientation_prompt,
+            extraction: profile.extraction,
+            parallel_context_template: profile.parallel_context_template,
+            variables: profile.variables,
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -365,6 +424,8 @@ pub struct ProfileSummary {
     pub id: String,
     pub name: String,
     pub step_count: usize,
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 // ── Export/Import envelope ──────────────────────────────────────────
@@ -429,6 +490,35 @@ pub struct ProfileExport {
     pub parallel_context_template: String,
     #[serde(default)]
     pub variables: Vec<VarSpec>,
+}
+
+impl ProfileExport {
+    fn from_profile(id: String, profile: ProfileData) -> Self {
+        Self {
+            id,
+            name: profile.name,
+            steps: profile.steps,
+            merge: profile.merge,
+            use_orientation: profile.use_orientation,
+            orientation_prompt: profile.orientation_prompt,
+            extraction: profile.extraction,
+            parallel_context_template: profile.parallel_context_template,
+            variables: profile.variables,
+        }
+    }
+
+    fn to_profile_data(&self) -> ProfileData {
+        ProfileData {
+            name: self.name.clone(),
+            steps: self.steps.clone(),
+            merge: self.merge.clone(),
+            use_orientation: self.use_orientation,
+            orientation_prompt: self.orientation_prompt.clone(),
+            extraction: self.extraction.clone(),
+            parallel_context_template: self.parallel_context_template.clone(),
+            variables: self.variables.clone(),
+        }
+    }
 }
 
 // ── Legacy types (deserialization only) ────────────────────────────
@@ -534,12 +624,13 @@ fn validate_profile_id(id: &str) -> Result<(), String> {
     if id.is_empty() {
         return Err("Profile ID cannot be empty".into());
     }
-    if !id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    if id.len() > 64
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return Err(
-            "Profile ID must contain only letters, numbers, hyphens, and underscores".into(),
+            "Profile ID must use 1–64 ASCII letters, numbers, hyphens, or underscores".into(),
         );
     }
     Ok(())
@@ -595,77 +686,58 @@ impl Default for MergeConfig {
 }
 
 fn default_steps() -> Vec<StepConfig> {
+    let mut validate = prompt_step(
+        "validate_feedback",
+        "Validate Feedback",
+        Phase::Sequential,
+        &[],
+        "validate_feedback",
+    );
+    validate.enabled = false;
     vec![
-        StepConfig {
-            id: "contribution".into(),
-            label: "Contribution".into(),
-            prompt: prompts::load_prompt("contribution").unwrap_or_default(),
-            enabled: true,
-            phase: Phase::Parallel,
-            tools: vec!["WebSearch".into()],
-            agents: vec![],
-            ..Default::default()
-        },
-        StepConfig {
-            id: "technical".into(),
-            label: "Technical Correctness".into(),
-            prompt: prompts::load_prompt("technical").unwrap_or_default(),
-            enabled: true,
-            phase: Phase::Parallel,
-            tools: vec![],
-            agents: vec![],
-            ..Default::default()
-        },
-        StepConfig {
-            id: "empirical".into(),
-            label: "Empirical Strategy".into(),
-            prompt: prompts::load_prompt("empirical").unwrap_or_default(),
-            enabled: true,
-            phase: Phase::Parallel,
-            tools: vec![],
-            agents: vec![],
-            ..Default::default()
-        },
-        StepConfig {
-            id: "consistency".into(),
-            label: "Internal Consistency".into(),
-            prompt: prompts::load_prompt("consistency").unwrap_or_default(),
-            enabled: true,
-            phase: Phase::Parallel,
-            tools: vec![],
-            agents: vec![],
-            ..Default::default()
-        },
-        StepConfig {
-            id: "exposition".into(),
-            label: "Exposition & Framing".into(),
-            prompt: prompts::load_prompt("exposition").unwrap_or_default(),
-            enabled: true,
-            phase: Phase::Parallel,
-            tools: vec![],
-            agents: vec![],
-            ..Default::default()
-        },
-        StepConfig {
-            id: "editor_synthesis".into(),
-            label: "Consolidate Issues".into(),
-            prompt: prompts::load_prompt("editor_synthesis").unwrap_or_default(),
-            enabled: true,
-            phase: Phase::Sequential,
-            tools: vec![],
-            agents: vec![],
-            ..Default::default()
-        },
-        StepConfig {
-            id: "validate_feedback".into(),
-            label: "Validate Feedback".into(),
-            prompt: prompts::load_prompt("validate_feedback").unwrap_or_default(),
-            enabled: false,
-            phase: Phase::Sequential,
-            tools: vec![],
-            agents: vec![],
-            ..Default::default()
-        },
+        prompt_step(
+            "contribution",
+            "Contribution",
+            Phase::Parallel,
+            &["WebSearch"],
+            "contribution",
+        ),
+        prompt_step(
+            "technical",
+            "Technical Correctness",
+            Phase::Parallel,
+            &[],
+            "technical",
+        ),
+        prompt_step(
+            "empirical",
+            "Empirical Strategy",
+            Phase::Parallel,
+            &[],
+            "empirical",
+        ),
+        prompt_step(
+            "consistency",
+            "Internal Consistency",
+            Phase::Parallel,
+            &[],
+            "consistency",
+        ),
+        prompt_step(
+            "exposition",
+            "Exposition & Framing",
+            Phase::Parallel,
+            &[],
+            "exposition",
+        ),
+        prompt_step(
+            "editor_synthesis",
+            "Consolidate Issues",
+            Phase::Sequential,
+            &[],
+            "editor_synthesis",
+        ),
+        validate,
     ]
 }
 
@@ -684,7 +756,6 @@ fn defaults() -> PipelineConfig {
 /// Profile IDs that cannot be deleted.
 // All are recreated by create_builtin_profiles() on startup, so
 // deleting any of them would silently "undo" itself — block deletion for all.
-// Mirrored by BUILTIN_PROFILES in PipelinePage.tsx.
 const BUILTIN_PROFILES: &[&str] = &[
     "deep-review",
     "quick-review",
@@ -697,6 +768,15 @@ const BUILTIN_PROFILES: &[&str] = &[
     "rubric-grading",
     "thesis-review",
 ];
+
+fn profile_summary(id: String, profile: &ProfileData) -> ProfileSummary {
+    ProfileSummary {
+        builtin: BUILTIN_PROFILES.contains(&id.as_str()),
+        id,
+        name: profile.name.clone(),
+        step_count: profile.steps.len(),
+    }
+}
 
 /// Step whose prompt is a named compiled-in default. Enabled, no agents.
 fn prompt_step(
@@ -773,16 +853,11 @@ fn generic_profile(
     } else {
         "orientation_generic"
     };
-    ProfileData {
-        name: name.into(),
-        steps,
-        merge: MergeConfig::default(),
-        use_orientation: true,
-        orientation_prompt: prompts::load_prompt(survey).unwrap_or_default(),
-        extraction,
-        parallel_context_template: generic_parallel_template(),
-        variables: Vec::new(),
-    }
+    let mut profile = ProfileData::new(name, steps, MergeConfig::default());
+    profile.orientation_prompt = prompts::load_prompt(survey).unwrap_or_default();
+    profile.extraction = extraction;
+    profile.parallel_context_template = generic_parallel_template();
+    profile
 }
 
 /// Write a built-in profile file if it doesn't exist yet.
@@ -800,145 +875,96 @@ fn create_builtin_profiles() -> Result<(), String> {
     let profiles = profiles_dir()?;
 
     // Quick Review — fast two-step pass
-    let quick_path = profiles.join("quick-review.json");
-    if !quick_path.exists() {
-        let profile = ProfileData {
-            name: "Quick Review".into(),
-            steps: vec![
-                StepConfig {
-                    id: "contribution".into(),
-                    label: "Contribution".into(),
-                    prompt: prompts::load_prompt("contribution").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Parallel,
-                    tools: vec![],
-                    agents: vec![],
-                    ..Default::default()
-                },
-                StepConfig {
-                    id: "consistency".into(),
-                    label: "Internal Consistency".into(),
-                    prompt: prompts::load_prompt("consistency").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Parallel,
-                    tools: vec![],
-                    agents: vec![],
-                    ..Default::default()
-                },
-                StepConfig {
-                    id: "editor_synthesis".into(),
-                    label: "Consolidate Issues".into(),
-                    prompt: prompts::load_prompt("editor_synthesis").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Sequential,
-                    tools: vec![],
-                    agents: vec![],
-                    ..Default::default()
-                },
+    write_builtin_if_missing(
+        &profiles.join("quick-review.json"),
+        &ProfileData::new(
+            "Quick Review",
+            vec![
+                prompt_step(
+                    "contribution",
+                    "Contribution",
+                    Phase::Parallel,
+                    &[],
+                    "contribution",
+                ),
+                prompt_step(
+                    "consistency",
+                    "Internal Consistency",
+                    Phase::Parallel,
+                    &[],
+                    "consistency",
+                ),
+                prompt_step(
+                    "editor_synthesis",
+                    "Consolidate Issues",
+                    Phase::Sequential,
+                    &[],
+                    "editor_synthesis",
+                ),
             ],
-            merge: MergeConfig::default(),
-            use_orientation: true,
-            orientation_prompt: String::new(),
-            extraction: ExtractionConfig::default(),
-            parallel_context_template: default_parallel_template(),
-            variables: Vec::new(),
-        };
-        let json =
-            serde_json::to_string_pretty(&profile).map_err(|e| format!("Serialize error: {e}"))?;
-        fs::write(&quick_path, json)
-            .map_err(|e| format!("Failed to write quick-review profile: {e}"))?;
-    }
+            MergeConfig::default(),
+        ),
+    )?;
 
     // Empirical — tailored for empirical papers
-    let empirical_path = profiles.join("empirical.json");
-    if !empirical_path.exists() {
-        let profile = ProfileData {
-            name: "Empirical".into(),
-            steps: vec![
-                StepConfig {
-                    id: "contribution".into(),
-                    label: "Contribution".into(),
-                    prompt: prompts::load_prompt("contribution").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Parallel,
-                    tools: vec!["WebSearch".into()],
-                    agents: vec![],
-                    ..Default::default()
-                },
-                StepConfig {
-                    id: "empirical".into(),
-                    label: "Empirical Strategy".into(),
-                    prompt: prompts::load_prompt("empirical").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Parallel,
-                    tools: vec![],
-                    agents: vec![],
-                    ..Default::default()
-                },
-                StepConfig {
-                    id: "consistency".into(),
-                    label: "Internal Consistency".into(),
-                    prompt: prompts::load_prompt("consistency").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Parallel,
-                    tools: vec![],
-                    agents: vec![],
-                    ..Default::default()
-                },
-                StepConfig {
-                    id: "exposition".into(),
-                    label: "Exposition & Framing".into(),
-                    prompt: prompts::load_prompt("exposition").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Parallel,
-                    tools: vec![],
-                    agents: vec![],
-                    ..Default::default()
-                },
-                StepConfig {
-                    id: "editor_synthesis".into(),
-                    label: "Consolidate Issues".into(),
-                    prompt: prompts::load_prompt("editor_synthesis").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Sequential,
-                    tools: vec![],
-                    agents: vec![],
-                    ..Default::default()
-                },
-                StepConfig {
-                    id: "validate_feedback".into(),
-                    label: "Validate Feedback".into(),
-                    prompt: prompts::load_prompt("validate_feedback").unwrap_or_default(),
-                    enabled: true,
-                    phase: Phase::Sequential,
-                    tools: vec![],
-                    agents: vec![],
-                    ..Default::default()
-                },
+    write_builtin_if_missing(
+        &profiles.join("empirical.json"),
+        &ProfileData::new(
+            "Empirical",
+            vec![
+                prompt_step(
+                    "contribution",
+                    "Contribution",
+                    Phase::Parallel,
+                    &["WebSearch"],
+                    "contribution",
+                ),
+                prompt_step(
+                    "empirical",
+                    "Empirical Strategy",
+                    Phase::Parallel,
+                    &[],
+                    "empirical",
+                ),
+                prompt_step(
+                    "consistency",
+                    "Internal Consistency",
+                    Phase::Parallel,
+                    &[],
+                    "consistency",
+                ),
+                prompt_step(
+                    "exposition",
+                    "Exposition & Framing",
+                    Phase::Parallel,
+                    &[],
+                    "exposition",
+                ),
+                prompt_step(
+                    "editor_synthesis",
+                    "Consolidate Issues",
+                    Phase::Sequential,
+                    &[],
+                    "editor_synthesis",
+                ),
+                prompt_step(
+                    "validate_feedback",
+                    "Validate Feedback",
+                    Phase::Sequential,
+                    &[],
+                    "validate_feedback",
+                ),
             ],
-            merge: MergeConfig::default(),
-            use_orientation: true,
-            orientation_prompt: String::new(),
-            extraction: ExtractionConfig::default(),
-            parallel_context_template: default_parallel_template(),
-            variables: Vec::new(),
-        };
-        let json =
-            serde_json::to_string_pretty(&profile).map_err(|e| format!("Serialize error: {e}"))?;
-        fs::write(&empirical_path, json)
-            .map_err(|e| format!("Failed to write empirical profile: {e}"))?;
-    }
+            MergeConfig::default(),
+        ),
+    )?;
 
     // Quick Code Review (formerly "Codebase Review") — folder input,
     // generic wrapper + survey. Migrate away the pre-rename file.
     let stale_codebase = profiles.join("codebase-review.json");
     if stale_codebase.exists() {
         let _ = fs::remove_file(&stale_codebase);
-        let mut settings = crate::settings::load_persisted();
-        if settings.active_profile == "codebase-review" {
-            settings.active_profile = "quick-code-review".into();
-            let _ = crate::settings::save(&settings);
-        }
+        let _ = crate::settings::replace_active_profile_if("codebase-review", "quick-code-review");
     }
     write_builtin_if_missing(
         &profiles.join("quick-code-review.json"),
@@ -1259,7 +1285,7 @@ fn ensure_migrated() -> Result<(), String> {
     if !deep_review_path.exists() {
         // Migrate from pipeline.json → save as a "Migrated" profile
         if old_path.exists() {
-            if let Ok(content) = fs::read_to_string(&old_path) {
+            if let Ok(content) = read_profile_file(&old_path) {
                 // Try legacy format with referees/post_steps
                 if let Ok(legacy) = serde_json::from_str::<LegacyProfileData>(&content) {
                     let profile = ProfileData::new(
@@ -1267,20 +1293,19 @@ fn ensure_migrated() -> Result<(), String> {
                         convert_legacy_steps(legacy.referees, legacy.post_steps),
                         legacy.merge,
                     );
-                    let migrated_path = profiles.join("migrated.json");
-                    let json = serde_json::to_string_pretty(&profile)
-                        .map_err(|e| format!("Serialize error: {e}"))?;
-                    fs::write(&migrated_path, json)
-                        .map_err(|e| format!("Failed to write migrated profile: {e}"))?;
+                    save_profile("migrated", &profile)?;
+                    // Delete the source only after the durable destination is
+                    // published. Unrecognized legacy JSON is left untouched
+                    // for manual recovery.
+                    let _ = fs::remove_file(&old_path);
                 }
-                let _ = fs::remove_file(&old_path);
             }
         }
 
         // Migrate from old referees.json
         let old_referees = home.join(".pipeline").join("referees.json");
         if old_referees.exists() {
-            if let Ok(content) = fs::read_to_string(&old_referees) {
+            if let Ok(content) = read_profile_file(&old_referees) {
                 if let Ok(referees) = serde_json::from_str::<Vec<LegacyRefereeConfig>>(&content) {
                     let profile = ProfileData::new(
                         "Migrated",
@@ -1289,12 +1314,9 @@ fn ensure_migrated() -> Result<(), String> {
                     );
                     let migrated_path = profiles.join("migrated.json");
                     if !migrated_path.exists() {
-                        let json = serde_json::to_string_pretty(&profile)
-                            .map_err(|e| format!("Serialize error: {e}"))?;
-                        fs::write(&migrated_path, json)
-                            .map_err(|e| format!("Failed to write migrated profile: {e}"))?;
+                        save_profile("migrated", &profile)?;
+                        let _ = fs::remove_file(&old_referees);
                     }
-                    let _ = fs::remove_file(&old_referees);
                 }
             }
         }
@@ -1336,13 +1358,12 @@ fn ensure_migrated() -> Result<(), String> {
 pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
     let path = profile_path(id)?;
     let content =
-        fs::read_to_string(&path).map_err(|e| format!("Failed to read profile '{id}': {e}"))?;
+        read_profile_file(&path).map_err(|e| format!("Failed to read profile '{id}': {e}"))?;
 
     // Try the current format. `steps` may legitimately be empty; serde's
     // required current-format fields distinguish it from the legacy shape.
     if let Ok(profile) = serde_json::from_str::<ProfileData>(&content) {
-        validate_profile_steps(&profile.steps)
-            .map_err(|e| format!("Profile '{id}' is invalid: {e}"))?;
+        validate_profile_data(&profile).map_err(|e| format!("Profile '{id}' is invalid: {e}"))?;
         return Ok(profile);
     }
 
@@ -1365,7 +1386,7 @@ pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
 
 pub fn save_profile(id: &str, profile: &ProfileData) -> Result<(), String> {
     let path = profile_path(id)?;
-    validate_profile_steps(&profile.steps)?;
+    validate_profile_data(profile)?;
     let json =
         serde_json::to_string_pretty(profile).map_err(|e| format!("Failed to serialize: {e}"))?;
     restore_profile_bytes(&path, json.as_bytes())
@@ -1379,15 +1400,7 @@ pub fn load() -> PipelineConfig {
     let _ = ensure_migrated();
     let settings = crate::settings::load_persisted();
     match load_profile(&settings.active_profile) {
-        Ok(profile) => PipelineConfig {
-            steps: profile.steps,
-            merge: profile.merge,
-            use_orientation: profile.use_orientation,
-            orientation_prompt: profile.orientation_prompt,
-            extraction: profile.extraction,
-            parallel_context_template: profile.parallel_context_template,
-            variables: profile.variables,
-        },
+        Ok(profile) => profile.into(),
         Err(e) => {
             // Always warn when a profile fails to load so the user knows
             // they're running on defaults rather than their saved config.
@@ -1411,20 +1424,6 @@ pub fn load() -> PipelineConfig {
     }
 }
 
-/// Load the active profile for execution. Unlike `load` (used by the editor
-/// so it can still open after a broken profile), this never substitutes a
-/// different workflow: a missing or corrupt active profile is a hard run-time
-/// error shown to the user.
-pub fn load_required() -> Result<PipelineConfig, String> {
-    ensure_migrated()?;
-    let settings = crate::settings::load_persisted();
-    load_required_for(&settings.active_profile)
-}
-
-pub fn load_required_for(active_profile: &str) -> Result<PipelineConfig, String> {
-    load_required_profile_for(active_profile).map(|(config, _)| config)
-}
-
 /// Load the executable config and its display name from one profile-file
 /// snapshot. Run manifests use the returned name so a concurrent profile edit
 /// cannot make their metadata disagree with the workflow that actually ran.
@@ -1436,19 +1435,8 @@ pub fn load_required_profile_for(active_profile: &str) -> Result<(PipelineConfig
             active_profile
         )
     })?;
-    let profile_name = profile.name;
-    Ok((
-        PipelineConfig {
-            steps: profile.steps,
-            merge: profile.merge,
-            use_orientation: profile.use_orientation,
-            orientation_prompt: profile.orientation_prompt,
-            extraction: profile.extraction,
-            parallel_context_template: profile.parallel_context_template,
-            variables: profile.variables,
-        },
-        profile_name,
-    ))
+    let profile_name = profile.name.clone();
+    Ok((profile.into(), profile_name))
 }
 
 /// Step ids key the executor's pass events and the merge grouping
@@ -1499,9 +1487,206 @@ pub fn validate_workflow_semantics(steps: &[StepConfig]) -> Result<(), String> {
 }
 
 fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String> {
+    if steps.len() > MAX_PROFILE_STEPS {
+        return Err(format!(
+            "Profile has {} steps; the safety limit is {MAX_PROFILE_STEPS}",
+            steps.len()
+        ));
+    }
     validate_unique_step_ids(steps)?;
     validate_dependencies(steps)?;
-    validate_workflow_semantics(steps)
+    validate_workflow_semantics(steps)?;
+    for step in steps {
+        if step.label.chars().count() > MAX_STEP_LABEL_CHARS {
+            return Err(format!(
+                "Step '{}' label exceeds {MAX_STEP_LABEL_CHARS} characters",
+                step.id
+            ));
+        }
+        if step.prompt.len() > MAX_STEP_PROMPT_BYTES {
+            return Err(format!(
+                "Step '{}' prompt exceeds the {} MB safety limit",
+                step.id,
+                MAX_STEP_PROMPT_BYTES / 1024 / 1024
+            ));
+        }
+        if step.tools.len() > ALLOWED_TOOLS.len() {
+            return Err(format!("Step '{}' declares too many tools", step.id));
+        }
+        let mut tools = std::collections::HashSet::new();
+        for tool in &step.tools {
+            if !ALLOWED_TOOLS.contains(&tool.as_str()) {
+                return Err(format!(
+                    "Step '{}' requests unsupported tool '{}'. Allowed tools: {}",
+                    step.id,
+                    tool,
+                    ALLOWED_TOOLS.join(", ")
+                ));
+            }
+            if !tools.insert(tool.as_str()) {
+                return Err(format!(
+                    "Step '{}' lists tool '{}' more than once",
+                    step.id, tool
+                ));
+            }
+        }
+        if step.agents.len() > ALLOWED_AGENTS.len() {
+            return Err(format!("Step '{}' declares too many agents", step.id));
+        }
+        let mut agents = std::collections::HashSet::new();
+        for agent in &step.agents {
+            if !ALLOWED_AGENTS.contains(&agent.as_str()) {
+                return Err(format!(
+                    "Step '{}' names unsupported agent '{}'. Allowed agents: {}",
+                    step.id,
+                    agent,
+                    ALLOWED_AGENTS.join(", ")
+                ));
+            }
+            if !agents.insert(agent.as_str()) {
+                return Err(format!(
+                    "Step '{}' lists agent '{}' more than once",
+                    step.id, agent
+                ));
+            }
+        }
+        if let Some(for_each) = &step.for_each {
+            if for_each.glob.trim().is_empty() || for_each.glob.len() > 1024 {
+                return Err(format!(
+                    "Step '{}' fan-out glob must contain 1–1024 bytes",
+                    step.id
+                ));
+            }
+            if !(1..=MAX_FAN_OUT_ITEMS).contains(&for_each.max) {
+                return Err(format!(
+                    "Step '{}' fan-out maximum must be between 1 and {MAX_FAN_OUT_ITEMS}",
+                    step.id
+                ));
+            }
+        }
+        if let Some(schema) = &step.output_schema {
+            let bytes = serde_json::to_vec(schema)
+                .map_err(|e| format!("Step '{}' output schema is invalid: {e}", step.id))?;
+            if bytes.len() > MAX_OUTPUT_SCHEMA_BYTES {
+                return Err(format!(
+                    "Step '{}' output schema exceeds the {} MB safety limit",
+                    step.id,
+                    MAX_OUTPUT_SCHEMA_BYTES / 1024 / 1024
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
+    if profile.name.trim().is_empty() || profile.name.chars().count() > MAX_PROFILE_NAME_CHARS {
+        return Err(format!(
+            "Profile name must contain 1–{MAX_PROFILE_NAME_CHARS} characters"
+        ));
+    }
+    validate_profile_steps(&profile.steps)?;
+
+    for (label, value) in [
+        ("orientation prompt", profile.orientation_prompt.as_str()),
+        (
+            "parallel context template",
+            profile.parallel_context_template.as_str(),
+        ),
+        ("merge prompt", profile.merge.prompt.as_str()),
+    ] {
+        if value.len() > MAX_PROFILE_TEXT_BYTES {
+            return Err(format!(
+                "Profile {label} exceeds the {} MB safety limit",
+                MAX_PROFILE_TEXT_BYTES / 1024 / 1024
+            ));
+        }
+    }
+    if profile.merge.agents.len() > 1 {
+        return Err("Merge supports at most one selected agent".to_string());
+    }
+    for agent in &profile.merge.agents {
+        if !ALLOWED_AGENTS.contains(&agent.as_str()) {
+            return Err(format!(
+                "Merge names unsupported agent '{}'. Allowed agents: {}",
+                agent,
+                ALLOWED_AGENTS.join(", ")
+            ));
+        }
+    }
+
+    if !matches!(
+        profile.extraction.method.as_str(),
+        "" | "auto" | "llm" | "marker" | "pdftotext"
+    ) {
+        return Err(format!(
+            "Invalid profile extraction method '{}'",
+            profile.extraction.method
+        ));
+    }
+    if !matches!(
+        profile.extraction.input_mode.as_str(),
+        "" | "document" | "folder" | "none"
+    ) {
+        return Err(format!(
+            "Invalid profile input mode '{}'",
+            profile.extraction.input_mode
+        ));
+    }
+
+    let valid_key = |key: &str| {
+        !key.is_empty()
+            && key.len() <= 64
+            && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    let mut variable_keys = std::collections::HashSet::new();
+    if profile.variables.len() > MAX_VARIABLES {
+        return Err(format!(
+            "Profile has too many variables (maximum {MAX_VARIABLES})"
+        ));
+    }
+    for variable in &profile.variables {
+        if !valid_key(&variable.key) {
+            return Err(format!(
+                "Invalid variable key '{}'. Use 1–64 ASCII letters, numbers, or underscores.",
+                variable.key
+            ));
+        }
+        if !variable_keys.insert(variable.key.as_str()) {
+            return Err(format!("Duplicate variable key '{}'", variable.key));
+        }
+        if !matches!(variable.kind.as_str(), "text" | "choice" | "file") {
+            return Err(format!(
+                "Invalid kind '{}' for variable '{}'",
+                variable.kind, variable.key
+            ));
+        }
+    }
+
+    let mut input_keys = std::collections::HashSet::new();
+    if profile.extraction.extra_inputs.len() > MAX_EXTRA_INPUTS {
+        return Err(format!(
+            "Profile has too many named inputs (maximum {MAX_EXTRA_INPUTS})"
+        ));
+    }
+    for input in &profile.extraction.extra_inputs {
+        if !valid_key(&input.key) {
+            return Err(format!(
+                "Invalid input key '{}'. Use 1–64 ASCII letters, numbers, or underscores.",
+                input.key
+            ));
+        }
+        if !input_keys.insert(input.key.as_str()) {
+            return Err(format!("Duplicate input key '{}'", input.key));
+        }
+        if !matches!(input.mode.as_str(), "document" | "folder") {
+            return Err(format!(
+                "Invalid mode '{}' for input '{}'",
+                input.mode, input.key
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Reject explicit `inputs` graphs that can't run: an unknown dependency id or
@@ -1574,7 +1759,7 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
 /// Save to the active profile.
 pub fn save(config: &PipelineConfig) -> Result<(), String> {
     let _ = ensure_migrated();
-    let settings = crate::settings::load_persisted();
+    let settings = crate::settings::load_persisted_required()?;
     save_for(&settings.active_profile, config)
 }
 
@@ -1582,16 +1767,7 @@ pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String>
     validate_profile_id(profile_id)?;
     validate_profile_steps(&config.steps)?;
     let name = load_profile(profile_id)?.name;
-    let profile = ProfileData {
-        name,
-        steps: config.steps.clone(),
-        merge: config.merge.clone(),
-        use_orientation: config.use_orientation,
-        orientation_prompt: config.orientation_prompt.clone(),
-        extraction: config.extraction.clone(),
-        parallel_context_template: config.parallel_context_template.clone(),
-        variables: config.variables.clone(),
-    };
+    let profile = ProfileData::from_config(name, config);
     save_profile(profile_id, &profile)
 }
 
@@ -1600,11 +1776,6 @@ pub fn reset_defaults() -> PipelineConfig {
     let d = defaults();
     let _ = save(&d);
     d
-}
-
-/// Load steps from the active profile.
-pub fn load_steps() -> Vec<StepConfig> {
-    load().steps
 }
 
 // ── Profile management ──────────────────────────────────────────────
@@ -1629,11 +1800,7 @@ pub fn list_profiles() -> Result<Vec<ProfileSummary>, String> {
             .unwrap_or("")
             .to_string();
         if let Ok(profile) = load_profile(&id) {
-            summaries.push(ProfileSummary {
-                id,
-                name: profile.name,
-                step_count: profile.steps.len(),
-            });
+            summaries.push(profile_summary(id, &profile));
         }
     }
     summaries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1653,22 +1820,9 @@ pub fn create_profile(name: &str) -> Result<ProfileSummary, String> {
     // New profiles start domain-neutral: generic starter steps, generic
     // context template, and an explicit generic survey prompt (empty would
     // fall back to the paper survey at runtime).
-    let profile = ProfileData {
-        name: name.into(),
-        steps: generic_starter_steps(),
-        merge: MergeConfig::default(),
-        use_orientation: true,
-        orientation_prompt: prompts::load_prompt("orientation_generic").unwrap_or_default(),
-        extraction: ExtractionConfig::default(),
-        parallel_context_template: generic_parallel_template(),
-        variables: Vec::new(),
-    };
+    let profile = generic_profile(name, generic_starter_steps(), ExtractionConfig::default());
     save_profile(&id, &profile)?;
-    Ok(ProfileSummary {
-        id,
-        name: name.to_string(),
-        step_count: profile.steps.len(),
-    })
+    Ok(profile_summary(id, &profile))
 }
 
 pub fn duplicate_profile(source_id: &str, new_name: &str) -> Result<ProfileSummary, String> {
@@ -1684,11 +1838,7 @@ pub fn duplicate_profile(source_id: &str, new_name: &str) -> Result<ProfileSumma
     }
     let profile = duplicate_profile_data(source, new_name);
     save_profile(&new_id, &profile)?;
-    Ok(ProfileSummary {
-        id: new_id,
-        name: new_name.to_string(),
-        step_count: profile.steps.len(),
-    })
+    Ok(profile_summary(new_id, &profile))
 }
 
 fn duplicate_profile_data(mut source: ProfileData, new_name: &str) -> ProfileData {
@@ -1701,11 +1851,7 @@ pub fn rename_profile(id: &str, new_name: &str) -> Result<ProfileSummary, String
     let mut profile = load_profile(id)?;
     profile.name = new_name.to_string();
     save_profile(id, &profile)?;
-    Ok(ProfileSummary {
-        id: id.to_string(),
-        name: new_name.to_string(),
-        step_count: profile.steps.len(),
-    })
+    Ok(profile_summary(id.to_string(), &profile))
 }
 
 pub fn delete_profile(id: &str) -> Result<(), String> {
@@ -1716,13 +1862,50 @@ pub fn delete_profile(id: &str) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Profile '{id}' does not exist"));
     }
-    fs::remove_file(&path).map_err(|e| format!("Failed to delete profile: {e}"))?;
+    delete_profile_file_transactionally(&path, || {
+        // If this was the active profile, switch back to deep-review. The
+        // profile file remains recoverable until this settings write commits.
+        crate::settings::replace_active_profile_if(id, "deep-review").map(|_| ())
+    })
+}
 
-    // If this was the active profile, switch back to deep-review
-    let mut settings = crate::settings::load_persisted();
-    if settings.active_profile == id {
-        settings.active_profile = "deep-review".into();
-        crate::settings::save(&settings)?;
+fn delete_profile_file_transactionally(
+    path: &Path,
+    update_references: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Profile path has no valid file name")?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let tombstone = path.with_file_name(format!(
+        ".{file_name}.deleting-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::rename(path, &tombstone).map_err(|e| format!("Failed to stage profile deletion: {e}"))?;
+
+    if let Err(error) = update_references() {
+        return match fs::rename(&tombstone, path) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(format!(
+                "{error}. The profile reference update failed and restoring {} also failed: {rollback}. Recover the profile from {}.",
+                path.display(),
+                tombstone.display()
+            )),
+        };
+    }
+
+    // Reference updates have committed. Failure to unlink the hidden
+    // tombstone must not make the UI retry an already-committed deletion; keep
+    // it as a recoverable backup and report the cleanup problem to diagnostics.
+    if let Err(error) = fs::remove_file(&tombstone) {
+        eprintln!(
+            "WARNING: profile deletion committed but temporary backup {} could not be removed: {error}",
+            tombstone.display()
+        );
     }
     Ok(())
 }
@@ -1730,26 +1913,11 @@ pub fn delete_profile(id: &str) -> Result<(), String> {
 pub fn switch_profile(id: &str) -> Result<PipelineConfig, String> {
     let _ = ensure_migrated();
     let profile = load_profile(id)?;
-    let mut settings = crate::settings::load_persisted();
-    settings.active_profile = id.to_string();
-    crate::settings::save(&settings)?;
-    Ok(PipelineConfig {
-        steps: profile.steps,
-        merge: profile.merge,
-        use_orientation: profile.use_orientation,
-        orientation_prompt: profile.orientation_prompt,
-        extraction: profile.extraction,
-        parallel_context_template: profile.parallel_context_template,
-        variables: profile.variables,
-    })
+    crate::settings::set_active_profile(id)?;
+    Ok(profile.into())
 }
 
 // ── Export/Import ───────────────────────────────────────────────────
-
-pub fn export_step_data(step: &StepConfig) -> Result<String, String> {
-    let envelope = ExportEnvelope::Step { data: step.clone() };
-    serde_json::to_string_pretty(&envelope).map_err(|e| format!("Serialize error: {e}"))
-}
 
 pub fn export_profile_data(id: &str) -> Result<String, String> {
     let profile = load_profile(id)?;
@@ -1769,7 +1937,7 @@ pub fn export_profile_data(id: &str) -> Result<String, String> {
 
 pub fn export_bundle() -> Result<String, String> {
     let _ = ensure_migrated();
-    let mut settings = crate::settings::load_persisted();
+    let mut settings = crate::settings::load_persisted_required()?;
     // Strip API keys from the export to prevent credential leakage
     settings.anthropic_api_key = String::new();
     settings.openai_api_key = String::new();
@@ -1779,17 +1947,7 @@ pub fn export_bundle() -> Result<String, String> {
     let mut profiles = Vec::new();
     for s in &summaries {
         let profile = load_profile(&s.id)?;
-        profiles.push(ProfileExport {
-            id: s.id.clone(),
-            name: profile.name,
-            steps: profile.steps,
-            merge: profile.merge,
-            use_orientation: profile.use_orientation,
-            orientation_prompt: profile.orientation_prompt,
-            extraction: profile.extraction,
-            parallel_context_template: profile.parallel_context_template,
-            variables: profile.variables,
-        });
+        profiles.push(ProfileExport::from_profile(s.id.clone(), profile));
     }
     let envelope = ExportEnvelope::Bundle {
         active_profile: settings.active_profile.clone(),
@@ -1908,7 +2066,6 @@ pub fn import_profile_data(
         id = format!("{base_id}-{counter}");
         counter += 1;
     }
-    let sc = steps.len();
     let mut profile = ProfileData::new(name, steps, merge);
     profile.use_orientation = use_orientation;
     profile.orientation_prompt = orientation_prompt;
@@ -1916,11 +2073,7 @@ pub fn import_profile_data(
     profile.parallel_context_template = parallel_context_template;
     profile.variables = variables;
     save_profile(&id, &profile)?;
-    Ok(ProfileSummary {
-        id,
-        name: name.to_string(),
-        step_count: sc,
-    })
+    Ok(profile_summary(id, &profile))
 }
 
 pub fn import_bundle(json: &str) -> Result<(), String> {
@@ -1941,7 +2094,7 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 ));
             }
             // Merge imported settings with existing, preserving local API keys.
-            let mut current = crate::settings::load_persisted();
+            let mut current = crate::settings::load_persisted_required()?;
             current.preferred_provider = imported_settings.preferred_provider;
             current.max_workers = imported_settings.max_workers;
             current.claude_model = imported_settings.claude_model;
@@ -2030,25 +2183,9 @@ fn validate_bundle_profiles(
         if !ids.insert(profile.id.clone()) {
             return Err(format!("Duplicate profile id '{}'", profile.id));
         }
-        validate_unique_step_ids(&profile.steps)
-            .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
-        validate_dependencies(&profile.steps)
-            .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
-        validate_workflow_semantics(&profile.steps)
-            .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
-        validated.push((
-            profile.id.clone(),
-            ProfileData {
-                name: profile.name.clone(),
-                steps: profile.steps.clone(),
-                merge: profile.merge.clone(),
-                use_orientation: profile.use_orientation,
-                orientation_prompt: profile.orientation_prompt.clone(),
-                extraction: profile.extraction.clone(),
-                parallel_context_template: profile.parallel_context_template.clone(),
-                variables: profile.variables.clone(),
-            },
-        ));
+        let data = profile.to_profile_data();
+        validate_profile_data(&data).map_err(|e| format!("Profile '{}': {e}", profile.name))?;
+        validated.push((profile.id.clone(), data));
     }
     if !ids.contains(active_profile) {
         return Err(format!(
@@ -2248,6 +2385,32 @@ mod tests {
         assert!(validate_bundle_profiles(&valid, "one").is_ok());
     }
 
+    #[test]
+    fn bundle_preflight_rejects_invalid_profile_metadata() {
+        let mut profile = bundle_profile("one", Vec::new());
+        profile.variables = vec![
+            VarSpec {
+                key: "topic".into(),
+                label: String::new(),
+                kind: "text".into(),
+                default: String::new(),
+                choices: Vec::new(),
+            },
+            VarSpec {
+                key: "topic".into(),
+                label: String::new(),
+                kind: "text".into(),
+                default: String::new(),
+                choices: Vec::new(),
+            },
+        ];
+        assert!(validate_bundle_profiles(&[profile], "one").is_err());
+
+        let mut profile = bundle_profile("one", Vec::new());
+        profile.extraction.input_mode = "socket".into();
+        assert!(validate_bundle_profiles(&[profile], "one").is_err());
+    }
+
     // ── slugify ────────────────────────────────────────────────────
 
     #[test]
@@ -2324,6 +2487,7 @@ mod tests {
         assert!(validate_profile_id("has spaces").is_err());
         assert!(validate_profile_id("has.dots").is_err());
         assert!(validate_profile_id("path/traversal").is_err());
+        assert!(validate_profile_id(&"a".repeat(65)).is_err());
     }
 
     // ── Legacy migration ───────────────────────────────────────────
@@ -2469,5 +2633,77 @@ mod tests {
                 .label(),
             "gpt-api"
         );
+    }
+
+    #[test]
+    fn profile_deletion_rolls_back_when_reference_update_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("custom.json");
+        fs::write(&path, "profile bytes").unwrap();
+
+        let error = delete_profile_file_transactionally(&path, || Err("settings failed".into()))
+            .unwrap_err();
+        assert_eq!(error, "settings failed");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "profile bytes");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn profile_deletion_commits_after_reference_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("custom.json");
+        fs::write(&path, "profile bytes").unwrap();
+
+        delete_profile_file_transactionally(&path, || Ok(())).unwrap();
+        assert!(!path.exists());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn profile_validation_rejects_executable_or_unknown_capabilities() {
+        let mut step = StepConfig {
+            id: "unsafe".to_string(),
+            label: "Unsafe".to_string(),
+            prompt: "Do work".to_string(),
+            enabled: true,
+            phase: Phase::Parallel,
+            tools: vec!["Bash".to_string()],
+            ..Default::default()
+        };
+        let mut profile = ProfileData::new(
+            "Imported".to_string(),
+            vec![step.clone()],
+            Default::default(),
+        );
+        assert!(validate_profile_data(&profile)
+            .unwrap_err()
+            .contains("unsupported tool 'Bash'"));
+
+        step.tools = vec!["Read".to_string()];
+        step.agents = vec!["unknown-provider".to_string()];
+        profile.steps = vec![step];
+        assert!(validate_profile_data(&profile)
+            .unwrap_err()
+            .contains("unsupported agent 'unknown-provider'"));
+    }
+
+    #[test]
+    fn profile_validation_bounds_fan_out_cost() {
+        let step = StepConfig {
+            id: "map".to_string(),
+            label: "Map".to_string(),
+            prompt: "Review {item}".to_string(),
+            enabled: true,
+            phase: Phase::Parallel,
+            for_each: Some(ForEach {
+                glob: "**/*".to_string(),
+                max: MAX_FAN_OUT_ITEMS + 1,
+            }),
+            ..Default::default()
+        };
+        let profile = ProfileData::new("Imported".to_string(), vec![step], Default::default());
+        assert!(validate_profile_data(&profile)
+            .unwrap_err()
+            .contains("fan-out maximum"));
     }
 }

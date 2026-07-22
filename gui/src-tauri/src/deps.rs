@@ -5,6 +5,10 @@ use serde::Serialize;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const PROBE_OUTPUT_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DepStatus {
@@ -46,7 +50,7 @@ pub(crate) struct ResolvedCommand {
 }
 
 impl ResolvedCommand {
-    fn direct(path: PathBuf) -> Self {
+    pub(crate) fn direct(path: PathBuf) -> Self {
         Self {
             discovered_path: path.clone(),
             program: path,
@@ -318,6 +322,25 @@ pub(crate) fn resolve_command(name: &str) -> Option<ResolvedCommand> {
     resolve_command_in(name, &directories, cfg!(windows), pathext.as_deref())
 }
 
+/// Harden an already-discovered command path (for managed tools). On Windows
+/// this applies the same native-executable/npm-shim rules as PATH discovery;
+/// arbitrary batch files are rejected.
+pub(crate) fn resolve_discovered_command(path: PathBuf) -> Option<ResolvedCommand> {
+    if !path.is_file() {
+        return None;
+    }
+    if !cfg!(windows) {
+        return Some(ResolvedCommand::direct(path));
+    }
+    let path_var = OsString::from(env::full_path());
+    let mut directories: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
+    if let Some(parent) = path.parent() {
+        directories.insert(0, parent.to_path_buf());
+    }
+    let extensions = windows_pathexts(std::env::var_os("PATHEXT").as_deref());
+    resolve_windows_candidate(path, &directories, &extensions)
+}
+
 /// Find a launchable binary on PATH by scanning directories directly.
 pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     resolve_command(name).map(|command| command.discovered_path)
@@ -325,18 +348,14 @@ pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
 
 fn configure_probe_command(command: &mut Command) {
     command.env("PATH", env::full_path());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
 }
 
 fn probe_resolved(command: &ResolvedCommand, version_args: &[&str]) -> Option<String> {
     let mut process = command.command(version_args);
     configure_probe_command(&mut process);
-    let output = process.output().ok()?;
-    if !output.status.success() {
+    let output =
+        crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT).ok()?;
+    if !output.status.success() || output.stdout_truncated || output.stderr_truncated {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -382,10 +401,11 @@ fn probe(name: &str, version_args: &[&str]) -> ProbeResult {
 fn check_claude_auth(command: &ResolvedCommand) -> bool {
     let mut process = command.command(["auth", "status"]);
     configure_probe_command(&mut process);
-    let Ok(output) = process.output() else {
+    let Ok(output) = crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT)
+    else {
         return false;
     };
-    if !output.status.success() {
+    if !output.status.success() || output.stdout_truncated || output.stderr_truncated {
         return false;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -401,7 +421,7 @@ fn check_claude_auth(command: &ResolvedCommand) -> bool {
 
 /// Check if Codex CLI has credentials available.
 /// Codex uses OPENAI_API_KEY env var or its own login system.
-fn check_codex_auth() -> Option<bool> {
+fn check_codex_auth(command: &ResolvedCommand) -> Option<bool> {
     // Check env var first
     if std::env::var("OPENAI_API_KEY")
         .map(|k| !k.is_empty())
@@ -409,18 +429,28 @@ fn check_codex_auth() -> Option<bool> {
     {
         return Some(true);
     }
-    // Check for codex config directory with stored credentials
-    if let Some(home) = dirs::home_dir() {
-        let config = home.join(".codex").join("auth.json");
-        if config.exists() {
-            return Some(true);
+    let mut process = command.command(["login", "status"]);
+    configure_probe_command(&mut process);
+    let output =
+        crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT).ok()?;
+    if output.stdout_truncated || output.stderr_truncated {
+        return None;
+    }
+    if !output.status.success() {
+        let diagnostic = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .to_ascii_lowercase();
+        if diagnostic.contains("unrecognized")
+            || diagnostic.contains("unexpected argument")
+            || diagnostic.contains("unknown command")
+        {
+            return None;
         }
     }
-    // Neither the env var nor the standard credential file is present, so
-    // report "not authenticated" — that drives the "run `codex login`" hint
-    // in the deps dialog. (This is only reached when the CLI is installed;
-    // the caller passes None for the not-installed case.)
-    Some(false)
+    Some(output.status.success())
 }
 
 /// Check if Gemini CLI has credentials available.
@@ -439,19 +469,10 @@ fn check_gemini_auth() -> Option<bool> {
     {
         return Some(true);
     }
-    // Check for Gemini config with stored credentials
-    if let Some(home) = dirs::home_dir() {
-        let settings = home.join(".gemini").join("settings.json");
-        if settings.exists() {
-            if let Ok(content) = std::fs::read_to_string(&settings) {
-                // If settings exist and contain an API key or auth config, consider authenticated
-                if content.contains("apiKey") || content.contains("oauth") {
-                    return Some(true);
-                }
-            }
-        }
-    }
-    Some(false)
+    // Gemini CLI currently has no stable, noninteractive auth-status command.
+    // A settings-file substring is not evidence of a readable, unexpired
+    // credential, so report this state as unknown rather than green.
+    None
 }
 
 /// Parse "http(s)://host[:port]/..." into (host, port) for a TCP probe.
@@ -482,22 +503,55 @@ fn parse_host_port(base_url: &str) -> Option<(String, u16)> {
     }
 }
 
-/// TCP-connect probe for the local OpenAI-compatible server.
-/// Returns (reachable, "host:port" description).
-fn probe_local_server(base_url: &str) -> (bool, String) {
+/// Protocol-level probe for the local OpenAI-compatible server. A listener is
+/// ready only if `/v1/models` returns a bounded OpenAI-style model list.
+fn probe_local_server(base_url: &str, api_key: &str) -> (bool, String) {
     let Some((host, port)) = parse_host_port(base_url) else {
         return (false, String::new());
     };
     let desc = format!("{host}:{port}");
-    use std::net::{TcpStream, ToSocketAddrs};
-    let Ok(mut addrs) = (host.as_str(), port).to_socket_addrs() else {
-        return (false, desc);
+    let models_url = if base_url.trim_end_matches('/').ends_with("/v1") {
+        format!("{}/models", base_url.trim_end_matches('/'))
+    } else {
+        format!("{}/v1/models", base_url.trim_end_matches('/'))
     };
-    let Some(addr) = addrs.next() else {
-        return (false, desc);
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => return (false, desc),
     };
-    let reachable = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).is_ok();
-    (reachable, desc)
+    let reachable = runtime.block_on(async {
+        let mut request = crate::pipeline::api_common::HTTP_CLIENT
+            .get(models_url)
+            .timeout(std::time::Duration::from_secs(3));
+        if !api_key.is_empty() {
+            request = request.bearer_auth(api_key);
+        }
+        let response = request.send().await.ok()?;
+        if !response.status().is_success()
+            || response
+                .content_length()
+                .is_some_and(|length| length > 1024 * 1024)
+        {
+            return None;
+        }
+        let mut response = response;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.ok()? {
+            if chunk.len() > 1024 * 1024usize.saturating_sub(body.len()) {
+                return None;
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let value: serde_json::Value = serde_json::from_slice(&body).ok()?;
+        value
+            .get("data")
+            .and_then(|data| data.as_array())
+            .map(|_| ())
+    });
+    (reachable.is_some(), desc)
 }
 
 /// Run all dependency checks in parallel.
@@ -510,6 +564,7 @@ pub fn check_all() -> DepsReport {
     let has_openai_key = !settings.openai_api_key.is_empty();
     let has_google_key = !settings.google_api_key.is_empty();
     let local_base_url = settings.local_base_url.clone();
+    let local_api_key = settings.local_api_key.clone();
 
     // Run all probes in parallel, skipping unnecessary work
     std::thread::scope(|s| {
@@ -531,7 +586,7 @@ pub fn check_all() -> DepsReport {
                 version,
                 path,
             } = probe("codex", &["--version"]);
-            let auth = command.as_ref().and_then(|_| check_codex_auth());
+            let auth = command.as_ref().and_then(check_codex_auth);
             (command.is_some(), version, path, auth)
         });
 
@@ -563,7 +618,7 @@ pub fn check_all() -> DepsReport {
         // Local OpenAI-compatible server: TCP reachability of the configured
         // base URL (fast, no HTTP parse — a listener there is a good signal).
         let local_url = local_base_url.clone();
-        let local_h = s.spawn(move || probe_local_server(&local_url));
+        let local_h = s.spawn(move || probe_local_server(&local_url, &local_api_key));
 
         // Collect results
         let (found, ver, path, claude_auth) = claude_h
@@ -601,6 +656,8 @@ pub fn check_all() -> DepsReport {
             "API key configured — CLI not required."
         } else if found && codex_auth == Some(false) {
             "Codex CLI is installed but not authenticated. Run `codex login` or set OPENAI_API_KEY."
+        } else if found && codex_auth.is_none() {
+            "Codex CLI is installed, but authentication status could not be verified. Run `codex login status`."
         } else {
             "Install Codex CLI: npm install -g @openai/codex"
         };
@@ -629,6 +686,8 @@ pub fn check_all() -> DepsReport {
             "API key configured — CLI not required."
         } else if found && gemini_auth == Some(false) {
             "Gemini CLI is installed but not authenticated. Set GEMINI_API_KEY or run `gemini` to log in."
+        } else if found && gemini_auth.is_none() {
+            "Gemini CLI is installed, but authentication cannot be verified noninteractively. Set GEMINI_API_KEY/GOOGLE_API_KEY or verify login before running."
         } else {
             "Install Gemini CLI: npm install -g @google/gemini-cli"
         };
@@ -768,7 +827,8 @@ pub fn check_all() -> DepsReport {
             if !d.found {
                 return false;
             }
-            d.authenticated != Some(false)
+            d.authenticated
+                .map_or(d.name == "Local LLM server", |authenticated| authenticated)
         });
         DepsReport { deps, ready }
     })

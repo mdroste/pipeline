@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import type {
@@ -13,11 +13,18 @@ import type {
   InputSlot,
   Settings,
   ModelCatalog,
-  ModelSelection,
 } from "../lib/types";
 import { reorderSteps } from "../lib/pipelineHelpers";
+import {
+  decodeModelSelection,
+  effortOptions,
+  encodeModelSelection,
+  providerTransport,
+  PROVIDERS,
+} from "../lib/providers";
 import WaveDiagram, { type WaveSelection } from "./WaveDiagram";
 import PromptEditor from "./PromptEditor";
+import ResizeHandle from "./ResizeHandle";
 
 interface Props {
   onClose: () => void;
@@ -36,6 +43,8 @@ type EditingMode = WaveSelection | null;
 export default function PipelinePage({ onClose, onProfileChange }: Props) {
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -46,19 +55,6 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   // Profile state
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [activeProfile, setActiveProfile] = useState<string>("deep-review");
-  // Mirrors BUILTIN_PROFILES in pipeline_config.rs — these cannot be deleted.
-  const BUILTIN_PROFILES = [
-    "deep-review",
-    "quick-review",
-    "empirical",
-    "quick-code-review",
-    "deep-code-review",
-    "replication-audit",
-    "grant-review",
-    "revision-response",
-    "rubric-grading",
-    "thesis-review",
-  ];
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   // Prompt dialog state
@@ -77,12 +73,16 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   const [dropHint, setDropHint] = useState<{ idx: number; phase: Phase } | null>(null);
 
   useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setLoadError(null);
     Promise.all([
       invoke<PipelineConfig>("get_pipeline_config"),
       invoke<ProfileSummary[]>("list_profiles"),
       invoke<string>("get_active_profile"),
     ])
       .then(([c, p, a]) => {
+        if (!live) return;
         setConfig(normalizeConfig(c));
         setProfiles(p);
         setActiveProfile(a);
@@ -90,15 +90,22 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
       })
       .catch((e) => {
         console.error(e);
-        setLoading(false);
+        if (live) {
+          setConfig(null);
+          setLoadError(e instanceof Error ? e.message : String(e));
+          setLoading(false);
+        }
       });
-  }, []);
+    return () => {
+      live = false;
+    };
+  }, [loadAttempt]);
 
   useEffect(() => {
     invoke<{ settings: Settings; warnings: string[] }>("get_settings")
       .then((response) => {
         setSettings(response.settings);
-        for (const provider of ["claude", "codex", "gemini", "local"]) {
+        for (const provider of PROVIDERS) {
           invoke<ModelCatalog>("get_model_catalog", {
             provider,
             settings: response.settings,
@@ -149,10 +156,40 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
     }
   }, [isStepEditing, editingStep]);
 
-  if (loading || !config) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400">
         <div className="animate-spin w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full" />
+      </div>
+    );
+  }
+  if (loadError || !config) {
+    return (
+      <div className="flex items-center justify-center h-full p-8">
+        <div className="max-w-md text-center space-y-4">
+          <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">
+            Pipeline editor could not be loaded
+          </h2>
+          <p className="text-sm text-red-600 dark:text-red-400 break-words">
+            {loadError ?? "The profile configuration was unavailable."}
+          </p>
+          <div className="flex justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+              className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 text-sm"
+            >
+              Close
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -225,7 +262,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   };
 
   const handleDeleteProfile = async () => {
-    if (BUILTIN_PROFILES.includes(activeProfile)) {
+    if (profiles.find((profile) => profile.id === activeProfile)?.builtin) {
       alert("Cannot delete a built-in profile.");
       return;
     }
@@ -334,7 +371,10 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
     try {
       const summary = await invoke<ProfileSummary>("import_profile_from_url", { url: url.trim() });
       await refreshProfiles();
-      await handleSwitchProfile(summary.id);
+      alert(
+        `Imported “${summary.name}” after safety validation. It was not activated. ` +
+        "Select it from the profile list to inspect its prompts, tools, agents, and fan-out settings before running it.",
+      );
     } catch (e) {
       alert(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -351,6 +391,14 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
       switch (envelope.type) {
         case "step": {
           const step = envelope.data as StepConfig;
+          const agents = step.agents?.length || 1;
+          const fanOut = step.for_each ? `; fan-out up to ${step.for_each.max} items` : "";
+          if (!confirm(
+            `Import step “${step.label}”?\n\n` +
+            `Tools: ${step.tools?.join(", ") || "none"}\n` +
+            `Agents: ${step.agents?.join(", ") || "profile default"}${fanOut}\n` +
+            `Maximum provider calls from this step: ${step.for_each ? step.for_each.max * agents : agents}`,
+          )) return;
           const id = config.steps.some((s) => s.id === step.id)
             ? `${step.id}_${Date.now()}`
             : step.id;
@@ -363,13 +411,30 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
           break;
         }
         case "profile": {
+          const enabled = envelope.steps.filter((step) => step.enabled);
+          const tools = [...new Set(enabled.flatMap((step) => step.tools ?? []))];
+          const agents = [...new Set(enabled.flatMap((step) => step.agents ?? []))];
+          const maxCalls = enabled.reduce((total, step) => {
+            const agentCount = Math.max(1, step.agents?.length ?? 0);
+            return total + agentCount * (step.for_each?.max ?? 1);
+          }, 0);
+          if (!confirm(
+            `Import and activate profile “${envelope.name}”?\n\n` +
+            `${enabled.length} enabled steps; up to ${maxCalls} provider calls per run.\n` +
+            `Tools: ${tools.join(", ") || "none"}\n` +
+            `Agents: ${agents.join(", ") || "profile default"}\n\n` +
+            "Review the imported prompts in the editor before starting a run.",
+          )) return;
           const summary = await invoke<ProfileSummary>("import_profile", { path });
           await refreshProfiles();
           await handleSwitchProfile(summary.id);
           break;
         }
         case "bundle": {
-          if (!confirm("Import all settings and profiles from this file? Existing profiles with the same ID will be overwritten.")) return;
+          if (!confirm(
+            `Import ${envelope.profiles.length} profiles plus provider/settings configuration?\n\n` +
+            "Existing profiles with the same ID will be overwritten. API-key fields and the active profile may change. Review the active profile before running it.",
+          )) return;
           await invoke("import_bundle", { path });
           const [c, p, a] = await Promise.all([
             invoke<PipelineConfig>("get_pipeline_config"),
@@ -513,7 +578,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
               Rename
             </button>
             <button onClick={handleDeleteProfile}
-              disabled={BUILTIN_PROFILES.includes(activeProfile)}
+              disabled={profiles.find((profile) => profile.id === activeProfile)?.builtin}
               className="flex-1 py-1 text-[11px] text-gray-500 hover:text-red-600 hover:bg-red-50
                          rounded transition-colors disabled:opacity-30 disabled:hover:text-gray-500
                          disabled:hover:bg-transparent">
@@ -1459,30 +1524,12 @@ function ModelOverrides({
       .map((provider) => provider || "claude"),
   ));
 
-  const transportFor = (provider: string): "cli" | "api" => {
-    if (!settings || provider === "local") return "api";
-    if (provider === "claude") return settings.anthropic_api_key ? "api" : "cli";
-    if (provider === "codex") return settings.openai_api_key ? "api" : "cli";
-    return settings.google_api_key ? "api" : "cli";
-  };
-
-  const encode = (selection: ModelSelection | undefined) => {
-    if (!selection) return "inherit";
-    if (selection.mode === "automatic") return "automatic";
-    return selection.mode === "role" ? `role:${selection.role}` : `pinned:${selection.model}`;
-  };
-
-  const decode = (value: string): ModelSelection | undefined => {
-    if (value === "inherit") return undefined;
-    if (value === "automatic") return { mode: "automatic" };
-    return value.startsWith("role:")
-      ? { mode: "role", role: value.slice(5) }
-      : { mode: "pinned", model: value.slice(7) };
-  };
+  const transportFor = (provider: string): "cli" | "api" =>
+    settings ? providerTransport(settings, provider) : "api";
 
   const updateModel = (key: string, value: string) => {
     const next = { ...(step.model_overrides ?? {}) };
-    const selection = decode(value);
+    const selection = decodeModelSelection(value);
     if (selection) next[key] = selection;
     else delete next[key];
     onChange({ model: "", model_overrides: next });
@@ -1526,20 +1573,16 @@ function ModelOverrides({
             const key = `${provider}:${transportFor(provider)}`;
             const catalog = catalogs[provider];
             const selection = step.model_overrides?.[key];
-            const value = encode(selection);
+            const value = encodeModelSelection(selection);
             const known = value === "inherit" || value === "automatic"
               || catalog?.roles.some((role) => value === `role:${role.id}`)
               || catalog?.models.some((model) => value === `pinned:${model.id}`);
-            const selectedId = selection?.mode === "pinned"
-              ? selection.model
-              : selection?.mode === "role"
-                ? catalog?.roles.find((role) => role.id === selection.role)?.model
-                : catalog?.default_model || catalog?.recommended_model;
-            const discoveredEfforts = catalog?.models.find((model) => model.id === selectedId)?.supported_efforts ?? [];
-            const efforts = discoveredEfforts.length
-              ? discoveredEfforts
-              : provider === "claude" ? ["low", "medium", "high", "max"]
-                : provider === "codex" ? ["low", "medium", "high"] : [];
+            const efforts = effortOptions(
+              catalog,
+              selection,
+              provider === "claude" ? ["low", "medium", "high", "max"]
+                : provider === "codex" ? ["low", "medium", "high"] : [],
+            );
             return (
               <div key={key} className="space-y-1.5">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
@@ -2095,8 +2138,6 @@ function AdvancedStepOptions({
 
 // --- Agent selector ---
 
-const PROVIDERS = ["claude", "codex", "gemini", "local"] as const;
-
 function AgentChips({
   agents,
   multi,
@@ -2189,60 +2230,5 @@ function PromptDialog({
         </div>
       </div>
     </div>
-  );
-}
-
-function ResizeHandle({
-  onResize,
-  min,
-  max,
-}: {
-  onResize: (width: number) => void;
-  min: number;
-  max: number;
-}) {
-  const cleanupRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    return () => {
-      // Clean up global listeners if component unmounts during a drag
-      if (cleanupRef.current) cleanupRef.current();
-    };
-  }, []);
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const parent = (e.target as HTMLElement).parentElement;
-      if (!parent) return;
-      const startX = e.clientX;
-      const startWidth = parent.getBoundingClientRect().width;
-
-      const onMouseMove = (ev: MouseEvent) => {
-        const newWidth = Math.min(max, Math.max(min, startWidth + ev.clientX - startX));
-        onResize(newWidth);
-      };
-      const onMouseUp = () => {
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        cleanupRef.current = null;
-      };
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      cleanupRef.current = onMouseUp;
-    },
-    [onResize, min, max]
-  );
-
-  return (
-    <div
-      onMouseDown={handleMouseDown}
-      className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize
-                 hover:bg-gray-300 active:bg-gray-400 transition-colors z-10"
-    />
   );
 }

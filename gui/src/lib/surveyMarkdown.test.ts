@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderGenericSurvey } from "./surveyMarkdown";
+import { renderGenericSurvey, renderSurvey } from "./surveyMarkdown";
 
 describe("renderGenericSurvey", () => {
   it("renders string values as titled sections", () => {
@@ -57,5 +57,32 @@ describe("renderGenericSurvey", () => {
   it("falls back to a JSON fence for non-object surveys", () => {
     const md = renderGenericSurvey(["a", "b"]);
     expect(md).toContain("```json");
+  });
+});
+
+describe("renderSurvey", () => {
+  it("keeps the paper-specific orientation presentation", () => {
+    const md = renderSurvey({
+      metadata: {
+        title: "A Paper",
+        authors: ["Ada", "Grace"],
+        date: null,
+        paper_type: "theory",
+        page_count: 12,
+        has_appendix: true,
+        has_online_appendix: false,
+      },
+      sections: [{ number: "1", title: "Model", page_start: 2, page_end: 5 }],
+      formal_results: [],
+      tables_figures: [],
+      notation: [],
+      stated_contribution: "A useful theorem.",
+      key_references: [],
+      extraction_quality_notes: [],
+    });
+    expect(md).toContain("# Orientation Map");
+    expect(md).toContain("**Authors**: Ada, Grace");
+    expect(md).toContain("| 1 | Model | 2–5 |");
+    expect(md).toContain("## Stated Contribution");
   });
 });

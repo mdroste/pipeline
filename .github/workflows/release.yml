@@ -8,7 +8,84 @@ permissions:
   contents: write
 
 jobs:
+  quality:
+    name: Tagged SHA quality gate
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri -> target
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install npm dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Rust dependency audit
+        working-directory: gui/src-tauri
+        run: cargo audit
+
+      - name: npm production dependency audit
+        working-directory: gui
+        run: npm audit --omit=dev
+
+      - name: Release metadata tests
+        working-directory: gui
+        run: npm run test:release
+
+      - name: Rust tests
+        working-directory: gui/src-tauri
+        run: cargo test --all-targets
+
+      - name: Rust formatting
+        working-directory: gui/src-tauri
+        run: cargo fmt --check
+
+      - name: Rust Clippy
+        working-directory: gui/src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Frontend tests
+        working-directory: gui
+        run: npm test -- --run
+
+      - name: Frontend production build
+        working-directory: gui
+        run: npm run build
+
+      - name: Install declared minimum Rust version
+        uses: dtolnay/rust-toolchain@1.80.0
+
+      - name: Check declared MSRV
+        working-directory: gui/src-tauri
+        run: cargo check --locked
+
   release:
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
@@ -88,6 +165,14 @@ jobs:
       - name: Install npm dependencies
         working-directory: gui
         run: npm ci
+
+      - name: Platform Rust tests
+        working-directory: gui/src-tauri
+        run: cargo test --all-targets
+
+      - name: Platform frontend tests
+        working-directory: gui
+        run: npm test -- --run
 
       # Import the Apple signing cert early on macOS so the Bundle
       # poppler step can sign its Mach-O files with --timestamp before

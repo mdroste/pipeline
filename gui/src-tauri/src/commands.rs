@@ -118,6 +118,30 @@ impl Drop for PipelineGuard {
     }
 }
 
+/// Per-run cleanup. A batch holds `PipelineGuard` across several jobs, so each
+/// job must close its own log sink and API read/write windows on every return
+/// path, including extraction or provider failures.
+struct RunStateGuard;
+
+fn begin_run_state() -> RunStateGuard {
+    CANCEL_FLAG.store(false, std::sync::atomic::Ordering::Release);
+    reset_pass_cancels();
+    crate::pipeline::logging::reset_run_usage();
+    crate::pipeline::logging::set_log_sink(None);
+    crate::pipeline::api_common::set_allowed_dirs(Vec::new());
+    crate::pipeline::api_common::set_write_dir(None);
+    RunStateGuard
+}
+
+impl Drop for RunStateGuard {
+    fn drop(&mut self) {
+        crate::pipeline::logging::set_log_sink(None);
+        crate::pipeline::api_common::set_allowed_dirs(Vec::new());
+        crate::pipeline::api_common::set_write_dir(None);
+        reset_pass_cancels();
+    }
+}
+
 /// PIDs of active child processes (claude/gemini/codex subprocesses).
 /// Populated by `register_child_pid`, cleared by `unregister_child_pid`.
 static CHILD_PIDS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
@@ -319,6 +343,10 @@ pub struct BatchJob {
     pub run_id: Option<String>,
     pub error: Option<String>,
     pub duration_secs: u64,
+    /// Immutable profile used by this batch job (empty for watch-folder jobs).
+    pub profile_id: String,
+    /// Content fingerprint shared by every job in one batch.
+    pub profile_snapshot_id: String,
 }
 
 static BATCH: std::sync::Mutex<Vec<BatchJob>> = std::sync::Mutex::new(Vec::new());
@@ -412,6 +440,31 @@ pub async fn wait_for_cancellation(pass_key: Option<&str>) {
     }
 }
 
+/// Poll an operation and the run/pass cancellation signal together without
+/// requiring Tokio's optional macro feature. Dropping the operation future is
+/// safe only for operations whose resources have their own RAII cleanup.
+pub async fn await_or_cancel<F, T>(future: F, pass_key: Option<&str>) -> Result<T, String>
+where
+    F: std::future::Future<Output = T>,
+{
+    use std::future::Future as _;
+    let mut operation = std::pin::pin!(future);
+    let mut cancellation = std::pin::pin!(wait_for_cancellation(pass_key));
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(value) = operation.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Ok(value));
+        }
+        if cancellation.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(Err(match pass_key {
+                Some(key) => format!("Pass '{key}' cancelled"),
+                None => "Pipeline cancelled".to_string(),
+            }));
+        }
+        std::task::Poll::Pending
+    })
+    .await
+}
+
 /// Register a child process PID so it can be killed on cancel. Also attributes
 /// the PID to the current pass (if any) for per-pass cancellation.
 pub fn register_child_pid(pid: u32) {
@@ -429,7 +482,13 @@ pub fn register_child_pid(pid: u32) {
         PASS_PIDS
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push((pass, pid));
+            .push((pass.clone(), pid));
+        // Close the race where cancel_pass observes no PID immediately before
+        // this child is registered. A cancelled pass may never acquire a new
+        // live subprocess after the cancellation decision has committed.
+        if is_pass_cancelled(&pass) {
+            kill_process(pid);
+        }
     }
 }
 
@@ -469,7 +528,7 @@ pub async fn cancel_pass(pass_key: String) -> Result<(), String> {
 }
 
 /// Kill all registered child processes.
-fn kill_all_children() {
+pub(crate) fn kill_all_children() {
     let pids = std::mem::take(&mut *CHILD_PIDS.lock().unwrap_or_else(|e| e.into_inner()));
     for pid in pids {
         kill_process(pid);
@@ -487,23 +546,14 @@ pub(crate) fn kill_process(pid: u32) {
             return;
         }
         let pid_i32 = pid as i32;
+        // Cancellation is a force-stop operation. Signal immediately while
+        // the PID is still registered as owned by Pipeline; never schedule a
+        // later PID-only escalation, because the child may be reaped and that
+        // numeric PID/process-group ID reused by an unrelated process.
         unsafe {
-            libc::kill(-pid_i32, libc::SIGTERM);
+            libc::kill(-pid_i32, libc::SIGKILL);
+            libc::kill(pid_i32, libc::SIGKILL);
         }
-        unsafe {
-            libc::kill(pid_i32, libc::SIGTERM);
-        }
-        // Escalate after a grace period. The provider leader may exit on TERM
-        // while a descendant keeps an inherited pipe open; targeting the
-        // dedicated process group prevents that descendant from hanging the
-        // caller indefinitely.
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(750));
-            unsafe {
-                libc::kill(-pid_i32, libc::SIGKILL);
-                libc::kill(pid_i32, libc::SIGKILL);
-            }
-        });
     }
     #[cfg(windows)]
     {
@@ -526,6 +576,98 @@ pub(crate) fn kill_process(pid: u32) {
             .creation_flags(0x08000000)
             .status();
     }
+}
+
+/// Create the optional persistent workspace shared by fresh runs and re-runs.
+/// Persistence remains best-effort; execution falls back to stdout when the
+/// run or artifact directory cannot be created.
+fn create_run_workspace(
+    app: &crate::emit::EventBus,
+    paper_hash: &str,
+    pending_meta: crate::runs::RunFinishMeta,
+) -> (Option<crate::runs::RunWriter>, Option<String>) {
+    let mut writer = match crate::runs::RunWriter::create_unique(paper_hash) {
+        Ok(writer) => Some(writer),
+        Err(error) => {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: could not create run directory: {error}")
+                }),
+            );
+            None
+        }
+    };
+
+    if let Some(writer) = writer.as_mut() {
+        if let Err(error) = writer.set_pending_meta(pending_meta) {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: could not update pending run manifest: {error}")
+                }),
+            );
+        }
+    }
+
+    if let Some(writer) = writer.as_ref() {
+        let logs_dir = writer.dir().join("logs");
+        match std::fs::create_dir_all(&logs_dir)
+            .and_then(|()| std::fs::File::create(logs_dir.join("run.log")))
+        {
+            Ok(file) => crate::pipeline::logging::set_log_sink(Some(file)),
+            Err(error) => {
+                let _ = app.emit_event(
+                    "pipeline:log",
+                    serde_json::json!({
+                        "line": format!("WARNING: could not open run log file: {error}")
+                    }),
+                );
+            }
+        }
+    }
+
+    let artifact_dir = writer.as_ref().and_then(|writer| {
+        let dir = writer.dir().join("artifacts");
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => Some(
+                crate::pipeline::claude::normalize_cli_root(&dir.to_string_lossy())
+                    .unwrap_or_else(|| dir.to_string_lossy().replace('\\', "/")),
+            ),
+            Err(error) => {
+                let _ = app.emit_event(
+                    "pipeline:log",
+                    serde_json::json!({
+                        "line": format!("WARNING: could not create artifact dir, steps will use stdout output: {error}")
+                    }),
+                );
+                None
+            }
+        }
+    });
+    crate::pipeline::api_common::set_write_dir(artifact_dir.as_ref().map(std::path::PathBuf::from));
+    (writer, artifact_dir)
+}
+
+fn write_run_input_file(
+    root: &std::path::Path,
+    prefix: &str,
+    suffix: &str,
+    content: &[u8],
+    label: &str,
+) -> Result<(tempfile::NamedTempFile, String), String> {
+    let mut file = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(suffix)
+        .tempfile_in(root)
+        .map_err(|error| format!("Failed to create {label} temp file: {error}"))?;
+    file.write_all(content)
+        .map_err(|error| format!("Failed to write {label} temp file: {error}"))?;
+    file.flush()
+        .map_err(|error| format!("Failed to flush {label} temp file: {error}"))?;
+    let path = crate::pipeline::claude::normalize_cli_root(&file.path().to_string_lossy())
+        .ok_or_else(|| format!("Failed to resolve {label} temp file"))?;
+    Ok((file, path))
 }
 
 /// Write a completed run's artifacts and manifest into the run directory:
@@ -614,20 +756,84 @@ fn finalize_run(
 }
 
 /// Purge old runs beyond the retention cap (0 = keep all), logging how many.
-fn enforce_retention(app: &crate::emit::EventBus, keep: usize) {
-    if keep == 0 {
+fn enforce_retention(app: &crate::emit::EventBus, keep: usize, max_bytes: u64) {
+    if keep == 0 && max_bytes == 0 {
         return;
     }
-    if let Ok(n) = crate::runs::purge_old_runs(keep) {
+    if let Ok(n) = crate::runs::purge_runs_with_limits(keep, max_bytes) {
         if n > 0 {
             let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({
-                    "line": format!("Removed {n} old run(s) to stay within the {keep}-run limit")
+                    "line": format!("Removed {n} old run(s) to satisfy history retention limits")
                 }),
             );
         }
     }
+}
+
+struct RunCompletion {
+    input_path: String,
+    input_mode: String,
+    profile_name: String,
+    variables: std::collections::HashMap<String, String>,
+    extra_inputs: std::collections::HashMap<String, String>,
+    parent_run_id: Option<String>,
+}
+
+/// Finalize persistence, retention, events, and the public response in one
+/// place so fresh runs and re-runs cannot drift in status or metadata rules.
+#[allow(clippy::too_many_arguments)]
+fn complete_run(
+    app: &crate::emit::EventBus,
+    writer: Option<crate::runs::RunWriter>,
+    report: &PipelineReport,
+    markdown: &str,
+    extracted_text: &str,
+    elapsed: std::time::Duration,
+    settings: &crate::settings::Settings,
+    completion: RunCompletion,
+) -> serde_json::Value {
+    let status = if report.failed_steps.is_empty() {
+        "done"
+    } else {
+        "partial"
+    };
+    let meta = crate::runs::RunFinishMeta {
+        input_path: completion.input_path,
+        input_mode: completion.input_mode,
+        profile_id: settings.active_profile.clone(),
+        profile_name: completion.profile_name,
+        provider: settings.preferred_provider.clone(),
+        status: status.to_string(),
+        duration_secs: elapsed.as_secs(),
+        usage: crate::pipeline::logging::run_usage(),
+        step_count: report.all_outputs().len() as u32,
+        failed_steps: report
+            .failed_steps
+            .iter()
+            .map(|failure| failure.step_label.clone())
+            .collect(),
+        variables: completion.variables,
+        extra_inputs: completion.extra_inputs,
+        parent_run_id: completion.parent_run_id,
+    };
+    let run_id = writer.and_then(|writer| finalize_run(app, writer, report, markdown, meta));
+    enforce_retention(
+        app,
+        settings.max_saved_runs as usize,
+        settings.max_saved_run_bytes,
+    );
+    app.emit_event("pipeline:stage", serde_json::json!({"stage": "done"}))
+        .ok();
+
+    serde_json::json!({
+        "report": report,
+        "markdown": markdown,
+        "extracted_text": extracted_text,
+        "run_id": run_id,
+        "status": status,
+    })
 }
 
 #[tauri::command]
@@ -664,6 +870,44 @@ pub async fn run_headless(
     run_pipeline_inner(&bus, paper_path, false, variables, extra_inputs).await
 }
 
+#[derive(Clone)]
+struct RunSnapshot {
+    settings: crate::settings::Settings,
+    config: PipelineConfig,
+    profile_name: String,
+    fingerprint: String,
+}
+
+fn load_run_snapshot() -> Result<RunSnapshot, String> {
+    use sha2::{Digest as _, Sha256};
+
+    let settings = crate::settings::load_persisted_required().map_err(|e| {
+        format!("Cannot start run because settings could not be loaded safely: {e}")
+    })?;
+    let (config, profile_name) =
+        pipeline_config::load_required_profile_for(&settings.active_profile)?;
+    let mut fingerprint_settings = settings.clone();
+    for secret in [
+        &mut fingerprint_settings.anthropic_api_key,
+        &mut fingerprint_settings.openai_api_key,
+        &mut fingerprint_settings.google_api_key,
+        &mut fingerprint_settings.local_api_key,
+    ] {
+        if !secret.is_empty() {
+            *secret = "<configured>".to_string();
+        }
+    }
+    let encoded = serde_json::to_vec(&(&fingerprint_settings, &config))
+        .map_err(|e| format!("Could not fingerprint run configuration: {e}"))?;
+    let digest = format!("{:x}", Sha256::digest(encoded));
+    Ok(RunSnapshot {
+        settings,
+        config,
+        profile_name,
+        fingerprint: digest[..16].to_string(),
+    })
+}
+
 async fn run_pipeline_inner(
     app: &crate::emit::EventBus,
     paper_path: &str,
@@ -671,13 +915,32 @@ async fn run_pipeline_inner(
     provided_vars: std::collections::HashMap<String, String>,
     provided_inputs: std::collections::HashMap<String, String>,
 ) -> Result<serde_json::Value, String> {
-    CANCEL_FLAG.store(false, std::sync::atomic::Ordering::Release);
-    reset_pass_cancels();
-    crate::pipeline::logging::reset_run_usage();
+    run_pipeline_inner_with_snapshot(app, paper_path, diff, provided_vars, provided_inputs, None)
+        .await
+}
+
+async fn run_pipeline_inner_with_snapshot(
+    app: &crate::emit::EventBus,
+    paper_path: &str,
+    diff: bool,
+    provided_vars: std::collections::HashMap<String, String>,
+    provided_inputs: std::collections::HashMap<String, String>,
+    snapshot: Option<RunSnapshot>,
+) -> Result<serde_json::Value, String> {
+    let _run_state = begin_run_state();
     let pipeline_start = std::time::Instant::now();
     // One immutable settings/profile snapshot defines the entire run. UI
     // edits made while providers are working take effect only on the next run.
-    let settings = crate::settings::load();
+    let snapshot = match snapshot {
+        Some(snapshot) => snapshot,
+        None => load_run_snapshot()?,
+    };
+    let RunSnapshot {
+        settings,
+        config,
+        profile_name,
+        ..
+    } = snapshot;
     let _settings_snapshot = crate::settings::freeze_for_run(settings.clone());
 
     // Set up allowed directories for direct API file reads
@@ -691,10 +954,6 @@ async fn run_pipeline_inner(
             .unwrap_or_default()
     };
     crate::pipeline::api_common::set_allowed_dirs(vec![source_dir.clone()]);
-
-    // Load profile config first so extraction overrides apply.
-    let (config, profile_name) =
-        pipeline_config::load_required_profile_for(&settings.active_profile)?;
 
     // Effective run-time variables: the profile's declared defaults, overlaid
     // with whatever the caller provided. Unknown provided keys are kept (a
@@ -720,7 +979,7 @@ async fn run_pipeline_inner(
     let extract_start = std::time::Instant::now();
     let input_mode = extract::effective_input_mode(&config.extraction.input_mode, paper_path);
     let extraction = match input_mode {
-        "folder" => extract::ingest_folder(paper_path)?,
+        "folder" => extract::ingest_folder_async(paper_path).await?,
         "none" => extract::ingest_none(),
         _ => extract::extract(app, paper_path, &config.extraction).await?,
     };
@@ -738,22 +997,10 @@ async fn run_pipeline_inner(
         .ok();
     }
 
-    // Persist this run's outputs under ~/.pipeline/runs/{run_id}/.
-    // Best-effort throughout: persistence failures are logged, never fatal.
-    let mut run_writer = match crate::runs::RunWriter::create_unique(&extraction.paper_hash) {
-        Ok(w) => Some(w),
-        Err(e) => {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: could not create run directory: {e}")
-                }),
-            );
-            None
-        }
-    };
-    if let Some(w) = run_writer.as_mut() {
-        if let Err(e) = w.set_pending_meta(crate::runs::RunFinishMeta {
+    let (mut run_writer, artifact_write_dir) = create_run_workspace(
+        app,
+        &extraction.paper_hash,
+        crate::runs::RunFinishMeta {
             input_path: paper_path.to_string(),
             input_mode: input_mode.to_string(),
             profile_id: settings.active_profile.clone(),
@@ -761,14 +1008,9 @@ async fn run_pipeline_inner(
             provider: settings.preferred_provider.clone(),
             variables: variables.clone(),
             ..Default::default()
-        }) {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: could not update pending run manifest: {e}")
-                }),
-            );
-        }
+        },
+    );
+    if let Some(w) = run_writer.as_mut() {
         if let Err(e) = w.add_text(
             "context/extracted_text.md",
             "Extracted text",
@@ -783,49 +1025,6 @@ async fn run_pipeline_inner(
             );
         }
     }
-
-    // Mirror the console to a transcript inside the run directory. Registered
-    // in the manifest at finish, after the sink is closed. Best-effort.
-    if let Some(w) = run_writer.as_ref() {
-        let logs_dir = w.dir().join("logs");
-        match std::fs::create_dir_all(&logs_dir)
-            .and_then(|_| std::fs::File::create(logs_dir.join("run.log")))
-        {
-            Ok(f) => crate::pipeline::logging::set_log_sink(Some(f)),
-            Err(e) => {
-                let _ = app.emit_event(
-                    "pipeline:log",
-                    serde_json::json!({
-                        "line": format!("WARNING: could not open run log file: {e}")
-                    }),
-                );
-            }
-        }
-    }
-
-    // Artifact write sandbox: LLM steps may write files into this run's
-    // artifacts/ directory and nowhere else. Created up front so every
-    // enforcement layer (Write tool validation, CLI permission rules,
-    // codex/gemini workspaces) can resolve it. When the run dir couldn't
-    // be created, steps fall back to stdout output.
-    let artifact_write_dir: Option<String> = run_writer.as_ref().and_then(|w| {
-        let dir = w.dir().join("artifacts");
-        match std::fs::create_dir_all(&dir) {
-            Ok(()) => Some(
-                crate::pipeline::claude::normalize_cli_root(&dir.to_string_lossy())
-                    .unwrap_or_else(|| dir.to_string_lossy().replace('\\', "/")),
-            ),
-            Err(e) => {
-                let _ = app.emit_event("pipeline:log", serde_json::json!({
-                    "line": format!("WARNING: could not create artifact dir, steps will use stdout output: {e}")
-                }));
-                None
-            }
-        }
-    });
-    crate::pipeline::api_common::set_write_dir(
-        artifact_write_dir.as_ref().map(std::path::PathBuf::from),
-    );
 
     // Render page images for PDF inputs so the artifact explorer can show
     // them. Deliberately independent of the extraction method; best-effort.
@@ -956,18 +1155,13 @@ async fn run_pipeline_inner(
         .prefix("pipeline_run_inputs_")
         .tempdir()
         .map_err(|e| format!("Failed to create run input directory: {e}"))?;
-    let mut tmp = tempfile::Builder::new()
-        .prefix("pipeline_paper_")
-        .suffix(".txt")
-        .tempfile_in(run_input_dir.path())
-        .map_err(|e| format!("Failed to create temp file: {e}"))?;
-    tmp.write_all(extraction.text.as_bytes())
-        .map_err(|e| format!("Failed to write temp file: {e}"))?;
-    tmp.flush()
-        .map_err(|e| format!("Failed to flush temp file: {e}"))?;
-    let paper_text_path =
-        crate::pipeline::claude::normalize_cli_root(&tmp.path().to_string_lossy())
-            .ok_or("Failed to resolve extracted-text temp file")?;
+    let (_paper_tmp, paper_text_path) = write_run_input_file(
+        run_input_dir.path(),
+        "pipeline_paper_",
+        ".txt",
+        extraction.text.as_bytes(),
+        "extracted-text",
+    )?;
 
     app.emit_event(
         "pipeline:preprocess",
@@ -1023,20 +1217,14 @@ async fn run_pipeline_inner(
 
         let orientation_json = serde_json::to_string(&orientation)
             .map_err(|e| format!("Failed to serialize orientation map: {e}"))?;
-        let mut orient_file = tempfile::Builder::new()
-            .prefix("pipeline_orient_")
-            .suffix(".json")
-            .tempfile_in(run_input_dir.path())
-            .map_err(|e| format!("Failed to create orientation temp file: {e}"))?;
-        orient_file
-            .write_all(orientation_json.as_bytes())
-            .map_err(|e| format!("Failed to write orientation temp file: {e}"))?;
-        orient_file
-            .flush()
-            .map_err(|e| format!("Failed to flush orientation temp file: {e}"))?;
-        orientation_path =
-            crate::pipeline::claude::normalize_cli_root(&orient_file.path().to_string_lossy())
-                .ok_or("Failed to resolve orientation temp file")?;
+        let (orient_file, path) = write_run_input_file(
+            run_input_dir.path(),
+            "pipeline_orient_",
+            ".json",
+            orientation_json.as_bytes(),
+            "orientation",
+        )?;
+        orientation_path = path;
         if let Some(w) = run_writer.as_mut() {
             if let Err(e) = w.add_text(
                 "context/orientation.json",
@@ -1136,7 +1324,7 @@ async fn run_pipeline_inner(
             extra_dirs.push(dir.to_string_lossy().to_string());
         }
         let ex = match slot.mode.as_str() {
-            "folder" => extract::ingest_folder(path)?,
+            "folder" => extract::ingest_folder_async(path).await?,
             _ => extract::extract(app, path, &config.extraction).await?,
         };
         if let Some(w) = run_writer.as_mut() {
@@ -1234,50 +1422,23 @@ async fn run_pipeline_inner(
     let elapsed = pipeline_start.elapsed();
     let markdown = output::render_markdown(&report, diff_text.as_deref(), elapsed, &settings);
 
-    // Finish the run directory: per-step artifacts, report, manifest.
-    // Metadata must describe the same immutable profile snapshot that ran,
-    // even if another window edits or switches profiles while this job is in
-    // flight.
-    let status = if report.failed_steps.is_empty() {
-        "done"
-    } else {
-        "partial"
-    };
-    let meta = crate::runs::RunFinishMeta {
-        input_path: paper_path.to_string(),
-        input_mode: input_mode.to_string(),
-        profile_id: settings.active_profile.clone(),
-        profile_name,
-        provider: settings.preferred_provider.clone(),
-        status: status.to_string(),
-        duration_secs: elapsed.as_secs(),
-        usage: crate::pipeline::logging::run_usage(),
-        step_count: report.all_outputs().len() as u32,
-        failed_steps: report
-            .failed_steps
-            .iter()
-            .map(|f| f.step_label.clone())
-            .collect(),
-        variables: variables.clone(),
-        extra_inputs: persisted_inputs,
-        parent_run_id: None,
-    };
-    let mut finished_run_id: Option<String> = None;
-    if let Some(w) = run_writer.take() {
-        finished_run_id = finalize_run(app, w, &report, &markdown, meta);
-    }
-    enforce_retention(app, settings.max_saved_runs as usize);
-
-    app.emit_event("pipeline:stage", serde_json::json!({"stage": "done"}))
-        .ok();
-
-    Ok(serde_json::json!({
-        "report": report,
-        "markdown": markdown,
-        "extracted_text": extraction.text,
-        "run_id": finished_run_id,
-        "status": status,
-    }))
+    Ok(complete_run(
+        app,
+        run_writer,
+        &report,
+        &markdown,
+        &extraction.text,
+        elapsed,
+        &settings,
+        RunCompletion {
+            input_path: paper_path.to_string(),
+            input_mode: input_mode.to_string(),
+            profile_name,
+            variables,
+            extra_inputs: persisted_inputs,
+            parent_run_id: None,
+        },
+    ))
 }
 
 // --- Resume / partial re-run (1.3.2) ---
@@ -1373,10 +1534,10 @@ async fn rerun_run_inner(
     from_step: Option<String>,
     only_failed: bool,
 ) -> Result<serde_json::Value, String> {
-    CANCEL_FLAG.store(false, std::sync::atomic::Ordering::Release);
-    crate::pipeline::logging::reset_run_usage();
+    let _run_state = begin_run_state();
     let start = std::time::Instant::now();
-    let settings = crate::settings::load();
+    let settings = crate::settings::load_persisted_required()
+        .map_err(|e| format!("Cannot re-run because settings could not be loaded safely: {e}"))?;
     let _settings_snapshot = crate::settings::freeze_for_run(settings.clone());
 
     let parent = crate::runs::load_manifest(parent_run_id)?;
@@ -1432,10 +1593,10 @@ async fn rerun_run_inner(
         "line": format!("Re-run of {parent_run_id}: reusing {} step(s), re-running the rest", preloaded.len())
     })).ok();
 
-    // New run directory.
-    let mut run_writer = crate::runs::RunWriter::create_unique(&parent_report.paper_hash).ok();
-    if let Some(w) = run_writer.as_mut() {
-        let _ = w.set_pending_meta(crate::runs::RunFinishMeta {
+    let (mut run_writer, artifact_write_dir) = create_run_workspace(
+        app,
+        &parent_report.paper_hash,
+        crate::runs::RunFinishMeta {
             input_path: parent.input_path.clone(),
             input_mode: parent.input_mode.clone(),
             profile_id: settings.active_profile.clone(),
@@ -1444,17 +1605,7 @@ async fn rerun_run_inner(
             variables: parent.variables.clone(),
             parent_run_id: Some(parent_run_id.to_string()),
             ..Default::default()
-        });
-    }
-    let artifact_write_dir: Option<String> = run_writer.as_ref().and_then(|w| {
-        let dir = w.dir().join("artifacts");
-        std::fs::create_dir_all(&dir).ok().map(|_| {
-            crate::pipeline::claude::normalize_cli_root(&dir.to_string_lossy())
-                .unwrap_or_else(|| dir.to_string_lossy().replace('\\', "/"))
-        })
-    });
-    crate::pipeline::api_common::set_write_dir(
-        artifact_write_dir.as_ref().map(std::path::PathBuf::from),
+        },
     );
     if let Some(w) = run_writer.as_mut() {
         let _ = w.add_text(
@@ -1470,12 +1621,6 @@ async fn rerun_run_inner(
             "context",
             &orient_json,
         );
-        let logs_dir = w.dir().join("logs");
-        if let Ok(f) = std::fs::create_dir_all(&logs_dir)
-            .and_then(|_| std::fs::File::create(logs_dir.join("run.log")))
-        {
-            crate::pipeline::logging::set_log_sink(Some(f));
-        }
     }
 
     // Extracted-text + orientation + named-input temp files for the steps to
@@ -1484,32 +1629,22 @@ async fn rerun_run_inner(
         .prefix("pipeline_run_inputs_")
         .tempdir()
         .map_err(|e| format!("Failed to create run input directory: {e}"))?;
-    let mut text_tmp = tempfile::Builder::new()
-        .prefix("pipeline_paper_")
-        .suffix(".txt")
-        .tempfile_in(run_input_dir.path())
-        .map_err(|e| format!("Failed to create temp file: {e}"))?;
-    text_tmp
-        .write_all(extracted_text.as_bytes())
-        .map_err(|e| format!("Failed to write temp file: {e}"))?;
-    text_tmp.flush().ok();
-    let paper_text_path =
-        crate::pipeline::claude::normalize_cli_root(&text_tmp.path().to_string_lossy())
-            .ok_or("Failed to resolve extracted-text temp file")?;
+    let (_text_tmp, paper_text_path) = write_run_input_file(
+        run_input_dir.path(),
+        "pipeline_paper_",
+        ".txt",
+        extracted_text.as_bytes(),
+        "extracted-text",
+    )?;
 
     let orient_json = serde_json::to_string(&orientation_value).unwrap_or_default();
-    let mut orient_tmp = tempfile::Builder::new()
-        .prefix("pipeline_orient_")
-        .suffix(".json")
-        .tempfile_in(run_input_dir.path())
-        .map_err(|e| format!("Failed to create orientation temp file: {e}"))?;
-    orient_tmp
-        .write_all(orient_json.as_bytes())
-        .map_err(|e| format!("Failed to write orientation temp file: {e}"))?;
-    orient_tmp.flush().ok();
-    let orientation_path =
-        crate::pipeline::claude::normalize_cli_root(&orient_tmp.path().to_string_lossy())
-            .ok_or("Failed to resolve orientation temp file")?;
+    let (_orient_tmp, orientation_path) = write_run_input_file(
+        run_input_dir.path(),
+        "pipeline_orient_",
+        ".json",
+        orient_json.as_bytes(),
+        "orientation",
+    )?;
 
     // Rehydrate named inputs from the parent run's captured copies. Required
     // inputs from older runs that predate capture fail explicitly instead of
@@ -1612,45 +1747,23 @@ async fn rerun_run_inner(
     let elapsed = start.elapsed();
     let markdown = output::render_markdown(&report, None, elapsed, &settings);
 
-    let status = if report.failed_steps.is_empty() {
-        "done"
-    } else {
-        "partial"
-    };
-    let meta = crate::runs::RunFinishMeta {
-        input_path: parent.input_path.clone(),
-        input_mode: parent.input_mode.clone(),
-        profile_id: settings.active_profile.clone(),
-        profile_name,
-        provider: settings.preferred_provider.clone(),
-        status: status.to_string(),
-        duration_secs: elapsed.as_secs(),
-        usage: crate::pipeline::logging::run_usage(),
-        step_count: report.all_outputs().len() as u32,
-        failed_steps: report
-            .failed_steps
-            .iter()
-            .map(|f| f.step_label.clone())
-            .collect(),
-        variables,
-        extra_inputs: persisted_inputs,
-        parent_run_id: Some(parent_run_id.to_string()),
-    };
-    let mut finished_run_id: Option<String> = None;
-    if let Some(w) = run_writer.take() {
-        finished_run_id = finalize_run(app, w, &report, &markdown, meta);
-    }
-    enforce_retention(app, settings.max_saved_runs as usize);
-    app.emit_event("pipeline:stage", serde_json::json!({"stage": "done"}))
-        .ok();
-
-    Ok(serde_json::json!({
-        "report": report,
-        "markdown": markdown,
-        "extracted_text": extracted_text,
-        "run_id": finished_run_id,
-        "status": status,
-    }))
+    Ok(complete_run(
+        app,
+        run_writer,
+        &report,
+        &markdown,
+        &extracted_text,
+        elapsed,
+        &settings,
+        RunCompletion {
+            input_path: parent.input_path,
+            input_mode: parent.input_mode,
+            profile_name,
+            variables,
+            extra_inputs: persisted_inputs,
+            parent_run_id: Some(parent_run_id.to_string()),
+        },
+    ))
 }
 
 // --- Run artifacts ---
@@ -1732,10 +1845,12 @@ pub async fn runs_disk_usage() -> Result<crate::runs::RunsDiskUsage, String> {
         .map_err(|e| format!("Disk-usage task failed: {e}"))?
 }
 
-/// Delete the oldest runs beyond `keep` (0 = keep all). Returns how many were removed.
+/// Apply configured count/byte history limits now. Refuses to run concurrently
+/// with a pipeline so the active run cannot be selected for deletion.
 #[tauri::command]
-pub async fn purge_runs(keep: u32) -> Result<usize, String> {
-    crate::runs::purge_old_runs(keep as usize)
+pub async fn purge_runs(keep: u32, max_bytes: u64) -> Result<usize, String> {
+    let _guard = acquire_pipeline_guard()?;
+    crate::runs::purge_runs_with_limits(keep as usize, max_bytes)
 }
 
 /// Write arbitrary text to a path (used by "Save console to file").
@@ -1844,7 +1959,9 @@ fn collect_rejected_issues(profile_id: &str) -> Vec<String> {
 /// concurrent run (it makes one LLM call).
 #[tauri::command]
 pub async fn draft_calibration(app: AppHandle) -> Result<serde_json::Value, String> {
-    let settings = crate::settings::load();
+    let settings = crate::settings::load_persisted_required().map_err(|e| {
+        format!("Cannot draft calibration because settings could not be loaded safely: {e}")
+    })?;
     let config = pipeline_config::load();
     let rejected = collect_rejected_issues(&settings.active_profile);
     if rejected.is_empty() {
@@ -1925,6 +2042,11 @@ pub async fn start_batch(
         return Err("No inputs to run".into());
     }
     let guard = acquire_pipeline_guard()?;
+    // Capture and validate the complete run definition once. Later profile,
+    // provider, or prompt edits apply only to a subsequent batch.
+    let snapshot = load_run_snapshot()?;
+    let batch_profile_id = snapshot.settings.active_profile.clone();
+    let batch_snapshot_id = snapshot.fingerprint.clone();
     BATCH_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
     {
         let mut jobs = BATCH.lock().unwrap_or_else(|e| e.into_inner());
@@ -1937,6 +2059,8 @@ pub async fn start_batch(
                 run_id: None,
                 error: None,
                 duration_secs: 0,
+                profile_id: batch_profile_id.clone(),
+                profile_snapshot_id: batch_snapshot_id.clone(),
             })
             .collect();
     }
@@ -1944,6 +2068,13 @@ pub async fn start_batch(
     let inputs = extra_inputs.unwrap_or_default();
     let bus = crate::emit::from_app(app);
     let run_bus = crate::emit::background(&bus);
+    let _ = bus.emit_event(
+        "pipeline:log",
+        serde_json::json!({"line": format!(
+            "Batch snapshot: profile '{}' ({})",
+            batch_profile_id, batch_snapshot_id
+        )}),
+    );
     emit_batch(&bus);
 
     tauri::async_runtime::spawn(async move {
@@ -1958,8 +2089,15 @@ pub async fn start_batch(
             emit_batch(&bus);
 
             let started = std::time::Instant::now();
-            let result =
-                run_pipeline_inner(&run_bus, path, false, vars.clone(), inputs.clone()).await;
+            let result = run_pipeline_inner_with_snapshot(
+                &run_bus,
+                path,
+                false,
+                vars.clone(),
+                inputs.clone(),
+                Some(snapshot.clone()),
+            )
+            .await;
             let secs = started.elapsed().as_secs();
 
             match result {
@@ -2184,6 +2322,8 @@ pub async fn start_watch(
                                 .map(|s| s.to_string()),
                             error: None,
                             duration_secs: 0,
+                            profile_id: String::new(),
+                            profile_snapshot_id: String::new(),
                         }
                     }
                     Ok(v) => BatchJob {
@@ -2196,6 +2336,8 @@ pub async fn start_watch(
                             .map(|s| s.to_string()),
                         error: Some("One or more pipeline steps failed".to_string()),
                         duration_secs: 0,
+                        profile_id: String::new(),
+                        profile_snapshot_id: String::new(),
                     },
                     Err(e) => BatchJob {
                         path: path.clone(),
@@ -2204,6 +2346,8 @@ pub async fn start_watch(
                         run_id: None,
                         error: Some(e),
                         duration_secs: 0,
+                        profile_id: String::new(),
+                        profile_snapshot_id: String::new(),
                     },
                 };
                 let mut state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -2771,9 +2915,23 @@ pub async fn read_cached_paper_text(paper_hash: String) -> Result<serde_json::Va
     if !path.exists() {
         return Ok(serde_json::json!({ "cached": false, "text": "" }));
     }
-    let text = std::fs::read_to_string(&path)
+    let file = std::fs::File::open(&path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    Ok(serde_json::json!({ "cached": true, "text": text, "path": path.to_string_lossy() }))
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(MAX_RUN_CONTEXT_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let truncated = bytes.len() as u64 > MAX_RUN_CONTEXT_SIZE;
+    if truncated {
+        bytes.truncate(MAX_RUN_CONTEXT_SIZE as usize);
+    }
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    Ok(serde_json::json!({
+        "cached": true,
+        "text": text,
+        "truncated": truncated,
+        "path": path.to_string_lossy()
+    }))
 }
 
 // --- Managed local engines ---
@@ -2864,6 +3022,8 @@ mod tests {
                     run_id: None,
                     error: None,
                     duration_secs: 0,
+                    profile_id: String::new(),
+                    profile_snapshot_id: String::new(),
                 },
             );
         }
@@ -2887,6 +3047,8 @@ mod tests {
                     run_id: None,
                     error: None,
                     duration_secs: 0,
+                    profile_id: String::new(),
+                    profile_snapshot_id: String::new(),
                 },
                 BatchJob {
                     path: "b".into(),
@@ -2895,6 +3057,8 @@ mod tests {
                     run_id: None,
                     error: None,
                     duration_secs: 0,
+                    profile_id: String::new(),
+                    profile_snapshot_id: String::new(),
                 },
                 BatchJob {
                     path: "c".into(),
@@ -2903,6 +3067,8 @@ mod tests {
                     run_id: None,
                     error: None,
                     duration_secs: 0,
+                    profile_id: String::new(),
+                    profile_snapshot_id: String::new(),
                 },
             ];
         }

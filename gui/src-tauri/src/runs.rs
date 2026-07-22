@@ -259,6 +259,12 @@ fn short_sha256(bytes: &[u8]) -> String {
 fn inspect_file(path: &Path) -> Result<(Vec<u8>, u64, String), String> {
     use std::io::Read as _;
     let file = fs::File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("Failed to inspect file: {e}"))?;
+    if !metadata.file_type().is_file() {
+        return Err("Artifact is not a regular file".to_string());
+    }
     let mut reader = std::io::BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut head = Vec::with_capacity(512);
@@ -449,9 +455,6 @@ impl RunWriter {
                 continue;
             };
             for entry in entries.flatten() {
-                if added >= MAX_UNLISTED {
-                    return added;
-                }
                 let path = entry.path();
                 let Ok(ft) = entry.file_type() else { continue };
                 if ft.is_symlink() {
@@ -461,9 +464,24 @@ impl RunWriter {
                     stack.push(path);
                     continue;
                 }
+                if !ft.is_file() {
+                    // A CLI model can create FIFOs/sockets on Unix. Never open
+                    // them during finalization; remove them from the run so a
+                    // later artifact read cannot block either.
+                    let _ = fs::remove_file(&path);
+                    continue;
+                }
                 let Ok(metadata) = entry.metadata() else {
                     continue;
                 };
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt as _;
+                    if metadata.nlink() > 1 {
+                        let _ = fs::remove_file(&path);
+                        continue;
+                    }
+                }
                 if metadata.len() > MAX_UNLISTED_BYTES
                     || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_UNLISTED_BYTES
                 {
@@ -478,6 +496,13 @@ impl RunWriter {
                 };
                 let rel_str = rel.to_string_lossy().replace('\\', "/");
                 if known.contains(&rel_str) {
+                    continue;
+                }
+                if added >= MAX_UNLISTED {
+                    // Keep walking after the registration cap. Otherwise a
+                    // model can place unlimited unindexed files after the
+                    // first 500 and evade every byte quota.
+                    let _ = fs::remove_file(&path);
                     continue;
                 }
                 let label = rel_str
@@ -506,11 +531,15 @@ impl RunWriter {
         // User metadata may be edited while finalization is racing with a UI
         // refresh. Preserve it instead of rebuilding those fields from empty
         // defaults on every lifecycle write.
-        let (title, tags) = fs::read_to_string(self.dir.join("manifest.json"))
-            .ok()
-            .and_then(|json| serde_json::from_str::<RunManifest>(&json).ok())
-            .map(|manifest| (manifest.title, manifest.tags))
-            .unwrap_or_default();
+        let (title, tags) = read_utf8_at_most(
+            &self.dir.join("manifest.json"),
+            MAX_MANIFEST_BYTES,
+            "Run manifest",
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str::<RunManifest>(&json).ok())
+        .map(|manifest| (manifest.title, manifest.tags))
+        .unwrap_or_default();
         RunManifest {
             run_id: self.run_id.clone(),
             created: self.created.clone(),
@@ -898,18 +927,41 @@ fn validate_annotation_content(content: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Delete the oldest runs beyond `keep`, returning how many were removed.
-/// `keep == 0` means unlimited (no purge). Best-effort: a delete failure on one
-/// run doesn't stop the rest.
-pub fn purge_old_runs(keep: usize) -> Result<usize, String> {
-    if keep == 0 {
+/// Delete oldest completed runs until both count and byte limits hold. A zero
+/// limit disables that dimension. Pending/running runs are never candidates.
+pub fn purge_runs_with_limits(keep: usize, max_bytes: u64) -> Result<usize, String> {
+    if keep == 0 && max_bytes == 0 {
         return Ok(0);
     }
     let summaries = list_runs()?; // already newest-first
+    let root = runs_dir()?;
+    let mut sized: Vec<(RunSummary, u64)> = summaries
+        .into_iter()
+        .map(|summary| {
+            let bytes = dir_size(&root.join(&summary.run_id));
+            (summary, bytes)
+        })
+        .collect();
+    let mut remaining = sized.len();
+    let mut total_bytes = sized
+        .iter()
+        .fold(0u64, |total, (_, bytes)| total.saturating_add(*bytes));
     let mut removed = 0usize;
-    for summary in summaries.into_iter().skip(keep) {
+    // Oldest first, deleting only while at least one configured limit is
+    // exceeded. Status is empty for an in-progress pending manifest.
+    for (summary, bytes) in sized.drain(..).rev() {
+        let count_exceeded = keep > 0 && remaining > keep;
+        let bytes_exceeded = max_bytes > 0 && total_bytes > max_bytes;
+        if !count_exceeded && !bytes_exceeded {
+            break;
+        }
+        if summary.status.is_empty() || summary.status == "running" {
+            continue;
+        }
         if delete_run(&summary.run_id).is_ok() {
             removed += 1;
+            remaining = remaining.saturating_sub(1);
+            total_bytes = total_bytes.saturating_sub(bytes);
         }
     }
     Ok(removed)
@@ -1195,5 +1247,36 @@ mod tests {
         let writer = RunWriter::create_in(temp.path(), "same-id").unwrap();
         assert!(RunWriter::create_in(temp.path(), "same-id").is_err());
         drop(writer);
+    }
+
+    #[test]
+    fn unlisted_artifact_cap_deletes_every_excess_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = RunWriter::create_in(temp.path(), "quota-run").unwrap();
+        let artifacts = writer.dir().join("artifacts");
+        fs::create_dir_all(&artifacts).unwrap();
+        for index in 0..505 {
+            fs::write(artifacts.join(format!("{index:04}.txt")), "x").unwrap();
+        }
+
+        assert_eq!(writer.register_unlisted("artifacts", "files"), 500);
+        assert_eq!(fs::read_dir(&artifacts).unwrap().count(), 500);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unlisted_artifact_scan_removes_fifo_without_opening_it() {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = RunWriter::create_in(temp.path(), "fifo-run").unwrap();
+        let artifacts = writer.dir().join("artifacts");
+        fs::create_dir_all(&artifacts).unwrap();
+        let fifo = artifacts.join("blocked.pipe");
+        let fifo_c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+
+        assert_eq!(writer.register_unlisted("artifacts", "files"), 0);
+        assert!(!fifo.exists());
     }
 }

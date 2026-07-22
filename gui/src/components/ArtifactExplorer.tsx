@@ -247,9 +247,23 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
 
   useEffect(() => {
     let live = true;
+    // Clear every run-scoped value before requesting the next manifest. This
+    // also prevents the content effect from combining a new run ID with the
+    // previous run's selection.
+    setManifest(null);
+    setManifestError(false);
+    setSelected("report.md");
+    setContent(null);
+    setLoadError(null);
     invoke<RunManifest>("get_run_manifest", { runId })
       .then((m) => {
-        if (live) setManifest(m);
+        if (live) {
+          const initial = m.artifacts.some((artifact) => artifact.rel_path === "report.md")
+            ? "report.md"
+            : (m.artifacts[0]?.rel_path ?? "");
+          setSelected(initial);
+          setManifest(m);
+        }
       })
       .catch((e) => {
         console.error("Failed to load run manifest:", e);
@@ -261,7 +275,7 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
   }, [runId]);
 
   useEffect(() => {
-    if (!manifest) return;
+    if (!manifest || !selected) return;
     let live = true;
     setLoadError(null);
     invoke<ArtifactContent>("read_artifact", { runId, relPath: selected })

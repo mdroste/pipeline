@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+const MAX_SETTINGS_BYTES: usize = 4 * 1024 * 1024;
+
 /// A durable model-selection policy. `Automatic` deliberately means
 /// "delegate to the provider" rather than a particular model ID. Roles are
 /// resolved through the provider/transport catalog, while pinned IDs never
@@ -171,6 +173,12 @@ pub struct Settings {
     #[serde(default)]
     pub max_saved_runs: u32,
 
+    /// Maximum total bytes retained under the run-history directory. Oldest
+    /// completed runs are purged until both this and `max_saved_runs` hold.
+    /// 0 disables the byte ceiling.
+    #[serde(default = "default_max_saved_run_bytes")]
+    pub max_saved_run_bytes: u64,
+
     /// Anthropic API key. When set, bypasses Claude CLI for direct API calls.
     #[serde(default)]
     pub anthropic_api_key: String,
@@ -229,6 +237,10 @@ fn default_max_retries() -> u32 {
     1
 }
 
+fn default_max_saved_run_bytes() -> u64 {
+    5_000_000_000
+}
+
 fn default_profile() -> String {
     "deep-review".to_string()
 }
@@ -257,6 +269,7 @@ impl Default for Settings {
             step_timeout_secs: 1200,
             max_retries: 1,
             max_saved_runs: 0,
+            max_saved_run_bytes: default_max_saved_run_bytes(),
             anthropic_api_key: String::new(),
             openai_api_key: String::new(),
             google_api_key: String::new(),
@@ -287,6 +300,9 @@ impl Settings {
         if self.max_retries > 10 {
             return Err("Step retries must be between 0 and 10".to_string());
         }
+        if self.max_saved_run_bytes > 1_000_000_000_000 {
+            return Err("Run-history byte limit cannot exceed 1 TB".to_string());
+        }
         if !matches!(
             self.pdf_extractor.as_str(),
             "llm" | "auto" | "marker" | "pdftotext"
@@ -298,9 +314,22 @@ impl Settings {
             || !self
                 .active_profile
                 .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
         {
             return Err("Invalid active profile ID".to_string());
+        }
+        // Bundles produced by older Pipeline releases may contain only these
+        // legacy fields. Validate them before save_unlocked migrates them into
+        // the transport-specific selections, otherwise an unsafe flag-like
+        // value can bypass the checks below.
+        for (label, value) in [
+            ("Claude", self.claude_model.as_str()),
+            ("Codex", self.codex_model.as_str()),
+            ("Gemini", self.gemini_model.as_str()),
+        ] {
+            if !value.is_empty() && (value.trim() != value || sanitize_cli_arg(value) != value) {
+                return Err(format!("Invalid legacy {label} model selection"));
+            }
         }
         for (label, selection) in [
             ("Claude CLI", &self.claude_cli_model_selection),
@@ -465,12 +494,17 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
 
     let path = match settings_path() {
         Ok(p) => p,
-        Err(_) => return (Settings::default(), warnings),
+        Err(e) => {
+            warnings.push(format!(
+                "Could not locate settings file: {e}. Using defaults."
+            ));
+            return (Settings::default(), warnings);
+        }
     };
     if !path.exists() {
         return (Settings::default(), warnings);
     }
-    let content = match fs::read_to_string(&path) {
+    let content = match read_settings_file(&path) {
         Ok(c) => c,
         Err(e) => {
             warnings.push(format!(
@@ -547,6 +581,22 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
     (settings, warnings)
 }
 
+fn read_settings_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read as _;
+    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(MAX_SETTINGS_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_SETTINGS_BYTES {
+        return Err(format!(
+            "settings file exceeds the {} MB safety limit",
+            MAX_SETTINGS_BYTES / 1024 / 1024
+        ));
+    }
+    String::from_utf8(bytes).map_err(|e| format!("settings file is not UTF-8: {e}"))
+}
+
 /// Load settings, discarding any warnings. Used by non-UI callers
 /// (pipeline execution, etc.) where fallback to defaults is fine.
 static RUN_SETTINGS: std::sync::Mutex<Option<(u64, Settings)>> = std::sync::Mutex::new(None);
@@ -589,6 +639,41 @@ pub fn load_persisted() -> Settings {
     load_with_warnings().0
 }
 
+/// Load the persisted settings for an operation that must not silently run or
+/// mutate state with defaults. Unlike the UI recovery loader, this never
+/// quarantines or substitutes around a malformed/decryption-failed file.
+pub fn load_persisted_required() -> Result<Settings, String> {
+    let path = settings_path()?;
+    if !path.exists() {
+        return Ok(Settings::default());
+    }
+    let mut settings = load_raw_settings_required(&path)?;
+    let key = load_or_create_key().map_err(|e| format!("Could not load encryption key: {e}"))?;
+    settings.anthropic_api_key = decrypt_string(&settings.anthropic_api_key, &key)
+        .map_err(|e| format!("Could not decrypt Anthropic API key: {e}"))?;
+    settings.openai_api_key = decrypt_string(&settings.openai_api_key, &key)
+        .map_err(|e| format!("Could not decrypt OpenAI API key: {e}"))?;
+    settings.google_api_key = decrypt_string(&settings.google_api_key, &key)
+        .map_err(|e| format!("Could not decrypt Google API key: {e}"))?;
+    settings.local_api_key = decrypt_string(&settings.local_api_key, &key)
+        .map_err(|e| format!("Could not decrypt local-server API key: {e}"))?;
+    Ok(settings)
+}
+
+/// Parse settings without decrypting secrets. This is the only safe starting
+/// point for an active-profile-only mutation: encrypted fields can be written
+/// back byte-for-byte even when the key is temporarily unavailable.
+fn load_raw_settings_required(path: &std::path::Path) -> Result<Settings, String> {
+    if !path.exists() {
+        return Ok(Settings::default());
+    }
+    let content = read_settings_file(path).map_err(|e| format!("Could not read settings: {e}"))?;
+    let mut settings: Settings = serde_json::from_str(&content)
+        .map_err(|e| format!("Settings file is invalid JSON: {e}"))?;
+    settings.migrate_legacy_model_fields();
+    Ok(settings)
+}
+
 /// Move an unparseable settings file to `<name>.corrupt` so a subsequent
 /// save() cannot destroy the user's data. Returns the backup path on success.
 fn quarantine_corrupt_file(path: &std::path::Path) -> Option<PathBuf> {
@@ -609,9 +694,10 @@ fn quarantine_corrupt_file(path: &std::path::Path) -> Option<PathBuf> {
 
 static SETTINGS_WRITE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub fn save(settings: &Settings) -> Result<(), String> {
-    let path = settings_path()?;
-    let _process_guard = SETTINGS_WRITE_MUTEX
+fn acquire_settings_write_lock(
+    path: &std::path::Path,
+) -> Result<(std::sync::MutexGuard<'static, ()>, fs::File), String> {
+    let process_guard = SETTINGS_WRITE_MUTEX
         .lock()
         .map_err(|_| "Settings write mutex poisoned".to_string())?;
     let lock_path = path.with_file_name("settings.lock");
@@ -624,6 +710,12 @@ pub fn save(settings: &Settings) -> Result<(), String> {
         .map_err(|e| format!("Failed to open settings lock: {e}"))?;
     fs2::FileExt::lock_exclusive(&lock_file)
         .map_err(|e| format!("Failed to lock settings: {e}"))?;
+    Ok((process_guard, lock_file))
+}
+
+pub fn save(settings: &Settings) -> Result<(), String> {
+    let path = settings_path()?;
+    let (_process_guard, lock_file) = acquire_settings_write_lock(&path)?;
     let result = save_unlocked(&path, settings);
     let _ = fs2::FileExt::unlock(&lock_file);
     result
@@ -633,22 +725,47 @@ pub fn save(settings: &Settings) -> Result<(), String> {
 /// active profile selected by another window/process after that page loaded.
 pub fn save_preserving_active(settings: &Settings) -> Result<(), String> {
     let path = settings_path()?;
-    let _process_guard = SETTINGS_WRITE_MUTEX
-        .lock()
-        .map_err(|_| "Settings write mutex poisoned".to_string())?;
-    let lock_path = path.with_file_name("settings.lock");
-    let lock_file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|e| format!("Failed to open settings lock: {e}"))?;
-    fs2::FileExt::lock_exclusive(&lock_file)
-        .map_err(|e| format!("Failed to lock settings: {e}"))?;
+    let (_process_guard, lock_file) = acquire_settings_write_lock(&path)?;
+    let current = load_raw_settings_required(&path);
     let mut merged = settings.clone();
-    merged.active_profile = load_with_warnings().0.active_profile;
-    let result = save_unlocked(&path, &merged);
+    let result = match current {
+        Ok(current) => {
+            merged.active_profile = current.active_profile.clone();
+            save_unlocked_preserving_raw_secrets(&path, &merged, &current)
+        }
+        Err(e) => Err(e),
+    };
+    let _ = fs2::FileExt::unlock(&lock_file);
+    result
+}
+
+/// Change only the active profile under the same process/cross-process lock as
+/// normal settings writes. This prevents a profile switch from replaying a
+/// stale full Settings value over a concurrent Settings-page save.
+pub fn set_active_profile(active_profile: &str) -> Result<(), String> {
+    let path = settings_path()?;
+    let (_process_guard, lock_file) = acquire_settings_write_lock(&path)?;
+    let result = load_raw_settings_required(&path).and_then(|mut current| {
+        current.active_profile = active_profile.to_string();
+        save_raw_unlocked(&path, &current)
+    });
+    let _ = fs2::FileExt::unlock(&lock_file);
+    result
+}
+
+/// Replace an active profile only if it still matches `expected`. Used by
+/// profile deletion so a concurrent switch to another valid profile wins.
+pub fn replace_active_profile_if(expected: &str, replacement: &str) -> Result<bool, String> {
+    let path = settings_path()?;
+    let (_process_guard, lock_file) = acquire_settings_write_lock(&path)?;
+    let result = load_raw_settings_required(&path).and_then(|mut current| {
+        let changed = current.active_profile == expected;
+        if changed {
+            current.active_profile = replacement.to_string();
+            save_raw_unlocked(&path, &current)?;
+        }
+        Ok(changed)
+    });
     let _ = fs2::FileExt::unlock(&lock_file);
     result
 }
@@ -665,6 +782,86 @@ fn save_unlocked(path: &std::path::Path, settings: &Settings) -> Result<(), Stri
     to_save.openai_api_key = encrypt_string(&settings.openai_api_key, &key)?;
     to_save.google_api_key = encrypt_string(&settings.google_api_key, &key)?;
     to_save.local_api_key = encrypt_string(&settings.local_api_key, &key)?;
+
+    let json =
+        serde_json::to_string_pretty(&to_save).map_err(|e| format!("Failed to serialize: {e}"))?;
+    atomic_write(path, &json)
+}
+
+fn save_raw_unlocked(path: &std::path::Path, settings: &Settings) -> Result<(), String> {
+    settings.validate()?;
+    let mut to_save = settings.clone();
+    to_save.migrate_legacy_model_fields();
+    to_save.sync_legacy_model_fields();
+    let json =
+        serde_json::to_string_pretty(&to_save).map_err(|e| format!("Failed to serialize: {e}"))?;
+    atomic_write(path, &json)
+}
+
+fn prepare_secret_for_save(
+    plaintext: &str,
+    raw: &str,
+    key: &Result<[u8; KEY_SIZE], String>,
+    label: &str,
+) -> Result<String, String> {
+    match key {
+        Ok(key) => {
+            // An empty UI value after a decryption failure must not erase the
+            // ciphertext. If the current ciphertext decrypts, an empty value
+            // is an intentional clear and remains empty.
+            if plaintext.is_empty()
+                && !raw.is_empty()
+                && raw.starts_with(ENC_PREFIX)
+                && decrypt_string(raw, key).is_err()
+            {
+                Ok(raw.to_string())
+            } else {
+                encrypt_string(plaintext, key)
+            }
+        }
+        Err(_) if plaintext.is_empty() && !raw.is_empty() => Ok(raw.to_string()),
+        Err(_) if plaintext.is_empty() => Ok(String::new()),
+        Err(error) => Err(format!(
+            "Could not encrypt {label} API key because the encryption key is unavailable: {error}"
+        )),
+    }
+}
+
+fn save_unlocked_preserving_raw_secrets(
+    path: &std::path::Path,
+    settings: &Settings,
+    raw: &Settings,
+) -> Result<(), String> {
+    settings.validate()?;
+    let key = load_or_create_key();
+    let mut to_save = settings.clone();
+    to_save.migrate_legacy_model_fields();
+    to_save.sync_legacy_model_fields();
+
+    to_save.anthropic_api_key = prepare_secret_for_save(
+        &settings.anthropic_api_key,
+        &raw.anthropic_api_key,
+        &key,
+        "Anthropic",
+    )?;
+    to_save.openai_api_key = prepare_secret_for_save(
+        &settings.openai_api_key,
+        &raw.openai_api_key,
+        &key,
+        "OpenAI",
+    )?;
+    to_save.google_api_key = prepare_secret_for_save(
+        &settings.google_api_key,
+        &raw.google_api_key,
+        &key,
+        "Google",
+    )?;
+    to_save.local_api_key = prepare_secret_for_save(
+        &settings.local_api_key,
+        &raw.local_api_key,
+        &key,
+        "local-server",
+    )?;
 
     let json =
         serde_json::to_string_pretty(&to_save).map_err(|e| format!("Failed to serialize: {e}"))?;
@@ -891,6 +1088,11 @@ fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to create temp file in {}: {e}", dir.display()))?;
     tmp.write_all(content.as_bytes())
         .map_err(|e| format!("Failed to write {}: {e}", tmp.path().display()))?;
+    tmp.flush()
+        .map_err(|e| format!("Failed to flush {}: {e}", tmp.path().display()))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync {}: {e}", tmp.path().display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -905,6 +1107,10 @@ fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), String> {
     }
     tmp.persist(path)
         .map_err(|e| format!("Failed to save {}: {}", path.display(), e.error))?;
+    #[cfg(unix)]
+    fs::File::open(dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("Failed to sync settings directory: {e}"))?;
     Ok(())
 }
 
@@ -972,6 +1178,36 @@ mod tests {
     }
 
     #[test]
+    fn unreadable_ciphertext_is_preserved_during_unrelated_save() {
+        let key = Ok([7u8; KEY_SIZE]);
+        let raw = "enc:not-valid-base64";
+        assert_eq!(prepare_secret_for_save("", raw, &key, "test").unwrap(), raw);
+
+        let missing_key = Err("key unavailable".to_string());
+        assert_eq!(
+            prepare_secret_for_save("", raw, &missing_key, "test").unwrap(),
+            raw
+        );
+        assert!(prepare_secret_for_save("new-key", raw, &missing_key, "test").is_err());
+    }
+
+    #[test]
+    fn raw_profile_mutation_does_not_reencrypt_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut settings = Settings {
+            active_profile: "quick-review".to_string(),
+            anthropic_api_key: "enc:opaque-ciphertext".to_string(),
+            ..Default::default()
+        };
+        save_raw_unlocked(&path, &settings).unwrap();
+
+        settings = load_raw_settings_required(&path).unwrap();
+        assert_eq!(settings.active_profile, "quick-review");
+        assert_eq!(settings.anthropic_api_key, "enc:opaque-ciphertext");
+    }
+
+    #[test]
     fn settings_validation_rejects_unsafe_or_out_of_range_values() {
         assert!(Settings::default().validate().is_ok());
 
@@ -994,6 +1230,27 @@ mod tests {
             ..Default::default()
         };
         assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            claude_model: "--dangerous-flag".into(),
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            active_profile: "profile.with.dots".into(),
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn settings_reader_rejects_oversized_files() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        temp.as_file()
+            .set_len(MAX_SETTINGS_BYTES as u64 + 1)
+            .unwrap();
+        assert!(read_settings_file(temp.path()).is_err());
     }
 
     // ── sanitize_cli_arg ──────────────────────────────────────────

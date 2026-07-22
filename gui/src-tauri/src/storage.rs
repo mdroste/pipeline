@@ -1,18 +1,26 @@
 use crate::models::{PipelineReport, ReportSummary};
-use chrono::Local;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-static HISTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const MAX_LEGACY_REPORT_BYTES: usize = 64 * 1024 * 1024;
 
-fn history_filename(paper_hash: &str) -> String {
-    let sequence = HISTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "{}_{}-{sequence:016x}.json",
-        paper_hash,
-        Local::now().format("%Y-%m-%d_%H%M%S-%9f")
-    )
+fn read_legacy_report(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read as _;
+    let file = fs::File::open(path)
+        .map_err(|e| format!("Failed to read report '{}': {e}", path.display()))?;
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(MAX_LEGACY_REPORT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read report '{}': {e}", path.display()))?;
+    if bytes.len() > MAX_LEGACY_REPORT_BYTES {
+        return Err(format!(
+            "Report '{}' exceeds the {} MB safety limit",
+            path.display(),
+            MAX_LEGACY_REPORT_BYTES / 1024 / 1024
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|e| format!("Report '{}' is not valid UTF-8: {e}", path.display()))
 }
 
 /// Get the history directory (~/.pipeline/history/), creating it if needed.
@@ -32,64 +40,6 @@ fn history_dir() -> Result<PathBuf, String> {
         }
     }
     Ok(dir)
-}
-
-/// Save a report to ~/.pipeline/history/<hash>_<date>.json.
-pub fn save_report(report: &PipelineReport) -> Result<String, String> {
-    use std::io::Write as _;
-    let dir = history_dir()?;
-    let filename = history_filename(&report.paper_hash);
-    let path = dir.join(&filename);
-
-    let json = serde_json::to_string_pretty(report)
-        .map_err(|e| format!("Failed to serialize report: {e}"))?;
-    // Atomic write with a unique temp name so concurrent saves for the same
-    // hash+second can't clobber each other's .tmp file.
-    let mut tmp = tempfile::NamedTempFile::new_in(&dir)
-        .map_err(|e| format!("Failed to create temp file in {}: {e}", dir.display()))?;
-    tmp.write_all(json.as_bytes())
-        .map_err(|e| format!("Failed to write report: {e}"))?;
-    tmp.persist_noclobber(&path)
-        .map_err(|e| format!("Failed to save report: {}", e.error))?;
-
-    Ok(path.to_string_lossy().to_string())
-}
-
-/// Load the most recent report for a given paper hash.
-pub fn load_latest_report(paper_hash: &str) -> Result<Option<PipelineReport>, String> {
-    // Validate hash format: hex characters only, expected length
-    if paper_hash.is_empty()
-        || !paper_hash.chars().all(|c| c.is_ascii_alphanumeric())
-        || paper_hash.len() > 64
-    {
-        return Err("Invalid paper hash format".into());
-    }
-    let dir = history_dir()?;
-    let prefix = format!("{}_", paper_hash);
-
-    let mut matching: Vec<PathBuf> = fs::read_dir(&dir)
-        .map_err(|e| format!("Failed to read history dir: {e}"))?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.starts_with(&prefix) && n.ends_with(".json"))
-                .unwrap_or(false)
-        })
-        .collect();
-
-    matching.sort();
-
-    if let Some(latest) = matching.last() {
-        let content =
-            fs::read_to_string(latest).map_err(|e| format!("Failed to read report: {e}"))?;
-        let report: PipelineReport =
-            serde_json::from_str(&content).map_err(|e| format!("Failed to parse report: {e}"))?;
-        Ok(Some(report))
-    } else {
-        Ok(None)
-    }
 }
 
 /// Result of listing reports, including any warnings about skipped files.
@@ -127,7 +77,7 @@ pub fn list_reports() -> Result<ListReportsResult, String> {
             .unwrap_or("unknown")
             .to_string();
 
-        match fs::read_to_string(&path) {
+        match read_legacy_report(&path) {
             Ok(content) => match serde_json::from_str::<PipelineReport>(&content) {
                 Ok(report) => {
                     summaries.push(ReportSummary {
@@ -154,14 +104,4 @@ pub fn list_reports() -> Result<ListReportsResult, String> {
         summaries,
         warnings,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn history_filenames_are_unique_within_the_same_clock_tick() {
-        assert_ne!(history_filename("abc"), history_filename("abc"));
-    }
 }

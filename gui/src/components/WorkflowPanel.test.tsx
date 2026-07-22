@@ -47,8 +47,8 @@ function makeConfig(): PipelineConfig {
 }
 
 const profiles: ProfileSummary[] = [
-  { id: "deep", name: "Deep Review", step_count: 3 },
-  { id: "quick", name: "Quick Review", step_count: 2 },
+  { id: "deep", name: "Deep Review", step_count: 3, builtin: false },
+  { id: "quick", name: "Quick Review", step_count: 2, builtin: false },
 ];
 
 function mockLoad(config: PipelineConfig) {

@@ -19,6 +19,7 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -30,6 +31,8 @@ use tauri::{AppHandle, Emitter};
 // the version and all five hashes together.
 
 const UV_VERSION: &str = "0.11.26";
+const MAX_UV_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_UV_BINARY_BYTES: u64 = 128 * 1024 * 1024;
 
 struct UvArtifact {
     target: &'static str,
@@ -208,18 +211,48 @@ fn uv_env() -> Result<Vec<(String, String)>, String> {
 /// Total size in bytes of a directory tree. Best-effort; unreadable entries
 /// are skipped.
 fn dir_size(root: &Path) -> u64 {
+    const MAX_ENTRIES: usize = 500_000;
+    const MAX_ELAPSED: std::time::Duration = std::time::Duration::from_secs(2);
+    let Ok(canonical_root) = root.canonicalize() else {
+        return 0;
+    };
     let mut total = 0u64;
-    let mut stack = vec![root.to_path_buf()];
+    let mut stack = vec![canonical_root.clone()];
+    let mut visited_dirs = std::collections::HashSet::new();
+    let mut entries_seen = 0usize;
+    let started = std::time::Instant::now();
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        if entries_seen >= MAX_ENTRIES || started.elapsed() >= MAX_ELAPSED {
+            break;
+        }
+        let Ok(canonical_dir) = dir.canonicalize() else {
+            continue;
+        };
+        if !canonical_dir.starts_with(&canonical_root)
+            || !visited_dirs.insert(canonical_dir.clone())
+        {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&canonical_dir) else {
             continue;
         };
         for entry in entries.flatten() {
-            let Ok(meta) = entry.metadata() else { continue };
-            if meta.is_dir() {
+            entries_seen += 1;
+            if entries_seen > MAX_ENTRIES || started.elapsed() >= MAX_ELAPSED {
+                break;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
                 stack.push(entry.path());
-            } else {
-                total += meta.len();
+            } else if file_type.is_file() {
+                if let Ok(meta) = entry.metadata() {
+                    total = total.saturating_add(meta.len());
+                }
             }
         }
     }
@@ -280,12 +313,15 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
             for (k, v) in env {
                 cmd.env(k, v);
             }
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                cmd.creation_flags(0x08000000);
+            let out = crate::process::run_bounded(
+                &mut cmd,
+                std::time::Duration::from_secs(5),
+                1024 * 1024,
+            )
+            .ok()?;
+            if !out.status.success() || out.stdout_truncated || out.stderr_truncated {
+                return None;
             }
-            let out = cmd.output().ok()?;
             Some(String::from_utf8_lossy(&out.stdout).to_string())
         });
 
@@ -450,6 +486,23 @@ fn emit_phase(app: &AppHandle, engine_id: &str, phase: &str, status: &str) {
     .ok();
 }
 
+async fn await_install_operation<F, T>(future: F) -> Result<T, String>
+where
+    F: std::future::Future<Output = T>,
+{
+    let mut operation = std::pin::pin!(future);
+    loop {
+        if INSTALL_CANCEL.load(Ordering::Acquire) {
+            return Err("Installation cancelled".to_string());
+        }
+        if let Ok(value) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), operation.as_mut()).await
+        {
+            return Ok(value);
+        }
+    }
+}
+
 /// Download uv (pinned version, checksum-verified) into `~/.pipeline/bin/`
 /// unless a matching version is already there.
 async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
@@ -457,12 +510,16 @@ async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
     if uv_path.is_file() {
         // Accept only the pinned version so the behavior we tested is the
         // behavior users get; anything else is replaced.
-        let current = std::process::Command::new(&uv_path)
-            .arg("--version")
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default();
+        let mut command = std::process::Command::new(&uv_path);
+        command.arg("--version");
+        let current =
+            crate::process::run_bounded(&mut command, std::time::Duration::from_secs(5), 64 * 1024)
+                .ok()
+                .filter(|output| {
+                    output.status.success() && !output.stdout_truncated && !output.stderr_truncated
+                })
+                .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+                .unwrap_or_default();
         if current.contains(UV_VERSION) {
             return Ok(uv_path);
         }
@@ -473,22 +530,69 @@ async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
     let url = uv_download_url(artifact.target);
     log(app, format!("Downloading uv {UV_VERSION} ({url})"));
 
+    let bin_dir = uv_path
+        .parent()
+        .ok_or("uv path has no parent directory")?
+        .to_path_buf();
+    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("Failed to create bin dir: {e}"))?;
+
     let client = &*crate::pipeline::api_common::HTTP_CLIENT;
-    let resp = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(300))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to download uv: {e}"))?;
+    let mut resp = await_install_operation(
+        client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(300))
+            .send(),
+    )
+    .await?
+    .map_err(|e| format!("Failed to download uv: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("uv download failed: HTTP {}", resp.status()));
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read uv download: {e}"))?;
+    if resp
+        .content_length()
+        .is_some_and(|length| length > MAX_UV_ARCHIVE_BYTES)
+    {
+        return Err(format!(
+            "uv archive exceeds the {} MB download limit",
+            MAX_UV_ARCHIVE_BYTES / 1024 / 1024
+        ));
+    }
 
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    // Keep the archive on the destination filesystem, but never in memory or
+    // at the final binary path. Both temporary files are removed on any error.
+    let mut archive = tempfile::Builder::new()
+        .prefix(".uv-download-")
+        .tempfile_in(&bin_dir)
+        .map_err(|e| format!("Failed to create temporary uv archive: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut archive_bytes = 0u64;
+    while let Some(chunk) = await_install_operation(resp.chunk())
+        .await?
+        .map_err(|e| format!("Failed to read uv download: {e}"))?
+    {
+        if INSTALL_CANCEL.load(Ordering::Acquire) {
+            return Err("Installation cancelled".to_string());
+        }
+        archive_bytes = archive_bytes
+            .checked_add(chunk.len() as u64)
+            .ok_or("uv archive size overflow")?;
+        if archive_bytes > MAX_UV_ARCHIVE_BYTES {
+            return Err(format!(
+                "uv archive exceeds the {} MB download limit",
+                MAX_UV_ARCHIVE_BYTES / 1024 / 1024
+            ));
+        }
+        hasher.update(&chunk);
+        archive
+            .write_all(&chunk)
+            .map_err(|e| format!("Failed to store uv download: {e}"))?;
+    }
+    archive
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync uv download: {e}"))?;
+
+    let digest = format!("{:x}", hasher.finalize());
     if digest != artifact.sha256 {
         return Err(format!(
             "uv download checksum mismatch (expected {}, got {digest}). \
@@ -498,19 +602,53 @@ async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
     }
     log(
         app,
-        format!("Verified uv archive ({} MB)", bytes.len() / 1_000_000),
+        format!("Verified uv archive ({} MB)", archive_bytes / 1_000_000),
     );
 
-    let bin_dir = uv_path
-        .parent()
-        .ok_or("uv path has no parent directory")?
-        .to_path_buf();
-    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("Failed to create bin dir: {e}"))?;
-
-    let dest = uv_path.clone();
-    tokio::task::spawn_blocking(move || unpack_uv(&bytes, &dest))
+    let staged = tempfile::Builder::new()
+        .prefix(".uv-executable-")
+        .tempfile_in(&bin_dir)
+        .map_err(|e| format!("Failed to stage uv executable: {e}"))?;
+    let archive_path = archive.path().to_path_buf();
+    let staged_path = staged.path().to_path_buf();
+    tokio::task::spawn_blocking(move || unpack_uv(&archive_path, &staged_path))
         .await
         .map_err(|e| format!("Unpack task failed: {e}"))??;
+
+    staged
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync staged uv executable: {e}"))?;
+    let mut probe = std::process::Command::new(staged.path());
+    probe.arg("--version");
+    let output =
+        crate::process::run_bounded(&mut probe, std::time::Duration::from_secs(10), 64 * 1024)
+            .map_err(|e| format!("Staged uv validation failed: {e}"))?;
+    let version = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success()
+        || output.stdout_truncated
+        || output.stderr_truncated
+        || !version.contains(UV_VERSION)
+    {
+        return Err(format!(
+            "Staged uv failed its version check (wanted {UV_VERSION})"
+        ));
+    }
+    if INSTALL_CANCEL.load(Ordering::Acquire) {
+        return Err("Installation cancelled".to_string());
+    }
+
+    // `persist` performs the final same-filesystem replacement. Until this
+    // point an existing working uv remains untouched.
+    staged
+        .into_temp_path()
+        .persist(&uv_path)
+        .map_err(|e| format!("Failed to install validated uv: {}", e.error))?;
+
+    #[cfg(unix)]
+    if let Ok(directory) = std::fs::File::open(&bin_dir) {
+        let _ = directory.sync_all();
+    }
 
     log(app, format!("Installed uv to {}", uv_path.display()));
     Ok(uv_path)
@@ -518,25 +656,35 @@ async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Extract the `uv` binary from the release archive into `dest`.
 #[cfg(not(windows))]
-fn unpack_uv(archive_bytes: &[u8], dest: &Path) -> Result<(), String> {
+fn unpack_uv(archive_path: &Path, dest: &Path) -> Result<(), String> {
     use std::io::Read as _;
-    let gz = flate2::read::GzDecoder::new(std::io::Cursor::new(archive_bytes));
+    let archive_file =
+        std::fs::File::open(archive_path).map_err(|e| format!("Failed to open uv archive: {e}"))?;
+    let gz = flate2::read::GzDecoder::new(archive_file);
     let mut archive = tar::Archive::new(gz);
     for entry in archive
         .entries()
         .map_err(|e| format!("Invalid uv archive: {e}"))?
     {
-        let mut entry = entry.map_err(|e| format!("Invalid uv archive entry: {e}"))?;
+        let entry = entry.map_err(|e| format!("Invalid uv archive entry: {e}"))?;
         let path = entry
             .path()
             .map_err(|e| format!("Invalid path in uv archive: {e}"))?
             .into_owned();
         if path.file_name().and_then(|n| n.to_str()) == Some("uv") {
-            let mut buf = Vec::new();
-            entry
-                .read_to_end(&mut buf)
-                .map_err(|e| format!("Failed to read uv from archive: {e}"))?;
-            std::fs::write(dest, &buf).map_err(|e| format!("Failed to write uv: {e}"))?;
+            if entry.size() > MAX_UV_BINARY_BYTES {
+                return Err("uv executable exceeds the extraction limit".to_string());
+            }
+            let mut out = std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(dest)
+                .map_err(|e| format!("Failed to open staged uv: {e}"))?;
+            let copied = std::io::copy(&mut entry.take(MAX_UV_BINARY_BYTES + 1), &mut out)
+                .map_err(|e| format!("Failed to extract uv: {e}"))?;
+            if copied > MAX_UV_BINARY_BYTES {
+                return Err("uv executable exceeds the extraction limit".to_string());
+            }
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))
                 .map_err(|e| format!("Failed to set uv permissions: {e}"))?;
@@ -547,10 +695,11 @@ fn unpack_uv(archive_bytes: &[u8], dest: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn unpack_uv(archive_bytes: &[u8], dest: &Path) -> Result<(), String> {
-    let cursor = std::io::Cursor::new(archive_bytes);
+fn unpack_uv(archive_path: &Path, dest: &Path) -> Result<(), String> {
+    let archive_file =
+        std::fs::File::open(archive_path).map_err(|e| format!("Failed to open uv archive: {e}"))?;
     let mut archive =
-        zip::ZipArchive::new(cursor).map_err(|e| format!("Invalid uv archive: {e}"))?;
+        zip::ZipArchive::new(archive_file).map_err(|e| format!("Invalid uv archive: {e}"))?;
     let names: Vec<String> = archive.file_names().map(|n| n.to_string()).collect();
     let entry_name = names
         .iter()
@@ -560,9 +709,19 @@ fn unpack_uv(archive_bytes: &[u8], dest: &Path) -> Result<(), String> {
     let mut entry = archive
         .by_name(&entry_name)
         .map_err(|e| format!("Failed to open uv.exe in archive: {e}"))?;
-    let mut out =
-        std::fs::File::create(dest).map_err(|e| format!("Failed to create uv.exe: {e}"))?;
-    std::io::copy(&mut entry, &mut out).map_err(|e| format!("Failed to write uv.exe: {e}"))?;
+    if entry.size() > MAX_UV_BINARY_BYTES {
+        return Err("uv executable exceeds the extraction limit".to_string());
+    }
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(dest)
+        .map_err(|e| format!("Failed to open staged uv.exe: {e}"))?;
+    let copied = std::io::copy(&mut entry.take(MAX_UV_BINARY_BYTES + 1), &mut out)
+        .map_err(|e| format!("Failed to write uv.exe: {e}"))?;
+    if copied > MAX_UV_BINARY_BYTES {
+        return Err("uv executable exceeds the extraction limit".to_string());
+    }
     Ok(())
 }
 
@@ -1007,6 +1166,18 @@ mod tests {
         std::fs::write(dir.path().join("sub/b.bin"), vec![0u8; 500]).unwrap();
         assert_eq!(dir_size(dir.path()), 1500);
         assert_eq!(dir_size(&dir.path().join("missing")), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dir_size_does_not_follow_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("inside"), vec![0u8; 10]).unwrap();
+        std::fs::write(outside.path().join("outside"), vec![0u8; 1_000]).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("escape")).unwrap();
+        std::os::unix::fs::symlink(root.path(), root.path().join("cycle")).unwrap();
+        assert_eq!(dir_size(root.path()), 10);
     }
 
     #[test]

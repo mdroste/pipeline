@@ -7,6 +7,27 @@
 
 use regex::Regex;
 use std::path::Path;
+use std::time::{Duration, Instant};
+
+const MAX_WALK_ENTRIES: usize = 100_000;
+const MAX_WALK_TIME: Duration = Duration::from_secs(5);
+const EXCLUDED_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "dist",
+    "build",
+];
+
+pub struct ExpandResult {
+    pub matches: Vec<String>,
+    /// Why the result may be incomplete (`match limit`, `entry limit`,
+    /// `time limit`, or `cancelled`).
+    pub limited_by: Option<&'static str>,
+}
 
 /// Translate a glob into an anchored regex string.
 pub fn glob_to_regex(pattern: &str) -> String {
@@ -50,22 +71,51 @@ pub fn glob_match(pattern: &str, rel_path: &str) -> bool {
 }
 
 /// Expand `pattern` against `root`, returning matching files' absolute paths
-/// (forward slashes), sorted, capped at `max`. Skips hidden files and symlinks;
-/// the recursive walk is bounded defensively. Returns `(matches, truncated)`.
-pub fn expand(root: &Path, pattern: &str, max: usize) -> (Vec<String>, bool) {
-    const MAX_WALK: usize = 100_000;
+/// (forward slashes), sorted, capped at `max`. The regex is compiled once.
+/// Hidden/common generated trees and symlinks are skipped; entry/time budgets
+/// and cancellation are reported explicitly.
+pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
+    let regex = match Regex::new(&glob_to_regex(pattern)) {
+        Ok(regex) => regex,
+        Err(_) => {
+            return ExpandResult {
+                matches: Vec::new(),
+                limited_by: Some("invalid pattern"),
+            };
+        }
+    };
     let mut matches: Vec<String> = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     let mut visited = 0usize;
-    while let Some(dir) = stack.pop() {
+    let started = Instant::now();
+    let mut limited_by = None;
+    'walk: while let Some(dir) = stack.pop() {
+        if crate::commands::is_cancelled() {
+            limited_by = Some("cancelled");
+            break;
+        }
+        if started.elapsed() >= MAX_WALK_TIME {
+            limited_by = Some("time limit");
+            break;
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
             visited += 1;
-            if visited > MAX_WALK {
-                matches.sort();
-                return (matches, true);
+            if visited > MAX_WALK_ENTRIES {
+                limited_by = Some("entry limit");
+                break 'walk;
+            }
+            if visited % 256 == 0 {
+                if crate::commands::is_cancelled() {
+                    limited_by = Some("cancelled");
+                    break 'walk;
+                }
+                if started.elapsed() >= MAX_WALK_TIME {
+                    limited_by = Some("time limit");
+                    break 'walk;
+                }
             }
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
@@ -77,6 +127,12 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> (Vec<String>, bool) {
                 continue;
             }
             if ft.is_dir() {
+                if EXCLUDED_DIRS
+                    .iter()
+                    .any(|excluded| name.eq_ignore_ascii_case(excluded))
+                {
+                    continue;
+                }
                 stack.push(path);
                 continue;
             }
@@ -84,15 +140,20 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> (Vec<String>, bool) {
                 continue;
             };
             let rel_str = rel.to_string_lossy().replace('\\', "/");
-            if glob_match(pattern, &rel_str) {
+            if regex.is_match(&rel_str) {
                 matches.push(path.to_string_lossy().replace('\\', "/"));
             }
         }
     }
     matches.sort();
-    let truncated = matches.len() > max;
+    if matches.len() > max {
+        limited_by.get_or_insert("match limit");
+    }
     matches.truncate(max);
-    (matches, truncated)
+    ExpandResult {
+        matches,
+        limited_by,
+    }
 }
 
 #[cfg(test)]

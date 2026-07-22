@@ -215,6 +215,13 @@ pub fn survey_hint(survey: &serde_json::Value) -> String {
 pub struct StepOutput {
     pub step_id: String,
     pub step_label: String,
+    /// Non-empty only when this output must be merged with sibling agent
+    /// outputs.  Unlike parsing `step_id`, this keeps fan-out units distinct.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub merge_group: String,
+    /// Source item bound to `{item}` for fan-out outputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fan_out_item: Option<String>,
     #[serde(default = "default_phase")]
     pub phase: String,
     #[serde(default)]
@@ -230,6 +237,9 @@ pub struct StepOutput {
     /// Output tokens the call reported.
     #[serde(default)]
     pub output_tokens: u64,
+    /// Number of provider attempts represented by the totals above.
+    #[serde(default)]
+    pub attempt_count: u32,
     /// Effective model id/alias used for this step (resolved override or global).
     #[serde(default)]
     pub model: String,
@@ -380,24 +390,6 @@ pub struct ExtractionResult {
     pub paper_hash: String,
     #[serde(default)]
     pub quality_notes: Vec<String>,
-}
-
-// --- Pipeline Progress Events ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StageEvent {
-    pub stage: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PassEvent {
-    pub name: String,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorEvent {
-    pub message: String,
 }
 
 // --- Report History ---

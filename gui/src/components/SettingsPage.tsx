@@ -2,6 +2,16 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { ModelCatalog, ModelSelection, Settings } from "../lib/types";
+import {
+  decodeModelSelection,
+  effortOptions,
+  encodeModelSelection,
+  type CloudProvider,
+  providerSelection,
+  providerTransport,
+  PROVIDERS,
+  withProviderSelection,
+} from "../lib/providers";
 import EnginesPanel from "./EnginesPanel";
 
 interface Props {
@@ -76,7 +86,7 @@ export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
   // Refetch only when the transport changes, not on every API-key keystroke.
   useEffect(() => {
     if (!settings) return;
-    for (const provider of ["claude", "codex", "gemini", "local"]) {
+    for (const provider of PROVIDERS) {
       void loadCatalog(provider, settings);
     }
   }, [
@@ -721,7 +731,10 @@ function RunRetention({
     try {
       // Passing the configured cap (0 keeps everything, so purge to a large
       // default only when unlimited) — here we honour the user's setting.
-      await invoke("purge_runs", { keep: settings.max_saved_runs });
+      await invoke("purge_runs", {
+        keep: settings.max_saved_runs,
+        maxBytes: settings.max_saved_run_bytes,
+      });
       loadUsage();
     } finally {
       setPurging(false);
@@ -735,8 +748,8 @@ function RunRetention({
       </label>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
         Past runs are stored under <code>~/.pipeline/runs/</code> with their artifacts and page
-        images, which add up. Keep at most this many; the oldest are removed after each run.
-        0 keeps everything.
+        images, which add up. The oldest completed runs are removed after each run until both
+        limits hold. 0 disables a limit.
         {usage && (
           <>
             {" "}Currently {usage.count} run{usage.count === 1 ? "" : "s"}, {fmtBytes(usage.bytes)}.
@@ -753,11 +766,36 @@ function RunRetention({
           }
           className="w-24 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
         />
+        <span className="text-xs text-gray-500">runs and</span>
+        <input
+          aria-label="Run history size limit in GB"
+          type="number"
+          min={0}
+          max={1000}
+          step={1}
+          value={Math.round((settings.max_saved_run_bytes ?? 5_000_000_000) / 1_000_000_000)}
+          onChange={(e) =>
+            setSettings({
+              ...settings,
+              max_saved_run_bytes:
+                Math.max(0, parseInt(e.target.value, 10) || 0) * 1_000_000_000,
+            })
+          }
+          className="w-24 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
+        />
+        <span className="text-xs text-gray-500">GB</span>
         <button
           onClick={purgeNow}
-          disabled={purging || settings.max_saved_runs === 0}
+          disabled={
+            purging ||
+            (settings.max_saved_runs === 0 && settings.max_saved_run_bytes === 0)
+          }
           className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          title={settings.max_saved_runs === 0 ? "Set a limit above 0 to purge" : "Delete runs beyond the limit now"}
+          title={
+            settings.max_saved_runs === 0 && settings.max_saved_run_bytes === 0
+              ? "Set a limit above 0 to purge"
+              : "Delete runs beyond the limits now"
+          }
         >
           {purging ? "Purging…" : "Purge now"}
         </button>
@@ -768,80 +806,8 @@ function RunRetention({
 
 /* ── Shared UI Components ────────────────────────────────────────── */
 
-type CloudProvider = "claude" | "codex" | "gemini";
-
-function providerTransport(settings: Settings, provider: string): "cli" | "api" {
-  if (provider === "local") return "api";
-  if (provider === "claude") return settings.anthropic_api_key ? "api" : "cli";
-  if (provider === "codex") return settings.openai_api_key ? "api" : "cli";
-  return settings.google_api_key ? "api" : "cli";
-}
-
-function providerSelection(settings: Settings, provider: CloudProvider): ModelSelection {
-  const transport = providerTransport(settings, provider);
-  const selection = provider === "claude"
-    ? (transport === "cli" ? settings.claude_cli_model_selection : settings.claude_api_model_selection)
-    : provider === "codex"
-      ? (transport === "cli" ? settings.codex_cli_model_selection : settings.codex_api_model_selection)
-      : (transport === "cli" ? settings.gemini_cli_model_selection : settings.gemini_api_model_selection);
-  // Settings written before structured selection existed.
-  if (selection) return selection;
-  const legacy = provider === "claude" ? settings.claude_model : provider === "codex" ? settings.codex_model : settings.gemini_model;
-  return legacy ? { mode: "pinned", model: legacy } : { mode: "automatic" };
-}
-
-function withProviderSelection(
-  settings: Settings,
-  provider: CloudProvider,
-  selection: ModelSelection,
-): Settings {
-  const transport = providerTransport(settings, provider);
-  const patch: Partial<Settings> = {};
-  if (provider === "claude") {
-    if (transport === "cli") patch.claude_cli_model_selection = selection;
-    else patch.claude_api_model_selection = selection;
-    patch.claude_model = "";
-  } else if (provider === "codex") {
-    if (transport === "cli") patch.codex_cli_model_selection = selection;
-    else patch.codex_api_model_selection = selection;
-    patch.codex_model = "";
-  } else {
-    if (transport === "cli") patch.gemini_cli_model_selection = selection;
-    else patch.gemini_api_model_selection = selection;
-    patch.gemini_model = "";
-  }
-  return { ...settings, ...patch };
-}
-
-function selectionValue(selection: ModelSelection): string {
-  if (selection.mode === "automatic") return "automatic";
-  if (selection.mode === "role") return `role:${selection.role}`;
-  return `pinned:${selection.model}`;
-}
-
-function parseSelection(value: string): ModelSelection {
-  if (value === "automatic") return { mode: "automatic" };
-  if (value.startsWith("role:")) return { mode: "role", role: value.slice(5) };
-  return { mode: "pinned", model: value.slice(7) };
-}
-
 function effortLabel(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function effortOptions(
-  catalog: ModelCatalog | undefined,
-  selection: ModelSelection,
-  fallback: string[],
-): string[] {
-  if (!catalog) return fallback;
-  const id = selection.mode === "pinned"
-    ? selection.model
-    : selection.mode === "role"
-      ? catalog.roles.find((role) => role.id === selection.role)?.model
-      : catalog.default_model || catalog.recommended_model;
-  const efforts = catalog.models.find((model) => model.id === id)?.supported_efforts;
-  return efforts?.length ? efforts : fallback;
 }
 
 function ModelPicker({
@@ -860,13 +826,13 @@ function ModelPicker({
   onRefresh: () => void;
 }) {
   const selection = providerSelection(settings, provider);
-  const value = selectionValue(selection);
+  const value = encodeModelSelection(selection);
   const known = value === "automatic"
     || catalog?.roles.some((role) => value === `role:${role.id}`)
     || catalog?.models.some((model) => value === `pinned:${model.id}`);
   return (
     <>
-      <select value={value} onChange={(event) => onChange(parseSelection(event.target.value))} className={selectClass}>
+      <select value={value} onChange={(event) => onChange(decodeModelSelection(event.target.value)!)} className={selectClass}>
         <option value="automatic">
           Automatic — {catalog?.transport === "api" ? "recommended available model" : "installed CLI default"}
         </option>

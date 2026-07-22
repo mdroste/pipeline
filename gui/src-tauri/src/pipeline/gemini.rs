@@ -1,23 +1,12 @@
 use std::io::Write;
 use std::process::Stdio;
-use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
-use tokio::io::BufReader;
 
-use super::claude::{
-    build_provider_command, emit_stderr_tail, last_stderr_hint, plan_cli_workspace,
-    prepare_cli_prompt, LlmOverrides, STDERR_TAIL_LINES,
+use super::claude::{build_provider_command, plan_cli_workspace, prepare_cli_prompt, LlmOverrides};
+use super::cli_process::{
+    capture_stderr, capture_text_stdout, emit_stderr_tail, last_stderr_hint, log,
+    track_child_started, verbose_log, wait_for_child,
 };
-
-fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
-    super::logging::emit(app, line.into());
-}
-
-fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
-    if crate::settings::load().verbose_logging {
-        log(app, line);
-    }
-}
 
 /// `--include-directories` expands Gemini's editable workspace as well as its
 /// readable roots. In write mode, this policy permits edits only under the
@@ -201,120 +190,47 @@ pub async fn call_gemini(
         .spawn()
         .map_err(|e| format!("Failed to spawn gemini: {e}. Is Gemini CLI installed?"))?;
 
-    let pid = child.id().unwrap_or(0);
-    if pid > 0 {
-        crate::commands::register_child_pid(pid);
-    }
-    let start_time = Instant::now();
-    log(app, format!("{label} started (PID {pid})"));
+    let (pid, start_time) = track_child_started(&child, app, label);
 
     // Stream stderr to the frontend, retaining the tail for diagnostics.
-    let stderr = child.stderr.take();
-    let app_stderr = app.clone();
     let sess = super::logging::current();
-    let stderr_task = tokio::spawn(super::logging::with_session_opt(sess.clone(), async move {
-        let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-        if let Some(stderr) = stderr {
-            let mut reader = BufReader::new(stderr);
-            while let Ok(Some(record)) =
-                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
-                    .await
-            {
-                let line = if record.truncated {
-                    format!("{}… [line truncated]", record.text)
-                } else {
-                    record.text
-                };
-                if !line.trim().is_empty() {
-                    verbose_log(&app_stderr, format!("[stderr] {line}"));
-                    if tail.len() >= STDERR_TAIL_LINES {
-                        tail.pop_front();
-                    }
-                    tail.push_back(line);
-                }
-            }
-        }
-        tail.into_iter().collect::<Vec<String>>()
-    }));
+    let stderr_task = capture_stderr(child.stderr.take(), app.clone(), sess.clone());
 
     // Stream stdout to the frontend
-    let stdout = child.stdout.take();
-    let app_stdout = app.clone();
-    let stdout_task = tokio::spawn(super::logging::with_session_opt(sess, async move {
-        let mut collected = String::new();
-        if let Some(stdout) = stdout {
-            let mut reader = BufReader::new(stdout);
-            while let Ok(Some(record)) =
-                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
-                    .await
-            {
-                let line = record.text;
-                if record.truncated {
-                    log(&app_stdout, "WARNING: provider emitted an oversized stdout record; record was truncated");
-                }
-                collected.push_str(&line);
-                collected.push('\n');
-                if collected.len() > super::claude::MAX_STDOUT_BYTES {
-                    log(
-                        &app_stdout,
-                        format!(
-                            "WARNING: stdout exceeded {} MB, truncating",
-                            super::claude::MAX_STDOUT_BYTES / 1_000_000
-                        ),
-                    );
-                    break;
-                }
-                if collected.lines().count() <= 5 {
-                    verbose_log(&app_stdout, format!("[out] {line}"));
-                }
-            }
-        }
-        if collected.lines().count() > 5 {
-            verbose_log(
-                &app_stdout,
-                format!("[out] ... ({} total lines)", collected.lines().count()),
-            );
-        }
-        collected
-    }));
+    let stdout_task = capture_text_stdout(child.stdout.take(), app.clone(), sess);
 
-    let status = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await;
-
-    let status = match status {
-        Ok(s) => s,
-        Err(_) => {
-            if pid > 0 { crate::commands::kill_process(pid); }
-            let _ = child.kill().await;
-            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-            if pid > 0 { crate::commands::unregister_child_pid(pid); }
+    let status = match wait_for_child(
+        &mut child,
+        pid,
+        timeout_secs,
+        "Gemini",
+        "gemini",
+        label,
+        app,
+    )
+    .await
+    {
+        Ok(status) => status,
+        Err(error) => {
             let _ = stdout_task.await;
             let _ = stderr_task.await;
-            if crate::commands::is_cancelled() {
-                log(app, format!("{label} cancelled"));
-                return Err("Pipeline cancelled".into());
-            }
-            log(app, format!("ERROR: Gemini call timed out after {timeout_secs}s (PID {pid}), killing process"));
-            return Err(format!("Gemini call timed out after {timeout_secs}s"));
+            return Err(error);
         }
-    }
-        .map_err(|e| {
-            if pid > 0 { crate::commands::unregister_child_pid(pid); }
-            format!("Failed waiting for gemini: {e}")
-        })?;
+    };
 
-    // Process has exited — unregister PID before joining I/O tasks
-    // so cancel cleanup can't miss it if a join fails
-    if pid > 0 {
-        crate::commands::unregister_child_pid(pid);
-    }
-
-    let text = stdout_task
+    let (raw_stdout, stdout_overflowed) = stdout_task
         .await
-        .map_err(|e| format!("stdout reader failed: {e}"))?
-        .trim()
-        .to_string();
+        .map_err(|e| format!("stdout reader failed: {e}"))?;
 
     let stderr_tail = stderr_task.await.unwrap_or_default();
+    if stdout_overflowed {
+        emit_stderr_tail(app, &stderr_tail);
+        return Err(format!(
+            "Gemini stdout exceeded the {} MB safety limit",
+            super::claude::MAX_STDOUT_BYTES / 1024 / 1024
+        ));
+    }
+    let text = raw_stdout.trim().to_string();
 
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();

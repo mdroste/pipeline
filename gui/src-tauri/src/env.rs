@@ -76,11 +76,12 @@ fn resolve_base_path() -> String {
 
     // Ask the user's login shell for its PATH.
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    if let Ok(output) = std::process::Command::new(&shell)
-        .args(["-ilc", "echo $PATH"])
-        .output()
+    let mut command = std::process::Command::new(&shell);
+    command.args(["-ilc", "echo $PATH"]);
+    if let Ok(output) =
+        crate::process::run_bounded(&mut command, std::time::Duration::from_secs(5), 64 * 1024)
     {
-        if output.status.success() {
+        if output.status.success() && !output.stdout_truncated && !output.stderr_truncated {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
                 return path;

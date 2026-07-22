@@ -8,6 +8,7 @@ pub mod models;
 pub mod output;
 pub mod pipeline;
 pub mod pipeline_config;
+pub mod process;
 pub mod prompts;
 pub mod runs;
 pub mod settings;

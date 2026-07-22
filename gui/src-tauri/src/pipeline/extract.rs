@@ -6,6 +6,44 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
+/// Maximum total output size for extracted LaTeX (10 MB).
+const MAX_LATEX_SIZE: usize = 10_000_000;
+/// Folder inventories are context, not an archival crawler. Bound every
+/// dimension independently so a directory-only tree cannot evade the file
+/// cap and a small number of huge files cannot monopolize a run indefinitely.
+const MAX_INVENTORY_ENTRIES: usize = 100_000;
+const MAX_INVENTORY_DIRS: usize = 10_000;
+const MAX_INVENTORY_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+fn open_regular_file(path: &Path) -> Result<fs::File, String> {
+    let file = fs::File::open(path)
+        .map_err(|e| format!("Failed to open regular file {}: {e}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("Failed to inspect {}: {e}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    Ok(file)
+}
+
+fn read_utf8_capped(path: &Path, limit: usize) -> Result<String, String> {
+    use std::io::Read as _;
+    let file = open_regular_file(path)?;
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    if bytes.len() > limit {
+        return Err(format!(
+            "{} exceeds the {} MB safety limit",
+            path.display(),
+            limit / 1_000_000
+        ));
+    }
+    String::from_utf8(bytes).map_err(|e| format!("{} is not valid UTF-8: {e}", path.display()))
+}
+
 #[derive(Debug)]
 struct BoundedOutput {
     status: std::process::ExitStatus,
@@ -125,8 +163,7 @@ fn ext_eq(path: &Path, expected: &str) -> bool {
 
 /// Compute SHA-256 hash of file contents, first 16 hex chars.
 fn compute_hash(path: &Path) -> Result<String, String> {
-    let file =
-        fs::File::open(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let file = open_regular_file(path)?;
     let mut reader = std::io::BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut chunk = [0u8; 64 * 1024];
@@ -135,6 +172,9 @@ fn compute_hash(path: &Path) -> Result<String, String> {
             .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
         if count == 0 {
             break;
+        }
+        if crate::commands::is_cancelled() {
+            return Err("Pipeline cancelled".to_string());
         }
         hasher.update(&chunk[..count]);
     }
@@ -156,7 +196,7 @@ fn find_main_tex(dir: &Path) -> Option<PathBuf> {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     for path in &tex_files {
-        if let Ok(content) = fs::read_to_string(path) {
+        if let Ok(content) = read_utf8_capped(path, MAX_LATEX_SIZE) {
             if content.contains("\\documentclass") {
                 candidates.push(path.clone());
             }
@@ -188,9 +228,6 @@ fn find_main_tex(dir: &Path) -> Option<PathBuf> {
     candidates.into_iter().next()
 }
 
-/// Maximum total output size for extracted LaTeX (10 MB).
-const MAX_LATEX_SIZE: usize = 10_000_000;
-
 /// Extract text from a .tex file, resolving \input{} and \include{} recursively.
 fn extract_latex(
     path: &Path,
@@ -203,8 +240,7 @@ fn extract_latex(
         return Ok(String::new());
     }
 
-    let content =
-        fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let content = read_utf8_capped(path, MAX_LATEX_SIZE)?;
 
     let parent = path.parent().unwrap_or(Path::new("."));
     let re = Regex::new(r"\\(?:input|include)\{([^}]+)\}").expect("LaTeX include regex is invalid");
@@ -395,12 +431,12 @@ fn extract_marker(
         marker_args.push("--disable_ocr".to_string());
     }
     let marker_bin = find_command("marker_single").ok_or("marker_single not found on PATH")?;
-    let mut cmd = StdCommand::new(&marker_bin);
-    cmd.env("PATH", env::full_path()).args(&marker_args);
+    let mut cmd = marker_bin.command(&marker_args);
+    cmd.env("PATH", env::full_path());
     // Managed installs keep their model weights under ~/.pipeline/hf.
     // System installs keep their own cache — don't redirect it.
     let is_managed = crate::engines::managed_bin_dir()
-        .map(|d| marker_bin.starts_with(&d))
+        .map(|d| marker_bin.discovered_path().starts_with(&d))
         .unwrap_or(false);
     if is_managed {
         for (k, v) in crate::engines::tool_env() {
@@ -426,11 +462,10 @@ fn extract_marker(
     // the file where expected.
     if let Some(dir) = &out_dir {
         if let Some(md) = find_marker_markdown(dir) {
-            if let Ok(content) = fs::read_to_string(&md) {
-                let content = content.trim().to_string();
-                if !content.is_empty() {
-                    return Ok(content);
-                }
+            let content = read_utf8_capped(&md, super::claude::MAX_STDOUT_BYTES)?;
+            let content = content.trim().to_string();
+            if !content.is_empty() {
+                return Ok(content);
             }
         }
     }
@@ -450,10 +485,8 @@ fn extract_pdftotext(path: &Path) -> Result<String, String> {
         .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
     let pdftotext_bin = find_command("pdftotext").ok_or("pdftotext not found on PATH")?;
-    let mut command = StdCommand::new(&pdftotext_bin);
-    command
-        .env("PATH", env::full_path())
-        .args(["-layout", path_str, "-"]);
+    let mut command = pdftotext_bin.command(["-layout", path_str, "-"]);
+    command.env("PATH", env::full_path());
     let output = run_bounded_output(
         command,
         "pdftotext",
@@ -484,34 +517,10 @@ fn extract_pdftotext(path: &Path) -> Result<String, String> {
 /// Find a command by scanning the managed tool directory (~/.pipeline/bin),
 /// then PATH, directly (no subprocess). Managed installs win over PATH so
 /// the one-click install is the copy that actually runs.
-fn find_command(name: &str) -> Option<PathBuf> {
-    resolve_command(crate::engines::find_managed(name), &env::full_path(), name)
-}
-
-/// Pure resolution order: a managed install always beats anything on PATH.
-/// Split from find_command so the precedence is unit-testable.
-fn resolve_command(managed: Option<PathBuf>, path_var: &str, name: &str) -> Option<PathBuf> {
-    if let Some(p) = managed {
-        return Some(p);
-    }
-    let sep = if cfg!(windows) { ';' } else { ':' };
-    for dir in path_var.split(sep) {
-        if dir.is_empty() {
-            continue;
-        }
-        let candidate = PathBuf::from(dir).join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        #[cfg(windows)]
-        for ext in &[".exe", ".cmd", ".bat"] {
-            let with_ext = PathBuf::from(format!("{}{ext}", candidate.display()));
-            if with_ext.is_file() {
-                return Some(with_ext);
-            }
-        }
-    }
-    None
+fn find_command(name: &str) -> Option<crate::deps::ResolvedCommand> {
+    crate::engines::find_managed(name)
+        .and_then(crate::deps::resolve_discovered_command)
+        .or_else(|| crate::deps::resolve_command(name))
 }
 
 // ── LLM extraction: transport, verification, repair ─────────────────
@@ -546,10 +555,8 @@ fn provider_uses_direct_api(settings: &crate::settings::Settings) -> bool {
 /// then skipped, not the extraction.
 fn pdftotext_page_baseline(path: &Path) -> Option<Vec<usize>> {
     let bin = find_command("pdftotext")?;
-    let mut command = StdCommand::new(&bin);
-    command
-        .env("PATH", env::full_path())
-        .args(["-layout", path.to_str()?, "-"]);
+    let mut command = bin.command(["-layout", path.to_str()?, "-"]);
+    command.env("PATH", env::full_path());
     let output = run_bounded_output(
         command,
         "pdftotext baseline",
@@ -956,8 +963,7 @@ pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Ve
     let prefix_str = prefix
         .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
-    let mut command = StdCommand::new(&bin);
-    command.env("PATH", env::full_path()).args([
+    let mut command = bin.command([
         "-png",
         "-r",
         "150",
@@ -966,6 +972,7 @@ pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Ve
         pdf_str,
         prefix_str,
     ]);
+    command.env("PATH", env::full_path());
     let output = run_bounded_output(
         command,
         "pdftoppm",
@@ -1509,30 +1516,6 @@ mod tests {
     }
 
     #[test]
-    fn managed_install_beats_system_path() {
-        // Regression guard for the engine-resolution contract: a marker
-        // installed from Settings (~/.pipeline/bin) must be the copy that
-        // runs, even when a system marker_single is on PATH.
-        let dir = tempfile::tempdir().unwrap();
-        let system = dir.path().join("marker_single");
-        fs::write(&system, "#!/bin/sh\n").unwrap();
-        let path_var = dir.path().to_string_lossy().to_string();
-
-        // No managed install: PATH resolution finds the system copy.
-        assert_eq!(
-            resolve_command(None, &path_var, "marker_single"),
-            Some(system.clone())
-        );
-
-        // Managed install present: it wins despite the system copy on PATH.
-        let managed = PathBuf::from("/managed/bin/marker_single");
-        assert_eq!(
-            resolve_command(Some(managed.clone()), &path_var, "marker_single"),
-            Some(managed)
-        );
-    }
-
-    #[test]
     fn fence_stripping() {
         assert_eq!(strip_markdown_fence("```markdown\n# Title\n```"), "# Title");
         assert_eq!(strip_markdown_fence("```\ntext\n```"), "text");
@@ -1588,35 +1571,82 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         return Err(format!("Not a directory: {root}"));
     }
 
+    let canonical_root = root_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve input folder {root}: {e}"))?;
+
     let mut files: Vec<(String, u64, PathBuf)> = Vec::new();
-    let mut stack = vec![root_path.clone()];
+    let mut stack = vec![canonical_root.clone()];
+    let mut visited_dirs = std::collections::HashSet::new();
+    let mut examined_entries = 0usize;
+    let mut examined_dirs = 0usize;
+    let mut skipped_special = 0usize;
     let mut truncated = false;
     while let Some(dir) = stack.pop() {
-        let entries = match fs::read_dir(&dir) {
+        if crate::commands::is_cancelled() {
+            return Err("Pipeline cancelled".to_string());
+        }
+        let Ok(canonical_dir) = dir.canonicalize() else {
+            continue;
+        };
+        if !canonical_dir.starts_with(&canonical_root)
+            || !visited_dirs.insert(canonical_dir.clone())
+        {
+            continue;
+        }
+        examined_dirs += 1;
+        if examined_dirs > MAX_INVENTORY_DIRS {
+            truncated = true;
+            break;
+        }
+        let entries = match fs::read_dir(&canonical_dir) {
             Ok(e) => e,
             Err(_) => continue, // unreadable subdir: skip, don't fail the run
         };
         for entry in entries.flatten() {
+            examined_entries += 1;
+            if examined_entries > MAX_INVENTORY_ENTRIES {
+                truncated = true;
+                stack.clear();
+                break;
+            }
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('.') {
                 continue;
             }
-            if path.is_dir() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            // Never follow directory/file symlinks from an inventory. Apart
+            // from escaping the selected root, a directory symlink can form a
+            // cycle and a file symlink can be swapped for a special file.
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
                 if !SKIP_DIRS.contains(&name.as_str()) {
                     stack.push(path);
                 }
-            } else if let Ok(meta) = entry.metadata() {
+            } else if file_type.is_file() {
+                let Ok(meta) = fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if !meta.file_type().is_file() {
+                    continue;
+                }
                 if files.len() >= MAX_INVENTORY_FILES {
                     truncated = true;
                     continue;
                 }
                 let rel = path
-                    .strip_prefix(&root_path)
+                    .strip_prefix(&canonical_root)
                     .unwrap_or(&path)
                     .to_string_lossy()
                     .replace('\\', "/");
                 files.push((rel, meta.len(), path));
+            } else {
+                skipped_special += 1;
             }
         }
     }
@@ -1632,23 +1662,46 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
     }
     if truncated {
         text.push_str(&format!(
-            "\n> Inventory truncated at {MAX_INVENTORY_FILES} files.\n"
+            "\n> Inventory truncated by its safety limits (maximum {MAX_INVENTORY_FILES} files, {MAX_INVENTORY_ENTRIES} entries, and {MAX_INVENTORY_DIRS} directories).\n"
+        ));
+    }
+    if skipped_special > 0 {
+        text.push_str(&format!(
+            "\n> Skipped {skipped_special} non-regular filesystem entr{} (for example, a socket or named pipe).\n",
+            if skipped_special == 1 { "y" } else { "ies" }
         ));
     }
 
     let mut hasher = Sha256::new();
     let mut chunk = [0u8; 64 * 1024];
+    let mut hashed_bytes = 0u64;
     for (rel, size, path) in &files {
+        if hashed_bytes.saturating_add(*size) > MAX_INVENTORY_HASH_BYTES {
+            return Err(format!(
+                "Input folder exceeds the {} GB hashing safety limit",
+                MAX_INVENTORY_HASH_BYTES / 1024 / 1024 / 1024
+            ));
+        }
         hasher.update(rel.as_bytes());
         hasher.update([0]);
         hasher.update(size.to_le_bytes());
-        let mut file =
-            fs::File::open(path).map_err(|e| format!("Failed to hash {}: {e}", path.display()))?;
+        let mut file = open_regular_file(path)
+            .map_err(|e| format!("Failed to hash {}: {e}", path.display()))?;
         loop {
+            if crate::commands::is_cancelled() {
+                return Err("Pipeline cancelled".to_string());
+            }
             let count = std::io::Read::read(&mut file, &mut chunk)
                 .map_err(|e| format!("Failed to hash {}: {e}", path.display()))?;
             if count == 0 {
                 break;
+            }
+            hashed_bytes = hashed_bytes.saturating_add(count as u64);
+            if hashed_bytes > MAX_INVENTORY_HASH_BYTES {
+                return Err(format!(
+                    "Input folder exceeds the {} GB hashing safety limit",
+                    MAX_INVENTORY_HASH_BYTES / 1024 / 1024 / 1024
+                ));
             }
             hasher.update(&chunk[..count]);
         }
@@ -1661,6 +1714,15 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         paper_hash: hash,
         quality_notes: vec![],
     })
+}
+
+/// Async boundary for folder inventory/hash work. The blocking implementation
+/// checks the global cancellation flag between entries and read chunks.
+pub async fn ingest_folder_async(root: &str) -> Result<ExtractionResult, String> {
+    let root = root.to_string();
+    tokio::task::spawn_blocking(move || ingest_folder(&root))
+        .await
+        .map_err(|e| format!("Folder ingestion task failed: {e}"))?
 }
 
 /// Context for a workflow that takes no input at all.
@@ -1729,6 +1791,28 @@ mod ingest_tests {
             .unwrap()
             .paper_hash;
         assert_ne!(first, second);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn folder_inventory_skips_symlink_cycles_and_special_files() {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("regular.txt"), "safe").unwrap();
+        std::os::unix::fs::symlink(dir.path(), dir.path().join("cycle")).unwrap();
+
+        let fifo = dir.path().join("blocked.pipe");
+        let fifo_c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+
+        let result = ingest_folder(dir.path().to_str().unwrap()).unwrap();
+        assert!(result.text.contains("regular.txt"));
+        assert!(!result.text.contains("cycle/"));
+        assert!(!result.text.contains("blocked.pipe |"));
+        assert!(result
+            .text
+            .contains("Skipped 1 non-regular filesystem entry"));
     }
 
     #[test]

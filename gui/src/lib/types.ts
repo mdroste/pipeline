@@ -130,6 +130,10 @@ export interface PipelineConfig {
 export interface StepOutput {
   step_id: string;
   step_label: string;
+  /** Explicit identity for sibling agent reports that should be merged. */
+  merge_group?: string;
+  /** Source item bound to `{item}` for a fan-out unit. */
+  fan_out_item?: string;
   phase: string;
   agent: string;
   raw_text: string;
@@ -137,6 +141,7 @@ export interface StepOutput {
   duration_secs?: number;
   input_tokens?: number;
   output_tokens?: number;
+  attempt_count?: number;
   /** Effective model id/alias used for this step. */
   model?: string;
   /** Provider that ran this step. */
@@ -296,6 +301,8 @@ export interface BatchJob {
   run_id: string | null;
   error: string | null;
   duration_secs: number;
+  profile_id?: string;
+  profile_snapshot_id?: string;
 }
 
 /** Mirrors commands::WatchStatus. */
@@ -338,6 +345,7 @@ export interface Settings {
   max_retries: number;
   /** Max past runs to keep on disk; 0 = keep all. */
   max_saved_runs: number;
+  max_saved_run_bytes: number;
   anthropic_api_key: string;
   openai_api_key: string;
   google_api_key: string;
@@ -377,6 +385,7 @@ export interface ProfileSummary {
   id: string;
   name: string;
   step_count: number;
+  builtin: boolean;
 }
 
 export interface ProfileExport {

@@ -1,21 +1,11 @@
 use std::process::Stdio;
-use std::time::{Duration, Instant};
 use tokio::io::BufReader;
 
-use super::claude::{
-    build_provider_command, emit_stderr_tail, last_stderr_hint, normalize_cli_root,
-    prepare_cli_prompt, LlmOverrides, STDERR_TAIL_LINES,
+use super::claude::{build_provider_command, normalize_cli_root, prepare_cli_prompt, LlmOverrides};
+use super::cli_process::{
+    capture_stderr, emit_stderr_tail, last_stderr_hint, log, track_child_started, verbose_log,
+    wait_for_child,
 };
-
-fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
-    super::logging::emit(app, line.into());
-}
-
-fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
-    if crate::settings::load().verbose_logging {
-        log(app, line);
-    }
-}
 
 fn codex_effective_cwd(
     needs_write: bool,
@@ -166,43 +156,13 @@ pub async fn call_codex(
         .spawn()
         .map_err(|e| format!("Failed to spawn codex: {e}. Is Codex CLI installed?"))?;
 
-    let pid = child.id().unwrap_or(0);
-    if pid > 0 {
-        crate::commands::register_child_pid(pid);
-    }
-    let start_time = Instant::now();
-    log(app, format!("{label} started (PID {pid})"));
+    let (pid, start_time) = track_child_started(&child, app, label);
 
     // Forward stderr to the verbose log. In --json mode it's mostly TUI
     // noise, but auth and capacity warnings land here too — dropping them
     // made those failures undiagnosable.
-    let stderr = child.stderr.take();
-    let app_stderr = app.clone();
     let sess = super::logging::current();
-    let stderr_task = tokio::spawn(super::logging::with_session_opt(sess.clone(), async move {
-        let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-        if let Some(stderr) = stderr {
-            let mut reader = BufReader::new(stderr);
-            while let Ok(Some(record)) =
-                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
-                    .await
-            {
-                let line = if record.truncated {
-                    format!("{}… [line truncated]", record.text)
-                } else {
-                    record.text
-                };
-                if !line.trim().is_empty() {
-                    verbose_log(&app_stderr, format!("[stderr] {line}"));
-                    if tail.len() >= STDERR_TAIL_LINES {
-                        tail.pop_front();
-                    }
-                    tail.push_back(line);
-                }
-            }
-        }
-        tail.into_iter().collect::<Vec<String>>()
-    }));
+    let stderr_task = capture_stderr(child.stderr.take(), app.clone(), sess.clone());
 
     // Parse JSONL stdout: collect agent_message text and usage info
     let stdout = child.stdout.take();
@@ -212,6 +172,8 @@ pub async fn call_codex(
         let mut agent_text = String::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        let mut overflowed = false;
+        let mut stdout_bytes = 0usize;
         if let Some(stdout) = stdout {
             let mut reader = BufReader::new(stdout);
             while let Ok(Some(record)) =
@@ -219,10 +181,28 @@ pub async fn call_codex(
                     .await
             {
                 if record.truncated {
-                    log(
-                        &app_stdout,
-                        "WARNING: Codex emitted an oversized JSON record; record was discarded",
-                    );
+                    if !overflowed {
+                        log(&app_stdout, "ERROR: Codex stdout exceeded its safety limit");
+                    }
+                    overflowed = true;
+                    continue;
+                }
+                stdout_bytes = stdout_bytes.saturating_add(record.text.len() + 1);
+                if stdout_bytes > super::claude::MAX_STDOUT_BYTES {
+                    if !overflowed {
+                        log(
+                            &app_stdout,
+                            format!(
+                                "ERROR: stdout exceeded {} MB",
+                                super::claude::MAX_STDOUT_BYTES / 1_000_000
+                            ),
+                        );
+                    }
+                    overflowed = true;
+                }
+                if overflowed {
+                    // Continue draining until EOF so the provider cannot
+                    // deadlock on a full stdout pipe.
                     continue;
                 }
                 let line = record.text;
@@ -237,7 +217,21 @@ pub async fn call_codex(
                                     == Some("agent_message")
                                 {
                                     if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                                        agent_text.push_str(text);
+                                        if text.len()
+                                            > super::claude::MAX_STDOUT_BYTES
+                                                .saturating_sub(agent_text.len())
+                                        {
+                                            log(
+                                                &app_stdout,
+                                                format!(
+                                                    "ERROR: stdout exceeded {} MB",
+                                                    super::claude::MAX_STDOUT_BYTES / 1_000_000
+                                                ),
+                                            );
+                                            overflowed = true;
+                                        } else {
+                                            agent_text.push_str(text);
+                                        }
                                     }
                                 }
                             }
@@ -275,16 +269,6 @@ pub async fn call_codex(
                 } else {
                     verbose_log(&app_stdout, format!("[codex] {line}"));
                 }
-                if agent_text.len() > super::claude::MAX_STDOUT_BYTES {
-                    log(
-                        &app_stdout,
-                        format!(
-                            "WARNING: stdout exceeded {} MB, truncating",
-                            super::claude::MAX_STDOUT_BYTES / 1_000_000
-                        ),
-                    );
-                    break;
-                }
             }
         }
         if total_input_tokens > 0 || total_output_tokens > 0 {
@@ -296,45 +280,37 @@ pub async fn call_codex(
                 ),
             );
         }
-        (agent_text, total_input_tokens, total_output_tokens)
+        (
+            agent_text,
+            total_input_tokens,
+            total_output_tokens,
+            overflowed,
+        )
     }));
 
-    let status = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await;
-
-    let status = match status {
-        Ok(s) => s,
-        Err(_) => {
-            if pid > 0 { crate::commands::kill_process(pid); }
-            let _ = child.kill().await;
-            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-            if pid > 0 { crate::commands::unregister_child_pid(pid); }
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
-            if crate::commands::is_cancelled() {
-                log(app, format!("{label} cancelled"));
-                return Err("Pipeline cancelled".into());
+    let status =
+        match wait_for_child(&mut child, pid, timeout_secs, "Codex", "codex", label, app).await {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                return Err(error);
             }
-            log(app, format!("ERROR: Codex call timed out after {timeout_secs}s (PID {pid}), killing process"));
-            return Err(format!("Codex call timed out after {timeout_secs}s"));
-        }
-    }
-        .map_err(|e| {
-            if pid > 0 { crate::commands::unregister_child_pid(pid); }
-            format!("Failed waiting for codex: {e}")
-        })?;
+        };
 
-    // Process has exited — unregister PID before joining I/O tasks
-    // so cancel cleanup can't miss it if a join fails
-    if pid > 0 {
-        crate::commands::unregister_child_pid(pid);
-    }
-
-    let (agent_text, input_tokens, output_tokens) = stdout_task
+    let (agent_text, input_tokens, output_tokens, stdout_overflowed) = stdout_task
         .await
         .map_err(|e| format!("stdout reader failed: {e}"))?;
-    let text = agent_text.trim().to_string();
 
     let stderr_tail = stderr_task.await.unwrap_or_default();
+    if stdout_overflowed {
+        emit_stderr_tail(app, &stderr_tail);
+        return Err(format!(
+            "Codex stdout exceeded the {} MB safety limit",
+            super::claude::MAX_STDOUT_BYTES / 1024 / 1024
+        ));
+    }
+    let text = agent_text.trim().to_string();
 
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();

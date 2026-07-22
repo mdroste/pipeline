@@ -5,7 +5,7 @@
 //! Merge auto-triggers between a parallel wave and the next step when
 //! any parallel step used multiple agents.
 
-use super::claude::{call_llm, cli_parent_dir, normalize_cli_root, LlmOverrides};
+use super::claude::{cli_parent_dir, normalize_cli_root};
 use super::merge;
 use crate::models::{StepFailure, StepOutput};
 use crate::output::{capitalize, strip_to_report};
@@ -188,7 +188,7 @@ pub async fn execute_steps(
                 mark_steps_done(&mut done, &to_run);
                 failed_steps.extend(wave_failures);
 
-                let has_multi_agent = wave_outputs.iter().any(|o| o.step_id.contains('/'));
+                let has_multi_agent = wave_outputs.iter().any(|o| !o.merge_group.is_empty());
                 if has_multi_agent && config.merge.enabled {
                     app.emit_event("pipeline:stage", serde_json::json!({"stage": "merging"}))
                         .ok();
@@ -298,11 +298,6 @@ pub async fn execute_steps(
                 break;
             }
         }
-    }
-
-    // A run whose only outputs are skips produced no report content.
-    if all_outputs.iter().all(|o| o.skipped) {
-        return Err("No steps produced output. Enable at least one step (or check that run_if conditions can pass).".into());
     }
 
     Ok(ExecutionResult {
@@ -480,13 +475,22 @@ fn output_format_block(write_dir: Option<&str>, report_rel: &str) -> String {
 /// written into the run artifacts when the run finishes; leaving it would
 /// duplicate every report in the artifact explorer.
 fn ingest_report_file(write_dir: Option<&str>, report_rel: &str) -> Option<String> {
+    use std::io::Read as _;
     let dir = write_dir?;
     let path = std::path::Path::new(dir).join(report_rel);
-    let content = std::fs::read_to_string(&path).ok()?;
+    let file = std::fs::File::open(&path).ok()?;
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(super::claude::MAX_STDOUT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let _ = std::fs::remove_file(&path);
+    if bytes.len() > super::claude::MAX_STDOUT_BYTES {
+        return None;
+    }
+    let content = String::from_utf8(bytes).ok()?;
     if content.trim().is_empty() {
         return None;
     }
-    let _ = std::fs::remove_file(&path);
     Some(content.trim().to_string())
 }
 
@@ -497,6 +501,130 @@ fn tools_with_write(step_tools: &[String], write_dir: Option<&str>) -> Vec<Strin
         tools.push("Write".to_string());
     }
     tools
+}
+
+struct StepCallRequest<'a> {
+    app: &'a crate::emit::EventBus,
+    pass_key: &'a str,
+    log_label: &'a str,
+    prompt: &'a str,
+    tools: &'a [String],
+    agent: Option<&'a str>,
+    cwd: Option<&'a str>,
+    read_dirs: &'a [String],
+    write_dir: Option<&'a str>,
+    report_rel: &'a str,
+    output_schema: Option<&'a serde_json::Value>,
+    command_model: Option<&'a str>,
+    effort: &'a str,
+    settings: &'a crate::settings::Settings,
+}
+
+struct StepCallResult {
+    text: String,
+    duration_secs: u64,
+    usage: crate::pipeline::logging::CallUsage,
+    attempt_count: u32,
+}
+
+/// Execute one logical step call, including retries, report-file handoff, and
+/// structured-output validation. Scheduling and terminal pass events remain
+/// with the parallel/sequential callers.
+async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResult, String> {
+    let timeout = request.settings.step_timeout_secs.max(60);
+    let max_retries = request.settings.max_retries;
+    let mut last_error = String::new();
+    let mut total_duration_secs = 0u64;
+    let mut total_usage = crate::pipeline::logging::CallUsage::default();
+
+    for attempt in 0..=max_retries {
+        if let Some(error) = cancellation_error(request.pass_key) {
+            return Err(error);
+        }
+        if attempt > 0 {
+            let _ = request.app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "{}: retry {attempt}/{max_retries} after failure: {last_error}",
+                    request.log_label,
+                )}),
+            );
+            let _ = request.app.emit_event(
+                "pipeline:pass",
+                serde_json::json!({ "name": request.pass_key, "status": "running" }),
+            );
+        }
+
+        let call = super::call::execute(super::call::Request {
+            app: request.app,
+            pass_key: request.pass_key,
+            log_label: request.log_label,
+            prompt: request.prompt,
+            tools: request.tools,
+            timeout_secs: timeout,
+            agent: request.agent,
+            cwd: request.cwd,
+            read_dirs: request.read_dirs,
+            write_dir: request.write_dir,
+            command_model: request.command_model,
+            effort: request.effort,
+            settings: request.settings,
+        })
+        .await;
+        total_duration_secs = total_duration_secs.saturating_add(call.duration_secs);
+        total_usage.add(call.usage.input_tokens, call.usage.output_tokens);
+
+        if let Some(error) = cancellation_error(request.pass_key) {
+            return Err(error);
+        }
+
+        let text = match call.output {
+            Ok(stdout) => ingest_report_file(request.write_dir, request.report_rel)
+                .unwrap_or_else(|| strip_to_report(&stdout)),
+            Err(error) => {
+                if is_cancellation_error(&error) {
+                    return Err(error);
+                }
+                if let Some(report) = ingest_report_file(request.write_dir, request.report_rel) {
+                    let _ = request.app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({ "line": format!(
+                            "{}: call reported an error but the report file was written; using it. ({error})",
+                            request.log_label,
+                        )}),
+                    );
+                    report
+                } else {
+                    last_error = error;
+                    continue;
+                }
+            }
+        };
+
+        if let Some(schema) = request.output_schema {
+            if let Err(reason) = crate::pipeline::structured::check(schema, &text) {
+                last_error = if attempt < max_retries {
+                    format!("output did not satisfy schema: {reason}")
+                } else {
+                    format!("output did not satisfy schema after {max_retries} retries: {reason}")
+                };
+                continue;
+            }
+        }
+
+        return Ok(StepCallResult {
+            text,
+            duration_secs: total_duration_secs,
+            usage: total_usage,
+            attempt_count: attempt.saturating_add(1),
+        });
+    }
+
+    Err(if last_error.is_empty() {
+        "step produced no output".to_string()
+    } else {
+        last_error
+    })
 }
 
 // ── Parallel execution ──────────────────────────────────────────────
@@ -566,6 +694,40 @@ struct Unit {
     item: Option<String>,
     suffix: String,
     display: String,
+    /// Suffix shared by all agents analyzing the same logical item. Empty for
+    /// ordinary non-fan-out work.
+    item_suffix: String,
+    merge_agents: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn step_output(
+    step_key: &str,
+    display_label: &str,
+    phase: &str,
+    provider: &str,
+    agent: &str,
+    call: StepCallResult,
+    resolution: &crate::model_catalog::ResolvedModel,
+) -> StepOutput {
+    StepOutput {
+        step_id: step_key.to_string(),
+        step_label: display_label.to_string(),
+        phase: phase.to_string(),
+        provider: provider.to_string(),
+        agent: agent.to_string(),
+        raw_text: call.text,
+        duration_secs: call.duration_secs,
+        input_tokens: call.usage.input_tokens,
+        output_tokens: call.usage.output_tokens,
+        attempt_count: call.attempt_count,
+        model: resolution.resolved_model.clone(),
+        model_transport: resolution.transport.clone(),
+        model_policy: resolution.selection.label(),
+        model_source: resolution.source.clone(),
+        model_catalog_updated_at: resolution.catalog_updated_at.clone(),
+        ..Default::default()
+    }
 }
 
 /// The directory a fan-out glob is resolved against: the input folder itself,
@@ -581,25 +743,27 @@ fn fan_out_root(source_path: &str) -> std::path::PathBuf {
     }
 }
 
-/// Build the units to run for a step: one per matching file (fan-out) or one
-/// per agent (normal). Fan-out with no matches returns empty (a warning is
-/// logged) so the step is simply skipped.
+/// Build the units to run for a step. Fan-out and agent selection are
+/// independent dimensions, so a multi-agent fan-out produces their Cartesian
+/// product. Fan-out with no matches returns empty; the caller records an
+/// explicit skipped output.
 fn build_units(
     step: &StepConfig,
     settings: &crate::settings::Settings,
     source_path: &str,
     app: &crate::emit::EventBus,
 ) -> Vec<Unit> {
-    let provider = step
-        .agents
-        .first()
-        .cloned()
-        .unwrap_or_else(|| settings.preferred_provider.clone());
+    let agents: Vec<String> = if step.agents.is_empty() {
+        vec![settings.preferred_provider.clone()]
+    } else {
+        step.agents.clone()
+    };
+    let multi = agents.len() > 1;
 
     if let Some(fe) = &step.for_each {
         let root = fan_out_root(source_path);
-        let (items, truncated) =
-            crate::pipeline::glob::expand(&root, &fe.glob, fe.max.max(1) as usize);
+        let expansion = crate::pipeline::glob::expand(&root, &fe.glob, fe.max.max(1) as usize);
+        let items = expansion.matches;
         if items.is_empty() {
             let _ = app.emit_event(
                 "pipeline:log",
@@ -609,18 +773,18 @@ fn build_units(
             );
             return Vec::new();
         }
-        if truncated {
+        if let Some(reason) = expansion.limited_by {
             let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({ "line": format!(
-                    "Fan-out step '{}' capped at {} files (glob '{}')", step.label, fe.max, fe.glob
+                    "Fan-out step '{}' was bounded by {reason} at {} files (glob '{}')", step.label, items.len(), fe.glob
                 )}),
             );
         }
         let mut used = std::collections::HashSet::new();
         items
             .into_iter()
-            .map(|path| {
+            .flat_map(|path| {
                 let base = std::path::Path::new(&path)
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
@@ -631,21 +795,21 @@ fn build_units(
                     suffix = format!("{}_{}", step_slug(&base), n);
                     n += 1;
                 }
-                Unit {
-                    agent: provider.clone(),
-                    item: Some(path),
-                    suffix,
-                    display: base,
-                }
+                agents.iter().cloned().map(move |agent| Unit {
+                    suffix: if multi {
+                        format!("{suffix}/{agent}")
+                    } else {
+                        suffix.clone()
+                    },
+                    item_suffix: suffix.clone(),
+                    display: base.clone(),
+                    agent,
+                    item: Some(path.clone()),
+                    merge_agents: multi,
+                })
             })
             .collect()
     } else {
-        let agents: Vec<String> = if step.agents.is_empty() {
-            vec![provider]
-        } else {
-            step.agents.clone()
-        };
-        let multi = agents.len() > 1;
         agents
             .into_iter()
             .map(|a| Unit {
@@ -653,6 +817,8 @@ fn build_units(
                 display: capitalize(&a),
                 agent: a,
                 item: None,
+                item_suffix: String::new(),
+                merge_agents: multi,
             })
             .collect()
     }
@@ -684,9 +850,39 @@ async fn run_parallel_wave(
     };
 
     let mut tasks: JoinSet<ParallelTaskResult> = JoinSet::new();
+    let mut immediate_results: Vec<((usize, String), StepOutput)> = Vec::new();
 
     for (idx, step) in steps.iter().enumerate() {
-        let units = build_units(step, settings, source_path, app);
+        let step_owned = (*step).clone();
+        let settings_owned = settings.clone();
+        let source_owned = source_path.to_string();
+        let app_owned = app.clone();
+        let units = crate::commands::await_or_cancel(
+            tokio::task::spawn_blocking(move || {
+                build_units(&step_owned, &settings_owned, &source_owned, &app_owned)
+            }),
+            Some(&step.id),
+        )
+        .await?
+        .map_err(|e| format!("Fan-out discovery task failed for '{}': {e}", step.label))?;
+        if units.is_empty() {
+            let _ = app.emit_event(
+                "pipeline:pass",
+                serde_json::json!({"name": step.id, "status": "skipped"}),
+            );
+            immediate_results.push((
+                (idx, String::new()),
+                StepOutput {
+                    step_id: step.id.clone(),
+                    step_label: step.label.clone(),
+                    phase: "parallel".to_string(),
+                    raw_text: "_(skipped: fan-out matched no files)_".to_string(),
+                    skipped: true,
+                    ..Default::default()
+                },
+            ));
+            continue;
+        }
 
         for unit in &units {
             let id = step.id.clone();
@@ -696,6 +892,16 @@ async fn run_parallel_wave(
             let model_selection = step.model_selection_for(settings, &agent_name);
             let effort_override = step.effort_for(settings, &agent_name);
             let output_schema = step.output_schema.clone();
+            let fan_out_item = unit.item.clone();
+            let merge_group = if unit.merge_agents {
+                if unit.item_suffix.is_empty() {
+                    id.clone()
+                } else {
+                    format!("{}/{}", id, unit.item_suffix)
+                }
+            } else {
+                String::new()
+            };
 
             // Composite key when this is one of several units (multi-agent or
             // fan-out); the bare step id when it's a single plain run.
@@ -723,18 +929,17 @@ async fn run_parallel_wave(
             let task_write_dir = write_dir.map(|s| s.to_string());
             let task_read_dirs = read_dirs.to_vec();
 
-            let _ = app.emit_event(
-                "pipeline:pass",
-                serde_json::json!({
-                    "name": step_key,
-                    "status": "running"
-                }),
-            );
-
             let app_handle = app.clone();
             let step_key_emit = step_key.clone();
             let log_label = if unit.suffix.is_empty() {
                 format!("Step: {}", label)
+            } else if unit.merge_agents {
+                format!(
+                    "Step: {} [{} · {}]",
+                    label,
+                    unit.display,
+                    capitalize(&agent_name)
+                )
             } else {
                 format!("Step: {} [{}]", label, unit.display)
             };
@@ -759,11 +964,18 @@ async fn run_parallel_wave(
                         error,
                     });
                 }
-                let _permit = sem.acquire().await.map_err(|_| StepFailure {
-                    step_id: step_key_emit.clone(),
-                    step_label: fail_label.clone(),
-                    error: "Semaphore closed".to_string(),
-                })?;
+                let _permit = crate::commands::await_or_cancel(sem.acquire(), Some(&step_key_emit))
+                    .await
+                    .map_err(|error| StepFailure {
+                        step_id: step_key_emit.clone(),
+                        step_label: fail_label.clone(),
+                        error,
+                    })?
+                    .map_err(|_| StepFailure {
+                        step_id: step_key_emit.clone(),
+                        step_label: fail_label.clone(),
+                        error: "Semaphore closed".to_string(),
+                    })?;
                 // Cancellation can happen while this unit is queued for the
                 // worker permit. Re-check after acquisition before starting a
                 // provider call (and therefore before incurring cost).
@@ -774,209 +986,83 @@ async fn run_parallel_wave(
                         error,
                     });
                 }
-                let tool_refs: Vec<&str> = tools.iter().map(|s| s.as_str()).collect();
-                let timeout = settings.step_timeout_secs.max(60);
-                let max_retries = settings.max_retries;
+                let _ = app_handle.emit_event(
+                    "pipeline:pass",
+                    serde_json::json!({
+                        "name": step_key_emit,
+                        "status": "running"
+                    }),
+                );
                 let provider = agent_name.clone();
-                let resolution = crate::model_catalog::resolve(
-                    &provider,
-                    &settings,
-                    model_selection.as_ref(),
+                let resolution = crate::commands::await_or_cancel(
+                    crate::model_catalog::resolve(&provider, &settings, model_selection.as_ref()),
+                    Some(&step_key_emit),
                 )
                 .await
                 .map_err(|error| StepFailure {
                     step_id: step_key_emit.clone(),
                     step_label: fail_label.clone(),
                     error,
+                })?
+                .map_err(|error| StepFailure {
+                    step_id: step_key_emit.clone(),
+                    step_label: fail_label.clone(),
+                    error,
                 })?;
-                let effective_model = resolution.resolved_model.clone();
-                let command_model = resolution.command_model.clone();
+                let call = execute_step_call(StepCallRequest {
+                    app: &app_handle,
+                    pass_key: &step_key_emit,
+                    log_label: &log_label,
+                    prompt: &prompt,
+                    tools: &tools,
+                    agent: Some(&agent_name),
+                    cwd: task_cwd.as_deref(),
+                    read_dirs: &task_read_dirs,
+                    write_dir: task_write_dir.as_deref(),
+                    report_rel: &report_rel,
+                    output_schema: output_schema.as_ref(),
+                    command_model: resolution.command_model.as_deref(),
+                    effort: &effort_override,
+                    settings: &settings,
+                })
+                .await;
 
-                let mut last_err = String::new();
-                for attempt in 0..=max_retries {
-                    if let Some(error) = cancellation_error(&step_key_emit) {
-                        return Err(StepFailure {
-                            step_id: step_key_emit.clone(),
-                            step_label: fail_label.clone(),
-                            error,
-                        });
-                    }
-                    if attempt > 0 {
-                        let _ = app_handle.emit_event(
-                            "pipeline:log",
-                            serde_json::json!({ "line": format!("{log_label}: retry {attempt}/{max_retries} after failure: {last_err}") }),
-                        );
+                match call {
+                    Ok(call) => {
                         let _ = app_handle.emit_event(
                             "pipeline:pass",
-                            serde_json::json!({
-                                "name": step_key_emit,
-                                "status": "running"
-                            }),
+                            serde_json::json!({ "name": step_key_emit, "status": "done" }),
                         );
+                        let mut output = step_output(
+                            &step_key,
+                            &display_label,
+                            "parallel",
+                            &provider,
+                            &agent_name,
+                            call,
+                            &resolution,
+                        );
+                        output.merge_group = merge_group;
+                        output.fan_out_item = fan_out_item;
+                        Ok((sort_key, output))
                     }
-                    let extra: Vec<&str> = task_read_dirs.iter().map(String::as_str).collect();
-                    let mut overrides = LlmOverrides::from_step_strings(
-                        command_model.as_deref().unwrap_or(""),
-                        &effort_override,
-                    );
-                    overrides.model_resolved = true;
-                    overrides.write_dir = task_write_dir.as_deref();
-                    overrides.settings = Some(&settings);
-                    let call_start = std::time::Instant::now();
-                    let (call_result, usage) = crate::pipeline::logging::with_pass(
-                        step_key_emit.clone(),
-                        crate::pipeline::logging::measure_usage(call_llm(
-                            &app_handle,
-                            &prompt,
-                            &tool_refs,
-                            None,
-                            "text",
-                            timeout,
-                            &log_label,
-                            Some(&agent_name),
-                            task_cwd.as_deref(),
-                            &extra,
-                            &overrides,
-                        )),
-                    )
-                    .await;
-                    let duration_secs = call_start.elapsed().as_secs();
-                    // Per-pass cancel: stop retrying and fail this pass only.
-                    if crate::commands::is_pass_cancelled(&step_key_emit) {
+                    Err(error) => {
                         let _ = app_handle.emit_event(
                             "pipeline:pass",
                             serde_json::json!({ "name": step_key_emit, "status": "error" }),
                         );
-                        return Err(StepFailure {
-                            step_id: step_key.clone(),
-                            step_label: fail_label.clone(),
-                            error: "Cancelled by user".to_string(),
-                        });
-                    }
-                    match call_result {
-                        Ok(raw_text) => {
-                            let text = match ingest_report_file(task_write_dir.as_deref(), &report_rel) {
-                                Some(file_text) => file_text,
-                                None => strip_to_report(&raw_text),
-                            };
-                            // Structured output is a contract, not a hint. A
-                            // malformed final attempt must fail the step.
-                            if let Some(schema) = &output_schema {
-                                if let Err(why) = crate::pipeline::structured::check(schema, &text) {
-                                    if attempt < max_retries {
-                                        last_err = format!("output did not satisfy schema: {why}");
-                                        continue;
-                                    }
-                                    last_err = format!(
-                                        "output did not satisfy schema after {max_retries} retries: {why}"
-                                    );
-                                    continue;
-                                }
-                            }
-                            let _ = app_handle.emit_event(
-                                "pipeline:pass",
-                                serde_json::json!({
-                                    "name": step_key_emit,
-                                    "status": "done"
-                                }),
-                            );
-                            return Ok((
-                                sort_key,
-                                StepOutput {
-                                    step_id: step_key,
-                                    step_label: display_label,
-                                    phase: "parallel".to_string(),
-                                    provider,
-                                    agent: agent_name,
-                                    raw_text: text,
-                                    duration_secs,
-                                    input_tokens: usage.input_tokens,
-                                    output_tokens: usage.output_tokens,
-                                    model: effective_model,
-                                    model_transport: resolution.transport,
-                                    model_policy: resolution.selection.label(),
-                                    model_source: resolution.source,
-                                    model_catalog_updated_at: resolution.catalog_updated_at,
-                                    ..Default::default()
-                                },
-                            ));
-                        }
-                        Err(e) => {
-                            if e.contains("cancelled") {
-                                let _ = app_handle.emit_event(
-                                    "pipeline:pass",
-                                    serde_json::json!({
-                                        "name": step_key_emit,
-                                        "status": "error"
-                                    }),
-                                );
-                                return Err(StepFailure {
-                                    step_id: step_key.clone(),
-                                    step_label: fail_label.clone(),
-                                    error: e,
-                                });
-                            }
-                            // The call may have failed after the report was
-                            // written (e.g. the empty-stdout quirk when the
-                            // model obeyed "don't print the report"). A
-                            // non-empty report file counts as success.
-                            if let Some(file_text) = ingest_report_file(task_write_dir.as_deref(), &report_rel) {
-                                if let Some(schema) = &output_schema {
-                                    if let Err(why) = crate::pipeline::structured::check(schema, &file_text) {
-                                        last_err = format!("report file did not satisfy schema: {why}");
-                                        continue;
-                                    }
-                                }
-                                let _ = app_handle.emit_event(
-                                    "pipeline:log",
-                                    serde_json::json!({ "line": format!("{log_label}: call reported an error but the report file was written; using it. ({e})") }),
-                                );
-                                let _ = app_handle.emit_event(
-                                    "pipeline:pass",
-                                    serde_json::json!({
-                                        "name": step_key_emit,
-                                        "status": "done"
-                                    }),
-                                );
-                                return Ok((
-                                    sort_key,
-                                    StepOutput {
-                                        step_id: step_key,
-                                        step_label: display_label,
-                                        phase: "parallel".to_string(),
-                                        provider,
-                                        agent: agent_name,
-                                        raw_text: file_text,
-                                        duration_secs,
-                                        input_tokens: usage.input_tokens,
-                                        output_tokens: usage.output_tokens,
-                                        model: effective_model,
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                            last_err = e;
-                        }
+                        Err(StepFailure {
+                            step_id: step_key,
+                            step_label: fail_label,
+                            error,
+                        })
                     }
                 }
-
-                let _ = app_handle.emit_event(
-                    "pipeline:pass",
-                    serde_json::json!({
-                        "name": step_key_emit,
-                        "status": "error"
-                    }),
-                );
-                Err(StepFailure {
-                    step_id: step_key,
-                    step_label: fail_label,
-                    error: last_err,
-                })
             });
         }
     }
 
-    let mut results = Vec::new();
+    let mut results = immediate_results;
     let mut failures: Vec<StepFailure> = Vec::new();
 
     while let Some(res) = tasks.join_next().await {
@@ -997,13 +1083,6 @@ async fn run_parallel_wave(
                 "pipeline:log",
                 serde_json::json!({ "line": format!("WARNING: step failed: {}: {}", f.step_label, f.error) }),
             );
-        }
-        if results.is_empty() {
-            let summary: Vec<String> = failures
-                .iter()
-                .map(|f| format!("{}: {}", f.step_label, f.error))
-                .collect();
-            return Err(format!("All steps failed: {}", summary.join("; ")));
         }
         let _ = app.emit_event(
             "pipeline:log",
@@ -1196,7 +1275,6 @@ async fn run_sequential_step(
     );
 
     let tools = tools_with_write(&step.tools, write_dir);
-    let tool_refs: Vec<&str> = tools.iter().map(|s| s.as_str()).collect();
     let agent = step.agents.first().map(|s| s.as_str());
     let log_label = format!("Step: {}", step.label);
 
@@ -1207,140 +1285,40 @@ async fn run_sequential_step(
     } else {
         cli_parent_dir(source_path)
     };
-    let timeout = settings.step_timeout_secs.max(60);
-    let max_retries = settings.max_retries;
     let provider = agent
         .map(|a| a.to_string())
         .unwrap_or_else(|| settings.preferred_provider.clone());
     let model_selection = step.model_selection_for(settings, &provider);
     let resolution =
         crate::model_catalog::resolve(&provider, settings, model_selection.as_ref()).await?;
-    let effective_model = resolution.resolved_model.clone();
-    let command_model = resolution.command_model.clone();
     let effort = step.effort_for(settings, &provider);
-
-    let mut last_err = String::new();
-    let mut final_text: Option<String> = None;
-    let mut usage = crate::pipeline::logging::CallUsage::default();
-    let mut duration_secs = 0u64;
-    for attempt in 0..=max_retries {
-        if let Some(error) = cancellation_error(&step.id) {
-            return Err(error);
-        }
-        if attempt > 0 {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!("{log_label}: retry {attempt}/{max_retries} after failure: {last_err}") }),
-            );
-            let _ = app.emit_event(
-                "pipeline:pass",
-                serde_json::json!({
-                    "name": step.id,
-                    "status": "running"
-                }),
-            );
-        }
-        let extra: Vec<&str> = read_dirs.iter().map(String::as_str).collect();
-        let mut overrides =
-            LlmOverrides::from_step_strings(command_model.as_deref().unwrap_or(""), &effort);
-        overrides.model_resolved = true;
-        overrides.write_dir = write_dir;
-        overrides.settings = Some(settings);
-        let call_start = std::time::Instant::now();
-        let (call_result, call_usage) = crate::pipeline::logging::with_pass(
-            step.id.clone(),
-            crate::pipeline::logging::measure_usage(call_llm(
-                app,
-                &prompt,
-                &tool_refs,
-                None,
-                "text",
-                timeout,
-                &log_label,
-                agent,
-                source_dir.as_deref(),
-                &extra,
-                &overrides,
-            )),
-        )
-        .await;
-        if crate::commands::is_pass_cancelled(&step.id) {
-            return Err("Cancelled by user".to_string());
-        }
-        // Resolve this attempt's text (from the report file or stdout), or None
-        // if the call failed with nothing written.
-        let candidate: Option<String> = match call_result {
-            Ok(text) => Some(
-                ingest_report_file(write_dir, &report_rel)
-                    .unwrap_or_else(|| strip_to_report(&text)),
-            ),
-            Err(e) => {
-                if e.contains("cancelled") {
-                    return Err(e);
-                }
-                // A non-empty report file counts as success even when the
-                // call errored (e.g. empty stdout after an obedient write).
-                if let Some(t) = ingest_report_file(write_dir, &report_rel) {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({ "line": format!("{log_label}: call reported an error but the report file was written; using it. ({e})") }),
-                    );
-                    Some(t)
-                } else {
-                    last_err = e;
-                    None
-                }
-            }
-        };
-        if let Some(text) = candidate {
-            // Structured output is a hard contract.
-            if let Some(schema) = &step.output_schema {
-                if let Err(why) = crate::pipeline::structured::check(schema, &text) {
-                    if attempt < max_retries {
-                        last_err = format!("output did not satisfy schema: {why}");
-                        continue;
-                    }
-                    last_err =
-                        format!("output did not satisfy schema after {max_retries} retries: {why}");
-                    continue;
-                }
-            }
-            final_text = Some(text);
-            usage = call_usage;
-            duration_secs = call_start.elapsed().as_secs();
-            last_err.clear();
-            break;
-        }
-    }
-
-    let text = match final_text {
-        Some(t) => t,
-        None => {
-            return Err(if last_err.is_empty() {
-                "step produced no output".to_string()
-            } else {
-                last_err
-            });
-        }
-    };
-
-    Ok(StepOutput {
-        step_id: step.id.clone(),
-        step_label: step.label.clone(),
-        phase: "sequential".to_string(),
-        provider,
-        agent: agent.unwrap_or("").to_string(),
-        raw_text: text,
-        duration_secs,
-        input_tokens: usage.input_tokens,
-        output_tokens: usage.output_tokens,
-        model: effective_model,
-        model_transport: resolution.transport,
-        model_policy: resolution.selection.label(),
-        model_source: resolution.source,
-        model_catalog_updated_at: resolution.catalog_updated_at,
-        ..Default::default()
+    let call = execute_step_call(StepCallRequest {
+        app,
+        pass_key: &step.id,
+        log_label: &log_label,
+        prompt: &prompt,
+        tools: &tools,
+        agent,
+        cwd: source_dir.as_deref(),
+        read_dirs,
+        write_dir,
+        report_rel: &report_rel,
+        output_schema: step.output_schema.as_ref(),
+        command_model: resolution.command_model.as_deref(),
+        effort: &effort,
+        settings,
     })
+    .await?;
+
+    Ok(step_output(
+        &step.id,
+        &step.label,
+        "sequential",
+        &provider,
+        agent.unwrap_or(""),
+        call,
+        &resolution,
+    ))
 }
 
 #[cfg(test)]
@@ -1539,6 +1517,33 @@ mod tests {
     }
 
     #[test]
+    fn fan_out_builds_item_by_agent_cartesian_product() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("a")).unwrap();
+        std::fs::create_dir_all(temp.path().join("b")).unwrap();
+        std::fs::write(temp.path().join("a/note.md"), "a").unwrap();
+        std::fs::write(temp.path().join("b/note.md"), "b").unwrap();
+
+        let mut step = make_step("s", Phase::Parallel);
+        step.agents = vec!["claude".into(), "gemini".into()];
+        step.for_each = Some(crate::pipeline_config::ForEach {
+            glob: "**/*.md".into(),
+            max: 10,
+        });
+        let settings = crate::settings::Settings::default();
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        let units = build_units(&step, &settings, temp.path().to_str().unwrap(), &bus);
+
+        assert_eq!(units.len(), 4);
+        assert_eq!(units.iter().filter(|u| u.agent == "claude").count(), 2);
+        assert_eq!(units.iter().filter(|u| u.agent == "gemini").count(), 2);
+        let item_keys: std::collections::HashSet<&str> =
+            units.iter().map(|u| u.item_suffix.as_str()).collect();
+        assert_eq!(item_keys.len(), 2, "duplicate basenames need distinct keys");
+        assert!(units.iter().all(|u| u.merge_agents));
+    }
+
+    #[test]
     fn terminal_parallel_failure_unblocks_dependent_step() {
         let mut downstream = make_step("downstream", Phase::Sequential);
         downstream.inputs = vec!["ok".into(), "failed".into()];
@@ -1579,6 +1584,47 @@ mod tests {
         let mut done = std::collections::HashSet::new();
         mark_steps_done(&mut done, &refs[..1]);
         assert_eq!(ready_indices(&[1], &deps, &done), vec![1]);
+    }
+
+    #[test]
+    fn zero_match_fan_out_returns_visible_skipped_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut fan = make_step("fan", Phase::Parallel);
+        fan.for_each = Some(crate::pipeline_config::ForEach {
+            glob: "**/*.does-not-exist".into(),
+            max: 20,
+        });
+        let settings = crate::settings::Settings::default();
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        let steps = [&fan];
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (outputs, failures) = runtime
+            .block_on(run_parallel_wave(
+                &bus,
+                &steps,
+                &settings,
+                &semaphore,
+                "",
+                "",
+                temp.path().to_str().unwrap(),
+                "mixed",
+                "",
+                "{step_prompt}",
+                &Default::default(),
+                &Default::default(),
+                &[],
+                None,
+            ))
+            .unwrap();
+        assert!(failures.is_empty());
+        assert_eq!(outputs.len(), 1);
+        assert!(outputs[0].skipped);
+        assert_eq!(outputs[0].step_id, "fan");
+        assert!(outputs[0].raw_text.contains("matched no files"));
     }
 
     // ── dependents_of ──────────────────────────────────────────────

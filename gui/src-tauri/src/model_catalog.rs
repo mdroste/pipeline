@@ -12,11 +12,13 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_POLICY_BYTES: usize = 1024 * 1024;
 const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
+const MAX_DISCOVERY_VERSION_BYTES: usize = 64 * 1024;
+const MAX_DISCOVERY_LINE_BYTES: usize = 1024 * 1024;
 const POLICY_URL: &str =
     "https://raw.githubusercontent.com/mdroste/pipeline/main/model-policy.json";
 const BUNDLED_POLICY: &str = include_str!("../../../model-policy.json");
@@ -171,12 +173,18 @@ fn read_cache(provider: &str, transport: &str) -> Option<CacheEnvelope> {
 }
 
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    use std::io::Write as _;
     let parent = path.parent().ok_or("Cache path has no parent")?;
     std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create model cache: {e}"))?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)
         .map_err(|e| format!("Failed to create model cache file: {e}"))?;
     serde_json::to_writer_pretty(&mut temp, value)
         .map_err(|e| format!("Failed to serialize model cache: {e}"))?;
+    temp.flush()
+        .map_err(|e| format!("Failed to flush model cache: {e}"))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync model cache: {e}"))?;
     temp.persist(path)
         .map_err(|e| format!("Failed to persist model cache: {}", e.error))?;
     Ok(())
@@ -196,12 +204,8 @@ async fn response_bytes_limited(
     {
         return Err(format!("Response exceeded the {limit} byte safety limit"));
     }
-    let mut bytes = Vec::with_capacity(
-        response
-            .content_length()
-            .unwrap_or(0)
-            .min(limit as u64) as usize,
-    );
+    let mut bytes =
+        Vec::with_capacity(response.content_length().unwrap_or(0).min(limit as u64) as usize);
     while let Some(chunk) = response
         .chunk()
         .await
@@ -579,14 +583,102 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
     Ok(catalog)
 }
 
+async fn read_discovery_output<R: AsyncRead + Unpin>(
+    mut reader: R,
+    limit: usize,
+) -> Result<(Vec<u8>, bool), String> {
+    let mut kept = Vec::with_capacity(limit.min(16 * 1024));
+    let mut overflowed = false;
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        let count = reader
+            .read(&mut chunk)
+            .await
+            .map_err(|e| format!("Failed to read provider discovery output: {e}"))?;
+        if count == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(kept.len());
+        let take = remaining.min(count);
+        kept.extend_from_slice(&chunk[..take]);
+        overflowed |= take < count;
+    }
+    Ok((kept, overflowed))
+}
+
+struct DiscoveryProcessGuard {
+    pid: u32,
+    armed: bool,
+}
+
+impl DiscoveryProcessGuard {
+    fn register(pid: u32) -> Self {
+        if pid > 0 {
+            crate::commands::register_child_pid(pid);
+        }
+        Self {
+            pid,
+            armed: pid > 0,
+        }
+    }
+
+    fn unregister(&mut self) {
+        if self.armed {
+            crate::commands::unregister_child_pid(self.pid);
+            self.armed = false;
+        }
+    }
+}
+
+impl Drop for DiscoveryProcessGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            crate::commands::kill_process(self.pid);
+            crate::commands::unregister_child_pid(self.pid);
+        }
+    }
+}
+
+async fn stop_discovery_child(
+    child: &mut tokio::process::Child,
+    guard: &mut DiscoveryProcessGuard,
+) {
+    if guard.pid > 0 {
+        crate::commands::kill_process(guard.pid);
+    }
+    let _ = child.kill().await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+    guard.unregister();
+}
+
 async fn cli_version(program: &str) -> String {
     let args = vec!["--version".to_string()];
     let Ok(mut command) = build_provider_command(program, None, &args) else {
         return String::new();
     };
-    command.stdout(Stdio::piped()).stderr(Stdio::null());
-    match tokio::time::timeout(Duration::from_secs(5), command.output()).await {
-        Ok(Ok(output)) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    command
+        .kill_on_drop(true)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let Ok(mut child) = command.spawn() else {
+        return String::new();
+    };
+    let mut guard = DiscoveryProcessGuard::register(child.id().unwrap_or(0));
+    let Some(stdout) = child.stdout.take() else {
+        stop_discovery_child(&mut child, &mut guard).await;
+        return String::new();
+    };
+    let reader = tokio::spawn(read_discovery_output(stdout, MAX_DISCOVERY_VERSION_BYTES));
+    let status = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+    if !matches!(status, Ok(Ok(status)) if status.success()) {
+        stop_discovery_child(&mut child, &mut guard).await;
+        let _ = reader.await;
+        return String::new();
+    }
+    guard.unregister();
+    match reader.await {
+        Ok(Ok((bytes, false))) => String::from_utf8_lossy(&bytes).trim().to_string(),
         _ => String::new(),
     }
 }
@@ -598,64 +690,87 @@ async fn rpc_exchange(
 ) -> Result<Vec<serde_json::Value>, String> {
     let mut command = build_provider_command(program, None, args)?;
     command
+        .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = command
         .spawn()
         .map_err(|e| format!("Failed to start {program} model discovery: {e}"))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or("Provider discovery has no stdin")?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Provider discovery has no stdout")?;
-    let mut lines = BufReader::new(stdout).lines();
-    let mut results = Vec::new();
-    for request in requests {
-        let id = request["id"].clone();
-        stdin
-            .write_all(
-                serde_json::to_string(request)
-                    .map_err(|e| e.to_string())?
-                    .as_bytes(),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
-        stdin.flush().await.map_err(|e| e.to_string())?;
-        let response = tokio::time::timeout(Duration::from_secs(12), async {
-            while let Some(line) = lines.next_line().await.map_err(|e| e.to_string())? {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if value.get("id") == Some(&id) {
-                        return Ok(value);
+    let mut guard = DiscoveryProcessGuard::register(child.id().unwrap_or(0));
+    let result = async {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or("Provider discovery has no stdin")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Provider discovery has no stdout")?;
+        let mut reader = BufReader::new(stdout);
+        let mut results = Vec::new();
+        for request in requests {
+            let id = request["id"].clone();
+            let response = tokio::time::timeout(Duration::from_secs(12), async {
+                stdin
+                    .write_all(
+                        serde_json::to_string(request)
+                            .map_err(|e| e.to_string())?
+                            .as_bytes(),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
+                stdin.flush().await.map_err(|e| e.to_string())?;
+                while let Some(record) = crate::pipeline::logging::next_bounded_line(
+                    &mut reader,
+                    MAX_DISCOVERY_LINE_BYTES,
+                )
+                .await
+                .map_err(|e| e.to_string())?
+                {
+                    if record.truncated {
+                        return Err(format!(
+                            "{program} model discovery emitted a response line larger than {} MB",
+                            MAX_DISCOVERY_LINE_BYTES / 1024 / 1024
+                        ));
+                    }
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&record.text) {
+                        if value.get("id") == Some(&id) {
+                            return Ok(value);
+                        }
                     }
                 }
+                Err("Provider discovery ended before replying".to_string())
+            })
+            .await
+            .map_err(|_| format!("{program} model discovery timed out"))??;
+            if response.get("error").is_some() {
+                return Err(format!(
+                    "{program} discovery returned {}",
+                    response["error"]
+                ));
             }
-            Err("Provider discovery ended before replying".to_string())
-        })
-        .await
-        .map_err(|_| format!("{program} model discovery timed out"))??;
-        if response.get("error").is_some() {
-            let _ = child.kill().await;
-            return Err(format!(
-                "{program} discovery returned {}",
-                response["error"]
-            ));
-        }
-        results.push(response);
-        if program == "codex" && id == serde_json::json!(1) {
-            stdin
-                .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}\n")
+            results.push(response);
+            if program == "codex" && id == serde_json::json!(1) {
+                tokio::time::timeout(Duration::from_secs(12), async {
+                    stdin
+                        .write_all(
+                            b"{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}\n",
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stdin.flush().await.map_err(|e| e.to_string())
+                })
                 .await
-                .map_err(|e| e.to_string())?;
-            stdin.flush().await.map_err(|e| e.to_string())?;
+                .map_err(|_| format!("{program} model discovery timed out"))??;
+            }
         }
+        Ok(results)
     }
-    let _ = child.kill().await;
-    Ok(results)
+    .await;
+    stop_discovery_child(&mut child, &mut guard).await;
+    result
 }
 
 async fn cli_catalog(provider: &str) -> Result<ModelCatalog, String> {
@@ -917,7 +1032,7 @@ pub fn price_for_model(model: &str) -> Option<(f64, f64)> {
     let model = model.to_ascii_lowercase();
     let policy = cache_dir()
         .ok()
-        .and_then(|dir| std::fs::read(dir.join("policy.json")).ok())
+        .and_then(|dir| read_file_limited(&dir.join("policy.json"), MAX_POLICY_BYTES))
         .and_then(|bytes| serde_json::from_slice::<Policy>(&bytes).ok())
         .filter(|policy| policy.schema_version == 1)
         .unwrap_or_else(bundled_policy);
@@ -957,5 +1072,31 @@ mod tests {
     fn pricing_comes_from_policy() {
         assert_eq!(price_for_model("claude-sonnet-4-6"), Some((3.0, 15.0)));
         assert_eq!(price_for_model("gpt-4.1-mini"), Some((0.4, 1.6)));
+    }
+
+    #[test]
+    fn cache_reader_is_bounded() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), b"123456789").unwrap();
+        assert_eq!(read_file_limited(temp.path(), 9).unwrap(), b"123456789");
+        assert!(read_file_limited(temp.path(), 8).is_none());
+    }
+
+    #[test]
+    fn discovery_output_is_bounded_but_fully_drained() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut writer, reader) = tokio::io::duplex(8);
+                let writing = tokio::spawn(async move {
+                    writer.write_all(b"123456789").await.unwrap();
+                });
+                let (bytes, overflowed) = read_discovery_output(reader, 4).await.unwrap();
+                writing.await.unwrap();
+                assert_eq!(bytes, b"1234");
+                assert!(overflowed);
+            });
     }
 }

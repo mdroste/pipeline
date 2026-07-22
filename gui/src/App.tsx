@@ -1,108 +1,30 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { lazy, Suspense, useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PaperSelector from "./components/PaperSelector";
-import ArtifactExplorer from "./components/ArtifactExplorer";
 import PipelineProgress from "./components/PipelineProgress";
 import WorkflowPanel from "./components/WorkflowPanel";
-import ReportViewer from "./components/ReportViewer";
 import ExportControls from "./components/ExportControls";
 import DepsCheck from "./components/DepsCheck";
-import SettingsPage from "./components/SettingsPage";
-import PipelinePage from "./components/PipelinePage";
-import AboutPage from "./components/AboutPage";
-import HistoryPage from "./components/HistoryPage";
-import BatchPanel from "./components/BatchPanel";
 import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
-import IssuesTable from "./components/IssuesTable";
 import UpdateBanner from "./components/UpdateBanner";
+import ResizeHandle from "./components/ResizeHandle";
 import { usePipeline } from "./hooks/usePipeline";
 import { isMac } from "./lib/platform";
-import { isPaperOrientation } from "./lib/types";
 import { detectReportIssues } from "./lib/issues";
-import { renderGenericSurvey } from "./lib/surveyMarkdown";
-import type { PipelineReport, DepsReport, OrientationMap, PaperMetadata, VarSpec, InputSlot } from "./lib/types";
+import { renderSurvey } from "./lib/surveyMarkdown";
+import type { PipelineReport, DepsReport, VarSpec, InputSlot } from "./lib/types";
+
+const SettingsPage = lazy(() => import("./components/SettingsPage"));
+const PipelinePage = lazy(() => import("./components/PipelinePage"));
+const AboutPage = lazy(() => import("./components/AboutPage"));
+const HistoryPage = lazy(() => import("./components/HistoryPage"));
+const BatchPanel = lazy(() => import("./components/BatchPanel"));
+const ArtifactExplorer = lazy(() => import("./components/ArtifactExplorer"));
+const ReportViewer = lazy(() => import("./components/ReportViewer"));
+const IssuesTable = lazy(() => import("./components/IssuesTable"));
 
 type Page = "main" | "pipeline" | "settings" | "help" | "history" | "batch";
-
-function renderOrientationMap(o: OrientationMap): string {
-  // Defensive: paper-shaped surveys may omit fields the schema defaults.
-  const m = (o.metadata ?? {}) as Partial<PaperMetadata>;
-  let md = `# Orientation Map\n\n`;
-  md += `**Title**: ${m.title ?? ""}  \n`;
-  if (m.authors?.length) md += `**Authors**: ${m.authors.join(", ")}  \n`;
-  md += `**Type**: ${m.paper_type ?? "unknown"}`;
-  if (m.page_count) md += ` · **Pages**: ${m.page_count}`;
-  md += `  \n`;
-  if (m.has_appendix) md += `**Appendix**: yes  \n`;
-  if (m.has_online_appendix) md += `**Online appendix**: yes  \n`;
-  md += `\n`;
-
-  if (o.stated_contribution) {
-    md += `## Stated Contribution\n\n${o.stated_contribution}\n\n`;
-  }
-
-  if (o.sections?.length) {
-    md += `## Sections\n\n| # | Title | Pages |\n|---|-------|-------|\n`;
-    for (const s of o.sections) {
-      const pages = s.page_start ? (s.page_end ? `${s.page_start}–${s.page_end}` : `${s.page_start}`) : "";
-      md += `| ${s.number} | ${s.title} | ${pages} |\n`;
-    }
-    md += `\n`;
-  }
-
-  if (o.formal_results?.length) {
-    md += `## Formal Results\n\n`;
-    for (const r of o.formal_results) {
-      md += `- **${r.kind} ${r.number}**${r.page ? ` (p. ${r.page})` : ""}: ${r.summary}`;
-      if (r.proof_location) md += ` — *Proof: ${r.proof_location}*`;
-      md += `\n`;
-    }
-    md += `\n`;
-  }
-
-  if (o.tables_figures?.length) {
-    md += `## Tables & Figures\n\n`;
-    for (const t of o.tables_figures) {
-      md += `- **${t.kind} ${t.number}**${t.page ? ` (p. ${t.page})` : ""}: ${t.caption_summary}`;
-      if (t.what_it_shows) md += ` — ${t.what_it_shows}`;
-      md += `\n`;
-    }
-    md += `\n`;
-  }
-
-  if (o.notation?.length) {
-    md += `## Notation\n\n| Symbol | Definition | Introduced |\n|--------|------------|------------|\n`;
-    for (const n of o.notation) {
-      md += `| ${n.symbol} | ${n.definition} | ${n.page_introduced ? `p. ${n.page_introduced}` : ""} |\n`;
-    }
-    md += `\n`;
-  }
-
-  if (o.key_references?.length) {
-    md += `## Key References\n\n`;
-    for (const r of o.key_references) {
-      md += `- ${r}\n`;
-    }
-    md += `\n`;
-  }
-
-  if (o.extraction_quality_notes?.length) {
-    md += `## Extraction Quality Notes\n\n`;
-    for (const n of o.extraction_quality_notes) {
-      md += `- **${n.page_range}**: ${n.description}\n`;
-    }
-    md += `\n`;
-  }
-
-  return md;
-}
-
-/** Render any survey JSON: paper view when paper-shaped, generic sections otherwise. */
-function renderSurvey(orientation: PipelineReport["orientation"]): string {
-  if (isPaperOrientation(orientation)) return renderOrientationMap(orientation);
-  return renderGenericSurvey(orientation);
-}
 
 function getArtifactMarkdown(
   artifact: string,
@@ -407,7 +329,7 @@ function App() {
               >
                 {depsReport.ready
                   ? "All dependencies OK"
-                  : `${depsReport.deps.filter((d) => !d.found).length} missing deps`}
+                  : "Dependencies need attention"}
               </button>
             )}
           </div>
@@ -418,6 +340,13 @@ function App() {
         <div className="flex-1 flex flex-col min-h-0">
           <UpdateBanner />
           <div className="flex-1 overflow-auto">
+            <Suspense
+              fallback={(
+                <div className="flex items-center justify-center h-full text-gray-400">
+                  <div className="animate-spin w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full" />
+                </div>
+              )}
+            >
             {page === "pipeline" ? (
               <PipelinePage onClose={() => { setPage("main"); setConfigVersion((v) => v + 1); }} onProfileChange={() => setConfigVersion((v) => v + 1)} />
             ) : page === "help" ? (
@@ -522,67 +451,13 @@ function App() {
                 </div>
               </div>
             )}
+            </Suspense>
           </div>
 
           {logs.length > 0 && <Console logs={logs} usage={usage} />}
         </div>
       </main>
     </div>
-  );
-}
-
-function ResizeHandle({
-  onResize,
-  min,
-  max,
-}: {
-  onResize: (width: number) => void;
-  min: number;
-  max: number;
-}) {
-  const cleanupRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    return () => {
-      // Clean up global listeners if component unmounts during a drag
-      if (cleanupRef.current) cleanupRef.current();
-    };
-  }, []);
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const parent = (e.target as HTMLElement).parentElement;
-      if (!parent) return;
-      const startWidth = parent.getBoundingClientRect().width;
-
-      const onMouseMove = (ev: MouseEvent) => {
-        const newWidth = Math.min(max, Math.max(min, startWidth + ev.clientX - startX));
-        onResize(newWidth);
-      };
-      const onMouseUp = () => {
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        cleanupRef.current = null;
-      };
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      cleanupRef.current = onMouseUp;
-    },
-    [onResize, min, max]
-  );
-
-  return (
-    <div
-      onMouseDown={handleMouseDown}
-      className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize
-                 hover:bg-gray-300 dark:hover:bg-gray-600 active:bg-gray-400 dark:active:bg-gray-500 transition-colors z-10"
-    />
   );
 }
 
