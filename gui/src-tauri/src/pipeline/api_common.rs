@@ -25,6 +25,10 @@ const MAX_READ_SIZE: usize = 5 * 1024 * 1024;
 
 /// Maximum PDF file size for Read tool calls (32 MB — matches Anthropic's document limit).
 const MAX_PDF_SIZE: usize = 32 * 1024 * 1024;
+/// Cumulative direct-API Read budget per model call. This bounds repeated
+/// reads of the same large PDF across tool iterations.
+const MAX_TOOL_READ_BYTES: usize = 40 * 1024 * 1024;
+const MAX_TOOL_READ_CALLS: usize = 32;
 
 /// Maximum size of a single Write tool call (5 MB — reports are ~100 KB;
 /// this leaves room for data artifacts without letting a runaway model
@@ -33,6 +37,7 @@ const MAX_WRITE_SIZE: usize = 5 * 1024 * 1024;
 
 /// Maximum number of Write tool calls per pipeline run.
 const MAX_WRITES_PER_RUN: usize = 200;
+const MAX_WRITE_BYTES_PER_RUN: usize = 100 * 1024 * 1024;
 
 // ── Logging ────────────────────────────────────────────────────────
 
@@ -185,6 +190,7 @@ static WRITE_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mute
 
 /// Write calls consumed this run, reset by `set_write_dir`.
 static WRITE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static WRITE_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Set (or clear) the directory Write tool calls are confined to.
 /// Call this before starting a pipeline run; pass `None` to disable writes.
@@ -193,6 +199,7 @@ pub fn set_write_dir(dir: Option<std::path::PathBuf>) {
         *wd = dir;
     }
     WRITE_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+    WRITE_BYTES.store(0, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Validate and perform a Write tool call. The destination must resolve
@@ -221,6 +228,21 @@ pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> 
             "Write limit reached ({MAX_WRITES_PER_RUN} files per run)"
         ));
     }
+    WRITE_BYTES
+        .fetch_update(
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+            |used| {
+                used.checked_add(content.len())
+                    .filter(|next| *next <= MAX_WRITE_BYTES_PER_RUN)
+            },
+        )
+        .map_err(|_| {
+            format!(
+                "Run artifact quota reached ({} MB)",
+                MAX_WRITE_BYTES_PER_RUN / 1024 / 1024
+            )
+        })?;
 
     // Resolve to a path relative to the artifact root. Absolute paths must
     // already point inside it (accepting both the raw and canonical spelling
@@ -295,22 +317,16 @@ fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf,
         .canonicalize()
         .map_err(|_| format!("File not found: {path}"))?;
 
-    // Validate the path is under an allowed directory.
-    // env::temp_dir() must be canonicalized like the file path: on macOS
-    // $TMPDIR lives under /var which is a symlink to /private/var, and on
-    // Windows canonicalize() returns \\?\-prefixed paths — comparing a
-    // canonical path against the raw temp dir never matches on either.
-    let temp_dir = std::env::temp_dir()
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::temp_dir());
+    // Validate the path against the exact roots registered for this run. The
+    // OS-wide temporary directory is deliberately not implicit: unrelated
+    // applications commonly place credentials and private documents there.
     let allowed = ALLOWED_DIRS.lock().unwrap_or_else(|e| e.into_inner());
-    let is_allowed = canonical.starts_with(&temp_dir)
-        || allowed.iter().any(|dir| {
-            std::path::Path::new(dir)
-                .canonicalize()
-                .map(|d| canonical.starts_with(&d))
-                .unwrap_or(false)
-        });
+    let is_allowed = allowed.iter().any(|dir| {
+        std::path::Path::new(dir)
+            .canonicalize()
+            .map(|d| canonical.starts_with(&d))
+            .unwrap_or(false)
+    });
     drop(allowed);
 
     if !is_allowed {
@@ -334,7 +350,11 @@ fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf,
 
 /// Read a text file from disk for a tool call.
 pub fn read_file_for_tool(path: &str) -> Result<String, String> {
-    let canonical = validate_tool_path(path, MAX_READ_SIZE)?;
+    read_file_for_tool_limited(path, MAX_READ_SIZE)
+}
+
+fn read_file_for_tool_limited(path: &str, limit: usize) -> Result<String, String> {
+    let canonical = validate_tool_path(path, MAX_READ_SIZE.min(limit))?;
 
     if path.to_lowercase().ends_with(".pdf") {
         return Err("Cannot read PDF as text. Use the extracted paper text instead.".into());
@@ -344,8 +364,8 @@ pub fn read_file_for_tool(path: &str) -> Result<String, String> {
 }
 
 /// Read a PDF file and return its contents as base64-encoded bytes.
-fn read_pdf_for_tool(path: &str) -> Result<String, String> {
-    let canonical = validate_tool_path(path, MAX_PDF_SIZE)?;
+fn read_pdf_for_tool(path: &str, limit: usize) -> Result<String, String> {
+    let canonical = validate_tool_path(path, MAX_PDF_SIZE.min(limit))?;
     let bytes = std::fs::read(&canonical).map_err(|e| format!("Failed to read {path}: {e}"))?;
     Ok(STANDARD.encode(&bytes))
 }
@@ -648,6 +668,18 @@ pub fn anthropic_has_tool_use(blocks: &[AnthropicContentBlock]) -> bool {
         .any(|b| matches!(b, AnthropicContentBlock::ToolUse { .. }))
 }
 
+fn anthropic_output_incomplete(reason: Option<&str>) -> bool {
+    reason == Some("max_tokens")
+}
+
+fn openai_output_incomplete(reason: Option<&str>) -> bool {
+    matches!(reason, Some("length" | "content_filter"))
+}
+
+fn google_output_incomplete(reason: Option<&str>) -> bool {
+    reason.is_some_and(|reason| reason != "STOP")
+}
+
 /// Run the tool-use loop for Anthropic. Returns (text, usage).
 pub async fn anthropic_tool_loop(
     app: &crate::emit::EventBus,
@@ -658,6 +690,7 @@ pub async fn anthropic_tool_loop(
     label: &str,
 ) -> Result<(String, Usage), String> {
     let mut usage = Usage::default();
+    let mut tool_budget = ToolBudget::default();
     let start = std::time::Instant::now();
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -710,6 +743,11 @@ pub async fn anthropic_tool_loop(
 
         if !anthropic_has_tool_use(&body.content) || body.stop_reason.as_deref() != Some("tool_use")
         {
+            if anthropic_output_incomplete(body.stop_reason.as_deref()) {
+                return Err(format!(
+                    "Anthropic truncated {label} because the output-token limit was reached"
+                ));
+            }
             return Ok((anthropic_extract_text(&body.content), usage));
         }
 
@@ -717,7 +755,7 @@ pub async fn anthropic_tool_loop(
         let mut tool_results: Vec<AnthropicContentBlock> = Vec::new();
         for block in &body.content {
             if let AnthropicContentBlock::ToolUse { id, name, input } = block {
-                let result = execute_tool(app, name, input, label, iteration);
+                let result = execute_tool(app, name, input, label, iteration, &mut tool_budget);
                 let (content, is_error) = match result {
                     ToolResult::Text(text) => (serde_json::Value::String(text), None),
                     ToolResult::PdfBase64(data) => (
@@ -790,6 +828,7 @@ pub async fn openai_tool_loop(
     drop_tools_on_400: bool,
 ) -> Result<(String, Usage), String> {
     let mut usage = Usage::default();
+    let mut tool_budget = ToolBudget::default();
     let start = std::time::Instant::now();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let mut tools_retry_used = false;
@@ -866,7 +905,14 @@ pub async fn openai_tool_loop(
                 for tc in tool_calls {
                     let input: serde_json::Value =
                         serde_json::from_str(&tc.function.arguments).unwrap_or_default();
-                    let result = execute_tool(app, &tc.function.name, &input, label, iteration);
+                    let result = execute_tool(
+                        app,
+                        &tc.function.name,
+                        &input,
+                        label,
+                        iteration,
+                        &mut tool_budget,
+                    );
                     let content = match result {
                         ToolResult::Text(text) => text,
                         ToolResult::PdfBase64(_) => {
@@ -892,6 +938,12 @@ pub async fn openai_tool_loop(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        if openai_output_incomplete(choice.finish_reason.as_deref()) {
+            return Err(format!(
+                "{provider} did not complete {label} (finish reason: {})",
+                choice.finish_reason.as_deref().unwrap_or("unknown")
+            ));
+        }
         return Ok((text, usage));
     }
 
@@ -915,6 +967,7 @@ pub async fn google_tool_loop(
         model
     );
     let mut usage = Usage::default();
+    let mut tool_budget = ToolBudget::default();
     let start = std::time::Instant::now();
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
@@ -1002,7 +1055,14 @@ pub async fn google_tool_loop(
             let response_parts: Vec<GooglePart> = function_calls
                 .iter()
                 .map(|fc| {
-                    let result = execute_tool(app, &fc.name, &fc.args, label, iteration);
+                    let result = execute_tool(
+                        app,
+                        &fc.name,
+                        &fc.args,
+                        label,
+                        iteration,
+                        &mut tool_budget,
+                    );
                     let content = match result {
                         ToolResult::Text(text) => text,
                         ToolResult::PdfBase64(_) => {
@@ -1038,6 +1098,13 @@ pub async fn google_tool_loop(
             .collect::<Vec<_>>()
             .join("");
 
+        if google_output_incomplete(candidate.finish_reason.as_deref()) {
+            return Err(format!(
+                "Google did not complete {label} (finish reason: {})",
+                candidate.finish_reason.as_deref().unwrap_or("unknown")
+            ));
+        }
+
         return Ok((text, usage));
     }
 
@@ -1048,6 +1115,12 @@ pub async fn google_tool_loop(
 
 // ── Shared helpers ─────────────────────────────────────────────────
 
+#[derive(Default)]
+struct ToolBudget {
+    read_calls: usize,
+    read_bytes: usize,
+}
+
 /// Execute a tool call.
 fn execute_tool(
     app: &crate::emit::EventBus,
@@ -1055,6 +1128,7 @@ fn execute_tool(
     input: &serde_json::Value,
     label: &str,
     iteration: usize,
+    budget: &mut ToolBudget,
 ) -> ToolResult {
     match name {
         "Read" => {
@@ -1067,14 +1141,33 @@ fn execute_tool(
                 app,
                 format!("[api] {label}: Read tool call #{} -> {path}", iteration + 1),
             );
+            if budget.read_calls >= MAX_TOOL_READ_CALLS {
+                return ToolResult::Error(format!(
+                    "Read limit reached ({MAX_TOOL_READ_CALLS} calls per model invocation)"
+                ));
+            }
+            let remaining = MAX_TOOL_READ_BYTES.saturating_sub(budget.read_bytes);
+            if remaining == 0 {
+                return ToolResult::Error(format!(
+                    "Read byte budget reached ({} MB per model invocation)",
+                    MAX_TOOL_READ_BYTES / 1024 / 1024
+                ));
+            }
+            budget.read_calls += 1;
             if path.to_lowercase().ends_with(".pdf") {
-                match read_pdf_for_tool(path) {
-                    Ok(data) => ToolResult::PdfBase64(data),
+                match read_pdf_for_tool(path, remaining) {
+                    Ok(data) => {
+                        budget.read_bytes += data.len().saturating_mul(3) / 4;
+                        ToolResult::PdfBase64(data)
+                    }
                     Err(e) => ToolResult::Error(e),
                 }
             } else {
-                match read_file_for_tool(path) {
-                    Ok(content) => ToolResult::Text(content),
+                match read_file_for_tool_limited(path, remaining) {
+                    Ok(content) => {
+                        budget.read_bytes += content.len();
+                        ToolResult::Text(content)
+                    }
                     Err(e) => ToolResult::Error(e),
                 }
             }
@@ -1145,15 +1238,30 @@ mod tests {
     use std::io::Write as _;
 
     #[test]
-    fn validate_tool_path_allows_temp_files() {
-        // Regression: env::temp_dir() must be canonicalized before the prefix
-        // check — on macOS $TMPDIR is under /var (a symlink to /private/var),
-        // so the raw comparison rejected every temp file in direct-API mode.
+    fn incomplete_provider_responses_are_identified() {
+        assert!(anthropic_output_incomplete(Some("max_tokens")));
+        assert!(!anthropic_output_incomplete(Some("end_turn")));
+        assert!(openai_output_incomplete(Some("length")));
+        assert!(openai_output_incomplete(Some("content_filter")));
+        assert!(!openai_output_incomplete(Some("stop")));
+        assert!(google_output_incomplete(Some("MAX_TOKENS")));
+        assert!(!google_output_incomplete(Some("STOP")));
+    }
+
+    #[test]
+    fn validate_tool_path_allows_explicit_private_temp_root() {
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(b"paper text").unwrap();
         tmp.flush().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
+        set_allowed_dirs(vec![tmp
+            .path()
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .to_string()]);
         validate_tool_path(&path, 1024).expect("temp file should be readable");
+        set_allowed_dirs(vec![]);
     }
 
     #[test]
@@ -1161,6 +1269,7 @@ mod tests {
         // Cargo.toml in the crate root exists but is neither in the temp dir
         // nor in ALLOWED_DIRS, so it must be denied.
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        set_allowed_dirs(vec![]);
         let err = validate_tool_path(path, usize::MAX).unwrap_err();
         assert!(err.contains("Access denied"), "{err}");
     }

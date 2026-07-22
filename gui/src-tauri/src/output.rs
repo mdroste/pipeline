@@ -78,6 +78,9 @@ fn format_secs(total_secs: u64) -> String {
 /// used only for a labelled *estimate* in the run summary, never billing.
 /// Order matters: more specific names are checked before broad ones.
 pub fn model_price(model: &str) -> Option<(f64, f64)> {
+    if let Some(price) = crate::model_catalog::price_for_model(model) {
+        return Some(price);
+    }
     let m = model.to_ascii_lowercase();
     // (needle, input $/Mtok, output $/Mtok)
     const TABLE: &[(&str, f64, f64)] = &[
@@ -180,7 +183,12 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
                 fmt_tokens(o.output_tokens)
             )
         };
-        let cost_cell = if provider_in_api_mode(settings, &o.provider) {
+        let api_transport = if o.model_transport.is_empty() {
+            provider_in_api_mode(settings, &o.provider)
+        } else {
+            o.model_transport == "api"
+        };
+        let cost_cell = if api_transport {
             match estimate_cost(&o.model, o.input_tokens, o.output_tokens) {
                 Some(c) => {
                     total_cost += c;
@@ -222,6 +230,37 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
     md.push_str(&format!(
         "| **Total** | | | **{total_tokens}** | **{total_cost_cell}** |\n\n"
     ));
+    let provenance: Vec<String> = outputs
+        .iter()
+        .filter(|output| !output.model_source.is_empty())
+        .map(|output| {
+            format!(
+                "- **{}**: {} via {} `{}`{}",
+                output.step_label,
+                if output.model_policy.is_empty() {
+                    "unspecified"
+                } else {
+                    &output.model_policy
+                },
+                if output.model_transport.is_empty() {
+                    "unknown transport"
+                } else {
+                    &output.model_transport
+                },
+                output.model_source,
+                if output.model_catalog_updated_at.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (catalog {})", output.model_catalog_updated_at)
+                },
+            )
+        })
+        .collect();
+    if !provenance.is_empty() {
+        md.push_str("<details><summary>Model resolution provenance</summary>\n\n");
+        md.push_str(&provenance.join("\n"));
+        md.push_str("\n\n</details>\n\n");
+    }
     if any_cost {
         md.push_str(
             "*Cost is an estimate at published API list prices for steps run through a direct API. \
@@ -259,29 +298,9 @@ pub fn render_markdown(
     }
 
     let provider = capitalize(&settings.preferred_provider);
-    let model = match settings.preferred_provider.as_str() {
-        "codex" => {
-            if settings.codex_model.is_empty() {
-                "default".to_string()
-            } else {
-                settings.codex_model.clone()
-            }
-        }
-        "gemini" => {
-            if settings.gemini_model.is_empty() {
-                "default".to_string()
-            } else {
-                settings.gemini_model.clone()
-            }
-        }
-        _ => {
-            if settings.claude_model.is_empty() {
-                "default".to_string()
-            } else {
-                settings.claude_model.clone()
-            }
-        }
-    };
+    let model = settings
+        .model_selection(&settings.preferred_provider)
+        .label();
     let effort = match settings.preferred_provider.as_str() {
         "codex" => {
             if settings.codex_effort.is_empty() {

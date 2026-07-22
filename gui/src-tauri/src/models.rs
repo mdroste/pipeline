@@ -236,6 +236,19 @@ pub struct StepOutput {
     /// Provider that ran this step ("claude", "codex", "gemini", "local").
     #[serde(default)]
     pub provider: String,
+    /// Transport used by the provider ("cli" or "api").
+    #[serde(default)]
+    pub model_transport: String,
+    /// Selection policy recorded for reproducibility (Automatic/role/pinned).
+    #[serde(default)]
+    pub model_policy: String,
+    /// Where the model catalog came from (installed_cli, provider_api, cache,
+    /// bundled_policy, or provider_default).
+    #[serde(default)]
+    pub model_source: String,
+    /// Catalog timestamp used to resolve this model.
+    #[serde(default)]
+    pub model_catalog_updated_at: String,
     /// True when the step was skipped by its `run_if` guard. The entry is kept
     /// (so dependents' `{step:id}` placeholders resolve) but is not real report
     /// content.

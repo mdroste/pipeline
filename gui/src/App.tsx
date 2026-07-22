@@ -207,7 +207,7 @@ function App() {
   const launch = (variables?: Record<string, string>, extraInputs?: Record<string, string>) => {
     setPage("main");
     setArtifact("report");
-    startPipeline(paperPath ?? "", false, variables, extraInputs);
+    startPipeline(paperPath ?? "", true, variables, extraInputs);
   };
 
   const handleGenerate = () => {

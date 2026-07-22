@@ -2,6 +2,45 @@
 
 export type Phase = "parallel" | "sequential";
 
+export type ModelSelection =
+  | { mode: "automatic" }
+  | { mode: "role"; role: string }
+  | { mode: "pinned"; model: string };
+
+export interface ModelCatalogEntry {
+  id: string;
+  display_name: string;
+  description: string;
+  is_default: boolean;
+  supported_efforts: string[];
+  capabilities: string[];
+  deprecated: boolean;
+  replacement?: string | null;
+  input_price_per_million?: number | null;
+  output_price_per_million?: number | null;
+}
+
+export interface ModelRole {
+  id: string;
+  label: string;
+  description: string;
+  model: string;
+}
+
+export interface ModelCatalog {
+  provider: string;
+  transport: "cli" | "api";
+  source: string;
+  source_version: string;
+  fetched_at: string;
+  stale: boolean;
+  warning?: string | null;
+  default_model?: string | null;
+  recommended_model?: string | null;
+  models: ModelCatalogEntry[];
+  roles: ModelRole[];
+}
+
 /** Deterministic guard controlling whether a step runs (mirrors RunCondition). */
 export type RunCondition =
   | { kind: "output_matches"; step: string; pattern: string; negate?: boolean }
@@ -17,8 +56,11 @@ export interface StepConfig {
   agents: string[];
   /** Per-step model override; empty/undefined = use the global setting. */
   model?: string;
+  /** Provider/transport-specific model policies (for example codex:cli). */
+  model_overrides?: Record<string, ModelSelection>;
   /** Per-step effort override; empty/undefined = use the global setting. */
   effort?: string;
+  effort_overrides?: Record<string, string>;
   /** Explicit upstream dependencies (step ids). Empty = implicit adjacency schedule. */
   inputs?: string[];
   /** Optional guard: skip the step unless this condition holds. */
@@ -99,6 +141,10 @@ export interface StepOutput {
   model?: string;
   /** Provider that ran this step. */
   provider?: string;
+  model_transport?: string;
+  model_policy?: string;
+  model_source?: string;
+  model_catalog_updated_at?: string;
   /** True when the step was skipped by its run_if guard. */
   skipped?: boolean;
 }
@@ -257,6 +303,8 @@ export interface WatchStatus {
   active: boolean;
   folder: string;
   processed: BatchJob[];
+  processed_total: number;
+  failed_total: number;
 }
 
 export interface PipelineResult {
@@ -272,10 +320,16 @@ export interface Settings {
   max_workers: number;
   active_profile: string;
   claude_model: string;
+  claude_cli_model_selection?: ModelSelection;
+  claude_api_model_selection?: ModelSelection;
   claude_effort: string;
   codex_model: string;
+  codex_cli_model_selection?: ModelSelection;
+  codex_api_model_selection?: ModelSelection;
   codex_effort: string;
   gemini_model: string;
+  gemini_cli_model_selection?: ModelSelection;
+  gemini_api_model_selection?: ModelSelection;
   pdf_extractor: string;
   marker_disable_ocr: boolean;
   marker_disable_images: boolean;

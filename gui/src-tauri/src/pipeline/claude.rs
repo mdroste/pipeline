@@ -1,13 +1,221 @@
 use std::io::Write;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
-use tempfile::NamedTempFile;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tempfile::TempDir;
+use tokio::io::BufReader;
 use tokio::process::Command;
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Claude to read it.
-const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
+pub(crate) const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
+
+/// A CLI-safe prompt argument. Long prompts live in a private temporary
+/// directory rather than directly under the process-wide temp directory, so
+/// providers can grant access to only this call's prompt file.
+pub(crate) struct PreparedCliPrompt {
+    pub argument: String,
+    pub path: Option<String>,
+    pub read_root: Option<String>,
+    _temp_dir: Option<TempDir>,
+}
+
+pub(crate) fn prepare_cli_prompt(prompt: &str) -> Result<PreparedCliPrompt, String> {
+    if prompt.len() <= MAX_DIRECT_PROMPT_LENGTH {
+        return Ok(PreparedCliPrompt {
+            argument: prompt.to_string(),
+            path: None,
+            read_root: None,
+            _temp_dir: None,
+        });
+    }
+
+    let temp_dir = tempfile::Builder::new()
+        .prefix("pipeline_prompt_")
+        .tempdir()
+        .map_err(|e| format!("Failed to create prompt temp directory: {e}"))?;
+    let prompt_path = temp_dir.path().join("prompt.txt");
+    let mut file = std::fs::File::create(&prompt_path)
+        .map_err(|e| format!("Failed to create prompt temp file: {e}"))?;
+    file.write_all(prompt.as_bytes())
+        .map_err(|e| format!("Failed to write prompt temp file: {e}"))?;
+    file.flush()
+        .map_err(|e| format!("Failed to flush prompt temp file: {e}"))?;
+
+    let path = normalize_cli_root(&prompt_path.to_string_lossy())
+        .ok_or_else(|| "Failed to resolve prompt temp file".to_string())?;
+    let read_root = normalize_cli_root(&temp_dir.path().to_string_lossy())
+        .ok_or_else(|| "Failed to resolve prompt temp directory".to_string())?;
+    Ok(PreparedCliPrompt {
+        argument: format!("Read the instructions at {path} and follow them exactly."),
+        path: Some(path),
+        read_root: Some(read_root),
+        _temp_dir: Some(temp_dir),
+    })
+}
+
+/// Normalize a path for CLI arguments. Existing paths are canonicalized
+/// (which resolves macOS `/var` aliases and Windows extended-path prefixes);
+/// absolute paths with another platform's syntax are normalized lexically so
+/// request construction can be tested deterministically on every host.
+pub(crate) fn normalize_cli_root(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let slash_path = trimmed.replace('\\', "/");
+    for candidate in [
+        std::path::Path::new(trimmed),
+        std::path::Path::new(&slash_path),
+    ] {
+        if let Ok(canonical) = candidate.canonicalize() {
+            return Some(normalize_canonical_cli_path(&canonical.to_string_lossy()));
+        }
+    }
+
+    if is_cli_absolute(&slash_path) {
+        Some(normalize_absolute_lexically(&slash_path))
+    } else {
+        None
+    }
+}
+
+/// Platform-independent parent extraction for absolute prompt paths. Rust's
+/// host `Path` parser does not recognize Windows drive paths when tests run on
+/// macOS/Linux, so normalize separators before finding the parent.
+pub(crate) fn cli_parent_dir(path: &str) -> Option<String> {
+    let normalized = path.trim().replace('\\', "/");
+    let (parent, _) = normalized.rsplit_once('/')?;
+    let parent = if parent.is_empty() { "/" } else { parent };
+    normalize_cli_root(parent)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CliWorkspacePlan {
+    pub cwd: Option<String>,
+    pub read_dirs: Vec<String>,
+}
+
+/// Select the provider cwd and the additional read-only roots. The artifact
+/// directory wins as cwd in write mode. Roots already covered by cwd, or by a
+/// less-specific root in the same list, are omitted.
+pub(crate) fn plan_cli_workspace(
+    cwd: Option<&str>,
+    extra_read_dirs: &[&str],
+    transient_read_root: Option<&str>,
+    write_dir: Option<&str>,
+) -> Result<CliWorkspacePlan, String> {
+    let mut effective_cwd = write_dir
+        .or(cwd)
+        .or(transient_read_root)
+        .map(|path| {
+            normalize_cli_root(path)
+                .ok_or_else(|| format!("Provider working directory must be absolute: {path}"))
+        })
+        .transpose()?;
+    let mut roots: Vec<String> = extra_read_dirs
+        .iter()
+        .copied()
+        .chain(transient_read_root)
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| {
+            normalize_cli_root(path)
+                .ok_or_else(|| format!("Provider read directory must be absolute: {path}"))
+        })
+        .collect::<Result<_, _>>()?;
+    // When the caller has no distinct cwd, use one of its explicit readable
+    // roots instead of falling back to the process-wide temp directory.
+    if effective_cwd.is_none() {
+        effective_cwd = roots.first().cloned();
+    }
+    roots.retain(|root| {
+        effective_cwd
+            .as_deref()
+            .map_or(true, |base| !same_or_descendant(root, base))
+    });
+
+    roots.sort_by(|a, b| {
+        path_depth(a)
+            .cmp(&path_depth(b))
+            .then_with(|| path_sort_key(a).cmp(&path_sort_key(b)))
+    });
+    let mut minimal: Vec<String> = Vec::new();
+    for root in roots {
+        if !minimal.iter().any(|base| same_or_descendant(&root, base)) {
+            minimal.push(root);
+        }
+    }
+    minimal.sort_by_key(|p| path_sort_key(p));
+
+    Ok(CliWorkspacePlan {
+        cwd: effective_cwd,
+        read_dirs: minimal,
+    })
+}
+
+fn normalize_canonical_cli_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    if let Some(rest) = normalized.strip_prefix("//?/UNC/") {
+        format!("//{rest}")
+    } else if let Some(rest) = normalized.strip_prefix("//?/") {
+        rest.to_string()
+    } else {
+        normalized
+    }
+}
+
+fn is_cli_absolute(path: &str) -> bool {
+    path.starts_with('/')
+        || (path.as_bytes().get(1) == Some(&b':')
+            && path.as_bytes().get(2) == Some(&b'/')
+            && path.as_bytes()[0].is_ascii_alphabetic())
+}
+
+fn normalize_absolute_lexically(path: &str) -> String {
+    let (prefix, rest) = if path.starts_with("//") {
+        ("//".to_string(), path.trim_start_matches('/'))
+    } else if path.as_bytes().get(1) == Some(&b':') {
+        (path[..2].to_string(), path[2..].trim_start_matches('/'))
+    } else {
+        ("/".to_string(), path.trim_start_matches('/'))
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    for part in rest.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    match prefix.as_str() {
+        "/" => format!("/{}", parts.join("/")),
+        "//" => format!("//{}", parts.join("/")),
+        drive => format!("{drive}/{}", parts.join("/")),
+    }
+}
+
+fn path_sort_key(path: &str) -> String {
+    if path.as_bytes().get(1) == Some(&b':') || path.starts_with("//") {
+        path.to_ascii_lowercase()
+    } else {
+        path.to_string()
+    }
+}
+
+fn path_depth(path: &str) -> usize {
+    path.split('/').filter(|part| !part.is_empty()).count()
+}
+
+fn same_or_descendant(path: &str, root: &str) -> bool {
+    let path = path_sort_key(path.trim_end_matches('/'));
+    let root = path_sort_key(root.trim_end_matches('/'));
+    path == root
+        || path
+            .strip_prefix(&root)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
 
 /// Per-call model/effort overrides. When fields are `Some(non-empty)`, they
 /// take precedence over the corresponding global settings for this single call.
@@ -17,6 +225,10 @@ const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
 pub struct LlmOverrides<'a> {
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
+    /// The caller already resolved the structured model policy. When true,
+    /// `model: None` intentionally means CLI Automatic and must not fall back
+    /// to a legacy settings string.
+    pub model_resolved: bool,
     /// PDF to attach to the request on direct-API paths. CLI paths ignore
     /// this — there the prompt references the file path and the CLI's Read
     /// tool handles PDFs natively.
@@ -30,6 +242,9 @@ pub struct LlmOverrides<'a> {
     /// each provider's sandbox mechanism — and callers should also set the
     /// subprocess cwd to this directory. `None` = read-only call.
     pub write_dir: Option<&'a str>,
+    /// Immutable settings snapshot captured at run start. When absent (for
+    /// standalone helper calls), settings are loaded normally.
+    pub settings: Option<&'a crate::settings::Settings>,
 }
 
 impl<'a> LlmOverrides<'a> {
@@ -101,10 +316,10 @@ pub fn emit_stderr_tail(app: &crate::emit::EventBus, tail: &[String]) {
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
 ///
 /// `extra_read_dirs` are passed through as `--add-dir` flags so the Read
-/// tool can reach paths outside the cwd.  The system temp dir is always
-/// added because we routinely write prompts and orientation maps there.
-/// Paths are normalized to forward slashes so Windows backslashes don't
-/// confuse Claude's internal path normalization.
+/// tool can reach paths outside the cwd. Long prompts add only their private
+/// temp directory; run inputs are expected to arrive in an isolated run temp
+/// directory supplied by the caller. Paths are canonicalized where possible
+/// and normalized to forward slashes for Windows CLI compatibility.
 #[allow(clippy::too_many_arguments)]
 pub async fn call_claude(
     app: &crate::emit::EventBus,
@@ -125,37 +340,34 @@ pub async fn call_claude(
     if !tools.iter().any(|t| t == "Read") {
         tools.push("Read".to_string());
     }
+    let prepared_prompt = prepare_cli_prompt(prompt)?;
+    if let Some(path) = &prepared_prompt.path {
+        log(
+            app,
+            format!("Wrote {} chars to temp file: {path}", prompt.len()),
+        );
+    }
+    let workspace = plan_cli_workspace(
+        cwd,
+        extra_read_dirs,
+        prepared_prompt.read_root.as_deref(),
+        overrides.write_dir,
+    )?;
+
     // When file writes are enabled, scope them: replace any bare Write/Edit
     // with an Edit rule confined to the artifact dir. An Edit(path) rule
     // governs the Write, Edit, and NotebookEdit tools together, and `//`
     // anchors an absolute path in Claude Code's gitignore-style permission
     // syntax (a single `/` would be project-root-relative).
-    if let Some(wd) = overrides.write_dir {
+    if let Some(wd) = workspace
+        .cwd
+        .as_deref()
+        .filter(|_| overrides.write_dir.is_some())
+    {
         tools.retain(|t| t != "Write" && t != "Edit");
         tools.push(format!("Edit({}/**)", absolute_rule_path(wd)));
     }
-    let mut _temp_file: Option<NamedTempFile> = None;
-
-    if prompt.len() > MAX_DIRECT_PROMPT_LENGTH {
-        let mut tmp = NamedTempFile::with_prefix("pipeline_prompt_")
-            .map_err(|e| format!("Failed to create temp file: {e}"))?;
-        tmp.write_all(prompt.as_bytes())
-            .map_err(|e| format!("Failed to write temp file: {e}"))?;
-        tmp.flush()
-            .map_err(|e| format!("Failed to flush temp file: {e}"))?;
-
-        let path = tmp.path().to_string_lossy().replace('\\', "/");
-        let bytes = prompt.len();
-        log(app, format!("Wrote {bytes} chars to temp file: {path}"));
-
-        cmd_args.push(format!(
-            "Read the instructions at {path} and follow them exactly."
-        ));
-
-        _temp_file = Some(tmp);
-    } else {
-        cmd_args.push(prompt.to_string());
-    }
+    cmd_args.push(prepared_prompt.argument.clone());
 
     // Always pass --allowedTools so Claude never gets default tools
     // (Edit, Write, Bash, etc.). When the list is empty, pass "none"
@@ -178,19 +390,9 @@ pub async fn call_claude(
     cmd_args.push("--permission-mode".to_string());
     cmd_args.push("acceptEdits".to_string());
 
-    // Grant Read access to the system temp dir (where temp prompt files,
-    // extracted paper text, and orientation maps live) plus any caller-
-    // provided directories (typically the paper's parent dir).  Forward
-    // slashes only — Claude's internal path normalization mishandles raw
-    // Windows backslash paths.
-    let mut add_dirs: Vec<String> = Vec::with_capacity(extra_read_dirs.len() + 1);
-    add_dirs.push(std::env::temp_dir().to_string_lossy().replace('\\', "/"));
-    for dir in extra_read_dirs {
-        add_dirs.push(dir.replace('\\', "/"));
-    }
-    add_dirs.sort();
-    add_dirs.dedup();
-    for dir in &add_dirs {
+    // Grant Read access only to this run's explicit source/input roots and,
+    // for a long prompt, that call's private prompt directory.
+    for dir in &workspace.read_dirs {
         cmd_args.push("--add-dir".to_string());
         cmd_args.push(dir.clone());
     }
@@ -199,8 +401,9 @@ pub async fn call_claude(
     // auto-approves file edits in the cwd and --add-dir directories, so
     // when writing is enabled, explicitly deny edits there. Deny rules
     // outrank both allow rules and the permission mode.
-    if overrides.write_dir.is_some() && !add_dirs.is_empty() {
-        let denies: Vec<String> = add_dirs
+    if overrides.write_dir.is_some() && !workspace.read_dirs.is_empty() {
+        let denies: Vec<String> = workspace
+            .read_dirs
             .iter()
             .map(|d| format!("Edit({}/**)", absolute_rule_path(d)))
             .collect();
@@ -217,8 +420,15 @@ pub async fn call_claude(
     cmd_args.push("json".to_string());
 
     // Apply Claude Code settings (model, effort) with optional per-step overrides.
-    let settings = crate::settings::load();
-    let model_src = overrides.model.unwrap_or(settings.claude_model.as_str());
+    let settings = overrides
+        .settings
+        .cloned()
+        .unwrap_or_else(crate::settings::load);
+    let model_src = if overrides.model_resolved {
+        overrides.model.unwrap_or("")
+    } else {
+        overrides.model.unwrap_or(settings.claude_model.as_str())
+    };
     let model = crate::settings::sanitize_cli_arg(model_src);
     if !model.is_empty() {
         cmd_args.push("--model".to_string());
@@ -248,10 +458,9 @@ pub async fn call_claude(
     // In write mode, run from the artifact dir: with acceptEdits, edits are
     // auto-approved in the cwd, and the scoped allow/deny rules above keep
     // everything else closed.
-    let effective_cwd = overrides.write_dir.or(cwd);
-    let mut cmd = build_silent_command("claude", effective_cwd);
-    cmd.args(&cmd_args)
-        .stdin(Stdio::null())
+    let effective_cwd = workspace.cwd.as_deref();
+    let mut cmd = build_provider_command("claude", effective_cwd, &cmd_args)?;
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -274,8 +483,16 @@ pub async fn call_claude(
     let stderr_task = tokio::spawn(super::logging::with_session_opt(sess.clone(), async move {
         let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         if let Some(stderr) = stderr {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
+            let mut reader = BufReader::new(stderr);
+            while let Ok(Some(record)) =
+                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
+                    .await
+            {
+                let line = if record.truncated {
+                    format!("{}… [line truncated]", record.text)
+                } else {
+                    record.text
+                };
                 if !line.trim().is_empty() {
                     verbose_log(&app_stderr, format!("[stderr] {line}"));
                     if tail.len() >= STDERR_TAIL_LINES {
@@ -294,8 +511,15 @@ pub async fn call_claude(
     let stdout_task = tokio::spawn(super::logging::with_session_opt(sess, async move {
         let mut collected = String::new();
         if let Some(stdout) = stdout {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
+            let mut reader = BufReader::new(stdout);
+            while let Ok(Some(record)) =
+                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
+                    .await
+            {
+                let line = record.text;
+                if record.truncated {
+                    log(&app_stdout, "WARNING: provider emitted an oversized stdout record; record was truncated");
+                }
                 collected.push_str(&line);
                 collected.push('\n');
                 if collected.len() > MAX_STDOUT_BYTES {
@@ -418,7 +642,9 @@ pub async fn call_claude(
 /// POSIX-style normalization of Windows paths.
 fn absolute_rule_path(dir: &str) -> String {
     let d = dir.trim_end_matches('/');
-    if let Some(stripped) = d.strip_prefix('/') {
+    if d.starts_with("//") {
+        d.to_string()
+    } else if let Some(stripped) = d.strip_prefix('/') {
         format!("//{stripped}")
     } else {
         format!("//{d}")
@@ -506,8 +732,39 @@ pub async fn call_llm(
     // frontend can separate concurrently running headless invocations.
     let session_id = super::logging::next_session_id();
     super::logging::with_session(session_id, label, async move {
-        let settings = crate::settings::load();
+        let settings = overrides
+            .settings
+            .cloned()
+            .unwrap_or_else(crate::settings::load);
         let provider = provider_override.unwrap_or(&settings.preferred_provider);
+
+        // Resolve a durable policy at the dispatch boundary. API Automatic
+        // becomes a concrete available ID; CLI Automatic intentionally omits
+        // the model flag so an older installed CLI keeps using its own default.
+        let requested = overrides
+            .model
+            .map(crate::settings::ModelSelection::from_legacy);
+        let resolution = if overrides.model_resolved {
+            None
+        } else {
+            Some(crate::model_catalog::resolve(provider, &settings, requested.as_ref()).await?)
+        };
+        let mut effective_overrides = overrides.clone();
+        if let Some(resolution) = &resolution {
+            effective_overrides.model = resolution.command_model.as_deref();
+            effective_overrides.model_resolved = true;
+            if let Some(effort) = effective_overrides.effort {
+                if !resolution.supported_efforts.is_empty()
+                    && !resolution
+                        .supported_efforts
+                        .iter()
+                        .any(|item| item == effort)
+                {
+                    effective_overrides.effort = None;
+                }
+            }
+        }
+        let overrides = &effective_overrides;
 
         // Direct API path: bypass CLI subprocess when an API key is configured
         match provider {
@@ -568,11 +825,17 @@ pub async fn call_llm(
             _ => {}
         }
 
-        // Subprocess fallback. extra_read_dirs is currently consumed only by
-        // call_claude — codex and gemini sandbox via --sandbox / their own
-        // mechanisms and don't accept --add-dir.
+        // Subprocess fallback. Claude uses --add-dir and Gemini uses
+        // --include-directories for the same explicit read-root set. Codex's
+        // sandbox restricts writes, not reads, so it needs no equivalent flag.
         match provider {
             "codex" => {
+                let codex_cwd = cwd.or_else(|| {
+                    extra_read_dirs
+                        .iter()
+                        .copied()
+                        .find(|path| !path.trim().is_empty())
+                });
                 super::codex::call_codex(
                     app,
                     prompt,
@@ -581,7 +844,7 @@ pub async fn call_llm(
                     output_format,
                     timeout_secs,
                     label,
-                    cwd,
+                    codex_cwd,
                     overrides,
                 )
                 .await
@@ -596,6 +859,7 @@ pub async fn call_llm(
                     timeout_secs,
                     label,
                     cwd,
+                    extra_read_dirs,
                     overrides,
                 )
                 .await
@@ -642,6 +906,32 @@ pub fn build_silent_command(program: &str, cwd: Option<&str>) -> Command {
     Command::from(std_cmd)
 }
 
+/// Resolve an installed provider CLI and build a tokio command without
+/// passing provider arguments through a shell. On Windows, npm `.cmd` shims
+/// are represented as `node.exe <validated-entrypoint>` by the resolver.
+pub(crate) fn build_provider_command(
+    program: &str,
+    cwd: Option<&str>,
+    args: &[String],
+) -> Result<Command, String> {
+    let resolved = crate::deps::resolve_command(program).ok_or_else(|| {
+        format!(
+            "No launchable {program} CLI was found on PATH. On Windows, reinstall it with npm if its command shim is missing or damaged."
+        )
+    })?;
+    let mut std_cmd = resolved.command(args);
+    configure_silent_command(&mut std_cmd);
+    match cwd {
+        Some(dir) => {
+            std_cmd.current_dir(dir);
+        }
+        None => {
+            std_cmd.current_dir(std::env::temp_dir());
+        }
+    }
+    Ok(Command::from(std_cmd))
+}
+
 /// Apply the shared environment and process-isolation flags to a standard
 /// command. Extraction uses this directly because it runs on blocking worker
 /// threads; async provider and installer commands use `build_silent_command`.
@@ -663,7 +953,7 @@ pub fn configure_silent_command(std_cmd: &mut std::process::Command) {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_claude_result;
+    use super::*;
 
     #[test]
     #[cfg(unix)]
@@ -709,5 +999,99 @@ mod tests {
         let (text, usage) = parse_claude_result(model);
         assert_eq!(text, model);
         assert_eq!(usage, None);
+    }
+
+    #[test]
+    fn folder_orientation_uses_folder_as_cwd_without_broadening_roots() {
+        let plan = plan_cli_workspace(
+            Some("/Users/Mike/Documents/Paper Folder"),
+            &["/Users/Mike/Documents/Paper Folder"],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.cwd.as_deref(),
+            Some("/Users/Mike/Documents/Paper Folder")
+        );
+        assert!(plan.read_dirs.is_empty());
+    }
+
+    #[test]
+    fn windows_write_workspace_keeps_all_read_roots_and_artifacts_as_cwd() {
+        let plan = plan_cli_workspace(
+            Some(r"C:\Users\Mike\Documents\Paper"),
+            &[
+                r"C:\Users\Mike\Documents\Paper",
+                r"C:\Users\Mike\AppData\Local\Temp\pipeline_run",
+                r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\named",
+                r"D:\Shared Inputs\Rubric",
+            ],
+            Some(r"C:\Users\Mike\AppData\Local\Temp\pipeline_prompt"),
+            Some(r"C:\Users\Mike\.pipeline\runs\r1\artifacts"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.cwd.as_deref(),
+            Some("C:/Users/Mike/.pipeline/runs/r1/artifacts")
+        );
+        assert_eq!(
+            plan.read_dirs,
+            vec![
+                "C:/Users/Mike/AppData/Local/Temp/pipeline_prompt",
+                "C:/Users/Mike/AppData/Local/Temp/pipeline_run",
+                "C:/Users/Mike/Documents/Paper",
+                "D:/Shared Inputs/Rubric",
+            ]
+        );
+    }
+
+    #[test]
+    fn invalid_write_workspace_fails_closed() {
+        let error = plan_cli_workspace(Some("/safe/source"), &[], None, Some("relative/artifacts"))
+            .unwrap_err();
+        assert!(error.contains("working directory must be absolute"));
+    }
+
+    #[test]
+    fn long_prompt_gets_its_own_read_root() {
+        let prompt = "x".repeat(MAX_DIRECT_PROMPT_LENGTH + 1);
+        let prepared = prepare_cli_prompt(&prompt).unwrap();
+        let path = prepared.path.as_deref().unwrap();
+        let root = prepared.read_root.as_deref().unwrap();
+        assert_eq!(cli_parent_dir(path).as_deref(), Some(root));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), prompt);
+
+        let isolated = plan_cli_workspace(None, &[], Some(root), None).unwrap();
+        assert_eq!(isolated.cwd.as_deref(), Some(root));
+        assert!(isolated.read_dirs.is_empty());
+
+        let alongside_source =
+            plan_cli_workspace(Some("/Users/Mike/Paper"), &[], Some(root), None).unwrap();
+        assert_eq!(alongside_source.read_dirs, vec![root.to_string()]);
+        assert!(!alongside_source
+            .read_dirs
+            .contains(&std::env::temp_dir().to_string_lossy().replace('\\', "/")));
+    }
+
+    #[test]
+    fn cli_paths_normalize_mac_windows_and_permission_rules() {
+        assert_eq!(
+            normalize_cli_root("/Users/Mike/Documents/../Paper").as_deref(),
+            Some("/Users/Mike/Paper")
+        );
+        assert_eq!(
+            normalize_cli_root(r"C:\Users\Mike\Documents\..\Paper\").as_deref(),
+            Some("C:/Users/Mike/Paper")
+        );
+        assert_eq!(
+            absolute_rule_path("/Users/Mike/Paper"),
+            "//Users/Mike/Paper"
+        );
+        assert_eq!(
+            absolute_rule_path("C:/Users/Mike/Paper"),
+            "//C:/Users/Mike/Paper"
+        );
     }
 }

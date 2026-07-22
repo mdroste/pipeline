@@ -77,6 +77,10 @@ jobs:
         working-directory: gui
         run: npm ci
 
+      - name: Release metadata tests
+        working-directory: gui
+        run: npm run test:release
+
       - name: Cargo test
         working-directory: gui/src-tauri
         run: cargo test

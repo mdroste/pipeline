@@ -12,6 +12,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "prepare:release-resources": "node ../scripts/release/prepare-notices.mjs",
+    "test:release": "node --test ../scripts/release/release.test.mjs && node ../scripts/release/validate-release-identity.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

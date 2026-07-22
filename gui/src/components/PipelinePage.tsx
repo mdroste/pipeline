@@ -11,6 +11,9 @@ import type {
   ExportEnvelope,
   VarSpec,
   InputSlot,
+  Settings,
+  ModelCatalog,
+  ModelSelection,
 } from "../lib/types";
 import { reorderSteps } from "../lib/pipelineHelpers";
 import WaveDiagram, { type WaveSelection } from "./WaveDiagram";
@@ -37,6 +40,8 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [editing, setEditing] = useState<EditingMode>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
 
   // Profile state
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -86,6 +91,24 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
       .catch((e) => {
         console.error(e);
         setLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    invoke<{ settings: Settings; warnings: string[] }>("get_settings")
+      .then((response) => {
+        setSettings(response.settings);
+        for (const provider of ["claude", "codex", "gemini", "local"]) {
+          invoke<ModelCatalog>("get_model_catalog", {
+            provider,
+            settings: response.settings,
+            refresh: false,
+          }).then((catalog) => setCatalogs((old) => ({ ...old, [provider]: catalog }))).catch(() => {});
+        }
+      })
+      .catch(() => {
+        // Model overrides remain usable with legacy fields against an older
+        // backend; catalog loading is an enhancement, not an editor blocker.
       });
   }, []);
 
@@ -242,7 +265,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   const handleSave = async () => {
     setSaving(true); setSaved(false);
     try {
-      await invoke("save_pipeline_config", { config });
+      await invoke("save_pipeline_config", { config, profileId: activeProfile });
       setSaved(true); setDirty(false);
       await refreshProfiles();
       onProfileChange?.();
@@ -286,7 +309,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
     });
     if (path) {
       try {
-        if (dirty) await invoke("save_pipeline_config", { config });
+        if (dirty) await invoke("save_pipeline_config", { config, profileId: activeProfile });
         await invoke("export_profile", { id: activeProfile, path });
       } catch (e) { alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
@@ -299,7 +322,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
     });
     if (path) {
       try {
-        if (dirty) await invoke("save_pipeline_config", { config });
+        if (dirty) await invoke("save_pipeline_config", { config, profileId: activeProfile });
         await invoke("export_bundle", { path });
       } catch (e) { alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`); }
     }
@@ -937,6 +960,8 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
               />
               <ModelOverrides
                 step={editingStep}
+                settings={settings}
+                catalogs={catalogs}
                 onChange={(patch) => updateStep(editingStep.id, patch)}
               />
               <AdvancedStepOptions
@@ -1281,6 +1306,12 @@ function StepRow({
   }
   if (step.model) badges.push(`model: ${step.model}`);
   if (step.effort) badges.push(`effort: ${step.effort}`);
+  if (Object.keys(step.model_overrides ?? {}).length) {
+    badges.push(`${Object.keys(step.model_overrides ?? {}).length} model ${Object.keys(step.model_overrides ?? {}).length === 1 ? "policy" : "policies"}`);
+  }
+  if (Object.keys(step.effort_overrides ?? {}).length) {
+    badges.push(`${Object.keys(step.effort_overrides ?? {}).length} effort ${Object.keys(step.effort_overrides ?? {}).length === 1 ? "override" : "overrides"}`);
+  }
 
   return (
     <div
@@ -1412,13 +1443,57 @@ function DropZone({
 
 function ModelOverrides({
   step,
+  settings,
+  catalogs,
   onChange,
 }: {
   step: StepConfig;
+  settings: Settings | null;
+  catalogs: Record<string, ModelCatalog>;
   onChange: (patch: Partial<StepConfig>) => void;
 }) {
-  const hasOverride = !!(step.model || step.effort);
+  const hasOverride = !!(step.model || step.effort || Object.keys(step.model_overrides ?? {}).length || Object.keys(step.effort_overrides ?? {}).length);
   const [open, setOpen] = useState(hasOverride);
+  const providers = Array.from(new Set(
+    (step.agents?.length ? step.agents : [settings?.preferred_provider || "claude"])
+      .map((provider) => provider || "claude"),
+  ));
+
+  const transportFor = (provider: string): "cli" | "api" => {
+    if (!settings || provider === "local") return "api";
+    if (provider === "claude") return settings.anthropic_api_key ? "api" : "cli";
+    if (provider === "codex") return settings.openai_api_key ? "api" : "cli";
+    return settings.google_api_key ? "api" : "cli";
+  };
+
+  const encode = (selection: ModelSelection | undefined) => {
+    if (!selection) return "inherit";
+    if (selection.mode === "automatic") return "automatic";
+    return selection.mode === "role" ? `role:${selection.role}` : `pinned:${selection.model}`;
+  };
+
+  const decode = (value: string): ModelSelection | undefined => {
+    if (value === "inherit") return undefined;
+    if (value === "automatic") return { mode: "automatic" };
+    return value.startsWith("role:")
+      ? { mode: "role", role: value.slice(5) }
+      : { mode: "pinned", model: value.slice(7) };
+  };
+
+  const updateModel = (key: string, value: string) => {
+    const next = { ...(step.model_overrides ?? {}) };
+    const selection = decode(value);
+    if (selection) next[key] = selection;
+    else delete next[key];
+    onChange({ model: "", model_overrides: next });
+  };
+
+  const updateEffort = (key: string, value: string) => {
+    const next = { ...(step.effort_overrides ?? {}) };
+    if (value) next[key] = value;
+    else delete next[key];
+    onChange({ effort: "", effort_overrides: next });
+  };
 
   return (
     <div>
@@ -1431,45 +1506,73 @@ function ModelOverrides({
         <span>Model overrides</span>
         {hasOverride && !open && (
           <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono ml-1">
-            {[step.model, step.effort].filter(Boolean).join(" / ")}
+            {[
+              step.model,
+              step.effort,
+              ...Object.entries(step.model_overrides ?? {}).map(([key, selection]) =>
+                `${key}=${selection.mode === "automatic" ? "auto" : selection.mode === "role" ? selection.role : selection.model}`
+              ),
+            ].filter(Boolean).join(" / ")}
           </span>
         )}
       </button>
       {open && (
         <div className="mt-2 space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
           <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
-            Leave blank to use the global setting for this step's provider.
-            Useful for spending more reasoning budget on a hard step or downgrading
-            a cheap one.
+            Each provider can inherit its global policy, follow its own current
+            default, use a stable role, or pin an exact discovered model.
           </p>
-          <div>
-            <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
-              Model
-            </label>
-            <input
-              type="text"
-              value={step.model ?? ""}
-              onChange={(e) => onChange({ model: e.target.value })}
-              placeholder="(inherit) e.g. opus, sonnet, haiku, gpt-5.1, gemini-2.5-pro"
-              className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs font-mono
-                         text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
-                         focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
-              Effort
-            </label>
-            <input
-              type="text"
-              value={step.effort ?? ""}
-              onChange={(e) => onChange({ effort: e.target.value })}
-              placeholder="(inherit) e.g. low, medium, high, max"
-              className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs font-mono
-                         text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
-                         focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-transparent"
-            />
-          </div>
+          {providers.map((provider) => {
+            const key = `${provider}:${transportFor(provider)}`;
+            const catalog = catalogs[provider];
+            const selection = step.model_overrides?.[key];
+            const value = encode(selection);
+            const known = value === "inherit" || value === "automatic"
+              || catalog?.roles.some((role) => value === `role:${role.id}`)
+              || catalog?.models.some((model) => value === `pinned:${model.id}`);
+            const selectedId = selection?.mode === "pinned"
+              ? selection.model
+              : selection?.mode === "role"
+                ? catalog?.roles.find((role) => role.id === selection.role)?.model
+                : catalog?.default_model || catalog?.recommended_model;
+            const discoveredEfforts = catalog?.models.find((model) => model.id === selectedId)?.supported_efforts ?? [];
+            const efforts = discoveredEfforts.length
+              ? discoveredEfforts
+              : provider === "claude" ? ["low", "medium", "high", "max"]
+                : provider === "codex" ? ["low", "medium", "high"] : [];
+            return (
+              <div key={key} className="space-y-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  {provider} · {transportFor(provider)}
+                </div>
+                <select
+                  value={value}
+                  onChange={(event) => updateModel(key, event.target.value)}
+                  className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
+                >
+                  <option value="inherit">Inherit global policy</option>
+                  <option value="automatic">Automatic — provider default</option>
+                  {!!catalog?.roles.length && <optgroup label="Stable roles">
+                    {catalog.roles.map((role) => <option key={role.id} value={`role:${role.id}`}>{role.label} — {role.model}</option>)}
+                  </optgroup>}
+                  {!!catalog?.models.length && <optgroup label="Pin exact model">
+                    {catalog.models.map((model) => <option key={model.id} value={`pinned:${model.id}`} disabled={model.deprecated}>{model.display_name || model.id}</option>)}
+                  </optgroup>}
+                  {!known && <option value={value}>Saved selection (not currently listed)</option>}
+                </select>
+                {!!efforts.length && (
+                  <select
+                    value={step.effort_overrides?.[key] ?? ""}
+                    onChange={(event) => updateEffort(key, event.target.value)}
+                    className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
+                  >
+                    <option value="">Inherit effort</option>
+                    {efforts.map((effort) => <option key={effort} value={effort}>{effort.charAt(0).toUpperCase() + effort.slice(1)}</option>)}
+                  </select>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

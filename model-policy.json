@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-07-22T00:00:00Z",
+  "transports": {
+    "claude:cli": {
+      "roles": { "balanced": "sonnet", "quality": "opus", "fast": "haiku" },
+      "models": []
+    },
+    "claude:api": {
+      "roles": { "quality": "claude-opus-4-6", "balanced": "claude-sonnet-4-6", "fast": "claude-haiku-4-5" },
+      "models": [
+        { "id": "claude-sonnet-4-6", "input_price_per_million": 3.0, "output_price_per_million": 15.0 },
+        { "id": "claude-opus-4-6", "input_price_per_million": 15.0, "output_price_per_million": 75.0 },
+        { "id": "claude-haiku-4-5", "input_price_per_million": 0.8, "output_price_per_million": 4.0 }
+      ]
+    },
+    "codex:cli": { "roles": {}, "models": [] },
+    "codex:api": {
+      "roles": {},
+      "models": [
+        { "id": "gpt-4.1", "input_price_per_million": 2.0, "output_price_per_million": 8.0 },
+        { "id": "gpt-4.1-mini", "input_price_per_million": 0.4, "output_price_per_million": 1.6 },
+        { "id": "gpt-4o", "input_price_per_million": 2.5, "output_price_per_million": 10.0 },
+        { "id": "gpt-4o-mini", "input_price_per_million": 0.15, "output_price_per_million": 0.6 }
+      ]
+    },
+    "gemini:cli": {
+      "roles": { "quality": "pro", "balanced": "flash", "fast": "flash-lite" },
+      "models": []
+    },
+    "gemini:api": {
+      "roles": {},
+      "models": [
+        { "id": "gemini-2.5-pro", "input_price_per_million": 1.25, "output_price_per_million": 10.0 },
+        { "id": "gemini-2.5-flash", "input_price_per_million": 0.3, "output_price_per_million": 2.5 },
+        { "id": "gemini-1.5-pro", "input_price_per_million": 1.25, "output_price_per_million": 5.0 },
+        { "id": "gemini-1.5-flash", "input_price_per_million": 0.075, "output_price_per_million": 0.3 }
+      ]
+    },
+    "local:api": { "roles": {}, "models": [] }
+  }
+}

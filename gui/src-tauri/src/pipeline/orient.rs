@@ -43,6 +43,7 @@ pub async fn build_orientation_map(
     app: &crate::emit::EventBus,
     extraction: &ExtractionResult,
     prompt_template: Option<&str>,
+    source_read_root: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let truncated = extraction.text.len() > MAX_PAPER_TEXT;
     let paper_text = if truncated {
@@ -83,6 +84,7 @@ pub async fn build_orientation_map(
 
     for attempt in 0..=MAX_RETRIES {
         let timeout = (crate::settings::load().step_timeout_secs / 2).max(60);
+        let read_dirs: Vec<&str> = source_read_root.into_iter().collect();
         let raw = call_llm(
             app,
             &prompt,
@@ -92,8 +94,8 @@ pub async fn build_orientation_map(
             timeout,
             "Orientation map",
             None,
-            None,
-            &[],
+            source_read_root,
+            &read_dirs,
             &LlmOverrides::default(),
         )
         .await?;

@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
   "productName": "Pipeline",
-  "version": "1.0.0",
+  "version": "../package.json",
   "identifier": "com.pipeline.report",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run prepare:release-resources && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -37,10 +37,12 @@
     ],
     "resources": [
       "../../prompts/*",
-      "resources/poppler/**/*"
+      "resources/poppler/**/*",
+      "resources/notices/**/*"
     ],
+    "licenseFile": "../../LICENSE",
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "15.0"
     }
   }
 }

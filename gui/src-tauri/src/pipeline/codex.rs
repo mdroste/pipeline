@@ -1,16 +1,11 @@
-use std::io::Write;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
-use tempfile::NamedTempFile;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 
 use super::claude::{
-    build_silent_command, emit_stderr_tail, last_stderr_hint, LlmOverrides, STDERR_TAIL_LINES,
+    build_provider_command, emit_stderr_tail, last_stderr_hint, normalize_cli_root,
+    prepare_cli_prompt, LlmOverrides, STDERR_TAIL_LINES,
 };
-
-/// Maximum characters to pass as a direct CLI argument.
-/// Beyond this we write to a temp file and tell Codex to read it.
-const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
 
 fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
     super::logging::emit(app, line.into());
@@ -20,6 +15,21 @@ fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     if crate::settings::load().verbose_logging {
         log(app, line);
     }
+}
+
+fn codex_effective_cwd(
+    needs_write: bool,
+    cwd: Option<&str>,
+    write_dir: Option<&str>,
+    prompt_root: Option<&str>,
+) -> Result<Option<String>, String> {
+    (if needs_write { write_dir.or(cwd) } else { cwd })
+        .or(prompt_root)
+        .map(|path| {
+            normalize_cli_root(path)
+                .ok_or_else(|| format!("Codex working directory must be absolute: {path}"))
+        })
+        .transpose()
 }
 
 /// Call `codex exec` and return the text output.
@@ -37,7 +47,7 @@ pub async fn call_codex(
     overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let mut cmd_args: Vec<String> = vec!["exec".to_string()];
-    let mut _temp_file: Option<NamedTempFile> = None;
+    let prepared_prompt = prepare_cli_prompt(prompt)?;
 
     // Use JSON mode for clean machine-readable output
     cmd_args.push("--json".to_string());
@@ -93,8 +103,15 @@ pub async fn call_codex(
     }
 
     // Apply Codex settings (model, reasoning effort) with optional per-step overrides.
-    let settings = crate::settings::load();
-    let model_src = overrides.model.unwrap_or(settings.codex_model.as_str());
+    let settings = overrides
+        .settings
+        .cloned()
+        .unwrap_or_else(crate::settings::load);
+    let model_src = if overrides.model_resolved {
+        overrides.model.unwrap_or("")
+    } else {
+        overrides.model.unwrap_or(settings.codex_model.as_str())
+    };
     let model = crate::settings::sanitize_cli_arg(model_src);
     if !model.is_empty() {
         cmd_args.push("--model".to_string());
@@ -107,27 +124,16 @@ pub async fn call_codex(
         cmd_args.push(format!("model_reasoning_effort={}", effort));
     }
 
-    // Handle large prompts: write to temp file and tell Codex to read it
-    if prompt.len() > MAX_DIRECT_PROMPT_LENGTH {
-        let mut tmp = NamedTempFile::with_prefix("pipeline_prompt_")
-            .map_err(|e| format!("Failed to create temp file: {e}"))?;
-        tmp.write_all(prompt.as_bytes())
-            .map_err(|e| format!("Failed to write temp file: {e}"))?;
-        tmp.flush()
-            .map_err(|e| format!("Failed to flush temp file: {e}"))?;
-
-        let path = tmp.path().to_string_lossy().replace('\\', "/");
-        let bytes = prompt.len();
-        log(app, format!("Wrote {bytes} chars to temp file: {path}"));
-
-        cmd_args.push(format!(
-            "Read the instructions at {path} and follow them exactly."
-        ));
-
-        _temp_file = Some(tmp);
-    } else {
-        cmd_args.push(prompt.to_string());
+    // Codex's sandbox constrains writes but permits reads, so it needs no
+    // equivalent of Claude/Gemini's read-root flags. The private prompt
+    // directory nevertheless prevents unrelated temp files sharing a root.
+    if let Some(path) = &prepared_prompt.path {
+        log(
+            app,
+            format!("Wrote {} chars to temp file: {path}", prompt.len()),
+        );
     }
+    cmd_args.push(prepared_prompt.argument.clone());
 
     // Log the command (truncated)
     let display_args: String = cmd_args
@@ -145,14 +151,14 @@ pub async fn call_codex(
 
     // The cwd defines codex's writable workspace, so in write mode it must
     // be the artifact dir regardless of what the caller passed.
-    let effective_cwd = if needs_write {
-        overrides.write_dir.or(cwd)
-    } else {
-        cwd
-    };
-    let mut cmd = build_silent_command("codex", effective_cwd);
-    cmd.args(&cmd_args)
-        .stdin(Stdio::null())
+    let effective_cwd = codex_effective_cwd(
+        needs_write,
+        cwd,
+        overrides.write_dir,
+        prepared_prompt.read_root.as_deref(),
+    )?;
+    let mut cmd = build_provider_command("codex", effective_cwd.as_deref(), &cmd_args)?;
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -176,8 +182,16 @@ pub async fn call_codex(
     let stderr_task = tokio::spawn(super::logging::with_session_opt(sess.clone(), async move {
         let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         if let Some(stderr) = stderr {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
+            let mut reader = BufReader::new(stderr);
+            while let Ok(Some(record)) =
+                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
+                    .await
+            {
+                let line = if record.truncated {
+                    format!("{}… [line truncated]", record.text)
+                } else {
+                    record.text
+                };
                 if !line.trim().is_empty() {
                     verbose_log(&app_stderr, format!("[stderr] {line}"));
                     if tail.len() >= STDERR_TAIL_LINES {
@@ -199,8 +213,19 @@ pub async fn call_codex(
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         if let Some(stdout) = stdout {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
+            let mut reader = BufReader::new(stdout);
+            while let Ok(Some(record)) =
+                super::logging::next_bounded_line(&mut reader, super::logging::MAX_CLI_LINE_BYTES)
+                    .await
+            {
+                if record.truncated {
+                    log(
+                        &app_stdout,
+                        "WARNING: Codex emitted an oversized JSON record; record was discarded",
+                    );
+                    continue;
+                }
+                let line = record.text;
                 if line.trim().is_empty() {
                     continue;
                 }
@@ -358,4 +383,36 @@ pub async fn call_codex(
     }
 
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_mode_keeps_windows_artifact_directory_as_workspace() {
+        let cwd = codex_effective_cwd(
+            true,
+            Some(r"C:\Users\Mike\Documents\Paper"),
+            Some(r"C:\Users\Mike\.pipeline\runs\r1\artifacts"),
+            Some(r"C:\Users\Mike\AppData\Local\Temp\pipeline_prompt"),
+        )
+        .unwrap();
+        assert_eq!(
+            cwd.as_deref(),
+            Some("C:/Users/Mike/.pipeline/runs/r1/artifacts")
+        );
+    }
+
+    #[test]
+    fn long_prompt_root_is_workspace_when_no_other_cwd_exists() {
+        let cwd =
+            codex_effective_cwd(false, None, None, Some("/private/tmp/pipeline_prompt")).unwrap();
+        assert_eq!(cwd.as_deref(), Some("/private/tmp/pipeline_prompt"));
+    }
+
+    #[test]
+    fn invalid_write_workspace_fails_closed() {
+        assert!(codex_effective_cwd(true, None, Some("relative/artifacts"), None).is_err());
+    }
 }

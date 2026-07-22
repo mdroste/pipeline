@@ -2,6 +2,57 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// A durable model-selection policy. `Automatic` deliberately means
+/// "delegate to the provider" rather than a particular model ID. Roles are
+/// resolved through the provider/transport catalog, while pinned IDs never
+/// float silently.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum ModelSelection {
+    #[default]
+    Automatic,
+    Role {
+        role: String,
+    },
+    Pinned {
+        model: String,
+    },
+}
+
+impl ModelSelection {
+    pub fn from_legacy(value: &str) -> Self {
+        let value = value.trim();
+        if value.is_empty() {
+            return Self::Automatic;
+        }
+        match value {
+            "auto" | "automatic" => Self::Automatic,
+            "sonnet" | "opus" | "haiku" | "fable" | "pro" | "flash" | "flash-lite" => Self::Role {
+                role: value.to_string(),
+            },
+            _ => Self::Pinned {
+                model: value.to_string(),
+            },
+        }
+    }
+
+    pub fn legacy_value(&self) -> String {
+        match self {
+            Self::Automatic => String::new(),
+            Self::Role { role } => role.clone(),
+            Self::Pinned { model } => model.clone(),
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Automatic => "Automatic".to_string(),
+            Self::Role { role } => format!("{role} role"),
+            Self::Pinned { model } => model.clone(),
+        }
+    }
+}
+
 /// Validate a string that will be passed as a CLI argument value.
 /// Rejects values that look like flags or contain control characters.
 /// Returns the trimmed value, or empty string if invalid.
@@ -46,6 +97,15 @@ pub struct Settings {
     #[serde(default)]
     pub claude_model: String,
 
+    /// Claude Code CLI selection. Separate from the API selection because
+    /// subscription entitlements and accepted IDs can differ.
+    #[serde(default)]
+    pub claude_cli_model_selection: ModelSelection,
+
+    /// Anthropic API selection.
+    #[serde(default)]
+    pub claude_api_model_selection: ModelSelection,
+
     /// Thinking effort level. Empty = Claude Code default.
     /// Options: "low", "medium", "high", "max".
     #[serde(default)]
@@ -56,6 +116,14 @@ pub struct Settings {
     #[serde(default)]
     pub codex_model: String,
 
+    /// Codex CLI selection (ChatGPT subscription transport).
+    #[serde(default)]
+    pub codex_cli_model_selection: ModelSelection,
+
+    /// OpenAI API selection.
+    #[serde(default)]
+    pub codex_api_model_selection: ModelSelection,
+
     /// Codex reasoning effort level. Empty = Codex default.
     /// Options: "low", "medium", "high".
     #[serde(default)]
@@ -65,6 +133,14 @@ pub struct Settings {
     /// Examples: "gemini-2.5-pro", "gemini-2.5-flash", or a full model ID.
     #[serde(default)]
     pub gemini_model: String,
+
+    /// Gemini CLI selection.
+    #[serde(default)]
+    pub gemini_cli_model_selection: ModelSelection,
+
+    /// Google Gemini API selection.
+    #[serde(default)]
+    pub gemini_api_model_selection: ModelSelection,
 
     /// PDF extraction method: "llm", "auto" (marker → pdftotext), "marker", or "pdftotext".
     #[serde(default = "default_pdf_extractor")]
@@ -164,10 +240,16 @@ impl Default for Settings {
             max_workers: 5,
             active_profile: "deep-review".to_string(),
             claude_model: String::new(),
+            claude_cli_model_selection: ModelSelection::Automatic,
+            claude_api_model_selection: ModelSelection::Automatic,
             claude_effort: String::new(),
             codex_model: String::new(),
+            codex_cli_model_selection: ModelSelection::Automatic,
+            codex_api_model_selection: ModelSelection::Automatic,
             codex_effort: String::new(),
             gemini_model: String::new(),
+            gemini_cli_model_selection: ModelSelection::Automatic,
+            gemini_api_model_selection: ModelSelection::Automatic,
             pdf_extractor: "llm".to_string(),
             marker_disable_ocr: false,
             marker_disable_images: true,
@@ -182,6 +264,180 @@ impl Default for Settings {
             local_model: String::new(),
             local_api_key: String::new(),
         }
+    }
+}
+
+impl Settings {
+    pub fn validate(&self) -> Result<(), String> {
+        if !matches!(
+            self.preferred_provider.as_str(),
+            "claude" | "codex" | "gemini" | "local"
+        ) {
+            return Err(format!(
+                "Invalid preferred provider '{}'",
+                self.preferred_provider
+            ));
+        }
+        if !(1..=10).contains(&self.max_workers) {
+            return Err("Maximum workers must be between 1 and 10".to_string());
+        }
+        if !(60..=7200).contains(&self.step_timeout_secs) {
+            return Err("Step timeout must be between 60 and 7200 seconds".to_string());
+        }
+        if self.max_retries > 10 {
+            return Err("Step retries must be between 0 and 10".to_string());
+        }
+        if !matches!(
+            self.pdf_extractor.as_str(),
+            "llm" | "auto" | "marker" | "pdftotext"
+        ) {
+            return Err(format!("Invalid PDF extractor '{}'", self.pdf_extractor));
+        }
+        if self.active_profile.is_empty()
+            || self.active_profile.len() > 64
+            || !self
+                .active_profile
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
+            return Err("Invalid active profile ID".to_string());
+        }
+        for (label, selection) in [
+            ("Claude CLI", &self.claude_cli_model_selection),
+            ("Anthropic API", &self.claude_api_model_selection),
+            ("Codex CLI", &self.codex_cli_model_selection),
+            ("OpenAI API", &self.codex_api_model_selection),
+            ("Gemini CLI", &self.gemini_cli_model_selection),
+            ("Google API", &self.gemini_api_model_selection),
+        ] {
+            let value = match selection {
+                ModelSelection::Automatic => continue,
+                ModelSelection::Role { role } => role,
+                ModelSelection::Pinned { model } => model,
+            };
+            if value.trim() != value || sanitize_cli_arg(value) != *value {
+                return Err(format!("Invalid {label} model selection"));
+            }
+        }
+        for (label, effort) in [
+            ("Claude", self.claude_effort.as_str()),
+            ("Codex", self.codex_effort.as_str()),
+        ] {
+            if !effort.is_empty() && sanitize_cli_arg(effort) != effort {
+                return Err(format!("Invalid {label} effort value"));
+            }
+        }
+        if !self.local_model.is_empty() && sanitize_cli_arg(&self.local_model) != self.local_model {
+            return Err("Invalid local model name".to_string());
+        }
+        let local_url = reqwest::Url::parse(&self.local_base_url)
+            .map_err(|e| format!("Invalid local server URL: {e}"))?;
+        if !matches!(local_url.scheme(), "http" | "https")
+            || !local_url.username().is_empty()
+            || local_url.password().is_some()
+            || local_url.query().is_some()
+            || local_url.fragment().is_some()
+        {
+            return Err(
+                "Local server URL must be an http(s) URL without credentials, query, or fragment"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// "cli" for subscription-backed command-line providers and "api" for
+    /// direct HTTP/local providers.
+    pub fn model_transport(&self, provider: &str) -> &'static str {
+        match provider {
+            "claude" | "" if self.anthropic_api_key.trim().is_empty() => "cli",
+            "codex" if self.openai_api_key.trim().is_empty() => "cli",
+            "gemini" if self.google_api_key.trim().is_empty() => "cli",
+            _ => "api",
+        }
+    }
+
+    pub fn model_context_key(&self, provider: &str) -> String {
+        format!(
+            "{}:{}",
+            if provider.is_empty() {
+                "claude"
+            } else {
+                provider
+            },
+            self.model_transport(provider)
+        )
+    }
+
+    pub fn model_selection(&self, provider: &str) -> ModelSelection {
+        match (provider, self.model_transport(provider)) {
+            ("codex", "cli") => self.codex_cli_model_selection.clone(),
+            ("codex", _) => self.codex_api_model_selection.clone(),
+            ("gemini", "cli") => self.gemini_cli_model_selection.clone(),
+            ("gemini", _) => self.gemini_api_model_selection.clone(),
+            ("local", _) => {
+                if self.local_model.trim().is_empty() {
+                    ModelSelection::Automatic
+                } else {
+                    ModelSelection::Pinned {
+                        model: self.local_model.trim().to_string(),
+                    }
+                }
+            }
+            (_, "cli") => self.claude_cli_model_selection.clone(),
+            _ => self.claude_api_model_selection.clone(),
+        }
+    }
+
+    pub fn model_effort(&self, provider: &str) -> &str {
+        match provider {
+            "codex" => &self.codex_effort,
+            "claude" | "" => &self.claude_effort,
+            _ => "",
+        }
+    }
+
+    /// Import the three legacy free-text model fields once. New fields win if
+    /// either transport already contains an explicit selection.
+    fn migrate_legacy_model_fields(&mut self) {
+        if self.claude_cli_model_selection == ModelSelection::Automatic
+            && self.claude_api_model_selection == ModelSelection::Automatic
+            && !self.claude_model.trim().is_empty()
+        {
+            let migrated = ModelSelection::from_legacy(&self.claude_model);
+            self.claude_cli_model_selection = migrated.clone();
+            self.claude_api_model_selection = migrated;
+        }
+        if self.codex_cli_model_selection == ModelSelection::Automatic
+            && self.codex_api_model_selection == ModelSelection::Automatic
+            && !self.codex_model.trim().is_empty()
+        {
+            let migrated = ModelSelection::from_legacy(&self.codex_model);
+            self.codex_cli_model_selection = migrated.clone();
+            self.codex_api_model_selection = migrated;
+        }
+        if self.gemini_cli_model_selection == ModelSelection::Automatic
+            && self.gemini_api_model_selection == ModelSelection::Automatic
+            && !self.gemini_model.trim().is_empty()
+        {
+            let migrated = ModelSelection::from_legacy(&self.gemini_model);
+            self.gemini_cli_model_selection = migrated.clone();
+            self.gemini_api_model_selection = migrated;
+        }
+    }
+
+    /// Keep old Pipeline builds and exported settings usable. The legacy field
+    /// mirrors whichever transport is active; the transport-specific fields
+    /// remain the source of truth for this build.
+    fn sync_legacy_model_fields(&mut self) {
+        self.claude_model = self.model_selection("claude").legacy_value();
+        self.codex_model = self.model_selection("codex").legacy_value();
+        self.gemini_model = self.model_selection("gemini").legacy_value();
+    }
+
+    pub fn normalized(mut self) -> Self {
+        self.migrate_legacy_model_fields();
+        self
     }
 }
 
@@ -243,6 +499,8 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
         }
     };
 
+    settings.migrate_legacy_model_fields();
+
     // Decrypt API keys (plaintext values pass through for backward compat)
     match load_or_create_key() {
         Ok(key) => {
@@ -291,7 +549,43 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
 
 /// Load settings, discarding any warnings. Used by non-UI callers
 /// (pipeline execution, etc.) where fallback to defaults is fine.
+static RUN_SETTINGS: std::sync::Mutex<Option<(u64, Settings)>> = std::sync::Mutex::new(None);
+static RUN_SETTINGS_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+pub struct RunSettingsGuard {
+    token: u64,
+}
+
+impl Drop for RunSettingsGuard {
+    fn drop(&mut self) {
+        let mut snapshot = RUN_SETTINGS.lock().unwrap_or_else(|e| e.into_inner());
+        if snapshot.as_ref().map(|(token, _)| *token) == Some(self.token) {
+            *snapshot = None;
+        }
+    }
+}
+
+pub fn freeze_for_run(settings: Settings) -> RunSettingsGuard {
+    use std::sync::atomic::Ordering;
+    let token = RUN_SETTINGS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    *RUN_SETTINGS.lock().unwrap_or_else(|e| e.into_inner()) = Some((token, settings));
+    RunSettingsGuard { token }
+}
+
 pub fn load() -> Settings {
+    RUN_SETTINGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|(_, settings)| settings.clone())
+        .unwrap_or_else(|| load_with_warnings().0)
+}
+
+/// Load the current on-disk settings without consulting the immutable
+/// execution snapshot. UI/profile mutations must use this path: otherwise an
+/// edit made while a run is active can start from the run's older snapshot and
+/// overwrite settings saved by another window.
+pub fn load_persisted() -> Settings {
     load_with_warnings().0
 }
 
@@ -313,12 +607,60 @@ fn quarantine_corrupt_file(path: &std::path::Path) -> Option<PathBuf> {
     }
 }
 
+static SETTINGS_WRITE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn save(settings: &Settings) -> Result<(), String> {
     let path = settings_path()?;
+    let _process_guard = SETTINGS_WRITE_MUTEX
+        .lock()
+        .map_err(|_| "Settings write mutex poisoned".to_string())?;
+    let lock_path = path.with_file_name("settings.lock");
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("Failed to open settings lock: {e}"))?;
+    fs2::FileExt::lock_exclusive(&lock_file)
+        .map_err(|e| format!("Failed to lock settings: {e}"))?;
+    let result = save_unlocked(&path, settings);
+    let _ = fs2::FileExt::unlock(&lock_file);
+    result
+}
+
+/// Save settings originating from the Settings page while preserving the
+/// active profile selected by another window/process after that page loaded.
+pub fn save_preserving_active(settings: &Settings) -> Result<(), String> {
+    let path = settings_path()?;
+    let _process_guard = SETTINGS_WRITE_MUTEX
+        .lock()
+        .map_err(|_| "Settings write mutex poisoned".to_string())?;
+    let lock_path = path.with_file_name("settings.lock");
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| format!("Failed to open settings lock: {e}"))?;
+    fs2::FileExt::lock_exclusive(&lock_file)
+        .map_err(|e| format!("Failed to lock settings: {e}"))?;
+    let mut merged = settings.clone();
+    merged.active_profile = load_with_warnings().0.active_profile;
+    let result = save_unlocked(&path, &merged);
+    let _ = fs2::FileExt::unlock(&lock_file);
+    result
+}
+
+fn save_unlocked(path: &std::path::Path, settings: &Settings) -> Result<(), String> {
+    settings.validate()?;
     let key = load_or_create_key()?;
 
     // Encrypt API keys before writing to disk
     let mut to_save = settings.clone();
+    to_save.migrate_legacy_model_fields();
+    to_save.sync_legacy_model_fields();
     to_save.anthropic_api_key = encrypt_string(&settings.anthropic_api_key, &key)?;
     to_save.openai_api_key = encrypt_string(&settings.openai_api_key, &key)?;
     to_save.google_api_key = encrypt_string(&settings.google_api_key, &key)?;
@@ -326,7 +668,7 @@ pub fn save(settings: &Settings) -> Result<(), String> {
 
     let json =
         serde_json::to_string_pretty(&to_save).map_err(|e| format!("Failed to serialize: {e}"))?;
-    atomic_write(&path, &json)
+    atomic_write(path, &json)
 }
 
 // ── Encryption helpers ─────────────────────────────────────────────
@@ -408,23 +750,48 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create .pipeline dir: {e}"))?;
     }
+    // Publish a complete key with no-clobber semantics. Two first-run
+    // processes may both generate candidates; exactly one wins the atomic
+    // persist and every loser reads that winner instead of caching its own
+    // now-orphaned key.
+    use std::io::Write as _;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("No parent directory for {}", path.display()))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("Failed to create keyfile temporary file: {e}"))?;
     #[cfg(unix)]
     {
-        use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|e| format!("Failed to write keyfile: {e}"))?;
-        file.write_all(&key)
-            .map_err(|e| format!("Failed to write keyfile: {e}"))?;
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Failed to restrict keyfile permissions: {e}"))?;
     }
+    temp.write_all(&key)
+        .map_err(|e| format!("Failed to write keyfile: {e}"))?;
+    temp.flush()
+        .map_err(|e| format!("Failed to flush keyfile: {e}"))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync keyfile: {e}"))?;
+    let created = match temp.persist_noclobber(&path) {
+        Ok(_) => true,
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let bytes =
+                fs::read(&path).map_err(|e| format!("Failed to read winning keyfile: {e}"))?;
+            if bytes.len() != KEY_SIZE {
+                return Err(format!(
+                    "Winning keyfile has wrong size ({} bytes, expected {KEY_SIZE})",
+                    bytes.len()
+                ));
+            }
+            key.copy_from_slice(&bytes);
+            false
+        }
+        Err(error) => return Err(format!("Failed to publish keyfile: {}", error.error)),
+    };
+
     #[cfg(windows)]
-    {
-        fs::write(&path, &key).map_err(|e| format!("Failed to write keyfile: {e}"))?;
+    if created {
         // Best-effort: restrict keyfile to current user via icacls.
         // Inheritance from %USERPROFILE% usually provides this already,
         // but this makes it explicit on non-standard directory layouts.
@@ -453,10 +820,8 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
             }
         }
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        fs::write(&path, &key).map_err(|e| format!("Failed to write keyfile: {e}"))?;
-    }
+    #[cfg(not(windows))]
+    let _ = created;
 
     Ok(key)
 }
@@ -606,6 +971,31 @@ mod tests {
         assert!(decrypt_string(&encrypted, &key2).is_err());
     }
 
+    #[test]
+    fn settings_validation_rejects_unsafe_or_out_of_range_values() {
+        assert!(Settings::default().validate().is_ok());
+
+        let mut invalid = Settings {
+            max_workers: 0,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            codex_cli_model_selection: ModelSelection::Pinned {
+                model: "--dangerous-flag".into(),
+            },
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            local_base_url: "file:///tmp/model".into(),
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+    }
+
     // ── sanitize_cli_arg ──────────────────────────────────────────
 
     #[test]
@@ -637,5 +1027,44 @@ mod tests {
     fn sanitize_rejects_empty() {
         assert_eq!(sanitize_cli_arg(""), "");
         assert_eq!(sanitize_cli_arg("   "), "");
+    }
+
+    #[test]
+    fn legacy_models_migrate_to_roles_or_pins() {
+        assert_eq!(
+            ModelSelection::from_legacy("sonnet"),
+            ModelSelection::Role {
+                role: "sonnet".into()
+            }
+        );
+        assert_eq!(
+            ModelSelection::from_legacy("gpt-5.6-sol"),
+            ModelSelection::Pinned {
+                model: "gpt-5.6-sol".into()
+            }
+        );
+        assert_eq!(ModelSelection::from_legacy(""), ModelSelection::Automatic);
+        assert_eq!(
+            ModelSelection::from_legacy("auto"),
+            ModelSelection::Automatic
+        );
+    }
+
+    #[test]
+    fn api_key_switches_to_independent_api_selection() {
+        let mut settings = Settings {
+            codex_cli_model_selection: ModelSelection::Role {
+                role: "balanced".into(),
+            },
+            codex_api_model_selection: ModelSelection::Pinned {
+                model: "gpt-api-only".into(),
+            },
+            ..Default::default()
+        };
+        assert_eq!(settings.model_transport("codex"), "cli");
+        assert_eq!(settings.model_selection("codex").label(), "balanced role");
+        settings.openai_api_key = "secret".into();
+        assert_eq!(settings.model_transport("codex"), "api");
+        assert_eq!(settings.model_selection("codex").label(), "gpt-api-only");
     }
 }

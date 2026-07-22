@@ -22,6 +22,7 @@ pub async fn merge_step_outputs(
     outputs: Vec<StepOutput>,
     merge_config: &MergeConfig,
     semaphore: &Arc<Semaphore>,
+    settings: &crate::settings::Settings,
 ) -> Result<Vec<StepOutput>, String> {
     // Validate merge prompt has required placeholders
     if !merge_config.prompt.contains("{topic}") || !merge_config.prompt.contains("{agent_reports}")
@@ -109,15 +110,39 @@ pub async fn merge_step_outputs(
         let app_handle = app.clone();
         let merge_key_done = merge_key.clone();
         let sem = semaphore.clone();
+        let timeout = settings.step_timeout_secs.max(60);
+        let run_settings = settings.clone();
 
         tasks.spawn(async move {
+            if crate::commands::is_cancelled() {
+                return Err((idx, "Pipeline cancelled".to_string()));
+            }
             let _permit = sem
                 .acquire()
                 .await
                 .map_err(|_| (idx, format!("Semaphore closed during merge for {base_id}")))?;
+            if crate::commands::is_cancelled() {
+                return Err((idx, "Pipeline cancelled".to_string()));
+            }
             let log_label = format!("Merge: {}", topic);
             let agent_ref = agent_override.as_deref();
-            let timeout = crate::settings::load().step_timeout_secs.max(60);
+            let provider = agent_ref
+                .unwrap_or(&run_settings.preferred_provider)
+                .to_string();
+            let resolution = crate::model_catalog::resolve(&provider, &run_settings, None)
+                .await
+                .map_err(|error| {
+                    (
+                        idx,
+                        format!("Model resolution failed for merge {base_id}: {error}"),
+                    )
+                })?;
+            let command_model = resolution.command_model.clone();
+            let effort = run_settings.model_effort(&provider).to_string();
+            let mut overrides =
+                LlmOverrides::from_step_strings(command_model.as_deref().unwrap_or(""), &effort);
+            overrides.model_resolved = true;
+            overrides.settings = Some(&run_settings);
             match call_llm(
                 &app_handle,
                 &prompt,
@@ -129,7 +154,7 @@ pub async fn merge_step_outputs(
                 agent_ref,
                 None,
                 &[],
-                &LlmOverrides::default(),
+                &overrides,
             )
             .await
             {
@@ -144,8 +169,14 @@ pub async fn merge_step_outputs(
                             step_id: base_id,
                             step_label: topic,
                             phase: "parallel".to_string(),
+                            provider,
                             agent: agents_joined,
                             raw_text: strip_to_report(&raw_text),
+                            model: resolution.resolved_model,
+                            model_transport: resolution.transport,
+                            model_policy: resolution.selection.label(),
+                            model_source: resolution.source,
+                            model_catalog_updated_at: resolution.catalog_updated_at,
                             ..Default::default()
                         },
                     ))
@@ -174,6 +205,12 @@ pub async fn merge_step_outputs(
     }
 
     if !errors.is_empty() {
+        if let Some((_, error)) = errors
+            .iter()
+            .find(|(_, error)| error.to_ascii_lowercase().contains("cancelled"))
+        {
+            return Err(error.clone());
+        }
         for (idx, err) in &errors {
             let _ = app.emit_event(
                 "pipeline:log",

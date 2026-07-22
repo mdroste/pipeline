@@ -14,7 +14,19 @@ It is a desktop app for macOS, Windows, and Linux. No API key is required if you
 
 Download the latest build for your platform from [Releases](https://github.com/mdroste/pipeline/releases).
 
-To build from source (requires [Node.js](https://nodejs.org/) >= 18 and the [Rust toolchain](https://rustup.rs/)):
+Release system baselines:
+
+- **macOS:** macOS 15.0 or later, with separate Apple Silicon and Intel builds.
+  The minimum is intentionally set to the newest requirement in the complete
+  bundled Poppler library closure; the installer does not claim compatibility
+  with older macOS versions that its PDF tools cannot satisfy.
+- **Windows:** 64-bit Windows. The installer is currently unsigned and may be
+  rejected by Windows or organization-managed security policy. Do not weaken a
+  device's security policy to install it.
+- **Linux:** x86-64 Ubuntu 22.04 or a compatible newer distribution (AppImage).
+
+To build from source (requires [Node.js](https://nodejs.org/) >= 20.19 and < 25,
+plus the [Rust toolchain](https://rustup.rs/)):
 
 ```bash
 git clone https://github.com/mdroste/pipeline.git
@@ -41,7 +53,11 @@ For a higher-quality alternative that preserves equations as LaTeX, optionally i
 
 LaTeX source files are always read natively and don't need either tool.
 
-Bundled poppler is GPL-2.0+; see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+Bundled Poppler is GPL-licensed. Exact platform inputs, source hashes, dynamic
+library notices, and SBOM details are in
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md). The same notice, license
+texts supplied by the packages, a CycloneDX SBOM, and exact Poppler file hashes
+are available offline inside every release build.
 
 ## What it does
 
@@ -84,21 +100,13 @@ Steps also support a few optional controls for building your own workflows: **de
 
 Custom profiles can be created, exported, imported from a file or a URL, and shared. Settings and profiles are stored in `~/.pipeline/`.
 
-## Batch, watch, and command line
+## Batch and watch
 
 The **Batch** panel runs the active profile over many papers, or a whole folder, one at a time. **Watch a folder** does the same automatically as files are added. A separate **run history** lets you reopen, re-run (reusing prior work), compare, and annotate past runs.
 
-A headless CLI (`pipeline-cli`) runs the same engine with no window — useful for scripts and CI:
-
-```bash
-pipeline-cli run --input paper.pdf --profile deep-review --out report.md
-pipeline-cli batch --input-dir ./papers
-pipeline-cli profiles
-```
-
 ## Revision tracking
 
-Reports are keyed by a hash of the paper content and stored in `~/.pipeline/history/`. Running Pipeline on a revised draft of a previously reviewed paper produces a diff: which issues were addressed, which persist, and what is new.
+Reports are stored as self-contained runs under `~/.pipeline/runs/`. Pipeline links revisions by their stable input path and content hash; running it on a revised draft can therefore show which issues were addressed, which persist, and what is new.
 
 ## Limitations
 

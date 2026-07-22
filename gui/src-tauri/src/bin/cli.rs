@@ -5,8 +5,8 @@
 //! webview — suitable for cron jobs, CI, and scripting. Progress is printed to
 //! stderr; the report goes to stdout or `--out`.
 //!
-//!   pipeline-cli run --input paper.pdf [--profile deep-review] [--var k=v]... [--out report.md]
-//!   pipeline-cli batch --input-dir ./papers [--profile grading]
+//!   pipeline-cli run --input paper.pdf [--profile deep-review] [--var k=v]... [--extra-input k=path]... [--out report.md]
+//!   pipeline-cli batch --input-dir ./papers [--profile grading] [--var k=v]... [--extra-input k=path]...
 //!   pipeline-cli profiles
 
 use pipeline_gui_lib::emit::{CliEvents, EventBus};
@@ -50,8 +50,8 @@ fn print_help() {
     eprintln!(
         "Pipeline CLI\n\n\
          USAGE:\n  \
-         pipeline-cli run --input <file> [--profile <id>] [--var k=v]... [--out <file>]\n  \
-         pipeline-cli batch --input-dir <dir> [--profile <id>]\n  \
+         pipeline-cli run --input <file> [--profile <id>] [--var k=v]... [--extra-input k=path]... [--out <file>]\n  \
+         pipeline-cli batch --input-dir <dir> [--profile <id>] [--var k=v]... [--extra-input k=path]...\n  \
          pipeline-cli profiles\n\n\
          Uses the same profiles and settings as the desktop app (~/.pipeline/).\n\
          Progress prints to stderr; the report prints to stdout unless --out is given.\n\
@@ -94,6 +94,87 @@ fn select_profile(args: &[String]) -> Result<(), i32> {
     Ok(())
 }
 
+fn key_values(args: &[String], name: &str) -> Result<HashMap<String, String>, String> {
+    let mut values = HashMap::new();
+    for value in repeated(args, name) {
+        let Some((key, value)) = value.split_once('=') else {
+            return Err(format!("{name} expects key=value, got '{value}'"));
+        };
+        if key.trim().is_empty() || value.trim().is_empty() {
+            return Err(format!("{name} expects a non-empty key and value"));
+        }
+        values.insert(key.to_string(), value.to_string());
+    }
+    Ok(values)
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use std::future::Future as _;
+    use tokio::signal::unix::{signal, SignalKind};
+    match signal(SignalKind::terminate()) {
+        Ok(mut terminate) => {
+            let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
+            let mut terminate = std::pin::pin!(terminate.recv());
+            std::future::poll_fn(|cx| {
+                if ctrl_c.as_mut().poll(cx).is_ready() || terminate.as_mut().poll(cx).is_ready() {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+        }
+        Err(_) => {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+async fn run_with_interrupt(
+    bus: EventBus,
+    input: &str,
+    vars: HashMap<String, String>,
+    extra_inputs: HashMap<String, String>,
+) -> Result<serde_json::Value, String> {
+    use std::future::Future as _;
+    let mut run = std::pin::pin!(commands::run_headless(bus, input, vars, extra_inputs));
+    let mut signal = std::pin::pin!(shutdown_signal());
+    let completed = std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(result) = run.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(result));
+        }
+        if signal.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        std::task::Poll::Pending
+    })
+    .await;
+    match completed {
+        Some(result) => result,
+        None => {
+            eprintln!("Interrupt received; cancelling the active run…");
+            let _ = commands::cancel_pipeline().await;
+            match tokio::time::timeout(std::time::Duration::from_secs(15), run.as_mut()).await {
+                Ok(_) => Err("Pipeline cancelled by interrupt".to_string()),
+                Err(_) => Err(
+                    "Pipeline cancellation timed out; child processes were terminated".to_string(),
+                ),
+            }
+        }
+    }
+}
+
+fn is_interruption(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("cancel") || error.contains("interrupt")
+}
+
 async fn cmd_run(args: &[String]) -> i32 {
     let Some(input) = flag(args, "--input") else {
         eprintln!("run: --input <file> is required");
@@ -102,16 +183,23 @@ async fn cmd_run(args: &[String]) -> i32 {
     if let Err(code) = select_profile(args) {
         return code;
     }
-    let vars: HashMap<String, String> = repeated(args, "--var")
-        .iter()
-        .filter_map(|kv| {
-            kv.split_once('=')
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-        })
-        .collect();
+    let vars = match key_values(args, "--var") {
+        Ok(values) => values,
+        Err(error) => {
+            eprintln!("run: {error}");
+            return 2;
+        }
+    };
+    let extra_inputs = match key_values(args, "--extra-input") {
+        Ok(values) => values,
+        Err(error) => {
+            eprintln!("run: {error}");
+            return 2;
+        }
+    };
 
     let bus: EventBus = Arc::new(CliEvents);
-    match commands::run_headless(bus, input, vars, HashMap::new()).await {
+    match run_with_interrupt(bus, input, vars, extra_inputs).await {
         Ok(v) => {
             let markdown = v.get("markdown").and_then(|m| m.as_str()).unwrap_or("");
             match flag(args, "--out") {
@@ -142,7 +230,11 @@ async fn cmd_run(args: &[String]) -> i32 {
         }
         Err(e) => {
             eprintln!("Error: {e}");
-            1
+            if is_interruption(&e) {
+                130
+            } else {
+                1
+            }
         }
     }
 }
@@ -155,6 +247,20 @@ async fn cmd_batch(args: &[String]) -> i32 {
     if let Err(code) = select_profile(args) {
         return code;
     }
+    let vars = match key_values(args, "--var") {
+        Ok(values) => values,
+        Err(error) => {
+            eprintln!("batch: {error}");
+            return 2;
+        }
+    };
+    let extra_inputs = match key_values(args, "--extra-input") {
+        Ok(values) => values,
+        Err(error) => {
+            eprintln!("batch: {error}");
+            return 2;
+        }
+    };
     let files = match scan_inputs(dir) {
         Ok(f) if !f.is_empty() => f,
         Ok(_) => {
@@ -171,15 +277,22 @@ async fn cmd_batch(args: &[String]) -> i32 {
     for (i, path) in files.iter().enumerate() {
         eprintln!("\n[{}/{}] {path}", i + 1, files.len());
         let bus: EventBus = Arc::new(CliEvents);
-        match commands::run_headless(bus, path, HashMap::new(), HashMap::new()).await {
+        match run_with_interrupt(bus, path, vars.clone(), extra_inputs.clone()).await {
             Ok(v) => {
                 if let Some(run_id) = v.get("run_id").and_then(|r| r.as_str()) {
                     eprintln!("  → {run_id}");
+                }
+                if v.get("status").and_then(|s| s.as_str()) == Some("partial") {
+                    eprintln!("  failed: one or more pipeline steps failed");
+                    failures += 1;
                 }
             }
             Err(e) => {
                 eprintln!("  failed: {e}");
                 failures += 1;
+                if is_interruption(&e) {
+                    return 130;
+                }
             }
         }
     }
@@ -234,5 +347,30 @@ fn cmd_profiles() -> i32 {
             eprintln!("Error: {e}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_value_flags_support_named_inputs_and_reject_malformed_values() {
+        let args = vec![
+            "--extra-input".to_string(),
+            "rubric=/tmp/rubric.pdf".to_string(),
+        ];
+        assert_eq!(
+            key_values(&args, "--extra-input").unwrap().get("rubric"),
+            Some(&"/tmp/rubric.pdf".to_string())
+        );
+        assert!(key_values(&["--var".to_string(), "broken".to_string()], "--var").is_err());
+    }
+
+    #[test]
+    fn interruption_errors_map_to_shell_interrupt_status() {
+        assert!(is_interruption("Pipeline cancelled by interrupt"));
+        assert!(is_interruption("Pipeline cancellation timed out"));
+        assert!(!is_interruption("provider authentication failed"));
     }
 }

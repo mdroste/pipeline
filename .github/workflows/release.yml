@@ -19,14 +19,14 @@ jobs:
             tauri_args: --target aarch64-apple-darwin
             expected_arch: arm64
             asset_arch: aarch64
-            max_minos: "11.0"
+            max_minos: "15.0"
           - os: macos-15-intel
             label: macOS-x64
             rust_target: x86_64-apple-darwin
             tauri_args: --target x86_64-apple-darwin
             expected_arch: x86_64
             asset_arch: x64
-            max_minos: "10.15"
+            max_minos: "15.0"
           - os: ubuntu-22.04
             label: Linux
             rust_target: ""
@@ -64,6 +64,16 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: gui/package-lock.json
+
+      - name: Validate release identity
+        id: version
+        shell: bash
+        run: node scripts/release/validate-release-identity.mjs --tag "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
+
+      - name: Configure truthful macOS deployment target
+        if: startsWith(matrix.label, 'macOS')
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.max_minos }}" >> "$GITHUB_ENV"
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -109,16 +119,58 @@ jobs:
         uses: actions/cache@v4
         with:
           path: gui/src-tauri/resources/poppler
-          key: poppler-${{ matrix.label }}-${{ hashFiles('.github/workflows/release.yml') }}
+          key: poppler-v3-${{ matrix.label }}-${{ hashFiles('scripts/release/poppler-lock.json', 'scripts/release/poppler-provenance.mjs', 'scripts/release/smoke-poppler.mjs', 'scripts/release/validate-macos-machos.sh', 'gui/src-tauri/resources/poppler/README.md', '.github/workflows/release.yml') }}
 
       - name: Bundle poppler (macOS)
         if: startsWith(matrix.label, 'macOS') && steps.cache_poppler.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
+          lock="$GITHUB_WORKSPACE/scripts/release/poppler-lock.json"
+          expected_version="$(jq -r '.macos.version' "$lock")"
+          core_commit="$(jq -r '.macos.homebrewCoreCommit' "$lock")"
+
+          # Disable Homebrew's JSON API and install from an immutable
+          # homebrew-core revision. The formula and every dependency bottle
+          # checksum are therefore taken from the reviewed lock revision.
+          # `brew --repo homebrew/core` exits nonzero when the tap is absent.
+          # Construct the conventional tap path from the always-present main
+          # repository so a clean runner works under `set -e`.
+          brew_repo="$(brew --repo)"
+          core_repo="$brew_repo/Library/Taps/homebrew/homebrew-core"
+          if [ ! -d "$core_repo/.git" ]; then
+            mkdir -p "$(dirname "$core_repo")"
+            git clone --filter=blob:none --no-checkout \
+              https://github.com/Homebrew/homebrew-core.git "$core_repo"
+          fi
+          git -C "$core_repo" fetch --depth=1 origin "$core_commit"
+          git -C "$core_repo" checkout --detach "$core_commit"
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_INSTALL_FROM_API=1
+
+          formula_json="$(brew info --json=v2 poppler)"
+          formula_version="$(jq -r '.formulae[0].versions.stable' <<<"$formula_json")"
+          formula_url="$(jq -r '.formulae[0].urls.stable.url' <<<"$formula_json")"
+          formula_sha="$(jq -r '.formulae[0].urls.stable.checksum' <<<"$formula_json")"
+          locked_url="$(jq -r '.macos.source.url' "$lock")"
+          locked_sha="$(jq -r '.macos.source.sha256' "$lock")"
+          if [ "$formula_version" != "$expected_version" ] || \
+             [ "$formula_url" != "$locked_url" ] || [ "$formula_sha" != "$locked_sha" ]; then
+            echo "Pinned Homebrew formula does not match poppler-lock.json" >&2
+            jq '.formulae[0] | {version:.versions.stable,url:.urls.stable.url,sha256:.urls.stable.checksum}' \
+              <<<"$formula_json" >&2
+            exit 1
+          fi
           brew install poppler dylibbundler
+
+          installed_version="$(brew list --versions poppler | awk '{print $2}')"
+          if [ "$installed_version" != "$expected_version" ]; then
+            echo "Homebrew installed poppler $installed_version; lock requires $expected_version" >&2
+            exit 1
+          fi
+
           poppler_bin="$(brew --prefix poppler)/bin"
-          work=$(mktemp -d)
+          work="$(mktemp -d)"
           cp "$poppler_bin/pdftoppm" "$work/"
           cp "$poppler_bin/pdftotext" "$work/"
           # dylibbundler follows each dylib's dependencies, but when a
@@ -136,33 +188,66 @@ jobs:
             cd "$work"
             dylibbundler -od -b \
               -x ./pdftoppm -x ./pdftotext \
-              -d ./lib -p '@loader_path/lib/' \
+              -d ./lib -p '@executable_path/lib/' \
               "${search_args[@]}" </dev/null
           )
           dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
-          mkdir -p "$dest/lib"
+          mkdir -p "$dest/lib" "$dest/share" "$dest/licenses/homebrew"
           cp "$work/pdftoppm" "$work/pdftotext" "$dest/"
           cp "$work/lib/"*.dylib "$dest/lib/"
+
+          data_dir="$(brew --prefix poppler)/share/poppler"
+          if [ ! -d "$data_dir" ]; then
+            echo "Homebrew poppler data directory is missing: $data_dir" >&2
+            exit 1
+          fi
+          cp -R "$data_dir" "$dest/share/poppler"
+
+          formulas=(poppler)
+          while IFS= read -r formula; do
+            [ -n "$formula" ] && formulas+=("$formula")
+          done < <(brew deps --formula poppler | sort -u)
+          brew info --json=v2 "${formulas[@]}" | jq --arg commit "$core_commit" '{
+            manager: "homebrew",
+            repositoryCommit: $commit,
+            packages: [.formulae[] | {
+              name,
+              version: (.installed[0].version // .versions.stable),
+              license,
+              homepage,
+              sourceUrl: .urls.stable.url,
+              sourceSha256: .urls.stable.checksum
+            }]
+          }' > "$dest/package-inventory.json"
+
+          # Preserve every license/copyright file installed by the runtime
+          # formula closure. The normalized package inventory remains the
+          # authoritative list when a bottle does not install a text file.
+          for formula in "${formulas[@]}"; do
+            formula_license_dir="$dest/licenses/homebrew/$formula"
+            mkdir -p "$formula_license_dir"
+            prefix="$(brew --prefix "$formula")"
+            while IFS= read -r -d '' license_file; do
+              cp "$license_file" "$formula_license_dir/$(basename "$license_file")"
+            done < <(find -L "$prefix" -maxdepth 3 -type f \
+              \( -iname 'COPYING*' -o -iname 'LICENSE*' -o -iname 'COPYRIGHT*' -o -iname 'NOTICE*' \) \
+              -size -2M -print0)
+          done
+
           # Sign every Mach-O with Developer ID + hardened runtime +
           # secure timestamp. The cert was imported in a prior step.
           # Without this, notarization rejects the app because the
           # Homebrew originals are unsigned and dylibbundler's rewrites
           # invalidate any existing signatures.
-          find "$dest" -type f | while read -r f; do
+          find "$dest" -type f | while IFS= read -r f; do
             if file "$f" | grep -q 'Mach-O'; then
               codesign --remove-signature "$f" 2>/dev/null || true
               codesign --force --options runtime --timestamp \
                 --sign "${APPLE_SIGNING_IDENTITY}" "$f"
             fi
           done
-          echo "Bundled poppler files:"
-          ls -la "$dest"
-          ls -la "$dest/lib"
-          du -sh "$dest"
-          # Sanity: confirm install names point at @loader_path and
-          # that signatures are in place.
-          otool -L "$dest/pdftoppm"
-          codesign -dv "$dest/pdftoppm" 2>&1 | head -5 || true
+          node scripts/release/poppler-provenance.mjs --create \
+            --platform macos --resource-dir "$dest"
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
 
@@ -171,74 +256,153 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get install -y poppler-utils patchelf
+          lock="$GITHUB_WORKSPACE/scripts/release/poppler-lock.json"
+          package_version="$(jq -r '.linux.packageVersion' "$lock")"
+          sudo apt-get install -y --allow-downgrades \
+            "poppler-utils=${package_version}" "libpoppler118=${package_version}" patchelf
           dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
-          mkdir -p "$dest/lib"
-          cp "$(which pdftoppm)" "$dest/"
-          cp "$(which pdftotext)" "$dest/"
+          mkdir -p "$dest/lib" "$dest/share" "$dest/licenses/debian"
+          source_pdftoppm="$(command -v pdftoppm)"
+          source_pdftotext="$(command -v pdftotext)"
+          cp "$source_pdftoppm" "$dest/"
+          cp "$source_pdftotext" "$dest/"
+
           # Copy each binary's dynamic deps, skipping glibc-family libs that
           # must come from the host (bundling them across distro versions
           # causes loader conflicts).
-          copy_deps() {
-            local bin="$1"
-            ldd "$bin" | awk '/=> \//{print $3}' | while read -r lib; do
-              local name
-              name=$(basename "$lib")
-              case "$name" in
-                ld-linux-*|libc.so.*|libdl.so.*|libpthread.so.*|libm.so.*|librt.so.*|libresolv.so.*|libnsl.so.*|libutil.so.*)
-                  continue ;;
-              esac
-              cp -L "$lib" "$dest/lib/"
-            done
-          }
-          copy_deps "$dest/pdftoppm"
-          copy_deps "$dest/pdftotext"
-          # Set rpath so the loader looks next to the binary first.
+          deps_file="$(mktemp)"
+          packages_file="$(mktemp)"
+          printf '%s\n' poppler-utils libpoppler118 > "$packages_file"
+          ldd "$source_pdftoppm" "$source_pdftotext" | awk '/=> \//{print $3}' | sort -u > "$deps_file"
+          while IFS= read -r lib; do
+            name="$(basename "$lib")"
+            case "$name" in
+              ld-linux-*|libc.so.*|libdl.so.*|libpthread.so.*|libm.so.*|librt.so.*|libresolv.so.*|libnsl.so.*|libutil.so.*)
+                continue ;;
+            esac
+            cp -L "$lib" "$dest/lib/$name"
+            dpkg-query -S "$lib" 2>/dev/null | head -1 | cut -d: -f1 >> "$packages_file" || true
+          done < "$deps_file"
+
+          # DT_RUNPATH on an executable is not inherited by grandchildren.
+          # Give every copied shared object its own sibling lookup path.
           patchelf --set-rpath '$ORIGIN/lib' "$dest/pdftoppm"
           patchelf --set-rpath '$ORIGIN/lib' "$dest/pdftotext"
-          echo "Bundled poppler files:"
-          ls -la "$dest"
-          ls -la "$dest/lib"
-          du -sh "$dest"
+          while IFS= read -r library; do
+            file "$library" | grep -q ELF && patchelf --set-rpath '$ORIGIN' "$library"
+          done < <(find "$dest/lib" -type f | sort)
+
+          if [ ! -d /usr/share/poppler ]; then
+            echo "Ubuntu poppler data directory is missing" >&2
+            exit 1
+          fi
+          cp -R /usr/share/poppler "$dest/share/poppler"
+          cp /usr/share/common-licenses/GPL-2 "$dest/licenses/debian/GPL-2.txt"
+          cp /usr/share/common-licenses/GPL-3 "$dest/licenses/debian/GPL-3.txt"
+
+          sort -u "$packages_file" | while IFS= read -r package; do
+            [ -n "$package" ] || continue
+            doc_package="${package%%:*}"
+            copyright="/usr/share/doc/$doc_package/copyright"
+            [ -f "$copyright" ] && cp "$copyright" "$dest/licenses/debian/$doc_package.copyright"
+            version="$(dpkg-query -W -f='${Version}' "$package")"
+            source_name="$(dpkg-query -W -f='${source:Package}' "$package")"
+            source_version="$(dpkg-query -W -f='${source:Version}' "$package")"
+            jq -n --arg name "$package" --arg version "$version" \
+              --arg sourceName "$source_name" --arg sourceVersion "$source_version" \
+              '{name:$name,version:$version,sourcePackage:$sourceName,sourceVersion:$sourceVersion}'
+          done | jq -s '{manager:"dpkg",distribution:"Ubuntu 22.04 LTS (jammy)",packages:.}' \
+            > "$dest/package-inventory.json"
+
+          node scripts/release/poppler-provenance.mjs --create \
+            --platform linux --resource-dir "$dest"
 
       - name: Bundle poppler (Windows)
         if: matrix.label == 'Windows' && steps.cache_poppler.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          ver="25.12.0-0"
-          url="https://github.com/oschwartz10612/poppler-windows/releases/download/v${ver}/Release-${ver}.zip"
-          curl -L -o /tmp/poppler.zip "$url"
-          mkdir -p /tmp/poppler
-          unzip -q /tmp/poppler.zip -d /tmp/poppler
-          inner=$(ls /tmp/poppler | head -1)
-          src="/tmp/poppler/${inner}/Library/bin"
-          dest="gui/src-tauri/resources/poppler"
-          mkdir -p "$dest"
+          lock="$GITHUB_WORKSPACE/scripts/release/poppler-lock.json"
+          version="$(jq -r '.windows.version' "$lock")"
+          distribution_version="$(jq -r '.windows.distributionVersion' "$lock")"
+          url="$(jq -r '.windows.archive.url' "$lock")"
+          expected_sha="$(jq -r '.windows.archive.sha256' "$lock")"
+          archive="$RUNNER_TEMP/Release-${distribution_version}.zip"
+          unpacked="$RUNNER_TEMP/poppler-${distribution_version}"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "$archive" "$url"
+          echo "$expected_sha  $archive" | sha256sum --check --strict
+          mkdir -p "$unpacked"
+          unzip -q "$archive" -d "$unpacked"
+          root="$unpacked/poppler-${version}"
+          src="$root/Library/bin"
+          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
+          mkdir -p "$dest" "$dest/share" "$dest/licenses/poppler"
           cp "$src/pdftoppm.exe" "$dest/"
           cp "$src/pdftotext.exe" "$dest/"
-          # Copy DLLs except Qt bindings (not used by pdftoppm/pdftotext).
+          # Copy the provider's dependency DLL set, excluding GUI/C++ binding
+          # libraries that pdftoppm and pdftotext do not load.
           shopt -s nullglob
           for dll in "$src"/*.dll; do
             name=$(basename "$dll")
             case "$name" in
-              Qt5*|Qt6*) continue ;;
+              Qt5*|Qt6*|poppler-cpp.dll|poppler-glib.dll) continue ;;
             esac
             cp "$dll" "$dest/"
           done
-          echo "Bundled poppler files:"
-          ls -la "$dest"
-          du -sh "$dest"
+          cp -R "$root/share/poppler" "$dest/share/poppler"
+          cp "$root/share/poppler/COPYING"* "$dest/licenses/poppler/"
+          cp "$root/share/poppler/README" "$dest/licenses/poppler/README"
+          jq --arg version "$version" --arg license "$(jq -r '.windows.license' "$lock")" '{
+            manager: "oschwartz10612/poppler-windows prebuilt archive",
+            packages: ([{name:"poppler",version:$version,license:$license}] +
+              [.windows.components[] | {name:.}])
+          }' "$lock" > "$dest/package-inventory.json"
+          node scripts/release/poppler-provenance.mjs --create \
+            --platform windows --resource-dir "$dest"
 
-      - name: Extract version number
-        id: version
+      # Cache hits receive the same full validation as newly-created bundles:
+      # executable smoke tests, exact version and file hashes, offline licenses,
+      # data files, loader closure, architecture, and minimum macOS.
+      - name: Validate bundled poppler
+        env:
+          LABEL: ${{ matrix.label }}
+          EXPECTED_ARCH: ${{ matrix.expected_arch }}
+          MAX_MINOS: ${{ matrix.max_minos }}
         shell: bash
-        run: echo "num=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: |
+          set -euo pipefail
+          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
+          case "$LABEL" in
+            macOS-*)
+              platform=macos
+              bash scripts/release/validate-macos-machos.sh \
+                --root "$dest" --expected-arch "$EXPECTED_ARCH" --max-minos "$MAX_MINOS" \
+                --poppler-layout --require-developer-id
+              ;;
+            Linux)
+              platform=linux
+              while IFS= read -r binary; do
+                file "$binary" | grep -q ELF || continue
+                if ldd "$binary" | grep -q 'not found'; then
+                  echo "Unresolved Linux dependency: $binary" >&2
+                  ldd "$binary" >&2
+                  exit 1
+                fi
+              done < <(find "$dest" -type f | sort)
+              ;;
+            Windows) platform=windows ;;
+            *) echo "Unknown release label: $LABEL" >&2; exit 1 ;;
+          esac
+          node scripts/release/poppler-provenance.mjs --verify \
+            --platform "$platform" --resource-dir "$dest"
+          node scripts/release/smoke-poppler.mjs "$dest"
 
       - name: Build and release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PIPELINE_RELEASE_BUILD: "1"
           # macOS code signing
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -246,9 +410,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows code signing (optional — add secrets when ready)
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           projectPath: gui
           tagName: ${{ github.ref_name }}
@@ -266,25 +427,30 @@ jobs:
 
             Open the `.dmg` and drag Pipeline into your Applications folder, then launch from Applications.
 
+            These builds require **macOS 15.0 or later**. This is the minimum
+            supported by the complete, checksummed Poppler library closure in
+            the current release infrastructure.
+
             ### Windows
             Download `Pipeline-${{ steps.version.outputs.num }}-Windows.exe` and double-click to install.
 
-            **Windows SmartScreen / Smart App Control:** Pipeline is not yet signed for Windows, so Windows will block the installer.
-
-            Try these in order:
-
-            1. **Unblock the file.** Right-click the downloaded `.exe` → **Properties** → tick **Unblock** at the bottom of the *General* tab → **OK**. Then run the installer. This usually clears the warning.
-            2. **If it's still blocked, turn off Smart App Control.** Open **Windows Security → App & browser control → Smart App Control** and switch it to **Off**. Install Pipeline, then turn Smart App Control back on.
-
-            Only do this for software you trust.
+            The Windows installer is currently unsigned. Windows or an
+            organization-managed device may decline to run it. Do not weaken
+            system security policy to install Pipeline; use it only where the
+            device's policy permits unsigned applications.
 
             ### Linux
-            Download `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage`, make it executable (`chmod +x <file>`), then run it. Works on any modern Linux distro — no package manager needed.
+            Download `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage`, make it executable (`chmod +x <file>`), then run it. The release baseline is x86-64 Ubuntu 22.04 or a compatible newer distribution.
+
+            Platform-specific CycloneDX SBOM and Poppler provenance files are
+            published beside each installer and are also available offline in
+            the installed application resources.
 
             ---
 
             ### Requirements
-            Pipeline uses [Claude Code](https://claude.com/claude-code) under the hood. Install Claude Code first; then launch Pipeline.
+            Configure at least one supported LLM provider (Claude, Codex,
+            Gemini, or an API/local endpoint) before starting a run.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.tauri_args }}
@@ -313,6 +479,28 @@ jobs:
             exit 1
           fi
 
+          bash scripts/release/validate-macos-machos.sh \
+            --root "${app_path}" --expected-arch "${EXPECTED_ARCH}" --max-minos "${MAX_MINOS}" \
+            --require-developer-id
+          app_poppler="${app_path}/Contents/Resources/resources/poppler"
+          app_notices="${app_path}/Contents/Resources/resources/notices"
+          if [ ! -d "${app_poppler}" ]; then
+            echo "Bundled Poppler directory was not found in Pipeline.app" >&2
+            find "${app_path}/Contents/Resources" -maxdepth 5 -print
+            exit 1
+          fi
+          bash scripts/release/validate-macos-machos.sh \
+            --root "${app_poppler}" --expected-arch "${EXPECTED_ARCH}" --max-minos "${MAX_MINOS}" \
+            --poppler-layout --require-developer-id
+          node scripts/release/poppler-provenance.mjs --verify \
+            --platform macos --resource-dir "${app_poppler}"
+          node scripts/release/smoke-poppler.mjs "${app_poppler}"
+          test -s "${app_notices}/PIPELINE_LICENSE.txt"
+          test -s "${app_notices}/THIRD_PARTY_LICENSES.md"
+          test -s "${app_notices}/THIRD_PARTY_SBOM.cdx.json"
+          test -s "${app_notices}/POPPLER_INPUT_LOCK.json"
+          test -s "${app_notices}/POPPLER_PROVENANCE.json"
+
           exe="${app_path}/Contents/MacOS/pipeline-gui"
           actual_arch="$(lipo -archs "${exe}")"
           if [ "${actual_arch}" != "${EXPECTED_ARCH}" ]; then
@@ -331,6 +519,11 @@ jobs:
           if ! plutil -p "${app_path}/Contents/Info.plist" | grep -q '"LSRequiresCarbon" => false'; then
             echo "Info.plist must not require Carbon"
             plutil -p "${app_path}/Contents/Info.plist"
+            exit 1
+          fi
+          declared_minos="$(plutil -extract LSMinimumSystemVersion raw "${app_path}/Contents/Info.plist")"
+          if [ "${declared_minos}" != "${MAX_MINOS}" ]; then
+            echo "Info.plist declares macOS ${declared_minos}; expected ${MAX_MINOS}" >&2
             exit 1
           fi
 
@@ -380,6 +573,24 @@ jobs:
             exit 1
           fi
 
+          dmg_app="${mount_dir}/Pipeline.app"
+          dmg_poppler="${dmg_app}/Contents/Resources/resources/poppler"
+          dmg_notices="${dmg_app}/Contents/Resources/resources/notices"
+          bash scripts/release/validate-macos-machos.sh \
+            --root "${dmg_app}" --expected-arch "${EXPECTED_ARCH}" --max-minos "${MAX_MINOS}" \
+            --require-developer-id
+          bash scripts/release/validate-macos-machos.sh \
+            --root "${dmg_poppler}" --expected-arch "${EXPECTED_ARCH}" --max-minos "${MAX_MINOS}" \
+            --poppler-layout --require-developer-id
+          node scripts/release/poppler-provenance.mjs --verify \
+            --platform macos --resource-dir "${dmg_poppler}"
+          node scripts/release/smoke-poppler.mjs "${dmg_poppler}"
+          test -s "${dmg_notices}/PIPELINE_LICENSE.txt"
+          test -s "${dmg_notices}/THIRD_PARTY_LICENSES.md"
+          test -s "${dmg_notices}/THIRD_PARTY_SBOM.cdx.json"
+          test -s "${dmg_notices}/POPPLER_INPUT_LOCK.json"
+          test -s "${dmg_notices}/POPPLER_PROVENANCE.json"
+
           dmg_arch="$(lipo -archs "${dmg_exe}")"
           if [ "${dmg_arch}" != "${EXPECTED_ARCH}" ]; then
             echo "Expected ${EXPECTED_ARCH} executable inside DMG, got: ${dmg_arch}"
@@ -399,6 +610,11 @@ jobs:
             plutil -p "${mount_dir}/Pipeline.app/Contents/Info.plist"
             exit 1
           fi
+          dmg_declared_minos="$(plutil -extract LSMinimumSystemVersion raw "${dmg_app}/Contents/Info.plist")"
+          if [ "${dmg_declared_minos}" != "${MAX_MINOS}" ]; then
+            echo "DMG Info.plist declares macOS ${dmg_declared_minos}; expected ${MAX_MINOS}" >&2
+            exit 1
+          fi
 
           echo "Verified ${app_path}"
           file "${exe}"
@@ -406,6 +622,86 @@ jobs:
           plutil -p "${app_path}/Contents/Info.plist" | grep LSMinimumSystemVersion
           echo "Verified ${dmg_path}"
           file "${dmg_exe}"
+
+      - name: Verify Linux AppImage contents
+        if: matrix.label == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage_dir="gui/src-tauri/target/release/bundle/appimage"
+          appimage="$(find "$appimage_dir" -maxdepth 1 -type f -name 'Pipeline_*_amd64.AppImage' -print -quit)"
+          if [ -z "$appimage" ]; then
+            echo "Expected x86-64 AppImage was not produced" >&2
+            find gui/src-tauri/target -type f -name '*.AppImage' -print
+            exit 1
+          fi
+          chmod +x "$appimage"
+          extract_dir="$(mktemp -d)"
+          (
+            cd "$extract_dir"
+            "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null
+          )
+          extracted="$extract_dir/squashfs-root"
+          manifest="$(find "$extracted" -type f -path '*/resources/poppler/PROVENANCE.json' -print -quit)"
+          if [ -z "$manifest" ]; then
+            echo "Poppler provenance is missing from AppImage" >&2
+            exit 1
+          fi
+          poppler_dir="$(dirname "$manifest")"
+          node scripts/release/poppler-provenance.mjs --verify \
+            --platform linux --resource-dir "$poppler_dir"
+          node scripts/release/smoke-poppler.mjs "$poppler_dir"
+          while IFS= read -r binary; do
+            file "$binary" | grep -q ELF || continue
+            if ldd "$binary" | grep -q 'not found'; then
+              echo "Unresolved dependency inside AppImage: $binary" >&2
+              ldd "$binary" >&2
+              exit 1
+            fi
+          done < <(find "$poppler_dir" -type f | sort)
+          notices="$(find "$extracted" -type d -path '*/resources/notices' -print -quit)"
+          test -s "$notices/PIPELINE_LICENSE.txt"
+          test -s "$notices/THIRD_PARTY_LICENSES.md"
+          test -s "$notices/THIRD_PARTY_SBOM.cdx.json"
+          test -s "$notices/POPPLER_INPUT_LOCK.json"
+          test -s "$notices/POPPLER_PROVENANCE.json"
+
+      - name: Verify Windows NSIS installer contents
+        if: matrix.label == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer_dir="gui/src-tauri/target/release/bundle/nsis"
+          installer="$(find "$installer_dir" -maxdepth 1 -type f -name 'Pipeline_*_x64-setup.exe' -print -quit)"
+          if [ -z "$installer" ]; then
+            echo "Expected x86-64 NSIS installer was not produced" >&2
+            find gui/src-tauri/target -type f -name '*setup.exe' -print
+            exit 1
+          fi
+          seven_zip="$(command -v 7z.exe || command -v 7z)"
+          extract_dir="$RUNNER_TEMP/pipeline-nsis-extracted"
+          mkdir -p "$extract_dir"
+          # The pinned Tauri NSIS template embeds application files directly
+          # with NSIS `File /oname=...` entries. 7-Zip's NSIS handler extracts
+          # those exact install payload paths without running the installer.
+          "$seven_zip" x -y -o"$extract_dir" "$installer" >/dev/null
+          manifest="$(find "$extract_dir" -type f -path '*/resources/poppler/PROVENANCE.json' -print -quit)"
+          if [ -z "$manifest" ]; then
+            echo "Poppler provenance is missing from the NSIS payload" >&2
+            find "$extract_dir" -maxdepth 5 -type f -print
+            exit 1
+          fi
+          poppler_dir="$(dirname "$manifest")"
+          node scripts/release/poppler-provenance.mjs --verify \
+            --platform windows --resource-dir "$poppler_dir"
+          node scripts/release/smoke-poppler.mjs "$poppler_dir"
+          resources_dir="$(dirname "$poppler_dir")"
+          notices="$resources_dir/notices"
+          test -s "$notices/PIPELINE_LICENSE.txt"
+          test -s "$notices/THIRD_PARTY_LICENSES.md"
+          test -s "$notices/THIRD_PARTY_SBOM.cdx.json"
+          test -s "$notices/POPPLER_INPUT_LOCK.json"
+          test -s "$notices/POPPLER_PROVENANCE.json"
 
       - name: Rename release assets
         env:
@@ -448,8 +744,13 @@ jobs:
               gh api -X PATCH "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
                 -f name="${new_name}" > /dev/null
             else
-              echo "Skip rename: ${old_name} not found after retries (may not exist for this platform)"
+              echo "Required release asset ${old_name} was not found after retries" >&2
+              return 1
             fi
+            lookup_asset_id "${new_name}" >/dev/null || {
+              echo "Renamed asset ${new_name} did not appear in the release" >&2
+              return 1
+            }
           }
 
           # Tauri produces updater tarballs (.app.tar.gz and .sig) on
@@ -470,23 +771,47 @@ jobs:
 
           case "${LABEL}" in
             "macOS-arm64")
+              platform_name="macOS-AppleSilicon"
+              friendly_asset="Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
               rename_asset "Pipeline_${VERSION}_aarch64.dmg" \
-                           "Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
+                           "${friendly_asset}"
               delete_asset "Pipeline_aarch64.app.tar.gz"
               delete_asset "Pipeline_aarch64.app.tar.gz.sig"
               ;;
             "macOS-x64")
+              platform_name="macOS-Intel"
+              friendly_asset="Pipeline-${VERSION}-macOS-Intel.dmg"
               rename_asset "Pipeline_${VERSION}_x64.dmg" \
-                           "Pipeline-${VERSION}-macOS-Intel.dmg"
+                           "${friendly_asset}"
               delete_asset "Pipeline_x64.app.tar.gz"
               delete_asset "Pipeline_x64.app.tar.gz.sig"
               ;;
             "Windows")
+              platform_name="Windows"
+              friendly_asset="Pipeline-${VERSION}-Windows.exe"
               rename_asset "Pipeline_${VERSION}_x64-setup.exe" \
-                           "Pipeline-${VERSION}-Windows.exe"
+                           "${friendly_asset}"
               ;;
             "Linux")
+              platform_name="Linux"
+              friendly_asset="Pipeline-${VERSION}-Linux.AppImage"
               rename_asset "Pipeline_${VERSION}_amd64.AppImage" \
-                           "Pipeline-${VERSION}-Linux.AppImage"
+                           "${friendly_asset}"
+              ;;
+            *)
+              echo "Unknown release matrix label: ${LABEL}" >&2
+              exit 1
               ;;
           esac
+
+          # Publish the same machine-readable records that are bundled
+          # offline. These are required release assets, not best-effort logs.
+          sbom_name="Pipeline-${VERSION}-${platform_name}-SBOM.cdx.json"
+          provenance_name="Pipeline-${VERSION}-${platform_name}-Poppler-provenance.json"
+          gh release upload "${TAG}" \
+            "gui/src-tauri/resources/notices/THIRD_PARTY_SBOM.cdx.json#${sbom_name}" \
+            "gui/src-tauri/resources/poppler/PROVENANCE.json#${provenance_name}" \
+            --clobber
+          lookup_asset_id "${friendly_asset}" >/dev/null
+          lookup_asset_id "${sbom_name}" >/dev/null
+          lookup_asset_id "${provenance_name}" >/dev/null

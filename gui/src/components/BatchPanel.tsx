@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { BatchJob, WatchStatus } from "../lib/types";
+import type { BatchJob, WatchStatus, InputSlot, PipelineConfig } from "../lib/types";
 
 interface Props {
   onClose: () => void;
@@ -39,6 +39,8 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
   // Live job list from the backend once a batch is running.
   const [jobs, setJobs] = useState<BatchJob[]>([]);
   const [watch, setWatch] = useState<WatchStatus | null>(null);
+  const [inputSlots, setInputSlots] = useState<InputSlot[]>([]);
+  const [extraInputs, setExtraInputs] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const running = jobs.some((j) => j.status === "running" || j.status === "pending");
@@ -46,6 +48,9 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
   useEffect(() => {
     invoke<BatchJob[]>("get_batch_status").then(setJobs).catch(() => {});
     invoke<WatchStatus>("get_watch_status").then(setWatch).catch(() => {});
+    invoke<PipelineConfig>("get_pipeline_config")
+      .then((config) => setInputSlots(config.extraction?.extra_inputs ?? []))
+      .catch(() => {});
     const unlisteners: Array<Promise<() => void>> = [
       listen<BatchJob[]>("batch:progress", (e) => setJobs(e.payload)),
       listen("batch:done", () => invoke<BatchJob[]>("get_batch_status").then(setJobs).catch(() => {})),
@@ -59,11 +64,33 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
   const startWatch = useCallback(async () => {
     setError(null);
     try {
+      const missing = inputSlots.find((slot) => slot.required && !extraInputs[slot.key]);
+      if (missing) {
+        setError(`Select the required input “${missing.label || missing.key}” before watching.`);
+        return;
+      }
       const dir = await open({ directory: true });
       if (typeof dir !== "string") return;
-      await invoke("start_watch", { folder: dir });
+      await invoke("start_watch", { folder: dir, extraInputs });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [extraInputs, inputSlots]);
+
+  const pickExtraInput = useCallback(async (slot: InputSlot) => {
+    try {
+      const picked = await open({
+        directory: slot.mode === "folder",
+        multiple: false,
+        ...(slot.mode === "folder"
+          ? {}
+          : { filters: [{ name: slot.label || "Input", extensions: ["pdf", "tex", "txt", "md", "docx"] }] }),
+      });
+      if (typeof picked === "string") {
+        setExtraInputs((current) => ({ ...current, [slot.key]: picked }));
+      }
+    } catch {
+      /* cancelled */
     }
   }, []);
 
@@ -102,12 +129,17 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
   const start = useCallback(async () => {
     setError(null);
     try {
-      await invoke("start_batch", { paths: staged });
+      const missing = inputSlots.find((slot) => slot.required && !extraInputs[slot.key]);
+      if (missing) {
+        setError(`Select the required input “${missing.label || missing.key}” before starting.`);
+        return;
+      }
+      await invoke("start_batch", { paths: staged, extraInputs });
       setStaged([]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [staged]);
+  }, [extraInputs, inputSlots, staged]);
 
   const cancel = useCallback(async () => {
     try {
@@ -140,6 +172,33 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
         {error && (
           <div className="p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">
             {error}
+          </div>
+        )}
+
+        {inputSlots.length > 0 && !running && !watch?.active && (
+          <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-2">
+            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Shared profile inputs
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              These files are supplied to every batch or watch job.
+            </p>
+            {inputSlots.map((slot) => (
+              <div key={slot.key} className="flex items-center gap-2 text-sm">
+                <span className="w-40 truncate text-gray-700 dark:text-gray-300">
+                  {slot.label || slot.key}{slot.required ? " *" : ""}
+                </span>
+                <button
+                  onClick={() => pickExtraInput(slot)}
+                  className="px-2.5 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                >
+                  Choose…
+                </button>
+                <span className="flex-1 truncate text-xs text-gray-500" title={extraInputs[slot.key]}>
+                  {extraInputs[slot.key]?.split(/[\\/]/).pop() || "Not selected"}
+                </span>
+              </div>
+            ))}
           </div>
         )}
 
@@ -221,6 +280,11 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
           </div>
           {watch && watch.processed.length > 0 && (
             <div className="mt-2 space-y-1">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Processed {watch.processed_total ?? watch.processed.length}
+                {(watch.failed_total ?? 0) > 0 && <span className="text-red-500"> · {watch.failed_total} failed</span>}
+                {(watch.processed_total ?? watch.processed.length) > watch.processed.length && <> · showing latest {watch.processed.length}</>}
+              </p>
               {watch.processed.map((j, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs">
                   <span className="flex-1 truncate text-gray-700 dark:text-gray-300" title={j.path}>{j.name}</span>

@@ -3,6 +3,7 @@ pub mod deps;
 pub mod emit;
 pub mod engines;
 pub mod env;
+pub mod model_catalog;
 pub mod models;
 pub mod output;
 pub mod pipeline;
@@ -78,6 +79,7 @@ pub fn run() {
             commands::check_deps,
             commands::get_settings,
             commands::save_settings,
+            commands::get_model_catalog,
             commands::get_pipeline_config,
             commands::save_pipeline_config,
             commands::get_default_parallel_template,

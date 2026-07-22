@@ -123,7 +123,9 @@ pub const ENGINES: &[EngineSpec] = &[EngineSpec {
     description: "Local PDF-to-Markdown conversion with equations preserved. \
                   Runs on CPU or Apple Silicon; no API calls. GPL-3.0 code; \
                   model weights under Datalab's revenue-capped OpenRAIL-M license.",
-    pip_spec: "marker-pdf",
+    // Pin the last release exercised by Pipeline's extraction integration.
+    // A live index spec can replace the engine underneath an unchanged app.
+    pip_spec: "marker-pdf==1.10.2",
     entry_point: "marker_single",
     est_download_mb: 3500,
     est_disk_mb: 6000,
@@ -249,10 +251,14 @@ pub struct EngineStatus {
 /// The format is one `name vX.Y.Z` header line per tool, followed by
 /// indented entry-point lines.
 fn parse_uv_tool_list(output: &str, pip_spec: &str) -> Option<String> {
+    let package = pip_spec
+        .split(['=', '<', '>', '!', '~'])
+        .next()
+        .unwrap_or(pip_spec);
     for line in output.lines() {
         let line = line.trim();
         let mut parts = line.split_whitespace();
-        if parts.next() == Some(pip_spec) {
+        if parts.next() == Some(package) {
             if let Some(ver) = parts.next() {
                 return Some(ver.trim_start_matches('v').to_string());
             }
@@ -339,12 +345,41 @@ static INSTALL_CHILD_PID: Mutex<Option<u32>> = Mutex::new(None);
 const INSTALL_STEP_TIMEOUT_SECS: u64 = 3600;
 const INSTALL_LOG_DRAIN_TIMEOUT_SECS: u64 = 5;
 
-struct InstallGuard;
+struct InstallGuard {
+    lock_file: std::fs::File,
+}
+
+fn acquire_install_guard() -> Result<InstallGuard, String> {
+    use fs2::FileExt as _;
+    if INSTALL_RUNNING.swap(true, Ordering::SeqCst) {
+        return Err("An engine install is already running".to_string());
+    }
+    let result = (|| {
+        let home = pipeline_home()?;
+        std::fs::create_dir_all(&home).map_err(|e| format!("Failed to create ~/.pipeline: {e}"))?;
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(home.join("engine.lock"))
+            .map_err(|e| format!("Failed to open engine lock: {e}"))?;
+        lock_file
+            .try_lock_exclusive()
+            .map_err(|e| format!("Another Pipeline process is installing an engine ({e})"))?;
+        Ok(InstallGuard { lock_file })
+    })();
+    if result.is_err() {
+        INSTALL_RUNNING.store(false, Ordering::SeqCst);
+    }
+    result
+}
 
 impl Drop for InstallGuard {
     fn drop(&mut self) {
         kill_install_child();
         INSTALL_RUNNING.store(false, Ordering::SeqCst);
+        let _ = fs2::FileExt::unlock(&self.lock_file);
     }
 }
 
@@ -540,7 +575,7 @@ async fn run_install_step(
     env: &[(String, String)],
     label: &str,
 ) -> Result<(), String> {
-    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::io::BufReader;
 
     let mut cmd = crate::pipeline::claude::build_silent_command(
         program.to_str().ok_or("Program path is not valid UTF-8")?,
@@ -560,14 +595,21 @@ async fn run_install_step(
     let pid = child.id().unwrap_or(0);
     if pid > 0 {
         *INSTALL_CHILD_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
+        crate::commands::register_process_job(pid);
     }
 
     let app_out = app.clone();
     let stdout = child.stdout.take();
     let mut out_task = tokio::spawn(async move {
         if let Some(stdout) = stdout {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            let mut reader = BufReader::new(stdout);
+            while let Ok(Some(record)) = crate::pipeline::logging::next_bounded_line(
+                &mut reader,
+                crate::pipeline::logging::MAX_CLI_LINE_BYTES,
+            )
+            .await
+            {
+                let line = record.text;
                 if !line.trim().is_empty() {
                     log(&app_out, line);
                 }
@@ -578,8 +620,14 @@ async fn run_install_step(
     let stderr = child.stderr.take();
     let mut err_task = tokio::spawn(async move {
         if let Some(stderr) = stderr {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            let mut reader = BufReader::new(stderr);
+            while let Ok(Some(record)) = crate::pipeline::logging::next_bounded_line(
+                &mut reader,
+                crate::pipeline::logging::MAX_CLI_LINE_BYTES,
+            )
+            .await
+            {
+                let line = record.text;
                 if !line.trim().is_empty() {
                     log(&app_err, line);
                 }
@@ -595,6 +643,7 @@ async fn run_install_step(
     // Keep the PID available to cancel_install until the child has exited or
     // the timeout path has killed and reaped it.
     *INSTALL_CHILD_PID.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    crate::commands::unregister_process_job(pid);
     finish_log_task(&mut out_task).await;
     finish_log_task(&mut err_task).await;
 
@@ -662,10 +711,7 @@ fn minimal_pdf_bytes() -> Vec<u8> {
 /// progress via `engines:phase` and `engines:log` events.
 pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
     let spec = engine(engine_id)?;
-    if INSTALL_RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("An engine install is already running".to_string());
-    }
-    let _guard = InstallGuard;
+    let _guard = acquire_install_guard()?;
     INSTALL_CANCEL.store(false, Ordering::Release);
 
     // Disk-space precheck against the estimate, with headroom.
@@ -810,10 +856,7 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
 /// reinstall fast); deleting `~/.pipeline/` manually removes everything.
 pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
     let spec = engine(engine_id)?;
-    if INSTALL_RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("An engine install is already running".to_string());
-    }
-    let _guard = InstallGuard;
+    let _guard = acquire_install_guard()?;
     INSTALL_CANCEL.store(false, Ordering::Release);
 
     let uv = uv_binary_path()?;
@@ -822,7 +865,11 @@ pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), St
         run_install_step(
             app,
             &uv,
-            &["tool", "uninstall", spec.pip_spec],
+            &[
+                "tool",
+                "uninstall",
+                spec.pip_spec.split('=').next().unwrap_or(spec.pip_spec),
+            ],
             &env,
             "uninstall",
         )

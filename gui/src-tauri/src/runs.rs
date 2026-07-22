@@ -25,6 +25,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const MAX_TEXT_BYTES: usize = 1_000_000;
 /// Images larger than this are not inlined (metadata only).
 const MAX_IMAGE_BYTES: u64 = 10_000_000;
+const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
+const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ANNOTATION_BYTES: usize = 1_000_000;
 static RUN_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn new_run_id(paper_hash: &str) -> String {
@@ -296,6 +299,14 @@ fn read_at_most(path: &Path, limit: usize) -> Result<(Vec<u8>, bool), String> {
     Ok((bytes, truncated))
 }
 
+fn read_utf8_at_most(path: &Path, limit: usize, label: &str) -> Result<String, String> {
+    let (bytes, oversized) = read_at_most(path, limit)?;
+    if oversized {
+        return Err(format!("{label} exceeds the {limit} byte safety limit"));
+    }
+    String::from_utf8(bytes).map_err(|e| format!("{label} is not valid UTF-8: {e}"))
+}
+
 /// Accumulates artifacts for a run and writes the manifest at the end.
 /// All writes are best-effort from the pipeline's perspective — callers log
 /// failures but never fail the run because persistence failed.
@@ -427,9 +438,11 @@ impl RunWriter {
     pub fn register_unlisted(&mut self, subdir: &str, group: &str) -> usize {
         const MAX_UNLISTED: usize = 500;
         const MAX_UNLISTED_BYTES: u64 = 50_000_000;
+        const MAX_TOTAL_UNLISTED_BYTES: u64 = 250_000_000;
         let known: std::collections::HashSet<String> =
             self.artifacts.iter().map(|a| a.rel_path.clone()).collect();
         let mut added = 0usize;
+        let mut total_bytes = 0u64;
         let mut stack = vec![self.dir.join(subdir)];
         while let Some(d) = stack.pop() {
             let Ok(entries) = fs::read_dir(&d) else {
@@ -448,11 +461,16 @@ impl RunWriter {
                     stack.push(path);
                     continue;
                 }
-                if entry
-                    .metadata()
-                    .map(|m| m.len() > MAX_UNLISTED_BYTES)
-                    .unwrap_or(true)
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                if metadata.len() > MAX_UNLISTED_BYTES
+                    || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_UNLISTED_BYTES
                 {
+                    // These files were produced inside Pipeline's per-run
+                    // model sandbox. Remove runaway output rather than leave
+                    // an unindexed, unbounded disk leak behind.
+                    let _ = fs::remove_file(&path);
                     continue;
                 }
                 let Ok(rel) = path.strip_prefix(&self.dir) else {
@@ -468,6 +486,7 @@ impl RunWriter {
                     .to_string();
                 if self.register_existing(&rel_str, &label, group).is_ok() {
                     added += 1;
+                    total_bytes += metadata.len();
                 }
             }
         }
@@ -484,6 +503,14 @@ impl RunWriter {
     }
 
     fn current_manifest(&self) -> RunManifest {
+        // User metadata may be edited while finalization is racing with a UI
+        // refresh. Preserve it instead of rebuilding those fields from empty
+        // defaults on every lifecycle write.
+        let (title, tags) = fs::read_to_string(self.dir.join("manifest.json"))
+            .ok()
+            .and_then(|json| serde_json::from_str::<RunManifest>(&json).ok())
+            .map(|manifest| (manifest.title, manifest.tags))
+            .unwrap_or_default();
         RunManifest {
             run_id: self.run_id.clone(),
             created: self.created.clone(),
@@ -498,8 +525,8 @@ impl RunWriter {
             usage: self.meta.usage,
             step_count: self.meta.step_count,
             failed_steps: self.meta.failed_steps.clone(),
-            title: String::new(),
-            tags: Vec::new(),
+            title,
+            tags,
             variables: self.meta.variables.clone(),
             extra_inputs: self.meta.extra_inputs.clone(),
             parent_run_id: self.meta.parent_run_id.clone(),
@@ -530,15 +557,35 @@ impl Drop for RunWriter {
 
 /// Serialize a manifest to `{dir}/manifest.json`.
 fn write_manifest(dir: &Path, manifest: &RunManifest) -> Result<(), String> {
+    use std::io::Write as _;
     let json = serde_json::to_string_pretty(manifest)
         .map_err(|e| format!("Failed to serialize manifest: {e}"))?;
-    fs::write(dir.join("manifest.json"), json).map_err(|e| format!("Failed to write manifest: {e}"))
+    let destination = dir.join("manifest.json");
+    let mut temp = tempfile::NamedTempFile::new_in(dir)
+        .map_err(|e| format!("Failed to create manifest temp file: {e}"))?;
+    temp.write_all(json.as_bytes())
+        .map_err(|e| format!("Failed to write manifest temp file: {e}"))?;
+    temp.flush()
+        .map_err(|e| format!("Failed to flush manifest temp file: {e}"))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync manifest temp file: {e}"))?;
+    temp.persist(&destination)
+        .map_err(|e| format!("Failed to publish manifest: {}", e.error))?;
+    #[cfg(unix)]
+    {
+        // Make the rename durable across a sudden power loss.
+        fs::File::open(dir)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|e| format!("Failed to sync run directory: {e}"))?;
+    }
+    Ok(())
 }
 
 pub fn load_manifest(run_id: &str) -> Result<RunManifest, String> {
     validate_run_id(run_id)?;
     let path = runs_dir()?.join(run_id).join("manifest.json");
-    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read manifest: {e}"))?;
+    let content = read_utf8_at_most(&path, MAX_MANIFEST_BYTES, "Run manifest")?;
     serde_json::from_str(&content).map_err(|e| format!("Invalid manifest: {e}"))
 }
 
@@ -555,16 +602,10 @@ pub fn list_runs() -> Result<Vec<RunSummary>, String> {
             continue;
         }
         let manifest_path = entry.path().join("manifest.json");
-        let manifest = fs::read_to_string(&manifest_path)
+        let manifest = read_utf8_at_most(&manifest_path, MAX_MANIFEST_BYTES, "Run manifest")
             .ok()
             .and_then(|content| serde_json::from_str::<RunManifest>(&content).ok())
-            .or_else(|| {
-                if manifest_path.exists() {
-                    None
-                } else {
-                    recover_orphan_manifest(&entry.path())
-                }
-            });
+            .or_else(|| recover_broken_manifest(&entry.path(), manifest_path.exists()));
         if let Some(manifest) = manifest {
             summaries.push(manifest.to_summary());
         }
@@ -572,6 +613,57 @@ pub fn list_runs() -> Result<Vec<RunSummary>, String> {
     // Sort by created timestamp (RFC3339 sorts lexically), newest first.
     summaries.sort_by(|a, b| b.created.cmp(&a.created));
     Ok(summaries)
+}
+
+/// Locate the newest completed report in the same revision lineage. Stable
+/// input path is the primary lineage key; content hash also finds identical
+/// copies moved back to the same logical input.
+pub fn load_latest_report_for_input(
+    input_path: &str,
+    paper_hash: &str,
+) -> Result<Option<crate::models::PipelineReport>, String> {
+    let normalized_input = Path::new(input_path)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(input_path));
+    let mut candidates: Vec<(String, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(runs_dir()?).map_err(|e| format!("Failed to list runs: {e}"))? {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let manifest = read_utf8_at_most(
+            &entry.path().join("manifest.json"),
+            MAX_MANIFEST_BYTES,
+            "Run manifest",
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str::<RunManifest>(&json).ok());
+        let Some(manifest) = manifest else { continue };
+        if manifest.status == "running"
+            || manifest.status == "failed"
+            || manifest.status == "cancelled"
+        {
+            continue;
+        }
+        let same_path = Path::new(&manifest.input_path)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(&manifest.input_path))
+            == normalized_input;
+        let same_hash = manifest.run_id.starts_with(&format!("{paper_hash}_"));
+        if same_path || same_hash {
+            candidates.push((manifest.created, entry.path().join("report.json")));
+        }
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in candidates {
+        let Ok(json) = read_utf8_at_most(&path, MAX_REPORT_BYTES, "Run report") else {
+            continue;
+        };
+        if let Ok(report) = serde_json::from_str(&json) {
+            return Ok(Some(report));
+        }
+    }
+    Ok(None)
 }
 
 /// Make a pre-fix manifest-less run visible and eligible for normal retention.
@@ -611,11 +703,32 @@ fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
     Some(manifest)
 }
 
+fn recover_broken_manifest(dir: &Path, existed: bool) -> Option<RunManifest> {
+    if existed {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let source = dir.join("manifest.json");
+        let backup = dir.join(format!("manifest.corrupt-{stamp}.json"));
+        // Preserve the bytes for support/recovery. If the rename loses a race
+        // with a writer, leave the new manifest alone and try again next list.
+        if fs::rename(source, backup).is_err() {
+            return None;
+        }
+    }
+    recover_orphan_manifest(dir)
+}
+
 /// Update a run's user-assigned title and tags in place. Tags are trimmed and
 /// de-duplicated; empties are dropped.
 pub fn update_run_meta(run_id: &str, title: &str, tags: &[String]) -> Result<(), String> {
     validate_run_id(run_id)?;
     let mut manifest = load_manifest(run_id)?;
+    if manifest.status == "running" {
+        return Err("A running job cannot be renamed or retagged".to_string());
+    }
     manifest.title = title.trim().to_string();
     let mut seen = std::collections::HashSet::new();
     manifest.tags = tags
@@ -632,6 +745,10 @@ pub fn update_run_meta(run_id: &str, title: &str, tags: &[String]) -> Result<(),
 /// removal, so a crafted id can't escape the sandbox.
 pub fn delete_run(run_id: &str) -> Result<(), String> {
     validate_run_id(run_id)?;
+    let manifest = load_manifest(run_id)?;
+    if manifest.status == "running" {
+        return Err("A running job cannot be deleted".to_string());
+    }
     let base = runs_dir()?
         .canonicalize()
         .map_err(|e| format!("Cannot resolve runs dir: {e}"))?;
@@ -642,7 +759,41 @@ pub fn delete_run(run_id: &str) -> Result<(), String> {
     if !canonical.starts_with(&base) || canonical == base {
         return Err("Invalid run id".into());
     }
-    fs::remove_dir_all(&canonical).map_err(|e| format!("Failed to delete run: {e}"))
+    fs::remove_dir_all(&canonical).map_err(|e| format!("Failed to delete run: {e}"))?;
+
+    // Legacy history duplicated the full report (and often the extracted
+    // paper text). Remove it once no remaining run references this paper hash
+    // so deleting the final run really deletes the private report data.
+    let paper_hash = run_id.split('_').next().unwrap_or_default();
+    let another_run_exists = fs::read_dir(&base)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false)
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(&format!("{paper_hash}_")))
+        });
+    if !another_run_exists && !paper_hash.is_empty() {
+        if let Some(home) = dirs::home_dir() {
+            let history = home.join(".pipeline").join("history");
+            if let Ok(entries) = fs::read_dir(history) {
+                for entry in entries.flatten() {
+                    if entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.starts_with(&format!("{paper_hash}_")))
+                    {
+                        let _ = fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Count of runs on disk and total bytes they occupy (best-effort walk).
@@ -690,28 +841,60 @@ fn dir_size(path: &Path) -> u64 {
 /// report artifact.
 pub fn read_annotations(run_id: &str) -> Result<String, String> {
     validate_run_id(run_id)?;
+    load_manifest(run_id)?;
     let path = runs_dir()?.join(run_id).join("annotations.json");
-    Ok(fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string()))
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("{}".to_string()),
+        Err(error) => Err(format!("Cannot inspect annotations: {error}")),
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err("Annotations file cannot be a symlink".to_string())
+        }
+        Ok(_) => read_utf8_at_most(&path, MAX_ANNOTATION_BYTES, "Annotations file"),
+    }
 }
 
 /// Write a run's annotations. `content` must be valid JSON and under 1 MB.
 pub fn write_annotations(run_id: &str, content: &str) -> Result<(), String> {
     validate_run_id(run_id)?;
-    if content.len() > 1_000_000 {
-        return Err("Annotations are too large".into());
-    }
-    serde_json::from_str::<serde_json::Value>(content)
-        .map_err(|e| format!("Annotations are not valid JSON: {e}"))?;
+    validate_annotation_content(content)?;
     let dir = runs_dir()?.join(run_id);
     // A delayed frontend save must not recreate a run that was just deleted.
     load_manifest(run_id)?;
+    let destination = dir.join("annotations.json");
+    if fs::symlink_metadata(&destination)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err("Annotations file cannot be a symlink".to_string());
+    }
     let mut temp = tempfile::NamedTempFile::new_in(&dir)
         .map_err(|e| format!("Cannot create annotation temp file: {e}"))?;
     use std::io::Write as _;
     temp.write_all(content.as_bytes())
         .map_err(|e| format!("Cannot write annotations: {e}"))?;
-    temp.persist(dir.join("annotations.json"))
+    temp.flush()
+        .map_err(|e| format!("Cannot flush annotations: {e}"))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Cannot sync annotations: {e}"))?;
+    temp.persist(destination)
         .map_err(|e| format!("Cannot save annotations: {}", e.error))?;
+    #[cfg(unix)]
+    fs::File::open(&dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("Cannot sync annotations directory: {e}"))?;
+    Ok(())
+}
+
+fn validate_annotation_content(content: &str) -> Result<(), String> {
+    if content.len() > MAX_ANNOTATION_BYTES {
+        return Err("Annotations are too large".into());
+    }
+    let value = serde_json::from_str::<serde_json::Value>(content)
+        .map_err(|e| format!("Annotations are not valid JSON: {e}"))?;
+    if !value.is_object() {
+        return Err("Annotations must be a JSON object".to_string());
+    }
     Ok(())
 }
 
@@ -857,6 +1040,25 @@ mod tests {
         assert!(read_artifact("some-run", "../other/file.md").is_err());
         assert!(read_artifact("some-run", "/etc/passwd").is_err());
         assert!(read_artifact("some-run", "a/../../b").is_err());
+    }
+
+    #[test]
+    fn bounded_utf8_reader_stops_at_the_limit() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        fs::write(temp.path(), b"123456789").unwrap();
+        assert_eq!(
+            read_utf8_at_most(temp.path(), 9, "test").unwrap(),
+            "123456789"
+        );
+        assert!(read_utf8_at_most(temp.path(), 8, "test").is_err());
+    }
+
+    #[test]
+    fn annotations_require_a_bounded_json_object() {
+        assert!(validate_annotation_content(r#"{"a":{"status":"done"}}"#).is_ok());
+        assert!(validate_annotation_content("[]").is_err());
+        assert!(validate_annotation_content("not-json").is_err());
+        assert!(validate_annotation_content(&"x".repeat(MAX_ANNOTATION_BYTES + 1)).is_err());
     }
 
     #[test]

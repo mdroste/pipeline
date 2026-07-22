@@ -141,6 +141,10 @@ fn compute_hash(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize())[..16].to_string())
 }
 
+fn content_hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))[..16].to_string()
+}
+
 /// Find the main .tex file in a directory by looking for \documentclass.
 fn find_main_tex(dir: &Path) -> Option<PathBuf> {
     let tex_files: Vec<PathBuf> = fs::read_dir(dir)
@@ -277,6 +281,36 @@ pub fn marker_output_dir(paper_hash: &str) -> Option<PathBuf> {
     )
 }
 
+fn prune_marker_cache(current_hash: &str) {
+    const KEEP_OTHER_ENTRIES: usize = 20;
+    let Some(current) = marker_output_dir(current_hash) else {
+        return;
+    };
+    let Some(root) = current.parent() else { return };
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path == current || !path.is_dir() {
+                return None;
+            }
+            let modified = entry
+                .metadata()
+                .ok()
+                .and_then(|meta| meta.modified().ok())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            Some((modified, path))
+        })
+        .collect();
+    dirs.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in dirs.into_iter().skip(KEEP_OTHER_ENTRIES) {
+        let _ = fs::remove_dir_all(path);
+    }
+}
+
 /// Image files marker emitted for a paper (figures/tables extracted from the
 /// PDF), for registration as run artifacts.
 pub fn marker_image_files(paper_hash: &str) -> Vec<PathBuf> {
@@ -346,6 +380,7 @@ fn extract_marker(
     // images land somewhere the run can collect them. Cleared first so a
     // prior run's files can't leak into this one.
     let out_dir = marker_output_dir(paper_hash);
+    prune_marker_cache(paper_hash);
     if let Some(dir) = &out_dir {
         let _ = fs::remove_dir_all(dir);
         if fs::create_dir_all(dir).is_ok() {
@@ -1233,7 +1268,6 @@ pub async fn extract(
     let native_result = tokio::task::spawn_blocking(move || {
         if path.is_dir() {
             if let Some(tex_path) = find_main_tex(&path) {
-                let hash = compute_hash(&tex_path)?;
                 // Must be canonical: extract_latex compares it against canonicalized
                 // include paths via starts_with. A non-canonical root silently defeats
                 // the path-traversal check.
@@ -1245,6 +1279,7 @@ pub async fn extract(
                 if text.trim().is_empty() {
                     return Err("LaTeX extraction produced empty output".to_string());
                 }
+                let hash = content_hash(text.as_bytes());
                 return Ok(ExtractionResult {
                     text,
                     method: "latex".to_string(),
@@ -1267,7 +1302,6 @@ pub async fn extract(
         }
 
         if ext_eq(&path, "tex") {
-            let hash = compute_hash(&path)?;
             // Must be canonical: extract_latex compares it against canonicalized
             // include paths via starts_with. A non-canonical root silently defeats
             // the path-traversal check.
@@ -1283,6 +1317,7 @@ pub async fn extract(
             if text.trim().is_empty() {
                 return Err("LaTeX extraction produced empty output".to_string());
             }
+            let hash = content_hash(text.as_bytes());
             Ok(ExtractionResult {
                 text,
                 method: "latex".to_string(),
@@ -1553,7 +1588,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         return Err(format!("Not a directory: {root}"));
     }
 
-    let mut files: Vec<(String, u64)> = Vec::new();
+    let mut files: Vec<(String, u64, PathBuf)> = Vec::new();
     let mut stack = vec![root_path.clone()];
     let mut truncated = false;
     while let Some(dir) = stack.pop() {
@@ -1581,7 +1616,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
                     .unwrap_or(&path)
                     .to_string_lossy()
                     .replace('\\', "/");
-                files.push((rel, meta.len()));
+                files.push((rel, meta.len(), path));
             }
         }
     }
@@ -1592,7 +1627,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         "# Input folder inventory\n\nRoot: {root_display}\n\n{} files. File contents are NOT included here — use the Read tool with paths under the root to open any file you need.\n\n| File | Bytes |\n|---|---|\n",
         files.len()
     );
-    for (rel, size) in &files {
+    for (rel, size, _) in &files {
         text.push_str(&format!("| {rel} | {size} |\n"));
     }
     if truncated {
@@ -1601,7 +1636,24 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         ));
     }
 
-    let hash = format!("{:x}", Sha256::digest(text.as_bytes()))[..16].to_string();
+    let mut hasher = Sha256::new();
+    let mut chunk = [0u8; 64 * 1024];
+    for (rel, size, path) in &files {
+        hasher.update(rel.as_bytes());
+        hasher.update([0]);
+        hasher.update(size.to_le_bytes());
+        let mut file =
+            fs::File::open(path).map_err(|e| format!("Failed to hash {}: {e}", path.display()))?;
+        loop {
+            let count = std::io::Read::read(&mut file, &mut chunk)
+                .map_err(|e| format!("Failed to hash {}: {e}", path.display()))?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&chunk[..count]);
+        }
+    }
+    let hash = format!("{:x}", hasher.finalize())[..16].to_string();
     Ok(ExtractionResult {
         text,
         method: "folder".to_string(),
@@ -1662,6 +1714,21 @@ mod ingest_tests {
         assert!(!result.text.contains("junk.js"));
         assert!(!result.text.contains(".git/config"));
         assert_eq!(result.paper_hash.len(), 16);
+    }
+
+    #[test]
+    fn folder_hash_changes_when_same_size_content_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("data.txt");
+        fs::write(&file, "alpha").unwrap();
+        let first = ingest_folder(dir.path().to_str().unwrap())
+            .unwrap()
+            .paper_hash;
+        fs::write(&file, "bravo").unwrap();
+        let second = ingest_folder(dir.path().to_str().unwrap())
+            .unwrap()
+            .paper_hash;
+        assert_ne!(first, second);
     }
 
     #[test]

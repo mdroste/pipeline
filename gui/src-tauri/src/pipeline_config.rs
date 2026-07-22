@@ -5,7 +5,7 @@
 use crate::prompts;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ── Data types ──────────────────────────────────────────────────────
 
@@ -34,9 +34,17 @@ pub struct StepConfig {
     /// Per-step model override. Empty = use the global setting for this step's provider.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
+    /// Provider/transport-specific model policies, keyed as `claude:cli`,
+    /// `codex:api`, etc. A plain provider key is accepted as a portable
+    /// fallback. This supersedes the legacy single `model` string.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub model_overrides: std::collections::HashMap<String, crate::settings::ModelSelection>,
     /// Per-step effort override (low/medium/high/max). Empty = use the global setting.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub effort: String,
+    /// Provider/transport-specific effort overrides. Supersedes `effort`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub effort_overrides: std::collections::HashMap<String, String>,
     /// Explicit upstream dependencies (step ids). Empty = the implicit
     /// adjacency schedule (parallel steps run in their wave; sequential steps
     /// wait for everything before them). Non-empty = this step waits for
@@ -111,12 +119,46 @@ impl Default for StepConfig {
             tools: Vec::new(),
             agents: Vec::new(),
             model: String::new(),
+            model_overrides: std::collections::HashMap::new(),
             effort: String::new(),
+            effort_overrides: std::collections::HashMap::new(),
             inputs: Vec::new(),
             run_if: None,
             output_schema: None,
             for_each: None,
         }
+    }
+}
+
+impl StepConfig {
+    /// Resolve the most specific model policy for a provider. New
+    /// provider/transport keys win, followed by a provider-wide override and
+    /// finally the legacy free-text field.
+    pub fn model_selection_for(
+        &self,
+        settings: &crate::settings::Settings,
+        provider: &str,
+    ) -> Option<crate::settings::ModelSelection> {
+        let context = settings.model_context_key(provider);
+        self.model_overrides
+            .get(&context)
+            .or_else(|| self.model_overrides.get(provider))
+            .cloned()
+            .or_else(|| {
+                (!self.model.trim().is_empty())
+                    .then(|| crate::settings::ModelSelection::from_legacy(&self.model))
+            })
+    }
+
+    pub fn effort_for(&self, settings: &crate::settings::Settings, provider: &str) -> String {
+        let context = settings.model_context_key(provider);
+        self.effort_overrides
+            .get(&context)
+            .or_else(|| self.effort_overrides.get(provider))
+            .filter(|value| !value.trim().is_empty())
+            .cloned()
+            .or_else(|| (!self.effort.trim().is_empty()).then(|| self.effort.clone()))
+            .unwrap_or_else(|| settings.model_effort(provider).to_string())
     }
 }
 
@@ -332,7 +374,7 @@ pub struct ProfileSummary {
 /// output schemas, and fan-out. v1 (unversioned) profiles read fine because
 /// every added field is `#[serde(default)]`; exports are tagged with the
 /// version so a future format change can migrate or reject gracefully.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 fn default_schema_version() -> u32 {
     1
@@ -534,16 +576,6 @@ pub fn sanitize_step_id(id: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
-}
-
-/// Sanitize all step IDs in a list, replacing reserved characters.
-fn sanitize_steps(steps: &mut [StepConfig]) {
-    for step in steps.iter_mut() {
-        let clean = sanitize_step_id(&step.id);
-        if clean != step.id {
-            step.id = clean;
-        }
-    }
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -902,7 +934,7 @@ fn create_builtin_profiles() -> Result<(), String> {
     let stale_codebase = profiles.join("codebase-review.json");
     if stale_codebase.exists() {
         let _ = fs::remove_file(&stale_codebase);
-        let mut settings = crate::settings::load();
+        let mut settings = crate::settings::load_persisted();
         if settings.active_profile == "codebase-review" {
             settings.active_profile = "quick-code-review".into();
             let _ = crate::settings::save(&settings);
@@ -1308,8 +1340,9 @@ pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
 
     // Try the current format. `steps` may legitimately be empty; serde's
     // required current-format fields distinguish it from the legacy shape.
-    if let Ok(mut profile) = serde_json::from_str::<ProfileData>(&content) {
-        sanitize_steps(&mut profile.steps);
+    if let Ok(profile) = serde_json::from_str::<ProfileData>(&content) {
+        validate_profile_steps(&profile.steps)
+            .map_err(|e| format!("Profile '{id}' is invalid: {e}"))?;
         return Ok(profile);
     }
 
@@ -1331,24 +1364,12 @@ pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
 }
 
 pub fn save_profile(id: &str, profile: &ProfileData) -> Result<(), String> {
-    use std::io::Write as _;
     let path = profile_path(id)?;
-    let mut clean = profile.clone();
-    sanitize_steps(&mut clean.steps);
+    validate_profile_steps(&profile.steps)?;
     let json =
-        serde_json::to_string_pretty(&clean).map_err(|e| format!("Failed to serialize: {e}"))?;
-    // Atomic write with a unique temp name so concurrent writers for the same
-    // profile can't clobber each other's .tmp file.
-    let dir = path
-        .parent()
-        .ok_or_else(|| format!("No parent dir for {}", path.display()))?;
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)
-        .map_err(|e| format!("Failed to create temp file in {}: {e}", dir.display()))?;
-    tmp.write_all(json.as_bytes())
-        .map_err(|e| format!("Failed to write profile: {e}"))?;
-    tmp.persist(&path)
-        .map_err(|e| format!("Failed to save profile: {}", e.error))?;
-    Ok(())
+        serde_json::to_string_pretty(profile).map_err(|e| format!("Failed to serialize: {e}"))?;
+    restore_profile_bytes(&path, json.as_bytes())
+        .map_err(|e| format!("Failed to save profile '{}': {e}", path.display()))
 }
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -1356,7 +1377,7 @@ pub fn save_profile(id: &str, profile: &ProfileData) -> Result<(), String> {
 /// Load the active profile as a PipelineConfig.
 pub fn load() -> PipelineConfig {
     let _ = ensure_migrated();
-    let settings = crate::settings::load();
+    let settings = crate::settings::load_persisted();
     match load_profile(&settings.active_profile) {
         Ok(profile) => PipelineConfig {
             steps: profile.steps,
@@ -1390,6 +1411,46 @@ pub fn load() -> PipelineConfig {
     }
 }
 
+/// Load the active profile for execution. Unlike `load` (used by the editor
+/// so it can still open after a broken profile), this never substitutes a
+/// different workflow: a missing or corrupt active profile is a hard run-time
+/// error shown to the user.
+pub fn load_required() -> Result<PipelineConfig, String> {
+    ensure_migrated()?;
+    let settings = crate::settings::load_persisted();
+    load_required_for(&settings.active_profile)
+}
+
+pub fn load_required_for(active_profile: &str) -> Result<PipelineConfig, String> {
+    load_required_profile_for(active_profile).map(|(config, _)| config)
+}
+
+/// Load the executable config and its display name from one profile-file
+/// snapshot. Run manifests use the returned name so a concurrent profile edit
+/// cannot make their metadata disagree with the workflow that actually ran.
+pub fn load_required_profile_for(active_profile: &str) -> Result<(PipelineConfig, String), String> {
+    ensure_migrated()?;
+    let profile = load_profile(active_profile).map_err(|error| {
+        format!(
+            "Active profile '{}' could not be loaded: {error}. Select or repair a profile before running.",
+            active_profile
+        )
+    })?;
+    let profile_name = profile.name;
+    Ok((
+        PipelineConfig {
+            steps: profile.steps,
+            merge: profile.merge,
+            use_orientation: profile.use_orientation,
+            orientation_prompt: profile.orientation_prompt,
+            extraction: profile.extraction,
+            parallel_context_template: profile.parallel_context_template,
+            variables: profile.variables,
+        },
+        profile_name,
+    ))
+}
+
 /// Step ids key the executor's pass events and the merge grouping
 /// (`{id}/{agent}`), so duplicates silently collide. Reject them at save and
 /// import time. Deliberately not enforced on load/migration, so an existing
@@ -1397,6 +1458,18 @@ pub fn load() -> PipelineConfig {
 pub fn validate_unique_step_ids(steps: &[StepConfig]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for step in steps {
+        if step.id.is_empty()
+            || step.id.len() > 64
+            || !step
+                .id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
+            return Err(format!(
+                "Invalid step id '{}'. Use 1–64 ASCII letters, numbers, '.', '-', or '_'.",
+                step.id
+            ));
+        }
         if !seen.insert(step.id.as_str()) {
             return Err(format!(
                 "Duplicate step id '{}' — step ids must be unique",
@@ -1405,6 +1478,30 @@ pub fn validate_unique_step_ids(steps: &[StepConfig]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+pub fn validate_workflow_semantics(steps: &[StepConfig]) -> Result<(), String> {
+    for step in steps {
+        if step.phase == Phase::Sequential && step.agents.len() > 1 {
+            return Err(format!(
+                "Sequential step '{}' selects multiple agents, but sequential multi-agent execution is unsupported.",
+                step.id
+            ));
+        }
+        if step.phase == Phase::Sequential && step.for_each.is_some() {
+            return Err(format!(
+                "Sequential step '{}' uses fan-out, but sequential fan-out is unsupported.",
+                step.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String> {
+    validate_unique_step_ids(steps)?;
+    validate_dependencies(steps)?;
+    validate_workflow_semantics(steps)
 }
 
 /// Reject explicit `inputs` graphs that can't run: an unknown dependency id or
@@ -1477,12 +1574,14 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
 /// Save to the active profile.
 pub fn save(config: &PipelineConfig) -> Result<(), String> {
     let _ = ensure_migrated();
-    validate_unique_step_ids(&config.steps)?;
-    validate_dependencies(&config.steps)?;
-    let settings = crate::settings::load();
-    let name = load_profile(&settings.active_profile)
-        .map(|p| p.name)
-        .unwrap_or_else(|_| "Default".into());
+    let settings = crate::settings::load_persisted();
+    save_for(&settings.active_profile, config)
+}
+
+pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String> {
+    validate_profile_id(profile_id)?;
+    validate_profile_steps(&config.steps)?;
+    let name = load_profile(profile_id)?.name;
     let profile = ProfileData {
         name,
         steps: config.steps.clone(),
@@ -1493,7 +1592,7 @@ pub fn save(config: &PipelineConfig) -> Result<(), String> {
         parallel_context_template: config.parallel_context_template.clone(),
         variables: config.variables.clone(),
     };
-    save_profile(&settings.active_profile, &profile)
+    save_profile(profile_id, &profile)
 }
 
 /// Reset active profile to defaults.
@@ -1511,7 +1610,7 @@ pub fn load_steps() -> Vec<StepConfig> {
 // ── Profile management ──────────────────────────────────────────────
 
 pub fn get_active_profile_id() -> String {
-    crate::settings::load().active_profile
+    crate::settings::load_persisted().active_profile
 }
 
 pub fn list_profiles() -> Result<Vec<ProfileSummary>, String> {
@@ -1620,7 +1719,7 @@ pub fn delete_profile(id: &str) -> Result<(), String> {
     fs::remove_file(&path).map_err(|e| format!("Failed to delete profile: {e}"))?;
 
     // If this was the active profile, switch back to deep-review
-    let mut settings = crate::settings::load();
+    let mut settings = crate::settings::load_persisted();
     if settings.active_profile == id {
         settings.active_profile = "deep-review".into();
         crate::settings::save(&settings)?;
@@ -1631,7 +1730,7 @@ pub fn delete_profile(id: &str) -> Result<(), String> {
 pub fn switch_profile(id: &str) -> Result<PipelineConfig, String> {
     let _ = ensure_migrated();
     let profile = load_profile(id)?;
-    let mut settings = crate::settings::load();
+    let mut settings = crate::settings::load_persisted();
     settings.active_profile = id.to_string();
     crate::settings::save(&settings)?;
     Ok(PipelineConfig {
@@ -1670,7 +1769,7 @@ pub fn export_profile_data(id: &str) -> Result<String, String> {
 
 pub fn export_bundle() -> Result<String, String> {
     let _ = ensure_migrated();
-    let mut settings = crate::settings::load();
+    let mut settings = crate::settings::load_persisted();
     // Strip API keys from the export to prevent credential leakage
     settings.anthropic_api_key = String::new();
     settings.openai_api_key = String::new();
@@ -1834,31 +1933,43 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             active_profile,
         } => {
             let validated = validate_bundle_profiles(&profiles, &active_profile)?;
-            // Merge imported settings with existing, preserving local API keys.
-            // Validate numeric ranges and provider to prevent invalid configs.
-            let mut current = crate::settings::load();
-            let valid_providers = ["claude", "codex", "gemini", "local"];
-            if !valid_providers.contains(&imported_settings.preferred_provider.as_str()) {
+            imported_settings.validate()?;
+            if imported_settings.active_profile != active_profile {
                 return Err(format!(
-                    "Invalid preferred provider '{}'",
-                    imported_settings.preferred_provider
+                    "Bundle active profile mismatch: settings name '{}', envelope names '{}'",
+                    imported_settings.active_profile, active_profile
                 ));
             }
+            // Merge imported settings with existing, preserving local API keys.
+            let mut current = crate::settings::load_persisted();
             current.preferred_provider = imported_settings.preferred_provider;
-            current.max_workers = imported_settings.max_workers.clamp(1, 10);
+            current.max_workers = imported_settings.max_workers;
             current.claude_model = imported_settings.claude_model;
+            current.claude_cli_model_selection = imported_settings.claude_cli_model_selection;
+            current.claude_api_model_selection = imported_settings.claude_api_model_selection;
             current.claude_effort = imported_settings.claude_effort;
             current.codex_model = imported_settings.codex_model;
+            current.codex_cli_model_selection = imported_settings.codex_cli_model_selection;
+            current.codex_api_model_selection = imported_settings.codex_api_model_selection;
             current.codex_effort = imported_settings.codex_effort;
             current.gemini_model = imported_settings.gemini_model;
+            current.gemini_cli_model_selection = imported_settings.gemini_cli_model_selection;
+            current.gemini_api_model_selection = imported_settings.gemini_api_model_selection;
+            if current.local_base_url != imported_settings.local_base_url {
+                // A bearer token is scoped to its endpoint. Carrying a local
+                // token across an imported server URL can disclose it to a
+                // different host on the next request.
+                current.local_api_key.clear();
+            }
             current.local_base_url = imported_settings.local_base_url;
             current.local_model = imported_settings.local_model;
             current.pdf_extractor = imported_settings.pdf_extractor;
             current.marker_disable_ocr = imported_settings.marker_disable_ocr;
             current.marker_disable_images = imported_settings.marker_disable_images;
             current.verbose_logging = imported_settings.verbose_logging;
-            current.step_timeout_secs = imported_settings.step_timeout_secs.clamp(60, 7200);
-            current.max_retries = imported_settings.max_retries.clamp(0, 10);
+            current.step_timeout_secs = imported_settings.step_timeout_secs;
+            current.max_retries = imported_settings.max_retries;
+            current.max_saved_runs = imported_settings.max_saved_runs;
             current.active_profile = active_profile;
 
             // Snapshot every destination before the first mutation. If any
@@ -1868,7 +1979,16 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 .iter()
                 .map(|(id, _)| {
                     let path = profile_path(id)?;
-                    let prior = fs::read(&path).ok();
+                    let prior = match fs::read(&path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(error) => {
+                            return Err(format!(
+                                "Cannot snapshot existing profile '{}': {error}",
+                                path.display()
+                            ));
+                        }
+                    };
                     Ok((path, prior))
                 })
                 .collect::<Result<_, String>>()?;
@@ -1914,6 +2034,8 @@ fn validate_bundle_profiles(
             .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
         validate_dependencies(&profile.steps)
             .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
+        validate_workflow_semantics(&profile.steps)
+            .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
         validated.push((
             profile.id.clone(),
             ProfileData {
@@ -1940,7 +2062,7 @@ fn restore_profile_snapshots(snapshots: &[(PathBuf, Option<Vec<u8>>)]) -> Result
     let mut errors = Vec::new();
     for (path, prior) in snapshots {
         let result = match prior {
-            Some(bytes) => fs::write(path, bytes),
+            Some(bytes) => restore_profile_bytes(path, bytes),
             None => {
                 if path.exists() {
                     fs::remove_file(path)
@@ -1958,6 +2080,21 @@ fn restore_profile_snapshots(snapshots: &[(PathBuf, Option<Vec<u8>>)]) -> Result
     } else {
         Err(errors.join("; "))
     }
+}
+
+fn restore_profile_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "profile has no parent")
+    })?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.flush()?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1986,6 +2123,41 @@ mod tests {
         let steps = vec![step_with_id("a"), step_with_id("b"), step_with_id("a")];
         let err = validate_unique_step_ids(&steps).unwrap_err();
         assert!(err.contains("Duplicate step id 'a'"), "{err}");
+    }
+
+    #[test]
+    fn invalid_step_ids_are_rejected_instead_of_rewritten() {
+        let step = StepConfig {
+            id: "a/b".to_string(),
+            ..Default::default()
+        };
+        assert!(validate_unique_step_ids(&[step]).is_err());
+
+        let mut empty = StepConfig::default();
+        empty.id.clear();
+        assert!(validate_unique_step_ids(&[empty]).is_err());
+    }
+
+    #[test]
+    fn unsupported_sequential_multi_unit_shapes_are_rejected() {
+        let multi_agent = StepConfig {
+            id: "synthesis".to_string(),
+            phase: Phase::Sequential,
+            agents: vec!["claude".to_string(), "gemini".to_string()],
+            ..Default::default()
+        };
+        assert!(validate_workflow_semantics(&[multi_agent]).is_err());
+
+        let fan_out = StepConfig {
+            id: "fanout".to_string(),
+            phase: Phase::Sequential,
+            for_each: Some(ForEach {
+                glob: "*.tex".to_string(),
+                max: 10,
+            }),
+            ..Default::default()
+        };
+        assert!(validate_workflow_semantics(&[fan_out]).is_err());
     }
 
     // ── validate_dependencies ──────────────────────────────────────
@@ -2266,5 +2438,36 @@ mod tests {
     fn sanitize_collapses_dashes() {
         assert_eq!(sanitize_step_id("a///b"), "a-b");
         assert_eq!(sanitize_step_id("--leading--"), "leading");
+    }
+
+    #[test]
+    fn step_model_policy_is_provider_and_transport_specific() {
+        let mut step = StepConfig::default();
+        step.model_overrides.insert(
+            "codex:cli".into(),
+            crate::settings::ModelSelection::Role {
+                role: "fast".into(),
+            },
+        );
+        step.model_overrides.insert(
+            "codex:api".into(),
+            crate::settings::ModelSelection::Pinned {
+                model: "gpt-api".into(),
+            },
+        );
+        let mut settings = crate::settings::Settings::default();
+        assert_eq!(
+            step.model_selection_for(&settings, "codex")
+                .unwrap()
+                .label(),
+            "fast role"
+        );
+        settings.openai_api_key = "secret".into();
+        assert_eq!(
+            step.model_selection_for(&settings, "codex")
+                .unwrap()
+                .label(),
+            "gpt-api"
+        );
     }
 }

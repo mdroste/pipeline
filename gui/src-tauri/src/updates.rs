@@ -10,6 +10,7 @@ use serde::Serialize;
 const OWNER: &str = "mdroste";
 const REPO: &str = "pipeline";
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct UpdateInfo {
@@ -61,7 +62,30 @@ pub async fn check() -> Result<UpdateInfo, String> {
         return Err(format!("GitHub returned {}", resp.status()));
     }
 
-    let release: GithubRelease = resp.json().await.map_err(|e| format!("parse error: {e}"))?;
+    if resp
+        .content_length()
+        .is_some_and(|length| length > MAX_RELEASE_RESPONSE_BYTES as u64)
+    {
+        return Err("GitHub update response exceeded the safety limit".to_string());
+    }
+    let mut resp = resp;
+    let mut bytes = Vec::with_capacity(
+        resp.content_length()
+            .unwrap_or(0)
+            .min(MAX_RELEASE_RESPONSE_BYTES as u64) as usize,
+    );
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("response read failed: {e}"))?
+    {
+        if chunk.len() > MAX_RELEASE_RESPONSE_BYTES.saturating_sub(bytes.len()) {
+            return Err("GitHub update response exceeded the safety limit".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let release: GithubRelease =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse error: {e}"))?;
 
     // Skip drafts and prereleases — we only care about shipped stable builds.
     if release.draft || release.prerelease {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import type { Settings } from "../lib/types";
+import type { ModelCatalog, ModelSelection, Settings } from "../lib/types";
 import EnginesPanel from "./EnginesPanel";
 
 interface Props {
@@ -20,6 +20,8 @@ export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
   const [section, setSection] = useState<Section>("llm");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
+  const [catalogLoading, setCatalogLoading] = useState<Record<string, boolean>>({});
 
   // Clear the "saved" indicator after 2 seconds, with proper cleanup
   useEffect(() => {
@@ -41,6 +43,48 @@ export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
         setLoading(false);
       });
   }, []);
+
+  const loadCatalog = async (provider: string, current: Settings, refresh = false) => {
+    setCatalogLoading((old) => ({ ...old, [provider]: true }));
+    try {
+      const catalog = await invoke<ModelCatalog>("get_model_catalog", {
+        provider,
+        settings: current,
+        refresh,
+      });
+      setCatalogs((old) => ({ ...old, [provider]: catalog }));
+    } catch (error) {
+      setCatalogs((old) => ({
+        ...old,
+        [provider]: {
+          provider,
+          transport: provider === "local" || providerTransport(current, provider) === "api" ? "api" : "cli",
+          source: "unavailable",
+          source_version: "",
+          fetched_at: "",
+          stale: true,
+          warning: String(error),
+          models: [],
+          roles: [],
+        },
+      }));
+    } finally {
+      setCatalogLoading((old) => ({ ...old, [provider]: false }));
+    }
+  };
+
+  // Refetch only when the transport changes, not on every API-key keystroke.
+  useEffect(() => {
+    if (!settings) return;
+    for (const provider of ["claude", "codex", "gemini", "local"]) {
+      void loadCatalog(provider, settings);
+    }
+  }, [
+    settings?.anthropic_api_key ? "api" : "cli",
+    settings?.openai_api_key ? "api" : "cli",
+    settings?.google_api_key ? "api" : "cli",
+    settings?.local_base_url,
+  ]);
 
   const handleSave = async () => {
     if (!settings) return;
@@ -159,7 +203,13 @@ export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
         )}
         <div className="p-8 max-w-xl">
           {section === "llm" && (
-            <LLMSection settings={settings} setSettings={setSettings} />
+            <LLMSection
+              settings={settings}
+              setSettings={setSettings}
+              catalogs={catalogs}
+              catalogLoading={catalogLoading}
+              loadCatalog={loadCatalog}
+            />
           )}
           {section === "extraction" && (
             <ExtractionSection settings={settings} setSettings={setSettings} />
@@ -228,9 +278,15 @@ function ProviderGroup({
 function LLMSection({
   settings,
   setSettings,
+  catalogs,
+  catalogLoading,
+  loadCatalog,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
+  catalogs: Record<string, ModelCatalog>;
+  catalogLoading: Record<string, boolean>;
+  loadCatalog: (provider: string, settings: Settings, refresh?: boolean) => Promise<void>;
 }) {
   return (
     <>
@@ -276,16 +332,13 @@ function LLMSection({
             </p>
           </Field>
           <Field label="Model">
-            <input
-              type="text"
-              value={settings.claude_model}
-              onChange={(e) =>
-                setSettings({ ...settings, claude_model: e.target.value })
-              }
-              placeholder="e.g. sonnet, opus, claude-sonnet-4-6 (empty = CLI default)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-              spellCheck={false}
+            <ModelPicker
+              provider="claude"
+              settings={settings}
+              catalog={catalogs.claude}
+              loading={catalogLoading.claude}
+              onChange={(selection) => setSettings(withProviderSelection(settings, "claude", selection))}
+              onRefresh={() => loadCatalog("claude", settings, true)}
             />
           </Field>
           <Field label="Thinking Effort">
@@ -297,10 +350,9 @@ function LLMSection({
               className={selectClass}
             >
               <option value="">Default</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="max">Max</option>
+              {effortOptions(catalogs.claude, providerSelection(settings, "claude"), ["low", "medium", "high", "max"]).map((effort) => (
+                <option key={effort} value={effort}>{effortLabel(effort)}</option>
+              ))}
             </select>
           </Field>
         </ProviderGroup>
@@ -323,16 +375,13 @@ function LLMSection({
             </p>
           </Field>
           <Field label="Model">
-            <input
-              type="text"
-              value={settings.codex_model}
-              onChange={(e) =>
-                setSettings({ ...settings, codex_model: e.target.value })
-              }
-              placeholder="e.g. gpt-5.4, gpt-5.3-codex (empty = CLI default)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-              spellCheck={false}
+            <ModelPicker
+              provider="codex"
+              settings={settings}
+              catalog={catalogs.codex}
+              loading={catalogLoading.codex}
+              onChange={(selection) => setSettings(withProviderSelection(settings, "codex", selection))}
+              onRefresh={() => loadCatalog("codex", settings, true)}
             />
           </Field>
           <Field label="Reasoning Effort">
@@ -344,9 +393,9 @@ function LLMSection({
               className={selectClass}
             >
               <option value="">Default</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
+              {effortOptions(catalogs.codex, providerSelection(settings, "codex"), ["low", "medium", "high"]).map((effort) => (
+                <option key={effort} value={effort}>{effortLabel(effort)}</option>
+              ))}
             </select>
           </Field>
         </ProviderGroup>
@@ -369,16 +418,13 @@ function LLMSection({
             </p>
           </Field>
           <Field label="Model">
-            <input
-              type="text"
-              value={settings.gemini_model}
-              onChange={(e) =>
-                setSettings({ ...settings, gemini_model: e.target.value })
-              }
-              placeholder="e.g. pro, flash, gemini-2.5-pro (empty = CLI default)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-              spellCheck={false}
+            <ModelPicker
+              provider="gemini"
+              settings={settings}
+              catalog={catalogs.gemini}
+              loading={catalogLoading.gemini}
+              onChange={(selection) => setSettings(withProviderSelection(settings, "gemini", selection))}
+              onRefresh={() => loadCatalog("gemini", settings, true)}
             />
           </Field>
         </ProviderGroup>
@@ -415,17 +461,20 @@ function LLMSection({
             />
           </Field>
           <Field label="Model">
-            <input
-              type="text"
+            <select
               value={settings.local_model}
-              onChange={(e) =>
-                setSettings({ ...settings, local_model: e.target.value })
-              }
-              placeholder="e.g. llama3.3, qwen2.5:14b (required)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-              spellCheck={false}
-            />
+              onChange={(e) => setSettings({ ...settings, local_model: e.target.value })}
+              className={`${selectClass} font-mono`}
+            >
+              <option value="">Select a model…</option>
+              {catalogs.local?.models.map((model) => (
+                <option key={model.id} value={model.id}>{model.display_name || model.id}</option>
+              ))}
+              {settings.local_model && !catalogs.local?.models.some((model) => model.id === settings.local_model) && (
+                <option value={settings.local_model}>{settings.local_model} (saved; not currently listed)</option>
+              )}
+            </select>
+            <CatalogStatus catalog={catalogs.local} loading={catalogLoading.local} onRefresh={() => loadCatalog("local", settings, true)} />
           </Field>
           <Field label="API Key">
             <input
@@ -718,6 +767,147 @@ function RunRetention({
 }
 
 /* ── Shared UI Components ────────────────────────────────────────── */
+
+type CloudProvider = "claude" | "codex" | "gemini";
+
+function providerTransport(settings: Settings, provider: string): "cli" | "api" {
+  if (provider === "local") return "api";
+  if (provider === "claude") return settings.anthropic_api_key ? "api" : "cli";
+  if (provider === "codex") return settings.openai_api_key ? "api" : "cli";
+  return settings.google_api_key ? "api" : "cli";
+}
+
+function providerSelection(settings: Settings, provider: CloudProvider): ModelSelection {
+  const transport = providerTransport(settings, provider);
+  const selection = provider === "claude"
+    ? (transport === "cli" ? settings.claude_cli_model_selection : settings.claude_api_model_selection)
+    : provider === "codex"
+      ? (transport === "cli" ? settings.codex_cli_model_selection : settings.codex_api_model_selection)
+      : (transport === "cli" ? settings.gemini_cli_model_selection : settings.gemini_api_model_selection);
+  // Settings written before structured selection existed.
+  if (selection) return selection;
+  const legacy = provider === "claude" ? settings.claude_model : provider === "codex" ? settings.codex_model : settings.gemini_model;
+  return legacy ? { mode: "pinned", model: legacy } : { mode: "automatic" };
+}
+
+function withProviderSelection(
+  settings: Settings,
+  provider: CloudProvider,
+  selection: ModelSelection,
+): Settings {
+  const transport = providerTransport(settings, provider);
+  const patch: Partial<Settings> = {};
+  if (provider === "claude") {
+    if (transport === "cli") patch.claude_cli_model_selection = selection;
+    else patch.claude_api_model_selection = selection;
+    patch.claude_model = "";
+  } else if (provider === "codex") {
+    if (transport === "cli") patch.codex_cli_model_selection = selection;
+    else patch.codex_api_model_selection = selection;
+    patch.codex_model = "";
+  } else {
+    if (transport === "cli") patch.gemini_cli_model_selection = selection;
+    else patch.gemini_api_model_selection = selection;
+    patch.gemini_model = "";
+  }
+  return { ...settings, ...patch };
+}
+
+function selectionValue(selection: ModelSelection): string {
+  if (selection.mode === "automatic") return "automatic";
+  if (selection.mode === "role") return `role:${selection.role}`;
+  return `pinned:${selection.model}`;
+}
+
+function parseSelection(value: string): ModelSelection {
+  if (value === "automatic") return { mode: "automatic" };
+  if (value.startsWith("role:")) return { mode: "role", role: value.slice(5) };
+  return { mode: "pinned", model: value.slice(7) };
+}
+
+function effortLabel(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function effortOptions(
+  catalog: ModelCatalog | undefined,
+  selection: ModelSelection,
+  fallback: string[],
+): string[] {
+  if (!catalog) return fallback;
+  const id = selection.mode === "pinned"
+    ? selection.model
+    : selection.mode === "role"
+      ? catalog.roles.find((role) => role.id === selection.role)?.model
+      : catalog.default_model || catalog.recommended_model;
+  const efforts = catalog.models.find((model) => model.id === id)?.supported_efforts;
+  return efforts?.length ? efforts : fallback;
+}
+
+function ModelPicker({
+  provider,
+  settings,
+  catalog,
+  loading,
+  onChange,
+  onRefresh,
+}: {
+  provider: CloudProvider;
+  settings: Settings;
+  catalog?: ModelCatalog;
+  loading?: boolean;
+  onChange: (selection: ModelSelection) => void;
+  onRefresh: () => void;
+}) {
+  const selection = providerSelection(settings, provider);
+  const value = selectionValue(selection);
+  const known = value === "automatic"
+    || catalog?.roles.some((role) => value === `role:${role.id}`)
+    || catalog?.models.some((model) => value === `pinned:${model.id}`);
+  return (
+    <>
+      <select value={value} onChange={(event) => onChange(parseSelection(event.target.value))} className={selectClass}>
+        <option value="automatic">
+          Automatic — {catalog?.transport === "api" ? "recommended available model" : "installed CLI default"}
+        </option>
+        {!!catalog?.roles.length && (
+          <optgroup label="Stable roles">
+            {catalog.roles.map((role) => (
+              <option key={role.id} value={`role:${role.id}`}>{role.label} — {role.model}</option>
+            ))}
+          </optgroup>
+        )}
+        {!!catalog?.models.length && (
+          <optgroup label="Pin exact model">
+            {catalog.models.map((model) => (
+              <option key={model.id} value={`pinned:${model.id}`} disabled={model.deprecated}>
+                {model.display_name || model.id}{model.is_default ? " (default)" : ""}{model.deprecated ? " (deprecated)" : ""}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {!known && <option value={value}>{selection.mode === "pinned" ? selection.model : value} (saved; not currently listed)</option>}
+      </select>
+      <CatalogStatus catalog={catalog} loading={loading} onRefresh={onRefresh} />
+    </>
+  );
+}
+
+function CatalogStatus({ catalog, loading, onRefresh }: { catalog?: ModelCatalog; loading?: boolean; onRefresh: () => void }) {
+  return (
+    <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-gray-400 dark:text-gray-500">
+      <span>
+        {loading ? "Discovering models…" : catalog
+          ? `${catalog.transport.toUpperCase()} · ${catalog.source_version || catalog.source}${catalog.stale ? " · stale" : ""}`
+          : "Catalog not loaded"}
+        {catalog?.warning && <span className="block text-amber-600 dark:text-amber-400">{catalog.warning}</span>}
+      </span>
+      <button type="button" onClick={onRefresh} disabled={loading} className="shrink-0 underline disabled:opacity-40">
+        Refresh
+      </button>
+    </div>
+  );
+}
 
 const selectClass =
   "w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-gray-100/20 transition-[box-shadow,color,background-color,border-color]";

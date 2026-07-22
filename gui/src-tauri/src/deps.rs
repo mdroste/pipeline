@@ -2,7 +2,8 @@
 
 use crate::env;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
@@ -25,73 +26,377 @@ pub struct DepsReport {
     pub ready: bool,
 }
 
-fn cmd(program: &str) -> Command {
-    let mut c = Command::new(program);
-    c.env("PATH", env::full_path());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x08000000);
-    }
-    c
+/// A command resolved to the exact program and fixed prefix arguments that can
+/// actually be passed to `CreateProcess`/`execve`.
+///
+/// On Windows, npm exposes package binaries as `.cmd` shims. Rust's
+/// `Command::new` cannot execute those scripts directly, while routing
+/// provider prompts through `cmd.exe /C` would turn untrusted prompt text into
+/// shell syntax. We therefore resolve a standard npm shim either to its native
+/// package executable or to `node.exe` plus its JavaScript entry point, and
+/// preserve every later argument as a distinct process argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedCommand {
+    /// Path shown in dependency diagnostics (the CLI itself or its npm shim).
+    discovered_path: PathBuf,
+    /// Native executable passed to the OS (`node.exe` for an npm shim).
+    program: PathBuf,
+    /// Validated arguments required before the caller's arguments.
+    prefix_args: Vec<OsString>,
 }
 
-/// Find a binary on PATH by scanning directories directly (no subprocess).
-pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path_var = env::full_path();
-    let sep = if cfg!(windows) { ';' } else { ':' };
-    for dir in path_var.split(sep) {
-        if dir.is_empty() {
+impl ResolvedCommand {
+    fn direct(path: PathBuf) -> Self {
+        Self {
+            discovered_path: path.clone(),
+            program: path,
+            prefix_args: Vec::new(),
+        }
+    }
+
+    pub(crate) fn discovered_path(&self) -> &Path {
+        &self.discovered_path
+    }
+
+    /// Construct a command without losing argument boundaries. Callers still
+    /// apply their own cwd, stdio, PATH, and process-group configuration.
+    pub(crate) fn command<I, S>(&self, args: I) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(&self.program);
+        command.args(&self.prefix_args);
+        command.args(args);
+        command
+    }
+}
+
+const DEFAULT_WINDOWS_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
+
+fn windows_pathexts(value: Option<&OsStr>) -> Vec<String> {
+    let raw = value
+        .and_then(|v| v.to_str())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or(DEFAULT_WINDOWS_PATHEXT);
+    let mut extensions = Vec::new();
+    for value in raw.split(';') {
+        let value = value.trim();
+        if value.is_empty() || value.chars().any(|ch| matches!(ch, '/' | '\\' | ':')) {
             continue;
         }
-        let candidate = PathBuf::from(dir).join(name);
-        if candidate.is_file() {
-            return Some(candidate);
+        let extension = if value.starts_with('.') {
+            value.to_string()
+        } else {
+            format!(".{value}")
+        };
+        if !extensions
+            .iter()
+            .any(|seen: &String| seen.eq_ignore_ascii_case(&extension))
+        {
+            extensions.push(extension);
         }
-        // On Windows, also check common extensions
-        #[cfg(windows)]
-        for ext in &[".exe", ".cmd", ".bat", ".com"] {
-            let with_ext = PathBuf::from(format!("{}{}", candidate.display(), ext));
-            if with_ext.is_file() {
-                return Some(with_ext);
+    }
+    if extensions.is_empty() {
+        windows_pathexts(Some(OsStr::new(DEFAULT_WINDOWS_PATHEXT)))
+    } else {
+        extensions
+    }
+}
+
+/// The case-insensitive fallback lets the Windows resolver be unit-tested on
+/// a case-sensitive filesystem and matches normal Windows path lookup.
+fn existing_file(path: &Path, windows: bool) -> Option<PathBuf> {
+    if path.is_file() {
+        return Some(path.to_path_buf());
+    }
+    if !windows {
+        return None;
+    }
+    let wanted = path.file_name()?.to_string_lossy();
+    std::fs::read_dir(path.parent()?)
+        .ok()?
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&wanted)
+                && entry.path().is_file()
+        })
+        .map(|entry| entry.path())
+}
+
+fn windows_relative_path(base: &Path, value: &str) -> Option<PathBuf> {
+    let mut path = base.to_path_buf();
+    let mut saw_component = false;
+    for component in value.split(['\\', '/']).filter(|part| !part.is_empty()) {
+        // npm's generated shims use a plain path below their own directory.
+        // Reject interpolation and traversal instead of interpreting it.
+        if component == "."
+            || component == ".."
+            || component.chars().any(|ch| ch == '%' || ch == ':')
+            || component.contains('\0')
+        {
+            return None;
+        }
+        saw_component = true;
+        path.push(component);
+    }
+    saw_component.then_some(path)
+}
+
+/// Extract the package entry point from npm's old (`%~dp0`) and current
+/// (`%dp0%`) cmd-shim templates. Only an existing file below `node_modules`
+/// is accepted; arbitrary batch files fail closed.
+fn npm_entrypoint_from_shim(shim: &Path) -> Option<PathBuf> {
+    const MAX_NPM_SHIM_BYTES: u64 = 64 * 1024;
+    if shim.metadata().ok()?.len() > MAX_NPM_SHIM_BYTES {
+        return None;
+    }
+    let contents = std::fs::read_to_string(shim).ok()?;
+    let lowercase = contents.to_ascii_lowercase();
+    let base = shim.parent()?;
+
+    for marker in ["%~dp0", "%dp0%"] {
+        let mut cursor = 0;
+        while let Some(offset) = lowercase[cursor..].find(marker) {
+            let suffix_start = cursor + offset + marker.len();
+            let remainder = &contents[suffix_start..];
+            let Some(quote_offset) = remainder.find('"') else {
+                break;
+            };
+            let suffix = &remainder[..quote_offset];
+            let components = suffix.split(['\\', '/']).filter(|part| !part.is_empty());
+            if components
+                .clone()
+                .any(|part| part.eq_ignore_ascii_case("node_modules"))
+            {
+                if let Some(entrypoint) = windows_relative_path(base, suffix) {
+                    if entrypoint.is_file() {
+                        return Some(entrypoint);
+                    }
+                }
+            }
+            cursor = suffix_start;
+        }
+    }
+    None
+}
+
+fn is_native_windows_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .map(|ext| ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("com"))
+        .unwrap_or(false)
+}
+
+fn find_windows_node(directories: &[PathBuf], extensions: &[String]) -> Option<PathBuf> {
+    for directory in directories {
+        for extension in extensions {
+            if !extension.eq_ignore_ascii_case(".exe") && !extension.eq_ignore_ascii_case(".com") {
+                continue;
+            }
+            let candidate = directory.join(format!("node{extension}"));
+            if let Some(path) = existing_file(&candidate, true) {
+                return Some(path);
             }
         }
     }
     None
 }
 
-/// Probe a command: find it on PATH (no subprocess), then run version command.
-/// Returns (found, version_string, path).
-fn probe(name: &str, version_args: &[&str]) -> (bool, String, String) {
-    let bin_path = match find_on_path(name) {
-        Some(p) => p,
-        None => return (false, String::new(), String::new()),
-    };
-    let path_str = bin_path.to_string_lossy().to_string();
-    match cmd(name).args(version_args).output() {
-        Ok(o) if o.status.success() => {
-            let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
-            let ver = if out.is_empty() { err } else { out };
-            (true, ver.lines().next().unwrap_or("").to_string(), path_str)
+fn resolve_windows_candidate(
+    path: PathBuf,
+    directories: &[PathBuf],
+    extensions: &[String],
+) -> Option<ResolvedCommand> {
+    if is_native_windows_extension(&path) {
+        return Some(ResolvedCommand::direct(path));
+    }
+
+    let extension = path.extension().and_then(OsStr::to_str)?;
+    if !extension.eq_ignore_ascii_case("cmd") && !extension.eq_ignore_ascii_case("bat") {
+        // Other PATHEXT entries require file associations or a command shell,
+        // neither of which preserves arbitrary provider arguments safely.
+        return None;
+    }
+
+    let entrypoint = npm_entrypoint_from_shim(&path)?;
+    if is_native_windows_extension(&entrypoint) {
+        return Some(ResolvedCommand {
+            discovered_path: path,
+            program: entrypoint,
+            prefix_args: Vec::new(),
+        });
+    }
+    let is_node_entrypoint = entrypoint
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|extension| {
+            extension.eq_ignore_ascii_case("js")
+                || extension.eq_ignore_ascii_case("cjs")
+                || extension.eq_ignore_ascii_case("mjs")
+        })
+        .unwrap_or(false);
+    if !is_node_entrypoint {
+        return None;
+    }
+    let local_node = path
+        .parent()
+        .and_then(|parent| existing_file(&parent.join("node.exe"), true));
+    let program = local_node.or_else(|| find_windows_node(directories, extensions))?;
+    Some(ResolvedCommand {
+        discovered_path: path,
+        program,
+        prefix_args: vec![entrypoint.into_os_string()],
+    })
+}
+
+fn resolve_command_in(
+    name: &str,
+    directories: &[PathBuf],
+    windows: bool,
+    pathext: Option<&OsStr>,
+) -> Option<ResolvedCommand> {
+    if !windows {
+        return directories.iter().find_map(|directory| {
+            existing_file(&directory.join(name), false).map(ResolvedCommand::direct)
+        });
+    }
+
+    let extensions = windows_pathexts(pathext);
+    let has_extension = Path::new(name).extension().is_some();
+    for directory in directories {
+        if has_extension {
+            if let Some(path) = existing_file(&directory.join(name), true) {
+                if let Some(command) = resolve_windows_candidate(path, directories, &extensions) {
+                    return Some(command);
+                }
+            }
+            continue;
         }
-        // Binary exists but version command failed — still report as found
-        _ => (true, String::new(), path_str),
+
+        // PATHEXT candidates must win over an extensionless npm POSIX shim,
+        // which is a shell script and is not launchable by CreateProcess.
+        for extension in &extensions {
+            let candidate = directory.join(format!("{name}{extension}"));
+            let Some(path) = existing_file(&candidate, true) else {
+                continue;
+            };
+            if let Some(command) = resolve_windows_candidate(path, directories, &extensions) {
+                return Some(command);
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a PATH command to a representation that is safe to launch with
+/// arbitrary arguments. On Windows this honors PATHEXT and unwraps npm shims.
+pub(crate) fn resolve_command(name: &str) -> Option<ResolvedCommand> {
+    let path = OsString::from(env::full_path());
+    let current_dir = std::env::current_dir().ok();
+    let directories: Vec<PathBuf> = std::env::split_paths(&path)
+        // Preserve the prior resolver's behavior: empty PATH entries do not
+        // implicitly grant execution from the app's current directory.
+        .filter(|directory| !directory.as_os_str().is_empty())
+        // Provider subprocesses change cwd before spawn. Resolve relative PATH
+        // entries against the app cwd now so the retained target stays valid.
+        .map(|directory| {
+            if directory.is_relative() {
+                current_dir
+                    .as_ref()
+                    .map(|cwd| cwd.join(&directory))
+                    .unwrap_or(directory)
+            } else {
+                directory
+            }
+        })
+        .collect();
+    let pathext = std::env::var_os("PATHEXT");
+    resolve_command_in(name, &directories, cfg!(windows), pathext.as_deref())
+}
+
+/// Find a launchable binary on PATH by scanning directories directly.
+pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
+    resolve_command(name).map(|command| command.discovered_path)
+}
+
+fn configure_probe_command(command: &mut Command) {
+    command.env("PATH", env::full_path());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 }
 
-/// Check if Claude CLI is authenticated via `claude auth status`.
-fn check_claude_auth() -> Option<bool> {
-    let output = cmd("claude").args(["auth", "status"]).output().ok()?;
+fn probe_resolved(command: &ResolvedCommand, version_args: &[&str]) -> Option<String> {
+    let mut process = command.command(version_args);
+    configure_probe_command(&mut process);
+    let output = process.output().ok()?;
     if !output.status.success() {
-        return Some(false);
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let version = if stdout.is_empty() { stderr } else { stdout };
+    let first_line = version.lines().next().unwrap_or("").trim();
+    (!first_line.is_empty()).then(|| first_line.to_string())
+}
+
+struct ProbeResult {
+    command: Option<ResolvedCommand>,
+    version: String,
+    path: String,
+}
+
+/// Resolve and run a version probe. A discovered path is retained for
+/// diagnostics, but a spawn error or non-zero exit is not considered found.
+fn probe(name: &str, version_args: &[&str]) -> ProbeResult {
+    let Some(command) = resolve_command(name) else {
+        return ProbeResult {
+            command: None,
+            version: String::new(),
+            path: String::new(),
+        };
+    };
+    let path = command.discovered_path().to_string_lossy().to_string();
+    let Some(version) = probe_resolved(&command, version_args) else {
+        return ProbeResult {
+            command: None,
+            version: String::new(),
+            path,
+        };
+    };
+    ProbeResult {
+        command: Some(command),
+        version,
+        path,
+    }
+}
+
+/// Check if Claude CLI is authenticated via `claude auth status`. Probe and
+/// parse failures are authentication failures, not an indeterminate success.
+fn check_claude_auth(command: &ResolvedCommand) -> bool {
+    let mut process = command.command(["auth", "status"]);
+    configure_probe_command(&mut process);
+    let Ok(output) = process.output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Parse JSON response: { "loggedIn": true, ... }
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-        return val.get("loggedIn").and_then(|v| v.as_bool());
-    }
-    None
+    serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .ok()
+        .and_then(|value| {
+            value
+                .get("loggedIn")
+                .and_then(|logged_in| logged_in.as_bool())
+        })
+        .unwrap_or(false)
 }
 
 /// Check if Codex CLI has credentials available.
@@ -199,7 +504,7 @@ fn probe_local_server(base_url: &str) -> (bool, String) {
 /// Skips subprocess probes when an API key already covers a provider.
 /// Uses existence checks (which) instead of --version/--help for optional tools.
 pub fn check_all() -> DepsReport {
-    let settings = crate::settings::load();
+    let settings = crate::settings::load_persisted();
     let provider = settings.preferred_provider.clone();
     let has_anthropic_key = !settings.anthropic_api_key.is_empty();
     let has_openai_key = !settings.openai_api_key.is_empty();
@@ -210,23 +515,35 @@ pub fn check_all() -> DepsReport {
     std::thread::scope(|s| {
         // Claude: probe CLI, skip auth check if API key covers it
         let claude_h = s.spawn(move || {
-            let (found, ver, path) = probe("claude", &["--version"]);
-            let auth = if found { check_claude_auth() } else { None };
-            (found, ver, path, auth)
+            let ProbeResult {
+                command,
+                version,
+                path,
+            } = probe("claude", &["--version"]);
+            let auth = command.as_ref().map(check_claude_auth);
+            (command.is_some(), version, path, auth)
         });
 
         // Codex: probe CLI, skip auth check if API key covers it
         let codex_h = s.spawn(move || {
-            let (found, ver, path) = probe("codex", &["--version"]);
-            let auth = if found { check_codex_auth() } else { None };
-            (found, ver, path, auth)
+            let ProbeResult {
+                command,
+                version,
+                path,
+            } = probe("codex", &["--version"]);
+            let auth = command.as_ref().and_then(|_| check_codex_auth());
+            (command.is_some(), version, path, auth)
         });
 
         // Gemini: probe CLI, skip auth check if API key covers it
         let gemini_h = s.spawn(move || {
-            let (found, ver, path) = probe("gemini", &["--version"]);
-            let auth = if found { check_gemini_auth() } else { None };
-            (found, ver, path, auth)
+            let ProbeResult {
+                command,
+                version,
+                path,
+            } = probe("gemini", &["--version"]);
+            let auth = command.as_ref().and_then(|_| check_gemini_auth());
+            (command.is_some(), version, path, auth)
         });
 
         // pdftoppm: used by Claude Code's Read tool to render PDF pages.
@@ -459,7 +776,51 @@ pub fn check_all() -> DepsReport {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_host_port;
+    use super::{
+        check_claude_auth, parse_host_port, probe_resolved, resolve_command_in, windows_pathexts,
+    };
+    use std::ffi::{OsStr, OsString};
+    use std::path::Path;
+
+    fn write_fixture(path: &Path, contents: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+
+    fn assert_windows_path_eq(actual: &Path, expected: &Path) {
+        assert!(
+            actual
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&expected.to_string_lossy()),
+            "{} != {}",
+            actual.display(),
+            expected.display()
+        );
+    }
+
+    fn write_node_shim(path: &Path, package_entrypoint: &str) {
+        write_fixture(
+            path,
+            &format!(
+                r#"@ECHO off
+GOTO start
+:find_dp0
+SET dp0=%~dp0
+EXIT /b
+:start
+SETLOCAL
+CALL :find_dp0
+IF EXIST "%dp0%\node.exe" (
+  SET "_prog=%dp0%\node.exe"
+) ELSE (
+  SET "_prog=node"
+  SET PATHEXT=%PATHEXT:;.JS;=;%
+)
+endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{package_entrypoint}" %*
+"#
+            ),
+        );
+    }
 
     #[test]
     fn parse_ollama_default() {
@@ -495,5 +856,191 @@ mod tests {
         assert_eq!(parse_host_port("localhost:11434"), None); // no scheme
         assert_eq!(parse_host_port("http://"), None);
         assert_eq!(parse_host_port("http://host:notaport/v1"), None);
+    }
+
+    #[test]
+    fn windows_js_npm_shim_resolves_to_node_and_preserves_untrusted_arguments() {
+        let temp = tempfile::tempdir().unwrap();
+        let npm_dir = temp.path().join("npm global with spaces");
+        let node_dir = temp.path().join("Node Runtime");
+        let shim = npm_dir.join("codex.CMD");
+        let entrypoint = npm_dir
+            .join("node_modules")
+            .join("@openai")
+            .join("codex")
+            .join("bin")
+            .join("codex.js");
+        let node = node_dir.join("node.EXE");
+        write_fixture(&npm_dir.join("codex"), "#!/bin/sh\nexit 99\n");
+        write_fixture(&entrypoint, "// fixture");
+        write_fixture(&node, "fixture");
+        write_node_shim(&shim, r"node_modules\@openai\codex\bin\codex.js");
+
+        let directories = vec![npm_dir, node_dir];
+        let resolved =
+            resolve_command_in("codex", &directories, true, Some(OsStr::new(".cmd;.EXE"))).unwrap();
+
+        assert_windows_path_eq(&resolved.discovered_path, &shim);
+        assert_windows_path_eq(&resolved.program, &node);
+        assert_eq!(
+            resolved.prefix_args,
+            vec![entrypoint.clone().into_os_string()]
+        );
+
+        // These strings would be shell syntax if concatenated into cmd /C.
+        // The resolved representation keeps each one as an opaque argument.
+        let caller_args = vec![
+            "hello & whoami | more".to_string(),
+            "a quoted \"value\"\nand a second line".to_string(),
+            "%PATH% !PROMPT! ^ <input >output".to_string(),
+        ];
+        let command = resolved.command(&caller_args);
+        assert_windows_path_eq(Path::new(command.get_program()), &node);
+        let actual_args: Vec<OsString> = command.get_args().map(OsString::from).collect();
+        let mut expected_args = vec![entrypoint.into_os_string()];
+        expected_args.extend(caller_args.into_iter().map(OsString::from));
+        assert_eq!(actual_args, expected_args);
+    }
+
+    #[test]
+    fn windows_pathext_order_and_case_are_honored() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("Provider Bin");
+        let shim = bin.join("gemini.CMD");
+        let executable = bin.join("gemini.EXE");
+        let entrypoint = bin
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli")
+            .join("dist")
+            .join("index.js");
+        let node = bin.join("node.exe");
+        write_fixture(&executable, "fixture");
+        write_fixture(&entrypoint, "// fixture");
+        write_fixture(&node, "fixture");
+        write_node_shim(&shim, r"node_modules\@google\gemini-cli\dist\index.js");
+        let directories = vec![bin];
+
+        let exe_first =
+            resolve_command_in("gemini", &directories, true, Some(OsStr::new(".exe;.CMD")))
+                .unwrap();
+        assert_windows_path_eq(&exe_first.discovered_path, &executable);
+        assert_windows_path_eq(&exe_first.program, &executable);
+
+        let cmd_first =
+            resolve_command_in("gemini", &directories, true, Some(OsStr::new(".cmd;.EXE")))
+                .unwrap();
+        assert_windows_path_eq(&cmd_first.discovered_path, &shim);
+        assert_windows_path_eq(&cmd_first.program, &node);
+    }
+
+    #[test]
+    fn windows_native_npm_shim_launches_target_without_node() {
+        let temp = tempfile::tempdir().unwrap();
+        let npm_dir = temp.path().join("npm global");
+        let shim = npm_dir.join("claude.cmd");
+        let executable = npm_dir
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("bin")
+            .join("claude.exe");
+        write_fixture(&executable, "native fixture");
+        write_fixture(
+            &shim,
+            r#"@ECHO off
+GOTO start
+:find_dp0
+SET dp0=%~dp0
+EXIT /b
+:start
+SETLOCAL
+CALL :find_dp0
+"%dp0%\node_modules\@anthropic-ai\claude-code\bin\claude.exe"   %*
+"#,
+        );
+
+        let resolved =
+            resolve_command_in("claude", &[npm_dir], true, Some(OsStr::new(".CMD"))).unwrap();
+        assert_windows_path_eq(&resolved.discovered_path, &shim);
+        assert_windows_path_eq(&resolved.program, &executable);
+        assert!(resolved.prefix_args.is_empty());
+    }
+
+    #[test]
+    fn windows_old_npm_shim_template_is_supported() {
+        let temp = tempfile::tempdir().unwrap();
+        let npm_dir = temp.path().join("legacy npm");
+        let shim = npm_dir.join("gemini.cmd");
+        let node = npm_dir.join("node.exe");
+        let entrypoint = npm_dir
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli")
+            .join("dist")
+            .join("index.js");
+        write_fixture(&node, "fixture");
+        write_fixture(&entrypoint, "// fixture");
+        write_fixture(
+            &shim,
+            r#"@IF EXIST "%~dp0\node.exe" (
+  "%~dp0\node.exe" "%~dp0\node_modules\@google\gemini-cli\dist\index.js" %*
+) ELSE (
+  node "%~dp0\node_modules\@google\gemini-cli\dist\index.js" %*
+)
+"#,
+        );
+
+        let resolved =
+            resolve_command_in("gemini", &[npm_dir], true, Some(OsStr::new(".CMD;.EXE"))).unwrap();
+        assert_windows_path_eq(&resolved.discovered_path, &shim);
+        assert_windows_path_eq(&resolved.program, &node);
+        assert_eq!(resolved.prefix_args, vec![entrypoint.into_os_string()]);
+    }
+
+    #[test]
+    fn windows_rejects_unrecognized_batch_shims() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("bin");
+        write_fixture(&bin.join("claude.cmd"), "@echo off\necho %*\n");
+        assert!(resolve_command_in("claude", &[bin], true, Some(OsStr::new(".CMD")),).is_none());
+    }
+
+    #[test]
+    fn windows_pathext_defaults_match_create_process_conventions() {
+        assert_eq!(windows_pathexts(None), vec![".COM", ".EXE", ".BAT", ".CMD"]);
+        assert_eq!(
+            windows_pathexts(Some(OsStr::new("cmd; .EXE; .cmd"))),
+            vec![".cmd", ".EXE"]
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn version_and_auth_probes_fail_closed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("bin with spaces");
+        let failing = bin.join("failing-provider");
+        write_fixture(&failing, "#!/bin/sh\nexit 7\n");
+        std::fs::set_permissions(&failing, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let command =
+            resolve_command_in("failing-provider", std::slice::from_ref(&bin), false, None)
+                .unwrap();
+        assert_eq!(probe_resolved(&command, &["--version"]), None);
+
+        let empty_version = bin.join("empty-version");
+        write_fixture(&empty_version, "#!/bin/sh\nexit 0\n");
+        std::fs::set_permissions(&empty_version, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let command =
+            resolve_command_in("empty-version", std::slice::from_ref(&bin), false, None).unwrap();
+        assert_eq!(probe_resolved(&command, &["--version"]), None);
+
+        let malformed_auth = bin.join("malformed-auth");
+        write_fixture(&malformed_auth, "#!/bin/sh\nprintf 'not-json\\n'\n");
+        std::fs::set_permissions(&malformed_auth, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let command = resolve_command_in("malformed-auth", &[bin], false, None).unwrap();
+        assert!(!check_claude_auth(&command));
     }
 }

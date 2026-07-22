@@ -39,6 +39,11 @@ Thumbs.db
 !/gui/src-tauri/resources/poppler/.gitkeep
 !/gui/src-tauri/resources/poppler/README.md
 
+# Offline notices/SBOM are deterministically generated before Tauri builds.
+/gui/src-tauri/resources/notices/*
+!/gui/src-tauri/resources/notices/.gitkeep
+!/gui/src-tauri/resources/notices/README.md
+
 # Local environment / secrets
 .env
 .env.local

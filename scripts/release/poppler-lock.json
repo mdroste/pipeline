@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "macos": {
+    "version": "26.07.0",
+    "deploymentTarget": "15.0",
+    "homebrewCoreCommit": "7777a34439b22630233caa93268c175864ee66ec",
+    "license": "GPL-2.0-only OR GPL-3.0-only",
+    "binaryProvider": "Homebrew",
+    "source": {
+      "url": "https://poppler.freedesktop.org/poppler-26.07.0.tar.xz",
+      "sha256": "304832f48f8a47fdca90c6b6d1f684e68f37c10c9a0726f345f4ca9df4ca01e2"
+    }
+  },
+  "linux": {
+    "version": "22.02.0",
+    "packageVersion": "22.02.0-2ubuntu0.13",
+    "distribution": "Ubuntu 22.04 LTS (jammy)",
+    "license": "GPL-2.0-only OR GPL-3.0-only",
+    "binaryProvider": "Ubuntu",
+    "source": {
+      "url": "https://poppler.freedesktop.org/poppler-22.02.0.tar.xz",
+      "sha256": "e390c8b806f6c9f0e35c8462033e0a738bb2460ebd660bdb8b6dca01556193e1"
+    },
+    "patchedSource": "https://launchpad.net/ubuntu/+source/poppler/22.02.0-2ubuntu0.13"
+  },
+  "windows": {
+    "version": "25.12.0",
+    "distributionVersion": "25.12.0-0",
+    "license": "GPL-2.0-or-later",
+    "binaryProvider": "oschwartz10612/poppler-windows",
+    "archive": {
+      "url": "https://github.com/oschwartz10612/poppler-windows/releases/download/v25.12.0-0/Release-25.12.0-0.zip",
+      "sha256": "9499c7474e4deb41c80ef5ea4a18cc1f3843695fbfa3c247db5c46c6eab2e26f"
+    },
+    "source": {
+      "url": "https://poppler.freedesktop.org/poppler-25.12.0.tar.xz",
+      "sha256": "c18b40eb36b1a0c5b86e29ca054bf0770304583da4f2cdd42fe86eca6a20de48"
+    },
+    "components": [
+      "cairo", "expat", "fontconfig", "freetype", "GNU libiconv/libcharset",
+      "libdeflate", "libjpeg-turbo", "Little CMS", "Lerc", "OpenJPEG", "OpenSSL", "libcurl",
+      "liblzma/xz", "libpng", "libssh2", "libtiff", "pixman", "zlib", "zstd"
+    ]
+  }
+}

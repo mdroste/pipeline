@@ -5,7 +5,7 @@
 //! Merge auto-triggers between a parallel wave and the next step when
 //! any parallel step used multiple agents.
 
-use super::claude::{call_llm, LlmOverrides};
+use super::claude::{call_llm, cli_parent_dir, normalize_cli_root, LlmOverrides};
 use super::merge;
 use crate::models::{StepFailure, StepOutput};
 use crate::output::{capitalize, strip_to_report};
@@ -21,6 +21,46 @@ pub struct ExecutionResult {
 }
 
 type ParallelTaskResult = Result<((usize, String), StepOutput), StepFailure>;
+
+/// Build the complete read-root set used by CLI providers for every step in a
+/// run. The source tree, private run-temp files (paper, orientation, named
+/// inputs), and any original named-input roots are all explicit. Provider
+/// request planning later canonicalizes/deduplicates ancestors and keeps the
+/// artifact directory separate as the writable cwd.
+fn provider_read_dirs(
+    source_path: &str,
+    paper_text_path: &str,
+    orientation_path: &str,
+    extra_inputs: &std::collections::HashMap<String, String>,
+    run_read_dirs: &[String],
+) -> Vec<String> {
+    let mut dirs: Vec<String> = run_read_dirs
+        .iter()
+        .filter_map(|path| normalize_cli_root(path))
+        .collect();
+
+    let source = std::path::Path::new(source_path);
+    if source.is_dir() {
+        if let Some(root) = normalize_cli_root(source_path) {
+            dirs.push(root);
+        }
+    } else if let Some(root) = cli_parent_dir(source_path) {
+        dirs.push(root);
+    }
+
+    for path in std::iter::once(paper_text_path)
+        .chain((!orientation_path.is_empty()).then_some(orientation_path))
+        .chain(extra_inputs.values().map(String::as_str))
+    {
+        if let Some(root) = cli_parent_dir(path) {
+            dirs.push(root);
+        }
+    }
+
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
 
 /// Execute all enabled steps in the pipeline.
 ///
@@ -44,13 +84,21 @@ pub async fn execute_steps(
     survey_hint: &str,
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
+    run_read_dirs: &[String],
     preloaded: &std::collections::HashMap<String, Vec<StepOutput>>,
     write_dir: Option<&str>,
+    settings: &crate::settings::Settings,
 ) -> Result<ExecutionResult, String> {
-    let settings = crate::settings::load();
     let semaphore = Arc::new(Semaphore::new(settings.max_workers.max(1) as usize));
     let mut all_outputs: Vec<StepOutput> = Vec::new();
     let mut failed_steps: Vec<StepFailure> = Vec::new();
+    let read_dirs = provider_read_dirs(
+        source_path,
+        paper_text_path,
+        orientation_path,
+        extra_inputs,
+        run_read_dirs,
+    );
 
     let enabled: Vec<&StepConfig> = config.steps.iter().filter(|s| s.enabled).collect();
     let deps = resolve_dependencies(&enabled);
@@ -119,7 +167,7 @@ pub async fn execute_steps(
                 let (mut wave_outputs, wave_failures) = run_parallel_wave(
                     app,
                     &to_run,
-                    &settings,
+                    settings,
                     &semaphore,
                     orientation_path,
                     paper_text_path,
@@ -129,6 +177,7 @@ pub async fn execute_steps(
                     &config.parallel_context_template,
                     variables,
                     extra_inputs,
+                    &read_dirs,
                     write_dir,
                 )
                 .await?;
@@ -148,10 +197,12 @@ pub async fn execute_steps(
                         wave_outputs.clone(),
                         &config.merge,
                         &semaphore,
+                        settings,
                     )
                     .await
                     {
                         Ok(merged) => wave_outputs = merged,
+                        Err(e) if is_cancellation_error(&e) => return Err(e),
                         Err(e) => {
                             let _ = app.emit_event(
                                 "pipeline:log",
@@ -216,7 +267,9 @@ pub async fn execute_steps(
             survey_hint,
             variables,
             extra_inputs,
+            &read_dirs,
             write_dir,
+            settings,
         )
         .await
         {
@@ -277,6 +330,20 @@ fn mark_steps_done(done: &mut std::collections::HashSet<String>, steps: &[&StepC
 /// Base id of a (possibly composite) step key: "technical/claude" → "technical".
 fn base_id(step_key: &str) -> &str {
     step_key.split('/').next().unwrap_or(step_key)
+}
+
+fn is_cancellation_error(error: &str) -> bool {
+    error.to_ascii_lowercase().contains("cancelled")
+}
+
+fn cancellation_error(pass_key: &str) -> Option<String> {
+    if crate::commands::is_cancelled() {
+        Some("Pipeline cancelled".to_string())
+    } else if crate::commands::is_pass_cancelled(pass_key) {
+        Some(format!("Pass '{pass_key}' cancelled"))
+    } else {
+        None
+    }
 }
 
 /// Compute each enabled step's dependency set (of enabled step ids). Explicit
@@ -374,20 +441,12 @@ fn emit_skip(app: &crate::emit::EventBus, step: &StepConfig) {
 
 // ── Artifact write handoff ──────────────────────────────────────────
 
-/// Filesystem-safe slug for a step key ("technical/claude" → "technical__claude").
-/// Mirrors the sanitization used for the numbered artifacts in commands.rs.
+/// Collision-resistant filesystem key for a step. Replacement-based slugs
+/// made valid IDs such as `a.b` and `a_b` share one report file, so one step
+/// could silently ingest another step's output.
 fn step_slug(step_key: &str) -> String {
-    step_key
-        .replace('/', "__")
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    use sha2::{Digest as _, Sha256};
+    format!("{:x}", Sha256::digest(step_key.as_bytes()))
 }
 
 /// Build the OUTPUT FORMAT block appended to every step prompt.
@@ -438,26 +497,6 @@ fn tools_with_write(step_tools: &[String], write_dir: Option<&str>) -> Vec<Strin
         tools.push("Write".to_string());
     }
     tools
-}
-
-/// The model that will actually run a step: the per-step override when set,
-/// otherwise the provider's global model ("" means the provider's own default).
-/// Recorded on the StepOutput so the run summary can show what ran.
-fn resolve_model(
-    settings: &crate::settings::Settings,
-    provider: &str,
-    model_override: &str,
-) -> String {
-    let ov = model_override.trim();
-    if !ov.is_empty() {
-        return ov.to_string();
-    }
-    match provider {
-        "codex" => settings.codex_model.clone(),
-        "gemini" => settings.gemini_model.clone(),
-        "local" => settings.local_model.clone(),
-        _ => settings.claude_model.clone(),
-    }
 }
 
 // ── Parallel execution ──────────────────────────────────────────────
@@ -634,11 +673,15 @@ async fn run_parallel_wave(
     context_template: &str,
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
+    read_dirs: &[String],
     write_dir: Option<&str>,
 ) -> Result<(Vec<StepOutput>, Vec<StepFailure>), String> {
-    let source_dir = std::path::Path::new(source_path)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
+    let source = std::path::Path::new(source_path);
+    let source_dir = if source.is_dir() {
+        normalize_cli_root(source_path)
+    } else {
+        cli_parent_dir(source_path)
+    };
 
     let mut tasks: JoinSet<ParallelTaskResult> = JoinSet::new();
 
@@ -650,8 +693,8 @@ async fn run_parallel_wave(
             let label = step.label.clone();
             let agent_name = unit.agent.clone();
             let tools = tools_with_write(&step.tools, write_dir);
-            let model_override = step.model.clone();
-            let effort_override = step.effort.clone();
+            let model_selection = step.model_selection_for(settings, &agent_name);
+            let effort_override = step.effort_for(settings, &agent_name);
             let output_schema = step.output_schema.clone();
 
             // Composite key when this is one of several units (multi-agent or
@@ -678,6 +721,7 @@ async fn run_parallel_wave(
             // Fan-out: bind {item} to this unit's file (empty otherwise).
             let prompt = prompt.replace("{item}", unit.item.as_deref().unwrap_or(""));
             let task_write_dir = write_dir.map(|s| s.to_string());
+            let task_read_dirs = read_dirs.to_vec();
 
             let _ = app.emit_event(
                 "pipeline:pass",
@@ -705,22 +749,58 @@ async fn run_parallel_wave(
             // display_label is moved into the success StepOutput; keep a copy
             // for failure reporting.
             let fail_label = display_label.clone();
+            let settings = settings.clone();
 
             tasks.spawn(async move {
+                if let Some(error) = cancellation_error(&step_key_emit) {
+                    return Err(StepFailure {
+                        step_id: step_key_emit.clone(),
+                        step_label: fail_label.clone(),
+                        error,
+                    });
+                }
                 let _permit = sem.acquire().await.map_err(|_| StepFailure {
                     step_id: step_key_emit.clone(),
                     step_label: fail_label.clone(),
                     error: "Semaphore closed".to_string(),
                 })?;
+                // Cancellation can happen while this unit is queued for the
+                // worker permit. Re-check after acquisition before starting a
+                // provider call (and therefore before incurring cost).
+                if let Some(error) = cancellation_error(&step_key_emit) {
+                    return Err(StepFailure {
+                        step_id: step_key_emit.clone(),
+                        step_label: fail_label.clone(),
+                        error,
+                    });
+                }
                 let tool_refs: Vec<&str> = tools.iter().map(|s| s.as_str()).collect();
-                let settings = crate::settings::load();
                 let timeout = settings.step_timeout_secs.max(60);
                 let max_retries = settings.max_retries;
                 let provider = agent_name.clone();
-                let effective_model = resolve_model(&settings, &provider, &model_override);
+                let resolution = crate::model_catalog::resolve(
+                    &provider,
+                    &settings,
+                    model_selection.as_ref(),
+                )
+                .await
+                .map_err(|error| StepFailure {
+                    step_id: step_key_emit.clone(),
+                    step_label: fail_label.clone(),
+                    error,
+                })?;
+                let effective_model = resolution.resolved_model.clone();
+                let command_model = resolution.command_model.clone();
 
                 let mut last_err = String::new();
                 for attempt in 0..=max_retries {
+                    if let Some(error) = cancellation_error(&step_key_emit) {
+                        return Err(StepFailure {
+                            step_id: step_key_emit.clone(),
+                            step_label: fail_label.clone(),
+                            error,
+                        });
+                    }
                     if attempt > 0 {
                         let _ = app_handle.emit_event(
                             "pipeline:log",
@@ -734,9 +814,14 @@ async fn run_parallel_wave(
                             }),
                         );
                     }
-                    let extra: Vec<&str> = task_cwd.as_deref().into_iter().collect();
-                    let mut overrides = LlmOverrides::from_step_strings(&model_override, &effort_override);
+                    let extra: Vec<&str> = task_read_dirs.iter().map(String::as_str).collect();
+                    let mut overrides = LlmOverrides::from_step_strings(
+                        command_model.as_deref().unwrap_or(""),
+                        &effort_override,
+                    );
+                    overrides.model_resolved = true;
                     overrides.write_dir = task_write_dir.as_deref();
+                    overrides.settings = Some(&settings);
                     let call_start = std::time::Instant::now();
                     let (call_result, usage) = crate::pipeline::logging::with_pass(
                         step_key_emit.clone(),
@@ -774,19 +859,18 @@ async fn run_parallel_wave(
                                 Some(file_text) => file_text,
                                 None => strip_to_report(&raw_text),
                             };
-                            // Structured-output contract: on a mismatch, retry
-                            // (the log carries the reason); after the last
-                            // attempt, keep the output but warn.
+                            // Structured output is a contract, not a hint. A
+                            // malformed final attempt must fail the step.
                             if let Some(schema) = &output_schema {
                                 if let Err(why) = crate::pipeline::structured::check(schema, &text) {
                                     if attempt < max_retries {
                                         last_err = format!("output did not satisfy schema: {why}");
                                         continue;
                                     }
-                                    let _ = app_handle.emit_event(
-                                        "pipeline:log",
-                                        serde_json::json!({ "line": format!("WARNING: {log_label}: output still did not satisfy schema after {max_retries} retries ({why}); keeping it.") }),
+                                    last_err = format!(
+                                        "output did not satisfy schema after {max_retries} retries: {why}"
                                     );
+                                    continue;
                                 }
                             }
                             let _ = app_handle.emit_event(
@@ -809,6 +893,10 @@ async fn run_parallel_wave(
                                     input_tokens: usage.input_tokens,
                                     output_tokens: usage.output_tokens,
                                     model: effective_model,
+                                    model_transport: resolution.transport,
+                                    model_policy: resolution.selection.label(),
+                                    model_source: resolution.source,
+                                    model_catalog_updated_at: resolution.catalog_updated_at,
                                     ..Default::default()
                                 },
                             ));
@@ -833,6 +921,12 @@ async fn run_parallel_wave(
                             // model obeyed "don't print the report"). A
                             // non-empty report file counts as success.
                             if let Some(file_text) = ingest_report_file(task_write_dir.as_deref(), &report_rel) {
+                                if let Some(schema) = &output_schema {
+                                    if let Err(why) = crate::pipeline::structured::check(schema, &file_text) {
+                                        last_err = format!("report file did not satisfy schema: {why}");
+                                        continue;
+                                    }
+                                }
                                 let _ = app_handle.emit_event(
                                     "pipeline:log",
                                     serde_json::json!({ "line": format!("{log_label}: call reported an error but the report file was written; using it. ({e})") }),
@@ -1073,7 +1167,9 @@ async fn run_sequential_step(
     survey_hint: &str,
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
+    read_dirs: &[String],
     write_dir: Option<&str>,
+    settings: &crate::settings::Settings,
 ) -> Result<StepOutput, String> {
     let _ = app.emit_event(
         "pipeline:pass",
@@ -1105,22 +1201,32 @@ async fn run_sequential_step(
     let log_label = format!("Step: {}", step.label);
 
     // Use the paper's parent directory as CWD for steps with Read access
-    let source_dir = std::path::Path::new(source_path)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
-    let settings = crate::settings::load();
+    let source = std::path::Path::new(source_path);
+    let source_dir = if source.is_dir() {
+        normalize_cli_root(source_path)
+    } else {
+        cli_parent_dir(source_path)
+    };
     let timeout = settings.step_timeout_secs.max(60);
     let max_retries = settings.max_retries;
     let provider = agent
         .map(|a| a.to_string())
         .unwrap_or_else(|| settings.preferred_provider.clone());
-    let effective_model = resolve_model(&settings, &provider, &step.model);
+    let model_selection = step.model_selection_for(settings, &provider);
+    let resolution =
+        crate::model_catalog::resolve(&provider, settings, model_selection.as_ref()).await?;
+    let effective_model = resolution.resolved_model.clone();
+    let command_model = resolution.command_model.clone();
+    let effort = step.effort_for(settings, &provider);
 
     let mut last_err = String::new();
     let mut final_text: Option<String> = None;
     let mut usage = crate::pipeline::logging::CallUsage::default();
     let mut duration_secs = 0u64;
     for attempt in 0..=max_retries {
+        if let Some(error) = cancellation_error(&step.id) {
+            return Err(error);
+        }
         if attempt > 0 {
             let _ = app.emit_event(
                 "pipeline:log",
@@ -1134,9 +1240,12 @@ async fn run_sequential_step(
                 }),
             );
         }
-        let extra: Vec<&str> = source_dir.as_deref().into_iter().collect();
-        let mut overrides = LlmOverrides::from_step_strings(&step.model, &step.effort);
+        let extra: Vec<&str> = read_dirs.iter().map(String::as_str).collect();
+        let mut overrides =
+            LlmOverrides::from_step_strings(command_model.as_deref().unwrap_or(""), &effort);
+        overrides.model_resolved = true;
         overrides.write_dir = write_dir;
+        overrides.settings = Some(settings);
         let call_start = std::time::Instant::now();
         let (call_result, call_usage) = crate::pipeline::logging::with_pass(
             step.id.clone(),
@@ -1184,18 +1293,16 @@ async fn run_sequential_step(
             }
         };
         if let Some(text) = candidate {
-            // Structured-output contract: retry on mismatch, keep-and-warn on
-            // the final attempt.
+            // Structured output is a hard contract.
             if let Some(schema) = &step.output_schema {
                 if let Err(why) = crate::pipeline::structured::check(schema, &text) {
                     if attempt < max_retries {
                         last_err = format!("output did not satisfy schema: {why}");
                         continue;
                     }
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({ "line": format!("WARNING: {log_label}: output still did not satisfy schema after {max_retries} retries ({why}); keeping it.") }),
-                    );
+                    last_err =
+                        format!("output did not satisfy schema after {max_retries} retries: {why}");
+                    continue;
                 }
             }
             final_text = Some(text);
@@ -1228,6 +1335,10 @@ async fn run_sequential_step(
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         model: effective_model,
+        model_transport: resolution.transport,
+        model_policy: resolution.selection.label(),
+        model_source: resolution.source,
+        model_catalog_updated_at: resolution.catalog_updated_at,
         ..Default::default()
     })
 }
@@ -1244,6 +1355,82 @@ mod tests {
             phase,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn provider_roots_include_paper_orientation_named_input_and_source() {
+        let inputs = std::collections::HashMap::from([(
+            "response".to_string(),
+            "/private/tmp/pipeline_run/named/response.txt".to_string(),
+        )]);
+        let roots = provider_read_dirs(
+            "/Users/Mike/Documents/Paper/main.tex",
+            "/private/tmp/pipeline_run/paper/paper.txt",
+            "/private/tmp/pipeline_run/orientation/orientation.json",
+            &inputs,
+            &["/Users/Mike/Documents/Named Source".to_string()],
+        );
+
+        for expected in [
+            "/Users/Mike/Documents/Paper",
+            "/Users/Mike/Documents/Named Source",
+            "/private/tmp/pipeline_run/paper",
+            "/private/tmp/pipeline_run/orientation",
+            "/private/tmp/pipeline_run/named",
+        ] {
+            assert!(
+                roots.iter().any(|root| root == expected),
+                "missing {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_roots_normalize_windows_path_shapes() {
+        let inputs = std::collections::HashMap::from([(
+            "rubric".to_string(),
+            r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\named\rubric.txt".to_string(),
+        )]);
+        let roots = provider_read_dirs(
+            r"C:\Users\Mike\Documents\Paper\main.pdf",
+            r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\paper\paper.txt",
+            r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\orientation\orientation.json",
+            &inputs,
+            &[r"D:\Shared Inputs\Data".to_string()],
+        );
+
+        for expected in [
+            "C:/Users/Mike/Documents/Paper",
+            "C:/Users/Mike/AppData/Local/Temp/pipeline_run/paper",
+            "C:/Users/Mike/AppData/Local/Temp/pipeline_run/orientation",
+            "C:/Users/Mike/AppData/Local/Temp/pipeline_run/named",
+            "D:/Shared Inputs/Data",
+        ] {
+            assert!(
+                roots.iter().any(|root| root == expected),
+                "missing {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn folder_source_grants_the_folder_not_its_parent() {
+        let folder = tempfile::tempdir().unwrap();
+        let canonical = folder.path().canonicalize().unwrap();
+        let roots = provider_read_dirs(
+            folder.path().to_str().unwrap(),
+            "/private/tmp/pipeline_run/paper.txt",
+            "",
+            &std::collections::HashMap::new(),
+            &[],
+        );
+        let expected = canonical.to_string_lossy().replace('\\', "/");
+        assert!(roots.iter().any(|root| root == &expected));
+        assert!(!roots.iter().any(|root| {
+            canonical
+                .parent()
+                .is_some_and(|parent| root == &parent.to_string_lossy().replace('\\', "/"))
+        }));
     }
 
     // ── resolve_dependencies (implicit adjacency schedule) ─────────
@@ -1568,10 +1755,11 @@ mod tests {
     // ── write handoff helpers ──────────────────────────────────────
 
     #[test]
-    fn step_slug_sanitizes() {
-        assert_eq!(step_slug("technical"), "technical");
-        assert_eq!(step_slug("technical/claude"), "technical__claude");
-        assert_eq!(step_slug("a b:c"), "a_b_c");
+    fn step_file_keys_are_deterministic_and_collision_resistant() {
+        assert_eq!(step_slug("technical"), step_slug("technical"));
+        assert_eq!(step_slug("technical").len(), 64);
+        assert_ne!(step_slug("a.b"), step_slug("a_b"));
+        assert_ne!(step_slug("technical"), step_slug("technical/claude"));
     }
 
     #[test]
