@@ -10,6 +10,13 @@ describe("issues parsing", () => {
     expect(extractJson("no json here")).toBeNull();
   });
 
+  it("skips malformed candidates and handles mixed nesting", () => {
+    expect(extractJson('bad [x] then {"items":[{"text":"} ]"}]}')).toEqual({
+      items: [{ text: "} ]" }],
+    });
+    expect(extractJson("```json\n{bad}\n```\n```json\n[1,2]\n```")).toEqual([1, 2]);
+  });
+
   it("parses an { issues: [...] } object", () => {
     const text = JSON.stringify({
       issues: [

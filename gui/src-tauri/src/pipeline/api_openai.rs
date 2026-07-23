@@ -12,7 +12,7 @@ fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(settings.codex_model.as_str());
     match raw {
-        "" => "gpt-4.1".to_string(),
+        "" => "gpt-5.6-terra".to_string(),
         other => other.to_string(),
     }
 }
@@ -182,6 +182,7 @@ pub async fn call_openai_api(
             )?;
             warm_request.max_completion_tokens = Some(32);
             let warm_label = format!("{label} · cache warm-up");
+            super::logging::record_provider_attempt();
             match openai_tool_loop(
                 app,
                 client,
@@ -219,6 +220,7 @@ pub async fn call_openai_api(
         }
     }
 
+    super::logging::record_provider_attempt();
     let (text, mut usage) = openai_tool_loop(
         app,
         client,
@@ -318,6 +320,7 @@ pub async fn call_local_api(
         prompt_cache_key: None,
     };
 
+    super::logging::record_provider_attempt();
     let (text, usage) = openai_tool_loop(
         app,
         client,

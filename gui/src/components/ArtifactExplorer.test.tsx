@@ -147,5 +147,22 @@ describe("ArtifactExplorer", () => {
     expect(
       await screen.findByRole("heading", { name: "Fallback Report" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("no manifest");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("retries a failed manifest request", async () => {
+    let attempts = 0;
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_run_manifest" && attempts++ === 0) {
+        return Promise.reject(new Error("temporary failure"));
+      }
+      if (cmd === "get_run_manifest") return Promise.resolve(manifest);
+      if (cmd === "read_artifact") return Promise.resolve(textContent("markdown", "# Recovered"));
+      return Promise.reject(new Error("unexpected"));
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { name: "Recovered" })).toBeInTheDocument();
   });
 });

@@ -40,6 +40,82 @@ const DEFAULT_EXTRACTION: ExtractionConfig = {
 
 type EditingMode = WaveSelection | null;
 
+/** Mirror the backend's effective dependency graph and return the target
+ * step's transitive upstreams in profile order. */
+function conditionUpstreamIds(steps: StepConfig[], targetId: string): string[] {
+  const enabled = steps.filter((step) => step.enabled);
+  const ids = new Set(enabled.map((step) => step.id));
+  const deps = new Map<string, string[]>();
+  const allPrior: string[] = [];
+  let lastSequential: string | null = null;
+  for (const step of enabled) {
+    const current = step.inputs?.length
+      ? step.inputs.filter((id) => ids.has(id))
+      : step.phase === "parallel"
+        ? (lastSequential ? [lastSequential] : [])
+        : [...allPrior];
+    deps.set(step.id, current);
+    allPrior.push(step.id);
+    if (step.phase === "sequential") lastSequential = step.id;
+  }
+  const upstream = new Set<string>();
+  const pending = [...(deps.get(targetId) ?? [])];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (upstream.has(id)) continue;
+    upstream.add(id);
+    pending.push(...(deps.get(id) ?? []));
+  }
+  return enabled.filter((step) => upstream.has(step.id)).map((step) => step.id);
+}
+
+const OUTPUT_SCHEMA_TYPES = new Set([
+  "object", "array", "string", "number", "integer", "boolean", "null",
+]);
+
+function outputSchemaError(schema: unknown, path = "$", depth = 0): string | null {
+  if (depth > 32) return `${path}: nesting exceeds 32 levels`;
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return `${path}: schema must be a JSON object`;
+  }
+  const object = schema as Record<string, unknown>;
+  if (object.type !== undefined &&
+      (typeof object.type !== "string" || !OUTPUT_SCHEMA_TYPES.has(object.type))) {
+    return `${path}.type: unsupported type`;
+  }
+  if (object.required !== undefined) {
+    if (!Array.isArray(object.required) || object.required.some((key) => typeof key !== "string")) {
+      return `${path}.required: expected an array of strings`;
+    }
+    if (new Set(object.required).size !== object.required.length) {
+      return `${path}.required: entries must be unique`;
+    }
+    if (object.type !== undefined && object.type !== "object") {
+      return `${path}.required: only valid for an object schema`;
+    }
+  }
+  if (object.properties !== undefined) {
+    if (!object.properties || typeof object.properties !== "object" ||
+        Array.isArray(object.properties)) {
+      return `${path}.properties: expected an object`;
+    }
+    if (object.type !== undefined && object.type !== "object") {
+      return `${path}.properties: only valid for an object schema`;
+    }
+    for (const [key, child] of Object.entries(object.properties)) {
+      const error = outputSchemaError(child, `${path}.properties.${key}`, depth + 1);
+      if (error) return error;
+    }
+  }
+  if (object.items !== undefined) {
+    if (object.type !== undefined && object.type !== "array") {
+      return `${path}.items: only valid for an array schema`;
+    }
+    return outputSchemaError(object.items, `${path}.items`, depth + 1);
+  }
+  return null;
+}
+
 export default function PipelinePage({ onClose, onProfileChange }: Props) {
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -150,6 +226,9 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   const editingStep = (config && isStepEditing)
     ? config.steps.find((s) => s.id === editing) ?? null
     : null;
+  const conditionStepIds = config && editingStep
+    ? conditionUpstreamIds(config.steps, editingStep.id)
+    : [];
 
   useEffect(() => {
     if (isStepEditing && !editingStep) {
@@ -1086,7 +1165,10 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
               />
               <AdvancedStepOptions
                 step={editingStep}
-                otherStepIds={config.steps.filter((s) => s.id !== editingStep.id).map((s) => s.id)}
+                otherStepIds={config.steps
+                  .filter((s) => s.enabled && s.id !== editingStep.id)
+                  .map((s) => s.id)}
+                conditionStepIds={conditionStepIds}
                 onChange={(patch) => updateStep(editingStep.id, patch)}
               />
             </div>
@@ -1950,10 +2032,12 @@ const ISSUES_SCHEMA = {
 function AdvancedStepOptions({
   step,
   otherStepIds,
+  conditionStepIds,
   onChange,
 }: {
   step: StepConfig;
   otherStepIds: string[];
+  conditionStepIds: string[];
   onChange: (patch: Partial<StepConfig>) => void;
 }) {
   const hasAny = !!(step.inputs?.length || step.run_if || step.output_schema);
@@ -1969,7 +2053,7 @@ function AdvancedStepOptions({
   const setCondKind = (kind: string) => {
     if (kind === "none") return onChange({ run_if: null });
     if (kind === "output_matches")
-      return onChange({ run_if: { kind: "output_matches", step: otherStepIds[0] ?? "", pattern: "" } });
+      return onChange({ run_if: { kind: "output_matches", step: conditionStepIds[0] ?? "", pattern: "" } });
     return onChange({ run_if: { kind: "survey_path", pointer: "", exists: true } });
   };
 
@@ -1982,6 +2066,11 @@ function AdvancedStepOptions({
     }
     try {
       const parsed = JSON.parse(text);
+      const error = outputSchemaError(parsed);
+      if (error) {
+        setSchemaError(error);
+        return;
+      }
       setSchemaError(null);
       onChange({ output_schema: parsed });
     } catch (e) {
@@ -2039,7 +2128,9 @@ function AdvancedStepOptions({
               className={inputClass}
             >
               <option value="none">Always run</option>
-              <option value="output_matches">A prior step's output matches a pattern</option>
+              <option value="output_matches" disabled={conditionStepIds.length === 0}>
+                An upstream step's output matches a pattern
+              </option>
               <option value="survey_path">The survey (orientation) JSON matches</option>
             </select>
             {cond?.kind === "output_matches" && (
@@ -2049,7 +2140,10 @@ function AdvancedStepOptions({
                   onChange={(e) => onChange({ run_if: { ...cond, step: e.target.value } })}
                   className={inputClass}
                 >
-                  {otherStepIds.map((id) => (
+                  {!conditionStepIds.includes(cond.step) && cond.step && (
+                    <option value={cond.step} disabled>{cond.step} (not upstream)</option>
+                  )}
+                  {conditionStepIds.map((id) => (
                     <option key={id} value={id}>{id}</option>
                   ))}
                 </select>
@@ -2136,7 +2230,7 @@ function AdvancedStepOptions({
               className={`${inputClass} resize-y`}
             />
             {schemaError ? (
-              <p className="text-[10px] text-red-500 mt-0.5">Invalid JSON: {schemaError}</p>
+              <p className="text-[10px] text-red-500 mt-0.5">Invalid schema: {schemaError}</p>
             ) : (
               <p className="text-[10px] text-gray-400 mt-0.5">
                 When set, the step must emit JSON matching this shape (with one retry).

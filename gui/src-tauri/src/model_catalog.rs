@@ -459,6 +459,40 @@ fn base_catalog(provider: &str, transport: &str, source: &str) -> ModelCatalog {
     }
 }
 
+/// The direct OpenAI transport uses Chat Completions with function tools.
+/// `/v1/models` also returns embeddings, media, realtime, search, and
+/// Responses-only coding models, so endpoint compatibility must be an
+/// allowlist plus explicit specialty exclusions rather than a broad denylist.
+fn is_openai_chat_model(id: &str) -> bool {
+    let id = id.to_ascii_lowercase();
+    if id.starts_with("ft:") {
+        return false;
+    }
+    let general_family = id.starts_with("gpt-")
+        || id.starts_with("o1")
+        || id.starts_with("o3")
+        || id.starts_with("o4");
+    let specialty = [
+        "embedding",
+        "moderation",
+        "whisper",
+        "tts",
+        "dall-e",
+        "realtime",
+        "transcribe",
+        "audio",
+        "image",
+        "sora",
+        "search",
+        "computer-use",
+        "deep-research",
+        "codex",
+        "babbage",
+        "davinci",
+    ];
+    general_family && !specialty.iter().any(|word| id.contains(word))
+}
+
 async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -493,31 +527,16 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
                 .error_for_status()
                 .map_err(|e| format!("OpenAI model discovery failed: {e}"))?;
             let value = response_json_limited(response, "OpenAI").await?;
-            let excluded = [
-                "embedding",
-                "moderation",
-                "whisper",
-                "tts",
-                "dall-e",
-                "realtime",
-                "transcribe",
-                "audio",
-                "image",
-                "ft:",
-                "babbage",
-                "davinci",
-            ];
             let mut discovered = Vec::new();
             for item in value["data"].as_array().into_iter().flatten() {
                 if let Some(id) = item["id"].as_str() {
-                    if !excluded.iter().any(|word| id.contains(word)) {
+                    if is_openai_chat_model(id) {
                         discovered.push((item["created"].as_u64().unwrap_or(0), entry(id)));
                     }
                 }
             }
-            // OpenAI's list has no default marker. Prefer recently created
-            // generations for inferred Automatic/role choices while the
-            // remote policy remains free to supply a more precise mapping.
+            // Recency only orders endpoint-compatible general models. The
+            // policy's explicit role mapping selects Automatic/role defaults.
             discovered.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
             catalog.models = discovered.into_iter().map(|(_, model)| model).collect();
         }
@@ -1232,6 +1251,25 @@ mod tests {
     fn pricing_comes_from_policy() {
         assert_eq!(price_for_model("claude-sonnet-4-6"), Some((3.0, 15.0)));
         assert_eq!(price_for_model("gpt-4.1-mini"), Some((0.4, 1.6)));
+        assert_eq!(price_for_model("gpt-5.6-terra"), Some((2.5, 15.0)));
+    }
+
+    #[test]
+    fn openai_chat_filter_excludes_specialty_and_responses_only_models() {
+        for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-4.1", "o3", "o4-mini"] {
+            assert!(is_openai_chat_model(model), "{model}");
+        }
+        for model in [
+            "text-embedding-3-large",
+            "gpt-image-2",
+            "gpt-realtime-2",
+            "gpt-5.3-codex",
+            "gpt-4o-search-preview",
+            "omni-moderation-latest",
+            "ft:gpt-4.1:org:custom",
+        ] {
+            assert!(!is_openai_chat_model(model), "{model}");
+        }
     }
 
     #[test]

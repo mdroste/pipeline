@@ -166,6 +166,7 @@ pub async fn call_anthropic_api(
                 )?,
             }];
             let warm_label = format!("{label} · cache warm-up");
+            super::logging::record_provider_attempt();
             match anthropic_tool_loop(
                 app,
                 client,
@@ -194,6 +195,7 @@ pub async fn call_anthropic_api(
         }
     }
 
+    super::logging::record_provider_attempt();
     let (text, mut usage) = anthropic_tool_loop(
         app,
         client,

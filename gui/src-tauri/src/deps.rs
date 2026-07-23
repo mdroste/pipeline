@@ -498,7 +498,7 @@ fn check_gemini_auth() -> Option<bool> {
 }
 
 fn cli_auth_status(found: bool, authenticated: Option<bool>) -> Option<CliAuthStatus> {
-    found.then(|| match authenticated {
+    found.then_some(match authenticated {
         Some(true) => CliAuthStatus::SignedIn,
         Some(false) => CliAuthStatus::SignedOut,
         None => CliAuthStatus::Unknown,

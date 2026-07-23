@@ -25,8 +25,8 @@ Release system baselines:
   device's security policy to install it.
 - **Linux:** x86-64 Ubuntu 22.04 or a compatible newer distribution (AppImage).
 
-To build from source (requires [Node.js](https://nodejs.org/) >= 20.19 and < 25,
-plus the [Rust toolchain](https://rustup.rs/)):
+To build from source (requires [Node.js](https://nodejs.org/) 22.12 or 24 LTS;
+Node.js 24 is recommended, plus the [Rust toolchain](https://rustup.rs/)):
 
 ```bash
 git clone https://github.com/mdroste/pipeline.git

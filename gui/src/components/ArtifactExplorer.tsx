@@ -240,7 +240,8 @@ const GROUPS: { id: string; label: string }[] = [
 
 export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
   const [manifest, setManifest] = useState<RunManifest | null>(null);
-  const [manifestError, setManifestError] = useState(false);
+  const [manifestError, setManifestError] = useState<string | null>(null);
+  const [manifestAttempt, setManifestAttempt] = useState(0);
   const [selected, setSelected] = useState<string>("report.md");
   const [content, setContent] = useState<ArtifactContent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -251,7 +252,7 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
     // also prevents the content effect from combining a new run ID with the
     // previous run's selection.
     setManifest(null);
-    setManifestError(false);
+    setManifestError(null);
     setSelected("report.md");
     setContent(null);
     setLoadError(null);
@@ -267,12 +268,12 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
       })
       .catch((e) => {
         console.error("Failed to load run manifest:", e);
-        if (live) setManifestError(true);
+        if (live) setManifestError(e instanceof Error ? e.message : String(e));
       });
     return () => {
       live = false;
     };
-  }, [runId]);
+  }, [runId, manifestAttempt]);
 
   useEffect(() => {
     if (!manifest || !selected) return;
@@ -297,7 +298,27 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
 
   // Graceful degradation: no manifest → plain report view.
   if (manifestError) {
-    return <ReportViewer markdown={fallbackMarkdown} />;
+    return (
+      <div className="h-full overflow-y-auto">
+        <div role="alert" className="m-4 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-300">
+          <p className="font-medium">Could not load this run's artifact manifest.</p>
+          <p className="mt-1 text-xs">{manifestError}</p>
+          <button
+            type="button"
+            onClick={() => setManifestAttempt((attempt) => attempt + 1)}
+            className="mt-2 rounded border border-red-300 dark:border-red-800 px-2 py-1 text-xs hover:bg-red-100 dark:hover:bg-red-900/40"
+          >
+            Retry
+          </button>
+        </div>
+        {fallbackMarkdown && (
+          <section aria-label="Fallback report">
+            <p className="mx-4 text-xs text-gray-500">Showing the fallback report.</p>
+            <ReportViewer markdown={fallbackMarkdown} />
+          </section>
+        )}
+      </div>
+    );
   }
   if (!manifest) {
     return (

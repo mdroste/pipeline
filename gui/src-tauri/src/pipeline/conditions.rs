@@ -27,8 +27,9 @@ pub fn condition_met(
             let text = resolve_step_text(step, prior);
             let matched = match Regex::new(pattern) {
                 Ok(re) => text.as_deref().map(|t| re.is_match(t)).unwrap_or(false),
-                // An invalid regex can't match anything; treat as no match.
-                Err(_) => false,
+                // Profiles are validated before execution. If malformed data
+                // bypasses that boundary, fail closed even when negated.
+                Err(_) => return false,
             };
             matched ^ *negate
         }
@@ -143,6 +144,20 @@ mod tests {
             negate: false,
         };
         assert!(condition_met(&c, &serde_json::Value::Null, &prior));
+    }
+
+    #[test]
+    fn invalid_regex_fails_closed_even_when_negated() {
+        let condition = RunCondition::OutputMatches {
+            step: "triage".into(),
+            pattern: "(".into(),
+            negate: true,
+        };
+        assert!(!condition_met(
+            &condition,
+            &serde_json::Value::Null,
+            &[out("triage", "anything")]
+        ));
     }
 
     #[test]

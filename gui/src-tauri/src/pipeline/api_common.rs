@@ -749,6 +749,7 @@ impl Usage {
             output_tokens: self.output_tokens,
             cached_input_tokens: self.cached_input_tokens,
             cache_write_input_tokens: self.cache_write_input_tokens,
+            ..Default::default()
         }
     }
 

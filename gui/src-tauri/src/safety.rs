@@ -94,6 +94,18 @@ pub fn validate_run_budget(
     let attempts_per_step = u64::from(settings.max_retries).saturating_add(1);
     let attempts = units
         .checked_mul(attempts_per_step)
+        // Shared slots normally warm only once. A timed-out warm-up can leave
+        // its slot unprepared, however, so the safe upper bound is one warm-up
+        // for every dispatched logical attempt.
+        .and_then(|value| {
+            if config.context_cache.enabled {
+                units
+                    .checked_mul(attempts_per_step)
+                    .and_then(|warmups| value.checked_add(warmups))
+            } else {
+                Some(value)
+            }
+        })
         .and_then(|value| value.checked_add(merge_calls))
         // Reserve a few calls for extraction, orientation, and reconciliation.
         .and_then(|value| value.checked_add(4))
@@ -309,5 +321,43 @@ mod tests {
             variables: Vec::new(),
         };
         assert!(validate_run_budget(&config, &crate::settings::Settings::default()).is_err());
+    }
+
+    #[test]
+    fn run_budget_accounts_for_shared_context_warmups() {
+        let step = crate::pipeline_config::StepConfig {
+            id: "fan-out".to_string(),
+            enabled: true,
+            phase: crate::pipeline_config::Phase::Parallel,
+            agents: vec![
+                "claude".to_string(),
+                "codex".to_string(),
+                "gemini".to_string(),
+                "local".to_string(),
+            ],
+            for_each: Some(crate::pipeline_config::ForEach {
+                glob: "**/*".to_string(),
+                max: 5,
+            }),
+            ..Default::default()
+        };
+        let mut config = crate::pipeline_config::PipelineConfig {
+            steps: (0..100).map(|_| step.clone()).collect(),
+            merge: Default::default(),
+            context_cache: Default::default(),
+            use_orientation: false,
+            orientation_prompt: String::new(),
+            extraction: Default::default(),
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        };
+        let settings = crate::settings::Settings {
+            max_retries: 1,
+            ..Default::default()
+        };
+        assert!(validate_run_budget(&config, &settings).is_ok());
+        config.context_cache.enabled = true;
+        let error = validate_run_budget(&config, &settings).unwrap_err();
+        assert!(error.contains("provider attempts"), "{error}");
     }
 }

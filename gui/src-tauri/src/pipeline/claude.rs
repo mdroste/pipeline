@@ -717,6 +717,7 @@ async fn call_claude_inner(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn claude: {e}. Is Claude Code installed?"))?;
+    super::logging::record_provider_attempt();
 
     let (pid, start_time) = track_child_started(&child, app, label);
 
@@ -850,6 +851,7 @@ fn parse_claude_result(raw: &str) -> (String, Option<crate::pipeline::logging::C
                     output_tokens: field("output_tokens"),
                     cached_input_tokens: cached,
                     cache_write_input_tokens: cache_write,
+                    ..Default::default()
                 }
             });
             return (text, usage);
@@ -1182,6 +1184,7 @@ mod tests {
                 output_tokens: 20,
                 cached_input_tokens: 5,
                 cache_write_input_tokens: 3,
+                ..Default::default()
             })
         );
     }

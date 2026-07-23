@@ -189,6 +189,7 @@ pub async fn call_gemini(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn gemini: {e}. Is Gemini CLI installed?"))?;
+    super::logging::record_provider_attempt();
 
     let (pid, start_time) = track_child_started(&child, app, label);
 

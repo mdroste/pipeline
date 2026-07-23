@@ -14,91 +14,127 @@
 //! without a schema engine. Unknown schema keywords are ignored, so a stricter
 //! validator could be swapped in later without breaking stored schemas.
 
-/// Pull a JSON value out of a model's text response: the whole string if it
-/// parses, else the contents of the first ```json fence, else the first
-/// balanced `{...}` or `[...]` span. Returns None if nothing parses.
+const MAX_SCHEMA_DEPTH: usize = 32;
+const SUPPORTED_TYPES: &[&str] = &[
+    "object", "array", "string", "number", "integer", "boolean", "null",
+];
+
+/// Pull a JSON value out of a model's text response: the whole string, any
+/// fenced block, or any object/array embedded in prose. Candidates are tried
+/// in source order, so malformed prose before a valid payload cannot hide it.
 pub fn extract_json(text: &str) -> Option<serde_json::Value> {
     let trimmed = text.trim();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
         return Some(v);
     }
-    // Fenced code block ```json ... ``` (or a bare ``` ... ```).
-    if let Some(inner) = fenced_block(trimmed) {
+    // Fenced blocks also support primitive JSON values, which do not start
+    // with an object/array delimiter.
+    for inner in fenced_blocks(trimmed) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(inner.trim()) {
             return Some(v);
         }
     }
-    // First balanced object or array span.
-    if let Some(span) = first_balanced_span(trimmed) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(span) {
-            return Some(v);
+    // `StreamDeserializer` consumes exactly one value and handles nesting,
+    // strings, and mixed object/array delimiters without a hand-written parser.
+    for (offset, ch) in trimmed.char_indices() {
+        if matches!(ch, '{' | '[') {
+            let mut stream = serde_json::Deserializer::from_str(&trimmed[offset..])
+                .into_iter::<serde_json::Value>();
+            if let Some(Ok(v)) = stream.next() {
+                return Some(v);
+            }
         }
     }
     None
 }
 
-fn fenced_block(text: &str) -> Option<&str> {
-    let start = text.find("```")?;
-    let after = &text[start + 3..];
-    // Skip an optional language tag on the same line (e.g. ```json).
-    let body_start = after.find('\n').map(|i| i + 1).unwrap_or(0);
-    let body = &after[body_start..];
-    let end = body.find("```")?;
-    Some(&body[..end])
+fn fenced_blocks(mut text: &str) -> Vec<&str> {
+    let mut blocks = Vec::new();
+    while let Some(start) = text.find("```") {
+        let after = &text[start + 3..];
+        let body_start = after.find('\n').map_or(0, |i| i + 1);
+        let body = &after[body_start..];
+        let Some(end) = body.find("```") else {
+            break;
+        };
+        blocks.push(&body[..end]);
+        text = &body[end + 3..];
+    }
+    blocks
 }
 
-fn first_balanced_span(text: &str) -> Option<&str> {
-    let bytes = text.as_bytes();
-    let (open, close) = {
-        let obj = text.find('{');
-        let arr = text.find('[');
-        match (obj, arr) {
-            (Some(o), Some(a)) => {
-                if o < a {
-                    (o, b'}')
-                } else {
-                    (a, b']')
-                }
-            }
-            (Some(o), None) => (o, b'}'),
-            (None, Some(a)) => (a, b']'),
-            (None, None) => return None,
+/// Validate the supported schema subset itself. Unknown keywords are retained
+/// for forwards compatibility, but every supported keyword must be well
+/// formed and semantically compatible with the declared type.
+pub fn validate_schema(schema: &serde_json::Value) -> Result<(), String> {
+    validate_schema_at(schema, "$", 0)
+}
+
+fn validate_schema_at(schema: &serde_json::Value, path: &str, depth: usize) -> Result<(), String> {
+    if depth > MAX_SCHEMA_DEPTH {
+        return Err(format!(
+            "{path}: schema nesting exceeds the {MAX_SCHEMA_DEPTH}-level safety limit"
+        ));
+    }
+    let object = schema
+        .as_object()
+        .ok_or_else(|| format!("{path}: schema must be a JSON object"))?;
+    let declared_type = match object.get("type") {
+        Some(serde_json::Value::String(ty)) if SUPPORTED_TYPES.contains(&ty.as_str()) => {
+            Some(ty.as_str())
         }
+        Some(serde_json::Value::String(ty)) => {
+            return Err(format!("{path}.type: unsupported type '{ty}'"));
+        }
+        Some(_) => return Err(format!("{path}.type: expected a string")),
+        None => None,
     };
-    let open_ch = bytes[open];
-    let mut depth = 0i32;
-    let mut in_str = false;
-    let mut escaped = false;
-    for i in open..bytes.len() {
-        let c = bytes[i];
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if c == b'\\' {
-                escaped = true;
-            } else if c == b'"' {
-                in_str = false;
-            }
-            continue;
+
+    if let Some(required) = object.get("required") {
+        if declared_type.is_some_and(|ty| ty != "object") {
+            return Err(format!("{path}.required: only valid for an object schema"));
         }
-        match c {
-            b'"' => in_str = true,
-            x if x == open_ch => depth += 1,
-            x if x == close => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&text[open..=i]);
-                }
+        let required = required
+            .as_array()
+            .ok_or_else(|| format!("{path}.required: expected an array of unique strings"))?;
+        let mut seen = std::collections::HashSet::new();
+        for (index, key) in required.iter().enumerate() {
+            let key = key
+                .as_str()
+                .ok_or_else(|| format!("{path}.required[{index}]: expected a string"))?;
+            if !seen.insert(key) {
+                return Err(format!("{path}.required: duplicate property '{key}'"));
             }
-            _ => {}
         }
     }
-    None
+
+    if let Some(properties) = object.get("properties") {
+        if declared_type.is_some_and(|ty| ty != "object") {
+            return Err(format!(
+                "{path}.properties: only valid for an object schema"
+            ));
+        }
+        let properties = properties
+            .as_object()
+            .ok_or_else(|| format!("{path}.properties: expected an object"))?;
+        for (key, child) in properties {
+            validate_schema_at(child, &format!("{path}.properties.{key}"), depth + 1)?;
+        }
+    }
+
+    if let Some(items) = object.get("items") {
+        if declared_type.is_some_and(|ty| ty != "array") {
+            return Err(format!("{path}.items: only valid for an array schema"));
+        }
+        validate_schema_at(items, &format!("{path}.items"), depth + 1)?;
+    }
+    Ok(())
 }
 
 /// Validate `value` against the supported subset of `schema`. Returns Ok(()) or
 /// a human-readable reason on the first violation.
 pub fn validate(schema: &serde_json::Value, value: &serde_json::Value) -> Result<(), String> {
+    validate_schema(schema)?;
     validate_at(schema, value, "$")
 }
 
@@ -153,7 +189,7 @@ fn type_matches(ty: &str, value: &serde_json::Value) -> bool {
         "integer" => value.is_i64() || value.is_u64(),
         "boolean" => value.is_boolean(),
         "null" => value.is_null(),
-        _ => true, // unknown declared type — don't reject
+        _ => false,
     }
 }
 
@@ -203,6 +239,21 @@ mod tests {
     }
 
     #[test]
+    fn extract_skips_malformed_candidates_and_fences() {
+        let text = "broken [not json]\n```json\n{still broken}\n```\nresult: [{\"ok\":true}]";
+        assert_eq!(extract_json(text), Some(serde_json::json!([{"ok": true}])));
+    }
+
+    #[test]
+    fn extract_handles_mixed_nested_delimiters() {
+        let text = r#"prefix {"items":[{"text":"} ]"}]} suffix"#;
+        assert_eq!(
+            extract_json(text),
+            Some(serde_json::json!({"items": [{"text": "} ]"}]}))
+        );
+    }
+
+    #[test]
     fn extract_returns_none_for_non_json() {
         assert!(extract_json("just some prose, no json here").is_none());
     }
@@ -242,5 +293,15 @@ mod tests {
         assert!(check(&schema, "```json\n{\"ok\": true}\n```").is_ok());
         assert!(check(&schema, "not json").is_err());
         assert!(check(&schema, "{\"nope\": 1}").is_err());
+    }
+
+    #[test]
+    fn malformed_and_unknown_schemas_are_rejected() {
+        assert!(validate_schema(&serde_json::json!([])).is_err());
+        assert!(validate_schema(&serde_json::json!({"type": "date"}))
+            .unwrap_err()
+            .contains("unsupported type"));
+        assert!(validate_schema(&serde_json::json!({"required": ["id", 2]})).is_err());
+        assert!(validate_schema(&serde_json::json!({"type": "string", "items": {}})).is_err());
     }
 }

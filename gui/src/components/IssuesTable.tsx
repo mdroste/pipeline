@@ -47,6 +47,11 @@ export default function IssuesTable({ issues, runId }: Props) {
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const [saved, setSaved] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [persistenceError, setPersistenceError] = useState<{
+    operation: "load" | "save" | "export";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     annotationsRef.current = annotations;
@@ -68,6 +73,7 @@ export default function IssuesTable({ issues, runId }: Props) {
     dirtyRunRef.current = null;
     annotationsRef.current = {};
     setAnnotations({});
+    setPersistenceError(null);
     if (!runId) {
       return;
     }
@@ -76,15 +82,26 @@ export default function IssuesTable({ issues, runId }: Props) {
         if (loadVersionRef.current !== version) return;
         try {
           const loaded = JSON.parse(s) as Annotations;
+          if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) {
+            throw new Error("annotations file is not a JSON object");
+          }
           annotationsRef.current = loaded;
           setAnnotations(loaded);
-        } catch {
-          /* ignore */
+          loadedRunRef.current = runId;
+          setPersistenceError(null);
+        } catch (error) {
+          setPersistenceError({
+            operation: "load",
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
       })
-      .catch(() => {})
-      .finally(() => {
-        if (loadVersionRef.current === version) loadedRunRef.current = runId;
+      .catch((error) => {
+        if (loadVersionRef.current !== version) return;
+        setPersistenceError({
+          operation: "load",
+          message: error instanceof Error ? error.message : String(error),
+        });
       });
     return () => {
       if (loadVersionRef.current === version) loadVersionRef.current++;
@@ -94,7 +111,7 @@ export default function IssuesTable({ issues, runId }: Props) {
         dirtyRunRef.current = null;
       }
     };
-  }, [runId]);
+  }, [runId, loadAttempt]);
 
   // Debounced, serialized persistence after a user edit.
   useEffect(() => {
@@ -109,10 +126,19 @@ export default function IssuesTable({ issues, runId }: Props) {
             dirtyRunRef.current = null;
           }
           setSaved(true);
+          setPersistenceError(null);
           if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
           savedTimerRef.current = setTimeout(() => setSaved(false), 1200);
         })
-        .catch(() => {});
+        .catch((error) => {
+          if (runId === loadedRunRef.current) {
+            setSaved(false);
+            setPersistenceError({
+              operation: "save",
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        });
     }, 600);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -172,8 +198,40 @@ export default function IssuesTable({ issues, runId }: Props) {
     try {
       const path = await save({ defaultPath: "accepted-issues.md", filters: [{ name: "Markdown", extensions: ["md"] }] });
       if (path) await invoke("save_text_file", { path, content: md });
-    } catch {
-      /* cancelled */
+    } catch (error) {
+      setPersistenceError({
+        operation: "export",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const retryPersistence = () => {
+    if (!runId || !persistenceError) return;
+    if (persistenceError.operation === "load") {
+      setLoadAttempt((attempt) => attempt + 1);
+      return;
+    }
+    if (persistenceError.operation === "save") {
+      const snapshot = JSON.stringify(annotationsRef.current);
+      const { request } = enqueueSave(runId, annotationsRef.current);
+      request
+        .then(() => {
+          if (
+            runId === loadedRunRef.current &&
+            JSON.stringify(annotationsRef.current) === snapshot
+          ) {
+            dirtyRunRef.current = null;
+          }
+          setPersistenceError(null);
+          setSaved(true);
+        })
+        .catch((error) =>
+          setPersistenceError({
+            operation: "save",
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
     }
   };
 
@@ -211,6 +269,24 @@ export default function IssuesTable({ issues, runId }: Props) {
           </button>
         </div>
       </div>
+
+      {persistenceError && (
+        <div role="alert" className="mb-4 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300">
+          <span className="font-medium">
+            Annotation {persistenceError.operation} failed:
+          </span>{" "}
+          {persistenceError.message}
+          {persistenceError.operation !== "export" && (
+            <button
+              type="button"
+              onClick={retryPersistence}
+              className="ml-2 rounded border border-red-300 dark:border-red-800 px-2 py-0.5 hover:bg-red-100 dark:hover:bg-red-900/40"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="space-y-1.5">
         {visible.map((issue) => {

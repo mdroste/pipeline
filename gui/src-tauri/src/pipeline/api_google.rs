@@ -12,7 +12,7 @@ fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(settings.gemini_model.as_str());
     match raw {
-        "" => "gemini-2.5-flash".to_string(),
+        "" => "gemini-3.6-flash".to_string(),
         other => other.to_string(),
     }
 }
@@ -146,6 +146,7 @@ pub async fn call_google_api(
             )?;
             warm_request.generation_config = Some(serde_json::json!({ "maxOutputTokens": 32 }));
             let warm_label = format!("{label} · cache warm-up");
+            super::logging::record_provider_attempt();
             match google_tool_loop(
                 app,
                 client,
@@ -175,6 +176,7 @@ pub async fn call_google_api(
         }
     }
 
+    super::logging::record_provider_attempt();
     let (text, mut usage) = google_tool_loop(
         app,
         client,

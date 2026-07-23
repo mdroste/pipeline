@@ -53,6 +53,8 @@ const MAX_PROFILE_NAME_CHARS: usize = 200;
 const MAX_VARIABLES: usize = 100;
 const MAX_EXTRA_INPUTS: usize = 100;
 const MAX_OUTPUT_SCHEMA_BYTES: usize = 1024 * 1024;
+const MAX_RUN_IF_PATTERN_BYTES: usize = 16 * 1024;
+const MAX_JSON_POINTER_BYTES: usize = 4 * 1024;
 const ALLOWED_TOOLS: &[&str] = &["Read", "Write", "WebSearch"];
 const ALLOWED_AGENTS: &[&str] = &["claude", "codex", "gemini", "local"];
 
@@ -1418,6 +1420,7 @@ fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String> {
     validate_unique_step_ids(steps)?;
     validate_dependencies(steps)?;
     validate_workflow_semantics(steps)?;
+    validate_run_conditions(steps)?;
     for step in steps {
         if step.label.chars().count() > MAX_STEP_LABEL_CHARS {
             return Err(format!(
@@ -1496,6 +1499,8 @@ fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String> {
                     MAX_OUTPUT_SCHEMA_BYTES / 1024 / 1024
                 ));
             }
+            crate::pipeline::structured::validate_schema(schema)
+                .map_err(|e| format!("Step '{}' output schema is invalid: {e}", step.id))?;
         }
     }
     Ok(())
@@ -1631,16 +1636,46 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
     Ok(())
 }
 
-/// Reject explicit `inputs` graphs that can't run: an unknown dependency id or
-/// a dependency cycle. Only enabled steps participate (a disabled upstream is
-/// simply ignored by the executor, so it isn't an error here). Steps with no
-/// explicit `inputs` use the implicit adjacency schedule and can't form cycles.
+/// Compute each enabled step's dependency set. Explicit `inputs` win;
+/// otherwise the implicit adjacency schedule is used.
+pub(crate) fn resolve_dependencies(
+    enabled: &[&StepConfig],
+) -> Vec<std::collections::HashSet<String>> {
+    let mut deps = Vec::with_capacity(enabled.len());
+    let mut all_prior: Vec<String> = Vec::new();
+    let mut last_sequential: Option<String> = None;
+    for step in enabled {
+        let current = if step.inputs.is_empty() {
+            match step.phase {
+                Phase::Parallel => last_sequential.iter().cloned().collect(),
+                Phase::Sequential => all_prior.iter().cloned().collect(),
+            }
+        } else {
+            step.inputs.iter().cloned().collect()
+        };
+        deps.push(current);
+        all_prior.push(step.id.clone());
+        if step.phase == Phase::Sequential {
+            last_sequential = Some(step.id.clone());
+        }
+    }
+    deps
+}
+
+/// Reject enabled dependency graphs that cannot run. Disabled steps may retain
+/// stale settings while being edited, but an enabled step may never wait on a
+/// disabled or unknown upstream.
 pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
     use std::collections::{HashMap, HashSet};
     let ids: HashSet<&str> = steps.iter().map(|s| s.id.as_str()).collect();
+    let enabled_ids: HashSet<&str> = steps
+        .iter()
+        .filter(|step| step.enabled)
+        .map(|step| step.id.as_str())
+        .collect();
 
     // Unknown / self dependencies.
-    for s in steps {
+    for s in steps.iter().filter(|step| step.enabled) {
         for dep in &s.inputs {
             if dep == &s.id {
                 return Err(format!("Step '{}' lists itself as a dependency.", s.id));
@@ -1651,13 +1686,23 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
                     s.id, dep
                 ));
             }
+            if !enabled_ids.contains(dep.as_str()) {
+                return Err(format!(
+                    "Step '{}' depends on disabled step '{}'. Enable it or remove the dependency.",
+                    s.id, dep
+                ));
+            }
         }
     }
 
-    // Cycle detection over the explicit-inputs graph (DFS with a colour map).
-    let graph: HashMap<&str, Vec<&str>> = steps
+    // Cycle detection over the complete effective graph (DFS with a colour
+    // map), including implicit adjacency dependencies.
+    let enabled: Vec<&StepConfig> = steps.iter().filter(|step| step.enabled).collect();
+    let resolved = resolve_dependencies(&enabled);
+    let graph: HashMap<&str, Vec<&str>> = enabled
         .iter()
-        .map(|s| (s.id.as_str(), s.inputs.iter().map(|d| d.as_str()).collect()))
+        .zip(&resolved)
+        .map(|(step, deps)| (step.id.as_str(), deps.iter().map(String::as_str).collect()))
         .collect();
     #[derive(PartialEq, Clone, Copy)]
     enum Mark {
@@ -1692,6 +1737,114 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
             } else {
                 marks.insert(node, Mark::Done);
                 stack.pop();
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_json_pointer(pointer: &str) -> bool {
+    if pointer.is_empty() {
+        return true;
+    }
+    if !pointer.starts_with('/') {
+        return false;
+    }
+    let bytes = pointer.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'~' {
+            if index + 1 >= bytes.len() || !matches!(bytes[index + 1], b'0' | b'1') {
+                return false;
+            }
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    true
+}
+
+/// Validate run guards against the effective dependency graph. An output guard
+/// may only read a transitive upstream, which guarantees the referent has
+/// completed before the scheduler evaluates the guard.
+fn validate_run_conditions(steps: &[StepConfig]) -> Result<(), String> {
+    let enabled: Vec<&StepConfig> = steps.iter().filter(|step| step.enabled).collect();
+    let deps = resolve_dependencies(&enabled);
+    let index: std::collections::HashMap<&str, usize> = enabled
+        .iter()
+        .enumerate()
+        .map(|(i, step)| (step.id.as_str(), i))
+        .collect();
+
+    for (step_index, step) in enabled.iter().enumerate() {
+        let Some(condition) = &step.run_if else {
+            continue;
+        };
+        match condition {
+            RunCondition::OutputMatches {
+                step: target,
+                pattern,
+                ..
+            } => {
+                if target.is_empty() {
+                    return Err(format!(
+                        "Step '{}' output condition must select an upstream step.",
+                        step.id
+                    ));
+                }
+                if pattern.len() > MAX_RUN_IF_PATTERN_BYTES {
+                    return Err(format!(
+                        "Step '{}' output condition exceeds the {MAX_RUN_IF_PATTERN_BYTES}-byte pattern limit.",
+                        step.id
+                    ));
+                }
+                regex::Regex::new(pattern).map_err(|error| {
+                    format!(
+                        "Step '{}' output condition has an invalid regular expression: {error}",
+                        step.id
+                    )
+                })?;
+                let Some(&target_index) = index.get(target.as_str()) else {
+                    return Err(format!(
+                        "Step '{}' output condition refers to an unknown or disabled step '{}'.",
+                        step.id, target
+                    ));
+                };
+                let mut pending: Vec<usize> = deps[step_index]
+                    .iter()
+                    .filter_map(|id| index.get(id.as_str()).copied())
+                    .collect();
+                let mut upstream = std::collections::HashSet::new();
+                while let Some(current) = pending.pop() {
+                    if upstream.insert(current) {
+                        pending.extend(
+                            deps[current]
+                                .iter()
+                                .filter_map(|id| index.get(id.as_str()).copied()),
+                        );
+                    }
+                }
+                if !upstream.contains(&target_index) {
+                    return Err(format!(
+                        "Step '{}' output condition reads '{}', but that step is not an upstream dependency.",
+                        step.id, target
+                    ));
+                }
+            }
+            RunCondition::SurveyPath { pointer, .. } => {
+                if pointer.len() > MAX_JSON_POINTER_BYTES {
+                    return Err(format!(
+                        "Step '{}' survey pointer exceeds the {MAX_JSON_POINTER_BYTES}-byte limit.",
+                        step.id
+                    ));
+                }
+                if !validate_json_pointer(pointer) {
+                    return Err(format!(
+                        "Step '{}' survey condition uses an invalid JSON pointer '{}'.",
+                        step.id, pointer
+                    ));
+                }
             }
         }
     }
@@ -2309,6 +2462,67 @@ mod tests {
             step_dep("c", &["b"]),
         ];
         assert!(validate_dependencies(&steps).is_err());
+    }
+
+    #[test]
+    fn disabled_dependencies_have_explicit_semantics() {
+        let mut disabled = step_dep("off", &["ghost"]);
+        disabled.enabled = false;
+        assert!(validate_dependencies(&[disabled.clone()]).is_ok());
+
+        let enabled = step_dep("on", &["off"]);
+        let error = validate_dependencies(&[disabled, enabled]).unwrap_err();
+        assert!(error.contains("disabled step 'off'"), "{error}");
+    }
+
+    #[test]
+    fn disabled_cycles_are_ignored() {
+        let mut a = step_dep("a", &["b"]);
+        let mut b = step_dep("b", &["a"]);
+        a.enabled = false;
+        b.enabled = false;
+        assert!(validate_dependencies(&[a, b]).is_ok());
+    }
+
+    #[test]
+    fn output_conditions_require_valid_completed_upstreams() {
+        let a = step_with_id("a");
+        let mut same_wave = step_with_id("b");
+        same_wave.run_if = Some(RunCondition::OutputMatches {
+            step: "a".into(),
+            pattern: "high".into(),
+            negate: false,
+        });
+        assert!(validate_run_conditions(&[a.clone(), same_wave.clone()])
+            .unwrap_err()
+            .contains("not an upstream dependency"));
+
+        same_wave.inputs = vec!["a".into()];
+        assert!(validate_run_conditions(&[a.clone(), same_wave.clone()]).is_ok());
+
+        if let Some(RunCondition::OutputMatches { pattern, .. }) = &mut same_wave.run_if {
+            *pattern = "(".into();
+        }
+        assert!(validate_run_conditions(&[a, same_wave])
+            .unwrap_err()
+            .contains("invalid regular expression"));
+    }
+
+    #[test]
+    fn survey_conditions_require_valid_json_pointers() {
+        let mut step = step_with_id("survey");
+        step.run_if = Some(RunCondition::SurveyPath {
+            pointer: "metadata/type".into(),
+            equals: None,
+            exists: Some(true),
+        });
+        assert!(validate_run_conditions(&[step.clone()]).is_err());
+        step.run_if = Some(RunCondition::SurveyPath {
+            pointer: "/metadata/a~1b".into(),
+            equals: None,
+            exists: Some(true),
+        });
+        assert!(validate_run_conditions(&[step]).is_ok());
     }
 
     fn bundle_profile(id: &str, steps: Vec<StepConfig>) -> ProfileExport {

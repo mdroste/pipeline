@@ -176,14 +176,20 @@ pub async fn execute_steps(
                 let step = enabled[i];
                 // Resume: a preloaded step reuses the parent run's output.
                 if let Some(cached) = preloaded.get(&step.id) {
+                    for output in cached {
+                        if let Err(error) = output_budget.reserve(output) {
+                            let _ = app.emit_event(
+                                "pipeline:pass",
+                                serde_json::json!({"name": step.id, "status": "error"}),
+                            );
+                            return Err(error);
+                        }
+                        all_outputs.push(output.clone());
+                    }
                     let _ = app.emit_event(
                         "pipeline:pass",
                         serde_json::json!({"name": step.id, "status": "done"}),
                     );
-                    for output in cached {
-                        output_budget.reserve(output)?;
-                        all_outputs.push(output.clone());
-                    }
                     done.insert(step.id.clone());
                     continue;
                 }
@@ -275,15 +281,21 @@ pub async fn execute_steps(
 
         // Resume: a preloaded step reuses the parent run's output.
         if let Some(cached) = preloaded.get(&step.id) {
+            for output in cached {
+                if let Err(error) = output_budget.reserve(output) {
+                    let _ = app.emit_event(
+                        "pipeline:pass",
+                        serde_json::json!({"name": step.id, "status": "error"}),
+                    );
+                    return Err(error);
+                }
+                all_outputs.push(output.clone());
+            }
             let _ = app.emit_event(
                 "pipeline:pass",
                 serde_json::json!({"name": step.id, "status": "done"}),
             );
             done.insert(step.id.clone());
-            for output in cached {
-                output_budget.reserve(output)?;
-                all_outputs.push(output.clone());
-            }
             continue;
         }
 
@@ -398,37 +410,10 @@ fn cancellation_error(pass_key: &str) -> Option<String> {
     }
 }
 
-/// Compute each enabled step's dependency set (of enabled step ids). Explicit
-/// `inputs` win; otherwise the implicit adjacency schedule is used: a parallel
-/// step waits for the most recent sequential step, a sequential step waits for
-/// every step before it. Dependency ids that aren't enabled steps are dropped
-/// (a disabled upstream can't be waited on).
+/// Delegate to the configuration module so validation and scheduling use the
+/// exact same effective dependency graph.
 fn resolve_dependencies(enabled: &[&StepConfig]) -> Vec<std::collections::HashSet<String>> {
-    let enabled_ids: std::collections::HashSet<&str> =
-        enabled.iter().map(|s| s.id.as_str()).collect();
-    let mut deps = Vec::with_capacity(enabled.len());
-    let mut all_prior: Vec<String> = Vec::new();
-    let mut last_sequential: Option<String> = None;
-    for s in enabled {
-        let d: std::collections::HashSet<String> = if !s.inputs.is_empty() {
-            s.inputs
-                .iter()
-                .filter(|id| enabled_ids.contains(id.as_str()) && id.as_str() != s.id)
-                .cloned()
-                .collect()
-        } else {
-            match s.phase {
-                Phase::Parallel => last_sequential.iter().cloned().collect(),
-                Phase::Sequential => all_prior.iter().cloned().collect(),
-            }
-        };
-        deps.push(d);
-        all_prior.push(s.id.clone());
-        if s.phase == Phase::Sequential {
-            last_sequential = Some(s.id.clone());
-        }
-    }
-    deps
+    crate::pipeline_config::resolve_dependencies(enabled)
 }
 
 /// The set of enabled steps that transitively depend on any of `seeds`
@@ -703,7 +688,12 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             text,
             duration_secs: total_duration_secs,
             usage: total_usage,
-            attempt_count: attempt.saturating_add(1),
+            attempt_count: u32::try_from(
+                total_usage
+                    .provider_attempts
+                    .max(u64::from(attempt.saturating_add(1))),
+            )
+            .unwrap_or(u32::MAX),
         });
     }
 
@@ -863,14 +853,14 @@ fn fan_out_root(source_path: &str) -> std::path::PathBuf {
 
 /// Build the units to run for a step. Fan-out and agent selection are
 /// independent dimensions, so a multi-agent fan-out produces their Cartesian
-/// product. Fan-out with no matches returns empty; the caller records an
-/// explicit skipped output.
+/// product. Fan-out with no matches returns empty; incomplete discovery is an
+/// error rather than being misreported as a valid zero-match scan.
 fn build_units(
     step: &StepConfig,
     settings: &crate::settings::Settings,
     source_path: &str,
     app: &crate::emit::EventBus,
-) -> Vec<Unit> {
+) -> Result<Vec<Unit>, String> {
     let agents: Vec<String> = if step.agents.is_empty() {
         vec![settings.preferred_provider.clone()]
     } else {
@@ -878,10 +868,28 @@ fn build_units(
     };
     let multi = agents.len() > 1;
 
-    if let Some(fe) = &step.for_each {
+    let units = if let Some(fe) = &step.for_each {
         let root = fan_out_root(source_path);
         let expansion = crate::pipeline::glob::expand(&root, &fe.glob, fe.max.max(1) as usize);
         let items = expansion.matches;
+        if let Some(reason) = expansion.limited_by {
+            if reason != "match limit" {
+                return Err(if reason == "cancelled" {
+                    "Pipeline cancelled during fan-out discovery".to_string()
+                } else {
+                    format!(
+                        "Fan-out discovery for '{}' stopped at the {reason}; results may be incomplete",
+                        step.label
+                    )
+                });
+            }
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "Fan-out step '{}' was bounded by {reason} at {} files (glob '{}')", step.label, items.len(), fe.glob
+                )}),
+            );
+        }
         if items.is_empty() {
             let _ = app.emit_event(
                 "pipeline:log",
@@ -889,15 +897,7 @@ fn build_units(
                     "WARNING: fan-out step '{}' matched no files for glob '{}'", step.label, fe.glob
                 )}),
             );
-            return Vec::new();
-        }
-        if let Some(reason) = expansion.limited_by {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!(
-                    "Fan-out step '{}' was bounded by {reason} at {} files (glob '{}')", step.label, items.len(), fe.glob
-                )}),
-            );
+            return Ok(Vec::new());
         }
         let mut used = std::collections::HashSet::new();
         items
@@ -926,7 +926,7 @@ fn build_units(
                     merge_agents: multi,
                 })
             })
-            .collect()
+            .collect::<Vec<_>>()
     } else {
         agents
             .into_iter()
@@ -938,8 +938,9 @@ fn build_units(
                 item_suffix: String::new(),
                 merge_agents: multi,
             })
-            .collect()
-    }
+            .collect::<Vec<_>>()
+    };
+    Ok(units)
 }
 
 /// Run all parallel steps in a wave concurrently.
@@ -984,7 +985,8 @@ async fn run_parallel_wave(
             Some(&step.id),
         )
         .await?
-        .map_err(|e| format!("Fan-out discovery task failed for '{}': {e}", step.label))?;
+        .map_err(|e| format!("Fan-out discovery task failed for '{}': {e}", step.label))?
+        .map_err(|e| format!("Fan-out discovery failed for '{}': {e}", step.label))?;
         if units.is_empty() {
             let _ = app.emit_event(
                 "pipeline:pass",
@@ -1163,10 +1165,6 @@ async fn run_parallel_wave(
 
                 match call {
                     Ok(call) => {
-                        let _ = app_handle.emit_event(
-                            "pipeline:pass",
-                            serde_json::json!({ "name": step_key_emit, "status": "done" }),
-                        );
                         let mut output = step_output(
                             &step_key,
                             &display_label,
@@ -1178,13 +1176,21 @@ async fn run_parallel_wave(
                         );
                         output.merge_group = merge_group;
                         output.fan_out_item = fan_out_item;
-                        output_budget
-                            .reserve(&output)
-                            .map_err(|error| StepFailure {
+                        if let Err(error) = output_budget.reserve(&output) {
+                            let _ = app_handle.emit_event(
+                                "pipeline:pass",
+                                serde_json::json!({ "name": step_key_emit, "status": "error" }),
+                            );
+                            return Err(StepFailure {
                                 step_id: step_key.clone(),
                                 step_label: fail_label.clone(),
                                 error,
-                            })?;
+                            });
+                        }
+                        let _ = app_handle.emit_event(
+                            "pipeline:pass",
+                            serde_json::json!({ "name": step_key_emit, "status": "done" }),
+                        );
                         Ok((sort_key, output))
                     }
                     Err(error) => {
@@ -1694,14 +1700,13 @@ mod tests {
     }
 
     #[test]
-    fn explicit_inputs_override_and_drop_unknown() {
+    fn explicit_inputs_override_implicit_schedule() {
         let mut a = make_step("a", Phase::Parallel);
         let mut b = make_step("b", Phase::Sequential);
-        b.inputs = vec!["a".into(), "ghost".into(), "b".into()]; // ghost unknown, b is self
+        b.inputs = vec!["a".into()];
         a.inputs = vec![];
         let deps = deps_of(&[a, b]);
         assert!(deps[0].is_empty());
-        // Only the real, non-self dependency survives.
         assert_eq!(deps[1], ["a".to_string()].into_iter().collect());
     }
 
@@ -1724,7 +1729,7 @@ mod tests {
         let step = make_step("s", Phase::Parallel);
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-        let units = build_units(&step, &settings, "/tmp/x.pdf", &bus);
+        let units = build_units(&step, &settings, "/tmp/x.pdf", &bus).unwrap();
         assert_eq!(units.len(), 1);
         assert_eq!(units[0].suffix, ""); // bare step id, no composite key
         assert_eq!(units[0].agent, settings.preferred_provider);
@@ -1736,7 +1741,7 @@ mod tests {
         step.agents = vec!["claude".into(), "gemini".into()];
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-        let units = build_units(&step, &settings, "/tmp/x.pdf", &bus);
+        let units = build_units(&step, &settings, "/tmp/x.pdf", &bus).unwrap();
         assert_eq!(units.len(), 2);
         assert_eq!(units[0].suffix, "claude");
         assert_eq!(units[1].suffix, "gemini");
@@ -1758,7 +1763,7 @@ mod tests {
         });
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-        let units = build_units(&step, &settings, temp.path().to_str().unwrap(), &bus);
+        let units = build_units(&step, &settings, temp.path().to_str().unwrap(), &bus).unwrap();
 
         assert_eq!(units.len(), 4);
         assert_eq!(units.iter().filter(|u| u.agent == "claude").count(), 2);
@@ -1804,7 +1809,11 @@ mod tests {
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
 
-        assert!(build_units(&steps[0], &settings, temp.path().to_str().unwrap(), &bus).is_empty());
+        assert!(
+            build_units(&steps[0], &settings, temp.path().to_str().unwrap(), &bus)
+                .unwrap()
+                .is_empty()
+        );
 
         let deps = resolve_dependencies(&refs);
         let mut done = std::collections::HashSet::new();

@@ -1208,6 +1208,7 @@ mod tests {
                 output_tokens: 200,
                 cached_input_tokens: 700,
                 cache_write_input_tokens: 100,
+                ..Default::default()
             },
             step_count: 6,
             failed_steps: vec!["Empirical".into()],

@@ -7,10 +7,7 @@
 
 use regex::Regex;
 use std::path::Path;
-use std::time::{Duration, Instant};
-
-const MAX_WALK_ENTRIES: usize = 100_000;
-const MAX_WALK_TIME: Duration = Duration::from_secs(5);
+use std::time::Instant;
 const EXCLUDED_DIRS: &[&str] = &[
     ".git",
     "node_modules",
@@ -25,7 +22,7 @@ const EXCLUDED_DIRS: &[&str] = &[
 pub struct ExpandResult {
     pub matches: Vec<String>,
     /// Why the result may be incomplete (`match limit`, `entry limit`,
-    /// `time limit`, or `cancelled`).
+    /// `directory limit`, `time limit`, or `cancelled`).
     pub limited_by: Option<&'static str>,
 }
 
@@ -87,6 +84,7 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
     let mut matches: Vec<String> = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     let mut visited = 0usize;
+    let mut directories = 1usize;
     let started = Instant::now();
     let mut limited_by = None;
     'walk: while let Some(dir) = stack.pop() {
@@ -94,7 +92,7 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
             limited_by = Some("cancelled");
             break;
         }
-        if started.elapsed() >= MAX_WALK_TIME {
+        if started.elapsed() >= crate::safety::MAX_WALK_TIME {
             limited_by = Some("time limit");
             break;
         }
@@ -103,7 +101,7 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
         };
         for entry in entries.flatten() {
             visited += 1;
-            if visited > MAX_WALK_ENTRIES {
+            if visited > crate::safety::MAX_WALK_ENTRIES {
                 limited_by = Some("entry limit");
                 break 'walk;
             }
@@ -112,7 +110,7 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
                     limited_by = Some("cancelled");
                     break 'walk;
                 }
-                if started.elapsed() >= MAX_WALK_TIME {
+                if started.elapsed() >= crate::safety::MAX_WALK_TIME {
                     limited_by = Some("time limit");
                     break 'walk;
                 }
@@ -132,6 +130,11 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
                     .any(|excluded| name.eq_ignore_ascii_case(excluded))
                 {
                     continue;
+                }
+                directories += 1;
+                if directories > crate::safety::MAX_WALK_DIRS {
+                    limited_by = Some("directory limit");
+                    break 'walk;
                 }
                 stack.push(path);
                 continue;

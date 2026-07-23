@@ -46,4 +46,29 @@ describe("IssuesTable annotation lifecycle", () => {
       ),
     );
   });
+
+  it("shows save failures and retries without losing the edit", async () => {
+    let saves = 0;
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_annotations") return Promise.resolve("{}");
+      if (command === "save_annotations" && saves++ === 0) {
+        return Promise.reject(new Error("disk full"));
+      }
+      return Promise.resolve();
+    });
+    render(<IssuesTable issues={issues} runId="run-a" />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_annotations", { runId: "run-a" }));
+    await userEvent.setup().click(screen.getByTitle("accept"));
+    expect(await screen.findByRole("alert", {}, { timeout: 1500 })).toHaveTextContent("disk full");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(invoke).toHaveBeenLastCalledWith(
+      "save_annotations",
+      expect.objectContaining({
+        runId: "run-a",
+        content: expect.stringContaining('"status":"accept"'),
+      }),
+    );
+  });
 });

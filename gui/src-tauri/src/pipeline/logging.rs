@@ -90,6 +90,10 @@ pub struct CallUsage {
     /// subset of `input_tokens` where the provider reports it.
     #[serde(default)]
     pub cache_write_input_tokens: u64,
+    /// Top-level provider invocations, including shared-context warm-ups and
+    /// CLI session fallbacks. This is distinct from logical step retries.
+    #[serde(default)]
+    pub provider_attempts: u64,
 }
 
 impl CallUsage {
@@ -107,6 +111,9 @@ impl CallUsage {
         self.cache_write_input_tokens = self
             .cache_write_input_tokens
             .saturating_add(other.cache_write_input_tokens);
+        self.provider_attempts = self
+            .provider_attempts
+            .saturating_add(other.provider_attempts);
     }
 }
 
@@ -143,6 +150,7 @@ static RUN_USAGE: Mutex<CallUsage> = Mutex::new(CallUsage {
     output_tokens: 0,
     cached_input_tokens: 0,
     cache_write_input_tokens: 0,
+    provider_attempts: 0,
 });
 
 /// A file the console log is mirrored to for the duration of a run. `emit`
@@ -242,6 +250,15 @@ fn record_usage(usage: CallUsage) {
         .add_usage(usage);
 }
 
+/// Record one provider invocation before dispatch. Keeping this separate from
+/// token reporting counts failed calls and CLI calls that expose no usage.
+pub fn record_provider_attempt() {
+    record_usage(CallUsage {
+        provider_attempts: 1,
+        ..Default::default()
+    });
+}
+
 /// Emit a `pipeline:usage` event with token counts for the current call,
 /// tagged with the active session. Calls with no token data (both zero) are
 /// skipped — CLI text-mode providers can't report usage.
@@ -269,6 +286,7 @@ pub fn emit_usage(app: &crate::emit::EventBus, usage: CallUsage) {
             "output_tokens": usage.output_tokens,
             "cached_input_tokens": usage.cached_input_tokens,
             "cache_write_input_tokens": usage.cache_write_input_tokens,
+            "provider_attempts": usage.provider_attempts,
         }),
     )
     .ok();
@@ -366,18 +384,21 @@ mod tests {
                 output_tokens: 20,
                 cached_input_tokens: 40,
                 cache_write_input_tokens: 10,
+                provider_attempts: 1,
             });
             record_usage(CallUsage {
                 input_tokens: 50,
                 output_tokens: 10,
                 cached_input_tokens: 5,
                 cache_write_input_tokens: 0,
+                provider_attempts: 2,
             });
         }));
         assert_eq!(usage.input_tokens, 150);
         assert_eq!(usage.output_tokens, 30);
         assert_eq!(usage.cached_input_tokens, 45);
         assert_eq!(usage.cache_write_input_tokens, 10);
+        assert_eq!(usage.provider_attempts, 3);
     }
 
     #[test]
@@ -385,6 +406,7 @@ mod tests {
         let (_, usage) = block_on(measure_usage(async {}));
         assert_eq!(usage.input_tokens, 0);
         assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.provider_attempts, 0);
     }
 
     #[test]

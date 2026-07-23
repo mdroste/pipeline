@@ -478,13 +478,6 @@ function App() {
                       </p>
                     </li>
                   </ol>
-
-                  <div className="mt-6 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-                    <span className="h-1.5 w-1.5 rounded-full bg-gray-900 dark:bg-gray-100" aria-hidden="true" />
-                    {inputMode === "none"
-                      ? "Use Run in the sidebar when you are ready."
-                      : "Choose an input in the sidebar to begin."}
-                  </div>
                 </div>
               </div>
             ) : (

@@ -515,17 +515,24 @@ pub async fn cancel_pass(pass_key: String) -> Result<(), String> {
         .unwrap_or_else(|e| e.into_inner())
         .push(pass_key.clone());
     signal_cancellation();
+    kill_pass_children(&pass_key);
+    Ok(())
+}
+
+/// Terminate subprocesses attributed to one pass without marking the pass as
+/// user-cancelled. Used when the whole logical provider call reaches its
+/// deadline, so retry policy can still decide what happens next.
+pub(crate) fn kill_pass_children(pass_key: &str) {
     let pids: Vec<u32> = PASS_PIDS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .iter()
-        .filter(|(k, _)| *k == pass_key)
+        .filter(|(k, _)| k == pass_key)
         .map(|(_, p)| *p)
         .collect();
-    for pid in pids {
-        kill_process(pid);
+    for pid in &pids {
+        kill_process(*pid);
     }
-    Ok(())
 }
 
 /// Kill all registered child processes.
@@ -1037,11 +1044,16 @@ async fn run_pipeline_inner_with_snapshot(
             let pdf = std::path::PathBuf::from(&extraction.source_path);
             let out_dir = w.dir().join("artifacts").join("pages");
             let rendered = tokio::task::spawn_blocking(move || {
-                crate::pipeline::extract::render_pdf_pages(&pdf, &out_dir, 50)
+                crate::pipeline::extract::render_pdf_pages(
+                    &pdf,
+                    &out_dir,
+                    crate::pipeline::extract::MAX_RENDERED_PDF_PAGES,
+                )
             })
             .await;
             match rendered {
-                Ok(Ok(names)) => {
+                Ok(Ok(rendered)) => {
+                    let names = rendered.names;
                     let count = names.len();
                     for name in &names {
                         let page_num = name
@@ -1070,6 +1082,17 @@ async fn run_pipeline_inner_with_snapshot(
                             "line": format!("Rendered {count} page images into the run artifacts")
                         }),
                     );
+                    if rendered.truncated {
+                        let _ = app.emit_event(
+                            "pipeline:log",
+                            serde_json::json!({
+                                "line": format!(
+                                    "WARNING: page image rendering reached the {}-page cap; a longer PDF is truncated in the artifact view",
+                                    crate::pipeline::extract::MAX_RENDERED_PDF_PAGES
+                                )
+                            }),
+                        );
+                    }
                 }
                 Ok(Err(e)) => {
                     let _ = app.emit_event(

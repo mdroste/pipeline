@@ -9,26 +9,13 @@ export interface Issue {
   body: string;
 }
 
-/** Find the first balanced `{...}` or `[...]` span, respecting string quoting. */
-function firstBalancedSpan(text: string): string | null {
-  const obj = text.indexOf("{");
-  const arr = text.indexOf("[");
-  let open: number;
-  let close: string;
-  if (obj !== -1 && (arr === -1 || obj < arr)) {
-    open = obj;
-    close = "}";
-  } else if (arr !== -1) {
-    open = arr;
-    close = "]";
-  } else {
-    return null;
-  }
-  const openCh = text[open];
-  let depth = 0;
+/** Find one balanced JSON object/array candidate at `start`, respecting mixed
+ * nesting and string quoting. */
+function balancedSpanAt(text: string, start: number): string | null {
+  const stack: string[] = [];
   let inStr = false;
   let escaped = false;
-  for (let i = open; i < text.length; i++) {
+  for (let i = start; i < text.length; i++) {
     const c = text[i];
     if (inStr) {
       if (escaped) escaped = false;
@@ -36,18 +23,20 @@ function firstBalancedSpan(text: string): string | null {
       else if (c === '"') inStr = false;
       continue;
     }
-    if (c === '"') inStr = true;
-    else if (c === openCh) depth++;
-    else if (c === close) {
-      depth--;
-      if (depth === 0) return text.slice(open, i + 1);
+    if (c === '"') {
+      inStr = true;
+    } else if (c === "{" || c === "[") {
+      stack.push(c === "{" ? "}" : "]");
+    } else if (c === "}" || c === "]") {
+      if (stack.pop() !== c) return null;
+      if (stack.length === 0) return text.slice(start, i + 1);
     }
   }
   return null;
 }
 
-/** Pull a JSON value out of a model reply: whole string, fenced block, or the
- *  first balanced span. Returns null if nothing parses. */
+/** Pull a JSON value out of a model reply: whole string, any fenced block, or
+ * any balanced object/array candidate. Returns null if nothing parses. */
 export function extractJson(text: string): unknown | null {
   const trimmed = text.trim();
   const tryParse = (s: string): unknown | undefined => {
@@ -59,15 +48,17 @@ export function extractJson(text: string): unknown | null {
   };
   let v = tryParse(trimmed);
   if (v !== undefined) return v;
-  const fence = trimmed.match(/```(?:[a-zA-Z0-9]*)?\s*\n?([\s\S]*?)```/);
-  if (fence) {
+  for (const fence of trimmed.matchAll(/```(?:[a-zA-Z0-9_-]*)?\s*\n?([\s\S]*?)```/g)) {
     v = tryParse(fence[1].trim());
     if (v !== undefined) return v;
   }
-  const span = firstBalancedSpan(trimmed);
-  if (span) {
-    v = tryParse(span);
-    if (v !== undefined) return v;
+  for (let start = 0; start < trimmed.length; start++) {
+    if (trimmed[start] !== "{" && trimmed[start] !== "[") continue;
+    const span = balancedSpanAt(trimmed, start);
+    if (span) {
+      v = tryParse(span);
+      if (v !== undefined) return v;
+    }
   }
   return null;
 }

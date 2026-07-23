@@ -14,6 +14,9 @@ const MAX_LATEX_SIZE: usize = 10_000_000;
 const MAX_INVENTORY_ENTRIES: usize = 100_000;
 const MAX_INVENTORY_DIRS: usize = 10_000;
 const MAX_INVENTORY_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Page images are useful artifacts but can consume substantial disk space.
+/// Keep this aligned with the documented run-artifact contract.
+pub const MAX_RENDERED_PDF_PAGES: u32 = 300;
 
 fn open_regular_file(path: &Path) -> Result<fs::File, String> {
     crate::safety::open_regular_file(path)
@@ -1081,7 +1084,20 @@ async fn extract_llm(
 /// Render each page of a PDF to a PNG in `out_dir` using bundled pdftoppm.
 /// Returns the sorted file names. Used to populate the run's page-image
 /// artifacts; independent of which extraction method ran.
-pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Vec<String>, String> {
+pub struct RenderedPdfPages {
+    pub names: Vec<String>,
+    pub truncated: bool,
+}
+
+fn rendered_page_limit(requested: u32) -> u32 {
+    requested.clamp(1, MAX_RENDERED_PDF_PAGES)
+}
+
+pub fn render_pdf_pages(
+    pdf: &Path,
+    out_dir: &Path,
+    max_pages: u32,
+) -> Result<RenderedPdfPages, String> {
     let bin = find_command("pdftoppm").ok_or("pdftoppm not found on PATH")?;
     let pdf_str = pdf
         .to_str()
@@ -1092,13 +1108,14 @@ pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Ve
     let prefix_str = prefix
         .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
-    let max_pages = max_pages.clamp(1, 50);
+    let max_pages = rendered_page_limit(max_pages);
+    let probe_pages = max_pages.saturating_add(1);
     let mut command = bin.command([
         "-png",
         "-r",
         "150",
         "-l",
-        &max_pages.to_string(),
+        &probe_pages.to_string(),
         pdf_str,
         prefix_str,
     ]);
@@ -1132,11 +1149,15 @@ pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Ve
         .filter(|n| n.starts_with("page") && n.ends_with(".png"))
         .collect();
     names.sort();
+    let truncated = names.len() > max_pages as usize;
+    for excess in names.iter().skip(max_pages as usize) {
+        let _ = fs::remove_file(out_dir.join(excess));
+    }
     names.truncate(max_pages as usize);
     if names.is_empty() {
         return Err("pdftoppm produced no page images".to_string());
     }
-    Ok(names)
+    Ok(RenderedPdfPages { names, truncated })
 }
 
 /// Extract from a PDF file using marker or pdftotext.
@@ -1511,6 +1532,14 @@ pub async fn extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rendered_page_limit_matches_documented_cap() {
+        assert_eq!(rendered_page_limit(0), 1);
+        assert_eq!(rendered_page_limit(50), 50);
+        assert_eq!(rendered_page_limit(500), MAX_RENDERED_PDF_PAGES);
+        assert_eq!(MAX_RENDERED_PDF_PAGES, 300);
+    }
 
     #[test]
     #[cfg(unix)]

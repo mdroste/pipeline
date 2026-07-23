@@ -40,9 +40,8 @@ pub async fn execute(request: Request<'_>) -> Result {
     overrides.shared_context = request.shared_context;
 
     let started = std::time::Instant::now();
-    let (output, usage) = super::logging::with_pass(
-        request.pass_key.to_string(),
-        super::logging::measure_usage(call_llm(
+    let bounded = async {
+        let mut call = std::pin::pin!(call_llm(
             request.app,
             request.prompt,
             &tool_refs,
@@ -54,7 +53,39 @@ pub async fn execute(request: Request<'_>) -> Result {
             request.cwd,
             &read_dirs,
             &overrides,
-        )),
+        ));
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(request.timeout_secs),
+            crate::commands::await_or_cancel(call.as_mut(), Some(request.pass_key)),
+        )
+        .await
+        {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => {
+                // Cancellation already terminates registered children. Keep
+                // polling briefly so CLI providers can reap them cleanly.
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), call.as_mut()).await;
+                Err(error)
+            }
+            Err(_) => {
+                crate::commands::kill_pass_children(request.pass_key);
+                // Keep polling briefly after termination so CLI providers can
+                // reap their child and drain/close reader tasks. The provider
+                // result is intentionally discarded: the logical deadline
+                // has already elapsed.
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), call.as_mut()).await;
+                Err(format!(
+                    "{} timed out after {}s (including context preparation and fallbacks)",
+                    request.log_label, request.timeout_secs
+                ))
+            }
+        }
+    };
+    let (output, usage) = super::logging::with_pass(
+        request.pass_key.to_string(),
+        super::logging::measure_usage(bounded),
     )
     .await;
 

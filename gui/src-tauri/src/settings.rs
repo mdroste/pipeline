@@ -114,7 +114,7 @@ pub struct Settings {
     pub claude_effort: String,
 
     /// Codex model to use. Empty = Codex default.
-    /// Examples: "o3", "o4-mini", "gpt-4.1", or a full model ID.
+    /// Examples: "gpt-5.6-terra", "o3", "gpt-4.1", or a full model ID.
     #[serde(default)]
     pub codex_model: String,
 
@@ -132,7 +132,7 @@ pub struct Settings {
     pub codex_effort: String,
 
     /// Gemini model to use. Empty = Gemini CLI default.
-    /// Examples: "gemini-2.5-pro", "gemini-2.5-flash", or a full model ID.
+    /// Examples: "gemini-3.1-pro-preview", "gemini-3.6-flash", or a full model ID.
     #[serde(default)]
     pub gemini_model: String,
 
