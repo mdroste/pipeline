@@ -166,7 +166,7 @@ export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
   ];
 
   return (
-    <div className="flex h-full">
+    <div data-testid="settings-page" className="flex h-full">
       {/* Sidebar nav */}
       <div className="w-48 shrink-0 border-r border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/50 p-4 flex flex-col">
         <h2 className="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4 px-2">

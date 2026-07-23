@@ -3,4 +3,4 @@
 import "./poppler-provenance.test.mjs";
 import "./prepare-notices.test.mjs";
 import "./validate-release-identity.test.mjs";
-
+import "./smoke-packaged-app.test.mjs";

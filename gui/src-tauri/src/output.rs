@@ -164,16 +164,41 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
         total_in += o.input_tokens;
         total_out += o.output_tokens;
 
-        let model = if o.model.trim().is_empty() {
-            "default".to_string()
+        let mut provider_models = Vec::new();
+        if o.calls.is_empty() {
+            provider_models.push(format!(
+                "{} · {}",
+                if o.provider.trim().is_empty() {
+                    "default".to_string()
+                } else {
+                    capitalize(&o.provider)
+                },
+                if o.model.trim().is_empty() {
+                    "default"
+                } else {
+                    &o.model
+                }
+            ));
         } else {
-            o.model.clone()
-        };
-        let provider = if o.provider.trim().is_empty() {
-            "default".to_string()
-        } else {
-            capitalize(&o.provider)
-        };
+            for call in &o.calls {
+                let label = format!(
+                    "{} · {}",
+                    if call.provider.trim().is_empty() {
+                        "default".to_string()
+                    } else {
+                        capitalize(&call.provider)
+                    },
+                    if call.model.trim().is_empty() {
+                        "default"
+                    } else {
+                        &call.model
+                    }
+                );
+                if !provider_models.contains(&label) {
+                    provider_models.push(label);
+                }
+            }
+        }
         let tokens = if o.input_tokens == 0 && o.output_tokens == 0 {
             "—".to_string()
         } else {
@@ -183,28 +208,48 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
                 fmt_tokens(o.output_tokens)
             )
         };
-        let api_transport = if o.model_transport.is_empty() {
-            provider_in_api_mode(settings, &o.provider)
-        } else {
-            o.model_transport == "api"
-        };
-        let cost_cell = if api_transport {
-            match estimate_cost(&o.model, o.input_tokens, o.output_tokens) {
-                Some(c) => {
-                    total_cost += c;
-                    any_cost = true;
-                    format_cost(c)
+        let mut row_cost = 0f64;
+        let mut row_has_cost = false;
+        if o.calls.is_empty() {
+            let api_transport = if o.model_transport.is_empty() {
+                provider_in_api_mode(settings, &o.provider)
+            } else {
+                o.model_transport == "api"
+            };
+            if api_transport {
+                if let Some(cost) = estimate_cost(&o.model, o.input_tokens, o.output_tokens) {
+                    row_cost += cost;
+                    row_has_cost = true;
                 }
-                None => "—".to_string(),
             }
+        } else {
+            for call in &o.calls {
+                let api_transport = if call.model_transport.is_empty() {
+                    provider_in_api_mode(settings, &call.provider)
+                } else {
+                    call.model_transport == "api"
+                };
+                if api_transport {
+                    if let Some(cost) =
+                        estimate_cost(&call.model, call.input_tokens, call.output_tokens)
+                    {
+                        row_cost += cost;
+                        row_has_cost = true;
+                    }
+                }
+            }
+        }
+        let cost_cell = if row_has_cost {
+            total_cost += row_cost;
+            any_cost = true;
+            format_cost(row_cost)
         } else {
             "—".to_string()
         };
         rows.push_str(&format!(
-            "| {} | {} · {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} |\n",
             o.step_label,
-            provider,
-            model,
+            provider_models.join("<br>"),
             format_secs(o.duration_secs),
             tokens,
             cost_cell,
@@ -230,32 +275,64 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
     md.push_str(&format!(
         "| **Total** | | | **{total_tokens}** | **{total_cost_cell}** |\n\n"
     ));
-    let provenance: Vec<String> = outputs
-        .iter()
-        .filter(|output| !output.model_source.is_empty())
-        .map(|output| {
-            format!(
-                "- **{}**: {} via {} `{}`{}",
-                output.step_label,
-                if output.model_policy.is_empty() {
-                    "unspecified"
-                } else {
-                    &output.model_policy
-                },
-                if output.model_transport.is_empty() {
-                    "unknown transport"
-                } else {
-                    &output.model_transport
-                },
-                output.model_source,
-                if output.model_catalog_updated_at.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (catalog {})", output.model_catalog_updated_at)
-                },
-            )
-        })
-        .collect();
+    let mut provenance = Vec::new();
+    for output in &outputs {
+        if output.calls.is_empty() {
+            if !output.model_source.is_empty() {
+                provenance.push(format!(
+                    "- **{}**: {} via {} `{}`{}",
+                    output.step_label,
+                    if output.model_policy.is_empty() {
+                        "unspecified"
+                    } else {
+                        &output.model_policy
+                    },
+                    if output.model_transport.is_empty() {
+                        "unknown transport"
+                    } else {
+                        &output.model_transport
+                    },
+                    output.model_source,
+                    if output.model_catalog_updated_at.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (catalog {})", output.model_catalog_updated_at)
+                    },
+                ));
+            }
+        } else {
+            for call in &output.calls {
+                if call.model_source.is_empty() {
+                    continue;
+                }
+                provenance.push(format!(
+                    "- **{} ({})**: {} via {} `{}`{}",
+                    output.step_label,
+                    if call.role.is_empty() {
+                        "call"
+                    } else {
+                        &call.role
+                    },
+                    if call.model_policy.is_empty() {
+                        "unspecified"
+                    } else {
+                        &call.model_policy
+                    },
+                    if call.model_transport.is_empty() {
+                        "unknown transport"
+                    } else {
+                        &call.model_transport
+                    },
+                    call.model_source,
+                    if call.model_catalog_updated_at.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (catalog {})", call.model_catalog_updated_at)
+                    },
+                ));
+            }
+        }
+    }
     if !provenance.is_empty() {
         md.push_str("<details><summary>Model resolution provenance</summary>\n\n");
         md.push_str(&provenance.join("\n"));
@@ -325,7 +402,7 @@ pub fn render_markdown(
         .unwrap_or_default();
     md.push_str(&format!(
         "{}**Reviewed**: {} · `{}`  \n**LLM**: {} · **Model**: {} · **Effort**: {} · **Generated in**: {}  \n*Report generated by Pipeline*\n\n",
-        type_prefix, report.report_date, &report.paper_hash,
+        type_prefix, report.report_date, report.paper_hash,
         provider, model, effort, format_duration(elapsed)
     ));
 

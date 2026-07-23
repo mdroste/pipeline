@@ -75,9 +75,20 @@ pub async fn build_orientation_map(
             template_owned.as_str()
         }
     };
-    let base_prompt = template
-        .replace("{input_text}", paper_text)
-        .replace("{paper_text}", paper_text);
+    let base_prompt = crate::safety::replace_all_limited(
+        template,
+        "{input_text}",
+        paper_text,
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Orientation prompt",
+    )?;
+    let base_prompt = crate::safety::replace_all_limited(
+        &base_prompt,
+        "{paper_text}",
+        paper_text,
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Orientation prompt",
+    )?;
 
     let mut prompt = base_prompt.clone();
     let mut last_error = String::new();
@@ -109,19 +120,27 @@ pub async fn build_orientation_map(
             Ok(_) => {
                 last_error = "top-level JSON value is not an object".to_string();
                 if attempt < MAX_RETRIES {
-                    prompt = format!(
-                        "Your previous response was not a JSON object. \
-                         Please try again. Return ONLY a single JSON object, no markdown fences.\n\n{base_prompt}"
-                    );
+                    prompt = "Your previous response was not a JSON object. Please try again. Return ONLY a single JSON object, no markdown fences.\n\n".to_string();
+                    crate::safety::push_str_limited(
+                        &mut prompt,
+                        &base_prompt,
+                        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+                        "Orientation retry prompt",
+                    )?;
                 }
             }
             Err(e) => {
                 last_error = format!("{e}");
                 if attempt < MAX_RETRIES {
                     prompt = format!(
-                        "Your previous response was not valid JSON. Error: {e}\n\
-                         Please try again. Return ONLY valid JSON, no markdown fences.\n\n{base_prompt}"
+                        "Your previous response was not valid JSON. Error: {e}\nPlease try again. Return ONLY valid JSON, no markdown fences.\n\n"
                     );
+                    crate::safety::push_str_limited(
+                        &mut prompt,
+                        &base_prompt,
+                        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+                        "Orientation retry prompt",
+                    )?;
                 }
             }
         }

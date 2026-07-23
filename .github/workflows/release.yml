@@ -78,7 +78,7 @@ jobs:
         run: npm run build
 
       - name: Install declared minimum Rust version
-        uses: dtolnay/rust-toolchain@1.80.0
+        uses: dtolnay/rust-toolchain@1.88.0
 
       - name: Check declared MSRV
         working-directory: gui/src-tauri
@@ -160,7 +160,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            xvfb
 
       - name: Install npm dependencies
         working-directory: gui
@@ -701,6 +702,29 @@ jobs:
             exit 1
           fi
 
+          app_spctl_output="$(spctl -a -vvv -t execute "${dmg_app}" 2>&1 || true)"
+          echo "${app_spctl_output}"
+          if ! grep -q 'source=Notarized Developer ID' <<<"${app_spctl_output}"; then
+            echo "Pipeline.app was not accepted as a notarized Developer ID application" >&2
+            exit 1
+          fi
+
+          # Reproduce the policy state of an app downloaded from a browser,
+          # then launch its exact signed executable. The frontend writes a
+          # private readiness marker after completing a Tauri IPC round trip.
+          smoke_root="$(mktemp -d)"
+          smoke_app="${smoke_root}/Pipeline.app"
+          ditto "${dmg_app}" "${smoke_app}"
+          xattr -w com.apple.quarantine '0081;00000000;GitHub Actions;Pipeline' "${smoke_app}"
+          quarantined_spctl="$(spctl -a -vvv -t execute "${smoke_app}" 2>&1 || true)"
+          echo "${quarantined_spctl}"
+          if ! grep -q 'source=Notarized Developer ID' <<<"${quarantined_spctl}"; then
+            echo "Quarantined Pipeline.app was not accepted by Gatekeeper" >&2
+            exit 1
+          fi
+          node scripts/release/smoke-packaged-app.mjs \
+            "${smoke_app}/Contents/MacOS/pipeline-gui"
+
           echo "Verified ${app_path}"
           file "${exe}"
           otool -l "${exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /(platform|minos|sdk)/{print} show && /sdk/{exit}'
@@ -750,6 +774,8 @@ jobs:
           test -s "$notices/THIRD_PARTY_SBOM.cdx.json"
           test -s "$notices/POPPLER_INPUT_LOCK.json"
           test -s "$notices/POPPLER_PROVENANCE.json"
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a \
+            node scripts/release/smoke-packaged-app.mjs "$GITHUB_WORKSPACE/$appimage"
 
       - name: Verify Windows NSIS installer contents
         if: matrix.label == 'Windows'
@@ -787,6 +813,29 @@ jobs:
           test -s "$notices/THIRD_PARTY_SBOM.cdx.json"
           test -s "$notices/POPPLER_INPUT_LOCK.json"
           test -s "$notices/POPPLER_PROVENANCE.json"
+
+      - name: Install and launch Windows NSIS artifact
+        if: matrix.label == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem "gui/src-tauri/target/release/bundle/nsis/Pipeline_*_x64-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Windows NSIS installer was not produced" }
+
+          $installDir = Join-Path $env:RUNNER_TEMP "pipeline-smoke-install"
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "NSIS installation failed with exit code $($install.ExitCode)" }
+
+          $application = Get-ChildItem $installDir -File -Filter "*.exe" |
+            Where-Object { $_.Name -ne "uninstall.exe" } |
+            Select-Object -First 1
+          if (-not $application) { throw "Installed Pipeline executable was not found under $installDir" }
+          node scripts/release/smoke-packaged-app.mjs $application.FullName
+
+          $uninstaller = Get-ChildItem $installDir -Recurse -File -Filter "uninstall.exe" | Select-Object -First 1
+          if (-not $uninstaller) { throw "NSIS uninstaller was not found under $installDir" }
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstall failed with exit code $($uninstall.ExitCode)" }
 
       - name: Rename release assets
         env:

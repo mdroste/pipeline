@@ -16,15 +16,7 @@ const MAX_INVENTORY_DIRS: usize = 10_000;
 const MAX_INVENTORY_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 fn open_regular_file(path: &Path) -> Result<fs::File, String> {
-    let file = fs::File::open(path)
-        .map_err(|e| format!("Failed to open regular file {}: {e}", path.display()))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| format!("Failed to inspect {}: {e}", path.display()))?;
-    if !metadata.file_type().is_file() {
-        return Err(format!("{} is not a regular file", path.display()));
-    }
-    Ok(file)
+    crate::safety::open_regular_file(path)
 }
 
 fn read_utf8_capped(path: &Path, limit: usize) -> Result<String, String> {
@@ -77,6 +69,7 @@ fn run_bounded_output(
     label: &str,
     timeout: std::time::Duration,
     output_limit: usize,
+    watched_output_dir: Option<&Path>,
 ) -> Result<BoundedOutput, String> {
     use std::process::Stdio;
 
@@ -95,18 +88,23 @@ fn run_bounded_output(
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::sync_channel(1);
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::sync_channel(1);
     let stdout_thread = std::thread::spawn(move || {
-        stdout
+        let result = stdout
             .map(|pipe| drain_capped(pipe, output_limit))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let _ = stdout_tx.send(result);
     });
     let stderr_thread = std::thread::spawn(move || {
-        stderr
+        let result = stderr
             .map(|pipe| drain_capped(pipe, output_limit))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let _ = stderr_tx.send(result);
     });
 
     let started = std::time::Instant::now();
+    let mut last_output_scan = std::time::Instant::now();
     let result = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
@@ -126,7 +124,38 @@ fn run_bounded_output(
                 let _ = child.wait();
                 break Err(format!("{label} timed out after {}s", timeout.as_secs()));
             }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Ok(None) => {
+                if let Some(dir) = watched_output_dir {
+                    if last_output_scan.elapsed() >= std::time::Duration::from_millis(250) {
+                        last_output_scan = std::time::Instant::now();
+                        let mut walk = crate::safety::WalkBudget::new_cancellable(
+                            "Extraction output directory",
+                        );
+                        match directory_bytes_bounded(dir, &mut walk) {
+                            Ok(bytes) if bytes <= 250_000_000 => {}
+                            Ok(bytes) => {
+                                if pid > 0 {
+                                    crate::commands::kill_process(pid);
+                                }
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                break Err(format!(
+                                    "{label} generated {bytes} bytes; the safety limit is 250000000"
+                                ));
+                            }
+                            Err(error) => {
+                                if pid > 0 {
+                                    crate::commands::kill_process(pid);
+                                }
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                break Err(error);
+                            }
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
             Err(e) => {
                 if pid > 0 {
                     crate::commands::kill_process(pid);
@@ -138,11 +167,44 @@ fn run_bounded_output(
         }
     };
 
+    // A successful leader can leave descendants holding its pipes. Bound the
+    // drain just like provider CLIs, then terminate the still-owned group/job.
+    let mut stdout_result = stdout_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .ok();
+    let mut stderr_result = stderr_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .ok();
+    if stdout_result.is_none() || stderr_result.is_none() {
+        if pid > 0 {
+            crate::commands::kill_process(pid);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        if stdout_result.is_none() {
+            stdout_result = stdout_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .ok();
+        }
+        if stderr_result.is_none() {
+            stderr_result = stderr_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .ok();
+        }
+    }
     if pid > 0 {
         crate::commands::unregister_child_pid(pid);
     }
-    let (stdout, stdout_truncated) = stdout_thread.join().unwrap_or_default();
-    let (stderr, stderr_truncated) = stderr_thread.join().unwrap_or_default();
+    if stdout_result.is_some() {
+        let _ = stdout_thread.join();
+    }
+    if stderr_result.is_some() {
+        let _ = stderr_thread.join();
+    }
+    let (stdout, stdout_truncated) = stdout_result
+        .ok_or_else(|| format!("{label} stdout pipe did not close after termination"))?;
+    let (stderr, stderr_truncated) = stderr_result
+        .ok_or_else(|| format!("{label} stderr pipe did not close after termination"))?;
     let status = result?;
     Ok(BoundedOutput {
         status,
@@ -151,6 +213,40 @@ fn run_bounded_output(
         stdout_truncated,
         stderr_truncated,
     })
+}
+
+fn directory_bytes_bounded(
+    root: &Path,
+    walk: &mut crate::safety::WalkBudget,
+) -> Result<u64, String> {
+    let mut bytes = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir)
+            .map_err(|error| format!("Failed to inspect {}: {error}", dir.display()))?;
+        for entry in entries {
+            walk.entry()?;
+            let entry = entry.map_err(|error| format!("Failed to inspect output: {error}"))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("Failed to inspect output: {error}"))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                walk.directory()?;
+                stack.push(entry.path());
+            } else if file_type.is_file() {
+                bytes = bytes.saturating_add(
+                    entry
+                        .metadata()
+                        .map_err(|error| format!("Failed to inspect output: {error}"))?
+                        .len(),
+                );
+            }
+        }
+    }
+    Ok(bytes)
 }
 
 /// Case-insensitive extension check (handles .PDF, .Tex, etc.).
@@ -319,6 +415,7 @@ pub fn marker_output_dir(paper_hash: &str) -> Option<PathBuf> {
 
 fn prune_marker_cache(current_hash: &str) {
     const KEEP_OTHER_ENTRIES: usize = 20;
+    const MAX_CACHE_BYTES: u64 = 1_000_000_000;
     let Some(current) = marker_output_dir(current_hash) else {
         return;
     };
@@ -326,73 +423,102 @@ fn prune_marker_cache(current_hash: &str) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
     };
-    let mut dirs: Vec<(std::time::SystemTime, PathBuf)> = entries
+    let mut walk = crate::safety::WalkBudget::new("Marker cache pruning");
+    let mut dirs: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
         .flatten()
         .filter_map(|entry| {
+            walk.entry().ok()?;
             let path = entry.path();
-            if path == current || !path.is_dir() {
+            let file_type = entry.file_type().ok()?;
+            if path == current || file_type.is_symlink() || !file_type.is_dir() {
                 return None;
             }
+            walk.directory().ok()?;
             let modified = entry
                 .metadata()
                 .ok()
                 .and_then(|meta| meta.modified().ok())
                 .unwrap_or(std::time::UNIX_EPOCH);
-            Some((modified, path))
+            let bytes = directory_bytes_bounded(&path, &mut walk).ok()?;
+            Some((modified, bytes, path))
         })
         .collect();
-    dirs.sort_by(|a, b| b.0.cmp(&a.0));
-    for (_, path) in dirs.into_iter().skip(KEEP_OTHER_ENTRIES) {
-        let _ = fs::remove_dir_all(path);
+    dirs.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    let mut retained_bytes = 0u64;
+    for (index, (_, bytes, path)) in dirs.into_iter().enumerate() {
+        if index >= KEEP_OTHER_ENTRIES || retained_bytes.saturating_add(bytes) > MAX_CACHE_BYTES {
+            let _ = fs::remove_dir_all(path);
+        } else {
+            retained_bytes = retained_bytes.saturating_add(bytes);
+        }
     }
 }
 
 /// Image files marker emitted for a paper (figures/tables extracted from the
 /// PDF), for registration as run artifacts.
-pub fn marker_image_files(paper_hash: &str) -> Vec<PathBuf> {
+pub fn marker_image_files(paper_hash: &str) -> Result<Vec<PathBuf>, String> {
     let Some(root) = marker_output_dir(paper_hash) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut images = Vec::new();
     let mut stack = vec![root];
+    let mut walk = crate::safety::WalkBudget::new("Marker image discovery");
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
+            walk.entry()?;
             let p = entry.path();
-            if p.is_dir() {
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("Failed to inspect marker output: {error}"))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                walk.directory()?;
                 stack.push(p);
-            } else if ["png", "jpg", "jpeg", "gif", "webp"]
-                .iter()
-                .any(|ext| ext_eq(&p, ext))
+            } else if file_type.is_file()
+                && ["png", "jpg", "jpeg", "gif", "webp"]
+                    .iter()
+                    .any(|ext| ext_eq(&p, ext))
             {
                 images.push(p);
             }
         }
     }
     images.sort();
-    images
+    Ok(images)
 }
 
 /// Find the markdown file marker wrote under its output dir (layout is
 /// {output_dir}/{pdf_stem}/{pdf_stem}.md, but search defensively).
-fn find_marker_markdown(root: &Path) -> Option<PathBuf> {
+fn find_marker_markdown(root: &Path) -> Result<Option<PathBuf>, String> {
     let mut stack = vec![root.to_path_buf()];
+    let mut walk = crate::safety::WalkBudget::new_cancellable("Marker markdown discovery");
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
+            walk.entry()?;
             let p = entry.path();
-            if p.is_dir() {
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("Failed to inspect marker output: {error}"))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                walk.directory()?;
                 stack.push(p);
-            } else if ext_eq(&p, "md") {
-                return Some(p);
+            } else if file_type.is_file() && ext_eq(&p, "md") {
+                return Ok(Some(p));
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// Extract text from PDF using marker_single.
@@ -451,6 +577,7 @@ fn extract_marker(
         "marker_single",
         std::time::Duration::from_secs(timeout_secs),
         super::claude::MAX_STDOUT_BYTES,
+        out_dir.as_deref(),
     )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -461,7 +588,7 @@ fn extract_marker(
     // in log lines. Fall back to stdout for marker versions that don't write
     // the file where expected.
     if let Some(dir) = &out_dir {
-        if let Some(md) = find_marker_markdown(dir) {
+        if let Some(md) = find_marker_markdown(dir)? {
             let content = read_utf8_capped(&md, super::claude::MAX_STDOUT_BYTES)?;
             let content = content.trim().to_string();
             if !content.is_empty() {
@@ -492,6 +619,7 @@ fn extract_pdftotext(path: &Path) -> Result<String, String> {
         "pdftotext",
         std::time::Duration::from_secs(crate::settings::load().step_timeout_secs.max(60)),
         super::claude::MAX_STDOUT_BYTES,
+        None,
     )?;
 
     if !output.status.success() {
@@ -562,6 +690,7 @@ fn pdftotext_page_baseline(path: &Path) -> Option<Vec<usize>> {
         "pdftotext baseline",
         std::time::Duration::from_secs(120),
         super::claude::MAX_STDOUT_BYTES,
+        None,
     )
     .ok()?;
     if !output.status.success() || output.stdout_truncated {
@@ -963,6 +1092,7 @@ pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Ve
     let prefix_str = prefix
         .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
+    let max_pages = max_pages.clamp(1, 50);
     let mut command = bin.command([
         "-png",
         "-r",
@@ -973,12 +1103,19 @@ pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Ve
         prefix_str,
     ]);
     command.env("PATH", env::full_path());
-    let output = run_bounded_output(
+    let output = match run_bounded_output(
         command,
         "pdftoppm",
         std::time::Duration::from_secs(crate::settings::load().step_timeout_secs.max(60)),
         1_000_000,
-    )?;
+        Some(out_dir),
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = fs::remove_dir_all(out_dir);
+            return Err(error);
+        }
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let suffix = if output.stderr_truncated {
@@ -995,6 +1132,7 @@ pub fn render_pdf_pages(pdf: &Path, out_dir: &Path, max_pages: u32) -> Result<Ve
         .filter(|n| n.starts_with("page") && n.ends_with(".png"))
         .collect();
     names.sort();
+    names.truncate(max_pages as usize);
     if names.is_empty() {
         return Err("pdftoppm produced no page images".to_string());
     }
@@ -1385,6 +1523,7 @@ mod tests {
             "sleep test",
             std::time::Duration::from_millis(20),
             1024,
+            None,
         )
         .unwrap_err();
         assert!(error.contains("timed out"));

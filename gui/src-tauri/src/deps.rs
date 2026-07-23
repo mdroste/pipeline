@@ -155,10 +155,19 @@ fn windows_relative_path(base: &Path, value: &str) -> Option<PathBuf> {
 /// is accepted; arbitrary batch files fail closed.
 fn npm_entrypoint_from_shim(shim: &Path) -> Option<PathBuf> {
     const MAX_NPM_SHIM_BYTES: u64 = 64 * 1024;
-    if shim.metadata().ok()?.len() > MAX_NPM_SHIM_BYTES {
+    if shim.symlink_metadata().ok()?.len() > MAX_NPM_SHIM_BYTES {
         return None;
     }
-    let contents = std::fs::read_to_string(shim).ok()?;
+    use std::io::Read as _;
+    let file = crate::safety::open_regular_file(shim).ok()?;
+    let mut bytes = Vec::with_capacity(MAX_NPM_SHIM_BYTES as usize);
+    file.take(MAX_NPM_SHIM_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > MAX_NPM_SHIM_BYTES as usize {
+        return None;
+    }
+    let contents = String::from_utf8(bytes).ok()?;
     let lowercase = contents.to_ascii_lowercase();
     let base = shim.parent()?;
 

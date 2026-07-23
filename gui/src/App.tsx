@@ -75,6 +75,14 @@ function App() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
 
+  // Release smoke tests set a private environment variable and wait for this
+  // IPC round trip. Normal app launches take the no-op path in Rust.
+  useEffect(() => {
+    invoke<boolean>("mark_smoke_ready").catch((error) => {
+      console.warn("Startup readiness signal failed:", error);
+    });
+  }, []);
+
   const handleDarkChange = useCallback((v: boolean) => {
     localStorage.setItem("theme", v ? "dark" : "light");
     setDark(v);
@@ -159,7 +167,7 @@ function App() {
   }, [depsReport]);
 
   return (
-    <div className="h-screen bg-gray-50 dark:bg-gray-950 flex flex-col overflow-hidden">
+    <div data-testid="app-shell" className="h-screen bg-gray-50 dark:bg-gray-950 flex flex-col overflow-hidden">
       {showDeps && depsReport && (
         <DepsCheck
           report={depsReport}
@@ -296,6 +304,7 @@ function App() {
             </button>
             <button
               onClick={() => setPage(page === "settings" ? "main" : "settings")}
+              aria-label="Settings"
               className={`p-2 rounded-lg transition-colors ${
                 page === "settings"
                   ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"

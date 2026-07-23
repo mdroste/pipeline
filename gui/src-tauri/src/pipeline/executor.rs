@@ -10,6 +10,7 @@ use super::merge;
 use crate::models::{StepFailure, StepOutput};
 use crate::output::{capitalize, strip_to_report};
 use crate::pipeline_config::{Phase, PipelineConfig, StepConfig};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -21,6 +22,28 @@ pub struct ExecutionResult {
 }
 
 type ParallelTaskResult = Result<((usize, String), StepOutput), StepFailure>;
+
+#[derive(Default)]
+struct OutputBudget(AtomicUsize);
+
+impl OutputBudget {
+    fn reserve(&self, output: &StepOutput) -> Result<(), String> {
+        let bytes = output.raw_text.len();
+        let result = self
+            .0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current
+                    .checked_add(bytes)
+                    .filter(|total| *total <= crate::safety::MAX_RUN_OUTPUT_BYTES)
+            });
+        result.map(|_| ()).map_err(|_| {
+            format!(
+                "Run outputs exceed the {} MB safety limit",
+                crate::safety::MAX_RUN_OUTPUT_BYTES / 1024 / 1024
+            )
+        })
+    }
+}
 
 /// Build the complete read-root set used by CLI providers for every step in a
 /// run. The source tree, private run-temp files (paper, orientation, named
@@ -90,6 +113,7 @@ pub async fn execute_steps(
     settings: &crate::settings::Settings,
 ) -> Result<ExecutionResult, String> {
     let semaphore = Arc::new(Semaphore::new(settings.max_workers.max(1) as usize));
+    let output_budget = Arc::new(OutputBudget::default());
     let mut all_outputs: Vec<StepOutput> = Vec::new();
     let mut failed_steps: Vec<StepFailure> = Vec::new();
     let read_dirs = provider_read_dirs(
@@ -138,7 +162,10 @@ pub async fn execute_steps(
                         "pipeline:pass",
                         serde_json::json!({"name": step.id, "status": "done"}),
                     );
-                    all_outputs.extend(cached.iter().cloned());
+                    for output in cached {
+                        output_budget.reserve(output)?;
+                        all_outputs.push(output.clone());
+                    }
                     done.insert(step.id.clone());
                     continue;
                 }
@@ -179,6 +206,7 @@ pub async fn execute_steps(
                     extra_inputs,
                     &read_dirs,
                     write_dir,
+                    &output_budget,
                 )
                 .await?;
                 // Every dispatched step is terminal once its wave returns. A
@@ -201,7 +229,12 @@ pub async fn execute_steps(
                     )
                     .await
                     {
-                        Ok(merged) => wave_outputs = merged,
+                        Ok(merged) => {
+                            for output in &merged {
+                                output_budget.reserve(output)?;
+                            }
+                            wave_outputs = merged;
+                        }
                         Err(e) if is_cancellation_error(&e) => return Err(e),
                         Err(e) => {
                             let _ = app.emit_event(
@@ -228,7 +261,10 @@ pub async fn execute_steps(
                 serde_json::json!({"name": step.id, "status": "done"}),
             );
             done.insert(step.id.clone());
-            all_outputs.extend(cached.iter().cloned());
+            for output in cached {
+                output_budget.reserve(output)?;
+                all_outputs.push(output.clone());
+            }
             continue;
         }
 
@@ -274,6 +310,7 @@ pub async fn execute_steps(
         .await
         {
             Ok(output) => {
+                output_budget.reserve(&output)?;
                 let _ = app.emit_event(
                     "pipeline:pass",
                     serde_json::json!({"name": step.id, "status": "done"}),
@@ -474,11 +511,11 @@ fn output_format_block(write_dir: Option<&str>, report_rel: &str) -> String {
 /// file is removed because the canonical copy (with the step header) is
 /// written into the run artifacts when the run finishes; leaving it would
 /// duplicate every report in the artifact explorer.
-fn ingest_report_file(write_dir: Option<&str>, report_rel: &str) -> Option<String> {
+fn ingest_report_file_blocking(write_dir: Option<&str>, report_rel: &str) -> Option<String> {
     use std::io::Read as _;
     let dir = write_dir?;
     let path = std::path::Path::new(dir).join(report_rel);
-    let file = std::fs::File::open(&path).ok()?;
+    let file = crate::safety::open_regular_file(&path).ok()?;
     let mut bytes = Vec::with_capacity(64 * 1024);
     file.take(super::claude::MAX_STDOUT_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -492,6 +529,17 @@ fn ingest_report_file(write_dir: Option<&str>, report_rel: &str) -> Option<Strin
         return None;
     }
     Some(content.trim().to_string())
+}
+
+async fn ingest_report_file(write_dir: Option<&str>, report_rel: &str) -> Option<String> {
+    let directory = write_dir.map(str::to_string);
+    let relative = report_rel.to_string();
+    tokio::task::spawn_blocking(move || {
+        ingest_report_file_blocking(directory.as_deref(), &relative)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Step tool list, extended with Write when this run supports file handoff.
@@ -580,12 +628,15 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
 
         let text = match call.output {
             Ok(stdout) => ingest_report_file(request.write_dir, request.report_rel)
+                .await
                 .unwrap_or_else(|| strip_to_report(&stdout)),
             Err(error) => {
                 if is_cancellation_error(&error) {
                     return Err(error);
                 }
-                if let Some(report) = ingest_report_file(request.write_dir, request.report_rel) {
+                if let Some(report) =
+                    ingest_report_file(request.write_dir, request.report_rel).await
+                {
                     let _ = request.app.emit_event(
                         "pipeline:log",
                         serde_json::json!({ "line": format!(
@@ -640,11 +691,11 @@ fn build_parallel_prompt(
     source_path: &str,
     template: &str,
     output_format: &str,
-) -> String {
+) -> Result<String, String> {
     let normalized_path = paper_text_path.replace('\\', "/");
     let normalized_source = source_path.replace('\\', "/");
 
-    let is_pdf = normalized_source.ends_with(".pdf");
+    let is_pdf = normalized_source.to_ascii_lowercase().ends_with(".pdf");
     let figure_hint = if is_pdf {
         format!(
             "The original PDF is at: {normalized_source}\n\
@@ -668,21 +719,33 @@ fn build_parallel_prompt(
         format!("The orientation map (JSON) is at: {normalized_orient}\n{survey_hint}")
     };
 
-    let expanded = template
-        .replace("{step_prompt}", &step.prompt)
-        .replace("{paper_type}", paper_type)
-        .replace("{orientation}", &orientation_block)
-        .replace("{paper_path}", &normalized_path)
-        .replace("{input_path}", &normalized_path) // vocabulary-neutral alias
-        .replace("{figure_hint}", &figure_hint);
+    let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
+    let mut expanded = template.to_string();
+    for (needle, value) in [
+        ("{step_prompt}", step.prompt.as_str()),
+        ("{paper_type}", paper_type),
+        ("{orientation}", orientation_block.as_str()),
+        ("{paper_path}", normalized_path.as_str()),
+        ("{input_path}", normalized_path.as_str()),
+        ("{figure_hint}", figure_hint.as_str()),
+    ] {
+        expanded =
+            crate::safety::replace_all_limited(&expanded, needle, value, limit, "Parallel prompt")?;
+    }
 
     // Templates from before the file-handoff change carry a hardcoded
     // marker instruction instead of the placeholder; they keep working
     // through the stdout fallback.
     if expanded.contains("{output_format}") {
-        expanded.replace("{output_format}", output_format)
+        crate::safety::replace_all_limited(
+            &expanded,
+            "{output_format}",
+            output_format,
+            limit,
+            "Parallel prompt",
+        )
     } else {
-        expanded
+        Ok(expanded)
     }
 }
 
@@ -710,6 +773,20 @@ fn step_output(
     call: StepCallResult,
     resolution: &crate::model_catalog::ResolvedModel,
 ) -> StepOutput {
+    let call_record = crate::models::StepCallRecord {
+        role: "step".to_string(),
+        provider: provider.to_string(),
+        agent: agent.to_string(),
+        model: resolution.resolved_model.clone(),
+        model_transport: resolution.transport.clone(),
+        model_policy: resolution.selection.label(),
+        model_source: resolution.source.clone(),
+        model_catalog_updated_at: resolution.catalog_updated_at.clone(),
+        duration_secs: call.duration_secs,
+        input_tokens: call.usage.input_tokens,
+        output_tokens: call.usage.output_tokens,
+        attempt_count: call.attempt_count,
+    };
     StepOutput {
         step_id: step_key.to_string(),
         step_label: display_label.to_string(),
@@ -726,6 +803,7 @@ fn step_output(
         model_policy: resolution.selection.label(),
         model_source: resolution.source.clone(),
         model_catalog_updated_at: resolution.catalog_updated_at.clone(),
+        calls: vec![call_record],
         ..Default::default()
     }
 }
@@ -841,6 +919,7 @@ async fn run_parallel_wave(
     extra_inputs: &std::collections::HashMap<String, String>,
     read_dirs: &[String],
     write_dir: Option<&str>,
+    output_budget: &Arc<OutputBudget>,
 ) -> Result<(Vec<StepOutput>, Vec<StepFailure>), String> {
     let source = std::path::Path::new(source_path);
     let source_dir = if source.is_dir() {
@@ -922,10 +1001,16 @@ async fn run_parallel_wave(
                 source_path,
                 context_template,
                 &output_format,
-            );
-            let prompt = substitute_run_context(&prompt, variables, extra_inputs);
+            )?;
+            let prompt = substitute_run_context(&prompt, variables, extra_inputs)?;
             // Fan-out: bind {item} to this unit's file (empty otherwise).
-            let prompt = prompt.replace("{item}", unit.item.as_deref().unwrap_or(""));
+            let prompt = crate::safety::replace_all_limited(
+                &prompt,
+                "{item}",
+                unit.item.as_deref().unwrap_or(""),
+                crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+                "Parallel prompt",
+            )?;
             let task_write_dir = write_dir.map(|s| s.to_string());
             let task_read_dirs = read_dirs.to_vec();
 
@@ -955,6 +1040,7 @@ async fn run_parallel_wave(
             // for failure reporting.
             let fail_label = display_label.clone();
             let settings = settings.clone();
+            let output_budget = output_budget.clone();
 
             tasks.spawn(async move {
                 if let Some(error) = cancellation_error(&step_key_emit) {
@@ -1044,6 +1130,13 @@ async fn run_parallel_wave(
                         );
                         output.merge_group = merge_group;
                         output.fan_out_item = fan_out_item;
+                        output_budget
+                            .reserve(&output)
+                            .map_err(|error| StepFailure {
+                                step_id: step_key.clone(),
+                                step_label: fail_label.clone(),
+                                error,
+                            })?;
                         Ok((sort_key, output))
                     }
                     Err(error) => {
@@ -1108,7 +1201,7 @@ fn expand_template(
     prior_outputs: &[StepOutput],
     paper_text_path: &str,
     source_path: &str,
-) -> String {
+) -> Result<String, String> {
     let orientation_ref = if orientation_path.is_empty() {
         String::new()
     } else {
@@ -1116,29 +1209,59 @@ fn expand_template(
         format!("The orientation map (JSON) is at: {normalized_orient}\n{survey_hint}")
     };
 
-    let prior_text: String = prior_outputs
-        .iter()
-        .map(|o| format!("## {}\n\n{}", o.step_label, o.raw_text))
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
+    let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
+    let mut prior_text = String::new();
+    for (index, output) in prior_outputs.iter().enumerate() {
+        if index > 0 {
+            crate::safety::push_str_limited(
+                &mut prior_text,
+                "\n\n---\n\n",
+                limit,
+                "Prior-step context",
+            )?;
+        }
+        crate::safety::push_str_limited(&mut prior_text, "## ", limit, "Prior-step context")?;
+        crate::safety::push_str_limited(
+            &mut prior_text,
+            &output.step_label,
+            limit,
+            "Prior-step context",
+        )?;
+        crate::safety::push_str_limited(&mut prior_text, "\n\n", limit, "Prior-step context")?;
+        crate::safety::push_str_limited(
+            &mut prior_text,
+            &output.raw_text,
+            limit,
+            "Prior-step context",
+        )?;
+    }
 
     let last_output_text = prior_outputs
         .last()
         .map(|o| o.raw_text.as_str())
         .unwrap_or("(not yet generated)");
 
-    let mut expanded = template
-        .replace("{orientation}", &orientation_ref)
-        .replace("{prior_outputs}", &prior_text)
-        .replace("{referee_reports}", &prior_text) // backward-compatible alias
-        .replace("{last_output}", last_output_text)
-        .replace("{editor_synthesis}", last_output_text) // backward-compatible alias
-        .replace("{paper_path}", paper_text_path)
-        .replace("{input_path}", paper_text_path) // vocabulary-neutral alias
-        .replace("{source_path}", source_path);
+    let mut expanded = template.to_string();
+    for (needle, value) in [
+        ("{orientation}", orientation_ref.as_str()),
+        ("{prior_outputs}", prior_text.as_str()),
+        ("{referee_reports}", prior_text.as_str()),
+        ("{last_output}", last_output_text),
+        ("{editor_synthesis}", last_output_text),
+        ("{paper_path}", paper_text_path),
+        ("{input_path}", paper_text_path),
+        ("{source_path}", source_path),
+    ] {
+        expanded = crate::safety::replace_all_limited(
+            &expanded,
+            needle,
+            value,
+            limit,
+            "Sequential prompt",
+        )?;
+    }
 
-    expanded = substitute_named_step_refs(&expanded, prior_outputs);
-    expanded
+    substitute_named_step_refs(&expanded, prior_outputs)
 }
 
 /// Replace `{step:<id>}` placeholders with the matching prior step's raw_text.
@@ -1147,35 +1270,48 @@ fn expand_template(
 /// base id has multiple agents, their outputs are joined with a separator.
 /// Unknown ids are replaced with a parenthesized notice so the prompt remains
 /// readable rather than leaking the literal `{step:foo}` to the LLM.
-fn substitute_named_step_refs(template: &str, prior_outputs: &[StepOutput]) -> String {
+fn substitute_named_step_refs(
+    template: &str,
+    prior_outputs: &[StepOutput],
+) -> Result<String, String> {
+    let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     let needle = "{step:";
 
     while let Some(start) = rest.find(needle) {
-        out.push_str(&rest[..start]);
+        crate::safety::push_str_limited(&mut out, &rest[..start], limit, "Sequential prompt")?;
         let after_open = &rest[start + needle.len()..];
         let Some(end_rel) = after_open.find('}') else {
             // No closing brace — emit the rest verbatim.
-            out.push_str(&rest[start..]);
-            return out;
+            crate::safety::push_str_limited(&mut out, &rest[start..], limit, "Sequential prompt")?;
+            return Ok(out);
         };
         let id = after_open[..end_rel].trim();
-        let resolved = resolve_step_ref(id, prior_outputs);
-        out.push_str(&resolved);
+        append_step_ref(&mut out, id, prior_outputs, limit)?;
         rest = &after_open[end_rel + 1..];
     }
-    out.push_str(rest);
-    out
+    crate::safety::push_str_limited(&mut out, rest, limit, "Sequential prompt")?;
+    Ok(out)
 }
 
-fn resolve_step_ref(id: &str, prior_outputs: &[StepOutput]) -> String {
+fn append_step_ref(
+    out: &mut String,
+    id: &str,
+    prior_outputs: &[StepOutput],
+    limit: usize,
+) -> Result<(), String> {
     if id.is_empty() {
-        return "(empty step reference)".to_string();
+        return crate::safety::push_str_limited(
+            out,
+            "(empty step reference)",
+            limit,
+            "Sequential prompt",
+        );
     }
     // Exact id match wins (covers both "technical" and "technical/claude").
     if let Some(o) = prior_outputs.iter().find(|o| o.step_id == id) {
-        return o.raw_text.clone();
+        return crate::safety::push_str_limited(out, &o.raw_text, limit, "Sequential prompt");
     }
     // Otherwise, gather all step outputs whose base id (before any '/') matches.
     let matches: Vec<&StepOutput> = prior_outputs
@@ -1183,16 +1319,35 @@ fn resolve_step_ref(id: &str, prior_outputs: &[StepOutput]) -> String {
         .filter(|o| o.step_id.split('/').next() == Some(id))
         .collect();
     if matches.is_empty() {
-        return format!("(no output for step '{id}')");
+        return crate::safety::push_str_limited(
+            out,
+            &format!("(no output for step '{id}')"),
+            limit,
+            "Sequential prompt",
+        );
     }
     if matches.len() == 1 {
-        return matches[0].raw_text.clone();
+        return crate::safety::push_str_limited(
+            out,
+            &matches[0].raw_text,
+            limit,
+            "Sequential prompt",
+        );
     }
-    matches
-        .iter()
-        .map(|o| format!("### {}\n\n{}", o.step_label, o.raw_text))
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n")
+    for (index, output) in matches.iter().enumerate() {
+        if index > 0 {
+            crate::safety::push_str_limited(out, "\n\n---\n\n", limit, "Sequential prompt")?;
+        }
+        for value in [
+            "### ",
+            output.step_label.as_str(),
+            "\n\n",
+            output.raw_text.as_str(),
+        ] {
+            crate::safety::push_str_limited(out, value, limit, "Sequential prompt")?;
+        }
+    }
+    Ok(())
 }
 
 /// Replace `{<prefix>key}` placeholders using `map`. Unknown keys become an
@@ -1201,26 +1356,32 @@ fn substitute_placeholders(
     text: &str,
     needle: &str,
     map: &std::collections::HashMap<String, String>,
-) -> String {
+) -> Result<String, String> {
     if !text.contains(needle) {
-        return text.to_string();
+        return Ok(text.to_string());
     }
+    let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find(needle) {
-        out.push_str(&rest[..start]);
+        crate::safety::push_str_limited(&mut out, &rest[..start], limit, "Run prompt")?;
         let after = &rest[start + needle.len()..];
         if let Some(end) = after.find('}') {
             let key = after[..end].trim();
-            out.push_str(map.get(key).map(|s| s.as_str()).unwrap_or(""));
+            crate::safety::push_str_limited(
+                &mut out,
+                map.get(key).map(|s| s.as_str()).unwrap_or(""),
+                limit,
+                "Run prompt",
+            )?;
             rest = &after[end + 1..];
         } else {
-            out.push_str(&rest[start..]);
-            return out;
+            crate::safety::push_str_limited(&mut out, &rest[start..], limit, "Run prompt")?;
+            return Ok(out);
         }
     }
-    out.push_str(rest);
-    out
+    crate::safety::push_str_limited(&mut out, rest, limit, "Run prompt")?;
+    Ok(out)
 }
 
 /// Apply both run-time substitutions to a prompt: `{var:key}` (values) and
@@ -1229,8 +1390,8 @@ fn substitute_run_context(
     text: &str,
     vars: &std::collections::HashMap<String, String>,
     inputs: &std::collections::HashMap<String, String>,
-) -> String {
-    let t = substitute_placeholders(text, "{var:", vars);
+) -> Result<String, String> {
+    let t = substitute_placeholders(text, "{var:", vars)?;
     substitute_placeholders(&t, "{input:", inputs)
 }
 
@@ -1265,14 +1426,23 @@ async fn run_sequential_step(
         prior_outputs,
         paper_text_path,
         source_path,
-    );
+    )?;
 
-    let base_prompt = substitute_run_context(&base_prompt, variables, extra_inputs);
+    let base_prompt = substitute_run_context(&base_prompt, variables, extra_inputs)?;
     let report_rel = format!("steps/{}.md", step_slug(&step.id));
-    let prompt = format!(
-        "{base_prompt}\n\n{}",
-        output_format_block(write_dir, &report_rel)
-    );
+    let mut prompt = base_prompt;
+    crate::safety::push_str_limited(
+        &mut prompt,
+        "\n\n",
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Sequential prompt",
+    )?;
+    crate::safety::push_str_limited(
+        &mut prompt,
+        &output_format_block(write_dir, &report_rel),
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Sequential prompt",
+    )?;
 
     let tools = tools_with_write(&step.tools, write_dir);
     let agent = step.agents.first().map(|s| s.as_str());
@@ -1289,8 +1459,11 @@ async fn run_sequential_step(
         .map(|a| a.to_string())
         .unwrap_or_else(|| settings.preferred_provider.clone());
     let model_selection = step.model_selection_for(settings, &provider);
-    let resolution =
-        crate::model_catalog::resolve(&provider, settings, model_selection.as_ref()).await?;
+    let resolution = crate::commands::await_or_cancel(
+        crate::model_catalog::resolve(&provider, settings, model_selection.as_ref()),
+        Some(&step.id),
+    )
+    .await??;
     let effort = step.effort_for(settings, &provider);
     let call = execute_step_call(StepCallRequest {
         app,
@@ -1596,6 +1769,7 @@ mod tests {
         });
         let settings = crate::settings::Settings::default();
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let output_budget = std::sync::Arc::new(OutputBudget::default());
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
         let steps = [&fan];
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1618,6 +1792,7 @@ mod tests {
                 &Default::default(),
                 &[],
                 None,
+                &output_budget,
             ))
             .unwrap();
         assert!(failures.is_empty());
@@ -1663,7 +1838,8 @@ mod tests {
             "Review for {var:journal}; persona {var:persona}.",
             "{var:",
             &vars,
-        );
+        )
+        .unwrap();
         assert_eq!(out, "Review for AER; persona .");
     }
 
@@ -1671,7 +1847,7 @@ mod tests {
     fn substitute_no_placeholders_is_unchanged() {
         let vars = std::collections::HashMap::new();
         assert_eq!(
-            substitute_placeholders("plain prompt", "{var:", &vars),
+            substitute_placeholders("plain prompt", "{var:", &vars).unwrap(),
             "plain prompt"
         );
     }
@@ -1680,7 +1856,7 @@ mod tests {
     fn substitute_unclosed_brace_passes_through() {
         let vars = std::collections::HashMap::new();
         assert_eq!(
-            substitute_placeholders("oops {var:x", "{var:", &vars),
+            substitute_placeholders("oops {var:x", "{var:", &vars).unwrap(),
             "oops {var:x"
         );
     }
@@ -1695,7 +1871,8 @@ mod tests {
             "Journal {var:journal}; read the response at {input:letter}.",
             &vars,
             &inputs,
-        );
+        )
+        .unwrap();
         assert_eq!(out, "Journal QJE; read the response at /tmp/letter.txt.");
     }
 
@@ -1714,11 +1891,29 @@ mod tests {
             "/tmp/paper.pdf",
             template,
             "",
-        );
+        )
+        .unwrap();
         assert!(result.contains("empirical"));
         assert!(result.contains("/tmp/orient.json"));
         assert!(result.contains("Read it for the paper's structure."));
         assert!(result.contains("/tmp/paper.txt"));
+        assert!(result.contains("original PDF"));
+    }
+
+    #[test]
+    fn build_parallel_prompt_recognizes_uppercase_pdf_extension() {
+        let step = make_step("test", Phase::Parallel);
+        let result = build_parallel_prompt(
+            &step,
+            "",
+            "",
+            "",
+            "/tmp/paper.txt",
+            "C:\\Papers\\DRAFT.PDF",
+            "{figure_hint}",
+            "",
+        )
+        .unwrap();
         assert!(result.contains("original PDF"));
     }
 
@@ -1735,7 +1930,8 @@ mod tests {
             "/tmp/p.pdf",
             template,
             "",
-        );
+        )
+        .unwrap();
         assert!(result.contains("old=/tmp/paper.txt"));
         assert!(result.contains("new=/tmp/paper.txt"));
     }
@@ -1753,7 +1949,8 @@ mod tests {
             "/home/user/papers/main.tex",
             template,
             "",
-        );
+        )
+        .unwrap();
         assert!(result.contains("LaTeX source directory"));
     }
 
@@ -1770,7 +1967,8 @@ mod tests {
             "/tmp/paper.pdf",
             template,
             "",
-        );
+        )
+        .unwrap();
         assert_eq!(result, "[]");
     }
 
@@ -1788,12 +1986,14 @@ mod tests {
             "/tmp/p.pdf",
             template,
             &block,
-        );
+        )
+        .unwrap();
         assert!(result.contains("/runs/r1/artifacts/steps/test.md"));
         // Old templates without the placeholder pass through untouched.
         let old = "{step_prompt}\nREPORT START markers here";
         let result =
-            build_parallel_prompt(&step, "", "", "", "/tmp/p.txt", "/tmp/p.pdf", old, &block);
+            build_parallel_prompt(&step, "", "", "", "/tmp/p.txt", "/tmp/p.pdf", old, &block)
+                .unwrap();
         assert!(!result.contains("{output_format}"));
         assert!(result.contains("REPORT START markers here"));
     }
@@ -1824,22 +2024,22 @@ mod tests {
         let wd = dir.path().to_string_lossy().to_string();
 
         // Absent file → None.
-        assert!(ingest_report_file(Some(&wd), "steps/a.md").is_none());
+        assert!(ingest_report_file_blocking(Some(&wd), "steps/a.md").is_none());
         // Disabled write dir → None.
-        assert!(ingest_report_file(None, "steps/a.md").is_none());
+        assert!(ingest_report_file_blocking(None, "steps/a.md").is_none());
 
         // Present file → content, and the file is consumed.
         std::fs::create_dir_all(dir.path().join("steps")).unwrap();
         std::fs::write(dir.path().join("steps/a.md"), "# Report\nbody\n").unwrap();
         assert_eq!(
-            ingest_report_file(Some(&wd), "steps/a.md").unwrap(),
+            ingest_report_file_blocking(Some(&wd), "steps/a.md").unwrap(),
             "# Report\nbody"
         );
         assert!(!dir.path().join("steps/a.md").exists());
 
-        // Empty file → None (falls back to stdout), file left in place.
+        // Empty file → None (falls back to stdout).
         std::fs::write(dir.path().join("steps/b.md"), "  \n").unwrap();
-        assert!(ingest_report_file(Some(&wd), "steps/b.md").is_none());
+        assert!(ingest_report_file_blocking(Some(&wd), "steps/b.md").is_none());
     }
 
     #[test]
@@ -1881,7 +2081,8 @@ mod tests {
             &prior,
             "/paper.txt",
             "/source.tex",
-        );
+        )
+        .unwrap();
         assert!(result.contains("## Step 1"));
         assert!(result.contains("output1"));
         assert!(result.contains("output2"));
@@ -1899,7 +2100,8 @@ mod tests {
             ..Default::default()
         }];
         let template = "{referee_reports} | {editor_synthesis}";
-        let result = expand_template(template, "", "", &prior, "/paper.txt", "/source.tex");
+        let result =
+            expand_template(template, "", "", &prior, "/paper.txt", "/source.tex").unwrap();
         assert!(result.contains("## S1"));
         assert!(result.contains("text | text"));
     }
@@ -1907,7 +2109,7 @@ mod tests {
     #[test]
     fn expand_template_no_prior() {
         let template = "Last: {last_output}";
-        let result = expand_template(template, "", "", &[], "/paper.txt", "/source.tex");
+        let result = expand_template(template, "", "", &[], "/paper.txt", "/source.tex").unwrap();
         assert!(result.contains("(not yet generated)"));
     }
 
@@ -1930,7 +2132,7 @@ mod tests {
             out("technical", "Technical", "tech body"),
             out("empirical", "Empirical", "emp body"),
         ];
-        let result = expand_template("Tech: {step:technical}", "", "", &prior, "p", "s");
+        let result = expand_template("Tech: {step:technical}", "", "", &prior, "p", "s").unwrap();
         assert!(result.contains("Tech: tech body"));
         assert!(!result.contains("emp body"));
     }
@@ -1941,7 +2143,7 @@ mod tests {
             out("technical/claude", "Technical (Claude)", "claude says"),
             out("technical/gemini", "Technical (Gemini)", "gemini says"),
         ];
-        let result = expand_template("All: {step:technical}", "", "", &prior, "p", "s");
+        let result = expand_template("All: {step:technical}", "", "", &prior, "p", "s").unwrap();
         assert!(result.contains("claude says"));
         assert!(result.contains("gemini says"));
         assert!(result.contains("---"));
@@ -1960,7 +2162,8 @@ mod tests {
             &prior,
             "p",
             "s",
-        );
+        )
+        .unwrap();
         assert!(result.contains("claude says"));
         assert!(!result.contains("gemini says"));
     }
@@ -1968,21 +2171,22 @@ mod tests {
     #[test]
     fn step_ref_unknown_id_emits_notice() {
         let prior = vec![out("technical", "Technical", "tech body")];
-        let result = expand_template("Missing: {step:nonexistent}", "", "", &prior, "p", "s");
+        let result =
+            expand_template("Missing: {step:nonexistent}", "", "", &prior, "p", "s").unwrap();
         assert!(result.contains("(no output for step 'nonexistent')"));
     }
 
     #[test]
     fn step_ref_unclosed_brace_passes_through() {
         let prior = vec![out("a", "A", "aa")];
-        let result = expand_template("Broken: {step:a", "", "", &prior, "p", "s");
+        let result = expand_template("Broken: {step:a", "", "", &prior, "p", "s").unwrap();
         assert!(result.contains("{step:a"));
     }
 
     #[test]
     fn step_ref_empty_id() {
         let prior = vec![out("a", "A", "aa")];
-        let result = expand_template("{step:}", "", "", &prior, "p", "s");
+        let result = expand_template("{step:}", "", "", &prior, "p", "s").unwrap();
         assert!(result.contains("(empty step reference)"));
     }
 }

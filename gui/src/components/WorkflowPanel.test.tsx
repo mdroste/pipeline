@@ -47,8 +47,8 @@ function makeConfig(): PipelineConfig {
 }
 
 const profiles: ProfileSummary[] = [
-  { id: "deep", name: "Deep Review", step_count: 3, builtin: false },
-  { id: "quick", name: "Quick Review", step_count: 2, builtin: false },
+  { id: "deep", name: "Paper Review (Full)", step_count: 3, builtin: false },
+  { id: "quick", name: "Paper Review (Quick)", step_count: 2, builtin: false },
 ];
 
 function mockLoad(config: PipelineConfig) {
@@ -85,8 +85,8 @@ describe("WorkflowPanel", () => {
 
     const select = await screen.findByRole("combobox");
     expect(select).toHaveValue("deep");
-    expect(screen.getByRole("option", { name: "Deep Review" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Quick Review" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Paper Review (Full)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Paper Review (Quick)" })).toBeInTheDocument();
   });
 
   it("lists enabled steps grouped by phase, hiding disabled steps", async () => {

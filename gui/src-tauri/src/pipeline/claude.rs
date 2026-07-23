@@ -6,7 +6,7 @@ use tokio::process::Command;
 
 pub use super::cli_process::MAX_STDOUT_BYTES;
 use super::cli_process::{
-    capture_stderr, capture_text_stdout, emit_stderr_tail, last_stderr_hint, log,
+    capture_stderr, capture_text_stdout, emit_stderr_tail, finish_streams, last_stderr_hint, log,
     track_child_started, verbose_log, wait_for_child,
 };
 
@@ -21,10 +21,12 @@ fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
     let mut stack = vec![root.to_path_buf()];
     let mut files = 0usize;
     let mut bytes = 0u64;
+    let mut walk = crate::safety::WalkBudget::new_cancellable("Artifact directory scan");
     while let Some(directory) = stack.pop() {
         let entries = std::fs::read_dir(&directory)
             .map_err(|e| format!("Cannot inspect artifact directory: {e}"))?;
         for entry in entries.flatten() {
+            walk.entry()?;
             let file_type = entry
                 .file_type()
                 .map_err(|e| format!("Cannot inspect artifact entry: {e}"))?;
@@ -32,6 +34,7 @@ fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
                 continue;
             }
             if file_type.is_dir() {
+                walk.directory()?;
                 stack.push(entry.path());
                 continue;
             }
@@ -72,6 +75,14 @@ where
         if let Ok(result) =
             tokio::time::timeout(Duration::from_millis(250), operation.as_mut()).await
         {
+            // A provider can finish between monitor ticks. Always scan once
+            // after completion so a last-millisecond oversized or special file
+            // cannot bypass the live quota.
+            let path = directory.clone();
+            let final_check = tokio::task::spawn_blocking(move || check_live_artifact_quota(&path))
+                .await
+                .map_err(|e| format!("Artifact monitor failed: {e}"))?;
+            final_check?;
             return result;
         }
         let path = directory.clone();
@@ -211,7 +222,7 @@ pub(crate) fn plan_cli_workspace(
     roots.retain(|root| {
         effective_cwd
             .as_deref()
-            .map_or(true, |base| !same_or_descendant(root, base))
+            .is_none_or(|base| !same_or_descendant(root, base))
     });
 
     roots.sort_by(|a, b| {
@@ -511,7 +522,7 @@ pub async fn call_claude(
     // Stream stdout to the frontend (Claude outputs result here)
     let stdout_task = capture_text_stdout(child.stdout.take(), app.clone(), sess);
 
-    let status = match wait_for_child(
+    let wait_result = wait_for_child(
         &mut child,
         pid,
         timeout_secs,
@@ -520,25 +531,15 @@ pub async fn call_claude(
         label,
         app,
     )
-    .await
-    {
-        Ok(status) => status,
-        Err(error) => {
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
-            return Err(error);
-        }
-    };
+    .await;
+
+    let streams = finish_streams(stdout_task, stderr_task, pid, "Claude").await;
+    let status = wait_result?;
 
     // Collect stdout and unwrap the JSON result envelope (see the
     // --output-format json note above). Falls back to the raw output when it
     // isn't the expected envelope, so callers/behavior are unchanged.
-    let (raw_stdout, stdout_overflowed) = stdout_task
-        .await
-        .map_err(|e| format!("stdout reader failed: {e}"))?;
-
-    // Let stderr finish and keep its tail for failure diagnostics.
-    let stderr_tail = stderr_task.await.unwrap_or_default();
+    let ((raw_stdout, stdout_overflowed), stderr_tail) = streams?;
     if stdout_overflowed {
         emit_stderr_tail(app, &stderr_tail);
         return Err(format!(
@@ -705,7 +706,13 @@ pub async fn call_llm(
         let resolution = if overrides.model_resolved {
             None
         } else {
-            Some(crate::model_catalog::resolve(provider, &settings, requested.as_ref()).await?)
+            Some(
+                crate::commands::await_or_cancel(
+                    crate::model_catalog::resolve(provider, &settings, requested.as_ref()),
+                    None,
+                )
+                .await??,
+            )
         };
         let mut effective_overrides = overrides.clone();
         if let Some(resolution) = &resolution {

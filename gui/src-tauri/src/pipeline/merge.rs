@@ -1,4 +1,4 @@
-use crate::models::StepOutput;
+use crate::models::{StepCallRecord, StepOutput};
 use crate::output::{capitalize, strip_to_report};
 use crate::pipeline_config::MergeConfig;
 use std::collections::BTreeMap;
@@ -26,6 +26,27 @@ fn group_outputs(outputs: Vec<StepOutput>) -> Vec<(String, Vec<StepOutput>)> {
         }
     }
     groups
+}
+
+fn call_records_for_output(output: &StepOutput) -> Vec<StepCallRecord> {
+    if !output.calls.is_empty() {
+        return output.calls.clone();
+    }
+
+    vec![StepCallRecord {
+        role: output.phase.clone(),
+        provider: output.provider.clone(),
+        agent: output.agent.clone(),
+        model: output.model.clone(),
+        model_transport: output.model_transport.clone(),
+        model_policy: output.model_policy.clone(),
+        model_source: output.model_source.clone(),
+        model_catalog_updated_at: output.model_catalog_updated_at.clone(),
+        duration_secs: output.duration_secs,
+        input_tokens: output.input_tokens,
+        output_tokens: output.output_tokens,
+        attempt_count: output.attempt_count,
+    }]
 }
 
 /// Merge multi-agent step outputs into single per-step outputs.
@@ -62,7 +83,13 @@ pub async fn merge_step_outputs(
     let mut results: Vec<Option<StepOutput>> = vec![None; total];
     // Save original multi-agent outputs for fallback on merge failure
     let mut originals: Vec<Option<Vec<StepOutput>>> = vec![None; total];
-    type MergeError = (usize, String, crate::pipeline::logging::CallUsage, u64);
+    type MergeError = (
+        usize,
+        String,
+        crate::pipeline::logging::CallUsage,
+        u64,
+        Option<StepCallRecord>,
+    );
     let mut tasks: JoinSet<Result<(usize, StepOutput), MergeError>> = JoinSet::new();
 
     for (idx, (_base_id, group)) in groups.into_iter().enumerate() {
@@ -78,16 +105,61 @@ pub async fn merge_step_outputs(
         // Multi-agent — build merge prompt and spawn task
         let topic = group[0].step_label.clone();
 
-        let agent_reports_text: String = group
-            .iter()
-            .map(|o| format!("### Analysis by {}\n\n{}", capitalize(&o.agent), o.raw_text))
-            .collect::<Vec<_>>()
-            .join("\n\n---\n\n");
+        let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
+        let mut agent_reports_text = String::new();
+        for (report_index, output) in group.iter().enumerate() {
+            if report_index > 0 {
+                crate::safety::push_str_limited(
+                    &mut agent_reports_text,
+                    "\n\n---\n\n",
+                    limit,
+                    "Merge context",
+                )?;
+            }
+            let capitalized_agent = capitalize(&output.agent);
+            for value in [
+                "### Analysis by ",
+                capitalized_agent.as_str(),
+                "\n\n",
+                output.raw_text.as_str(),
+            ] {
+                crate::safety::push_str_limited(
+                    &mut agent_reports_text,
+                    value,
+                    limit,
+                    "Merge context",
+                )?;
+            }
+        }
 
-        let prompt = merge_config
-            .prompt
-            .replace("{topic}", &topic)
-            .replace("{agent_reports}", &agent_reports_text);
+        let prompt = crate::safety::replace_all_limited(
+            &merge_config.prompt,
+            "{topic}",
+            &topic,
+            limit,
+            "Merge prompt",
+        )?;
+        let prompt = crate::safety::replace_all_limited(
+            &prompt,
+            "{agent_reports}",
+            &agent_reports_text,
+            limit,
+            "Merge prompt",
+        )?;
+        let original_calls: Vec<StepCallRecord> =
+            group.iter().flat_map(call_records_for_output).collect();
+        let original_duration = original_calls
+            .iter()
+            .fold(0u64, |total, call| total.saturating_add(call.duration_secs));
+        let original_input = original_calls
+            .iter()
+            .fold(0u64, |total, call| total.saturating_add(call.input_tokens));
+        let original_output = original_calls
+            .iter()
+            .fold(0u64, |total, call| total.saturating_add(call.output_tokens));
+        let original_attempts = original_calls
+            .iter()
+            .fold(0u32, |total, call| total.saturating_add(call.attempt_count));
 
         let agent_override = merge_config.agents.first().cloned();
         let agents_joined = group
@@ -113,6 +185,7 @@ pub async fn merge_step_outputs(
                     error,
                     crate::pipeline::logging::CallUsage::default(),
                     0,
+                    None,
                 )
             };
             let cancellation_error = || {
@@ -174,12 +247,34 @@ pub async fn merge_step_outputs(
                 settings: &run_settings,
             })
             .await;
+            let merge_call = StepCallRecord {
+                role: "merge".to_string(),
+                provider: provider.clone(),
+                agent: provider.clone(),
+                model: resolution.resolved_model.clone(),
+                model_transport: resolution.transport.clone(),
+                model_policy: resolution.selection.label(),
+                model_source: resolution.source.clone(),
+                model_catalog_updated_at: resolution.catalog_updated_at.clone(),
+                duration_secs: call.duration_secs,
+                input_tokens: call.usage.input_tokens,
+                output_tokens: call.usage.output_tokens,
+                attempt_count: 1,
+            };
             if let Some(error) = cancellation_error() {
                 let _ = app_handle.emit_event(
                     "pipeline:pass",
                     serde_json::json!({ "name": merge_key_done, "status": "error" }),
                 );
-                return Err((idx, error, call.usage, call.duration_secs));
+                let mut failed_call = merge_call;
+                failed_call.role = "failed_merge".to_string();
+                return Err((
+                    idx,
+                    error,
+                    call.usage,
+                    call.duration_secs,
+                    Some(failed_call),
+                ));
             }
             match call.output {
                 Ok(raw_text) => {
@@ -187,6 +282,8 @@ pub async fn merge_step_outputs(
                         "pipeline:pass",
                         serde_json::json!({ "name": merge_key_done, "status": "done" }),
                     );
+                    let mut calls = original_calls;
+                    calls.push(merge_call);
                     Ok((
                         idx,
                         StepOutput {
@@ -197,15 +294,16 @@ pub async fn merge_step_outputs(
                             provider,
                             agent: agents_joined,
                             raw_text: strip_to_report(&raw_text),
-                            duration_secs: call.duration_secs,
-                            input_tokens: call.usage.input_tokens,
-                            output_tokens: call.usage.output_tokens,
-                            attempt_count: 1,
+                            duration_secs: original_duration.saturating_add(call.duration_secs),
+                            input_tokens: original_input.saturating_add(call.usage.input_tokens),
+                            output_tokens: original_output.saturating_add(call.usage.output_tokens),
+                            attempt_count: original_attempts.saturating_add(1),
                             model: resolution.resolved_model,
                             model_transport: resolution.transport,
                             model_policy: resolution.selection.label(),
                             model_source: resolution.source,
                             model_catalog_updated_at: resolution.catalog_updated_at,
+                            calls,
                             ..Default::default()
                         },
                     ))
@@ -215,11 +313,14 @@ pub async fn merge_step_outputs(
                         "pipeline:pass",
                         serde_json::json!({ "name": merge_key_done, "status": "error" }),
                     );
+                    let mut failed_call = merge_call;
+                    failed_call.role = "failed_merge".to_string();
                     Err((
                         idx,
                         format!("Merge for {base_id} failed: {e}"),
                         call.usage,
                         call.duration_secs,
+                        Some(failed_call),
                     ))
                 }
             }
@@ -239,18 +340,21 @@ pub async fn merge_step_outputs(
                 format!("Merge task panicked: {e}"),
                 Default::default(),
                 0,
+                None,
             )),
         }
     }
 
     if !errors.is_empty() {
-        if let Some((_, error, _, _)) = errors
-            .iter()
-            .find(|(_, error, _, _)| error.to_ascii_lowercase().contains("cancelled"))
-        {
-            return Err(error.clone());
+        if crate::commands::is_cancelled() {
+            if let Some((_, error, _, _, _)) = errors
+                .iter()
+                .find(|(_, error, _, _, _)| error.to_ascii_lowercase().contains("cancelled"))
+            {
+                return Err(error.clone());
+            }
         }
-        for (idx, err, merge_usage, merge_duration_secs) in &errors {
+        for (idx, err, merge_usage, merge_duration_secs, merge_call) in &errors {
             let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({ "line": format!("WARNING: merge failed: {err}") }),
@@ -266,20 +370,68 @@ pub async fn merge_step_outputs(
                         .map(|o| o.agent.clone())
                         .collect::<Vec<_>>()
                         .join("+");
-                    let combined_text = format!(
-                        "> **Note**: Multi-agent merge failed. Showing individual agent outputs.\n\n{}",
-                        original_outputs
-                            .iter()
-                            .map(|o| {
-                                format!(
-                                    "### Analysis by {}\n\n{}",
-                                    capitalize(&o.agent),
-                                    &o.raw_text
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n\n---\n\n")
-                    );
+                    let mut combined_text = String::new();
+                    crate::safety::push_str_limited(
+                        &mut combined_text,
+                        "> **Note**: Multi-agent merge failed. Showing individual agent outputs.\n\n",
+                        crate::safety::MAX_RUN_OUTPUT_BYTES,
+                        "Merged fallback output",
+                    )?;
+                    for (report_index, output) in original_outputs.iter().enumerate() {
+                        if report_index > 0 {
+                            crate::safety::push_str_limited(
+                                &mut combined_text,
+                                "\n\n---\n\n",
+                                crate::safety::MAX_RUN_OUTPUT_BYTES,
+                                "Merged fallback output",
+                            )?;
+                        }
+                        let capitalized_agent = capitalize(&output.agent);
+                        for value in [
+                            "### Analysis by ",
+                            capitalized_agent.as_str(),
+                            "\n\n",
+                            output.raw_text.as_str(),
+                        ] {
+                            crate::safety::push_str_limited(
+                                &mut combined_text,
+                                value,
+                                crate::safety::MAX_RUN_OUTPUT_BYTES,
+                                "Merged fallback output",
+                            )?;
+                        }
+                    }
+                    let mut calls: Vec<StepCallRecord> = original_outputs
+                        .iter()
+                        .flat_map(call_records_for_output)
+                        .collect();
+                    if let Some(merge_call) = merge_call {
+                        calls.push(merge_call.clone());
+                    } else if merge_usage.input_tokens > 0
+                        || merge_usage.output_tokens > 0
+                        || *merge_duration_secs > 0
+                    {
+                        calls.push(StepCallRecord {
+                            role: "failed_merge".to_string(),
+                            duration_secs: *merge_duration_secs,
+                            input_tokens: merge_usage.input_tokens,
+                            output_tokens: merge_usage.output_tokens,
+                            attempt_count: 1,
+                            ..Default::default()
+                        });
+                    }
+                    let duration_secs = calls
+                        .iter()
+                        .fold(0u64, |total, call| total.saturating_add(call.duration_secs));
+                    let input_tokens = calls
+                        .iter()
+                        .fold(0u64, |total, call| total.saturating_add(call.input_tokens));
+                    let output_tokens = calls
+                        .iter()
+                        .fold(0u64, |total, call| total.saturating_add(call.output_tokens));
+                    let attempt_count = calls
+                        .iter()
+                        .fold(0u32, |total, call| total.saturating_add(call.attempt_count));
                     results[*idx] = Some(StepOutput {
                         step_id: base_id,
                         step_label: topic,
@@ -287,14 +439,11 @@ pub async fn merge_step_outputs(
                         phase: "parallel".to_string(),
                         agent: agents_joined,
                         raw_text: combined_text,
-                        duration_secs: *merge_duration_secs,
-                        input_tokens: merge_usage.input_tokens,
-                        output_tokens: merge_usage.output_tokens,
-                        attempt_count: u32::from(
-                            merge_usage.input_tokens > 0
-                                || merge_usage.output_tokens > 0
-                                || *merge_duration_secs > 0,
-                        ),
+                        duration_secs,
+                        input_tokens,
+                        output_tokens,
+                        attempt_count,
+                        calls,
                         ..Default::default()
                     });
                     let _ = app.emit_event(
@@ -314,7 +463,7 @@ pub async fn merge_step_outputs(
                 "All merges failed: {}",
                 errors
                     .iter()
-                    .map(|(_, e, _, _)| e.as_str())
+                    .map(|(_, e, _, _, _)| e.as_str())
                     .collect::<Vec<_>>()
                     .join("; ")
             ));

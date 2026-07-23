@@ -13,7 +13,7 @@ export default function DepsCheck({ report, onDismiss }: Props) {
   const hasBlockers = missingRequired.length > 0 || unauthenticated.length > 0;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div data-testid="dependencies-modal" className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6">
         <h2 className="text-lg font-bold text-gray-900 mb-1">
           Dependencies
@@ -97,6 +97,7 @@ export default function DepsCheck({ report, onDismiss }: Props) {
           )}
           <button
             onClick={onDismiss}
+            data-testid="dependencies-dismiss"
             className="py-1.5 px-4 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-800"
           >
             {allGood ? "Close" : hasBlockers ? "Dismiss" : "Continue"}

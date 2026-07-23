@@ -127,21 +127,13 @@ pub async fn wait_for_child(
     app: &crate::emit::EventBus,
 ) -> Result<ExitStatus, String> {
     match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await {
-        Ok(result) => {
-            if pid > 0 {
-                crate::commands::unregister_child_pid(pid);
-            }
-            result.map_err(|error| format!("Failed waiting for {binary}: {error}"))
-        }
+        Ok(result) => result.map_err(|error| format!("Failed waiting for {binary}: {error}")),
         Err(_) => {
             if pid > 0 {
                 crate::commands::kill_process(pid);
             }
             let _ = child.kill().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-            if pid > 0 {
-                crate::commands::unregister_child_pid(pid);
-            }
             if crate::commands::is_cancelled() {
                 log(app, format!("{label} cancelled"));
                 return Err("Pipeline cancelled".into());
@@ -155,6 +147,62 @@ pub async fn wait_for_child(
             Err(format!("{provider} call timed out after {timeout_secs}s"))
         }
     }
+}
+
+/// Drain both provider pipes after the leader exits. Descendants can inherit a
+/// pipe and keep it open forever, so normal EOF gets a short grace period and
+/// is then enforced by terminating the still-owned process group/job.
+async fn wait_for_stream_tasks<A, B>(
+    stdout_task: &JoinHandle<A>,
+    stderr_task: &JoinHandle<B>,
+    duration: Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + duration;
+    loop {
+        if stdout_task.is_finished() && stderr_task.is_finished() {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+pub async fn finish_streams<A, B>(
+    stdout_task: JoinHandle<A>,
+    stderr_task: JoinHandle<B>,
+    pid: u32,
+    provider: &str,
+) -> Result<(A, B), String>
+where
+    A: Send + 'static,
+    B: Send + 'static,
+{
+    if !wait_for_stream_tasks(&stdout_task, &stderr_task, Duration::from_secs(1)).await {
+        if pid > 0 {
+            crate::commands::kill_process(pid);
+        }
+        if !wait_for_stream_tasks(&stdout_task, &stderr_task, Duration::from_secs(2)).await {
+            stdout_task.abort();
+            stderr_task.abort();
+            if pid > 0 {
+                crate::commands::unregister_child_pid(pid);
+            }
+            return Err(format!(
+                "{provider} output pipes did not close after termination"
+            ));
+        }
+    }
+    if pid > 0 {
+        crate::commands::unregister_child_pid(pid);
+    }
+    let stdout = stdout_task.await;
+    let stderr = stderr_task.await;
+    Ok((
+        stdout.map_err(|error| format!("{provider} stdout reader failed: {error}"))?,
+        stderr.map_err(|error| format!("{provider} stderr reader failed: {error}"))?,
+    ))
 }
 
 pub fn last_stderr_hint(tail: &[String]) -> Option<String> {

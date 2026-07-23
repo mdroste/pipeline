@@ -3,8 +3,8 @@ use tokio::io::BufReader;
 
 use super::claude::{build_provider_command, normalize_cli_root, prepare_cli_prompt, LlmOverrides};
 use super::cli_process::{
-    capture_stderr, emit_stderr_tail, last_stderr_hint, log, track_child_started, verbose_log,
-    wait_for_child,
+    capture_stderr, emit_stderr_tail, finish_streams, last_stderr_hint, log, track_child_started,
+    verbose_log, wait_for_child,
 };
 
 fn codex_effective_cwd(
@@ -288,21 +288,11 @@ pub async fn call_codex(
         )
     }));
 
-    let status =
-        match wait_for_child(&mut child, pid, timeout_secs, "Codex", "codex", label, app).await {
-            Ok(status) => status,
-            Err(error) => {
-                let _ = stdout_task.await;
-                let _ = stderr_task.await;
-                return Err(error);
-            }
-        };
-
-    let (agent_text, input_tokens, output_tokens, stdout_overflowed) = stdout_task
-        .await
-        .map_err(|e| format!("stdout reader failed: {e}"))?;
-
-    let stderr_tail = stderr_task.await.unwrap_or_default();
+    let wait_result =
+        wait_for_child(&mut child, pid, timeout_secs, "Codex", "codex", label, app).await;
+    let streams = finish_streams(stdout_task, stderr_task, pid, "Codex").await;
+    let status = wait_result?;
+    let ((agent_text, input_tokens, output_tokens, stdout_overflowed), stderr_tail) = streams?;
     if stdout_overflowed {
         emit_stderr_tail(app, &stderr_tail);
         return Err(format!(

@@ -1,0 +1,22 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run prepare:release-resources && npm run build -- --mode e2e"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "default",
+        {
+          "identifier": "e2e",
+          "description": "CI-only WebDriver capability for the compiled-app smoke test",
+          "windows": ["main"],
+          "permissions": [
+            "wdio:default",
+            "wdio-webdriver:default"
+          ]
+        }
+      ]
+    }
+  }
+}

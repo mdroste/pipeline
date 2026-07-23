@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::PathBuf;
 
 // Default prompts compiled into the binary.
@@ -117,8 +116,20 @@ pub fn load_prompt(filename: &str) -> Result<String, String> {
                     return Err(format!("Prompt path escapes prompts directory: {filename}"));
                 }
             }
-            return fs::read_to_string(&user_path)
-                .map_err(|e| format!("Failed to read {}: {e}", user_path.display()));
+            use std::io::Read as _;
+            let file = crate::safety::open_regular_file(&user_path)?;
+            let mut bytes = Vec::with_capacity(64 * 1024);
+            file.take(crate::pipeline_config::MAX_STEP_PROMPT_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("Failed to read {}: {e}", user_path.display()))?;
+            if bytes.len() > crate::pipeline_config::MAX_STEP_PROMPT_BYTES {
+                return Err(format!(
+                    "Prompt override {} is too large",
+                    user_path.display()
+                ));
+            }
+            return String::from_utf8(bytes)
+                .map_err(|e| format!("Prompt override {} is not UTF-8: {e}", user_path.display()));
         }
     }
 

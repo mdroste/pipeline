@@ -583,7 +583,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
 
 fn read_settings_file(path: &std::path::Path) -> Result<String, String> {
     use std::io::Read as _;
-    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let file = crate::safety::open_regular_file(path)?;
     let mut bytes = Vec::with_capacity(64 * 1024);
     file.take(MAX_SETTINGS_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -899,12 +899,22 @@ fn load_or_create_key() -> Result<[u8; KEY_SIZE], String> {
     Ok(key)
 }
 
+fn read_keyfile(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let file = crate::safety::open_regular_file(path)?;
+    let mut bytes = Vec::with_capacity(KEY_SIZE + 1);
+    file.take(KEY_SIZE as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to read keyfile: {error}"))?;
+    Ok(bytes)
+}
+
 fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
     let path = home.join(".pipeline").join("keyfile");
 
     if path.exists() {
-        let bytes = fs::read(&path).map_err(|e| format!("Failed to read keyfile: {e}"))?;
+        let bytes = read_keyfile(&path)?;
         if bytes.len() == KEY_SIZE {
             let mut key = [0u8; KEY_SIZE];
             key.copy_from_slice(&bytes);
@@ -974,7 +984,7 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
         Ok(_) => true,
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
             let bytes =
-                fs::read(&path).map_err(|e| format!("Failed to read winning keyfile: {e}"))?;
+                read_keyfile(&path).map_err(|e| format!("Failed to read winning keyfile: {e}"))?;
             if bytes.len() != KEY_SIZE {
                 return Err(format!(
                     "Winning keyfile has wrong size ({} bytes, expected {KEY_SIZE})",

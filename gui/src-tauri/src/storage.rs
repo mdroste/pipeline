@@ -6,7 +6,7 @@ const MAX_LEGACY_REPORT_BYTES: usize = 64 * 1024 * 1024;
 
 fn read_legacy_report(path: &std::path::Path) -> Result<String, String> {
     use std::io::Read as _;
-    let file = fs::File::open(path)
+    let file = crate::safety::open_regular_file(path)
         .map_err(|e| format!("Failed to read report '{}': {e}", path.display()))?;
     let mut bytes = Vec::with_capacity(64 * 1024);
     file.take(MAX_LEGACY_REPORT_BYTES as u64 + 1)
@@ -55,8 +55,10 @@ pub fn list_reports() -> Result<ListReportsResult, String> {
     let mut warnings = Vec::new();
 
     let entries = fs::read_dir(&dir).map_err(|e| format!("Failed to read history dir: {e}"))?;
+    let mut walk = crate::safety::WalkBudget::new("Legacy history listing");
 
     for entry_result in entries {
+        walk.entry()?;
         let entry = match entry_result {
             Ok(e) => e,
             Err(e) => {
@@ -99,7 +101,7 @@ pub fn list_reports() -> Result<ListReportsResult, String> {
         }
     }
 
-    summaries.sort_by(|a, b| b.report_date.cmp(&a.report_date));
+    summaries.sort_by_key(|summary| std::cmp::Reverse(summary.report_date));
     Ok(ListReportsResult {
         summaries,
         warnings,

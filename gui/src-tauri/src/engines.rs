@@ -348,7 +348,7 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
             // A copy elsewhere on PATH (pip/anaconda). Exclude the managed
             // dir in case the user added ~/.pipeline/bin to PATH themselves.
             let system_path = crate::deps::find_on_path(spec.entry_point)
-                .filter(|p| managed_dir.as_ref().map_or(true, |d| !p.starts_with(d)))
+                .filter(|p| managed_dir.as_ref().is_none_or(|d| !p.starts_with(d)))
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
             EngineStatus {
@@ -658,8 +658,8 @@ async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
 #[cfg(not(windows))]
 fn unpack_uv(archive_path: &Path, dest: &Path) -> Result<(), String> {
     use std::io::Read as _;
-    let archive_file =
-        std::fs::File::open(archive_path).map_err(|e| format!("Failed to open uv archive: {e}"))?;
+    let archive_file = crate::safety::open_regular_file(archive_path)
+        .map_err(|e| format!("Failed to open uv archive: {e}"))?;
     let gz = flate2::read::GzDecoder::new(archive_file);
     let mut archive = tar::Archive::new(gz);
     for entry in archive
@@ -696,8 +696,8 @@ fn unpack_uv(archive_path: &Path, dest: &Path) -> Result<(), String> {
 
 #[cfg(windows)]
 fn unpack_uv(archive_path: &Path, dest: &Path) -> Result<(), String> {
-    let archive_file =
-        std::fs::File::open(archive_path).map_err(|e| format!("Failed to open uv archive: {e}"))?;
+    let archive_file = crate::safety::open_regular_file(archive_path)
+        .map_err(|e| format!("Failed to open uv archive: {e}"))?;
     let mut archive =
         zip::ZipArchive::new(archive_file).map_err(|e| format!("Invalid uv archive: {e}"))?;
     let names: Vec<String> = archive.file_names().map(|n| n.to_string()).collect();

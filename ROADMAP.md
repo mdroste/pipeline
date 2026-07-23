@@ -256,7 +256,7 @@ Smaller items, batched. Roughly in order of value:
 >
 > **Profile schema v2:** `CURRENT_SCHEMA_VERSION = 2`; exports carry `schema_version`, and import rejects profiles from a newer app version. v1/unversioned profiles still load (every field is `#[serde(default)]`).
 >
-> **New built-in profiles (ship as data):** **Revision Response Check** (revised paper + `{input:response}` letter + optional prior report → verify claimed changes → structured issues), **Rubric Grading** (`{var:course}` + `{input:rubric}`), and **Thesis Review** (fan-out per `**/*.tex` chapter → cross-chapter synthesis) — each exercises a different new engine feature; verified created and listed by the CLI.
+> **Generalized-profile validation:** Revision-response, rubric-grading, and thesis-review workflows originally exercised extra inputs, variables, structured output, and fan-out. All three were later retired from the default catalog while the underlying engine capabilities remain available to custom profiles.
 >
 > **Template sharing:** `import_profile_from_url` fetches a shared profile JSON over http(s) (size-capped, schema-checked) and imports it; a "From URL…" button in the profile controls. The *curated gallery repo* itself is external content (a GitHub repo of template JSONs) not created here — import-from-URL is the mechanism it would use.
 

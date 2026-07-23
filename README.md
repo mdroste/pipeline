@@ -37,6 +37,14 @@ npm run tauri build
 
 The output is in `gui/src-tauri/target/release/bundle/`.
 
+### Cross-platform testing
+
+Every pull request runs the Rust and frontend suites and opens a compiled test
+binary on Ubuntu 22.04, Windows Server 2022, Apple Silicon macOS 15, and Intel
+macOS 15. Release builds additionally launch the AppImage, silently install and
+launch the Windows NSIS package, and assess and launch a quarantined,
+notarized macOS app before release assets are finalized.
+
 ### LLM setup
 
 You need at least one LLM provider:
@@ -67,7 +75,7 @@ Pipeline processes a paper in three stages:
 2. **Orient**: One LLM call builds a structured map of the paper -- sections, formal results, tables, notation, stated contribution. This map is validated against a schema and shared with all subsequent steps.
 3. **Execute**: Runs the configured pipeline steps. Parallel steps run concurrently; sequential steps run afterward and receive all prior outputs.
 
-### Default pipeline (Deep Review)
+### Default pipeline (Paper Review (Full))
 
 | Step | Phase | Focus |
 |------|-------|-------|
@@ -83,14 +91,12 @@ Each parallel step receives only the paper text, the orientation map, and its ow
 
 ### Built-in profiles
 
-Beyond Deep Review, the app ships several profiles you can use as-is or copy and edit:
+The app ships five profiles you can use as-is or copy and edit:
 
-- **Quick Review** and **Empirical** — shorter and empirically-focused paper reviews.
-- **Quick / Deep Code Review**, **Replication Package Audit** — for a folder of source or a replication package.
+- **Paper Review (Full)** and **Paper Review (Quick)** — full and abbreviated referee-report workflows.
+- **Codebase Review** — seven code-review passes, consolidation, and verification over a source folder.
+- **Replication Package Audit** — for a folder containing a paper's replication package.
 - **Grant Proposal Review** — aims, feasibility, panel readability, consistency.
-- **Revision Response Check** — give it the revised paper plus the authors' response letter (and, optionally, the prior report); it verifies each claimed change against the paper.
-- **Rubric Grading** — grade a submission against a rubric file, criterion by criterion (asks for the course name when you run it).
-- **Thesis Review** — reviews each chapter of a folder separately, then adds a cross-chapter pass for inconsistent notation, redundancy, and gaps.
 
 ## Configuration
 

@@ -150,8 +150,24 @@ export interface StepOutput {
   model_policy?: string;
   model_source?: string;
   model_catalog_updated_at?: string;
+  calls?: StepCallRecord[];
   /** True when the step was skipped by its run_if guard. */
   skipped?: boolean;
+}
+
+export interface StepCallRecord {
+  role?: string;
+  provider?: string;
+  agent?: string;
+  model?: string;
+  model_transport?: string;
+  model_policy?: string;
+  model_source?: string;
+  model_catalog_updated_at?: string;
+  duration_secs?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  attempt_count?: number;
 }
 
 // --- Report types ---

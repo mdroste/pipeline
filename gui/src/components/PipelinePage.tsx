@@ -393,11 +393,13 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
           const step = envelope.data as StepConfig;
           const agents = step.agents?.length || 1;
           const fanOut = step.for_each ? `; fan-out up to ${step.for_each.max} items` : "";
+          const logicalCalls = (step.for_each?.max ?? 1) * agents;
+          const attempts = logicalCalls * ((settings?.max_retries ?? 0) + 1);
           if (!confirm(
             `Import step “${step.label}”?\n\n` +
             `Tools: ${step.tools?.join(", ") || "none"}\n` +
             `Agents: ${step.agents?.join(", ") || "profile default"}${fanOut}\n` +
-            `Maximum provider calls from this step: ${step.for_each ? step.for_each.max * agents : agents}`,
+            `Maximum provider attempts from this step: ${attempts}`,
           )) return;
           const id = config.steps.some((s) => s.id === step.id)
             ? `${step.id}_${Date.now()}`
@@ -414,13 +416,20 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
           const enabled = envelope.steps.filter((step) => step.enabled);
           const tools = [...new Set(enabled.flatMap((step) => step.tools ?? []))];
           const agents = [...new Set(enabled.flatMap((step) => step.agents ?? []))];
-          const maxCalls = enabled.reduce((total, step) => {
+          const logicalCalls = enabled.reduce((total, step) => {
             const agentCount = Math.max(1, step.agents?.length ?? 0);
             return total + agentCount * (step.for_each?.max ?? 1);
           }, 0);
+          const mergeCalls = envelope.merge?.enabled
+            ? enabled.reduce((total, step) => {
+                const agentCount = Math.max(1, step.agents?.length ?? 0);
+                return total + (agentCount > 1 ? (step.for_each?.max ?? 1) : 0);
+              }, 0)
+            : 0;
+          const maxAttempts = logicalCalls * ((settings?.max_retries ?? 0) + 1) + mergeCalls;
           if (!confirm(
             `Import and activate profile “${envelope.name}”?\n\n` +
-            `${enabled.length} enabled steps; up to ${maxCalls} provider calls per run.\n` +
+            `${enabled.length} enabled steps; up to ${maxAttempts} provider attempts per run (including retries and merges).\n` +
             `Tools: ${tools.join(", ") || "none"}\n` +
             `Agents: ${agents.join(", ") || "profile default"}\n\n` +
             "Review the imported prompts in the editor before starting a run.",

@@ -7,6 +7,42 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+struct ProfileMutationGuard {
+    _process: std::sync::MutexGuard<'static, ()>,
+    file: fs::File,
+}
+
+impl Drop for ProfileMutationGuard {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
+fn lock_profile_mutations() -> Result<ProfileMutationGuard, String> {
+    static PROCESS_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let process = PROCESS_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let profiles = profiles_dir()?;
+    let root = profiles
+        .parent()
+        .ok_or("Profiles directory has no parent")?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("profiles.lock"))
+        .map_err(|error| format!("Failed to open profile lock: {error}"))?;
+    fs2::FileExt::lock_exclusive(&file)
+        .map_err(|error| format!("Failed to lock profiles: {error}"))?;
+    Ok(ProfileMutationGuard {
+        _process: process,
+        file,
+    })
+}
+
 const MAX_PROFILE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_PROFILE_STEPS: usize = 100;
 pub const MAX_STEP_PROMPT_BYTES: usize = 1024 * 1024;
@@ -22,7 +58,7 @@ const ALLOWED_AGENTS: &[&str] = &["claude", "codex", "gemini", "local"];
 
 fn read_profile_file(path: &Path) -> Result<String, String> {
     use std::io::Read as _;
-    let file = fs::File::open(path)
+    let file = crate::safety::open_regular_file(path)
         .map_err(|e| format!("Failed to read profile '{}': {e}", path.display()))?;
     let mut bytes = Vec::with_capacity(64 * 1024);
     file.take(MAX_PROFILE_BYTES as u64 + 1)
@@ -759,14 +795,23 @@ fn defaults() -> PipelineConfig {
 const BUILTIN_PROFILES: &[&str] = &[
     "deep-review",
     "quick-review",
-    "empirical",
-    "quick-code-review",
     "deep-code-review",
     "replication-audit",
     "grant-review",
-    "revision-response",
-    "rubric-grading",
-    "thesis-review",
+];
+
+/// Profiles shipped by earlier releases that were removed from the catalog.
+/// A version marker makes the archival a one-time migration, so users may
+/// later create custom profiles that happen to reuse one of these IDs.
+const RETIRED_BUILTIN_PROFILES: &[(&str, &str)] = &[
+    ("empirical", "deep-review"),
+    ("quick-code-review", "deep-code-review"),
+    ("revision-response", "deep-review"),
+    ("thesis-review", "deep-review"),
+    ("rubric-grading", "deep-review"),
+    // Very old releases used this ID for the workflow later renamed Quick
+    // Code Review. The current Codebase Review retains the deep workflow ID.
+    ("codebase-review", "deep-code-review"),
 ];
 
 fn profile_summary(id: String, profile: &ProfileData) -> ProfileSummary {
@@ -805,41 +850,6 @@ fn folder_extraction() -> ExtractionConfig {
     }
 }
 
-/// A step with an inline prompt (not a compiled-in named default).
-fn inline_step(id: &str, label: &str, phase: Phase, tools: &[&str], prompt: &str) -> StepConfig {
-    StepConfig {
-        id: id.into(),
-        label: label.into(),
-        prompt: prompt.into(),
-        enabled: true,
-        phase,
-        tools: tools.iter().map(|t| t.to_string()).collect(),
-        agents: vec![],
-        ..Default::default()
-    }
-}
-
-/// The issues schema that enables the Issues table + annotations in the report.
-fn issues_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "required": ["issues"],
-        "properties": {
-            "issues": {
-                "type": "array",
-                "items": { "type": "object", "required": ["title", "severity", "body"] }
-            }
-        }
-    })
-}
-
-/// A sequential consolidation step that emits structured issues.
-fn issues_synthesis_step(id: &str, label: &str) -> StepConfig {
-    let mut s = prompt_step(id, label, Phase::Sequential, &[], "editor_synthesis_issues");
-    s.output_schema = Some(issues_schema());
-    s
-}
-
 /// Domain-neutral profile scaffold: generic wrapper + generic survey prompt.
 /// Folder-input profiles get the folder survey, which explores the tree with
 /// the Read tool instead of surveying the file inventory text.
@@ -861,24 +871,25 @@ fn generic_profile(
 }
 
 /// Write a built-in profile file if it doesn't exist yet.
-fn write_builtin_if_missing(path: &PathBuf, profile: &ProfileData) -> Result<(), String> {
+fn write_builtin_if_missing(path: &Path, profile: &ProfileData) -> Result<(), String> {
     if path.exists() {
         return Ok(());
     }
     let json =
         serde_json::to_string_pretty(profile).map_err(|e| format!("Serialize error: {e}"))?;
-    fs::write(path, json).map_err(|e| format!("Failed to write {}: {e}", path.display()))
+    restore_profile_bytes(path, json.as_bytes())
+        .map_err(|e| format!("Failed to write {}: {e}", path.display()))
 }
 
 /// Built-in profiles created on first run.
 fn create_builtin_profiles() -> Result<(), String> {
     let profiles = profiles_dir()?;
 
-    // Quick Review — fast two-step pass
+    // Paper Review (Quick) — fast two-step pass
     write_builtin_if_missing(
         &profiles.join("quick-review.json"),
         &ProfileData::new(
-            "Quick Review",
+            "Paper Review (Quick)",
             vec![
                 prompt_step(
                     "contribution",
@@ -906,110 +917,12 @@ fn create_builtin_profiles() -> Result<(), String> {
         ),
     )?;
 
-    // Empirical — tailored for empirical papers
-    write_builtin_if_missing(
-        &profiles.join("empirical.json"),
-        &ProfileData::new(
-            "Empirical",
-            vec![
-                prompt_step(
-                    "contribution",
-                    "Contribution",
-                    Phase::Parallel,
-                    &["WebSearch"],
-                    "contribution",
-                ),
-                prompt_step(
-                    "empirical",
-                    "Empirical Strategy",
-                    Phase::Parallel,
-                    &[],
-                    "empirical",
-                ),
-                prompt_step(
-                    "consistency",
-                    "Internal Consistency",
-                    Phase::Parallel,
-                    &[],
-                    "consistency",
-                ),
-                prompt_step(
-                    "exposition",
-                    "Exposition & Framing",
-                    Phase::Parallel,
-                    &[],
-                    "exposition",
-                ),
-                prompt_step(
-                    "editor_synthesis",
-                    "Consolidate Issues",
-                    Phase::Sequential,
-                    &[],
-                    "editor_synthesis",
-                ),
-                prompt_step(
-                    "validate_feedback",
-                    "Validate Feedback",
-                    Phase::Sequential,
-                    &[],
-                    "validate_feedback",
-                ),
-            ],
-            MergeConfig::default(),
-        ),
-    )?;
-
-    // Quick Code Review (formerly "Codebase Review") — folder input,
-    // generic wrapper + survey. Migrate away the pre-rename file.
-    let stale_codebase = profiles.join("codebase-review.json");
-    if stale_codebase.exists() {
-        let _ = fs::remove_file(&stale_codebase);
-        let _ = crate::settings::replace_active_profile_if("codebase-review", "quick-code-review");
-    }
-    write_builtin_if_missing(
-        &profiles.join("quick-code-review.json"),
-        &generic_profile(
-            "Quick Code Review",
-            vec![
-                prompt_step(
-                    "code_correctness",
-                    "Correctness",
-                    Phase::Parallel,
-                    &["Read"],
-                    "code_correctness",
-                ),
-                prompt_step(
-                    "code_design",
-                    "Design & Maintainability",
-                    Phase::Parallel,
-                    &["Read"],
-                    "code_design",
-                ),
-                prompt_step(
-                    "code_security",
-                    "Security",
-                    Phase::Parallel,
-                    &["Read"],
-                    "code_security",
-                ),
-                prompt_step(
-                    "code_synthesis",
-                    "Consolidate Findings",
-                    Phase::Sequential,
-                    &[],
-                    "code_synthesis",
-                ),
-            ],
-            folder_extraction(),
-        ),
-    )?;
-
-    // Deep Code Review — seven parallel passes, consolidate, then a
+    // Codebase Review — seven parallel passes, consolidate, then a
     // sequential verify step that re-reads the code to refute findings.
     write_builtin_if_missing(
         &profiles.join("deep-code-review.json"),
         &generic_profile(
-            "Deep Code Review",
+            "Codebase Review",
             vec![
                 prompt_step(
                     "code_correctness",
@@ -1172,111 +1085,85 @@ fn create_builtin_profiles() -> Result<(), String> {
         ),
     )?;
 
-    // ── Release 2.0 profiles: exercise the generalized engine ──────
+    Ok(())
+}
 
-    // Revision Response Check — revised paper + response letter + prior report.
-    write_builtin_if_missing(&profiles.join("revision-response.json"), &{
-        let extraction = ExtractionConfig {
-            extra_inputs: vec![
-                InputSlot {
-                    key: "response".into(),
-                    label: "Response letter".into(),
-                    mode: "document".into(),
-                    required: true,
-                },
-                InputSlot {
-                    key: "prior_report".into(),
-                    label: "Prior referee report".into(),
-                    mode: "document".into(),
-                    required: false,
-                },
-            ],
-            ..Default::default()
-        };
-        let mut p = generic_profile(
-            "Revision Response Check",
-            vec![
-                inline_step("verify_changes", "Verify Claimed Changes", Phase::Parallel, &["Read"],
-                    "You are checking a revised paper against the authors' response to referees.\n\n\
-                     The revised paper text is provided. The response letter is at {input:response}. \
-                     A prior referee report, if available, is at {input:prior_report}.\n\n\
-                     For each change the authors claim to have made, verify whether the revised paper actually \
-                     reflects it. Flag: claims not supported by the paper, changes that introduce new problems, \
-                     and prior concerns the response fails to address. Do not praise or summarize."),
-                issues_synthesis_step("consolidate", "Consolidate Verdicts"),
-            ],
-            extraction,
-        );
-        p.orientation_prompt = prompts::load_prompt("orientation_generic").unwrap_or_default();
-        p
-    })?;
+/// Apply catalog changes to profiles created by older Pipeline releases.
+fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
+    let marker = profiles.join(".builtin-catalog-v3");
+    if !marker.exists() {
+        for (id, replacement) in RETIRED_BUILTIN_PROFILES {
+            // Do not leave Settings pointing at a profile archived below.
+            let _ = crate::settings::replace_active_profile_if(id, replacement);
+            archive_retired_profile(profiles, id)?;
+        }
+        fs::write(&marker, b"paper-and-code-profile-catalog\n").map_err(|error| {
+            format!(
+                "Failed to record the built-in profile catalog migration '{}': {error}",
+                marker.display()
+            )
+        })?;
+    }
 
-    // Rubric Grading — grade a document against a rubric, with course variables.
-    write_builtin_if_missing(&profiles.join("rubric-grading.json"), &{
-        let extraction = ExtractionConfig {
-            extra_inputs: vec![InputSlot {
-                key: "rubric".into(),
-                label: "Grading rubric".into(),
-                mode: "document".into(),
-                required: true,
-            }],
-            ..Default::default()
-        };
-        let mut p = generic_profile(
-            "Rubric Grading",
-            vec![
-                inline_step("grade", "Grade Against Rubric", Phase::Parallel, &["Read"],
-                    "Grade this submission for the course \"{var:course}\" against the rubric at {input:rubric}.\n\n\
-                     Go criterion by criterion: state the criterion, the score or level you assign, and one or two \
-                     sentences of specific, evidence-based justification citing the submission. End with the total \
-                     and the two highest-leverage improvements."),
-                inline_step("summary", "Grade Summary", Phase::Sequential, &[],
-                    "Produce the final graded feedback: the per-criterion scores and justifications, the total, \
-                     and a short overall comment.\n\n{prior_outputs}"),
-            ],
-            extraction,
-        );
-        p.variables = vec![VarSpec {
-            key: "course".into(),
-            label: "Course".into(),
-            kind: "text".into(),
-            default: String::new(),
-            choices: vec![],
-        }];
-        p
-    })?;
-
-    // Thesis Review — fan out per chapter, then a cross-chapter synthesis.
-    write_builtin_if_missing(
-        &profiles.join("thesis-review.json"),
-        &generic_profile(
-            "Thesis Review",
-            vec![
-                {
-                    let mut s = inline_step("chapter_review", "Chapter Review", Phase::Parallel, &["Read"],
-                        "Review the chapter/section file at {item}. Identify substantive issues: gaps in the \
-                         argument, unclear or unsupported claims, methodological problems, and exposition that \
-                         would confuse a reader. Reference the file. Do not praise or summarize.");
-                    s.for_each = Some(ForEach { glob: "**/*.tex".into(), max: 20 });
-                    s
-                },
-                inline_step("cross_chapter", "Cross-Chapter Synthesis", Phase::Sequential, &[],
-                    "You have per-chapter reviews of a thesis below. Synthesize them into a single ordered list \
-                     of the most important issues, and add cross-chapter problems the per-chapter reviews could \
-                     not see: inconsistent notation or terminology across chapters, redundancy, contradictory \
-                     claims, and gaps between chapters.\n\n{prior_outputs}"),
-            ],
-            folder_extraction(),
-        ),
-    )?;
+    // Built-in workflows are customizable, so rename the profile while
+    // preserving any edits users made to its steps and settings.
+    for (id, previous_name, current_name) in [
+        ("deep-review", "Deep Review", "Paper Review (Full)"),
+        ("quick-review", "Quick Review", "Paper Review (Quick)"),
+        ("deep-code-review", "Deep Code Review", "Codebase Review"),
+    ] {
+        let mut profile = load_profile(id)?;
+        if profile.name == previous_name {
+            profile.name = current_name.to_string();
+            save_profile_unlocked(id, &profile)?;
+        }
+    }
 
     Ok(())
+}
+
+/// Hide a retired built-in from the profile list without discarding any user
+/// customizations it may contain. Avoid overwriting an archive left by a
+/// partially completed or earlier migration.
+fn archive_retired_profile(profiles: &Path, id: &str) -> Result<(), String> {
+    let source = profiles.join(format!("{id}.json"));
+    if !source.exists() {
+        return Ok(());
+    }
+
+    let archive_dir = profiles.join(".retired-builtins");
+    fs::create_dir_all(&archive_dir).map_err(|error| {
+        format!(
+            "Failed to create retired-profile archive '{}': {error}",
+            archive_dir.display()
+        )
+    })?;
+    let destination = (1..=1000)
+        .map(|copy| {
+            let suffix = if copy == 1 {
+                String::new()
+            } else {
+                format!("-{copy}")
+            };
+            archive_dir.join(format!("{id}{suffix}.json"))
+        })
+        .find(|candidate| !candidate.exists())
+        .ok_or_else(|| format!("Too many archived copies of profile '{id}'"))?;
+
+    fs::rename(&source, &destination).map_err(|error| {
+        format!(
+            "Failed to archive retired profile '{}' as '{}': {error}",
+            source.display(),
+            destination.display()
+        )
+    })
 }
 
 // ── Migration ───────────────────────────────────────────────────────
 
 /// Migrate from old single-file formats to profiles directory. Idempotent.
 fn ensure_migrated() -> Result<(), String> {
+    let _lock = lock_profile_mutations()?;
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
     let old_path = home.join(".pipeline").join("pipeline.json");
     let profiles = profiles_dir()?;
@@ -1293,7 +1180,7 @@ fn ensure_migrated() -> Result<(), String> {
                         convert_legacy_steps(legacy.referees, legacy.post_steps),
                         legacy.merge,
                     );
-                    save_profile("migrated", &profile)?;
+                    save_profile_unlocked("migrated", &profile)?;
                     // Delete the source only after the durable destination is
                     // published. Unrecognized legacy JSON is left untouched
                     // for manual recovery.
@@ -1314,7 +1201,7 @@ fn ensure_migrated() -> Result<(), String> {
                     );
                     let migrated_path = profiles.join("migrated.json");
                     if !migrated_path.exists() {
-                        save_profile("migrated", &profile)?;
+                        save_profile_unlocked("migrated", &profile)?;
                         let _ = fs::remove_file(&old_referees);
                     }
                 }
@@ -1327,9 +1214,9 @@ fn ensure_migrated() -> Result<(), String> {
             let _ = fs::remove_file(&old_default);
         }
 
-        // Create Deep Review as the primary profile
+        // Create the full paper review as the primary profile.
         let profile = ProfileData::new(
-            "Deep Review",
+            "Paper Review (Full)",
             {
                 let mut s = default_steps();
                 if let Some(step) = s.iter_mut().find(|s| s.id == "validate_feedback") {
@@ -1341,14 +1228,16 @@ fn ensure_migrated() -> Result<(), String> {
         );
         let json =
             serde_json::to_string_pretty(&profile).map_err(|e| format!("Serialize error: {e}"))?;
-        fs::write(&deep_review_path, json)
+        restore_profile_bytes(&deep_review_path, json.as_bytes())
             .map_err(|e| format!("Failed to write deep-review profile: {e}"))?;
     } else if old_path.exists() {
         let _ = fs::remove_file(&old_path);
     }
 
-    // Always ensure other built-in profiles exist
+    // Always ensure current built-in profiles exist and apply catalog changes
+    // to installations created by earlier releases.
     create_builtin_profiles()?;
+    migrate_builtin_catalog(&profiles)?;
 
     Ok(())
 }
@@ -1375,8 +1264,9 @@ pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
                 convert_legacy_steps(legacy.referees, legacy.post_steps),
                 legacy.merge,
             );
-            // Write back in new format
-            let _ = save_profile(id, &profile);
+            // Keep loading legacy profile files without mutating them during
+            // a read. Explicit saves/imports publish the current format under
+            // the cross-process profile lock.
             return Ok(profile);
         }
     }
@@ -1384,13 +1274,18 @@ pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
     Err(format!("Failed to parse profile '{id}'"))
 }
 
-pub fn save_profile(id: &str, profile: &ProfileData) -> Result<(), String> {
+fn save_profile_unlocked(id: &str, profile: &ProfileData) -> Result<(), String> {
     let path = profile_path(id)?;
     validate_profile_data(profile)?;
     let json =
         serde_json::to_string_pretty(profile).map_err(|e| format!("Failed to serialize: {e}"))?;
     restore_profile_bytes(&path, json.as_bytes())
         .map_err(|e| format!("Failed to save profile '{}': {e}", path.display()))
+}
+
+pub fn save_profile(id: &str, profile: &ProfileData) -> Result<(), String> {
+    let _lock = lock_profile_mutations()?;
+    save_profile_unlocked(id, profile)
 }
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -1661,6 +1556,23 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
                 variable.kind, variable.key
             ));
         }
+        if variable.label.len() > 1_024 {
+            return Err(format!("Variable '{}' label is too long", variable.key));
+        }
+        if variable.default.len() > crate::safety::MAX_RUNTIME_VALUE_BYTES {
+            return Err(format!(
+                "Variable '{}' default exceeds the 1 MB safety limit",
+                variable.key
+            ));
+        }
+        if variable.choices.len() > 100
+            || variable.choices.iter().any(|choice| choice.len() > 65_536)
+        {
+            return Err(format!(
+                "Variable '{}' has too many or oversized choices",
+                variable.key
+            ));
+        }
     }
 
     let mut input_keys = std::collections::HashSet::new();
@@ -1675,6 +1587,9 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
                 "Invalid input key '{}'. Use 1–64 ASCII letters, numbers, or underscores.",
                 input.key
             ));
+        }
+        if input.label.len() > 1_024 {
+            return Err(format!("Named input '{}' label is too long", input.key));
         }
         if !input_keys.insert(input.key.as_str()) {
             return Err(format!("Duplicate input key '{}'", input.key));
@@ -1764,11 +1679,12 @@ pub fn save(config: &PipelineConfig) -> Result<(), String> {
 }
 
 pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String> {
+    let _lock = lock_profile_mutations()?;
     validate_profile_id(profile_id)?;
     validate_profile_steps(&config.steps)?;
     let name = load_profile(profile_id)?.name;
     let profile = ProfileData::from_config(name, config);
-    save_profile(profile_id, &profile)
+    save_profile_unlocked(profile_id, &profile)
 }
 
 /// Reset active profile to defaults.
@@ -1788,7 +1704,9 @@ pub fn list_profiles() -> Result<Vec<ProfileSummary>, String> {
     let _ = ensure_migrated();
     let dir = profiles_dir()?;
     let mut summaries = Vec::new();
+    let mut walk = crate::safety::WalkBudget::new("Profile listing");
     for entry in fs::read_dir(&dir).map_err(|e| format!("Failed to read profiles dir: {e}"))? {
+        walk.entry()?;
         let entry = entry.map_err(|e| format!("Dir entry error: {e}"))?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -1809,6 +1727,7 @@ pub fn list_profiles() -> Result<Vec<ProfileSummary>, String> {
 
 pub fn create_profile(name: &str) -> Result<ProfileSummary, String> {
     let _ = ensure_migrated();
+    let _lock = lock_profile_mutations()?;
     let id = slugify(name);
     if id.is_empty() {
         return Err("Profile name produces empty ID".into());
@@ -1821,12 +1740,13 @@ pub fn create_profile(name: &str) -> Result<ProfileSummary, String> {
     // context template, and an explicit generic survey prompt (empty would
     // fall back to the paper survey at runtime).
     let profile = generic_profile(name, generic_starter_steps(), ExtractionConfig::default());
-    save_profile(&id, &profile)?;
+    save_profile_unlocked(&id, &profile)?;
     Ok(profile_summary(id, &profile))
 }
 
 pub fn duplicate_profile(source_id: &str, new_name: &str) -> Result<ProfileSummary, String> {
     let _ = ensure_migrated();
+    let _lock = lock_profile_mutations()?;
     let source = load_profile(source_id)?;
     let new_id = slugify(new_name);
     if new_id.is_empty() {
@@ -1837,7 +1757,7 @@ pub fn duplicate_profile(source_id: &str, new_name: &str) -> Result<ProfileSumma
         return Err(format!("A profile with ID '{new_id}' already exists"));
     }
     let profile = duplicate_profile_data(source, new_name);
-    save_profile(&new_id, &profile)?;
+    save_profile_unlocked(&new_id, &profile)?;
     Ok(profile_summary(new_id, &profile))
 }
 
@@ -1848,13 +1768,15 @@ fn duplicate_profile_data(mut source: ProfileData, new_name: &str) -> ProfileDat
 
 pub fn rename_profile(id: &str, new_name: &str) -> Result<ProfileSummary, String> {
     let _ = ensure_migrated();
+    let _lock = lock_profile_mutations()?;
     let mut profile = load_profile(id)?;
     profile.name = new_name.to_string();
-    save_profile(id, &profile)?;
+    save_profile_unlocked(id, &profile)?;
     Ok(profile_summary(id.to_string(), &profile))
 }
 
 pub fn delete_profile(id: &str) -> Result<(), String> {
+    let _lock = lock_profile_mutations()?;
     if BUILTIN_PROFILES.contains(&id) {
         return Err(format!("Cannot delete the built-in profile '{id}'"));
     }
@@ -2053,6 +1975,7 @@ pub fn import_profile_data(
     variables: Vec<VarSpec>,
 ) -> Result<ProfileSummary, String> {
     let _ = ensure_migrated();
+    let _lock = lock_profile_mutations()?;
     validate_unique_step_ids(&steps)?;
     validate_dependencies(&steps)?;
     let mut id = slugify(name);
@@ -2072,7 +1995,7 @@ pub fn import_profile_data(
     profile.extraction = extraction;
     profile.parallel_context_template = parallel_context_template;
     profile.variables = variables;
-    save_profile(&id, &profile)?;
+    save_profile_unlocked(&id, &profile)?;
     Ok(profile_summary(id, &profile))
 }
 
@@ -2093,6 +2016,7 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                     imported_settings.active_profile, active_profile
                 ));
             }
+            let _lock = lock_profile_mutations()?;
             // Merge imported settings with existing, preserving local API keys.
             let mut current = crate::settings::load_persisted_required()?;
             current.preferred_provider = imported_settings.preferred_provider;
@@ -2132,8 +2056,8 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 .iter()
                 .map(|(id, _)| {
                     let path = profile_path(id)?;
-                    let prior = match fs::read(&path) {
-                        Ok(bytes) => Some(bytes),
+                    let prior = match fs::symlink_metadata(&path) {
+                        Ok(_) => Some(read_profile_file(&path)?.into_bytes()),
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                         Err(error) => {
                             return Err(format!(
@@ -2146,7 +2070,7 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 })
                 .collect::<Result<_, String>>()?;
             for (id, profile) in &validated {
-                if let Err(error) = save_profile(id, profile) {
+                if let Err(error) = save_profile_unlocked(id, profile) {
                     let rollback = restore_profile_snapshots(&snapshots);
                     return Err(match rollback {
                         Ok(()) => error,
@@ -2632,6 +2556,42 @@ mod tests {
                 .unwrap()
                 .label(),
             "gpt-api"
+        );
+    }
+
+    #[test]
+    fn builtin_catalog_contains_only_current_profiles() {
+        assert_eq!(
+            BUILTIN_PROFILES,
+            [
+                "deep-review",
+                "quick-review",
+                "deep-code-review",
+                "replication-audit",
+                "grant-review",
+            ]
+        );
+    }
+
+    #[test]
+    fn retired_profile_archive_preserves_content_and_avoids_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("empirical.json");
+        fs::write(&source, "first version").unwrap();
+        archive_retired_profile(dir.path(), "empirical").unwrap();
+
+        let archive = dir.path().join(".retired-builtins");
+        assert_eq!(
+            fs::read_to_string(archive.join("empirical.json")).unwrap(),
+            "first version"
+        );
+        assert!(!source.exists());
+
+        fs::write(&source, "second version").unwrap();
+        archive_retired_profile(dir.path(), "empirical").unwrap();
+        assert_eq!(
+            fs::read_to_string(archive.join("empirical-2.json")).unwrap(),
+            "second version"
         );
     }
 

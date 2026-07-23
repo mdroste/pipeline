@@ -4,7 +4,7 @@ use tempfile::NamedTempFile;
 
 use super::claude::{build_provider_command, plan_cli_workspace, prepare_cli_prompt, LlmOverrides};
 use super::cli_process::{
-    capture_stderr, capture_text_stdout, emit_stderr_tail, last_stderr_hint, log,
+    capture_stderr, capture_text_stdout, emit_stderr_tail, finish_streams, last_stderr_hint, log,
     track_child_started, verbose_log, wait_for_child,
 };
 
@@ -199,7 +199,7 @@ pub async fn call_gemini(
     // Stream stdout to the frontend
     let stdout_task = capture_text_stdout(child.stdout.take(), app.clone(), sess);
 
-    let status = match wait_for_child(
+    let wait_result = wait_for_child(
         &mut child,
         pid,
         timeout_secs,
@@ -208,21 +208,10 @@ pub async fn call_gemini(
         label,
         app,
     )
-    .await
-    {
-        Ok(status) => status,
-        Err(error) => {
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
-            return Err(error);
-        }
-    };
-
-    let (raw_stdout, stdout_overflowed) = stdout_task
-        .await
-        .map_err(|e| format!("stdout reader failed: {e}"))?;
-
-    let stderr_tail = stderr_task.await.unwrap_or_default();
+    .await;
+    let streams = finish_streams(stdout_task, stderr_task, pid, "Gemini").await;
+    let status = wait_result?;
+    let ((raw_stdout, stdout_overflowed), stderr_tail) = streams?;
     if stdout_overflowed {
         emit_stderr_tail(app, &stderr_tail);
         return Err(format!(

@@ -277,6 +277,7 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
   useEffect(() => {
     if (!manifest || !selected) return;
     let live = true;
+    setContent(null);
     setLoadError(null);
     invoke<ArtifactContent>("read_artifact", { runId, relPath: selected })
       .then((c) => {

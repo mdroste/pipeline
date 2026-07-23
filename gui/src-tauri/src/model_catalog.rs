@@ -160,7 +160,7 @@ fn cache_path(provider: &str, transport: &str) -> Result<PathBuf, String> {
 
 fn read_file_limited(path: &Path, limit: usize) -> Option<Vec<u8>> {
     use std::io::Read as _;
-    let file = std::fs::File::open(path).ok()?;
+    let file = crate::safety::open_regular_file(path).ok()?;
     let mut bytes = Vec::with_capacity(64 * 1024);
     file.take(limit as u64 + 1).read_to_end(&mut bytes).ok()?;
     (bytes.len() <= limit).then_some(bytes)
@@ -534,9 +534,7 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
             for item in value["models"].as_array().into_iter().flatten() {
                 let supports_generate = item["supportedGenerationMethods"]
                     .as_array()
-                    .map_or(true, |methods| {
-                        methods.iter().any(|m| m == "generateContent")
-                    });
+                    .is_none_or(|methods| methods.iter().any(|m| m == "generateContent"));
                 if supports_generate {
                     if let Some(id) = item["name"]
                         .as_str()

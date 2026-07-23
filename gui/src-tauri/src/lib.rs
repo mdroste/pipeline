@@ -11,6 +11,7 @@ pub mod pipeline_config;
 pub mod process;
 pub mod prompts;
 pub mod runs;
+pub mod safety;
 pub mod settings;
 pub mod storage;
 pub mod updates;
@@ -37,12 +38,36 @@ fn locate_bundled_poppler(app: &tauri::App) -> Option<std::path::PathBuf> {
     candidates.into_iter().find(|dir| dir.join(bin).is_file())
 }
 
+/// Signal to a packaging smoke test that the native window loaded the
+/// frontend and completed a Tauri IPC round trip. In normal application runs
+/// the environment variable is absent and this command is a no-op.
+#[tauri::command]
+fn mark_smoke_ready() -> Result<bool, String> {
+    write_smoke_ready(std::env::var_os("PIPELINE_SMOKE_READY_FILE"))
+}
+
+fn write_smoke_ready(path: Option<std::ffi::OsString>) -> Result<bool, String> {
+    let Some(path) = path else {
+        return Ok(false);
+    };
+    std::fs::write(std::path::PathBuf::from(path), b"ready\n")
+        .map_err(|error| format!("failed to write smoke-test readiness marker: {error}"))?;
+    Ok(true)
+}
+
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "e2e")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             env::set_bundled_poppler_dir(locate_bundled_poppler(app));
+            commands::cleanup_stale_print_exports();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -112,7 +137,19 @@ pub fn run() {
             commands::install_engine,
             commands::uninstall_engine,
             commands::cancel_engine_install,
+            mark_smoke_ready,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+    commands::cleanup_print_export();
+}
+
+#[cfg(test)]
+mod smoke_tests {
+    use super::write_smoke_ready;
+
+    #[test]
+    fn readiness_marker_is_a_noop_without_ci_environment() {
+        assert!(!write_smoke_ready(None).unwrap());
+    }
 }

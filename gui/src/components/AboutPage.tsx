@@ -73,24 +73,16 @@ function HelpContent() {
         </p>
         <div className="grid gap-2">
           <ProfileCard
-            name="Deep Review"
+            name="Paper Review (Full)"
             description="Five parallel review steps on a paper, then consolidation and validation. The default."
           />
           <ProfileCard
-            name="Quick Review"
+            name="Paper Review (Quick)"
             description="Two review steps and consolidation. Fast."
           />
           <ProfileCard
-            name="Empirical"
-            description="For empirical papers. Skips Technical Correctness and adds web search to Contribution."
-          />
-          <ProfileCard
-            name="Quick Code Review"
-            description="Correctness, design, and security passes over a code folder, then consolidation."
-          />
-          <ProfileCard
-            name="Deep Code Review"
-            description="Seven passes (adds concurrency, error handling, performance, tests), then consolidation and a verification step that re-reads the code to confirm each finding."
+            name="Codebase Review"
+            description="Seven passes covering correctness, security, design, concurrency, error handling, performance, and tests, followed by consolidation and verification."
           />
           <ProfileCard
             name="Replication Package Audit"

@@ -81,6 +81,29 @@ describe("ArtifactExplorer", () => {
     expect(container.querySelector("[class*='hljs-']")).not.toBeNull();
   });
 
+  it("clears the previous artifact while the next one is loading", async () => {
+    const user = userEvent.setup();
+    let resolveNext: ((value: unknown) => void) | undefined;
+    invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "get_run_manifest") return Promise.resolve(manifest);
+      if (cmd === "read_artifact" && args?.relPath === "report.md") {
+        return Promise.resolve(textContent("markdown", "# Previous report"));
+      }
+      if (cmd === "read_artifact" && args?.relPath === "artifacts/02_analysis.py") {
+        return new Promise((resolve) => { resolveNext = resolve; });
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+    expect(await screen.findByRole("heading", { name: "Previous report" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Analysis script" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Previous report" })).not.toBeInTheDocument();
+    });
+    resolveNext?.(textContent("code", "return 42"));
+  });
+
   it("renders CSV artifacts as a table", async () => {
     const user = userEvent.setup();
     mockBackend({

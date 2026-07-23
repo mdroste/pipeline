@@ -26,6 +26,7 @@ const MAX_TEXT_BYTES: usize = 1_000_000;
 /// Images larger than this are not inlined (metadata only).
 const MAX_IMAGE_BYTES: u64 = 10_000_000;
 const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
+const MAX_MANIFEST_ARTIFACTS: usize = 5_000;
 const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ANNOTATION_BYTES: usize = 1_000_000;
 static RUN_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -258,13 +259,7 @@ fn short_sha256(bytes: &[u8]) -> String {
 
 fn inspect_file(path: &Path) -> Result<(Vec<u8>, u64, String), String> {
     use std::io::Read as _;
-    let file = fs::File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| format!("Failed to inspect file: {e}"))?;
-    if !metadata.file_type().is_file() {
-        return Err("Artifact is not a regular file".to_string());
-    }
+    let file = crate::safety::open_regular_file(path)?;
     let mut reader = std::io::BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut head = Vec::with_capacity(512);
@@ -293,7 +288,8 @@ fn inspect_file(path: &Path) -> Result<(Vec<u8>, u64, String), String> {
 
 fn read_at_most(path: &Path, limit: usize) -> Result<(Vec<u8>, bool), String> {
     use std::io::Read as _;
-    let file = fs::File::open(path).map_err(|e| format!("Cannot open artifact: {e}"))?;
+    let file =
+        crate::safety::open_regular_file(path).map_err(|e| format!("Cannot open artifact: {e}"))?;
     let mut bytes = Vec::with_capacity(limit.min(64 * 1024) + 1);
     file.take(limit as u64 + 1)
         .read_to_end(&mut bytes)
@@ -326,6 +322,15 @@ pub struct RunWriter {
 }
 
 impl RunWriter {
+    fn ensure_artifact_capacity(&self) -> Result<(), String> {
+        if self.artifacts.len() >= MAX_MANIFEST_ARTIFACTS {
+            return Err(format!(
+                "Run has reached the {MAX_MANIFEST_ARTIFACTS}-artifact safety limit"
+            ));
+        }
+        Ok(())
+    }
+
     pub fn create(run_id: &str) -> Result<Self, String> {
         Self::create_in(&runs_dir()?, run_id)
     }
@@ -396,6 +401,7 @@ impl RunWriter {
         group: &str,
         content: &str,
     ) -> Result<(), String> {
+        self.ensure_artifact_capacity()?;
         let path = self.dir.join(rel_path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -422,6 +428,7 @@ impl RunWriter {
         label: &str,
         group: &str,
     ) -> Result<(), String> {
+        self.ensure_artifact_capacity()?;
         let path = self.dir.join(rel_path);
         let (head, bytes, sha256) =
             inspect_file(&path).map_err(|e| format!("Failed to inspect {rel_path}: {e}"))?;
@@ -450,17 +457,24 @@ impl RunWriter {
         let mut added = 0usize;
         let mut total_bytes = 0u64;
         let mut stack = vec![self.dir.join(subdir)];
+        let mut walk = crate::safety::WalkBudget::new("Run artifact discovery");
         while let Some(d) = stack.pop() {
             let Ok(entries) = fs::read_dir(&d) else {
                 continue;
             };
             for entry in entries.flatten() {
+                if walk.entry().is_err() {
+                    return added;
+                }
                 let path = entry.path();
                 let Ok(ft) = entry.file_type() else { continue };
                 if ft.is_symlink() {
                     continue;
                 }
                 if ft.is_dir() {
+                    if walk.directory().is_err() {
+                        return added;
+                    }
                     stack.push(path);
                     continue;
                 }
@@ -589,6 +603,12 @@ fn write_manifest(dir: &Path, manifest: &RunManifest) -> Result<(), String> {
     use std::io::Write as _;
     let json = serde_json::to_string_pretty(manifest)
         .map_err(|e| format!("Failed to serialize manifest: {e}"))?;
+    if json.len() > MAX_MANIFEST_BYTES {
+        return Err(format!(
+            "Run manifest would be {} bytes; the safety limit is {MAX_MANIFEST_BYTES}",
+            json.len()
+        ));
+    }
     let destination = dir.join("manifest.json");
     let mut temp = tempfile::NamedTempFile::new_in(dir)
         .map_err(|e| format!("Failed to create manifest temp file: {e}"))?;
@@ -626,15 +646,27 @@ pub fn list_runs() -> Result<Vec<RunSummary>, String> {
     let Ok(entries) = fs::read_dir(&dir) else {
         return Ok(summaries);
     };
+    let mut walk = crate::safety::WalkBudget::new("Run history listing");
     for entry in entries.flatten() {
+        walk.entry()?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             continue;
         }
         let manifest_path = entry.path().join("manifest.json");
-        let manifest = read_utf8_at_most(&manifest_path, MAX_MANIFEST_BYTES, "Run manifest")
-            .ok()
-            .and_then(|content| serde_json::from_str::<RunManifest>(&content).ok())
-            .or_else(|| recover_broken_manifest(&entry.path(), manifest_path.exists()));
+        let manifest_too_large = fs::symlink_metadata(&manifest_path)
+            .map(|metadata| metadata.len() > MAX_MANIFEST_BYTES as u64)
+            .unwrap_or(false);
+        let manifest = if manifest_too_large {
+            // Never rename and replace an oversized manifest: doing so can
+            // destroy a valid run index merely because an older writer
+            // exceeded the newer reader's limit.
+            None
+        } else {
+            read_utf8_at_most(&manifest_path, MAX_MANIFEST_BYTES, "Run manifest")
+                .ok()
+                .and_then(|content| serde_json::from_str::<RunManifest>(&content).ok())
+                .or_else(|| recover_broken_manifest(&entry.path(), manifest_path.exists()))
+        };
         if let Some(manifest) = manifest {
             summaries.push(manifest.to_summary());
         }
@@ -655,7 +687,9 @@ pub fn load_latest_report_for_input(
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(input_path));
     let mut candidates: Vec<(String, PathBuf)> = Vec::new();
+    let mut walk = crate::safety::WalkBudget::new_cancellable("Prior report discovery");
     for entry in fs::read_dir(runs_dir()?).map_err(|e| format!("Failed to list runs: {e}"))? {
+        walk.entry()?;
         let Ok(entry) = entry else { continue };
         if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
             continue;
@@ -758,7 +792,14 @@ pub fn update_run_meta(run_id: &str, title: &str, tags: &[String]) -> Result<(),
     if manifest.status == "running" {
         return Err("A running job cannot be renamed or retagged".to_string());
     }
-    manifest.title = title.trim().to_string();
+    let title = title.trim();
+    if title.len() > 500 {
+        return Err("Run title cannot exceed 500 bytes".to_string());
+    }
+    if tags.len() > 50 || tags.iter().any(|tag| tag.trim().len() > 100) {
+        return Err("Runs support at most 50 tags of 100 bytes each".to_string());
+    }
+    manifest.title = title.to_string();
     let mut seen = std::collections::HashSet::new();
     manifest.tags = tags
         .iter()
@@ -833,17 +874,20 @@ pub fn disk_usage() -> Result<RunsDiskUsage, String> {
     let Ok(entries) = fs::read_dir(&dir) else {
         return Ok(RunsDiskUsage { count: 0, bytes: 0 });
     };
+    let mut walk = crate::safety::WalkBudget::new("Run storage scan");
     for entry in entries.flatten() {
+        walk.entry()?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             continue;
         }
         count += 1;
-        bytes += dir_size(&entry.path());
+        walk.directory()?;
+        bytes = bytes.saturating_add(dir_size(&entry.path(), &mut walk)?);
     }
     Ok(RunsDiskUsage { count, bytes })
 }
 
-fn dir_size(path: &Path) -> u64 {
+fn dir_size(path: &Path, walk: &mut crate::safety::WalkBudget) -> Result<u64, String> {
     let mut total = 0u64;
     let mut stack = vec![path.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -851,18 +895,20 @@ fn dir_size(path: &Path) -> u64 {
             continue;
         };
         for entry in entries.flatten() {
+            walk.entry()?;
             let Ok(ft) = entry.file_type() else { continue };
             if ft.is_symlink() {
                 continue;
             }
             if ft.is_dir() {
+                walk.directory()?;
                 stack.push(entry.path());
             } else if let Ok(meta) = entry.metadata() {
-                total += meta.len();
+                total = total.saturating_add(meta.len());
             }
         }
     }
-    total
+    Ok(total)
 }
 
 /// Read a run's annotations (per-issue accept/reject/note), or "{}" if none.
@@ -935,13 +981,13 @@ pub fn purge_runs_with_limits(keep: usize, max_bytes: u64) -> Result<usize, Stri
     }
     let summaries = list_runs()?; // already newest-first
     let root = runs_dir()?;
-    let mut sized: Vec<(RunSummary, u64)> = summaries
-        .into_iter()
-        .map(|summary| {
-            let bytes = dir_size(&root.join(&summary.run_id));
-            (summary, bytes)
-        })
-        .collect();
+    let mut walk = crate::safety::WalkBudget::new("Run retention scan");
+    let mut sized: Vec<(RunSummary, u64)> = Vec::with_capacity(summaries.len());
+    for summary in summaries {
+        walk.directory()?;
+        let bytes = dir_size(&root.join(&summary.run_id), &mut walk)?;
+        sized.push((summary, bytes));
+    }
     let mut remaining = sized.len();
     let mut total_bytes = sized
         .iter()
@@ -990,20 +1036,23 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
         return Err("Invalid artifact path".into());
     }
 
-    let meta = fs::metadata(&path).map_err(|e| format!("Cannot stat artifact: {e}"))?;
-    let size = meta.len();
     let abs_path = path.to_string_lossy().replace('\\', "/");
 
     // Sniff a small head for kind detection of extensionless files.
-    let head = {
+    let (head, size) = {
         use std::io::Read as _;
         let mut buf = vec![0u8; 512];
-        let mut f = fs::File::open(&path).map_err(|e| format!("Cannot open artifact: {e}"))?;
+        let mut f = crate::safety::open_regular_file(&path)
+            .map_err(|e| format!("Cannot open artifact: {e}"))?;
+        let size = f
+            .metadata()
+            .map_err(|e| format!("Cannot stat artifact: {e}"))?
+            .len();
         let n = f
             .read(&mut buf)
             .map_err(|e| format!("Cannot read artifact: {e}"))?;
         buf.truncate(n);
-        buf
+        (buf, size)
     };
     let kind = detect_kind(rel_path, &head);
 
@@ -1216,6 +1265,22 @@ mod tests {
         let content = fs::read_to_string(temp.path().join("run-2/manifest.json")).unwrap();
         let manifest: RunManifest = serde_json::from_str(&content).unwrap();
         assert_eq!(manifest.status, "done");
+    }
+
+    #[test]
+    fn oversized_manifest_is_rejected_without_replacing_last_valid_copy() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = RunWriter::create_in(temp.path(), "bounded-manifest").unwrap();
+        writer
+            .meta
+            .variables
+            .insert("huge".to_string(), "x".repeat(MAX_MANIFEST_BYTES));
+        assert!(writer.persist_current().is_err());
+
+        let content =
+            fs::read_to_string(temp.path().join("bounded-manifest/manifest.json")).unwrap();
+        let manifest: RunManifest = serde_json::from_str(&content).unwrap();
+        assert!(manifest.variables.is_empty());
     }
 
     #[test]

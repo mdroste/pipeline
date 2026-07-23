@@ -212,6 +212,34 @@ pub fn survey_hint(survey: &serde_json::Value) -> String {
 // --- Step Output ---
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StepCallRecord {
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub model_transport: String,
+    #[serde(default)]
+    pub model_policy: String,
+    #[serde(default)]
+    pub model_source: String,
+    #[serde(default)]
+    pub model_catalog_updated_at: String,
+    #[serde(default)]
+    pub duration_secs: u64,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub attempt_count: u32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StepOutput {
     pub step_id: String,
     pub step_label: String,
@@ -259,6 +287,11 @@ pub struct StepOutput {
     /// Catalog timestamp used to resolve this model.
     #[serde(default)]
     pub model_catalog_updated_at: String,
+    /// Every provider call represented by this output. Multi-agent merges keep
+    /// the original analyses plus the merge call rather than losing their
+    /// usage and model provenance. Empty for reports saved before this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calls: Vec<StepCallRecord>,
     /// True when the step was skipped by its `run_if` guard. The entry is kept
     /// (so dependents' `{step:id}` placeholders resolve) but is not real report
     /// content.

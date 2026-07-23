@@ -16,7 +16,8 @@ const MAX_RUN_CONTEXT_SIZE: u64 = 64 * 1024 * 1024;
 
 /// Read a file for import, rejecting files above the size limit.
 fn read_import_file(path: &str) -> Result<String, String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
+    let file = crate::safety::open_regular_file(std::path::Path::new(path))
+        .map_err(|e| format!("Failed to read {path}: {e}"))?;
     let mut bytes = Vec::new();
     file.take(MAX_IMPORT_SIZE + 1)
         .read_to_end(&mut bytes)
@@ -964,6 +965,9 @@ async fn run_pipeline_inner_with_snapshot(
         .map(|v| (v.key.clone(), v.default.clone()))
         .collect();
     variables.extend(provided_vars);
+    crate::safety::validate_runtime_context(&variables, "Run variables")?;
+    crate::safety::validate_runtime_context(&provided_inputs, "Named input paths")?;
+    crate::safety::validate_run_budget(&config, &settings)?;
 
     // Extract paper text
     app.emit_event("pipeline:stage", serde_json::json!({"stage": "extracting"}))
@@ -1033,7 +1037,7 @@ async fn run_pipeline_inner_with_snapshot(
             let pdf = std::path::PathBuf::from(&extraction.source_path);
             let out_dir = w.dir().join("artifacts").join("pages");
             let rendered = tokio::task::spawn_blocking(move || {
-                crate::pipeline::extract::render_pdf_pages(&pdf, &out_dir, 100)
+                crate::pipeline::extract::render_pdf_pages(&pdf, &out_dir, 50)
             })
             .await;
             match rendered {
@@ -1091,7 +1095,19 @@ async fn run_pipeline_inner_with_snapshot(
     // into the run artifacts. Best-effort.
     if extraction.method == "marker" {
         if let Some(w) = run_writer.as_mut() {
-            let images = crate::pipeline::extract::marker_image_files(&extraction.paper_hash);
+            let images = match crate::pipeline::extract::marker_image_files(&extraction.paper_hash)
+            {
+                Ok(images) => images,
+                Err(error) => {
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!("WARNING: marker image discovery stopped: {error}")
+                        }),
+                    );
+                    Vec::new()
+                }
+            };
             if !images.is_empty() {
                 let figures_dir = w.dir().join("artifacts").join("figures");
                 if let Err(e) = std::fs::create_dir_all(&figures_dir) {
@@ -1482,8 +1498,8 @@ fn read_run_file(run_id: &str, rel: &str) -> Result<String, String> {
     if !path.starts_with(&run_dir) {
         return Err("Run-relative path resolves outside the run directory".to_string());
     }
-    let file =
-        std::fs::File::open(&path).map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
+    let file = crate::safety::open_regular_file(&path)
+        .map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
     let mut bytes = Vec::with_capacity(64 * 1024);
     file.take(MAX_RUN_CONTEXT_SIZE + 1)
         .read_to_end(&mut bytes)
@@ -2170,9 +2186,15 @@ pub async fn cancel_batch() -> Result<(), String> {
 fn scan_input_files(dir: &str) -> Result<Vec<String>, String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("Cannot read folder: {e}"))?;
     let mut files: Vec<String> = Vec::new();
+    let mut walk = crate::safety::WalkBudget::new("Input folder scan");
     for entry in entries.flatten() {
+        walk.entry()?;
         let path = entry.path();
-        if !path.is_file() {
+        if !entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -2238,12 +2260,12 @@ pub async fn start_watch(
     // Capture the baseline once. A second asynchronous scan would classify
     // files added in between as pre-existing and silently miss them.
     let baseline = scan_input_files(&folder)?;
-    if WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner()).active {
-        return Err("Already watching a folder".into());
-    }
-    let generation = WATCH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
-    {
+    let generation = {
         let mut st = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        if st.active {
+            return Err("Already watching a folder".into());
+        }
+        let generation = WATCH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
         *st = WatchStatus {
             active: true,
             folder: folder.clone(),
@@ -2251,7 +2273,8 @@ pub async fn start_watch(
             processed_total: 0,
             failed_total: 0,
         };
-    }
+        generation
+    };
     let bus = crate::emit::from_app(app);
     let run_bus = crate::emit::background(&bus);
     let inputs = extra_inputs.unwrap_or_default();
@@ -2308,6 +2331,9 @@ pub async fn start_watch(
                     run_pipeline_inner(&run_bus, &path, false, Default::default(), inputs.clone())
                         .await;
                 drop(guard);
+                if WATCH_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation {
+                    break;
+                }
                 seen.insert(path.clone());
                 observations.remove(&path);
                 let job = match result {
@@ -2456,7 +2482,42 @@ pub async fn save_all_artifacts(
 }
 
 /// Stash the last export path so we can clean it up on the next export.
-static LAST_EXPORT_PATH: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static LAST_EXPORT_PATH: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+pub(crate) fn cleanup_print_export() {
+    if let Ok(mut previous) = LAST_EXPORT_PATH.lock() {
+        if let Some(path) = previous.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+pub(crate) fn cleanup_stale_print_exports() {
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(24 * 60 * 60))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten().take(1_000) {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("pipeline_report_") || !name.ends_with(".html") {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.is_file()
+            && metadata
+                .modified()
+                .map(|time| time < cutoff)
+                .unwrap_or(false)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
 
 #[tauri::command]
 pub async fn print_report_html(markdown: String) -> Result<(), String> {
@@ -2529,11 +2590,7 @@ pub async fn print_report_html(markdown: String) -> Result<(), String> {
     ));
 
     // Clean up previous export file
-    if let Ok(mut prev) = LAST_EXPORT_PATH.lock() {
-        if let Some(old_path) = prev.take() {
-            let _ = std::fs::remove_file(&old_path);
-        }
-    }
+    cleanup_print_export();
 
     let mut tmp = tempfile::Builder::new()
         .prefix("pipeline_report_")
@@ -2545,25 +2602,25 @@ pub async fn print_report_html(markdown: String) -> Result<(), String> {
     tmp.flush().map_err(|e| format!("Failed to flush: {e}"))?;
 
     let path = tmp.into_temp_path();
-    let path_str = path.to_string_lossy().to_string();
-    path.keep()
+    let path_buf = path
+        .keep()
         .map_err(|e| format!("Failed to persist temp file: {e}"))?;
 
     if let Ok(mut prev) = LAST_EXPORT_PATH.lock() {
-        *prev = Some(path_str.clone());
+        *prev = Some(path_buf.clone());
     }
 
     #[cfg(target_os = "macos")]
     std::process::Command::new("open")
         .arg("--")
-        .arg(&path_str)
+        .arg(&path_buf)
         .spawn()
         .map_err(|e| format!("Failed to open browser: {e}"))?;
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         std::process::Command::new("explorer")
-            .arg(&path_str)
+            .arg(&path_buf)
             .creation_flags(0x08000000)
             .spawn()
             .map_err(|e| format!("Failed to open browser: {e}"))?;
@@ -2571,7 +2628,7 @@ pub async fn print_report_html(markdown: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     std::process::Command::new("xdg-open")
         .arg("--")
-        .arg(&path_str)
+        .arg(&path_buf)
         .spawn()
         .map_err(|e| format!("Failed to open browser: {e}"))?;
 
@@ -2915,7 +2972,7 @@ pub async fn read_cached_paper_text(paper_hash: String) -> Result<serde_json::Va
     if !path.exists() {
         return Ok(serde_json::json!({ "cached": false, "text": "" }));
     }
-    let file = std::fs::File::open(&path)
+    let file = crate::safety::open_regular_file(&path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     let mut bytes = Vec::with_capacity(64 * 1024);
     file.take(MAX_RUN_CONTEXT_SIZE + 1)
