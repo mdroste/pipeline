@@ -708,7 +708,7 @@ fn unpack_uv(archive_path: &Path, dest: &Path) -> Result<(), String> {
         .find(|n| n.ends_with("uv.exe"))
         .ok_or("uv.exe not found in the downloaded archive")?
         .clone();
-    let mut entry = archive
+    let entry = archive
         .by_name(&entry_name)
         .map_err(|e| format!("Failed to open uv.exe in archive: {e}"))?;
     if entry.size() > MAX_UV_BINARY_BYTES {
