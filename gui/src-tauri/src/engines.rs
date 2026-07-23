@@ -19,6 +19,8 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
+use std::io::Read as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -105,7 +105,7 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
                 limited_by = Some("entry limit");
                 break 'walk;
             }
-            if visited % 256 == 0 {
+            if visited.is_multiple_of(256) {
                 if crate::commands::is_cancelled() {
                     limited_by = Some("cancelled");
                     break 'walk;

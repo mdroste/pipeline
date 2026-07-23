@@ -138,6 +138,13 @@ jobs:
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@1.88.0
 
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -146,6 +153,10 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf
+
+      - name: Install npm dependencies
+        working-directory: gui
+        run: npm ci
 
       - name: Check declared MSRV
         working-directory: gui/src-tauri

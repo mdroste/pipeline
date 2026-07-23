@@ -151,12 +151,11 @@ pub fn run_bounded(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(unix)]
     fn caps_output_while_draining_to_exit() {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "printf 123456789"]);
@@ -167,7 +166,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn times_out_promptly() {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "sleep 5"]);

@@ -875,9 +875,10 @@ pub fn check_all() -> DepsReport {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::{check_claude_auth, probe_resolved};
     use super::{
-        check_claude_auth, cli_auth_status, parse_host_port, probe_resolved, resolve_command_in,
-        windows_pathexts, CliAuthStatus,
+        cli_auth_status, parse_host_port, resolve_command_in, windows_pathexts, CliAuthStatus,
     };
     use std::ffi::{OsStr, OsString};
     use std::path::Path;
