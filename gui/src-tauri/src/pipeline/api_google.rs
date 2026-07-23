@@ -43,6 +43,35 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     }
 }
 
+fn build_contents(
+    prompt: &str,
+    pdf_attachment: Option<&std::path::Path>,
+    shared_context: Option<&super::context_cache::PreparedContext>,
+) -> Result<Vec<GoogleContent>, String> {
+    let mut parts = Vec::new();
+    if let Some(pdf) = pdf_attachment {
+        let data = pdf_attachment_base64(pdf, MAX_ATTACH_PDF_GOOGLE)?;
+        parts.push(GooglePart::InlineData {
+            inline_data: GoogleInlineData {
+                mime_type: "application/pdf".to_string(),
+                data,
+            },
+        });
+    }
+    if let Some(context) = shared_context {
+        parts.push(GooglePart::Text {
+            text: context.content().to_string(),
+        });
+    }
+    parts.push(GooglePart::Text {
+        text: prompt.to_string(),
+    });
+    Ok(vec![GoogleContent {
+        role: "user".to_string(),
+        parts,
+    }])
+}
+
 /// Call the Google Gemini API directly, with tool-use loop for Read.
 #[allow(clippy::too_many_arguments)]
 pub async fn call_google_api(
@@ -77,23 +106,8 @@ pub async fn call_google_api(
     // With a PDF attachment, the user content is [inline PDF, text] parts;
     // otherwise just text. Google's inline-data path has a smaller request
     // cap than the other providers (see MAX_ATTACH_PDF_GOOGLE).
-    let mut parts = Vec::new();
-    if let Some(pdf) = overrides.pdf_attachment {
-        let data = pdf_attachment_base64(pdf, MAX_ATTACH_PDF_GOOGLE)?;
-        parts.push(GooglePart::InlineData {
-            inline_data: GoogleInlineData {
-                mime_type: "application/pdf".to_string(),
-                data,
-            },
-        });
-    }
-    parts.push(GooglePart::Text {
-        text: prompt.to_string(),
-    });
-    let contents = vec![GoogleContent {
-        role: "user".to_string(),
-        parts,
-    }];
+    let shared_context = overrides.shared_context.as_deref();
+    let contents = build_contents(prompt, overrides.pdf_attachment, shared_context)?;
 
     let request = GoogleRequest {
         contents,
@@ -104,7 +118,64 @@ pub async fn call_google_api(
         })),
     };
 
-    let (text, usage) = google_tool_loop(
+    let mut warm_usage = Usage::default();
+    if let Some(context) = shared_context {
+        let tools_key = serde_json::to_string(&request.tools).unwrap_or_default();
+        let system_key = serde_json::to_string(&request.system_instruction).unwrap_or_default();
+        let attachment_key = overrides
+            .pdf_attachment
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let cache_key = context.compatibility_key(
+            "google-api",
+            [
+                model.as_str(),
+                system_key.as_str(),
+                tools_key.as_str(),
+                attachment_key.as_str(),
+            ],
+        );
+        let slot = context.slot(cache_key).await;
+        let mut state = slot.lock().await;
+        if state.is_none() {
+            let mut warm_request = request.clone();
+            warm_request.contents = build_contents(
+                "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
+                overrides.pdf_attachment,
+                Some(context),
+            )?;
+            warm_request.generation_config = Some(serde_json::json!({ "maxOutputTokens": 32 }));
+            let warm_label = format!("{label} · cache warm-up");
+            match google_tool_loop(
+                app,
+                client,
+                &settings.google_api_key,
+                &model,
+                warm_request,
+                timeout_secs,
+                &warm_label,
+            )
+            .await
+            {
+                Ok((_text, usage)) => {
+                    warm_usage = usage;
+                    *state = Some("ready".to_string());
+                    log(app, format!("{label}: Google shared context warmed"));
+                }
+                Err(error) => {
+                    *state = Some("implicit".to_string());
+                    log(
+                        app,
+                        format!(
+                            "WARNING: {label}: Google cache warm-up was unavailable ({error}); continuing with implicit prefix caching"
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    let (text, mut usage) = google_tool_loop(
         app,
         client,
         &settings.google_api_key,
@@ -114,6 +185,7 @@ pub async fn call_google_api(
         label,
     )
     .await?;
+    usage.merge(warm_usage);
 
     let elapsed = start.elapsed().as_secs();
     log(
@@ -124,11 +196,34 @@ pub async fn call_google_api(
             usage.summary()
         ),
     );
-    super::logging::emit_usage(app, usage.input_tokens, usage.output_tokens);
+    super::logging::emit_usage(app, usage.call_usage());
 
     if text.trim().is_empty() {
         return Err(format!("{label}: Google API returned empty output"));
     }
 
     Ok(text.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_context_precedes_google_task_content() {
+        let context = super::super::context_cache::PreparedContext::new(
+            "paper body",
+            &serde_json::json!({"map": "orientation"}),
+        )
+        .unwrap();
+        let contents = build_contents("task-specific request", None, Some(&context)).unwrap();
+        let GooglePart::Text { text: shared } = &contents[0].parts[0] else {
+            panic!("expected text prefix")
+        };
+        let GooglePart::Text { text: task } = &contents[0].parts[1] else {
+            panic!("expected task text")
+        };
+        assert!(shared.contains("paper body"));
+        assert_eq!(task, "task-specific request");
+    }
 }

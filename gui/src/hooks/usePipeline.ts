@@ -26,6 +26,8 @@ export interface PassTiming {
 export interface TokenTotals {
   input: number;
   output: number;
+  cached: number;
+  cacheWrite: number;
 }
 
 /** Token usage aggregated over a run: a grand total plus per-session counts.
@@ -36,7 +38,10 @@ export interface UsageState {
   bySession: Record<number, TokenTotals>;
 }
 
-const EMPTY_USAGE: UsageState = { total: { input: 0, output: 0 }, bySession: {} };
+const EMPTY_USAGE: UsageState = {
+  total: { input: 0, output: 0, cached: 0, cacheWrite: 0 },
+  bySession: {},
+};
 
 export type PipelineState =
   | { kind: "idle" }
@@ -139,24 +144,45 @@ export function usePipeline() {
             });
           }
         ),
-        listen<{ session: number | null; input_tokens: number; output_tokens: number }>(
+        listen<{
+          session: number | null;
+          input_tokens: number;
+          output_tokens: number;
+          cached_input_tokens?: number;
+          cache_write_input_tokens?: number;
+        }>(
           "pipeline:usage",
           (event) => {
             if (!mounted) return;
-            const { session, input_tokens, output_tokens } = event.payload;
+            const {
+              session,
+              input_tokens,
+              output_tokens,
+              cached_input_tokens = 0,
+              cache_write_input_tokens = 0,
+            } = event.payload;
             // Usage events are infrequent (one per LLM call), so update state
             // directly rather than through the log buffer.
             setUsage((prev) => {
               const total = {
                 input: prev.total.input + input_tokens,
                 output: prev.total.output + output_tokens,
+                cached: prev.total.cached + cached_input_tokens,
+                cacheWrite: prev.total.cacheWrite + cache_write_input_tokens,
               };
               const bySession = { ...prev.bySession };
               if (session != null) {
-                const cur = bySession[session] ?? { input: 0, output: 0 };
+                const cur = bySession[session] ?? {
+                  input: 0,
+                  output: 0,
+                  cached: 0,
+                  cacheWrite: 0,
+                };
                 bySession[session] = {
                   input: cur.input + input_tokens,
                   output: cur.output + output_tokens,
+                  cached: cur.cached + cached_input_tokens,
+                  cacheWrite: cur.cacheWrite + cache_write_input_tokens,
                 };
               }
               return { total, bySession };

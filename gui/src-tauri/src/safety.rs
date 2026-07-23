@@ -301,6 +301,7 @@ mod tests {
         let config = crate::pipeline_config::PipelineConfig {
             steps: vec![step],
             merge: Default::default(),
+            context_cache: Default::default(),
             use_orientation: false,
             orientation_prompt: String::new(),
             extraction: Default::default(),

@@ -18,10 +18,24 @@ pub struct DepStatus {
     pub path: String,
     pub required: bool,
     pub hint: String,
-    /// Whether the CLI is authenticated / signed in.
-    /// None = not applicable or not checked (e.g. binary not found).
+    /// Whether the provider has usable authentication, either through its CLI
+    /// session or a configured direct-API key. None = not applicable or the
+    /// result could not be verified.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authenticated: Option<bool>,
+    /// Sign-in state reported by the installed CLI itself. This stays
+    /// separate from `authenticated`: a configured direct-API key can make a
+    /// provider ready without saying anything about the CLI's own session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cli_auth_status: Option<CliAuthStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CliAuthStatus {
+    SignedIn,
+    SignedOut,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -405,17 +419,17 @@ fn probe(name: &str, version_args: &[&str]) -> ProbeResult {
     }
 }
 
-/// Check if Claude CLI is authenticated via `claude auth status`. Probe and
-/// parse failures are authentication failures, not an indeterminate success.
-fn check_claude_auth(command: &ResolvedCommand) -> bool {
+/// Check if Claude CLI is authenticated via `claude auth status`. Claude
+/// returns JSON even when the user is signed out (with a non-zero exit code),
+/// so parse the payload before considering process status. Execution or parse
+/// failures are unknown, not evidence that the user signed out.
+fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
     let mut process = command.command(["auth", "status"]);
     configure_probe_command(&mut process);
-    let Ok(output) = crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT)
-    else {
-        return false;
-    };
-    if !output.status.success() || output.stdout_truncated || output.stderr_truncated {
-        return false;
+    let output =
+        crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT).ok()?;
+    if output.stdout_truncated || output.stderr_truncated {
+        return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     serde_json::from_str::<serde_json::Value>(stdout.trim())
@@ -425,7 +439,6 @@ fn check_claude_auth(command: &ResolvedCommand) -> bool {
                 .get("loggedIn")
                 .and_then(|logged_in| logged_in.as_bool())
         })
-        .unwrap_or(false)
 }
 
 /// Check if Codex CLI has credentials available.
@@ -482,6 +495,14 @@ fn check_gemini_auth() -> Option<bool> {
     // A settings-file substring is not evidence of a readable, unexpired
     // credential, so report this state as unknown rather than green.
     None
+}
+
+fn cli_auth_status(found: bool, authenticated: Option<bool>) -> Option<CliAuthStatus> {
+    found.then(|| match authenticated {
+        Some(true) => CliAuthStatus::SignedIn,
+        Some(false) => CliAuthStatus::SignedOut,
+        None => CliAuthStatus::Unknown,
+    })
 }
 
 /// Parse "http(s)://host[:port]/..." into (host, port) for a TCP probe.
@@ -563,9 +584,10 @@ fn probe_local_server(base_url: &str, api_key: &str) -> (bool, String) {
     (reachable.is_some(), desc)
 }
 
-/// Run all dependency checks in parallel.
-/// Skips subprocess probes when an API key already covers a provider.
-/// Uses existence checks (which) instead of --version/--help for optional tools.
+/// Run all dependency checks in parallel. Provider CLIs are still probed when
+/// a direct-API key is configured so their own sign-in state can be reported
+/// separately. Uses existence checks instead of --version/--help for optional
+/// tools.
 pub fn check_all() -> DepsReport {
     let settings = crate::settings::load_persisted();
     let provider = settings.preferred_provider.clone();
@@ -575,20 +597,20 @@ pub fn check_all() -> DepsReport {
     let local_base_url = settings.local_base_url.clone();
     let local_api_key = settings.local_api_key.clone();
 
-    // Run all probes in parallel, skipping unnecessary work
+    // Run all independent probes in parallel.
     std::thread::scope(|s| {
-        // Claude: probe CLI, skip auth check if API key covers it
+        // Probe each CLI and its own sign-in state even if a direct API key
+        // independently makes that provider ready.
         let claude_h = s.spawn(move || {
             let ProbeResult {
                 command,
                 version,
                 path,
             } = probe("claude", &["--version"]);
-            let auth = command.as_ref().map(check_claude_auth);
+            let auth = command.as_ref().and_then(check_claude_auth);
             (command.is_some(), version, path, auth)
         });
 
-        // Codex: probe CLI, skip auth check if API key covers it
         let codex_h = s.spawn(move || {
             let ProbeResult {
                 command,
@@ -599,7 +621,6 @@ pub fn check_all() -> DepsReport {
             (command.is_some(), version, path, auth)
         });
 
-        // Gemini: probe CLI, skip auth check if API key covers it
         let gemini_h = s.spawn(move || {
             let ProbeResult {
                 command,
@@ -637,6 +658,8 @@ pub fn check_all() -> DepsReport {
             "API key configured — CLI not required."
         } else if found && claude_auth == Some(false) {
             "Claude CLI is installed but not signed in. Run `claude auth login` to authenticate."
+        } else if found && claude_auth.is_none() {
+            "Claude CLI is installed, but authentication status could not be verified. Run `claude auth status`."
         } else {
             "Install Claude Code: npm install -g @anthropic-ai/claude-code"
         };
@@ -656,6 +679,7 @@ pub fn check_all() -> DepsReport {
             } else {
                 claude_auth
             },
+            cli_auth_status: cli_auth_status(found, claude_auth),
         };
 
         let (found, ver, path, codex_auth) = codex_h
@@ -686,6 +710,7 @@ pub fn check_all() -> DepsReport {
             } else {
                 codex_auth
             },
+            cli_auth_status: cli_auth_status(found, codex_auth),
         };
 
         let (found, ver, path, gemini_auth) = gemini_h
@@ -716,6 +741,7 @@ pub fn check_all() -> DepsReport {
             } else {
                 gemini_auth
             },
+            cli_auth_status: cli_auth_status(found, gemini_auth),
         };
 
         // Classify a found binary as bundled (under our resource dir) or system.
@@ -753,6 +779,7 @@ pub fn check_all() -> DepsReport {
                 format!("{install_hint} — needed for PDF support in the LLM Read tool.")
             },
             authenticated: None,
+            cli_auth_status: None,
         };
 
         let pdftotext_path = pdftotext_h.join().unwrap_or(None);
@@ -774,6 +801,7 @@ pub fn check_all() -> DepsReport {
                 format!("{install_hint} — needed for the pdftotext extraction fallback.")
             },
             authenticated: None,
+            cli_auth_status: None,
         };
 
         let marker_path = marker_h.join().unwrap_or(None);
@@ -804,6 +832,7 @@ pub fn check_all() -> DepsReport {
             required: false,
             hint: marker_hint.into(),
             authenticated: None,
+            cli_auth_status: None,
         };
 
         let (local_reachable, local_desc) = local_h.join().unwrap_or((false, String::new()));
@@ -826,6 +855,7 @@ pub fn check_all() -> DepsReport {
                     .into()
             },
             authenticated: None,
+            cli_auth_status: None,
         };
 
         let deps = vec![claude, codex, gemini, local, pdftoppm, pdftotext, marker];
@@ -846,7 +876,8 @@ pub fn check_all() -> DepsReport {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_claude_auth, parse_host_port, probe_resolved, resolve_command_in, windows_pathexts,
+        check_claude_auth, cli_auth_status, parse_host_port, probe_resolved, resolve_command_in,
+        windows_pathexts, CliAuthStatus,
     };
     use std::ffi::{OsStr, OsString};
     use std::path::Path;
@@ -1110,6 +1141,37 @@ CALL :find_dp0
         write_fixture(&malformed_auth, "#!/bin/sh\nprintf 'not-json\\n'\n");
         std::fs::set_permissions(&malformed_auth, std::fs::Permissions::from_mode(0o755)).unwrap();
         let command = resolve_command_in("malformed-auth", &[bin], false, None).unwrap();
-        assert!(!check_claude_auth(&command));
+        assert_eq!(check_claude_auth(&command), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn claude_auth_uses_json_state_even_when_signed_out_exits_nonzero() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("bin");
+        let signed_out = bin.join("signed-out");
+        write_fixture(
+            &signed_out,
+            "#!/bin/sh\nprintf '{\"loggedIn\":false}\\n'\nexit 1\n",
+        );
+        std::fs::set_permissions(&signed_out, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let command = resolve_command_in("signed-out", &[bin], false, None).unwrap();
+        assert_eq!(check_claude_auth(&command), Some(false));
+    }
+
+    #[test]
+    fn cli_auth_status_is_tri_state_and_only_applies_to_installed_clis() {
+        assert_eq!(cli_auth_status(false, None), None);
+        assert_eq!(
+            cli_auth_status(true, Some(true)),
+            Some(CliAuthStatus::SignedIn)
+        );
+        assert_eq!(
+            cli_auth_status(true, Some(false)),
+            Some(CliAuthStatus::SignedOut)
+        );
+        assert_eq!(cli_auth_status(true, None), Some(CliAuthStatus::Unknown));
     }
 }

@@ -314,8 +314,8 @@ function LLMSection({
             }
             className={selectClass}
           >
-            <option value="claude">Claude</option>
-            <option value="codex">Codex (OpenAI)</option>
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="codex">ChatGPT (OpenAI)</option>
             <option value="gemini">Gemini (Google)</option>
             <option value="local">Local (Ollama / OpenAI-compatible)</option>
           </select>
@@ -325,7 +325,7 @@ function LLMSection({
         </Field>
 
         {/* Claude */}
-        <ProviderGroup title="Claude" active={settings.preferred_provider === "claude"} hasApiKey={!!settings.anthropic_api_key}>
+        <ProviderGroup title="Claude (Anthropic)" active={settings.preferred_provider === "claude"} hasApiKey={!!settings.anthropic_api_key}>
           <Field label="API Key">
             <input
               type="password"
@@ -367,8 +367,8 @@ function LLMSection({
           </Field>
         </ProviderGroup>
 
-        {/* Codex / OpenAI */}
-        <ProviderGroup title="Codex (OpenAI)" active={settings.preferred_provider === "codex"} hasApiKey={!!settings.openai_api_key}>
+        {/* ChatGPT / OpenAI */}
+        <ProviderGroup title="ChatGPT (OpenAI)" active={settings.preferred_provider === "codex"} hasApiKey={!!settings.openai_api_key}>
           <Field label="API Key">
             <input
               type="password"

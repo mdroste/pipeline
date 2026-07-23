@@ -681,7 +681,7 @@ async fn cli_version(program: &str) -> String {
     }
 }
 
-async fn rpc_exchange(
+pub(crate) async fn rpc_exchange(
     program: &str,
     args: &[String],
     requests: &[serde_json::Value],
@@ -771,6 +771,157 @@ async fn rpc_exchange(
     result
 }
 
+/// Ask Claude Code for the same account-aware model list exposed by its
+/// interactive `/model` picker. This is the documented Agent SDK initialize
+/// handshake: it does not submit a user prompt or make a model call.
+async fn claude_sdk_initialize() -> Result<serde_json::Value, String> {
+    let args = [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--safe-mode",
+        "--permission-mode",
+        "dontAsk",
+        "--tools",
+        "",
+        "--disable-slash-commands",
+        "--no-chrome",
+        "--no-session-persistence",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+    let mut command = build_provider_command("claude", None, &args)?;
+    command
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Failed to start Claude model discovery: {e}"))?;
+    let mut guard = DiscoveryProcessGuard::register(child.id().unwrap_or(0));
+    let result = async {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or("Claude model discovery has no stdin")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Claude model discovery has no stdout")?;
+        let request_id = "pipeline-model-list";
+        let request = serde_json::json!({
+            "type": "control_request",
+            "request_id": request_id,
+            "request": {
+                "subtype": "initialize",
+                "hooks": {}
+            }
+        });
+        stdin
+            .write_all(
+                serde_json::to_string(&request)
+                    .map_err(|e| e.to_string())?
+                    .as_bytes(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
+        stdin.flush().await.map_err(|e| e.to_string())?;
+
+        let mut reader = BufReader::new(stdout);
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while let Some(record) =
+                crate::pipeline::logging::next_bounded_line(&mut reader, MAX_DISCOVERY_LINE_BYTES)
+                    .await
+                    .map_err(|e| e.to_string())?
+            {
+                if record.truncated {
+                    return Err(format!(
+                        "Claude model discovery emitted a response line larger than {} MB",
+                        MAX_DISCOVERY_LINE_BYTES / 1024 / 1024
+                    ));
+                }
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&record.text) else {
+                    continue;
+                };
+                if value["type"] != "control_response"
+                    || value["response"]["request_id"] != request_id
+                {
+                    continue;
+                }
+                if value["response"]["subtype"] == "error" {
+                    return Err(format!(
+                        "Claude model discovery returned {}",
+                        value["response"]["error"]
+                    ));
+                }
+                return value["response"]["response"]
+                    .as_object()
+                    .map(|_| value["response"]["response"].clone())
+                    .ok_or_else(|| {
+                        "Claude model discovery returned no initialization data".to_string()
+                    });
+            }
+            Err("Claude model discovery ended before replying".to_string())
+        })
+        .await
+        .map_err(|_| "Claude model discovery timed out".to_string())?
+    }
+    .await;
+    stop_discovery_child(&mut child, &mut guard).await;
+    result
+}
+
+fn populate_claude_models(
+    catalog: &mut ModelCatalog,
+    initialization: &serde_json::Value,
+) -> Result<(), String> {
+    let models = initialization["models"]
+        .as_array()
+        .ok_or("Claude model discovery returned no model list")?;
+    let default_resolved = models
+        .iter()
+        .find(|model| model["value"] == "default")
+        .and_then(|model| model["resolvedModel"].as_str())
+        .map(str::to_string);
+    catalog.default_model.clone_from(&default_resolved);
+
+    for item in models {
+        let Some(id) = item["value"].as_str() else {
+            continue;
+        };
+        // Pipeline already provides an Automatic option which deliberately
+        // omits --model, so do not duplicate Claude's `default` sentinel as a
+        // pinnable exact model.
+        if id == "default" {
+            continue;
+        }
+        let mut model = entry(id);
+        model.display_name = item["displayName"].as_str().unwrap_or(id).to_string();
+        model.description = item["description"].as_str().unwrap_or("").to_string();
+        model.supported_efforts = item["supportedEffortLevels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::to_string)
+            .collect();
+        model.is_default = default_resolved
+            .as_deref()
+            .is_some_and(|default| item["resolvedModel"].as_str() == Some(default));
+        catalog.models.push(model);
+    }
+    if catalog.models.is_empty() {
+        return Err("Claude model discovery returned an empty model list".into());
+    }
+    Ok(())
+}
+
 async fn cli_catalog(provider: &str) -> Result<ModelCatalog, String> {
     let program = match provider {
         "claude" => "claude",
@@ -838,9 +989,10 @@ async fn cli_catalog(provider: &str) -> Result<ModelCatalog, String> {
                 catalog.models.push(model);
             }
         }
-        // Claude Code exposes durable tier aliases but no supported machine
-        // model-list endpoint. Keep Automatic plus the policy roles.
-        "claude" => {}
+        "claude" => {
+            let initialization = claude_sdk_initialize().await?;
+            populate_claude_models(&mut catalog, &initialization)?;
+        }
         _ => unreachable!(),
     }
     catalog.roles = infer_roles(provider, &catalog.models);
@@ -867,7 +1019,17 @@ pub async fn discover(
     let transport = settings.model_transport(provider);
     if !refresh && provider != "local" {
         if let Some(cache) = read_cache(provider, transport) {
-            if now_epoch().saturating_sub(cache.saved_at) < CACHE_TTL.as_secs() {
+            // Builds before Claude Agent SDK discovery cached only the three
+            // policy roles and an empty model list. Refresh those legacy
+            // envelopes immediately after upgrading instead of preserving
+            // them for the remainder of the 24-hour TTL.
+            let legacy_claude_cli_cache = provider == "claude"
+                && transport == "cli"
+                && cache.catalog.source == "installed_cli"
+                && cache.catalog.models.is_empty();
+            if !legacy_claude_cli_cache
+                && now_epoch().saturating_sub(cache.saved_at) < CACHE_TTL.as_secs()
+            {
                 return Ok(cache.catalog);
             }
         }
@@ -1096,5 +1258,49 @@ mod tests {
                 assert_eq!(bytes, b"1234");
                 assert!(overflowed);
             });
+    }
+
+    #[test]
+    fn claude_sdk_models_are_account_aware_and_skip_default_sentinel() {
+        let initialization = serde_json::json!({
+            "models": [
+                {
+                    "value": "default",
+                    "resolvedModel": "claude-opus-4-8[1m]",
+                    "displayName": "Default (recommended)",
+                    "description": "Account default"
+                },
+                {
+                    "value": "opus[1m]",
+                    "resolvedModel": "claude-opus-4-8[1m]",
+                    "displayName": "Opus",
+                    "description": "Everyday complex tasks",
+                    "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]
+                },
+                {
+                    "value": "claude-fable-5[1m]",
+                    "resolvedModel": "claude-fable-5",
+                    "displayName": "Fable",
+                    "description": "Hardest and longest-running tasks",
+                    "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]
+                }
+            ]
+        });
+        let mut catalog = base_catalog("claude", "cli", "installed_cli");
+        populate_claude_models(&mut catalog, &initialization).unwrap();
+
+        assert_eq!(
+            catalog.default_model.as_deref(),
+            Some("claude-opus-4-8[1m]")
+        );
+        assert_eq!(catalog.models.len(), 2);
+        assert_eq!(catalog.models[0].id, "opus[1m]");
+        assert!(catalog.models[0].is_default);
+        assert_eq!(catalog.models[1].id, "claude-fable-5[1m]");
+        assert_eq!(catalog.models[1].display_name, "Fable");
+        assert_eq!(
+            catalog.models[1].supported_efforts,
+            ["low", "medium", "high", "xhigh", "max"]
+        );
     }
 }

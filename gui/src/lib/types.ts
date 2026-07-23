@@ -115,9 +115,16 @@ export interface VarSpec {
   choices?: string[];
 }
 
+/** Optional, profile-scoped reuse of the extracted input and orientation map. */
+export interface ContextCacheConfig {
+  enabled: boolean;
+}
+
 export interface PipelineConfig {
   steps: StepConfig[];
   merge: MergeConfig;
+  /** Missing on older profiles/backends and therefore treated as disabled. */
+  context_cache?: ContextCacheConfig;
   use_orientation: boolean;
   /** Custom orientation-map prompt. Empty = use the default (prompts/orientation.md). */
   orientation_prompt: string;
@@ -141,6 +148,8 @@ export interface StepOutput {
   duration_secs?: number;
   input_tokens?: number;
   output_tokens?: number;
+  cached_input_tokens?: number;
+  cache_write_input_tokens?: number;
   attempt_count?: number;
   /** Effective model id/alias used for this step. */
   model?: string;
@@ -296,6 +305,8 @@ export interface RunSummary {
   duration_secs: number;
   input_tokens: number;
   output_tokens: number;
+  cached_input_tokens: number;
+  cache_write_input_tokens: number;
   step_count: number;
   artifact_count: number;
   failed_steps: string[];
@@ -381,6 +392,8 @@ export interface DepStatus {
   required: boolean;
   hint: string;
   authenticated?: boolean;
+  /** The installed CLI's own session, independent of direct-API readiness. */
+  cli_auth_status?: "signed_in" | "signed_out" | "unknown";
 }
 
 export interface DepsReport {
@@ -419,6 +432,7 @@ export type ExportEnvelope =
       name: string;
       steps: StepConfig[];
       merge: MergeConfig;
+      context_cache?: ContextCacheConfig;
       use_orientation?: boolean;
       orientation_prompt?: string;
       extraction?: ExtractionConfig;

@@ -109,6 +109,31 @@ describe("PipelinePage", () => {
     expect(saveCall?.[1].config.steps.length).toBe(3);
   });
 
+  it("offers an opt-in shared context cache in pipeline settings", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    const toggle = screen.getByRole("switch", { name: "Reuse shared input context" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "save_pipeline_config",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            context_cache: { enabled: true },
+          }),
+        }),
+      );
+    });
+  });
+
   it("renders the execution-shape diagram for the loaded steps", async () => {
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);

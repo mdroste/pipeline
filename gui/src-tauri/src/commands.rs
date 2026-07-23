@@ -2825,13 +2825,13 @@ fn import_profile_envelope(
     envelope: pipeline_config::ExportEnvelope,
 ) -> Result<ProfileSummary, String> {
     match envelope {
-        pipeline_config::ExportEnvelope::Profile { schema_version, name, steps, merge, use_orientation, orientation_prompt, extraction, parallel_context_template, variables } => {
+        pipeline_config::ExportEnvelope::Profile { schema_version, name, steps, merge, context_cache, use_orientation, orientation_prompt, extraction, parallel_context_template, variables } => {
             if schema_version > pipeline_config::CURRENT_SCHEMA_VERSION {
                 return Err(format!(
                     "This profile was made with a newer version of Pipeline (schema v{schema_version}). Update the app to import it."
                 ));
             }
-            pipeline_config::import_profile_data(&name, steps, merge, use_orientation, orientation_prompt, extraction, parallel_context_template, variables)
+            pipeline_config::import_profile_data(&name, steps, merge, context_cache, use_orientation, orientation_prompt, extraction, parallel_context_template, variables)
         }
         pipeline_config::ExportEnvelope::Step { .. } => {
             Err("This file contains a single step, not a profile. Use Import on the pipeline page to add it to the current profile.".into())

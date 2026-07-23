@@ -45,6 +45,8 @@ fn call_records_for_output(output: &StepOutput) -> Vec<StepCallRecord> {
         duration_secs: output.duration_secs,
         input_tokens: output.input_tokens,
         output_tokens: output.output_tokens,
+        cached_input_tokens: output.cached_input_tokens,
+        cache_write_input_tokens: output.cache_write_input_tokens,
         attempt_count: output.attempt_count,
     }]
 }
@@ -157,6 +159,12 @@ pub async fn merge_step_outputs(
         let original_output = original_calls
             .iter()
             .fold(0u64, |total, call| total.saturating_add(call.output_tokens));
+        let original_cached = original_calls.iter().fold(0u64, |total, call| {
+            total.saturating_add(call.cached_input_tokens)
+        });
+        let original_cache_write = original_calls.iter().fold(0u64, |total, call| {
+            total.saturating_add(call.cache_write_input_tokens)
+        });
         let original_attempts = original_calls
             .iter()
             .fold(0u32, |total, call| total.saturating_add(call.attempt_count));
@@ -245,6 +253,7 @@ pub async fn merge_step_outputs(
                 command_model: resolution.command_model.as_deref(),
                 effort: &effort,
                 settings: &run_settings,
+                shared_context: None,
             })
             .await;
             let merge_call = StepCallRecord {
@@ -259,6 +268,8 @@ pub async fn merge_step_outputs(
                 duration_secs: call.duration_secs,
                 input_tokens: call.usage.input_tokens,
                 output_tokens: call.usage.output_tokens,
+                cached_input_tokens: call.usage.cached_input_tokens,
+                cache_write_input_tokens: call.usage.cache_write_input_tokens,
                 attempt_count: 1,
             };
             if let Some(error) = cancellation_error() {
@@ -297,6 +308,10 @@ pub async fn merge_step_outputs(
                             duration_secs: original_duration.saturating_add(call.duration_secs),
                             input_tokens: original_input.saturating_add(call.usage.input_tokens),
                             output_tokens: original_output.saturating_add(call.usage.output_tokens),
+                            cached_input_tokens: original_cached
+                                .saturating_add(call.usage.cached_input_tokens),
+                            cache_write_input_tokens: original_cache_write
+                                .saturating_add(call.usage.cache_write_input_tokens),
                             attempt_count: original_attempts.saturating_add(1),
                             model: resolution.resolved_model,
                             model_transport: resolution.transport,
@@ -416,6 +431,8 @@ pub async fn merge_step_outputs(
                             duration_secs: *merge_duration_secs,
                             input_tokens: merge_usage.input_tokens,
                             output_tokens: merge_usage.output_tokens,
+                            cached_input_tokens: merge_usage.cached_input_tokens,
+                            cache_write_input_tokens: merge_usage.cache_write_input_tokens,
                             attempt_count: 1,
                             ..Default::default()
                         });
@@ -429,6 +446,12 @@ pub async fn merge_step_outputs(
                     let output_tokens = calls
                         .iter()
                         .fold(0u64, |total, call| total.saturating_add(call.output_tokens));
+                    let cached_input_tokens = calls.iter().fold(0u64, |total, call| {
+                        total.saturating_add(call.cached_input_tokens)
+                    });
+                    let cache_write_input_tokens = calls.iter().fold(0u64, |total, call| {
+                        total.saturating_add(call.cache_write_input_tokens)
+                    });
                     let attempt_count = calls
                         .iter()
                         .fold(0u32, |total, call| total.saturating_add(call.attempt_count));
@@ -442,6 +465,8 @@ pub async fn merge_step_outputs(
                         duration_secs,
                         input_tokens,
                         output_tokens,
+                        cached_input_tokens,
+                        cache_write_input_tokens,
                         attempt_count,
                         calls,
                         ..Default::default()

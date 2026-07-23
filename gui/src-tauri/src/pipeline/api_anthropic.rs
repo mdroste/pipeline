@@ -59,6 +59,37 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     tools
 }
 
+fn build_content(
+    prompt: &str,
+    pdf_attachment: Option<&std::path::Path>,
+    shared_context: Option<&super::context_cache::PreparedContext>,
+) -> Result<serde_json::Value, String> {
+    if pdf_attachment.is_none() && shared_context.is_none() {
+        return Ok(serde_json::Value::String(prompt.to_string()));
+    }
+    let mut blocks = Vec::new();
+    if let Some(pdf) = pdf_attachment {
+        let data = pdf_attachment_base64(pdf, MAX_ATTACH_PDF)?;
+        blocks.push(serde_json::json!({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": data
+            }
+        }));
+    }
+    if let Some(context) = shared_context {
+        blocks.push(serde_json::json!({
+            "type": "text",
+            "text": context.content(),
+            "cache_control": { "type": "ephemeral" }
+        }));
+    }
+    blocks.push(serde_json::json!({ "type": "text", "text": prompt }));
+    Ok(serde_json::Value::Array(blocks))
+}
+
 /// Call the Anthropic API directly, with tool-use loop for Read.
 #[allow(clippy::too_many_arguments)]
 pub async fn call_anthropic_api(
@@ -88,23 +119,8 @@ pub async fn call_anthropic_api(
 
     // With a PDF attachment, the user message is [document, text] content
     // blocks; otherwise a plain string.
-    let content = match overrides.pdf_attachment {
-        Some(pdf) => {
-            let data = pdf_attachment_base64(pdf, MAX_ATTACH_PDF)?;
-            serde_json::json!([
-                {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": data
-                    }
-                },
-                { "type": "text", "text": prompt }
-            ])
-        }
-        None => serde_json::Value::String(prompt.to_string()),
-    };
+    let shared_context = overrides.shared_context.as_deref();
+    let content = build_content(prompt, overrides.pdf_attachment, shared_context)?;
     let messages = vec![AnthropicMessage {
         role: "user".to_string(),
         content,
@@ -119,7 +135,66 @@ pub async fn call_anthropic_api(
         output_config,
     };
 
-    let (text, usage) = anthropic_tool_loop(
+    let mut warm_usage = Usage::default();
+    if let Some(context) = shared_context {
+        let tools_key = serde_json::to_string(&request.tools).unwrap_or_default();
+        let attachment_key = overrides
+            .pdf_attachment
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let cache_key = context.compatibility_key(
+            "anthropic-api",
+            [
+                request.model.as_str(),
+                effort,
+                system_prompt.unwrap_or(""),
+                tools_key.as_str(),
+                attachment_key.as_str(),
+            ],
+        );
+        let slot = context.slot(cache_key).await;
+        let mut state = slot.lock().await;
+        if state.is_none() {
+            let mut warm_request = request.clone();
+            warm_request.max_tokens = 32;
+            warm_request.messages = vec![AnthropicMessage {
+                role: "user".to_string(),
+                content: build_content(
+                    "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
+                    overrides.pdf_attachment,
+                    Some(context),
+                )?,
+            }];
+            let warm_label = format!("{label} · cache warm-up");
+            match anthropic_tool_loop(
+                app,
+                client,
+                &settings.anthropic_api_key,
+                warm_request,
+                timeout_secs,
+                &warm_label,
+            )
+            .await
+            {
+                Ok((_text, usage)) => {
+                    warm_usage = usage;
+                    *state = Some("ready".to_string());
+                    log(app, format!("{label}: Anthropic shared context warmed"));
+                }
+                Err(error) => {
+                    *state = Some("implicit".to_string());
+                    log(
+                        app,
+                        format!(
+                            "WARNING: {label}: Anthropic cache warm-up was unavailable ({error}); continuing with the cached prefix"
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    let (text, mut usage) = anthropic_tool_loop(
         app,
         client,
         &settings.anthropic_api_key,
@@ -128,6 +203,7 @@ pub async fn call_anthropic_api(
         label,
     )
     .await?;
+    usage.merge(warm_usage);
 
     let elapsed = start.elapsed().as_secs();
     log(
@@ -138,7 +214,7 @@ pub async fn call_anthropic_api(
             usage.summary()
         ),
     );
-    super::logging::emit_usage(app, usage.input_tokens, usage.output_tokens);
+    super::logging::emit_usage(app, usage.call_usage());
 
     if text.trim().is_empty() {
         return Err(format!("{label}: Anthropic API returned empty output"));
@@ -186,5 +262,19 @@ mod tests {
         // Empty or unrecognized values are dropped rather than sent.
         assert_eq!(effort_config("claude-sonnet-4-6", ""), None);
         assert_eq!(effort_config("claude-sonnet-4-6", "xhigh"), None);
+    }
+
+    #[test]
+    fn shared_context_block_has_anthropic_cache_breakpoint() {
+        let context = super::super::context_cache::PreparedContext::new(
+            "paper body",
+            &serde_json::json!({"map": "orientation"}),
+        )
+        .unwrap();
+        let content = build_content("task-specific request", None, Some(&context)).unwrap();
+        let blocks = content.as_array().unwrap();
+        assert!(blocks[0]["text"].as_str().unwrap().contains("paper body"));
+        assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(blocks[1]["text"], "task-specific request");
     }
 }

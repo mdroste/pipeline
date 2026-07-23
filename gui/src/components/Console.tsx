@@ -196,7 +196,8 @@ export default function Console({ logs, usage }: Props) {
               <option value="master">All sessions</option>
               {sessions.map((s) => {
                 const u = usage.bySession[s.id];
-                const tok = u ? ` · ${fmtTokens(u.input)}→${fmtTokens(u.output)}` : "";
+                const cache = u?.cached ? ` · ${fmtTokens(u.cached)} cached` : "";
+                const tok = u ? ` · ${fmtTokens(u.input)}→${fmtTokens(u.output)}${cache}` : "";
                 return (
                   <option key={s.id} value={String(s.id)}>
                     {(s.hasError ? "✕ " : "") + s.label + ` (${s.count})` + tok}
@@ -240,9 +241,21 @@ export default function Console({ logs, usage }: Props) {
           {usage.total.input + usage.total.output > 0 && (
             <span
               className="text-gray-500"
-              title={`${usage.total.input.toLocaleString()} input + ${usage.total.output.toLocaleString()} output tokens (providers that report usage)`}
+              title={[
+                `${usage.total.input.toLocaleString()} logical input`,
+                `${usage.total.output.toLocaleString()} output`,
+                `${usage.total.cached.toLocaleString()} cache-read`,
+                `${usage.total.cacheWrite.toLocaleString()} cache-write tokens`,
+                "(providers that report usage)",
+              ].join(" · ")}
             >
               {fmtTokens(usage.total.input)} in / {fmtTokens(usage.total.output)} out
+              {usage.total.cached > 0 && (
+                <span className="text-green-500"> · {fmtTokens(usage.total.cached)} cached</span>
+              )}
+              {usage.total.cacheWrite > 0 && (
+                <span className="text-blue-400"> · {fmtTokens(usage.total.cacheWrite)} warmed</span>
+              )}
             </span>
           )}
           {errorCount > 0 && (

@@ -512,7 +512,7 @@ pub enum ToolResult {
 
 // ── Anthropic-specific types ───────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AnthropicRequest {
     pub model: String,
     pub max_tokens: u32,
@@ -543,6 +543,8 @@ pub struct AnthropicResponse {
 pub struct AnthropicUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    pub cache_read_input_tokens: Option<u64>,
+    pub cache_creation_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -574,7 +576,7 @@ pub enum AnthropicContentBlock {
 
 // ── OpenAI-specific types ──────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OpenAIRequest {
     pub model: String,
     pub messages: Vec<OpenAIMessage>,
@@ -584,6 +586,10 @@ pub struct OpenAIRequest {
     pub reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_completion_tokens: Option<u32>,
+    /// Keeps requests with the same prepared paper/orientation prefix routed
+    /// together for OpenAI's automatic prompt cache.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -629,11 +635,17 @@ pub struct OpenAIChoice {
 pub struct OpenAIUsage {
     pub prompt_tokens: Option<u64>,
     pub completion_tokens: Option<u64>,
+    pub prompt_tokens_details: Option<OpenAIPromptTokenDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OpenAIPromptTokenDetails {
+    pub cached_tokens: Option<u64>,
 }
 
 // ── Google-specific types ──────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GoogleRequest {
     pub contents: Vec<GoogleContent>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "systemInstruction")]
@@ -717,14 +729,39 @@ pub struct GoogleError {
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cache_write_input_tokens: u64,
     pub requests: u32,
 }
 
 impl Usage {
-    pub fn add(&mut self, input: u64, output: u64) {
+    pub fn add(&mut self, input: u64, output: u64, cached: u64, cache_write: u64) {
         self.input_tokens += input;
         self.output_tokens += output;
+        self.cached_input_tokens += cached;
+        self.cache_write_input_tokens += cache_write;
         self.requests += 1;
+    }
+
+    pub fn call_usage(&self) -> super::logging::CallUsage {
+        super::logging::CallUsage {
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cached_input_tokens: self.cached_input_tokens,
+            cache_write_input_tokens: self.cache_write_input_tokens,
+        }
+    }
+
+    pub fn merge(&mut self, other: Usage) {
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(other.cached_input_tokens);
+        self.cache_write_input_tokens = self
+            .cache_write_input_tokens
+            .saturating_add(other.cache_write_input_tokens);
+        self.requests = self.requests.saturating_add(other.requests);
     }
 
     /// Format as a compact string for log lines.
@@ -733,8 +770,16 @@ impl Usage {
         if total == 0 {
             return String::new();
         }
+        let cache = if self.cached_input_tokens > 0 || self.cache_write_input_tokens > 0 {
+            format!(
+                ", {} cached/{} cache-write",
+                self.cached_input_tokens, self.cache_write_input_tokens
+            )
+        } else {
+            String::new()
+        };
         format!(
-            ", {}+{} tokens ({} req)",
+            ", {}+{} tokens{cache} ({} req)",
             self.input_tokens, self.output_tokens, self.requests
         )
     }
@@ -828,10 +873,18 @@ pub async fn anthropic_tool_loop(
             .map_err(|e| format!("Failed to parse Anthropic response: {e}"))?;
 
         if let Some(u) = &body.usage {
-            let inp = u.input_tokens.unwrap_or(0);
+            let uncached = u.input_tokens.unwrap_or(0);
+            let cached = u.cache_read_input_tokens.unwrap_or(0);
+            let cache_write = u.cache_creation_input_tokens.unwrap_or(0);
+            let inp = uncached.saturating_add(cached).saturating_add(cache_write);
             let out = u.output_tokens.unwrap_or(0);
-            usage.add(inp, out);
-            verbose_log(app, format!("[api] {label}: tokens in={inp} out={out}"));
+            usage.add(inp, out, cached, cache_write);
+            verbose_log(
+                app,
+                format!(
+                    "[api] {label}: tokens in={inp} out={out} cached={cached} cache-write={cache_write}"
+                ),
+            );
         }
 
         if !anthropic_has_tool_use(&body.content) || body.stop_reason.as_deref() != Some("tool_use")
@@ -981,8 +1034,16 @@ pub async fn openai_tool_loop(
         if let Some(u) = &body.usage {
             let inp = u.prompt_tokens.unwrap_or(0);
             let out = u.completion_tokens.unwrap_or(0);
-            usage.add(inp, out);
-            verbose_log(app, format!("[api] {label}: tokens in={inp} out={out}"));
+            let cached = u
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|details| details.cached_tokens)
+                .unwrap_or(0);
+            usage.add(inp, out, cached, 0);
+            verbose_log(
+                app,
+                format!("[api] {label}: tokens in={inp} out={out} cached={cached}"),
+            );
         }
 
         let choice = body
@@ -1119,8 +1180,15 @@ pub async fn google_tool_loop(
                 .get("candidatesTokenCount")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            usage.add(inp, out);
-            verbose_log(app, format!("[api] {label}: tokens in={inp} out={out}"));
+            let cached = um
+                .get("cachedContentTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            usage.add(inp, out, cached, 0);
+            verbose_log(
+                app,
+                format!("[api] {label}: tokens in={inp} out={out} cached={cached}"),
+            );
         } else {
             usage.requests += 1;
         }

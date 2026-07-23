@@ -314,6 +314,11 @@ pub struct PipelineConfig {
     pub steps: Vec<StepConfig>,
     #[serde(default)]
     pub merge: MergeConfig,
+    /// Optional run-local shared-context caching. When enabled, the executor
+    /// prepares the extracted input and orientation map once, then lets each
+    /// provider use its native prefix cache or forkable CLI sessions.
+    #[serde(default)]
+    pub context_cache: ContextCacheConfig,
     /// Whether to build an orientation map before running steps.
     #[serde(default = "default_true")]
     pub use_orientation: bool,
@@ -347,6 +352,8 @@ pub struct ProfileData {
     pub steps: Vec<StepConfig>,
     #[serde(default)]
     pub merge: MergeConfig,
+    #[serde(default)]
+    pub context_cache: ContextCacheConfig,
     #[serde(default = "default_true")]
     pub use_orientation: bool,
     #[serde(default)]
@@ -366,6 +373,7 @@ impl ProfileData {
             name: name.into(),
             steps,
             merge,
+            context_cache: ContextCacheConfig::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
             extraction: ExtractionConfig::default(),
@@ -379,6 +387,7 @@ impl ProfileData {
             name: name.into(),
             steps: config.steps.clone(),
             merge: config.merge.clone(),
+            context_cache: config.context_cache.clone(),
             use_orientation: config.use_orientation,
             orientation_prompt: config.orientation_prompt.clone(),
             extraction: config.extraction.clone(),
@@ -393,6 +402,7 @@ impl From<ProfileData> for PipelineConfig {
         Self {
             steps: profile.steps,
             merge: profile.merge,
+            context_cache: profile.context_cache,
             use_orientation: profile.use_orientation,
             orientation_prompt: profile.orientation_prompt,
             extraction: profile.extraction,
@@ -404,6 +414,16 @@ impl From<ProfileData> for PipelineConfig {
 
 fn default_true() -> bool {
     true
+}
+
+/// Shared-context caching is deliberately a small, provider-neutral profile
+/// setting. The backend selects the safest native mechanism for each call.
+/// Defaulting to disabled preserves the behavior and cost profile of existing
+/// profiles until the user opts in.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextCacheConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// Default parallel-step context template, with user override applied from
@@ -466,12 +486,12 @@ pub struct ProfileSummary {
 
 // ── Export/Import envelope ──────────────────────────────────────────
 
-/// Current profile/export schema version. v2 is the generalized-engine format
-/// (Release 1.2+): step dependencies, conditions, variables, named inputs,
-/// output schemas, and fan-out. v1 (unversioned) profiles read fine because
-/// every added field is `#[serde(default)]`; exports are tagged with the
-/// version so a future format change can migrate or reject gracefully.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+/// Current profile/export schema version. v2 introduced the generalized
+/// engine; v3 added provider/model policy metadata; v4 adds optional shared
+/// context caching. v1 (unversioned) profiles read fine because every added
+/// field is `#[serde(default)]`; exports are tagged so future format changes
+/// can migrate or reject gracefully.
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 fn default_schema_version() -> u32 {
     1
@@ -490,6 +510,8 @@ pub enum ExportEnvelope {
         steps: Vec<StepConfig>,
         #[serde(default)]
         merge: MergeConfig,
+        #[serde(default)]
+        context_cache: ContextCacheConfig,
         #[serde(default = "default_true")]
         use_orientation: bool,
         #[serde(default)]
@@ -516,6 +538,8 @@ pub struct ProfileExport {
     pub steps: Vec<StepConfig>,
     #[serde(default)]
     pub merge: MergeConfig,
+    #[serde(default)]
+    pub context_cache: ContextCacheConfig,
     #[serde(default = "default_true")]
     pub use_orientation: bool,
     #[serde(default)]
@@ -535,6 +559,7 @@ impl ProfileExport {
             name: profile.name,
             steps: profile.steps,
             merge: profile.merge,
+            context_cache: profile.context_cache,
             use_orientation: profile.use_orientation,
             orientation_prompt: profile.orientation_prompt,
             extraction: profile.extraction,
@@ -548,6 +573,7 @@ impl ProfileExport {
             name: self.name.clone(),
             steps: self.steps.clone(),
             merge: self.merge.clone(),
+            context_cache: self.context_cache.clone(),
             use_orientation: self.use_orientation,
             orientation_prompt: self.orientation_prompt.clone(),
             extraction: self.extraction.clone(),
@@ -781,6 +807,7 @@ fn defaults() -> PipelineConfig {
     PipelineConfig {
         steps: default_steps(),
         merge: MergeConfig::default(),
+        context_cache: ContextCacheConfig::default(),
         use_orientation: true,
         orientation_prompt: String::new(),
         extraction: ExtractionConfig::default(),
@@ -1848,6 +1875,7 @@ pub fn export_profile_data(id: &str) -> Result<String, String> {
         name: profile.name,
         steps: profile.steps,
         merge: profile.merge,
+        context_cache: profile.context_cache,
         use_orientation: profile.use_orientation,
         orientation_prompt: profile.orientation_prompt,
         extraction: profile.extraction,
@@ -1925,6 +1953,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
                 name,
                 steps: convert_legacy_steps(referees, post_steps),
                 merge,
+                context_cache: ContextCacheConfig::default(),
                 use_orientation: true,
                 orientation_prompt: String::new(),
                 extraction: ExtractionConfig::default(),
@@ -1952,6 +1981,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
             name: "Imported".into(),
             steps: convert_legacy_steps(referees, post_steps),
             merge,
+            context_cache: ContextCacheConfig::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
             extraction: ExtractionConfig::default(),
@@ -1968,6 +1998,7 @@ pub fn import_profile_data(
     name: &str,
     steps: Vec<StepConfig>,
     merge: MergeConfig,
+    context_cache: ContextCacheConfig,
     use_orientation: bool,
     orientation_prompt: String,
     extraction: ExtractionConfig,
@@ -1990,6 +2021,7 @@ pub fn import_profile_data(
         counter += 1;
     }
     let mut profile = ProfileData::new(name, steps, merge);
+    profile.context_cache = context_cache;
     profile.use_orientation = use_orientation;
     profile.orientation_prompt = orientation_prompt;
     profile.extraction = extraction;
@@ -2285,6 +2317,7 @@ mod tests {
             name: id.into(),
             steps,
             merge: MergeConfig::default(),
+            context_cache: ContextCacheConfig::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
             extraction: ExtractionConfig::default(),
@@ -2366,6 +2399,24 @@ mod tests {
         let decoded: ProfileData = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.name, "Empty");
         assert!(decoded.steps.is_empty());
+        assert!(!decoded.context_cache.enabled);
+    }
+
+    #[test]
+    fn context_cache_is_opt_in_and_backward_compatible() {
+        let legacy = r#"{
+            "name":"Legacy",
+            "steps":[],
+            "merge":{"enabled":false,"prompt":"","agents":[]}
+        }"#;
+        let decoded: ProfileData = serde_json::from_str(legacy).unwrap();
+        assert!(!decoded.context_cache.enabled);
+
+        let mut profile = ProfileData::new("Cached", Vec::new(), MergeConfig::default());
+        profile.context_cache.enabled = true;
+        let json = serde_json::to_string(&profile).unwrap();
+        let decoded: ProfileData = serde_json::from_str(&json).unwrap();
+        assert!(decoded.context_cache.enabled);
     }
 
     #[test]

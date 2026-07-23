@@ -236,6 +236,10 @@ pub struct StepCallRecord {
     #[serde(default)]
     pub output_tokens: u64,
     #[serde(default)]
+    pub cached_input_tokens: u64,
+    #[serde(default)]
+    pub cache_write_input_tokens: u64,
+    #[serde(default)]
     pub attempt_count: u32,
 }
 
@@ -265,6 +269,12 @@ pub struct StepOutput {
     /// Output tokens the call reported.
     #[serde(default)]
     pub output_tokens: u64,
+    /// Input tokens served from a provider cache.
+    #[serde(default)]
+    pub cached_input_tokens: u64,
+    /// Input tokens written to a provider cache.
+    #[serde(default)]
+    pub cache_write_input_tokens: u64,
     /// Number of provider attempts represented by the totals above.
     #[serde(default)]
     pub attempt_count: u32,

@@ -336,6 +336,9 @@ pub struct LlmOverrides<'a> {
     /// Immutable settings snapshot captured at run start. When absent (for
     /// standalone helper calls), settings are loaded normally.
     pub settings: Option<&'a crate::settings::Settings>,
+    /// Run-local paper/orientation prefix. Direct APIs place it before the
+    /// task-specific prompt; supported CLIs fork a warmed base session.
+    pub shared_context: Option<std::sync::Arc<crate::pipeline::context_cache::PreparedContext>>,
 }
 
 impl<'a> LlmOverrides<'a> {
@@ -364,6 +367,29 @@ impl<'a> LlmOverrides<'a> {
 /// temp directory; run inputs are expected to arrive in an isolated run temp
 /// directory supplied by the caller. Paths are canonicalized where possible
 /// and normalized to forward slashes for Windows CLI compatibility.
+#[derive(Clone, Copy)]
+enum ClaudeSessionMode<'a> {
+    Start(&'a str),
+    ResumeFork(&'a str),
+}
+
+fn is_cli_session_capability_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    [
+        "unknown option",
+        "unexpected argument",
+        "fork-session",
+        "session not found",
+        "cannot resume",
+        "failed to resume",
+    ]
+    .iter()
+    .any(|needle| error.contains(needle))
+}
+
+/// Use one warmed Claude session per compatible model/configuration, then fork
+/// it for every task. If the installed CLI cannot create the base session, the
+/// call falls back to an ordinary self-contained prompt.
 #[allow(clippy::too_many_arguments)]
 pub async fn call_claude(
     app: &crate::emit::EventBus,
@@ -376,6 +402,173 @@ pub async fn call_claude(
     cwd: Option<&str>,
     extra_read_dirs: &[&str],
     overrides: &LlmOverrides<'_>,
+) -> Result<String, String> {
+    let Some(context) = overrides.shared_context.as_ref() else {
+        return call_claude_inner(
+            app,
+            prompt,
+            allowed_tools,
+            system_prompt,
+            output_format,
+            timeout_secs,
+            label,
+            cwd,
+            extra_read_dirs,
+            overrides,
+            None,
+        )
+        .await;
+    };
+
+    let settings = overrides
+        .settings
+        .cloned()
+        .unwrap_or_else(crate::settings::load);
+    let model = overrides.model.unwrap_or(settings.claude_model.as_str());
+    let effort = overrides.effort.unwrap_or(settings.claude_effort.as_str());
+    let tools_key = allowed_tools.join(",");
+    let write_key = overrides.write_dir.unwrap_or("");
+    let session_key = context.compatibility_key(
+        "claude-cli",
+        [
+            model,
+            effort,
+            system_prompt.unwrap_or(""),
+            tools_key.as_str(),
+            cwd.unwrap_or(""),
+            write_key,
+        ],
+    );
+    let slot = context.slot(session_key).await;
+
+    let base_result = {
+        let mut base = slot.lock().await;
+        if let Some(id) = base.as_ref() {
+            Ok(id.clone())
+        } else {
+            match super::context_cache::new_session_id() {
+                Err(error) => Err(error),
+                Ok(id) => {
+                    let primer = format!(
+                        "{}\n\nReply with exactly: Context prepared.",
+                        context.content()
+                    );
+                    let mut primer_overrides = overrides.clone();
+                    primer_overrides.shared_context = None;
+                    let primer_label = format!("{label} · cache warm-up");
+                    call_claude_inner(
+                        app,
+                        &primer,
+                        &[],
+                        system_prompt,
+                        "text",
+                        timeout_secs,
+                        &primer_label,
+                        cwd,
+                        extra_read_dirs,
+                        &primer_overrides,
+                        Some(ClaudeSessionMode::Start(&id)),
+                    )
+                    .await
+                    .map(|_| {
+                        *base = Some(id.clone());
+                        id
+                    })
+                }
+            }
+        }
+    };
+
+    match base_result {
+        Ok(base_id) => {
+            log(
+                app,
+                format!("{label}: using forked Claude shared-context session"),
+            );
+            let result = call_claude_inner(
+                app,
+                prompt,
+                allowed_tools,
+                system_prompt,
+                output_format,
+                timeout_secs,
+                label,
+                cwd,
+                extra_read_dirs,
+                overrides,
+                Some(ClaudeSessionMode::ResumeFork(&base_id)),
+            )
+            .await;
+            if let Err(error) = &result {
+                if is_cli_session_capability_error(error) {
+                    log(
+                        app,
+                        format!(
+                            "WARNING: {label}: installed Claude CLI cannot fork the warmed session ({error}); using a self-contained call"
+                        ),
+                    );
+                    let fallback = context.prefixed_prompt(prompt)?;
+                    let mut fallback_overrides = overrides.clone();
+                    fallback_overrides.shared_context = None;
+                    return call_claude_inner(
+                        app,
+                        &fallback,
+                        allowed_tools,
+                        system_prompt,
+                        output_format,
+                        timeout_secs,
+                        label,
+                        cwd,
+                        extra_read_dirs,
+                        &fallback_overrides,
+                        None,
+                    )
+                    .await;
+                }
+            }
+            result
+        }
+        Err(error) => {
+            log(
+                app,
+                format!(
+                    "WARNING: {label}: Claude session cache was unavailable ({error}); using a self-contained call"
+                ),
+            );
+            let fallback = context.prefixed_prompt(prompt)?;
+            let mut fallback_overrides = overrides.clone();
+            fallback_overrides.shared_context = None;
+            call_claude_inner(
+                app,
+                &fallback,
+                allowed_tools,
+                system_prompt,
+                output_format,
+                timeout_secs,
+                label,
+                cwd,
+                extra_read_dirs,
+                &fallback_overrides,
+                None,
+            )
+            .await
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn call_claude_inner(
+    app: &crate::emit::EventBus,
+    prompt: &str,
+    allowed_tools: &[&str],
+    system_prompt: Option<&str>,
+    output_format: &str,
+    timeout_secs: u64,
+    label: &str,
+    cwd: Option<&str>,
+    extra_read_dirs: &[&str],
+    overrides: &LlmOverrides<'_>,
+    session_mode: Option<ClaudeSessionMode<'_>>,
 ) -> Result<String, String> {
     let mut cmd_args: Vec<String> = vec!["-p".to_string()];
     let mut tools: Vec<String> = allowed_tools.iter().map(|s| s.to_string()).collect();
@@ -412,6 +605,19 @@ pub async fn call_claude(
         tools.push(format!("Edit({}/**)", absolute_rule_path(wd)));
     }
     cmd_args.push(prepared_prompt.argument.clone());
+
+    match session_mode {
+        Some(ClaudeSessionMode::Start(id)) => {
+            cmd_args.push("--session-id".to_string());
+            cmd_args.push(id.to_string());
+        }
+        Some(ClaudeSessionMode::ResumeFork(id)) => {
+            cmd_args.push("--resume".to_string());
+            cmd_args.push(id.to_string());
+            cmd_args.push("--fork-session".to_string());
+        }
+        None => {}
+    }
 
     // Always pass --allowedTools so Claude never gets default tools
     // (Edit, Write, Bash, etc.). When the list is empty, pass "none"
@@ -552,7 +758,13 @@ pub async fn call_claude(
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();
     let token_info = match claude_usage {
-        Some((i, o)) if i > 0 || o > 0 => format!(", {i}+{o} tokens"),
+        Some(usage) if usage.input_tokens > 0 || usage.output_tokens > 0 => format!(
+            ", {}+{} tokens, {} cached/{} cache-write",
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cached_input_tokens,
+            usage.cache_write_input_tokens
+        ),
         _ => String::new(),
     };
     log(
@@ -562,8 +774,8 @@ pub async fn call_claude(
             text.len()
         ),
     );
-    if let Some((i, o)) = claude_usage {
-        super::logging::emit_usage(app, i, o);
+    if let Some(usage) = claude_usage {
+        super::logging::emit_usage(app, usage);
     }
 
     if !status.success() {
@@ -611,11 +823,11 @@ fn absolute_rule_path(dir: &str) -> String {
 }
 
 /// Parse `claude -p --output-format json` output into the model's result text
-/// and, when present, `(input_tokens, output_tokens)`. Input tokens include
-/// cache-read/creation so the count reflects total tokens consumed. Falls back
+/// and, when present, cache-aware token usage. `input_tokens` remains the
+/// logical total and includes cache reads/creation. Falls back
 /// to the trimmed raw output with no usage when the input isn't the expected
 /// JSON envelope (older CLI, error text, or a caller-forced format).
-fn parse_claude_result(raw: &str) -> (String, Option<(u64, u64)>) {
+fn parse_claude_result(raw: &str) -> (String, Option<crate::pipeline::logging::CallUsage>) {
     let trimmed = raw.trim();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
         // Only claude's own result envelope carries `"type":"result"`. Gating
@@ -629,10 +841,16 @@ fn parse_claude_result(raw: &str) -> (String, Option<(u64, u64)>) {
                 .unwrap_or_default();
             let usage = v.get("usage").map(|u| {
                 let field = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
-                let input = field("input_tokens")
-                    + field("cache_read_input_tokens")
-                    + field("cache_creation_input_tokens");
-                (input, field("output_tokens"))
+                let cached = field("cache_read_input_tokens");
+                let cache_write = field("cache_creation_input_tokens");
+                crate::pipeline::logging::CallUsage {
+                    input_tokens: field("input_tokens")
+                        .saturating_add(cached)
+                        .saturating_add(cache_write),
+                    output_tokens: field("output_tokens"),
+                    cached_input_tokens: cached,
+                    cache_write_input_tokens: cache_write,
+                }
             });
             return (text, usage);
         }
@@ -793,6 +1011,17 @@ pub async fn call_llm(
         // Subprocess fallback. Claude uses --add-dir and Gemini uses
         // --include-directories for the same explicit read-root set. Codex's
         // sandbox restricts writes, not reads, so it needs no equivalent flag.
+        let fallback_prompt;
+        let cli_prompt = if provider == "gemini" {
+            if let Some(context) = overrides.shared_context.as_ref() {
+                fallback_prompt = context.prefixed_prompt(prompt)?;
+                fallback_prompt.as_str()
+            } else {
+                prompt
+            }
+        } else {
+            prompt
+        };
         let cli_call = async {
             match provider {
                 "codex" => {
@@ -818,7 +1047,7 @@ pub async fn call_llm(
                 "gemini" => {
                     super::gemini::call_gemini(
                         app,
-                        prompt,
+                        cli_prompt,
                         allowed_tools,
                         system_prompt,
                         output_format,
@@ -946,7 +1175,28 @@ mod tests {
             "usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}}"#;
         let (text, usage) = parse_claude_result(raw);
         assert_eq!(text, "hello world");
-        assert_eq!(usage, Some((108, 20)));
+        assert_eq!(
+            usage,
+            Some(crate::pipeline::logging::CallUsage {
+                input_tokens: 108,
+                output_tokens: 20,
+                cached_input_tokens: 5,
+                cache_write_input_tokens: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn session_capability_errors_are_distinguished_from_model_failures() {
+        assert!(is_cli_session_capability_error(
+            "error: unknown option '--fork-session'"
+        ));
+        assert!(is_cli_session_capability_error(
+            "failed to resume: session not found"
+        ));
+        assert!(!is_cli_session_capability_error(
+            "service overloaded; try again"
+        ));
     }
 
     #[test]

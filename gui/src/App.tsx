@@ -441,12 +441,50 @@ function App() {
                 </div>
               </div>
             ) : state.kind === "idle" ? (
-              <div className="flex items-center justify-center h-full text-gray-400">
-                <div className="text-center">
-                  <p className="text-lg">Select input file(s) to get started</p>
-                  <p className="text-sm mt-1">
-                    Supports .tex, .pdf, or directories
-                  </p>
+              <div className="flex items-center justify-center min-h-full px-8 py-16">
+                <div className="w-full max-w-3xl">
+                  <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">
+                    Pipeline
+                  </h1>
+
+                  <ol className="mt-8 grid grid-cols-1 border-y border-gray-200 dark:border-gray-800 sm:grid-cols-3">
+                    <li className="py-5 sm:pr-5">
+                      <span className="text-xs font-medium tabular-nums text-gray-400 dark:text-gray-600">01</span>
+                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                        {inputMode === "none" ? "Start" : "Select input"}
+                      </p>
+                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-500">
+                        {inputMode === "none"
+                          ? "No source file is required for this workflow."
+                          : "Use a PDF, LaTeX file, or project directory."}
+                      </p>
+                    </li>
+                    <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:px-5 dark:border-gray-800">
+                      <span className="text-xs font-medium tabular-nums text-gray-400 dark:text-gray-600">02</span>
+                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                        Run a workflow
+                      </p>
+                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-500">
+                        Prompts execute in parallel or in sequence.
+                      </p>
+                    </li>
+                    <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:pl-5 dark:border-gray-800">
+                      <span className="text-xs font-medium tabular-nums text-gray-400 dark:text-gray-600">03</span>
+                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                        Review report(s)
+                      </p>
+                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-500">
+                        Findings converge in a single review.
+                      </p>
+                    </li>
+                  </ol>
+
+                  <div className="mt-6 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-gray-900 dark:bg-gray-100" aria-hidden="true" />
+                    {inputMode === "none"
+                      ? "Use Run in the sidebar when you are ready."
+                      : "Choose an input in the sidebar to begin."}
+                  </div>
                 </div>
               </div>
             ) : (

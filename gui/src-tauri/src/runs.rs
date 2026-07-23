@@ -135,6 +135,8 @@ pub struct RunSummary {
     pub duration_secs: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cache_write_input_tokens: u64,
     pub step_count: u32,
     pub artifact_count: u32,
     pub failed_steps: Vec<String>,
@@ -178,6 +180,8 @@ impl RunManifest {
             duration_secs: self.duration_secs,
             input_tokens: self.usage.input_tokens,
             output_tokens: self.usage.output_tokens,
+            cached_input_tokens: self.usage.cached_input_tokens,
+            cache_write_input_tokens: self.usage.cache_write_input_tokens,
             step_count: self.step_count,
             artifact_count: self.artifacts.len() as u32,
             failed_steps: self.failed_steps.clone(),
@@ -1202,6 +1206,8 @@ mod tests {
             usage: crate::pipeline::logging::CallUsage {
                 input_tokens: 1000,
                 output_tokens: 200,
+                cached_input_tokens: 700,
+                cache_write_input_tokens: 100,
             },
             step_count: 6,
             failed_steps: vec!["Empirical".into()],
@@ -1215,6 +1221,9 @@ mod tests {
         assert_eq!(s.input_name, "paper.tex");
         assert_eq!(s.status, "partial");
         assert_eq!(s.input_tokens, 1000);
+        assert_eq!(s.output_tokens, 200);
+        assert_eq!(s.cached_input_tokens, 700);
+        assert_eq!(s.cache_write_input_tokens, 100);
         assert_eq!(s.step_count, 6);
         assert_eq!(s.failed_steps, vec!["Empirical".to_string()]);
         assert_eq!(s.title, "My run");

@@ -7,7 +7,10 @@ import type { LogEntry, UsageState } from "../hooks/usePipeline";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 
-const EMPTY_USAGE: UsageState = { total: { input: 0, output: 0 }, bySession: {} };
+const EMPTY_USAGE: UsageState = {
+  total: { input: 0, output: 0, cached: 0, cacheWrite: 0 },
+  bySession: {},
+};
 
 function log(line: string, level = "info", session: number | null = null): LogEntry {
   return { line, level, session, label: null, t: 1_700_000_000_000 };
@@ -59,5 +62,19 @@ describe("Console", () => {
     );
     // The jump-to-error control is labelled with the total error count.
     expect(screen.getByTitle("Scroll to the first error")).toHaveTextContent("2 errors");
+  });
+
+  it("surfaces cache reads and warm-up tokens", () => {
+    render(
+      <Console
+        logs={[]}
+        usage={{
+          total: { input: 50_000, output: 2_000, cached: 40_000, cacheWrite: 8_000 },
+          bySession: {},
+        }}
+      />
+    );
+    expect(screen.getByText(/40k cached/)).toBeInTheDocument();
+    expect(screen.getByText(/8k warmed/)).toBeInTheDocument();
   });
 });

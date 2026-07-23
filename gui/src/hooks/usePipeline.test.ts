@@ -21,8 +21,22 @@ function emitLog(line: string, extra?: { session?: number; label?: string; level
   handlers["pipeline:log"]({ payload: { line, ...extra } });
 }
 
-function emitUsage(session: number | null, input: number, output: number) {
-  handlers["pipeline:usage"]({ payload: { session, input_tokens: input, output_tokens: output } });
+function emitUsage(
+  session: number | null,
+  input: number,
+  output: number,
+  cached = 0,
+  cacheWrite = 0,
+) {
+  handlers["pipeline:usage"]({
+    payload: {
+      session,
+      input_tokens: input,
+      output_tokens: output,
+      cached_input_tokens: cached,
+      cache_write_input_tokens: cacheWrite,
+    },
+  });
 }
 
 describe("usePipeline log buffering", () => {
@@ -83,16 +97,28 @@ describe("usePipeline log buffering", () => {
     await waitFor(() => expect(result.current.listenersReady).toBe(true));
 
     act(() => {
-      emitUsage(1, 100, 20);
-      emitUsage(1, 50, 10);
+      emitUsage(1, 100, 20, 70, 20);
+      emitUsage(1, 50, 10, 30);
       emitUsage(2, 200, 40);
       emitUsage(null, 5, 5); // orchestration-level: counts toward the total only
     });
 
     await waitFor(() => expect(result.current.usage.total.input).toBe(355));
     expect(result.current.usage.total.output).toBe(75);
-    expect(result.current.usage.bySession[1]).toEqual({ input: 150, output: 30 });
-    expect(result.current.usage.bySession[2]).toEqual({ input: 200, output: 40 });
+    expect(result.current.usage.total.cached).toBe(100);
+    expect(result.current.usage.total.cacheWrite).toBe(20);
+    expect(result.current.usage.bySession[1]).toEqual({
+      input: 150,
+      output: 30,
+      cached: 100,
+      cacheWrite: 20,
+    });
+    expect(result.current.usage.bySession[2]).toEqual({
+      input: 200,
+      output: 40,
+      cached: 0,
+      cacheWrite: 0,
+    });
     expect(result.current.usage.bySession[3]).toBeUndefined();
     unmount();
   });

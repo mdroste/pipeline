@@ -114,6 +114,24 @@ pub async fn execute_steps(
 ) -> Result<ExecutionResult, String> {
     let semaphore = Arc::new(Semaphore::new(settings.max_workers.max(1) as usize));
     let output_budget = Arc::new(OutputBudget::default());
+    let shared_context = if config.context_cache.enabled {
+        let paper_text = std::fs::read_to_string(paper_text_path)
+            .map_err(|error| format!("Failed to prepare shared input context: {error}"))?;
+        let prepared = Arc::new(super::context_cache::PreparedContext::new(
+            &paper_text,
+            orientation_value,
+        )?);
+        super::logging::emit(
+            app,
+            format!(
+                "Shared input context enabled ({} bytes, provider-native caching selected per call)",
+                prepared.bytes()
+            ),
+        );
+        Some(prepared)
+    } else {
+        None
+    };
     let mut all_outputs: Vec<StepOutput> = Vec::new();
     let mut failed_steps: Vec<StepFailure> = Vec::new();
     let read_dirs = provider_read_dirs(
@@ -207,6 +225,7 @@ pub async fn execute_steps(
                     &read_dirs,
                     write_dir,
                     &output_budget,
+                    shared_context.clone(),
                 )
                 .await?;
                 // Every dispatched step is terminal once its wave returns. A
@@ -306,6 +325,7 @@ pub async fn execute_steps(
             &read_dirs,
             write_dir,
             settings,
+            shared_context.clone(),
         )
         .await
         {
@@ -506,6 +526,20 @@ fn output_format_block(write_dir: Option<&str>, report_rel: &str) -> String {
     }
 }
 
+fn append_shared_context_note(mut prompt: String) -> Result<String, String> {
+    crate::safety::push_str_limited(
+        &mut prompt,
+        "\n\nSHARED CONTEXT NOTE:\n\
+         The extracted input text and orientation map are already present in the shared context \
+         for this call. Do not read those two files again. You may still read original source \
+         assets when needed to inspect figures, tables, code, or other material not represented \
+         in the extracted text.",
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Shared-context prompt",
+    )?;
+    Ok(prompt)
+}
+
 /// Read (and remove) a model-written report file. Returns `None` when the
 /// file is absent or empty — callers then fall back to stdout output. The
 /// file is removed because the canonical copy (with the step header) is
@@ -566,6 +600,7 @@ struct StepCallRequest<'a> {
     command_model: Option<&'a str>,
     effort: &'a str,
     settings: &'a crate::settings::Settings,
+    shared_context: Option<Arc<super::context_cache::PreparedContext>>,
 }
 
 struct StepCallResult {
@@ -617,10 +652,11 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             command_model: request.command_model,
             effort: request.effort,
             settings: request.settings,
+            shared_context: request.shared_context.clone(),
         })
         .await;
         total_duration_secs = total_duration_secs.saturating_add(call.duration_secs);
-        total_usage.add(call.usage.input_tokens, call.usage.output_tokens);
+        total_usage.add_usage(call.usage);
 
         if let Some(error) = cancellation_error(request.pass_key) {
             return Err(error);
@@ -785,6 +821,8 @@ fn step_output(
         duration_secs: call.duration_secs,
         input_tokens: call.usage.input_tokens,
         output_tokens: call.usage.output_tokens,
+        cached_input_tokens: call.usage.cached_input_tokens,
+        cache_write_input_tokens: call.usage.cache_write_input_tokens,
         attempt_count: call.attempt_count,
     };
     StepOutput {
@@ -797,6 +835,8 @@ fn step_output(
         duration_secs: call.duration_secs,
         input_tokens: call.usage.input_tokens,
         output_tokens: call.usage.output_tokens,
+        cached_input_tokens: call.usage.cached_input_tokens,
+        cache_write_input_tokens: call.usage.cache_write_input_tokens,
         attempt_count: call.attempt_count,
         model: resolution.resolved_model.clone(),
         model_transport: resolution.transport.clone(),
@@ -920,6 +960,7 @@ async fn run_parallel_wave(
     read_dirs: &[String],
     write_dir: Option<&str>,
     output_budget: &Arc<OutputBudget>,
+    shared_context: Option<Arc<super::context_cache::PreparedContext>>,
 ) -> Result<(Vec<StepOutput>, Vec<StepFailure>), String> {
     let source = std::path::Path::new(source_path);
     let source_dir = if source.is_dir() {
@@ -1011,6 +1052,11 @@ async fn run_parallel_wave(
                 crate::safety::MAX_EXPANDED_PROMPT_BYTES,
                 "Parallel prompt",
             )?;
+            let prompt = if shared_context.is_some() {
+                append_shared_context_note(prompt)?
+            } else {
+                prompt
+            };
             let task_write_dir = write_dir.map(|s| s.to_string());
             let task_read_dirs = read_dirs.to_vec();
 
@@ -1041,6 +1087,7 @@ async fn run_parallel_wave(
             let fail_label = display_label.clone();
             let settings = settings.clone();
             let output_budget = output_budget.clone();
+            let shared_context = shared_context.clone();
 
             tasks.spawn(async move {
                 if let Some(error) = cancellation_error(&step_key_emit) {
@@ -1110,6 +1157,7 @@ async fn run_parallel_wave(
                     command_model: resolution.command_model.as_deref(),
                     effort: &effort_override,
                     settings: &settings,
+                    shared_context,
                 })
                 .await;
 
@@ -1410,6 +1458,7 @@ async fn run_sequential_step(
     read_dirs: &[String],
     write_dir: Option<&str>,
     settings: &crate::settings::Settings,
+    shared_context: Option<Arc<super::context_cache::PreparedContext>>,
 ) -> Result<StepOutput, String> {
     let _ = app.emit_event(
         "pipeline:pass",
@@ -1437,6 +1486,9 @@ async fn run_sequential_step(
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Sequential prompt",
     )?;
+    if shared_context.is_some() {
+        prompt = append_shared_context_note(prompt)?;
+    }
     crate::safety::push_str_limited(
         &mut prompt,
         &output_format_block(write_dir, &report_rel),
@@ -1480,6 +1532,7 @@ async fn run_sequential_step(
         command_model: resolution.command_model.as_deref(),
         effort: &effort,
         settings,
+        shared_context,
     })
     .await?;
 
@@ -1793,6 +1846,7 @@ mod tests {
                 &[],
                 None,
                 &output_budget,
+                None,
             ))
             .unwrap();
         assert!(failures.is_empty());
@@ -1814,6 +1868,7 @@ mod tests {
                 make_step("s", Phase::Sequential), // implicitly depends on a, b
             ],
             merge: MergeConfig::default(),
+            context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
             extraction: Default::default(),
@@ -2016,6 +2071,16 @@ mod tests {
         let markers = output_format_block(None, "steps/s.md");
         assert!(markers.contains("REPORT START"));
         assert!(!markers.contains("steps/s.md"));
+    }
+
+    #[test]
+    fn shared_context_note_overrides_file_rereads_but_keeps_asset_access() {
+        let prompt =
+            append_shared_context_note("Read the paper text at /tmp/paper.txt.".to_string())
+                .unwrap();
+        assert!(prompt.contains("Do not read those two files again"));
+        assert!(prompt.contains("inspect figures, tables, code"));
+        assert!(prompt.ends_with("in the extracted text."));
     }
 
     #[test]

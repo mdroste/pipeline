@@ -125,6 +125,7 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
     return {
       ...c,
       merge: c.merge ?? DEFAULT_MERGE,
+      context_cache: c.context_cache ?? { enabled: false },
       extraction: c.extraction ?? DEFAULT_EXTRACTION,
       orientation_prompt: c.orientation_prompt ?? "",
       parallel_context_template: c.parallel_context_template ?? "",
@@ -878,6 +879,51 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   Settings that apply to all steps in this profile.
                 </p>
+              </div>
+
+              {/* Shared context cache */}
+              <div className="flex items-start gap-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-label="Reuse shared input context"
+                  aria-checked={config.context_cache?.enabled ?? false}
+                  onClick={() => {
+                    setConfig({
+                      ...config,
+                      context_cache: { enabled: !(config.context_cache?.enabled ?? false) },
+                    });
+                    setDirty(true);
+                  }}
+                  className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
+                    config.context_cache?.enabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+                  }`}
+                >
+                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                    config.context_cache?.enabled ? "translate-x-3.5" : "translate-x-0.5"
+                  }`} />
+                </button>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                      Reuse shared input context
+                    </span>
+                    <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
+                      Optional
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Prepares the extracted input and orientation map once for all review steps.
+                    Pipeline automatically uses provider prompt caches for API calls and forked
+                    base sessions for Claude or Codex CLI. Turn this on for large, multi-step
+                    reviews; unsupported providers fall back safely to ordinary calls.
+                  </p>
+                  {config.context_cache?.enabled && (
+                    <p className="text-[11px] text-green-600 dark:text-green-400 mt-1">
+                      Enabled for this profile. Cache reads and writes will appear in token usage.
+                    </p>
+                  )}
+                </div>
               </div>
 
               {/* Orientation map toggle */}

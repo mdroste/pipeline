@@ -22,6 +22,31 @@ fn codex_effective_cwd(
         .transpose()
 }
 
+#[derive(Clone, Copy)]
+enum CodexSessionMode<'a> {
+    New,
+    Resume(&'a str),
+}
+
+struct CodexInvocation {
+    text: String,
+    thread_id: Option<String>,
+}
+
+fn is_session_resume_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    [
+        "unknown option",
+        "unexpected argument",
+        "session not found",
+        "thread not found",
+        "failed to resume",
+        "failed to load rollout",
+    ]
+    .iter()
+    .any(|needle| error.contains(needle))
+}
+
 /// Call `codex exec` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
 #[allow(clippy::too_many_arguments)]
@@ -36,7 +61,208 @@ pub async fn call_codex(
     cwd: Option<&str>,
     overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
+    let Some(context) = overrides.shared_context.as_ref() else {
+        return call_codex_inner(
+            app,
+            prompt,
+            allowed_tools,
+            system_prompt,
+            timeout_secs,
+            label,
+            cwd,
+            overrides,
+            CodexSessionMode::New,
+        )
+        .await
+        .map(|result| result.text);
+    };
+
+    let settings = overrides
+        .settings
+        .cloned()
+        .unwrap_or_else(crate::settings::load);
+    let model = overrides.model.unwrap_or(settings.codex_model.as_str());
+    let effort = overrides.effort.unwrap_or(settings.codex_effort.as_str());
+    let tools_key = allowed_tools.join(",");
+    let session_key = context.compatibility_key(
+        "codex-cli",
+        [
+            model,
+            effort,
+            system_prompt.unwrap_or(""),
+            tools_key.as_str(),
+            cwd.unwrap_or(""),
+            overrides.write_dir.unwrap_or(""),
+        ],
+    );
+    let slot = context.slot(session_key).await;
+
+    let base_result = {
+        let mut base = slot.lock().await;
+        if let Some(id) = base.as_ref() {
+            Ok(id.clone())
+        } else {
+            let primer = format!(
+                "{}\n\nReply with exactly: Context prepared.",
+                context.content()
+            );
+            let mut primer_overrides = overrides.clone();
+            primer_overrides.shared_context = None;
+            let primer_label = format!("{label} · cache warm-up");
+            call_codex_inner(
+                app,
+                &primer,
+                allowed_tools,
+                system_prompt,
+                timeout_secs,
+                &primer_label,
+                cwd,
+                &primer_overrides,
+                CodexSessionMode::New,
+            )
+            .await
+            .and_then(|result| {
+                let id = result
+                    .thread_id
+                    .ok_or_else(|| "Codex did not report a reusable thread id".to_string())?;
+                *base = Some(id.clone());
+                Ok(id)
+            })
+        }
+    };
+
+    let branch_result = match base_result {
+        Ok(base_id) => fork_codex_thread(&base_id).await.map(|id| (base_id, id)),
+        Err(error) => Err(error),
+    };
+
+    match branch_result {
+        Ok((_base_id, branch_id)) => {
+            log(
+                app,
+                format!("{label}: using forked Codex shared-context session"),
+            );
+            let result = call_codex_inner(
+                app,
+                prompt,
+                allowed_tools,
+                system_prompt,
+                timeout_secs,
+                label,
+                cwd,
+                overrides,
+                CodexSessionMode::Resume(&branch_id),
+            )
+            .await;
+            match result {
+                Ok(result) => Ok(result.text),
+                Err(error) if is_session_resume_error(&error) => {
+                    log(
+                        app,
+                        format!(
+                            "WARNING: {label}: installed Codex CLI could not resume the forked thread ({error}); using a self-contained call"
+                        ),
+                    );
+                    let fallback = context.prefixed_prompt(prompt)?;
+                    let mut fallback_overrides = overrides.clone();
+                    fallback_overrides.shared_context = None;
+                    call_codex_inner(
+                        app,
+                        &fallback,
+                        allowed_tools,
+                        system_prompt,
+                        timeout_secs,
+                        label,
+                        cwd,
+                        &fallback_overrides,
+                        CodexSessionMode::New,
+                    )
+                    .await
+                    .map(|result| result.text)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => {
+            log(
+                app,
+                format!(
+                    "WARNING: {label}: Codex session cache was unavailable ({error}); using a self-contained call"
+                ),
+            );
+            let fallback = context.prefixed_prompt(prompt)?;
+            let mut fallback_overrides = overrides.clone();
+            fallback_overrides.shared_context = None;
+            call_codex_inner(
+                app,
+                &fallback,
+                allowed_tools,
+                system_prompt,
+                timeout_secs,
+                label,
+                cwd,
+                &fallback_overrides,
+                CodexSessionMode::New,
+            )
+            .await
+            .map(|result| result.text)
+        }
+    }
+}
+
+async fn fork_codex_thread(thread_id: &str) -> Result<String, String> {
+    let requests = [
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "clientInfo": {
+                    "name": "pipeline",
+                    "title": "Pipeline",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }
+        }),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "thread/fork",
+            "params": { "threadId": thread_id }
+        }),
+    ];
+    let replies = crate::model_catalog::rpc_exchange(
+        "codex",
+        &["app-server".into(), "--listen".into(), "stdio://".into()],
+        &requests,
+    )
+    .await?;
+    replies
+        .get(1)
+        .and_then(|reply| reply.get("result"))
+        .and_then(|result| result.get("thread"))
+        .and_then(|thread| thread.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "Codex thread/fork returned no child thread id".to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn call_codex_inner(
+    app: &crate::emit::EventBus,
+    prompt: &str,
+    allowed_tools: &[&str],
+    system_prompt: Option<&str>,
+    timeout_secs: u64,
+    label: &str,
+    cwd: Option<&str>,
+    overrides: &LlmOverrides<'_>,
+    session_mode: CodexSessionMode<'_>,
+) -> Result<CodexInvocation, String> {
     let mut cmd_args: Vec<String> = vec!["exec".to_string()];
+    if matches!(session_mode, CodexSessionMode::Resume(_)) {
+        cmd_args.push("resume".to_string());
+    }
     let prepared_prompt = prepare_cli_prompt(prompt)?;
 
     // Use JSON mode for clean machine-readable output
@@ -61,8 +287,10 @@ pub async fn call_codex(
     } else {
         "read-only"
     };
-    cmd_args.push("--sandbox".to_string());
-    cmd_args.push(sandbox.to_string());
+    if matches!(session_mode, CodexSessionMode::New) {
+        cmd_args.push("--sandbox".to_string());
+        cmd_args.push(sandbox.to_string());
+    }
 
     if needs_write {
         // workspace-write also opens /tmp and $TMPDIR by default; close
@@ -123,6 +351,9 @@ pub async fn call_codex(
             format!("Wrote {} chars to temp file: {path}", prompt.len()),
         );
     }
+    if let CodexSessionMode::Resume(id) = session_mode {
+        cmd_args.push(id.to_string());
+    }
     cmd_args.push(prepared_prompt.argument.clone());
 
     // Log the command (truncated)
@@ -172,6 +403,8 @@ pub async fn call_codex(
         let mut agent_text = String::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
+        let mut total_cached_input_tokens: u64 = 0;
+        let mut thread_id: Option<String> = None;
         let mut overflowed = false;
         let mut stdout_bytes = 0usize;
         if let Some(stdout) = stdout {
@@ -211,6 +444,13 @@ pub async fn call_codex(
                 }
                 if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
                     match event.get("type").and_then(|t| t.as_str()) {
+                        Some("thread.started") => {
+                            thread_id = event
+                                .get("thread_id")
+                                .or_else(|| event.get("threadId"))
+                                .and_then(|value| value.as_str())
+                                .map(str::to_string);
+                        }
                         Some("item.completed") => {
                             if let Some(item) = event.get("item") {
                                 if item.get("type").and_then(|t| t.as_str())
@@ -246,6 +486,10 @@ pub async fn call_codex(
                                     .get("output_tokens")
                                     .and_then(|v| v.as_u64())
                                     .unwrap_or(0);
+                                total_cached_input_tokens += usage
+                                    .get("cached_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
                             }
                         }
                         // Codex reports fatal problems (bad config, auth, model)
@@ -275,8 +519,8 @@ pub async fn call_codex(
             verbose_log(
                 &app_stdout,
                 format!(
-                    "[codex] {}: tokens in={total_input_tokens} out={total_output_tokens}",
-                    label_clone
+                    "[codex] {}: tokens in={total_input_tokens} out={total_output_tokens} cached={total_cached_input_tokens}",
+                    label_clone,
                 ),
             );
         }
@@ -284,6 +528,8 @@ pub async fn call_codex(
             agent_text,
             total_input_tokens,
             total_output_tokens,
+            total_cached_input_tokens,
+            thread_id,
             overflowed,
         )
     }));
@@ -292,7 +538,17 @@ pub async fn call_codex(
         wait_for_child(&mut child, pid, timeout_secs, "Codex", "codex", label, app).await;
     let streams = finish_streams(stdout_task, stderr_task, pid, "Codex").await;
     let status = wait_result?;
-    let ((agent_text, input_tokens, output_tokens, stdout_overflowed), stderr_tail) = streams?;
+    let (
+        (
+            agent_text,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            thread_id,
+            stdout_overflowed,
+        ),
+        stderr_tail,
+    ) = streams?;
     if stdout_overflowed {
         emit_stderr_tail(app, &stderr_tail);
         return Err(format!(
@@ -305,7 +561,7 @@ pub async fn call_codex(
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();
     let token_info = if input_tokens > 0 || output_tokens > 0 {
-        format!(", {input_tokens}+{output_tokens} tokens")
+        format!(", {input_tokens}+{output_tokens} tokens, {cached_input_tokens} cached")
     } else {
         String::new()
     };
@@ -316,7 +572,15 @@ pub async fn call_codex(
             text.len()
         ),
     );
-    super::logging::emit_usage(app, input_tokens, output_tokens);
+    super::logging::emit_usage(
+        app,
+        super::logging::CallUsage {
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            cache_write_input_tokens: 0,
+        },
+    );
 
     if !status.success() {
         if crate::commands::is_cancelled() || exit_code == 143 || status.code().is_none() {
@@ -348,7 +612,7 @@ pub async fn call_codex(
         return Err(msg);
     }
 
-    Ok(text)
+    Ok(CodexInvocation { text, thread_id })
 }
 
 #[cfg(test)]
@@ -380,5 +644,12 @@ mod tests {
     #[test]
     fn invalid_write_workspace_fails_closed() {
         assert!(codex_effective_cwd(true, None, Some("relative/artifacts"), None).is_err());
+    }
+
+    #[test]
+    fn resume_errors_are_distinguished_from_provider_failures() {
+        assert!(is_session_resume_error("failed to load rollout for thread"));
+        assert!(is_session_resume_error("session not found"));
+        assert!(!is_session_resume_error("rate limited"));
     }
 }

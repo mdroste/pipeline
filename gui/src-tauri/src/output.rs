@@ -143,19 +143,43 @@ fn fmt_tokens(n: u64) -> String {
     }
 }
 
+fn fmt_token_usage(input: u64, output: u64, cached: u64, cache_write: u64) -> String {
+    if input == 0 && output == 0 && cached == 0 && cache_write == 0 {
+        return "—".to_string();
+    }
+    let mut value = format!("{} / {}", fmt_tokens(input), fmt_tokens(output));
+    let mut cache_parts = Vec::new();
+    if cached > 0 {
+        cache_parts.push(format!("{} cached", fmt_tokens(cached)));
+    }
+    if cache_write > 0 {
+        cache_parts.push(format!("{} warmed", fmt_tokens(cache_write)));
+    }
+    if !cache_parts.is_empty() {
+        value.push_str(&format!(" ({})", cache_parts.join(", ")));
+    }
+    value
+}
+
 /// A per-step run summary table (time, model, tokens, estimated cost), or None
 /// when there is nothing worth showing (e.g. a legacy report with no metrics).
 fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<String> {
     let outputs = report.all_outputs();
-    let has_metrics = outputs
-        .iter()
-        .any(|o| o.duration_secs > 0 || o.input_tokens > 0 || o.output_tokens > 0);
+    let has_metrics = outputs.iter().any(|o| {
+        o.duration_secs > 0
+            || o.input_tokens > 0
+            || o.output_tokens > 0
+            || o.cached_input_tokens > 0
+            || o.cache_write_input_tokens > 0
+    });
     if !has_metrics {
         return None;
     }
 
     let mut total_in = 0u64;
     let mut total_out = 0u64;
+    let mut total_cached = 0u64;
+    let mut total_cache_write = 0u64;
     let mut total_cost = 0f64;
     let mut any_cost = false;
 
@@ -163,6 +187,8 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
     for o in &outputs {
         total_in += o.input_tokens;
         total_out += o.output_tokens;
+        total_cached += o.cached_input_tokens;
+        total_cache_write += o.cache_write_input_tokens;
 
         let mut provider_models = Vec::new();
         if o.calls.is_empty() {
@@ -199,15 +225,12 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
                 }
             }
         }
-        let tokens = if o.input_tokens == 0 && o.output_tokens == 0 {
-            "—".to_string()
-        } else {
-            format!(
-                "{} / {}",
-                fmt_tokens(o.input_tokens),
-                fmt_tokens(o.output_tokens)
-            )
-        };
+        let tokens = fmt_token_usage(
+            o.input_tokens,
+            o.output_tokens,
+            o.cached_input_tokens,
+            o.cache_write_input_tokens,
+        );
         let mut row_cost = 0f64;
         let mut row_has_cost = false;
         if o.calls.is_empty() {
@@ -256,11 +279,7 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
         ));
     }
 
-    let total_tokens = if total_in == 0 && total_out == 0 {
-        "—".to_string()
-    } else {
-        format!("{} / {}", fmt_tokens(total_in), fmt_tokens(total_out))
-    };
+    let total_tokens = fmt_token_usage(total_in, total_out, total_cached, total_cache_write);
     let total_cost_cell = if any_cost {
         format_cost(total_cost)
     } else {
@@ -275,6 +294,13 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
     md.push_str(&format!(
         "| **Total** | | | **{total_tokens}** | **{total_cost_cell}** |\n\n"
     ));
+    if total_cached > 0 || total_cache_write > 0 {
+        md.push_str(
+            "_Cached tokens are included in logical input totals. Estimated cost uses full \
+             input list price as a conservative upper bound; provider cache discounts may \
+             reduce the billed amount._\n\n",
+        );
+    }
     let mut provenance = Vec::new();
     for output in &outputs {
         if output.calls.is_empty() {
@@ -670,5 +696,22 @@ mod tests {
         let api = render_run_summary(&report, &s).unwrap();
         assert!(api.contains("$15.00"));
         assert!(api.contains("list prices"));
+    }
+
+    #[test]
+    fn run_summary_distinguishes_cached_and_warmed_input() {
+        let mut output = metric_output(
+            "Technical",
+            "claude-sonnet-4-6",
+            "claude",
+            30,
+            50_000,
+            2_000,
+        );
+        output.cached_input_tokens = 40_000;
+        output.cache_write_input_tokens = 8_000;
+        let summary = render_run_summary(&report_with(vec![output]), &Settings::default()).unwrap();
+        assert!(summary.contains("50.0k / 2.0k (40.0k cached, 8.0k warmed)"));
+        assert!(summary.contains("conservative upper bound"));
     }
 }

@@ -78,16 +78,35 @@ pub struct LogSession {
 }
 
 /// Token usage for one LLM call (or accumulated across several).
-#[derive(Clone, Copy, Default, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Input tokens served from a provider cache. This is a subset of
+    /// `input_tokens`, which remains the total logical input size.
+    #[serde(default)]
+    pub cached_input_tokens: u64,
+    /// Input tokens written into a provider cache during this call. Also a
+    /// subset of `input_tokens` where the provider reports it.
+    #[serde(default)]
+    pub cache_write_input_tokens: u64,
 }
 
 impl CallUsage {
     pub fn add(&mut self, input: u64, output: u64) {
         self.input_tokens += input;
         self.output_tokens += output;
+    }
+
+    pub fn add_usage(&mut self, other: CallUsage) {
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(other.cached_input_tokens);
+        self.cache_write_input_tokens = self
+            .cache_write_input_tokens
+            .saturating_add(other.cache_write_input_tokens);
     }
 }
 
@@ -122,6 +141,8 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 static RUN_USAGE: Mutex<CallUsage> = Mutex::new(CallUsage {
     input_tokens: 0,
     output_tokens: 0,
+    cached_input_tokens: 0,
+    cache_write_input_tokens: 0,
 });
 
 /// A file the console log is mirrored to for the duration of a run. `emit`
@@ -209,28 +230,32 @@ fn classify(line: &str) -> &'static str {
 /// Fold a call's token usage into the active per-call accumulator (if any) and
 /// the run-wide total. Split out from `emit_usage` so it can be tested without
 /// an `AppHandle`.
-fn record_usage(input_tokens: u64, output_tokens: u64) {
+fn record_usage(usage: CallUsage) {
     let _ = USAGE_ACCUM.try_with(|cell| {
         cell.lock()
             .unwrap_or_else(|e| e.into_inner())
-            .add(input_tokens, output_tokens);
+            .add_usage(usage);
     });
     RUN_USAGE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .add(input_tokens, output_tokens);
+        .add_usage(usage);
 }
 
 /// Emit a `pipeline:usage` event with token counts for the current call,
 /// tagged with the active session. Calls with no token data (both zero) are
 /// skipped — CLI text-mode providers can't report usage.
-pub fn emit_usage(app: &crate::emit::EventBus, input_tokens: u64, output_tokens: u64) {
-    if input_tokens == 0 && output_tokens == 0 {
+pub fn emit_usage(app: &crate::emit::EventBus, usage: CallUsage) {
+    if usage.input_tokens == 0
+        && usage.output_tokens == 0
+        && usage.cached_input_tokens == 0
+        && usage.cache_write_input_tokens == 0
+    {
         return;
     }
     // Fold into the per-call accumulator (if a `measure_usage` scope is active)
     // and the run-wide total, before emitting the event.
-    record_usage(input_tokens, output_tokens);
+    record_usage(usage);
     let (session, label) = match current() {
         Some(s) => (Some(s.id), Some(s.label)),
         None => (None, None),
@@ -240,8 +265,10 @@ pub fn emit_usage(app: &crate::emit::EventBus, input_tokens: u64, output_tokens:
         serde_json::json!({
             "session": session,
             "label": label,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "cached_input_tokens": usage.cached_input_tokens,
+            "cache_write_input_tokens": usage.cache_write_input_tokens,
         }),
     )
     .ok();
@@ -334,11 +361,23 @@ mod tests {
     #[test]
     fn measure_usage_sums_calls_in_scope() {
         let (_, usage) = block_on(measure_usage(async {
-            record_usage(100, 20);
-            record_usage(50, 10);
+            record_usage(CallUsage {
+                input_tokens: 100,
+                output_tokens: 20,
+                cached_input_tokens: 40,
+                cache_write_input_tokens: 10,
+            });
+            record_usage(CallUsage {
+                input_tokens: 50,
+                output_tokens: 10,
+                cached_input_tokens: 5,
+                cache_write_input_tokens: 0,
+            });
         }));
         assert_eq!(usage.input_tokens, 150);
         assert_eq!(usage.output_tokens, 30);
+        assert_eq!(usage.cached_input_tokens, 45);
+        assert_eq!(usage.cache_write_input_tokens, 10);
     }
 
     #[test]
@@ -352,6 +391,10 @@ mod tests {
     fn record_usage_outside_scope_does_not_panic() {
         // No active accumulator — must be a no-op for the task-local, and still
         // fold into the run total.
-        record_usage(1, 1);
+        record_usage(CallUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            ..Default::default()
+        });
     }
 }

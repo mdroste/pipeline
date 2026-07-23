@@ -52,6 +52,7 @@ fn build_messages(
     prompt: &str,
     system_prompt: Option<&str>,
     pdf_attachment: Option<&std::path::Path>,
+    shared_context: Option<&super::context_cache::PreparedContext>,
 ) -> Result<Vec<OpenAIMessage>, String> {
     let mut messages = Vec::new();
     if let Some(sys) = system_prompt {
@@ -62,25 +63,32 @@ fn build_messages(
             tool_call_id: None,
         });
     }
-    let user_content = match pdf_attachment {
-        Some(pdf) => {
+    let user_content = if pdf_attachment.is_some() || shared_context.is_some() {
+        let mut parts = Vec::new();
+        if let Some(pdf) = pdf_attachment {
             let data = pdf_attachment_base64(pdf, MAX_ATTACH_PDF)?;
             let filename = pdf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "document.pdf".to_string());
-            serde_json::json!([
-                {
-                    "type": "file",
-                    "file": {
-                        "filename": filename,
-                        "file_data": format!("data:application/pdf;base64,{data}")
-                    }
-                },
-                { "type": "text", "text": prompt }
-            ])
+            parts.push(serde_json::json!({
+                "type": "file",
+                "file": {
+                    "filename": filename,
+                    "file_data": format!("data:application/pdf;base64,{data}")
+                }
+            }));
         }
-        None => serde_json::Value::String(prompt.to_string()),
+        if let Some(context) = shared_context {
+            parts.push(serde_json::json!({
+                "type": "text",
+                "text": context.content()
+            }));
+        }
+        parts.push(serde_json::json!({ "type": "text", "text": prompt }));
+        serde_json::Value::Array(parts)
+    } else {
+        serde_json::Value::String(prompt.to_string())
     };
     messages.push(OpenAIMessage {
         role: "user".to_string(),
@@ -112,7 +120,13 @@ pub async fn call_openai_api(
 
     let client = &*super::api_common::HTTP_CLIENT;
     let tools = build_tools(allowed_tools);
-    let messages = build_messages(prompt, system_prompt, overrides.pdf_attachment)?;
+    let shared_context = overrides.shared_context.as_deref();
+    let messages = build_messages(
+        prompt,
+        system_prompt,
+        overrides.pdf_attachment,
+        shared_context,
+    )?;
 
     let effort_src = overrides
         .effort
@@ -123,16 +137,89 @@ pub async fn call_openai_api(
     } else {
         None
     };
+    let tools_key = serde_json::to_string(&tools).unwrap_or_default();
+    let attachment_key = overrides
+        .pdf_attachment
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let prompt_cache_key = shared_context.map(|context| {
+        context.compatibility_key(
+            "openai-api",
+            [
+                model.as_str(),
+                effort_src,
+                system_prompt.unwrap_or(""),
+                tools_key.as_str(),
+                attachment_key.as_str(),
+            ],
+        )
+    });
 
-    let request = OpenAIRequest {
+    let mut request = OpenAIRequest {
         model,
         messages,
         tools,
         reasoning_effort,
         max_completion_tokens: overrides.max_output_tokens,
+        prompt_cache_key,
     };
 
-    let (text, usage) = openai_tool_loop(
+    let mut warm_usage = Usage::default();
+    if let Some(context) = shared_context {
+        let cache_key = request
+            .prompt_cache_key
+            .clone()
+            .unwrap_or_else(|| context.key().to_string());
+        let slot = context.slot(cache_key).await;
+        let mut state = slot.lock().await;
+        if state.is_none() {
+            let mut warm_request = request.clone();
+            warm_request.messages = build_messages(
+                "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
+                system_prompt,
+                overrides.pdf_attachment,
+                Some(context),
+            )?;
+            warm_request.max_completion_tokens = Some(32);
+            let warm_label = format!("{label} · cache warm-up");
+            match openai_tool_loop(
+                app,
+                client,
+                "https://api.openai.com/v1",
+                &settings.openai_api_key,
+                "OpenAI",
+                warm_request,
+                timeout_secs,
+                &warm_label,
+                false,
+            )
+            .await
+            {
+                Ok((_text, usage)) => {
+                    warm_usage = usage;
+                    *state = Some("ready".to_string());
+                    log(app, format!("{label}: OpenAI shared context warmed"));
+                }
+                Err(error) => {
+                    *state = Some("implicit".to_string());
+                    // Older compatible endpoints may reject the routing hint
+                    // even though ordinary prefix caching still works.
+                    request.prompt_cache_key = None;
+                    log(
+                        app,
+                        format!(
+                            "WARNING: {label}: OpenAI cache warm-up was unavailable ({error}); continuing with automatic prefix caching"
+                        ),
+                    );
+                }
+            }
+        }
+        if state.as_deref() == Some("implicit") {
+            request.prompt_cache_key = None;
+        }
+    }
+
+    let (text, mut usage) = openai_tool_loop(
         app,
         client,
         "https://api.openai.com/v1",
@@ -144,6 +231,7 @@ pub async fn call_openai_api(
         false,
     )
     .await?;
+    usage.merge(warm_usage);
 
     let elapsed = start.elapsed().as_secs();
     log(
@@ -154,7 +242,7 @@ pub async fn call_openai_api(
             usage.summary()
         ),
     );
-    super::logging::emit_usage(app, usage.input_tokens, usage.output_tokens);
+    super::logging::emit_usage(app, usage.call_usage());
 
     if text.trim().is_empty() {
         return Err(format!("{label}: OpenAI API returned empty output"));
@@ -218,10 +306,16 @@ pub async fn call_local_api(
     let client = &*super::api_common::HTTP_CLIENT;
     let request = OpenAIRequest {
         model,
-        messages: build_messages(prompt, system_prompt, None)?,
+        messages: build_messages(
+            prompt,
+            system_prompt,
+            None,
+            overrides.shared_context.as_deref(),
+        )?,
         tools: build_tools(allowed_tools),
         reasoning_effort: None,
         max_completion_tokens: overrides.max_output_tokens,
+        prompt_cache_key: None,
     };
 
     let (text, usage) = openai_tool_loop(
@@ -246,11 +340,36 @@ pub async fn call_local_api(
             usage.summary()
         ),
     );
-    super::logging::emit_usage(app, usage.input_tokens, usage.output_tokens);
+    super::logging::emit_usage(app, usage.call_usage());
 
     if text.trim().is_empty() {
         return Err(format!("{label}: local server returned empty output"));
     }
 
     Ok(text.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_context_is_a_stable_prefix_before_the_task() {
+        let context = super::super::context_cache::PreparedContext::new(
+            "paper body",
+            &serde_json::json!({"map": "orientation"}),
+        )
+        .unwrap();
+        let messages = build_messages(
+            "task-specific request",
+            Some("system"),
+            None,
+            Some(&context),
+        )
+        .unwrap();
+        assert_eq!(messages[0].role, "system");
+        let parts = messages[1].content.as_ref().unwrap().as_array().unwrap();
+        assert!(parts[0]["text"].as_str().unwrap().contains("paper body"));
+        assert_eq!(parts[1]["text"], "task-specific request");
+    }
 }

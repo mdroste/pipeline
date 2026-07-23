@@ -53,6 +53,8 @@ describe("SettingsPage", () => {
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
     expect(await screen.findByText("Preferred Provider")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Claude (Anthropic)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "ChatGPT (OpenAI)" })).toBeInTheDocument();
     expect(invoke).toHaveBeenCalledWith("get_settings");
   });
 

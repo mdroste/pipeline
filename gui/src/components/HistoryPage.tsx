@@ -308,8 +308,25 @@ export default function HistoryPage({ onClose, initialRunId, onRerun }: Props) {
                         <span>{r.step_count} step{r.step_count === 1 ? "" : "s"}</span>
                         <span>{fmtDuration(r.duration_secs)}</span>
                         {r.input_tokens + r.output_tokens > 0 && (
-                          <span title="input / output tokens">
+                          <span
+                            title={[
+                              `${r.input_tokens.toLocaleString()} input`,
+                              `${r.output_tokens.toLocaleString()} output`,
+                              `${(r.cached_input_tokens ?? 0).toLocaleString()} cached`,
+                              `${(r.cache_write_input_tokens ?? 0).toLocaleString()} warmed`,
+                            ].join(" · ")}
+                          >
                             {fmtTokens(r.input_tokens)} / {fmtTokens(r.output_tokens)} tok
+                            {(r.cached_input_tokens ?? 0) > 0 && (
+                              <span className="text-green-600 dark:text-green-400">
+                                {" "}· {fmtTokens(r.cached_input_tokens)} cached
+                              </span>
+                            )}
+                            {(r.cache_write_input_tokens ?? 0) > 0 && (
+                              <span className="text-blue-600 dark:text-blue-400">
+                                {" "}· {fmtTokens(r.cache_write_input_tokens)} warmed
+                              </span>
+                            )}
                           </span>
                         )}
                         {r.failed_steps.length > 0 && (

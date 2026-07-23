@@ -20,6 +20,7 @@ pub struct Request<'a> {
     pub command_model: Option<&'a str>,
     pub effort: &'a str,
     pub settings: &'a crate::settings::Settings,
+    pub shared_context: Option<std::sync::Arc<crate::pipeline::context_cache::PreparedContext>>,
 }
 
 pub struct Result {
@@ -36,6 +37,7 @@ pub async fn execute(request: Request<'_>) -> Result {
     overrides.model_resolved = true;
     overrides.write_dir = request.write_dir;
     overrides.settings = Some(request.settings);
+    overrides.shared_context = request.shared_context;
 
     let started = std::time::Instant::now();
     let (output, usage) = super::logging::with_pass(

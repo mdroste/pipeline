@@ -102,6 +102,13 @@ The app ships five profiles you can use as-is or copy and edit:
 
 The pipeline editor in the GUI lets you add, remove, reorder, enable, and disable steps. Each step has a phase (Parallel or Sequential), a prompt, optional tools (e.g., WebSearch), and one or more LLM agents. Assigning multiple agents to a step (e.g., Claude + Gemini) runs them independently; their outputs are merged automatically.
 
+For long, multi-step inputs, **Pipeline Settings → Reuse shared input context**
+optionally prepares the extracted input and orientation map once. API providers
+reuse a warmed prompt prefix; Claude and Codex CLI calls fork a warmed base
+session. The setting is per profile and off by default. The console and saved
+run summary show cache-read and cache-write tokens when the provider reports
+them, and unsupported providers fall back to ordinary self-contained calls.
+
 Steps also support a few optional controls for building your own workflows: **dependencies** (make a step wait for specific earlier steps), **conditions** (run a step only when the survey or an earlier step matches), a **JSON output shape** (which turns the report into a sortable, annotatable issues table), **variables** (values the app asks for at run time, referenced as `{var:name}`), **extra named inputs** (a response letter, rubric, or prior report, referenced as `{input:name}`), and **fan-out** (run a step once per file matching a glob, with `{item}` bound to each file).
 
 Custom profiles can be created, exported, imported from a file or a URL, and shared. Settings and profiles are stored in `~/.pipeline/`.

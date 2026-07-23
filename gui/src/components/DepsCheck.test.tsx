@@ -20,10 +20,11 @@ describe("DepsCheck", () => {
   it("shows 'All dependencies found' when everything is installed and authenticated", () => {
     const report: DepsReport = {
       ready: true,
-      deps: [dep({ name: "claude", authenticated: true })],
+      deps: [dep({ name: "claude", authenticated: true, cli_auth_status: "signed_in" })],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     expect(screen.getByText("All dependencies found.")).toBeInTheDocument();
+    expect(screen.getByText("signed in")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
@@ -41,11 +42,42 @@ describe("DepsCheck", () => {
   it("shows 'not signed in' for a required dep that is present but unauthenticated", () => {
     const report: DepsReport = {
       ready: false,
-      deps: [dep({ name: "claude", authenticated: false })],
+      deps: [dep({ name: "claude", authenticated: false, cli_auth_status: "signed_out" })],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     expect(screen.getByText("not signed in")).toBeInTheDocument();
     expect(screen.getByText(/Required CLI not signed in\./)).toBeInTheDocument();
+  });
+
+  it("reports an installed CLI whose sign-in state cannot be verified", () => {
+    const report: DepsReport = {
+      ready: false,
+      deps: [dep({
+        name: "Gemini CLI",
+        authenticated: undefined,
+        cli_auth_status: "unknown",
+        hint: "Gemini CLI authentication cannot be verified noninteractively.",
+      })],
+    };
+    render(<DepsCheck report={report} onDismiss={() => {}} />);
+    expect(screen.getByText("sign-in not verified")).toBeInTheDocument();
+    expect(screen.getByText(/Required CLI sign-in could not be verified\./)).toBeInTheDocument();
+    expect(screen.getByText(/cannot be verified noninteractively/)).toBeInTheDocument();
+  });
+
+  it("reports a signed-out CLI without blocking a configured direct API", () => {
+    const report: DepsReport = {
+      ready: true,
+      deps: [dep({
+        authenticated: true,
+        cli_auth_status: "signed_out",
+        hint: "API key configured — CLI not required.",
+      })],
+    };
+    render(<DepsCheck report={report} onDismiss={() => {}} />);
+    expect(screen.getByText("not signed in")).toBeInTheDocument();
+    expect(screen.queryByText(/Required CLI not signed in/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   it("treats missing optional deps as non-blocking ('Continue' button, no blocker text)", () => {
