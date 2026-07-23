@@ -1627,6 +1627,10 @@ mod tests {
     fn folder_source_grants_the_folder_not_its_parent() {
         let folder = tempfile::tempdir().unwrap();
         let canonical = folder.path().canonicalize().unwrap();
+        let expected = normalize_cli_root(&folder.path().to_string_lossy()).unwrap();
+        let parent = canonical
+            .parent()
+            .and_then(|path| normalize_cli_root(&path.to_string_lossy()));
         let roots = provider_read_dirs(
             folder.path().to_str().unwrap(),
             "/private/tmp/pipeline_run/paper.txt",
@@ -1634,13 +1638,10 @@ mod tests {
             &std::collections::HashMap::new(),
             &[],
         );
-        let expected = canonical.to_string_lossy().replace('\\', "/");
         assert!(roots.iter().any(|root| root == &expected));
-        assert!(!roots.iter().any(|root| {
-            canonical
-                .parent()
-                .is_some_and(|parent| root == &parent.to_string_lossy().replace('\\', "/"))
-        }));
+        assert!(!roots
+            .iter()
+            .any(|root| parent.as_ref().is_some_and(|parent| root == parent)));
     }
 
     // ── resolve_dependencies (implicit adjacency schedule) ─────────
