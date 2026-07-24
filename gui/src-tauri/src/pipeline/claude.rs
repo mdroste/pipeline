@@ -1,4 +1,6 @@
+use std::future::Future;
 use std::io::Write;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -9,6 +11,8 @@ use super::cli_process::{
     capture_stderr, capture_text_stdout, emit_stderr_tail, finish_streams, last_stderr_hint, log,
     track_child_started, verbose_log, wait_for_child,
 };
+
+type BoxedProviderFuture<'a> = Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
 
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Claude to read it.
@@ -61,15 +65,12 @@ fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-async fn supervise_artifact_writes<F>(
-    future: F,
+async fn supervise_artifact_writes(
+    future: BoxedProviderFuture<'_>,
     write_dir: &str,
     pass_key: Option<String>,
-) -> Result<String, String>
-where
-    F: std::future::Future<Output = Result<String, String>>,
-{
-    let mut operation = std::pin::pin!(future);
+) -> Result<String, String> {
+    let mut operation = future;
     let directory = std::path::PathBuf::from(write_dir);
     loop {
         if let Ok(result) =
@@ -315,6 +316,10 @@ fn same_or_descendant(path: &str, root: &str) -> bool {
 #[derive(Default, Clone, Debug)]
 pub struct LlmOverrides<'a> {
     pub model: Option<&'a str>,
+    /// Human-readable resolved model provenance for the console. This can be
+    /// populated even when CLI Automatic deliberately omits the model flag.
+    pub model_display: Option<&'a str>,
+    pub model_policy: Option<&'a str>,
     pub effort: Option<&'a str>,
     /// The caller already resolved the structured model policy. When true,
     /// `model: None` intentionally means CLI Automatic and must not fall back
@@ -571,7 +576,14 @@ async fn call_claude_inner(
     session_mode: Option<ClaudeSessionMode<'_>>,
 ) -> Result<String, String> {
     let mut cmd_args: Vec<String> = vec!["-p".to_string()];
-    let mut tools: Vec<String> = allowed_tools.iter().map(|s| s.to_string()).collect();
+    let mut tools: Vec<String> = allowed_tools
+        .iter()
+        // Direct APIs expose this as a first-class multimodal tool. Claude
+        // Code's native Read tool already handles images, so do not pass an
+        // unknown permission name to the CLI.
+        .filter(|tool| **tool != "ReadDocumentAsset")
+        .map(|tool| tool.to_string())
+        .collect();
     // Read is always available — steps need it for paper/orientation files
     // and the long-prompt workaround writes to a temp file.
     if !tools.iter().any(|t| t == "Read") {
@@ -744,8 +756,9 @@ async fn call_claude_inner(
     let status = wait_result?;
 
     // Collect stdout and unwrap the JSON result envelope (see the
-    // --output-format json note above). Falls back to the raw output when it
-    // isn't the expected envelope, so callers/behavior are unchanged.
+    // --output-format json note above). A successful process must produce the
+    // envelope: accepting arbitrary stdout here would let CLI narration or
+    // warnings become the report.
     let ((raw_stdout, stdout_overflowed), stderr_tail) = streams?;
     if stdout_overflowed {
         emit_stderr_tail(app, &stderr_tail);
@@ -754,9 +767,18 @@ async fn call_claude_inner(
             MAX_STDOUT_BYTES / 1024 / 1024
         ));
     }
-    let (text, claude_usage) = parse_claude_result(&raw_stdout);
-
     let exit_code = status.code().unwrap_or(-1);
+    let parsed_result = parse_claude_result(&raw_stdout);
+    let (text, claude_usage) = match parsed_result {
+        Ok(result) => result,
+        Err(_) if !status.success() => (raw_stdout.trim().to_string(), None),
+        Err(error) => {
+            emit_stderr_tail(app, &stderr_tail);
+            let msg = format!("Claude returned an invalid JSON result envelope: {error}");
+            log(app, format!("ERROR: {msg}"));
+            return Err(msg);
+        }
+    };
     let elapsed = start_time.elapsed().as_secs();
     let token_info = match claude_usage {
         Some(usage) if usage.input_tokens > 0 || usage.output_tokens > 0 => format!(
@@ -825,39 +847,47 @@ fn absolute_rule_path(dir: &str) -> String {
 
 /// Parse `claude -p --output-format json` output into the model's result text
 /// and, when present, cache-aware token usage. `input_tokens` remains the
-/// logical total and includes cache reads/creation. Falls back
-/// to the trimmed raw output with no usage when the input isn't the expected
-/// JSON envelope (older CLI, error text, or a caller-forced format).
-fn parse_claude_result(raw: &str) -> (String, Option<crate::pipeline::logging::CallUsage>) {
+/// logical total and includes cache reads/creation. Successful CLI calls are
+/// required to use this envelope so incidental stdout can never be promoted
+/// to model output.
+fn parse_claude_result(
+    raw: &str,
+) -> Result<(String, Option<crate::pipeline::logging::CallUsage>), String> {
     let trimmed = raw.trim();
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-        // Only claude's own result envelope carries `"type":"result"`. Gating
-        // on it means a model's *own* top-level JSON output (e.g. the
-        // orientation map) is never mistaken for the envelope and unwrapped.
-        if v.get("type").and_then(|t| t.as_str()) == Some("result") {
-            let text = v
-                .get("result")
-                .and_then(|r| r.as_str())
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
-            let usage = v.get("usage").map(|u| {
-                let field = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
-                let cached = field("cache_read_input_tokens");
-                let cache_write = field("cache_creation_input_tokens");
-                crate::pipeline::logging::CallUsage {
-                    input_tokens: field("input_tokens")
-                        .saturating_add(cached)
-                        .saturating_add(cache_write),
-                    output_tokens: field("output_tokens"),
-                    cached_input_tokens: cached,
-                    cache_write_input_tokens: cache_write,
-                    ..Default::default()
-                }
-            });
-            return (text, usage);
+    let v = serde_json::from_str::<serde_json::Value>(trimmed)
+        .map_err(|error| format!("invalid JSON: {error}"))?;
+    if v.get("type").and_then(|t| t.as_str()) != Some("result") {
+        return Err("missing `type: result`".to_string());
+    }
+    if v.get("is_error").and_then(|value| value.as_bool()) == Some(true) {
+        return Err("Claude marked the result as an error".to_string());
+    }
+    if let Some(subtype) = v.get("subtype").and_then(|value| value.as_str()) {
+        if subtype != "success" {
+            return Err(format!("non-success result subtype `{subtype}`"));
         }
     }
-    (trimmed.to_string(), None)
+    let text = v
+        .get("result")
+        .and_then(|r| r.as_str())
+        .ok_or("missing string `result`")?
+        .trim()
+        .to_string();
+    let usage = v.get("usage").map(|u| {
+        let field = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        let cached = field("cache_read_input_tokens");
+        let cache_write = field("cache_creation_input_tokens");
+        crate::pipeline::logging::CallUsage {
+            input_tokens: field("input_tokens")
+                .saturating_add(cached)
+                .saturating_add(cache_write),
+            output_tokens: field("output_tokens"),
+            cached_input_tokens: cached,
+            cache_write_input_tokens: cache_write,
+            ..Default::default()
+        }
+    });
+    Ok((text, usage))
 }
 
 /// Extract a user-facing error hint from CLI output.
@@ -893,6 +923,51 @@ pub fn extract_error_hint(output: &str) -> Option<String> {
 /// `cwd`: optional working directory for the subprocess. Pass the paper's source
 /// directory when the LLM needs to read figures or other assets alongside the paper.
 /// When `None`, the subprocess runs in the system temp dir.
+fn request_provider_label(provider: &str, transport: &str) -> &'static str {
+    match (provider, transport) {
+        ("claude", "api") => "Anthropic",
+        ("claude", _) => "Claude Code",
+        ("codex", "api") => "OpenAI",
+        ("codex", _) => "Codex CLI",
+        ("gemini", "api") => "Google",
+        ("gemini", _) => "Gemini CLI",
+        ("local", _) => "Local server",
+        _ => "Unknown provider",
+    }
+}
+
+fn request_effort(
+    provider: &str,
+    transport: &str,
+    model: &str,
+    settings: &crate::settings::Settings,
+    overrides: &LlmOverrides<'_>,
+) -> String {
+    let configured = match provider {
+        "claude" => overrides
+            .effort
+            .unwrap_or(settings.claude_effort.as_str())
+            .trim(),
+        "codex" => overrides
+            .effort
+            .unwrap_or(settings.codex_effort.as_str())
+            .trim(),
+        _ => return "Not configurable".to_string(),
+    };
+    if configured.is_empty() {
+        return "Provider default".to_string();
+    }
+    if provider == "claude" && transport == "api" {
+        if model.starts_with("claude-haiku") {
+            return "Not sent (unsupported by model)".to_string();
+        }
+        if !matches!(configured, "low" | "medium" | "high" | "max") {
+            return "Not sent (unsupported value)".to_string();
+        }
+    }
+    configured.to_string()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn call_llm(
     app: &crate::emit::EventBus,
@@ -910,12 +985,20 @@ pub async fn call_llm(
     // Tag every log line this call produces with a unique session id so the
     // frontend can separate concurrently running headless invocations.
     let session_id = super::logging::next_session_id();
-    super::logging::with_session(session_id, label, async move {
+    // Type-erase the dispatcher body before entering the generic task-local
+    // scope. This prevents TaskLocalFuture from embedding and duplicating the
+    // complete cross-provider state machine in debug builds.
+    let operation: BoxedProviderFuture<'_> = Box::pin(async move {
         let settings = overrides
             .settings
             .cloned()
             .unwrap_or_else(crate::settings::load);
         let provider = provider_override.unwrap_or(&settings.preferred_provider);
+        let provider = if provider.is_empty() {
+            "claude"
+        } else {
+            provider
+        };
 
         // Resolve a durable policy at the dispatch boundary. API Automatic
         // becomes a concrete available ID; CLI Automatic intentionally omits
@@ -951,9 +1034,78 @@ pub async fn call_llm(
         }
         let overrides = &effective_overrides;
 
+        let transport = settings.model_transport(provider);
+        let model = overrides
+            .model_display
+            .filter(|value| !value.trim().is_empty())
+            .or(overrides.model.filter(|value| !value.trim().is_empty()))
+            .map(str::to_string)
+            .or_else(|| {
+                resolution
+                    .as_ref()
+                    .map(|value| value.resolved_model.clone())
+            })
+            .unwrap_or_else(|| "Automatic (provider CLI default)".to_string());
+        let model_policy = overrides
+            .model_policy
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| resolution.as_ref().map(|value| value.selection.label()))
+            .unwrap_or_else(|| {
+                if overrides.model.is_some() {
+                    "Resolved model".to_string()
+                } else {
+                    "Automatic".to_string()
+                }
+            });
+        let effort = request_effort(provider, transport, &model, &settings, overrides);
+        let provider_label = request_provider_label(provider, transport);
+        let prompt_chars = prompt.chars().count();
+        let max_output_tokens = if transport != "api" {
+            None
+        } else {
+            match provider {
+                "claude" | "gemini" => Some(overrides.max_output_tokens.unwrap_or(16_384)),
+                "codex" | "local" => overrides.max_output_tokens,
+                _ => overrides.max_output_tokens,
+            }
+        };
+        let summary = format!(
+            "LLM request · {provider_label} {} · model {model} · effort {effort} · \
+             {prompt_chars} prompt characters",
+            transport.to_ascii_uppercase(),
+        );
+        super::logging::emit_request(
+            app,
+            summary,
+            serde_json::json!({
+                "provider": provider,
+                "provider_label": provider_label,
+                "transport": transport,
+                "model": model,
+                "model_policy": model_policy,
+                "effort": effort,
+                "tools": allowed_tools,
+                "timeout_secs": timeout_secs,
+                "max_output_tokens": max_output_tokens,
+                "output_format": output_format,
+                "prompt": prompt,
+                "prompt_chars": prompt_chars,
+                "system_prompt": system_prompt,
+                "shared_context": overrides.shared_context.as_ref().map(|context| context.content()),
+                "shared_context_chars": overrides.shared_context.as_ref().map(|context| context.content().chars().count()).unwrap_or(0),
+                "pdf_attached": overrides.pdf_attachment.is_some() && transport == "api",
+                "write_enabled": overrides.write_dir.is_some(),
+                "working_directory": cwd,
+                "read_directories": extra_read_dirs,
+                "write_directory": overrides.write_dir,
+                "local_endpoint": (provider == "local").then_some(settings.local_base_url.as_str()),
+            }),
+        );
+
         // Direct API path: bypass CLI subprocess when an API key is configured
         match provider {
-            "claude" | "" if !settings.anthropic_api_key.is_empty() => {
+            "claude" if !settings.anthropic_api_key.is_empty() => {
                 return super::api_anthropic::call_anthropic_api(
                     app,
                     prompt,
@@ -1024,7 +1176,7 @@ pub async fn call_llm(
         } else {
             prompt
         };
-        let cli_call = async {
+        let cli_call: BoxedProviderFuture<'_> = Box::pin(async {
             match provider {
                 "codex" => {
                     let codex_cwd = cwd.or_else(|| {
@@ -1077,14 +1229,14 @@ pub async fn call_llm(
                     .await
                 }
             }
-        };
+        });
         if let Some(write_dir) = overrides.write_dir {
             supervise_artifact_writes(cli_call, write_dir, super::logging::current_pass()).await
         } else {
             cli_call.await
         }
-    })
-    .await
+    });
+    super::logging::with_session(session_id, label, operation).await
 }
 
 /// Build a tokio Command with the full user PATH and platform-specific flags.
@@ -1106,7 +1258,12 @@ pub fn build_silent_command(program: &str, cwd: Option<&str>) -> Command {
             std_cmd.current_dir(std::env::temp_dir());
         }
     }
-    Command::from(std_cmd)
+    let mut command = Command::from(std_cmd);
+    // The pass/run supervisors kill the complete process group. This is a
+    // final leader-process safeguard if a provider future is dropped during
+    // panic or runtime shutdown before normal reaping runs.
+    command.kill_on_drop(true);
+    command
 }
 
 /// Resolve an installed provider CLI and build a tokio command without
@@ -1132,7 +1289,9 @@ pub(crate) fn build_provider_command(
             std_cmd.current_dir(std::env::temp_dir());
         }
     }
-    Ok(Command::from(std_cmd))
+    let mut command = Command::from(std_cmd);
+    command.kill_on_drop(true);
+    Ok(command)
 }
 
 /// Apply the shared environment and process-isolation flags to a standard
@@ -1159,6 +1318,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn request_effort_reports_what_each_transport_sends() {
+        let settings = crate::settings::Settings {
+            claude_effort: "high".to_string(),
+            codex_effort: "medium".to_string(),
+            ..Default::default()
+        };
+        let overrides = LlmOverrides::default();
+
+        assert_eq!(
+            request_effort("claude", "api", "claude-sonnet-4-6", &settings, &overrides),
+            "high"
+        );
+        assert_eq!(
+            request_effort("claude", "api", "claude-haiku-4-5", &settings, &overrides),
+            "Not sent (unsupported by model)"
+        );
+        assert_eq!(
+            request_effort("codex", "cli", "gpt-5.6", &settings, &overrides),
+            "medium"
+        );
+        assert_eq!(
+            request_effort("gemini", "api", "gemini-3.6-flash", &settings, &overrides),
+            "Not configurable"
+        );
+    }
+
+    #[test]
     #[cfg(unix)]
     fn configured_child_owns_a_dedicated_process_group() {
         let mut command = std::process::Command::new("sleep");
@@ -1175,7 +1361,7 @@ mod tests {
     fn unwraps_result_envelope_and_sums_input_tokens() {
         let raw = r#"{"type":"result","subtype":"success","result":"hello world",
             "usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}}"#;
-        let (text, usage) = parse_claude_result(raw);
+        let (text, usage) = parse_claude_result(raw).unwrap();
         assert_eq!(text, "hello world");
         assert_eq!(
             usage,
@@ -1204,26 +1390,31 @@ mod tests {
 
     #[test]
     fn envelope_without_usage_yields_result_and_no_tokens() {
-        let (text, usage) = parse_claude_result(r#"{"type":"result","result":"ok"}"#);
+        let (text, usage) = parse_claude_result(r#"{"type":"result","result":"ok"}"#).unwrap();
         assert_eq!(text, "ok");
         assert_eq!(usage, None);
     }
 
     #[test]
-    fn plain_text_falls_back_unchanged() {
-        let (text, usage) = parse_claude_result("  just some plain text  ");
-        assert_eq!(text, "just some plain text");
-        assert_eq!(usage, None);
+    fn plain_text_is_rejected_as_a_result_envelope() {
+        assert!(parse_claude_result("  just some plain text  ").is_err());
     }
 
     #[test]
-    fn model_json_output_is_not_mistaken_for_envelope() {
-        // A model that returns its own JSON (e.g. the orientation map) has no
-        // "type":"result" marker, so it passes through verbatim.
+    fn model_json_output_is_rejected_without_the_cli_envelope() {
         let model = r#"{"metadata":{"title":"X"},"result":"not an envelope"}"#;
-        let (text, usage) = parse_claude_result(model);
-        assert_eq!(text, model);
-        assert_eq!(usage, None);
+        assert!(parse_claude_result(model).is_err());
+    }
+
+    #[test]
+    fn error_result_envelopes_are_rejected() {
+        assert!(parse_claude_result(
+            r#"{"type":"result","subtype":"error_max_turns","result":"partial"}"#
+        )
+        .is_err());
+        assert!(
+            parse_claude_result(r#"{"type":"result","is_error":true,"result":"partial"}"#).is_err()
+        );
     }
 
     #[test]

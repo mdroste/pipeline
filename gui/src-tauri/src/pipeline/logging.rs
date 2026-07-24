@@ -313,6 +313,29 @@ pub fn emit(app: &crate::emit::EventBus, line: String) {
     .ok();
 }
 
+/// Emit the summary and structured details for one LLM request. The concise
+/// summary is mirrored to the run transcript; the potentially large prompt
+/// remains in the live event only and is revealed explicitly by the console.
+pub fn emit_request(app: &crate::emit::EventBus, line: String, request: serde_json::Value) {
+    let (session, label) = match current() {
+        Some(s) => (Some(s.id), Some(s.label)),
+        None => (None, None),
+    };
+    let level = "info";
+    write_to_sink(&line, level, session, label.as_deref());
+    app.emit_event(
+        "pipeline:log",
+        serde_json::json!({
+            "line": line,
+            "session": session,
+            "label": label,
+            "level": level,
+            "request": request,
+        }),
+    )
+    .ok();
+}
+
 /// Append one line to the on-disk transcript, if mirroring is active. Best
 /// effort: a write failure is dropped silently so logging never breaks a run.
 fn write_to_sink(line: &str, level: &str, session: Option<u64>, label: Option<&str>) {

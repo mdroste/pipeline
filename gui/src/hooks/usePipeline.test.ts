@@ -17,7 +17,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(() => new Promise(() => {})),
 }));
 
-function emitLog(line: string, extra?: { session?: number; label?: string; level?: string }) {
+function emitLog(
+  line: string,
+  extra?: {
+    session?: number;
+    label?: string;
+    level?: string;
+    request?: Record<string, unknown>;
+  }
+) {
   handlers["pipeline:log"]({ payload: { line, ...extra } });
 }
 
@@ -81,13 +89,19 @@ describe("usePipeline log buffering", () => {
     await waitFor(() => expect(result.current.listenersReady).toBe(true));
 
     act(() => {
-      // One line over the 10k cap → truncate to the last 8k plus a marker.
+      emitLog("request summary", {
+        session: 9,
+        label: "Long-running step",
+        request: { prompt: "important prompt" },
+      });
+      // Cross the 10k cap → retain 8k entries plus a marker.
       for (let i = 0; i < 10001; i++) emitLog(`line ${i}`);
     });
 
     await waitFor(() => expect(result.current.logs).toHaveLength(8001));
     const logs = result.current.logs;
     expect(logs[0].line).toContain("earlier log lines dropped");
+    expect(logs.some((entry) => entry.session === 9 && entry.request)).toBe(true);
     expect(logs[logs.length - 1].line).toBe("line 10000");
     unmount();
   });

@@ -137,7 +137,7 @@ function App() {
   const launch = (variables?: Record<string, string>, extraInputs?: Record<string, string>) => {
     setPage("main");
     setArtifact("report");
-    startPipeline(paperPath ?? "", true, variables, extraInputs);
+    startPipeline(paperPath ?? "", false, variables, extraInputs);
   };
 
   const handleGenerate = () => {
@@ -456,7 +456,7 @@ function App() {
                       <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-500">
                         {inputMode === "none"
                           ? "No source file is required for this workflow."
-                          : "Use a PDF, LaTeX file, or project directory."}
+                          : "Use a PDF, LaTeX file, Word document, or project directory."}
                       </p>
                     </li>
                     <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:px-5 dark:border-gray-800">

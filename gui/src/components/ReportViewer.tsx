@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { useFindBar } from "../hooks/useFindBar";
+import { normalizeMathDelimiters } from "../lib/mathMarkdown";
 
 interface Props {
   markdown: string;
@@ -75,17 +76,21 @@ function slugify(text: string): string {
 
 export default function ReportViewer({ markdown }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
-  const find = useFindBar(contentRef, markdown);
+  const normalizedMarkdown = useMemo(
+    () => normalizeMathDelimiters(markdown),
+    [markdown],
+  );
+  const find = useFindBar(contentRef, normalizedMarkdown);
 
   // Extract headings for table of contents
   const headings = useMemo(() => {
-    const matches = markdown.matchAll(/^(#{1,3})\s+(.+)$/gm);
+    const matches = normalizedMarkdown.matchAll(/^(#{1,3})\s+(.+)$/gm);
     return Array.from(matches).map((m) => ({
       level: m[1].length,
       text: m[2],
       id: slugify(m[2]),
     }));
-  }, [markdown]);
+  }, [normalizedMarkdown]);
 
   return (
     <div className="flex h-full relative">
@@ -138,7 +143,7 @@ export default function ReportViewer({ markdown }: Props) {
       {/* Report content */}
       <div className="flex-1 overflow-y-auto">
         <div className="report-content" ref={contentRef}>
-          <MathErrorBoundary resetKey={markdown}>
+          <MathErrorBoundary resetKey={normalizedMarkdown}>
             {(fallback) => (
               <>
                 {fallback && (
@@ -186,7 +191,7 @@ export default function ReportViewer({ markdown }: Props) {
                   },
                 }}
               >
-                {markdown}
+                {normalizedMarkdown}
                 </ReactMarkdown>
               </>
             )}

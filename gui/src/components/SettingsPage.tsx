@@ -595,6 +595,7 @@ function ExtractionSection({
             {(
               [
                 ["llm", "LLM (default)", "Your configured provider reads the PDF and extracts it to Markdown, verified page-by-page. Best quality."],
+                ["paddleocr-vl", "Local engine: PaddleOCR-VL 1.6 Q8", "Fast, high-quality local extraction for text, equations, tables, and scans. About 1.9 GB; install it below."],
                 ["marker", "Local engine: marker-pdf", "Local extraction, no LLM cost. Install it below."],
                 ["pdftotext", "pdftotext (basic)", "Fast, but equations are lost."],
               ] as const
@@ -647,7 +648,7 @@ function ExtractionSection({
               />
               <Toggle
                 label="Disable image extraction"
-                description="Skip extracting images from the PDF. Faster and uses less memory. When enabled, extracted figures appear in the run's artifact explorer."
+                description="Skip extracting figure images from the PDF. Faster and smaller, but the run will retain page renders only instead of separate figure assets."
                 checked={settings.marker_disable_images}
                 onChange={(v) =>
                   setSettings({ ...settings, marker_disable_images: v })
@@ -694,6 +695,14 @@ function GeneralSection({
           checked={settings.verbose_logging}
           onChange={(v) =>
             setSettings({ ...settings, verbose_logging: v })
+          }
+        />
+        <Toggle
+          label="Automatic revision reconciliation"
+          description="When a matching completed run exists, add an AI comparison of addressed, remaining, and new concerns. This adds an LLM call to the run."
+          checked={settings.auto_revision_reconciliation}
+          onChange={(v) =>
+            setSettings({ ...settings, auto_revision_reconciliation: v })
           }
         />
         <RunRetention settings={settings} setSettings={setSettings} />
@@ -933,6 +942,7 @@ function Toggle({
       <button
         type="button"
         role="switch"
+        aria-label={label}
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors mt-0.5 ${

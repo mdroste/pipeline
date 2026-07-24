@@ -1,7 +1,7 @@
 use std::process::Stdio;
-use tokio::io::BufReader;
+use tokio::io::{AsyncWriteExt, BufReader};
 
-use super::claude::{build_provider_command, normalize_cli_root, prepare_cli_prompt, LlmOverrides};
+use super::claude::{build_provider_command, normalize_cli_root, LlmOverrides};
 use super::cli_process::{
     capture_stderr, emit_stderr_tail, finish_streams, last_stderr_hint, log, track_child_started,
     verbose_log, wait_for_child,
@@ -31,6 +31,45 @@ enum CodexSessionMode<'a> {
 struct CodexInvocation {
     text: String,
     thread_id: Option<String>,
+}
+
+fn read_last_message_file(path: &std::path::Path) -> Result<Option<String>, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("Could not inspect Codex final-message file: {error}"))?;
+    if metadata.len() > super::claude::MAX_STDOUT_BYTES as u64 {
+        return Err(format!(
+            "Codex final message exceeded the {} MB safety limit",
+            super::claude::MAX_STDOUT_BYTES / 1_000_000
+        ));
+    }
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("Could not read Codex final-message file: {error}"))?;
+    let trimmed = text.trim();
+    Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
+}
+
+fn update_last_agent_message(
+    event: &serde_json::Value,
+    last_agent_text: &mut String,
+) -> Result<bool, String> {
+    let Some(item) = event.get("item") else {
+        return Ok(false);
+    };
+    if item.get("type").and_then(|kind| kind.as_str()) != Some("agent_message") {
+        return Ok(false);
+    }
+    let Some(text) = item.get("text").and_then(|text| text.as_str()) else {
+        return Ok(false);
+    };
+    if text.len() > super::claude::MAX_STDOUT_BYTES {
+        return Err(format!(
+            "Codex agent message exceeded the {} MB safety limit",
+            super::claude::MAX_STDOUT_BYTES / 1_000_000
+        ));
+    }
+    last_agent_text.clear();
+    last_agent_text.push_str(text);
+    Ok(true)
 }
 
 fn is_session_resume_error(error: &str) -> bool {
@@ -263,8 +302,6 @@ async fn call_codex_inner(
     if matches!(session_mode, CodexSessionMode::Resume(_)) {
         cmd_args.push("resume".to_string());
     }
-    let prepared_prompt = prepare_cli_prompt(prompt)?;
-
     // Use JSON mode for clean machine-readable output
     cmd_args.push("--json".to_string());
 
@@ -342,19 +379,23 @@ async fn call_codex_inner(
         cmd_args.push(format!("model_reasoning_effort={}", effort));
     }
 
-    // Codex's sandbox constrains writes but permits reads, so it needs no
-    // equivalent of Claude/Gemini's read-root flags. The private prompt
-    // directory nevertheless prevents unrelated temp files sharing a root.
-    if let Some(path) = &prepared_prompt.path {
-        log(
-            app,
-            format!("Wrote {} chars to temp file: {path}", prompt.len()),
-        );
-    }
+    // Codex reads the full prompt from a closed pipe. This avoids turning a
+    // long prompt into a meta-instruction to use a Read tool, which can surface
+    // as progress narration and makes prompt delivery tool-dependent.
+    // JSONL contains progress/commentary messages as well as the terminal
+    // response. Have Codex write the one terminal message separately so those
+    // channels can never be flattened into a report.
+    let last_message_dir = tempfile::Builder::new()
+        .prefix("pipeline_codex_final_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create Codex final-message directory: {error}"))?;
+    let last_message_path = last_message_dir.path().join("final.txt");
+    cmd_args.push("--output-last-message".to_string());
+    cmd_args.push(last_message_path.to_string_lossy().replace('\\', "/"));
     if let CodexSessionMode::Resume(id) = session_mode {
         cmd_args.push(id.to_string());
     }
-    cmd_args.push(prepared_prompt.argument.clone());
+    cmd_args.push("-".to_string());
 
     // Log the command (truncated)
     let display_args: String = cmd_args
@@ -372,14 +413,9 @@ async fn call_codex_inner(
 
     // The cwd defines codex's writable workspace, so in write mode it must
     // be the artifact dir regardless of what the caller passed.
-    let effective_cwd = codex_effective_cwd(
-        needs_write,
-        cwd,
-        overrides.write_dir,
-        prepared_prompt.read_root.as_deref(),
-    )?;
+    let effective_cwd = codex_effective_cwd(needs_write, cwd, overrides.write_dir, None)?;
     let mut cmd = build_provider_command("codex", effective_cwd.as_deref(), &cmd_args)?;
-    cmd.stdin(Stdio::null())
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -389,6 +425,21 @@ async fn call_codex_inner(
     super::logging::record_provider_attempt();
 
     let (pid, start_time) = track_child_started(&child, app, label);
+    let mut prompt_stdin = child
+        .stdin
+        .take()
+        .ok_or("Codex process did not expose stdin")?;
+    let prompt_bytes = prompt.as_bytes().to_vec();
+    let stdin_task = tokio::spawn(async move {
+        prompt_stdin
+            .write_all(&prompt_bytes)
+            .await
+            .map_err(|error| format!("Failed to send prompt to Codex: {error}"))?;
+        prompt_stdin
+            .shutdown()
+            .await
+            .map_err(|error| format!("Failed to close Codex prompt stream: {error}"))
+    });
 
     // Forward stderr to the verbose log. In --json mode it's mostly TUI
     // noise, but auth and capacity warnings land here too — dropping them
@@ -396,12 +447,14 @@ async fn call_codex_inner(
     let sess = super::logging::current();
     let stderr_task = capture_stderr(child.stderr.take(), app.clone(), sess.clone());
 
-    // Parse JSONL stdout: collect agent_message text and usage info
+    // Parse JSONL stdout for telemetry. Keep only the latest agent_message as
+    // a compatibility fallback for older CLIs that fail to populate
+    // --output-last-message; never concatenate progress and final messages.
     let stdout = child.stdout.take();
     let app_stdout = app.clone();
     let label_clone = label.to_string();
     let stdout_task = tokio::spawn(super::logging::with_session_opt(sess, async move {
-        let mut agent_text = String::new();
+        let mut last_agent_text = String::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let mut total_cached_input_tokens: u64 = 0;
@@ -453,28 +506,11 @@ async fn call_codex_inner(
                                 .map(str::to_string);
                         }
                         Some("item.completed") => {
-                            if let Some(item) = event.get("item") {
-                                if item.get("type").and_then(|t| t.as_str())
-                                    == Some("agent_message")
-                                {
-                                    if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                                        if text.len()
-                                            > super::claude::MAX_STDOUT_BYTES
-                                                .saturating_sub(agent_text.len())
-                                        {
-                                            log(
-                                                &app_stdout,
-                                                format!(
-                                                    "ERROR: stdout exceeded {} MB",
-                                                    super::claude::MAX_STDOUT_BYTES / 1_000_000
-                                                ),
-                                            );
-                                            overflowed = true;
-                                        } else {
-                                            agent_text.push_str(text);
-                                        }
-                                    }
-                                }
+                            if let Err(error) =
+                                update_last_agent_message(&event, &mut last_agent_text)
+                            {
+                                log(&app_stdout, format!("ERROR: {error}"));
+                                overflowed = true;
                             }
                         }
                         Some("turn.completed") => {
@@ -526,7 +562,7 @@ async fn call_codex_inner(
             );
         }
         (
-            agent_text,
+            last_agent_text,
             total_input_tokens,
             total_output_tokens,
             total_cached_input_tokens,
@@ -539,9 +575,15 @@ async fn call_codex_inner(
         wait_for_child(&mut child, pid, timeout_secs, "Codex", "codex", label, app).await;
     let streams = finish_streams(stdout_task, stderr_task, pid, "Codex").await;
     let status = wait_result?;
+    let stdin_result = stdin_task
+        .await
+        .map_err(|error| format!("Codex prompt writer failed: {error}"))?;
+    if status.success() {
+        stdin_result?;
+    }
     let (
         (
-            agent_text,
+            last_agent_text,
             input_tokens,
             output_tokens,
             cached_input_tokens,
@@ -557,7 +599,17 @@ async fn call_codex_inner(
             super::claude::MAX_STDOUT_BYTES / 1024 / 1024
         ));
     }
-    let text = agent_text.trim().to_string();
+    let text = match read_last_message_file(&last_message_path) {
+        Ok(Some(text)) => text,
+        Ok(None) => last_agent_text.trim().to_string(),
+        Err(error) => {
+            log(
+                app,
+                format!("WARNING: {label}: {error}; using the final JSONL message"),
+            );
+            last_agent_text.trim().to_string()
+        }
+    };
 
     let exit_code = status.code().unwrap_or(-1);
     let elapsed = start_time.elapsed().as_secs();
@@ -653,5 +705,41 @@ mod tests {
         assert!(is_session_resume_error("failed to load rollout for thread"));
         assert!(is_session_resume_error("session not found"));
         assert!(!is_session_resume_error("rate limited"));
+    }
+
+    #[test]
+    fn reads_only_the_terminal_message_file() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "  ## Final report\n\nClean.  \n").unwrap();
+        assert_eq!(
+            read_last_message_file(file.path()).unwrap().as_deref(),
+            Some("## Final report\n\nClean.")
+        );
+    }
+
+    #[test]
+    fn jsonl_fallback_replaces_commentary_with_the_terminal_message() {
+        let events = [
+            serde_json::json!({
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": "I’ll read the instructions and use the requested skill."
+                }
+            }),
+            serde_json::json!({
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": "## Final report\n\nClean."
+                }
+            }),
+        ];
+        let mut fallback = String::new();
+        for event in events {
+            update_last_agent_message(&event, &mut fallback).unwrap();
+        }
+        assert_eq!(fallback, "## Final report\n\nClean.");
+        assert!(!fallback.contains("instructions"));
     }
 }

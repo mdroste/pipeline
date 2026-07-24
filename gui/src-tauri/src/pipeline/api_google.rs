@@ -28,6 +28,14 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
             "parameters": def.input_schema,
         }));
     }
+    if allowed_tools.contains(&"ReadDocumentAsset") {
+        let def = DocumentAssetToolDef::default();
+        declarations.push(serde_json::json!({
+            "name": def.name,
+            "description": def.description,
+            "parameters": def.input_schema,
+        }));
+    }
     if allowed_tools.contains(&"Write") {
         let def = WriteToolDef::default();
         declarations.push(serde_json::json!({

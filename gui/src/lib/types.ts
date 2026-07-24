@@ -94,7 +94,7 @@ export interface InputSlot {
 
 /** Per-profile extraction overrides. Empty/null fields inherit from global Settings. */
 export interface ExtractionConfig {
-  /** "" | "auto" | "llm" | "marker" | "pdftotext". Empty = inherit. */
+  /** "" | "auto" | "llm" | "paddleocr-vl" | "marker" | "pdftotext". Empty = inherit. */
   method: string;
   /** null = inherit; true/false = override. */
   marker_disable_ocr: boolean | null;
@@ -310,6 +310,7 @@ export interface RunSummary {
   step_count: number;
   artifact_count: number;
   failed_steps: string[];
+  resumable: boolean;
   title: string;
   tags: string[];
 }
@@ -324,7 +325,7 @@ export interface RunsDiskUsage {
 export interface BatchJob {
   path: string;
   name: string;
-  status: string; // pending | running | done | failed | cancelled
+  status: string; // pending | running | done | partial | failed | cancelled | interrupted
   run_id: string | null;
   error: string | null;
   duration_secs: number;
@@ -370,6 +371,8 @@ export interface Settings {
   verbose_logging: boolean;
   step_timeout_secs: number;
   max_retries: number;
+  /** Add an LLM revision reconciliation when a matching prior run exists. */
+  auto_revision_reconciliation: boolean;
   /** Max past runs to keep on disk; 0 = keep all. */
   max_saved_runs: number;
   max_saved_run_bytes: number;

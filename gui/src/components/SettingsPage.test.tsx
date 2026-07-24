@@ -24,6 +24,7 @@ function makeSettings(): Settings {
     verbose_logging: false,
     step_timeout_secs: 1200,
     max_retries: 1,
+    auto_revision_reconciliation: false,
     max_saved_runs: 0,
     max_saved_run_bytes: 5_000_000_000,
     anthropic_api_key: "",
@@ -58,6 +59,17 @@ describe("SettingsPage", () => {
     expect(invoke).toHaveBeenCalledWith("get_settings");
   });
 
+  it("offers PaddleOCR-VL as a PDF extraction method", async () => {
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+    expect(
+      screen.getByRole("radio", {
+        name: /Local engine: PaddleOCR-VL 1\.6 Q8/,
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("surfaces backend warnings from settings load", async () => {
     mockLoad(makeSettings(), [
       "Settings file has invalid JSON: oops. It was moved to settings.json.corrupt",
@@ -82,6 +94,31 @@ describe("SettingsPage", () => {
       }),
     );
     expect(await screen.findByText("Settings saved.")).toBeInTheDocument();
+  });
+
+  it("keeps automatic revision reconciliation off by default and persists opt-in", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: "General" }));
+    const reconciliation = screen.getByRole("switch", {
+      name: /automatic revision reconciliation/i,
+    });
+    expect(reconciliation).toHaveAttribute("aria-checked", "false");
+
+    await user.click(reconciliation);
+    expect(reconciliation).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: {
+          ...makeSettings(),
+          auto_revision_reconciliation: true,
+        },
+      }),
+    );
   });
 
   it("shows an error state with a working back button when loading fails", async () => {

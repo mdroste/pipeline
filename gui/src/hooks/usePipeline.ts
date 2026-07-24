@@ -5,6 +5,33 @@ import type { PipelineReport, PipelineResult } from "../lib/types";
 
 export type PassStatus = "pending" | "running" | "done" | "error" | "skipped";
 
+/** Effective settings and prompt material for one provider invocation. Secrets
+ *  are never included. Large prompt fields arrive only in the live event and
+ *  are not written to the persistent console transcript. */
+export interface LlmRequestDetails {
+  provider: string;
+  provider_label: string;
+  transport: "cli" | "api";
+  model: string;
+  model_policy: string;
+  effort: string;
+  tools: string[];
+  timeout_secs: number;
+  max_output_tokens: number | null;
+  output_format: string;
+  prompt: string;
+  prompt_chars: number;
+  system_prompt: string | null;
+  shared_context: string | null;
+  shared_context_chars: number;
+  pdf_attached: boolean;
+  write_enabled: boolean;
+  working_directory: string | null;
+  read_directories: string[];
+  write_directory: string | null;
+  local_endpoint: string | null;
+}
+
 /** One console line, tagged with the headless session (LLM call) it came from.
  *  `session` is null for orchestration/extraction lines that belong to no
  *  single call; those show only in the master view. */
@@ -15,6 +42,8 @@ export interface LogEntry {
   level: string; // info | warn | error | stderr | stdout
   /** Client arrival time (ms epoch), used for optional console timestamps. */
   t: number;
+  /** Present on the first line for an LLM session. */
+  request?: LlmRequestDetails;
 }
 
 /** Start/end times (ms epoch) of a single pass, for elapsed-time display. */
@@ -131,7 +160,13 @@ export function usePipeline() {
             };
           });
         }),
-        listen<{ line: string; session?: number | null; label?: string | null; level?: string }>(
+        listen<{
+          line: string;
+          session?: number | null;
+          label?: string | null;
+          level?: string;
+          request?: LlmRequestDetails;
+        }>(
           "pipeline:log",
           (event) => {
             if (!mounted) return;
@@ -141,6 +176,7 @@ export function usePipeline() {
               label: event.payload.label ?? null,
               level: event.payload.level ?? "info",
               t: Date.now(),
+              ...(event.payload.request ? { request: event.payload.request } : {}),
             });
           }
         ),
@@ -203,15 +239,31 @@ export function usePipeline() {
           setLogs((prev) => {
             const next = prev.concat(pending);
             if (next.length > LOG_MAX) {
+              const tail = next.slice(-LOG_KEEP);
+              const retainedSessions = new Set(
+                tail
+                  .filter((entry) => entry.request && entry.session != null)
+                  .map((entry) => entry.session as number)
+              );
+              const earlierRequests = new Map<number, LogEntry>();
+              for (const entry of next.slice(0, -LOG_KEEP)) {
+                if (entry.request && entry.session != null && !retainedSessions.has(entry.session)) {
+                  earlierRequests.set(entry.session, entry);
+                }
+              }
+              const protectedRequests = Array.from(earlierRequests.values()).slice(-LOG_KEEP);
+              const retained = protectedRequests.concat(
+                tail.slice(protectedRequests.length)
+              );
               return [
                 {
-                  line: `… earlier log lines dropped (showing last ${LOG_KEEP}) …`,
+                  line: `… earlier log lines dropped (${LOG_KEEP} recent lines kept; request summaries retained) …`,
                   session: null,
                   label: null,
                   level: "info",
                   t: Date.now(),
                 },
-                ...next.slice(-LOG_KEEP),
+                ...retained,
               ];
             }
             return next;

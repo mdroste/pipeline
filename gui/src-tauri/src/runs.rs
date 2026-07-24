@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Text artifacts larger than this are truncated when read for display.
 const MAX_TEXT_BYTES: usize = 1_000_000;
+const MAX_DOCUMENT_BUNDLE_BYTES: usize = 16 * 1024 * 1024;
 /// Images larger than this are not inlined (metadata only).
 const MAX_IMAGE_BYTES: u64 = 10_000_000;
 const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
@@ -66,7 +67,8 @@ pub struct RunManifest {
     pub provider: String,
     pub artifacts: Vec<ArtifactEntry>,
     // ── Run-level metadata (all defaulted so pre-1.1 manifests still load) ──
-    /// Outcome: "done" | "partial" (some steps failed) | "failed" | "cancelled".
+    /// Outcome: "done" | "partial" (some steps failed) | "failed" |
+    /// "cancelled" | "interrupted" (process ended before finalization).
     #[serde(default)]
     pub status: String,
     /// Wall-clock time the whole run took, in seconds.
@@ -140,6 +142,9 @@ pub struct RunSummary {
     pub step_count: u32,
     pub artifact_count: u32,
     pub failed_steps: Vec<String>,
+    /// The run has a structured report plus cached extraction and can continue
+    /// from its last durable step through the History page.
+    pub resumable: bool,
     pub title: String,
     pub tags: Vec<String>,
 }
@@ -185,6 +190,7 @@ impl RunManifest {
             step_count: self.step_count,
             artifact_count: self.artifacts.len() as u32,
             failed_steps: self.failed_steps.clone(),
+            resumable: false,
             title: self.title.clone(),
             tags: self.tags.clone(),
         }
@@ -642,6 +648,379 @@ pub fn load_manifest(run_id: &str) -> Result<RunManifest, String> {
     serde_json::from_str(&content).map_err(|e| format!("Invalid manifest: {e}"))
 }
 
+fn write_text_atomic(dir: &Path, name: &str, content: &[u8]) -> Result<(), String> {
+    use std::io::Write as _;
+    let destination = dir.join(name);
+    let mut temp = tempfile::NamedTempFile::new_in(dir)
+        .map_err(|error| format!("Failed to create recovery temp file: {error}"))?;
+    temp.write_all(content)
+        .map_err(|error| format!("Failed to write recovery temp file: {error}"))?;
+    temp.flush()
+        .map_err(|error| format!("Failed to flush recovery temp file: {error}"))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|error| format!("Failed to sync recovery temp file: {error}"))?;
+    temp.persist(destination)
+        .map_err(|error| format!("Failed to publish recovered file: {}", error.error))?;
+    Ok(())
+}
+
+fn register_recovered_artifact(
+    manifest: &mut RunManifest,
+    dir: &Path,
+    rel_path: &str,
+    label: &str,
+    group: &str,
+) {
+    if manifest.artifacts.len() >= MAX_MANIFEST_ARTIFACTS
+        || manifest
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.rel_path == rel_path)
+    {
+        return;
+    }
+    let path = dir.join(rel_path);
+    let Ok((head, bytes, sha256)) = inspect_file(&path) else {
+        return;
+    };
+    manifest.artifacts.push(ArtifactEntry {
+        rel_path: rel_path.to_string(),
+        label: label.to_string(),
+        kind: detect_kind(rel_path, &head).to_string(),
+        bytes,
+        sha256,
+        group: group.to_string(),
+    });
+}
+
+fn register_recovered_directory(
+    manifest: &mut RunManifest,
+    dir: &Path,
+    rel_dir: &str,
+    group: &str,
+) {
+    let Ok(entries) = fs::read_dir(dir.join(rel_dir)) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            (file_type.is_file() && !file_type.is_symlink()).then_some(entry.path())
+        })
+        .collect();
+    paths.sort();
+    for path in paths.into_iter().take(500) {
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let relative = format!("{rel_dir}/{name}");
+        let label = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(name);
+        register_recovered_artifact(manifest, dir, &relative, label, group);
+    }
+}
+
+fn recovery_failure(manifest: &RunManifest) -> Vec<crate::models::StepFailure> {
+    if manifest.status == "done" {
+        return Vec::new();
+    }
+    if manifest.status == "partial" && !manifest.failed_steps.is_empty() {
+        return manifest
+            .failed_steps
+            .iter()
+            .enumerate()
+            .map(|(index, label)| crate::models::StepFailure {
+                step_id: format!("__incomplete_{index}__"),
+                step_label: label.clone(),
+                error: "Step did not complete before the run stopped".to_string(),
+            })
+            .collect();
+    }
+    let (step_id, step_label, error) = match manifest.status.as_str() {
+        "cancelled" => (
+            "__run_cancelled__",
+            "Run cancelled",
+            "Pipeline was cancelled before final report finalization",
+        ),
+        "failed" => (
+            "__run_failed__",
+            "Run failed",
+            "Pipeline failed before final report finalization",
+        ),
+        "partial" => (
+            "__run_partial__",
+            "Run incomplete",
+            "Pipeline stopped before its structured report was saved",
+        ),
+        _ => (
+            "__run_interrupted__",
+            "Run interrupted",
+            "Pipeline exited before final report finalization",
+        ),
+    };
+    vec![crate::models::StepFailure {
+        step_id: step_id.to_string(),
+        step_label: step_label.to_string(),
+        error: error.to_string(),
+    }]
+}
+
+fn resumable_status(status: &str) -> bool {
+    matches!(status, "partial" | "failed" | "cancelled" | "interrupted")
+}
+
+fn run_has_resume_files(dir: &Path, manifest: &RunManifest) -> bool {
+    if !resumable_status(&manifest.status)
+        || crate::safety::open_regular_file(&dir.join("context/extracted_text.md")).is_err()
+    {
+        return false;
+    }
+    read_utf8_at_most(&dir.join("report.json"), MAX_REPORT_BYTES, "Run report")
+        .ok()
+        .and_then(|json| serde_json::from_str::<crate::models::PipelineReport>(&json).ok())
+        .is_some()
+}
+
+/// Turn the durable pieces of an unfinished run into the same structured
+/// report consumed by the normal resume path. Returns true only when recovery
+/// wrote a report; completed/unsupported runs are left untouched.
+fn recover_resumable_run_dir(dir: &Path, manifest: &mut RunManifest) -> Result<bool, String> {
+    if !matches!(
+        manifest.status.as_str(),
+        "running" | "partial" | "failed" | "cancelled" | "interrupted" | "done"
+    ) {
+        return Ok(false);
+    }
+    let report_is_valid =
+        read_utf8_at_most(&dir.join("report.json"), MAX_REPORT_BYTES, "Run report")
+            .ok()
+            .and_then(|json| serde_json::from_str::<crate::models::PipelineReport>(&json).ok())
+            .is_some();
+    if report_is_valid {
+        return Ok(false);
+    }
+    // A re-run always starts from the captured extraction. If it was never
+    // written, this job stopped before there was a safe restart point.
+    crate::safety::open_regular_file(&dir.join("context/extracted_text.md"))
+        .map_err(|_| "Incomplete run has no captured extraction to resume from".to_string())?;
+
+    let checkpoint_dir = dir.join("artifacts").join("checkpoints");
+    let mut checkpoints = Vec::new();
+    if let Ok(entries) = fs::read_dir(&checkpoint_dir) {
+        let mut walk = crate::safety::WalkBudget::new("Incomplete-run checkpoint recovery");
+        for entry in entries.flatten() {
+            walk.entry()?;
+            let path = entry.path();
+            let is_regular = entry
+                .file_type()
+                .map(|kind| kind.is_file() && !kind.is_symlink())
+                .unwrap_or(false);
+            if !is_regular || path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt as _;
+                if entry
+                    .metadata()
+                    .map(|metadata| metadata.nlink() > 1)
+                    .unwrap_or(true)
+                {
+                    continue;
+                }
+            }
+            checkpoints.push(path);
+        }
+    }
+    checkpoints.sort();
+
+    let mut outputs = Vec::new();
+    let mut checkpoint_failures = Vec::new();
+    for path in &checkpoints {
+        let Ok(json) = read_utf8_at_most(path, MAX_REPORT_BYTES, "Step checkpoint") else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&json) else {
+            continue;
+        };
+        if let Some(failure) = value
+            .get("failure")
+            .cloned()
+            .and_then(|failure| serde_json::from_value(failure).ok())
+        {
+            checkpoint_failures.push(failure);
+        } else if let Ok(output) = serde_json::from_value::<crate::models::StepOutput>(value) {
+            outputs.push(output);
+        }
+    }
+
+    let orientation = read_utf8_at_most(
+        &dir.join("context").join("orientation.json"),
+        MAX_REPORT_BYTES,
+        "Orientation map",
+    )
+    .ok()
+    .and_then(|json| serde_json::from_str(&json).ok())
+    .unwrap_or(serde_json::Value::Null);
+    let failed_steps = if checkpoint_failures.is_empty() {
+        recovery_failure(manifest)
+    } else {
+        checkpoint_failures
+    };
+    let report = crate::models::PipelineReport {
+        orientation,
+        step_outputs: outputs,
+        failed_steps,
+        referee_reports: Vec::new(),
+        editor: None,
+        report_date: chrono::DateTime::parse_from_rfc3339(&manifest.created)
+            .map(|date| date.date_naive())
+            .unwrap_or_else(|_| chrono::Local::now().date_naive()),
+        paper_hash: manifest
+            .run_id
+            .split('_')
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+    };
+    let report_json = serde_json::to_vec_pretty(&report)
+        .map_err(|error| format!("Failed to serialize recovered report: {error}"))?;
+    write_text_atomic(dir, "report.json", &report_json)?;
+    let settings = crate::settings::load();
+    let markdown = crate::output::render_markdown(
+        &report,
+        None,
+        std::time::Duration::from_secs(manifest.duration_secs),
+        &settings,
+    );
+    write_text_atomic(dir, "report.md", markdown.as_bytes())?;
+
+    register_recovered_artifact(manifest, dir, "report.md", "Recovered report", "report");
+    register_recovered_artifact(
+        manifest,
+        dir,
+        "report.json",
+        "Recovered report data",
+        "context",
+    );
+    register_recovered_artifact(
+        manifest,
+        dir,
+        "context/document_bundle.json",
+        "Document bundle",
+        "document",
+    );
+    register_recovered_artifact(
+        manifest,
+        dir,
+        "context/document.md",
+        "Readable document",
+        "document",
+    );
+    register_recovered_artifact(
+        manifest,
+        dir,
+        "context/blocks.jsonl",
+        "Document blocks",
+        "document",
+    );
+    register_recovered_directory(manifest, dir, "artifacts/pages", "pages");
+    register_recovered_directory(manifest, dir, "artifacts/figures", "figures");
+    register_recovered_directory(manifest, dir, "artifacts/document/figures", "figures");
+    register_recovered_artifact(
+        manifest,
+        dir,
+        "context/extracted_text.md",
+        "Extracted text",
+        "context",
+    );
+    register_recovered_artifact(
+        manifest,
+        dir,
+        "context/orientation.json",
+        "Orientation map",
+        "context",
+    );
+    for path in checkpoints {
+        let Ok(relative) = path.strip_prefix(dir) else {
+            continue;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let label = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Step checkpoint");
+        register_recovered_artifact(manifest, dir, &relative, label, "checkpoint");
+    }
+
+    if manifest.status == "running" {
+        manifest.status = "interrupted".to_string();
+    }
+    manifest.step_count = report.step_outputs.len() as u32;
+    for failure in &report.failed_steps {
+        if !manifest
+            .failed_steps
+            .iter()
+            .any(|label| label == &failure.step_label)
+        {
+            manifest.failed_steps.push(failure.step_label.clone());
+        }
+    }
+    write_manifest(dir, manifest)?;
+    Ok(true)
+}
+
+/// Recover runs stopped by an abort, cancellation, provider failure, or a
+/// report-persistence failure. The global run lock is acquired first, so a
+/// second Pipeline process can never rewrite a genuinely active run.
+/// Completed step checkpoints become a partial `report.json`, allowing the
+/// normal re-run path to reuse them.
+pub fn recover_resumable_runs() -> Result<usize, String> {
+    use fs2::FileExt as _;
+    let root = runs_dir()?;
+    let pipeline_dir = root
+        .parent()
+        .ok_or("Cannot resolve Pipeline data directory")?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(pipeline_dir.join("run.lock"))
+        .map_err(|error| format!("Failed to open Pipeline recovery lock: {error}"))?;
+    if lock.try_lock_exclusive().is_err() {
+        return Ok(0);
+    }
+
+    let mut recovered = 0usize;
+    let mut walk = crate::safety::WalkBudget::new("Incomplete-run recovery");
+    for entry in fs::read_dir(&root)
+        .map_err(|error| format!("Failed to list runs for recovery: {error}"))?
+        .flatten()
+    {
+        walk.entry()?;
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let manifest_path = entry.path().join("manifest.json");
+        let Ok(json) = read_utf8_at_most(&manifest_path, MAX_MANIFEST_BYTES, "Run manifest") else {
+            continue;
+        };
+        let Ok(mut manifest) = serde_json::from_str::<RunManifest>(&json) else {
+            continue;
+        };
+        if recover_resumable_run_dir(&entry.path(), &mut manifest).unwrap_or(false) {
+            recovered += 1;
+        }
+    }
+    let _ = fs2::FileExt::unlock(&lock);
+    Ok(recovered)
+}
+
 /// List every run on disk as a summary row, newest first. Unreadable or
 /// malformed manifests are skipped rather than failing the whole listing.
 pub fn list_runs() -> Result<Vec<RunSummary>, String> {
@@ -672,7 +1051,9 @@ pub fn list_runs() -> Result<Vec<RunSummary>, String> {
                 .or_else(|| recover_broken_manifest(&entry.path(), manifest_path.exists()))
         };
         if let Some(manifest) = manifest {
-            summaries.push(manifest.to_summary());
+            let mut summary = manifest.to_summary();
+            summary.resumable = run_has_resume_files(&entry.path(), &manifest);
+            summaries.push(summary);
         }
     }
     // Sort by created timestamp (RFC3339 sorts lexically), newest first.
@@ -709,6 +1090,7 @@ pub fn load_latest_report_for_input(
         if manifest.status == "running"
             || manifest.status == "failed"
             || manifest.status == "cancelled"
+            || manifest.status == "interrupted"
         {
             continue;
         }
@@ -1102,7 +1484,12 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
             abs_path,
         }),
         _ => {
-            let (bytes, truncated) = read_at_most(&path, MAX_TEXT_BYTES)?;
+            let limit = if rel_path == "context/document_bundle.json" {
+                MAX_DOCUMENT_BUNDLE_BYTES
+            } else {
+                MAX_TEXT_BYTES
+            };
+            let (bytes, truncated) = read_at_most(&path, limit)?;
             Ok(ArtifactContent {
                 kind: kind.into(),
                 bytes: size,
@@ -1259,6 +1646,176 @@ mod tests {
             manifest.extra_inputs.get("letter").map(String::as_str),
             Some("context/input.md")
         );
+    }
+
+    #[test]
+    fn abrupt_run_recovery_builds_report_from_step_checkpoints() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = RunWriter::create_in(temp.path(), "abc123_run").unwrap();
+        writer
+            .add_text(
+                "context/extracted_text.md",
+                "Extracted text",
+                "context",
+                "paper",
+            )
+            .unwrap();
+        writer
+            .add_text(
+                "context/orientation.json",
+                "Orientation map",
+                "context",
+                r#"{"metadata":{"title":"Test"}}"#,
+            )
+            .unwrap();
+        let run_dir = writer.dir().to_path_buf();
+        let checkpoint_dir = run_dir.join("artifacts/checkpoints");
+        fs::create_dir_all(&checkpoint_dir).unwrap();
+        let output = crate::models::StepOutput {
+            step_id: "technical".to_string(),
+            step_label: "Technical".to_string(),
+            phase: "parallel".to_string(),
+            raw_text: "Recovered analysis".to_string(),
+            ..Default::default()
+        };
+        fs::write(
+            checkpoint_dir.join("0000_technical.json"),
+            serde_json::to_vec_pretty(&output).unwrap(),
+        )
+        .unwrap();
+        // Simulate an abort: Drop never gets the opportunity to mark the run
+        // failed or persist its in-memory artifact index.
+        std::mem::forget(writer);
+
+        let manifest_json = fs::read_to_string(run_dir.join("manifest.json")).unwrap();
+        let mut manifest: RunManifest = serde_json::from_str(&manifest_json).unwrap();
+        assert_eq!(manifest.status, "running");
+        assert!(recover_resumable_run_dir(&run_dir, &mut manifest).unwrap());
+
+        assert_eq!(manifest.status, "interrupted");
+        assert_eq!(manifest.step_count, 1);
+        let report: crate::models::PipelineReport =
+            serde_json::from_str(&fs::read_to_string(run_dir.join("report.json")).unwrap())
+                .unwrap();
+        assert_eq!(report.step_outputs.len(), 1);
+        assert_eq!(report.step_outputs[0].raw_text, "Recovered analysis");
+        assert!(run_dir.join("report.md").is_file());
+    }
+
+    #[test]
+    fn cancelled_run_becomes_resumable_from_its_last_checkpoint() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = RunWriter::create_in(temp.path(), "def456_run").unwrap();
+        writer
+            .set_pending_meta(RunFinishMeta {
+                input_path: "/papers/test.pdf".to_string(),
+                input_mode: "document".to_string(),
+                profile_id: "deep-review".to_string(),
+                profile_name: "Deep Review".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        writer
+            .add_text(
+                "context/extracted_text.md",
+                "Extracted text",
+                "context",
+                "paper",
+            )
+            .unwrap();
+        writer
+            .add_text(
+                "context/orientation.json",
+                "Orientation map",
+                "context",
+                r#"{"metadata":{"title":"Test"}}"#,
+            )
+            .unwrap();
+        let run_dir = writer.dir().to_path_buf();
+        let checkpoint_dir = run_dir.join("artifacts/checkpoints");
+        fs::create_dir_all(&checkpoint_dir).unwrap();
+        let output = crate::models::StepOutput {
+            step_id: "technical".to_string(),
+            step_label: "Technical".to_string(),
+            raw_text: "Durable work".to_string(),
+            ..Default::default()
+        };
+        fs::write(
+            checkpoint_dir.join("0000_technical.json"),
+            serde_json::to_vec_pretty(&output).unwrap(),
+        )
+        .unwrap();
+
+        let mut manifest = writer.current_manifest();
+        manifest.status = "cancelled".to_string();
+        write_manifest(&run_dir, &manifest).unwrap();
+        std::mem::forget(writer);
+
+        assert!(recover_resumable_run_dir(&run_dir, &mut manifest).unwrap());
+        assert_eq!(manifest.status, "cancelled");
+        assert_eq!(manifest.step_count, 1);
+        assert_eq!(manifest.failed_steps, vec!["Run cancelled"]);
+        assert!(run_has_resume_files(&run_dir, &manifest));
+        let report: crate::models::PipelineReport =
+            serde_json::from_str(&fs::read_to_string(run_dir.join("report.json")).unwrap())
+                .unwrap();
+        assert_eq!(report.step_outputs[0].raw_text, "Durable work");
+        assert_eq!(report.failed_steps[0].step_label, "Run cancelled");
+    }
+
+    #[test]
+    fn failed_run_without_a_captured_extraction_is_not_resumable() {
+        let temp = tempfile::tempdir().unwrap();
+        let writer = RunWriter::create_in(temp.path(), "no_context_run").unwrap();
+        let run_dir = writer.dir().to_path_buf();
+        let mut manifest = writer.current_manifest();
+        manifest.status = "failed".to_string();
+        write_manifest(&run_dir, &manifest).unwrap();
+        std::mem::forget(writer);
+
+        assert!(recover_resumable_run_dir(&run_dir, &mut manifest).is_err());
+        assert!(!run_has_resume_files(&run_dir, &manifest));
+        assert!(!run_dir.join("report.json").exists());
+    }
+
+    #[test]
+    fn recovery_preserves_checkpointed_failure_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = RunWriter::create_in(temp.path(), "failed_step_run").unwrap();
+        writer
+            .add_text(
+                "context/extracted_text.md",
+                "Extracted text",
+                "context",
+                "paper",
+            )
+            .unwrap();
+        let run_dir = writer.dir().to_path_buf();
+        let checkpoint_dir = run_dir.join("artifacts/checkpoints");
+        fs::create_dir_all(&checkpoint_dir).unwrap();
+        fs::write(
+            checkpoint_dir.join("failure_empirical.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "failure": crate::models::StepFailure {
+                    step_id: "empirical/gemini".to_string(),
+                    step_label: "Empirical [Gemini]".to_string(),
+                    error: "provider failed".to_string(),
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut manifest = writer.current_manifest();
+        manifest.status = "failed".to_string();
+        write_manifest(&run_dir, &manifest).unwrap();
+        std::mem::forget(writer);
+
+        assert!(recover_resumable_run_dir(&run_dir, &mut manifest).unwrap());
+        let report: crate::models::PipelineReport =
+            serde_json::from_str(&fs::read_to_string(run_dir.join("report.json")).unwrap())
+                .unwrap();
+        assert_eq!(report.failed_steps[0].step_id, "empirical/gemini");
+        assert_eq!(manifest.failed_steps, vec!["Empirical [Gemini]"]);
     }
 
     #[test]

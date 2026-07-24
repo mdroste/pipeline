@@ -15,9 +15,8 @@ marker_single (if the user pip-installed it) → bundled pdftotext. Weaknesses:
 2. **Provider-gated** — OpenAI/Google direct APIs can't return PDF bytes
    through the Read tool (`pdf_read_supported = false`), so those users are
    forced down to native extraction.
-3. **marker is an afterthought** — user-managed pip install, stdout capture
-   only, no figure images, no version visibility, and (per July 2026
-   benchmarks) marker is now mid-pack anyway.
+3. **marker was an afterthought** — this was subsequently addressed by the
+   managed engine, retained figure artifacts, and the DocumentBundle layer.
 4. **pdftotext garbles equations** — that's why `scan_math_quality` exists.
 
 ## What the research says (July 2026)
@@ -187,9 +186,10 @@ While in there: run `marker_single` with `--output_dir` pointing into
 `runs/{id}/artifacts/marker/` instead of scraping stdout. Read the emitted
 `.md` as the extraction text; register extracted figure images in the
 manifest so the ArtifactExplorer shows them. Keep stdout capture as the
-fallback for older marker versions. `marker_disable_images` keeps its
-current default (true) globally, but the managed-engine settings card
-suggests enabling image extraction now that figures land in the explorer.
+fallback for older marker versions. `marker_disable_images` was initially
+retained as true. As of the DocumentBundle work (2026-07-23), new settings
+default it to false because figure retention is part of the normal document
+contract; users can still disable it when speed or disk use matters more.
 
 ## Move 4: UI
 

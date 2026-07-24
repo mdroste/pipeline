@@ -4,6 +4,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::io::Write as _;
+use std::path::PathBuf;
 use std::sync::LazyLock;
 
 /// Maximum tool-call round-trips before giving up.
@@ -26,6 +27,8 @@ const MAX_READ_SIZE: usize = 5 * 1024 * 1024;
 
 /// Maximum PDF file size for Read tool calls (32 MB — matches Anthropic's document limit).
 const MAX_PDF_SIZE: usize = 32 * 1024 * 1024;
+/// Maximum image size for a visual document-asset read.
+const MAX_IMAGE_SIZE: usize = 20 * 1024 * 1024;
 /// Cumulative direct-API Read budget per model call. This bounds repeated
 /// reads of the same large PDF across tool iterations.
 const MAX_TOOL_READ_BYTES: usize = 40 * 1024 * 1024;
@@ -131,6 +134,35 @@ impl Default for ReadToolDef {
                     "file_path": {
                         "type": "string",
                         "description": "Absolute file path to read"
+                    }
+                },
+                "required": ["file_path"]
+            }),
+        }
+    }
+}
+
+/// Multimodal asset reader. Kept separate from `Read` so providers receive
+/// image bytes as image content rather than accidentally decoding them as
+/// UTF-8 text.
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentAssetToolDef {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl Default for DocumentAssetToolDef {
+    fn default() -> Self {
+        Self {
+            name: "ReadDocumentAsset".to_string(),
+            description: "Read an image referenced by a DocumentBundle and return it as visual input. Use the absolute path formed from the bundle's run root and the asset rel_path.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Absolute path of a PNG, JPEG, GIF, or WebP document asset"
                     }
                 },
                 "required": ["file_path"]
@@ -477,6 +509,27 @@ fn read_pdf_for_tool(path: &str, limit: usize) -> Result<String, String> {
     Ok(STANDARD.encode(&bytes))
 }
 
+fn read_image_for_tool(path: &str, limit: usize) -> Result<(String, String), String> {
+    let extension = PathBuf::from(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let media_type = match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => {
+            return Err("Unsupported document image type; use PNG, JPEG, GIF, or WebP".to_string())
+        }
+    };
+    let limit = MAX_IMAGE_SIZE.min(limit);
+    let canonical = validate_tool_path(path, limit)?;
+    let bytes = read_bytes_limited(&canonical, limit)?;
+    Ok((STANDARD.encode(bytes), media_type.to_string()))
+}
+
 /// Read a PDF the app itself is attaching to a request (as opposed to one the
 /// model asked for via the Read tool — that path goes through the allowed-dir
 /// sandbox above). Only a size cap applies: the path comes from our own
@@ -506,6 +559,8 @@ pub enum ToolResult {
     Text(String),
     /// PDF content as base64-encoded bytes.
     PdfBase64(String),
+    /// Image content with the media type required by multimodal APIs.
+    ImageBase64 { data: String, media_type: String },
     /// Error message.
     Error(String),
 }
@@ -917,6 +972,17 @@ pub async fn anthropic_tool_loop(
                         }]),
                         None,
                     ),
+                    ToolResult::ImageBase64 { data, media_type } => (
+                        serde_json::json!([{
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": data
+                            }
+                        }]),
+                        None,
+                    ),
                     ToolResult::Error(msg) => (serde_json::Value::String(msg), Some(true)),
                 };
                 tool_results.push(AnthropicContentBlock::ToolResult {
@@ -1070,19 +1136,52 @@ pub async fn openai_tool_loop(
                         &mut tool_budget,
                     )
                     .await;
-                    let content = match result {
-                        ToolResult::Text(text) => text,
-                        ToolResult::PdfBase64(_) => {
-                            "Cannot read PDF visually via this API. Use the extracted paper text file instead.".to_string()
+                    match result {
+                        ToolResult::ImageBase64 { data, media_type } => {
+                            request.messages.push(OpenAIMessage {
+                                role: "tool".to_string(),
+                                content: Some(serde_json::Value::String(
+                                    "The requested document image is attached in the next message."
+                                        .to_string(),
+                                )),
+                                tool_calls: None,
+                                tool_call_id: Some(tc.id.clone()),
+                            });
+                            request.messages.push(OpenAIMessage {
+                                role: "user".to_string(),
+                                content: Some(serde_json::json!([
+                                    {
+                                        "type": "text",
+                                        "text": "Visual document asset requested by the preceding tool call."
+                                    },
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": format!("data:{media_type};base64,{data}")
+                                        }
+                                    }
+                                ])),
+                                tool_calls: None,
+                                tool_call_id: None,
+                            });
                         }
-                        ToolResult::Error(msg) => msg,
-                    };
-                    request.messages.push(OpenAIMessage {
-                        role: "tool".to_string(),
-                        content: Some(serde_json::Value::String(content)),
-                        tool_calls: None,
-                        tool_call_id: Some(tc.id.clone()),
-                    });
+                        other => {
+                            let content = match other {
+                                ToolResult::Text(text) => text,
+                                ToolResult::PdfBase64(_) => {
+                                    "Cannot read PDF visually via this API. Use the extracted paper text or rendered page assets instead.".to_string()
+                                }
+                                ToolResult::Error(msg) => msg,
+                                ToolResult::ImageBase64 { .. } => unreachable!(),
+                            };
+                            request.messages.push(OpenAIMessage {
+                                role: "tool".to_string(),
+                                content: Some(serde_json::Value::String(content)),
+                                tool_calls: None,
+                                tool_call_id: Some(tc.id.clone()),
+                            });
+                        }
+                    }
                 }
                 continue;
             }
@@ -1220,12 +1319,18 @@ pub async fn google_tool_loop(
             for fc in function_calls {
                 let result =
                     execute_tool(app, &fc.name, &fc.args, label, iteration, &mut tool_budget).await;
-                let content = match result {
-                    ToolResult::Text(text) => text,
-                    ToolResult::PdfBase64(_) => {
-                        "Cannot read PDF visually via this API. Use the extracted paper text file instead.".to_string()
-                    }
-                    ToolResult::Error(msg) => msg,
+                let (content, image) = match result {
+                    ToolResult::Text(text) => (text, None),
+                    ToolResult::PdfBase64(_) => (
+                        "Cannot read PDF visually via this tool. Use the extracted paper text or rendered page assets instead.".to_string(),
+                        None,
+                    ),
+                    ToolResult::ImageBase64 { data, media_type } => (
+                        "The requested document image is included as inline visual data."
+                            .to_string(),
+                        Some(GoogleInlineData { data, mime_type: media_type }),
+                    ),
+                    ToolResult::Error(msg) => (msg, None),
                 };
                 response_parts.push(GooglePart::FunctionResponse {
                     function_response: GoogleFunctionResponse {
@@ -1233,6 +1338,9 @@ pub async fn google_tool_loop(
                         response: serde_json::json!({ "content": content }),
                     },
                 });
+                if let Some(inline_data) = image {
+                    response_parts.push(GooglePart::InlineData { inline_data });
+                }
             }
 
             request.contents.push(GoogleContent {
@@ -1352,6 +1460,41 @@ async fn execute_tool(
                 }
             }
         }
+        "ReadDocumentAsset" => {
+            let path = input
+                .get("file_path")
+                .or_else(|| input.get("path"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            verbose_log(
+                app,
+                format!(
+                    "[api] {label}: ReadDocumentAsset tool call #{} -> {path}",
+                    iteration + 1
+                ),
+            );
+            if budget.read_calls >= MAX_TOOL_READ_CALLS {
+                return ToolResult::Error(format!(
+                    "Read limit reached ({MAX_TOOL_READ_CALLS} calls per model invocation)"
+                ));
+            }
+            let remaining = MAX_TOOL_READ_BYTES.saturating_sub(budget.read_bytes);
+            if remaining == 0 {
+                return ToolResult::Error(format!(
+                    "Read byte budget reached ({} MB per model invocation)",
+                    MAX_TOOL_READ_BYTES / 1024 / 1024
+                ));
+            }
+            budget.read_calls += 1;
+            let owned_path = path.to_string();
+            match run_blocking_tool(move || read_image_for_tool(&owned_path, remaining)).await {
+                Ok((data, media_type)) => {
+                    budget.read_bytes += data.len().saturating_mul(3) / 4;
+                    ToolResult::ImageBase64 { data, media_type }
+                }
+                Err(error) => ToolResult::Error(error),
+            }
+        }
         "Write" => {
             let path = input
                 .get("file_path")
@@ -1458,6 +1601,23 @@ mod tests {
         set_allowed_dirs(vec![]);
         let err = validate_tool_path(path, usize::MAX).unwrap_err();
         assert!(err.contains("Access denied"), "{err}");
+    }
+
+    #[test]
+    fn document_asset_reader_returns_multimodal_image_data() {
+        let _guard = READ_DIR_TEST_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("figure.png");
+        std::fs::write(&image, b"\x89PNG\r\n\x1a\nvisual-bytes").unwrap();
+        set_allowed_dirs(vec![dir.path().to_string_lossy().to_string()]);
+        let (data, media_type) =
+            read_image_for_tool(&image.to_string_lossy(), MAX_IMAGE_SIZE).unwrap();
+        assert_eq!(media_type, "image/png");
+        assert_eq!(
+            STANDARD.decode(data).unwrap(),
+            b"\x89PNG\r\n\x1a\nvisual-bytes"
+        );
+        set_allowed_dirs(Vec::new());
     }
 
     #[test]

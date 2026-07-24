@@ -1,8 +1,9 @@
 use std::io::Write;
 use std::process::Stdio;
 use tempfile::NamedTempFile;
+use tokio::io::AsyncWriteExt;
 
-use super::claude::{build_provider_command, plan_cli_workspace, prepare_cli_prompt, LlmOverrides};
+use super::claude::{build_provider_command, plan_cli_workspace, LlmOverrides};
 use super::cli_process::{
     capture_stderr, capture_text_stdout, emit_stderr_tail, finish_streams, last_stderr_hint, log,
     track_child_started, verbose_log, wait_for_child,
@@ -78,6 +79,80 @@ fn create_gemini_write_policy(write_dir: &str) -> Result<NamedTempFile, String> 
     Ok(policy)
 }
 
+/// Parse Gemini CLI's one-shot JSON envelope. The `response` field is the
+/// terminal assistant response; all other stdout fields are telemetry or
+/// diagnostics and must not be flattened into the report.
+fn parse_gemini_result(
+    raw: &str,
+) -> Result<(String, Option<crate::pipeline::logging::CallUsage>), String> {
+    let value = serde_json::from_str::<serde_json::Value>(raw.trim())
+        .map_err(|error| format!("invalid JSON: {error}"))?;
+    if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
+        let detail = error
+            .get("message")
+            .and_then(|message| message.as_str())
+            .unwrap_or("Gemini marked the result as an error");
+        return Err(detail.to_string());
+    }
+    let text = value
+        .get("response")
+        .and_then(|response| response.as_str())
+        .ok_or("missing string `response`")?
+        .trim()
+        .to_string();
+
+    let mut input_tokens = 0u64;
+    let mut output_tokens = 0u64;
+    let mut cached_input_tokens = 0u64;
+    if let Some(models) = value
+        .get("stats")
+        .and_then(|stats| stats.get("models"))
+        .and_then(|models| models.as_object())
+    {
+        for model in models.values() {
+            if let Some(tokens) = model.get("tokens") {
+                input_tokens = input_tokens.saturating_add(
+                    tokens
+                        .get("prompt")
+                        .and_then(|count| count.as_u64())
+                        .unwrap_or(0),
+                );
+                output_tokens = output_tokens.saturating_add(
+                    tokens
+                        .get("candidates")
+                        .and_then(|count| count.as_u64())
+                        .unwrap_or(0),
+                );
+                cached_input_tokens = cached_input_tokens.saturating_add(
+                    tokens
+                        .get("cached")
+                        .and_then(|count| count.as_u64())
+                        .unwrap_or(0),
+                );
+            }
+        }
+    }
+    let usage = (input_tokens > 0 || output_tokens > 0 || cached_input_tokens > 0).then_some(
+        crate::pipeline::logging::CallUsage {
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            cache_write_input_tokens: 0,
+            ..Default::default()
+        },
+    );
+    Ok((text, usage))
+}
+
+fn gemini_error_hint(raw: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(raw.trim())
+        .ok()?
+        .get("error")?
+        .get("message")?
+        .as_str()
+        .map(str::to_string)
+}
+
 /// Call `gemini -p` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
 #[allow(clippy::too_many_arguments)]
@@ -94,13 +169,6 @@ pub async fn call_gemini(
     overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let mut cmd_args: Vec<String> = Vec::new();
-    let prepared_prompt = prepare_cli_prompt(prompt)?;
-    if let Some(path) = &prepared_prompt.path {
-        log(
-            app,
-            format!("Wrote {} chars to temp file: {path}", prompt.len()),
-        );
-    }
 
     // Gemini's file tools confine writes to the workspace (cwd) at the
     // tool layer, symlink-resolved — so write mode means: cwd = artifact
@@ -112,7 +180,7 @@ pub async fn call_gemini(
     let workspace = plan_cli_workspace(
         cwd,
         extra_read_dirs,
-        prepared_prompt.read_root.as_deref(),
+        None,
         if needs_write {
             overrides.write_dir
         } else {
@@ -139,9 +207,10 @@ pub async fn call_gemini(
         _write_policy = Some(policy);
     }
 
-    // Output as plain text
+    // Gemini's JSON envelope keeps the terminal response separate from
+    // diagnostics and stats.
     cmd_args.push("-o".to_string());
-    cmd_args.push("text".to_string());
+    cmd_args.push("json".to_string());
 
     // Apply Gemini settings (model) with optional per-step override.
     // Gemini CLI doesn't expose an effort flag, so overrides.effort is ignored here.
@@ -161,8 +230,11 @@ pub async fn call_gemini(
     }
 
     // Gemini uses -p "prompt" for non-interactive mode.
+    // Its CLI explicitly appends stdin to this value, so pipe the complete
+    // prompt and close the stream instead of asking the model to read a temp
+    // file as its first action.
     cmd_args.push("-p".to_string());
-    cmd_args.push(prepared_prompt.argument.clone());
+    cmd_args.push(String::new());
 
     // Log the command (truncated)
     let display_args: String = cmd_args
@@ -182,7 +254,7 @@ pub async fn call_gemini(
     // be the artifact dir regardless of what the caller passed.
     let effective_cwd = workspace.cwd.as_deref();
     let mut cmd = build_provider_command("gemini", effective_cwd, &cmd_args)?;
-    cmd.stdin(Stdio::null())
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -192,6 +264,21 @@ pub async fn call_gemini(
     super::logging::record_provider_attempt();
 
     let (pid, start_time) = track_child_started(&child, app, label);
+    let mut prompt_stdin = child
+        .stdin
+        .take()
+        .ok_or("Gemini process did not expose stdin")?;
+    let prompt_bytes = prompt.as_bytes().to_vec();
+    let stdin_task = tokio::spawn(async move {
+        prompt_stdin
+            .write_all(&prompt_bytes)
+            .await
+            .map_err(|error| format!("Failed to send prompt to Gemini: {error}"))?;
+        prompt_stdin
+            .shutdown()
+            .await
+            .map_err(|error| format!("Failed to close Gemini prompt stream: {error}"))
+    });
 
     // Stream stderr to the frontend, retaining the tail for diagnostics.
     let sess = super::logging::current();
@@ -212,6 +299,12 @@ pub async fn call_gemini(
     .await;
     let streams = finish_streams(stdout_task, stderr_task, pid, "Gemini").await;
     let status = wait_result?;
+    let stdin_result = stdin_task
+        .await
+        .map_err(|error| format!("Gemini prompt writer failed: {error}"))?;
+    if status.success() {
+        stdin_result?;
+    }
     let ((raw_stdout, stdout_overflowed), stderr_tail) = streams?;
     if stdout_overflowed {
         emit_stderr_tail(app, &stderr_tail);
@@ -220,26 +313,16 @@ pub async fn call_gemini(
             super::claude::MAX_STDOUT_BYTES / 1024 / 1024
         ));
     }
-    let text = raw_stdout.trim().to_string();
-
     let exit_code = status.code().unwrap_or(-1);
-    let elapsed = start_time.elapsed().as_secs();
-    log(
-        app,
-        format!(
-            "{label} finished ({elapsed}s, exit code {exit_code}, {} chars output)",
-            text.len()
-        ),
-    );
-
     if !status.success() {
         if crate::commands::is_cancelled() || exit_code == 143 || status.code().is_none() {
             log(app, format!("{label} cancelled"));
             return Err("Pipeline cancelled".into());
         }
         emit_stderr_tail(app, &stderr_tail);
-        let hint =
-            super::claude::extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
+        let hint = gemini_error_hint(&raw_stdout)
+            .or_else(|| super::claude::extract_error_hint(&raw_stdout))
+            .or_else(|| last_stderr_hint(&stderr_tail));
         let msg = if let Some(hint) = hint {
             format!("Gemini call failed (exit {exit_code}): {hint}")
         } else {
@@ -249,6 +332,31 @@ pub async fn call_gemini(
         };
         log(app, format!("ERROR: {msg}"));
         return Err(msg);
+    }
+
+    let (text, gemini_usage) = parse_gemini_result(&raw_stdout).map_err(|error| {
+        emit_stderr_tail(app, &stderr_tail);
+        let msg = format!("Gemini returned an invalid JSON result envelope: {error}");
+        log(app, format!("ERROR: {msg}"));
+        msg
+    })?;
+    let elapsed = start_time.elapsed().as_secs();
+    let token_info = match gemini_usage {
+        Some(usage) if usage.input_tokens > 0 || usage.output_tokens > 0 => format!(
+            ", {}+{} tokens, {} cached",
+            usage.input_tokens, usage.output_tokens, usage.cached_input_tokens
+        ),
+        _ => String::new(),
+    };
+    log(
+        app,
+        format!(
+            "{label} finished ({elapsed}s, exit code {exit_code}, {} chars output{token_info})",
+            text.len()
+        ),
+    );
+    if let Some(usage) = gemini_usage {
+        super::logging::emit_usage(app, usage);
     }
 
     if text.is_empty() {
@@ -374,5 +482,35 @@ mod tests {
         })
         .to_string();
         assert!(allowed.is_match(&args));
+    }
+
+    #[test]
+    fn json_envelope_returns_only_terminal_response_and_usage() {
+        let raw = r#"{
+          "session_id":"s1",
+          "response":"  ## Final report\n\nClean.  ",
+          "stats":{"models":{
+            "gemini-3-pro":{"tokens":{"prompt":120,"candidates":30,"cached":10}}
+          }}
+        }"#;
+        let (text, usage) = parse_gemini_result(raw).unwrap();
+        assert_eq!(text, "## Final report\n\nClean.");
+        assert_eq!(
+            usage,
+            Some(crate::pipeline::logging::CallUsage {
+                input_tokens: 120,
+                output_tokens: 30,
+                cached_input_tokens: 10,
+                cache_write_input_tokens: 0,
+                ..Default::default()
+            })
+        );
+    }
+
+    #[test]
+    fn malformed_or_error_json_envelopes_are_rejected() {
+        assert!(parse_gemini_result("narration before the report").is_err());
+        assert!(parse_gemini_result(r#"{"error":{"message":"capacity exhausted"}}"#).is_err());
+        assert!(parse_gemini_result(r#"{"session_id":"s1"}"#).is_err());
     }
 }

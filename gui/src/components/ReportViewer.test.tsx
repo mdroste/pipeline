@@ -41,4 +41,16 @@ describe("ReportViewer", () => {
       screen.queryByText(/could not be rendered/),
     ).not.toBeInTheDocument();
   });
+
+  it("normalizes legacy slash-delimited math before rendering", () => {
+    const { container } = render(
+      <ReportViewer markdown={"Inline \\(x+1\\).\n\n\\[\ny=2\n\\]"} />,
+    );
+    expect(container.querySelectorAll(".katex")).toHaveLength(2);
+  });
+
+  it("does not normalize math-like delimiters inside code", () => {
+    render(<ReportViewer markdown={"`\\(not math\\)`"} />);
+    expect(screen.getByText("\\(not math\\)")).toBeInTheDocument();
+  });
 });

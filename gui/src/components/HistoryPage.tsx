@@ -49,6 +49,7 @@ function StatusBadge({ status }: { status: string }) {
     done: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
     partial: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
     failed: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+    interrupted: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
     cancelled: "bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300",
   };
   const cls = map[status] || map.done;
@@ -345,13 +346,13 @@ export default function HistoryPage({ onClose, initialRunId, onRerun }: Props) {
                       </button>
                       {onRerun && (
                         <>
-                          {r.failed_steps.length > 0 && (
+                          {r.resumable && (
                             <button
                               onClick={() => onRerun(r.run_id, true)}
                               className="px-2 py-1 text-xs rounded text-amber-600 hover:text-amber-800 dark:text-amber-400"
-                              title="Re-run only the failed steps and anything downstream (reuses successful steps)"
+                              title="Continue from the last completed step, reusing successful outputs and rerunning failed or missing work"
                             >
-                              Re-run failed
+                              Resume
                             </button>
                           )}
                           <button

@@ -1,6 +1,8 @@
-use super::claude::{call_llm, LlmOverrides};
+use super::call::{execute_text, OwnedRequest};
 use crate::models::PipelineReport;
-use crate::output::strip_to_report;
+use crate::output::{
+    extract_report_envelope, new_report_nonce, normalize_math_delimiters, report_output_format,
+};
 
 /// Produce a markdown diff between two reports on the same paper.
 pub async fn reconcile(
@@ -31,7 +33,7 @@ pub async fn reconcile(
     let prior_date = prior.report_date;
     let current_date = current.report_date;
 
-    let prompt = format!(
+    let mut prompt = format!(
         r#"You are comparing two referee reports on successive versions of the same paper.
 
 PRIOR REPORT (from {prior_date}):
@@ -69,27 +71,64 @@ Write a structured diff in markdown:
 
 ### Summary
 [1-2 paragraph assessment: Did the revision make meaningful progress?
-What is the most important remaining issue?]
-
-OUTPUT FORMAT:
-Begin your report with exactly `<!-- REPORT START -->` and end with exactly `<!-- REPORT END -->`.
-Include ONLY your markdown report between those markers — no preamble, no commentary, no acknowledgments outside them."#
+What is the most important remaining issue?]"#
     );
+    let report_nonce = new_report_nonce()?;
+    crate::safety::push_str_limited(
+        &mut prompt,
+        "\n\n",
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Reconciliation prompt",
+    )?;
+    crate::safety::push_str_limited(
+        &mut prompt,
+        &report_output_format(None, &report_nonce),
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Reconciliation prompt",
+    )?;
 
-    let timeout = crate::settings::load().step_timeout_secs.max(60);
-    let raw = call_llm(
-        app,
-        &prompt,
-        &[],
-        None,
-        "text",
-        timeout,
-        "Revision reconciliation",
-        None,
-        None,
-        &[],
-        &LlmOverrides::default(),
-    )
-    .await?;
-    Ok(strip_to_report(&raw))
+    let settings = crate::settings::load();
+    let timeout = settings.step_timeout_secs.max(60);
+    let mut last_error = String::new();
+    for attempt in 0..=settings.max_retries {
+        let mut attempt_prompt = prompt.clone();
+        if attempt > 0 {
+            crate::safety::push_str_limited(
+                &mut attempt_prompt,
+                &format!(
+                    "\n\nRETRY NOTICE:\nThe previous response was rejected: {last_error}\n\
+                     Return the complete diff again and obey the OUTPUT FORMAT contract exactly."
+                ),
+                crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+                "Reconciliation retry prompt",
+            )?;
+        }
+        let mut request = OwnedRequest::new(
+            app,
+            "reconciliation",
+            "Revision reconciliation",
+            attempt_prompt,
+            timeout,
+        );
+        request.settings = std::sync::Arc::new(settings.clone());
+        let raw = match execute_text(request).await {
+            Ok(raw) => raw,
+            Err(error) if error.to_ascii_lowercase().contains("cancel") => return Err(error),
+            Err(error) => {
+                last_error = error;
+                continue;
+            }
+        };
+        match extract_report_envelope(&raw, &report_nonce) {
+            Ok(report) => return Ok(normalize_math_delimiters(&report)),
+            Err(error) => {
+                last_error = format!("Revision reconciliation returned an invalid report: {error}");
+            }
+        }
+    }
+    Err(if last_error.is_empty() {
+        "Revision reconciliation produced no report".to_string()
+    } else {
+        last_error
+    })
 }

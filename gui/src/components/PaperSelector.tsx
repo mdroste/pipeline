@@ -13,7 +13,7 @@ export default function PaperSelector({ onPathChange, disabled }: Props) {
     try {
       const path = await openDialog({
         multiple: false,
-        filters: [{ name: "Papers", extensions: ["pdf", "tex"] }],
+        filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }],
       });
       if (path) {
         setSelectedPath(path as string);

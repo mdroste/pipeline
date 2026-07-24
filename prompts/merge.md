@@ -8,13 +8,9 @@ INDEPENDENT ANALYSES:
 Instructions:
 
 1. Read all analyses carefully. These are independent evaluations of the same dimension of the paper.
-2. Where multiple agents independently identified the same issue, combine into one entry. Note the independent confirmation — this is a high-confidence finding.
-3. Where only one agent raised an issue, preserve it and note it was identified by a single source.
-4. If analyses contradict (one flags a problem, another finds no issue at the same location), note the disagreement and assess which interpretation is better supported by the cited evidence.
+2. Where multiple agents identified the same issue, combine it into one entry. Use agreement as an internal confidence signal; do not mention agents, independent confirmation, or the merge process in the report.
+3. Preserve a well-supported issue even if it appears in only one analysis, without labeling how many sources raised it.
+4. If analyses contradict, resolve the conflict using the cited evidence. If the substance is genuinely unresolved, state the underlying ambiguity without describing the reviewer disagreement.
 5. Maintain the issue-focused format. Do not add new issues not present in any input analysis.
 
-Output the merged assessment as if written by a single reviewer. Do not praise the paper. No preamble or summary.
-
-OUTPUT FORMAT:
-Begin your report with exactly `<!-- REPORT START -->` and end with exactly `<!-- REPORT END -->`.
-Include ONLY your markdown report between those markers — no preamble, no commentary, no acknowledgments outside them.
+Output the merged assessment as if written by a single reviewer. Do not praise the paper. No preamble, process commentary, or summary.

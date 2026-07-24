@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import type { LogEntry, UsageState } from "../hooks/usePipeline";
+import type { LlmRequestDetails, LogEntry, UsageState } from "../hooks/usePipeline";
 
 interface Props {
   logs: LogEntry[];
@@ -9,6 +9,18 @@ interface Props {
 }
 
 type LevelFilter = "all" | "warn" | "error";
+
+const DEFAULT_CONSOLE_HEIGHT = 192;
+const MIN_CONSOLE_HEIGHT = 96;
+const CONSOLE_VIEWPORT_MARGIN = 96;
+
+function maxConsoleHeight(): number {
+  return Math.max(MIN_CONSOLE_HEIGHT, window.innerHeight - CONSOLE_VIEWPORT_MARGIN);
+}
+
+function clampConsoleHeight(height: number): number {
+  return Math.min(maxConsoleHeight(), Math.max(MIN_CONSOLE_HEIGHT, height));
+}
 
 // Compact token count: 1_234_567 → "1.2M", 45_678 → "45.7k", 832 → "832".
 function fmtTokens(n: number): string {
@@ -43,11 +55,142 @@ function fmtClock(ms: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+function fmtCount(n: number): string {
+  return n.toLocaleString();
+}
+
+function requestText(request: LlmRequestDetails): string {
+  const parts: string[] = [];
+  if (request.system_prompt) parts.push(`SYSTEM PROMPT\n\n${request.system_prompt}`);
+  if (request.shared_context) parts.push(`SHARED CONTEXT\n\n${request.shared_context}`);
+  parts.push(`TASK PROMPT\n\n${request.prompt}`);
+  return parts.join("\n\n" + "=".repeat(72) + "\n\n");
+}
+
+function RequestDetails({
+  request,
+  copyText,
+}: {
+  request: LlmRequestDetails;
+  copyText: (text: string) => Promise<void>;
+}) {
+  const [showPrompt, setShowPrompt] = useState(false);
+  const toolText = request.tools.length > 0 ? request.tools.join(", ") : "None";
+  const transport = request.transport === "api" ? "Direct API" : "CLI";
+  const outputLimit =
+    request.max_output_tokens == null
+      ? "provider default"
+      : `${fmtCount(request.max_output_tokens)} max output tokens`;
+  const access = [
+    request.pdf_attached ? "PDF attached" : null,
+    request.shared_context ? `shared context (${fmtCount(request.shared_context_chars)} chars)` : null,
+    request.write_enabled ? "artifact writes enabled" : "read-only",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="mb-2 rounded border border-gray-700 bg-gray-800/80 text-gray-300">
+      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 px-3 py-2 text-xs">
+        <span className="text-gray-500">Provider</span>
+        <span>
+          {request.provider_label} ({request.provider}) · {transport}
+          {request.local_endpoint ? ` · ${request.local_endpoint}` : ""}
+        </span>
+        <span className="text-gray-500">Model</span>
+        <span>
+          {request.model} <span className="text-gray-500">({request.model_policy})</span>
+        </span>
+        <span className="text-gray-500">Settings</span>
+        <span>
+          effort {request.effort} · tools {toolText} · timeout {fmtCount(request.timeout_secs)}s ·{" "}
+          {outputLimit}
+        </span>
+        <span className="text-gray-500">Context</span>
+        <span>{access}</span>
+      </div>
+
+      <div className="border-t border-gray-700">
+        <button
+          onClick={() => setShowPrompt((value) => !value)}
+          className="w-full cursor-pointer select-none px-3 py-1.5 text-left text-gray-400 hover:text-gray-200"
+        >
+          {showPrompt ? "Hide" : "View"} prompt ({fmtCount(request.prompt_chars)} task characters)
+        </button>
+        {showPrompt && (
+          <div className="border-t border-gray-700 px-3 py-2">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-gray-500">
+                System, shared context, and task prompt are shown separately in dispatch order.
+              </span>
+              <button
+                onClick={() => void copyText(requestText(request))}
+                className="rounded border border-gray-600 px-1.5 py-0.5 text-gray-300 hover:bg-gray-700 hover:text-gray-100"
+              >
+                Copy prompt
+              </button>
+            </div>
+            {request.system_prompt && (
+              <section className="mb-3">
+                <div className="mb-1 text-gray-500">System prompt</div>
+                <pre className="whitespace-pre-wrap text-gray-300">{request.system_prompt}</pre>
+              </section>
+            )}
+            {request.shared_context && (
+              <section className="mb-3">
+                <div className="mb-1 text-gray-500">
+                  Shared context ({fmtCount(request.shared_context_chars)} characters)
+                </div>
+                <pre className="whitespace-pre-wrap text-gray-300">{request.shared_context}</pre>
+              </section>
+            )}
+            <section>
+              <div className="mb-1 text-gray-500">Task prompt</div>
+              <pre className="whitespace-pre-wrap text-gray-300">{request.prompt}</pre>
+            </section>
+          </div>
+        )}
+      </div>
+
+      {(request.working_directory ||
+        request.read_directories.length > 0 ||
+        request.write_directory) && (
+        <details className="border-t border-gray-700">
+          <summary className="cursor-pointer select-none px-3 py-1.5 text-gray-400 hover:text-gray-200">
+            View execution paths
+          </summary>
+          <div className="border-t border-gray-700 px-3 py-2 text-gray-400">
+            {request.working_directory && (
+              <div>
+                <span className="text-gray-500">Working directory: </span>
+                {request.working_directory}
+              </div>
+            )}
+            {request.read_directories.map((path) => (
+              <div key={path}>
+                <span className="text-gray-500">Read root: </span>
+                {path}
+              </div>
+            ))}
+            {request.write_directory && (
+              <div>
+                <span className="text-gray-500">Write root: </span>
+                {request.write_directory}
+              </div>
+            )}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 /** The pipeline console: session filter, text search, level filter, timestamps,
  *  per-line copy, jump-to-error, auto-scroll that pauses when scrolled up, and
  *  copy/save of the visible lines. */
 export default function Console({ logs, usage }: Props) {
   const [open, setOpen] = useState(true);
+  const [height, setHeight] = useState(DEFAULT_CONSOLE_HEIGHT);
   const [selectedSession, setSelectedSession] = useState<number | "master">("master");
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState<LevelFilter>("all");
@@ -59,10 +202,69 @@ export default function Console({ logs, usage }: Props) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  const stopResizing = useCallback(() => {
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }, []);
+
+  const startResizing = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      resizeCleanupRef.current?.();
+
+      const consoleElement = event.currentTarget.parentElement;
+      const measuredHeight = consoleElement?.getBoundingClientRect().height ?? 0;
+      const startHeight = measuredHeight > 0 ? measuredHeight : height;
+      const startY = event.clientY;
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        setHeight(clampConsoleHeight(startHeight + startY - moveEvent.clientY));
+      };
+      const onMouseUp = () => {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        stopResizing();
+        resizeCleanupRef.current = null;
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+      resizeCleanupRef.current = onMouseUp;
+    },
+    [height, stopResizing],
+  );
+
+  const resizeWithKeyboard = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const delta = event.shiftKey ? 48 : 16;
+    let next: number | null = null;
+    if (event.key === "ArrowUp") next = height + delta;
+    if (event.key === "ArrowDown") next = height - delta;
+    if (event.key === "Home") next = MIN_CONSOLE_HEIGHT;
+    if (event.key === "End") next = maxConsoleHeight();
+    if (next == null) return;
+    event.preventDefault();
+    setHeight(clampConsoleHeight(next));
+  }, [height]);
 
   // Group console lines by headless session for the per-session selector.
   const sessions = useMemo(() => {
-    const map = new Map<number, { id: number; label: string; count: number; hasError: boolean }>();
+    const map = new Map<
+      number,
+      {
+        id: number;
+        label: string;
+        count: number;
+        hasError: boolean;
+        request?: LlmRequestDetails;
+      }
+    >();
     for (const e of logs) {
       if (e.session == null) continue;
       let s = map.get(e.session);
@@ -73,6 +275,7 @@ export default function Console({ logs, usage }: Props) {
       s.count++;
       if (s.label.startsWith("Session ") && e.label) s.label = e.label;
       if (isError(e)) s.hasError = true;
+      if (e.request) s.request = e.request;
     }
     return Array.from(map.values()).sort((a, b) => a.id - b.id);
   }, [logs]);
@@ -82,6 +285,10 @@ export default function Console({ logs, usage }: Props) {
     selectedSession !== "master" && !sessions.some((s) => s.id === selectedSession)
       ? "master"
       : selectedSession;
+  const activeRequest =
+    activeSession === "master"
+      ? undefined
+      : sessions.find((session) => session.id === activeSession)?.request;
 
   const needle = search.trim().toLowerCase();
   const visibleLogs = useMemo(() => {
@@ -172,9 +379,26 @@ export default function Console({ logs, usage }: Props) {
 
   return (
     <div
-      className="border-t border-gray-300 dark:border-gray-700 bg-gray-900 flex flex-col"
-      style={{ height: open ? "12rem" : undefined }}
+      className="relative shrink-0 border-t border-gray-300 dark:border-gray-700 bg-gray-900 flex flex-col"
+      style={{ height: open ? `${height}px` : undefined }}
     >
+      {open && (
+        <div
+          role="separator"
+          aria-label="Resize console"
+          aria-orientation="horizontal"
+          aria-valuemin={MIN_CONSOLE_HEIGHT}
+          aria-valuemax={maxConsoleHeight()}
+          aria-valuenow={Math.round(height)}
+          tabIndex={0}
+          title="Drag to resize the console"
+          onMouseDown={startResizing}
+          onKeyDown={resizeWithKeyboard}
+          className="group absolute -top-1 left-0 z-20 h-2 w-full cursor-row-resize focus:outline-none"
+        >
+          <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-transparent transition-colors group-hover:bg-blue-400 group-focus:bg-blue-400 group-active:bg-blue-500" />
+        </div>
+      )}
       <div className="flex items-center justify-between px-4 py-1.5 bg-gray-800 text-gray-400 text-xs font-mono shrink-0 gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <button
@@ -187,10 +411,16 @@ export default function Console({ logs, usage }: Props) {
           {sessions.length > 0 && (
             <select
               value={activeSession === "master" ? "master" : String(activeSession)}
-              onChange={(e) =>
-                setSelectedSession(e.target.value === "master" ? "master" : Number(e.target.value))
-              }
-              className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 max-w-[14rem] cursor-pointer"
+              onChange={(e) => {
+                const next =
+                  e.target.value === "master" ? "master" : Number(e.target.value);
+                setSelectedSession(next);
+                if (next !== "master") {
+                  setFollow(false);
+                  scrollRef.current?.scrollTo?.({ top: 0 });
+                }
+              }}
+              className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 max-w-[22rem] cursor-pointer"
               title="Show a single headless session's log, or all of them"
             >
               <option value="master">All sessions</option>
@@ -198,9 +428,12 @@ export default function Console({ logs, usage }: Props) {
                 const u = usage.bySession[s.id];
                 const cache = u?.cached ? ` · ${fmtTokens(u.cached)} cached` : "";
                 const tok = u ? ` · ${fmtTokens(u.input)}→${fmtTokens(u.output)}${cache}` : "";
+                const request = s.request
+                  ? ` · ${s.request.provider_label} ${s.request.transport.toUpperCase()} · ${s.request.model}`
+                  : "";
                 return (
                   <option key={s.id} value={String(s.id)}>
-                    {(s.hasError ? "✕ " : "") + s.label + ` (${s.count})` + tok}
+                    {(s.hasError ? "✕ " : "") + s.label + request + ` (${s.count})` + tok}
                   </option>
                 );
               })}
@@ -300,6 +533,13 @@ export default function Console({ logs, usage }: Props) {
 
       {open && (
         <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto px-4 py-2 min-h-0 relative">
+          {activeRequest && (
+            <RequestDetails
+              key={String(activeSession)}
+              request={activeRequest}
+              copyText={copyText}
+            />
+          )}
           <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
             {visibleLogs.map((entry, i) => (
               <div

@@ -144,7 +144,7 @@ pub struct Settings {
     #[serde(default)]
     pub gemini_api_model_selection: ModelSelection,
 
-    /// PDF extraction method: "llm", "auto" (marker → pdftotext), "marker", or "pdftotext".
+    /// PDF extraction method: "llm", "auto", "marker", "paddleocr-vl", or "pdftotext".
     #[serde(default = "default_pdf_extractor")]
     pub pdf_extractor: String,
 
@@ -153,7 +153,7 @@ pub struct Settings {
     pub marker_disable_ocr: bool,
 
     /// Disable image extraction when using marker-pdf.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub marker_disable_images: bool,
 
     /// Show verbose LLM output in the console (command lines, stdout, stderr).
@@ -167,6 +167,12 @@ pub struct Settings {
     /// Number of times to retry a failed step before giving up. Default = 1.
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
+
+    /// Automatically compare a completed run with the newest prior run for
+    /// the same input path or content hash. Disabled by default because it
+    /// adds a niche, potentially costly LLM reconciliation call.
+    #[serde(default)]
+    pub auto_revision_reconciliation: bool,
 
     /// Maximum number of past runs to keep on disk. The oldest are purged after
     /// each run once the count exceeds this. 0 = keep everything (default).
@@ -217,10 +223,6 @@ fn default_pdf_extractor() -> String {
     "llm".to_string()
 }
 
-fn default_true() -> bool {
-    true
-}
-
 fn default_provider() -> String {
     "claude".to_string()
 }
@@ -264,10 +266,11 @@ impl Default for Settings {
             gemini_api_model_selection: ModelSelection::Automatic,
             pdf_extractor: "llm".to_string(),
             marker_disable_ocr: false,
-            marker_disable_images: true,
+            marker_disable_images: false,
             verbose_logging: false,
             step_timeout_secs: 1200,
             max_retries: 1,
+            auto_revision_reconciliation: false,
             max_saved_runs: 0,
             max_saved_run_bytes: default_max_saved_run_bytes(),
             anthropic_api_key: String::new(),
@@ -305,7 +308,7 @@ impl Settings {
         }
         if !matches!(
             self.pdf_extractor.as_str(),
-            "llm" | "auto" | "marker" | "pdftotext"
+            "llm" | "auto" | "marker" | "paddleocr-vl" | "pdftotext"
         ) {
             return Err(format!("Invalid PDF extractor '{}'", self.pdf_extractor));
         }
@@ -1127,6 +1130,18 @@ fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revision_reconciliation_is_opt_in_for_new_and_existing_settings() {
+        assert!(!Settings::default().auto_revision_reconciliation);
+        let legacy: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!legacy.auto_revision_reconciliation);
+    }
+
+    #[test]
+    fn document_figure_extraction_is_enabled_for_new_settings() {
+        assert!(!Settings::default().marker_disable_images);
+    }
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {

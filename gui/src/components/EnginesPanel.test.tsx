@@ -49,6 +49,24 @@ describe("EnginesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("lists PaddleOCR-VL as a separate compact managed engine", async () => {
+    invoke.mockResolvedValue([
+      engine(),
+      engine({
+        id: "paddleocr-vl",
+        label: "PaddleOCR-VL 1.6 Q8",
+        description: "Compact native extraction.",
+        est_download_mb: 1900,
+        est_disk_mb: 2300,
+      }),
+    ]);
+    render(<EnginesPanel />);
+    expect(await screen.findByText("PaddleOCR-VL 1.6 Q8")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Install \(~1\.9 GB\)/ }),
+    ).toBeInTheDocument();
+  });
+
   it("notes a system copy (e.g. anaconda) when no managed install exists", async () => {
     invoke.mockResolvedValue([
       engine({ system_path: "/opt/anaconda3/bin/marker_single" }),

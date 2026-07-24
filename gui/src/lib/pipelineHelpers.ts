@@ -34,6 +34,7 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
         { token: "{prior_outputs}", description: "All prior step outputs concatenated" },
         { token: "{last_output}", description: "Most recent prior step's output" },
         { token: "{input_path}", description: "Path to the extracted input text" },
+        { token: "{document_bundle}", description: "Path to canonical DocumentBundle JSON" },
         { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
         { token: "{source_path}", description: "Path to the original input (PDF, .tex, folder)" },
       ];
@@ -48,6 +49,7 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
         { token: "{step_prompt}", description: "The individual step's prompt" },
         { token: "{orientation}", description: "Survey / orientation map reference block" },
         { token: "{input_path}", description: "Path to the extracted input text" },
+        { token: "{document_bundle}", description: "Path to canonical DocumentBundle JSON" },
         { token: "{paper_type}", description: "theory / empirical / mixed (paper surveys only; empty otherwise)" },
         { token: "{figure_hint}", description: "Figure/table access instructions" },
         { token: "{output_format}", description: "Output delivery instructions (file write or markers)" },

@@ -129,6 +129,12 @@ function HelpContent() {
             description="Select a .tex file to get exact equations and tables. Files referenced with \input{} are included automatically."
           />
           <TierCard
+            tier="Native"
+            tierColor="text-green-700 bg-green-50"
+            title="Word (.docx)"
+            description="Reads OOXML directly, retaining Word equation markup, table grids, and embedded figure images."
+          />
+          <TierCard
             tier="Default"
             tierColor="text-blue-700 bg-blue-50"
             title="LLM extraction"
@@ -153,11 +159,12 @@ function HelpContent() {
       <Section title="Results and revisions">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
           Every run is saved to <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">~/.pipeline/runs/</code>,
-          including the report and any files the steps produced. Browse them in
-          the artifact explorer after the run finishes. To check a revised
-          paper, run it with the diff option: Pipeline finds the earlier report
-          for the same paper and lists which issues were addressed, which
-          remain, and which are new.
+          including a readable document, canonical DocumentBundle, and visual page and figure assets that can be inspected in the run viewer.
+          It also retains the report and any files the steps produced. Browse them
+          in the artifact explorer after the run finishes. To compare revised
+          papers automatically, enable revision reconciliation in Settings:
+          Pipeline finds the earlier report for the same paper and lists which
+          issues were addressed, which remain, and which are new.
         </p>
       </Section>
 

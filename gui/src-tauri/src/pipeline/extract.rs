@@ -527,6 +527,7 @@ fn find_marker_markdown(root: &Path) -> Result<Option<PathBuf>, String> {
 /// Extract text from PDF using marker_single.
 /// Timeout is half the user's step timeout, floored at 120s to accommodate first-run model downloads.
 fn extract_marker(
+    app: &crate::emit::EventBus,
     path: &Path,
     paper_hash: &str,
     marker_disable_ocr: bool,
@@ -575,6 +576,12 @@ fn extract_marker(
     // Wait with timeout — use half the user's step timeout (same convention as LLM extraction),
     // with a floor of 120s to handle first-run model downloads.
     let timeout_secs = (settings.step_timeout_secs / 2).max(120);
+    let _ = app.emit_event(
+        "pipeline:log",
+        serde_json::json!({
+            "line": "Marker: invoking marker_single for PDF extraction"
+        }),
+    );
     let output = run_bounded_output(
         cmd,
         "marker_single",
@@ -643,6 +650,302 @@ fn extract_pdftotext(path: &Path) -> Result<String, String> {
         return Err("pdftotext returned empty output".to_string());
     }
     Ok(text)
+}
+
+struct PaddleServer {
+    child: std::process::Child,
+    pid: u32,
+    base_url: String,
+}
+
+impl Drop for PaddleServer {
+    fn drop(&mut self) {
+        if self.pid > 0 {
+            crate::commands::kill_process(self.pid);
+            crate::commands::unregister_child_pid(self.pid);
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+async fn start_paddle_server(
+    paths: &crate::engines::PaddleEnginePaths,
+) -> Result<PaddleServer, String> {
+    use std::process::Stdio;
+
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("Failed to reserve a PaddleOCR-VL port: {error}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| format!("Failed to inspect the PaddleOCR-VL port: {error}"))?
+        .port();
+    drop(listener);
+
+    let mut command = StdCommand::new(&paths.server);
+    command.args([
+        "-m",
+        paths
+            .model
+            .to_str()
+            .ok_or("PaddleOCR-VL model path is not valid UTF-8")?,
+        "--mmproj",
+        paths
+            .mmproj
+            .to_str()
+            .ok_or("PaddleOCR-VL projector path is not valid UTF-8")?,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &port.to_string(),
+        "--temp",
+        "0",
+        "--ctx-size",
+        "16384",
+        "--n-gpu-layers",
+        "99",
+        "--alias",
+        "paddleocr-vl-1.6",
+        "--no-ui",
+    ]);
+    crate::pipeline::claude::configure_silent_command(&mut command);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Failed to start managed llama-server: {error}"))?;
+    let pid = child.id();
+    if pid > 0 {
+        crate::commands::register_child_pid(pid);
+    }
+    let base_url = format!("http://127.0.0.1:{port}");
+    let client = &*crate::pipeline::api_common::HTTP_CLIENT;
+    let started = std::time::Instant::now();
+    loop {
+        if crate::commands::is_cancelled() {
+            if pid > 0 {
+                crate::commands::kill_process(pid);
+                crate::commands::unregister_child_pid(pid);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Pipeline cancelled".to_string());
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Failed to inspect llama-server: {error}"))?
+        {
+            if pid > 0 {
+                crate::commands::unregister_child_pid(pid);
+            }
+            return Err(format!(
+                "Managed llama-server exited during model loading (exit {})",
+                status.code().unwrap_or(-1)
+            ));
+        }
+        if let Ok(response) = client
+            .get(format!("{base_url}/health"))
+            .timeout(std::time::Duration::from_secs(2))
+            .send()
+            .await
+        {
+            if response.status().is_success() {
+                return Ok(PaddleServer {
+                    child,
+                    pid,
+                    base_url,
+                });
+            }
+        }
+        if started.elapsed() >= std::time::Duration::from_secs(180) {
+            if pid > 0 {
+                crate::commands::kill_process(pid);
+                crate::commands::unregister_child_pid(pid);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("PaddleOCR-VL model loading timed out after 180 seconds".to_string());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
+fn read_image_data_url(path: &Path) -> Result<String, String> {
+    use base64::Engine as _;
+    use std::io::Read as _;
+    const MAX_PAGE_IMAGE_BYTES: usize = 25_000_000;
+    let mut file = open_regular_file(path)?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(MAX_PAGE_IMAGE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to read rendered PDF page: {error}"))?;
+    if bytes.len() > MAX_PAGE_IMAGE_BYTES {
+        return Err(format!(
+            "Rendered PDF page exceeds the {} MB safety limit",
+            MAX_PAGE_IMAGE_BYTES / 1_000_000
+        ));
+    }
+    Ok(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+fn paddle_response_text(value: &serde_json::Value) -> Result<String, String> {
+    if let Some(message) = value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(|message| message.as_str())
+    {
+        return Err(format!("PaddleOCR-VL inference failed: {message}"));
+    }
+    let content = value
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .ok_or("PaddleOCR-VL returned an invalid response")?;
+    Ok(strip_markdown_fence(content).trim().to_string())
+}
+
+async fn paddle_extract_page(
+    server: &PaddleServer,
+    image_path: &Path,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    let image_url = read_image_data_url(image_path)?;
+    let body = serde_json::json!({
+        "model": "paddleocr-vl-1.6",
+        "temperature": 0,
+        "max_tokens": 8192,
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "OCR:" },
+                { "type": "image_url", "image_url": { "url": image_url } }
+            ]
+        }]
+    });
+    let response = crate::pipeline::api_common::HTTP_CLIENT
+        .post(format!("{}/v1/chat/completions", server.base_url))
+        .timeout(timeout)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("PaddleOCR-VL request failed: {error}"))?;
+    let status = response.status();
+    let value: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|error| format!("Failed to decode PaddleOCR-VL response: {error}"))?;
+    if !status.is_success() {
+        let message = value
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(|message| message.as_str())
+            .unwrap_or("unknown local inference error");
+        return Err(format!(
+            "PaddleOCR-VL request failed (HTTP {status}): {message}"
+        ));
+    }
+    paddle_response_text(&value)
+}
+
+/// Extract every rendered PDF page through one managed llama.cpp process.
+/// Loading the Q8 model once per document is the important performance
+/// property; page boundaries also make completeness checks deterministic.
+async fn extract_paddle(
+    app: &crate::emit::EventBus,
+    path: &Path,
+    hash: &str,
+) -> Result<ExtractionResult, String> {
+    let paths = crate::engines::paddle_engine_paths()?;
+    let render_dir = tempfile::Builder::new()
+        .prefix("pipeline_paddle_pages_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create PaddleOCR-VL page directory: {error}"))?;
+    let pdf = path.to_path_buf();
+    let output_dir = render_dir.path().to_path_buf();
+    let rendered = tokio::task::spawn_blocking(move || {
+        render_pdf_pages(&pdf, &output_dir, MAX_RENDERED_PDF_PAGES)
+    })
+    .await
+    .map_err(|error| format!("PDF rendering task failed: {error}"))??;
+    if rendered.truncated {
+        return Err(format!(
+            "PaddleOCR-VL extraction is limited to {MAX_RENDERED_PDF_PAGES} pages per PDF"
+        ));
+    }
+
+    let _ = app.emit_event(
+        "pipeline:log",
+        serde_json::json!({
+            "line": format!(
+                "PaddleOCR-VL: loading the managed Q8 model for {} page(s)",
+                rendered.names.len()
+            )
+        }),
+    );
+    let server = start_paddle_server(&paths).await?;
+    let settings = crate::settings::load();
+    let page_timeout =
+        std::time::Duration::from_secs((settings.step_timeout_secs / 2).clamp(120, 900));
+    let baseline = {
+        let pdf = path.to_path_buf();
+        tokio::task::spawn_blocking(move || pdftotext_page_baseline(&pdf))
+            .await
+            .unwrap_or(None)
+    };
+    let mut text = String::new();
+    let mut quality_notes = Vec::new();
+    for (index, name) in rendered.names.iter().enumerate() {
+        if crate::commands::is_cancelled() {
+            return Err("Pipeline cancelled".to_string());
+        }
+        let page = index + 1;
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({
+                "line": format!(
+                    "PaddleOCR-VL: extracting page {page}/{}",
+                    rendered.names.len()
+                )
+            }),
+        );
+        let page_text =
+            paddle_extract_page(&server, &render_dir.path().join(name), page_timeout).await?;
+        if baseline
+            .as_ref()
+            .and_then(|pages| pages.get(index))
+            .is_some_and(|baseline_len| {
+                *baseline_len >= SUSPECT_BASELINE_MIN_CHARS
+                    && page_text.chars().count() < *baseline_len / 10
+            })
+        {
+            quality_notes.push(format!(
+                "PaddleOCR-VL returned unusually little text for page {page}; verify that page against the original PDF."
+            ));
+        }
+        text.push_str(&format!("<!-- PAGE {page} -->\n"));
+        text.push_str(page_text.trim());
+        text.push_str("\n\n");
+    }
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("PaddleOCR-VL returned empty output".to_string());
+    }
+    quality_notes.extend(scan_math_quality(&text));
+    Ok(ExtractionResult {
+        text,
+        method: "paddleocr-vl".to_string(),
+        source_path: path.to_string_lossy().to_string(),
+        paper_hash: hash.to_string(),
+        quality_notes,
+    })
 }
 
 /// Find a command by scanning the managed tool directory (~/.pipeline/bin),
@@ -884,26 +1187,19 @@ async fn repair_pages(
         source_line(attach, prompt_path),
         extraction_requirements()
     );
-    let overrides = super::claude::LlmOverrides {
-        pdf_attachment: attach.then_some(path),
-        max_output_tokens: Some(EXTRACTION_MAX_OUTPUT_TOKENS),
-        ..Default::default()
-    };
     let label = format!("LLM extraction repair (pages {start}-{end})");
-    let raw = super::claude::call_llm(
+    let mut request = super::call::OwnedRequest::new(
         app,
-        &prompt,
-        &["Read"],
-        None,
-        "text",
+        format!("extraction-repair-{start}-{end}"),
+        label,
+        prompt,
         timeout_secs,
-        &label,
-        None,
-        None,
-        extra_dirs,
-        &overrides,
-    )
-    .await?;
+    );
+    request.tools = vec!["Read".to_string()];
+    request.read_dirs = extra_dirs.iter().map(|dir| (*dir).to_string()).collect();
+    request.pdf_attachment = attach.then(|| path.to_path_buf());
+    request.max_output_tokens = Some(EXTRACTION_MAX_OUTPUT_TOKENS);
+    let raw = super::call::execute_text(request).await?;
     let text = strip_markdown_fence(&raw).to_string();
     match parse_page_sections(&text) {
         Some((_, sections)) if !sections.is_empty() => Ok(sections
@@ -971,25 +1267,14 @@ async fn extract_llm(
         extraction_requirements()
     );
 
-    let overrides = super::claude::LlmOverrides {
-        pdf_attachment: attach.then_some(path),
-        max_output_tokens: Some(EXTRACTION_MAX_OUTPUT_TOKENS),
-        ..Default::default()
-    };
-    let raw = super::claude::call_llm(
-        app,
-        &prompt,
-        &["Read"],
-        None,
-        "text",
-        timeout,
-        "LLM PDF extraction",
-        None,
-        None,
-        &extra_dirs,
-        &overrides,
-    )
-    .await?;
+    let mut request =
+        super::call::OwnedRequest::new(app, "extraction", "LLM PDF extraction", prompt, timeout);
+    request.tools = vec!["Read".to_string()];
+    request.read_dirs = extra_dirs.iter().map(|dir| (*dir).to_string()).collect();
+    request.pdf_attachment = attach.then(|| path.to_path_buf());
+    request.max_output_tokens = Some(EXTRACTION_MAX_OUTPUT_TOKENS);
+    request.settings = std::sync::Arc::new(settings);
+    let raw = super::call::execute_text(request).await?;
     let text = strip_markdown_fence(&raw).to_string();
     if text.is_empty() {
         return Err("LLM returned empty output for PDF extraction".to_string());
@@ -1165,6 +1450,7 @@ pub fn render_pdf_pages(
 /// `method` should be the resolved effective extractor ("marker" or "pdftotext");
 /// callers are expected to translate "auto" / "llm" upstream.
 fn extract_pdf_native(
+    app: &crate::emit::EventBus,
     path: &Path,
     method: &str,
     marker_disable_ocr: bool,
@@ -1183,7 +1469,7 @@ fn extract_pdf_native(
                     .to_string(),
             );
         }
-        let text = extract_marker(path, &hash, marker_disable_ocr, marker_disable_images)?;
+        let text = extract_marker(app, path, &hash, marker_disable_ocr, marker_disable_images)?;
         let quality_notes = scan_math_quality(&text);
         return Ok(ExtractionResult {
             text,
@@ -1329,6 +1615,32 @@ fn find_pdf_in_dir(dir: &Path) -> Option<PathBuf> {
     pdfs.into_iter().next()
 }
 
+/// Find a Word Open XML document in a project directory. Legacy `.doc`
+/// binaries are intentionally unsupported because they cannot be inspected
+/// safely without an external converter.
+fn find_docx_in_dir(dir: &Path) -> Option<PathBuf> {
+    let mut documents: Vec<PathBuf> = fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| ext_eq(path, "docx"))
+        .collect();
+    documents.sort();
+    documents.into_iter().next()
+}
+
+fn extract_docx(path: &Path) -> Result<ExtractionResult, String> {
+    let text = crate::document_bundle::extract_docx_text(path)?;
+    let hash = content_hash(text.as_bytes());
+    Ok(ExtractionResult {
+        text,
+        method: "docx".to_string(),
+        source_path: path.to_string_lossy().to_string(),
+        paper_hash: hash,
+        quality_notes: Vec::new(),
+    })
+}
+
 /// Extract text from a paper file or directory.
 /// When `app` is provided and the pdf_extractor setting is "llm", uses the
 /// configured LLM provider to read and extract the PDF to Markdown.
@@ -1363,6 +1675,50 @@ pub async fn extract(
     // All providers can extract PDFs now: direct APIs get the PDF attached
     // to the request, CLIs read it with their multimodal Read tool.
     let use_llm = effective_method == "llm";
+    let use_paddle = effective_method == "paddleocr-vl";
+
+    // PaddleOCR-VL owns an async local HTTP server for the duration of one
+    // document, so it cannot run inside the blocking native-extractor branch.
+    if use_paddle {
+        let pdf_path = if path.is_dir() {
+            if find_main_tex(&path).is_some() {
+                None
+            } else {
+                find_pdf_in_dir(&path)
+            }
+        } else if ext_eq(&path, "pdf") {
+            Some(path.clone())
+        } else {
+            None
+        };
+        if let Some(pdf) = pdf_path {
+            let hash = {
+                let pdf_for_hash = pdf.clone();
+                tokio::task::spawn_blocking(move || compute_hash(&pdf_for_hash))
+                    .await
+                    .map_err(|error| format!("Hash computation failed: {error}"))??
+            };
+            match extract_paddle(app, &pdf, &hash).await {
+                Ok(result) => return Ok(result),
+                Err(error) if crate::commands::is_cancelled() => return Err(error),
+                Err(error) => {
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!(
+                                "WARNING: PaddleOCR-VL extraction failed: {error}. Falling back to LLM extraction."
+                            )
+                        }),
+                    );
+                    return extract_llm(app, &pdf, &hash).await.map_err(|fallback| {
+                        format!(
+                            "PaddleOCR-VL extraction failed ({error}); LLM fallback also failed ({fallback})"
+                        )
+                    });
+                }
+            }
+        }
+    }
 
     // For LLM PDF extraction, identify the PDF path and run async
     if use_llm {
@@ -1398,8 +1754,9 @@ pub async fn extract(
                         "line": format!("WARNING: LLM extraction failed: {e}. Falling back to pdftotext.")
                     }));
                     let p = pdf.clone();
+                    let native_app = app.clone();
                     return tokio::task::spawn_blocking(move || {
-                        extract_pdf_native(&p, "pdftotext", false, false)
+                        extract_pdf_native(&native_app, &p, "pdftotext", false, false)
                     })
                     .await
                     .map_err(|e| format!("Extraction task failed: {e}"))?;
@@ -1429,6 +1786,7 @@ pub async fn extract(
     let blocking_method = effective_method.clone();
     let blocking_disable_ocr = effective_marker_disable_ocr;
     let blocking_disable_images = effective_marker_disable_images;
+    let native_app = app.clone();
 
     // Non-LLM paths: run blocking I/O on a separate thread
     let native_result = tokio::task::spawn_blocking(move || {
@@ -1457,6 +1815,7 @@ pub async fn extract(
 
             if let Some(pdf) = find_pdf_in_dir(&path) {
                 return extract_pdf_native(
+                    &native_app,
                     &pdf,
                     &blocking_method,
                     blocking_disable_ocr,
@@ -1464,7 +1823,14 @@ pub async fn extract(
                 );
             }
 
-            return Err(format!("No .tex or .pdf files found in {}", path.display()));
+            if let Some(docx) = find_docx_in_dir(&path) {
+                return extract_docx(&docx);
+            }
+
+            return Err(format!(
+                "No .tex, .pdf, or .docx files found in {}",
+                path.display()
+            ));
         }
 
         if ext_eq(&path, "tex") {
@@ -1493,11 +1859,14 @@ pub async fn extract(
             })
         } else if ext_eq(&path, "pdf") {
             extract_pdf_native(
+                &native_app,
                 &path,
                 &blocking_method,
                 blocking_disable_ocr,
                 blocking_disable_images,
             )
+        } else if ext_eq(&path, "docx") {
+            extract_docx(&path)
         } else {
             let ext = path
                 .extension()
@@ -1532,6 +1901,31 @@ pub async fn extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paddle_response_extracts_openai_message_content() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "```markdown\n# Heading\n\n$x=1$\n```"
+                }
+            }]
+        });
+        assert_eq!(
+            paddle_response_text(&response).unwrap(),
+            "# Heading\n\n$x=1$"
+        );
+    }
+
+    #[test]
+    fn paddle_response_surfaces_server_errors() {
+        let response = serde_json::json!({
+            "error": { "message": "failed to load projector" }
+        });
+        assert!(paddle_response_text(&response)
+            .unwrap_err()
+            .contains("failed to load projector"));
+    }
 
     #[test]
     fn rendered_page_limit_matches_documented_cap() {

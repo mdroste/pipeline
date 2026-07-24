@@ -6,7 +6,7 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue)](https://github.com/mdroste/pipeline/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 
-Pipeline generates referee reports for academic papers. It takes a PDF or LaTeX source, runs several independent analyses in parallel (contribution, technical correctness, empirical strategy, internal consistency, exposition), then consolidates the results into a single structured report.
+Pipeline generates referee reports for academic papers. It takes a PDF, LaTeX source, or Word `.docx`, runs several independent analyses in parallel (contribution, technical correctness, empirical strategy, internal consistency, exposition), then consolidates the results into a single structured report.
 
 It is a desktop app for macOS, Windows, and Linux. No API key is required if you have a Claude subscription.
 
@@ -57,9 +57,16 @@ You need at least one LLM provider:
 
 Pipeline bundles `pdftoppm` and `pdftotext` (from [poppler](https://poppler.freedesktop.org/)) on all platforms, so PDF extraction works out of the box with no extra install. `pdftoppm` is what Claude Code uses internally to render PDF pages for the LLM; `pdftotext` is the fallback extractor.
 
-For a higher-quality alternative that preserves equations as LaTeX, optionally install [marker-pdf](https://github.com/VikParuchuri/marker): `pip install marker-pdf`.
+For higher-quality local extraction, Settings → PDF Extraction can optionally
+install either [PaddleOCR-VL 1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF)
+Q8 with a native [llama.cpp](https://github.com/ggml-org/llama.cpp) runtime
+(about 1.9 GB), or [marker-pdf](https://github.com/VikParuchuri/marker). Both
+managed engines run locally and can be uninstalled from the same page.
 
-LaTeX source files are always read natively and don't need either tool.
+LaTeX source files are read natively; a compiled companion PDF is used for
+visual page inspection when present. Word `.docx` papers are read from OOXML,
+including table grids, equation OMML, and embedded images. Legacy `.doc` is
+not supported.
 
 Bundled Poppler is GPL-licensed. Exact platform inputs, source hashes, dynamic
 library notices, and SBOM details are in
@@ -71,9 +78,15 @@ are available offline inside every release build.
 
 Pipeline processes a paper in three stages:
 
-1. **Extract**: Reads the paper text. LaTeX files are parsed directly (with `\input{}` resolution). PDFs go through LLM extraction, marker, or pdftotext.
-2. **Orient**: One LLM call builds a structured map of the paper -- sections, formal results, tables, notation, stated contribution. This map is validated against a schema and shared with all subsequent steps.
-3. **Execute**: Runs the configured pipeline steps. Parallel steps run concurrently; sequential steps run afterward and receive all prior outputs.
+1. **Extract and normalize**: Reads PDF, LaTeX, or DOCX and creates a versioned `DocumentBundle` containing text blocks, equations, tables, figures, page renders, source representations, provenance, and extraction warnings.
+2. **Orient**: One LLM call builds a structured map of the paper -- sections, formal results, tables, notation, stated contribution -- and enriches matching bundle nodes.
+3. **Execute**: Runs the configured pipeline steps. Parallel steps run concurrently; sequential steps run afterward and receive all prior outputs. Every step can read the canonical bundle and inspect its visual assets.
+
+Each saved run includes a readable document, canonical JSON, streaming JSONL
+blocks, page images, and extracted or source-native figures. The run Artifact
+Explorer has a DocumentBundle inspection view for checking source provenance,
+quality warnings, semantic blocks, equations/tables, and links to every page
+or figure image.
 
 ### Default pipeline (Paper Review (Full))
 

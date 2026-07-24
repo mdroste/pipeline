@@ -292,7 +292,7 @@ fn default_slot_mode() -> String {
 /// the global toggle when this struct is absent on a profile).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtractionConfig {
-    /// "auto" | "llm" | "marker" | "pdftotext" | "" (= inherit global).
+    /// "auto" | "llm" | "marker" | "paddleocr-vl" | "pdftotext" | "" (= inherit global).
     #[serde(default)]
     pub method: String,
     /// Input mode for the workflow: "" or "document" (single file, default),
@@ -339,6 +339,7 @@ pub struct PipelineConfig {
     ///   {paper_type}   — theory / empirical / mixed
     ///   {orientation}  — orientation map reference (empty if disabled)
     ///   {paper_path}   — path to extracted paper text
+    ///   {document_bundle} — path to canonical DocumentBundle JSON
     ///   {figure_hint}  — figure/table access instructions
     #[serde(default = "default_parallel_template")]
     pub parallel_context_template: String,
@@ -1148,7 +1149,70 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         }
     }
 
+    // Refresh shipped prompt text only when a built-in still contains the
+    // exact prior default. Hash matching preserves every customized prompt,
+    // while ensuring existing installations receive the cleaner synthesis and
+    // merge defaults rather than only newly created profiles.
+    let prompt_marker = profiles.join(".builtin-catalog-v4");
+    if !prompt_marker.exists() {
+        for id in BUILTIN_PROFILES {
+            let path = profiles.join(format!("{id}.json"));
+            if !path.exists() {
+                continue;
+            }
+            let content = read_profile_file(&path)
+                .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+            let mut profile: ProfileData = serde_json::from_str(&content)
+                .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+            if migrate_shipped_prompt_defaults(&mut profile) {
+                validate_profile_data(&profile)?;
+                let json = serde_json::to_string_pretty(&profile).map_err(|error| {
+                    format!("Failed to serialize '{}': {error}", path.display())
+                })?;
+                restore_profile_bytes(&path, json.as_bytes())
+                    .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+            }
+        }
+        fs::write(&prompt_marker, b"clean-terminal-report-prompts\n").map_err(|error| {
+            format!(
+                "Failed to record the prompt catalog migration '{}': {error}",
+                prompt_marker.display()
+            )
+        })?;
+    }
+
     Ok(())
+}
+
+fn prompt_digest(prompt: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    format!("{:x}", Sha256::digest(prompt.as_bytes()))
+}
+
+fn migrate_shipped_prompt_defaults(profile: &mut ProfileData) -> bool {
+    const OLD_EDITOR: &str = "2393f4d8f6f39641b5a5e609e132513abb3850b4995eb0522a3ae077fdef29b0";
+    const OLD_EDITOR_ISSUES: &str =
+        "01079fa2f1a5c0c44ba88861966b8383bbb5a4ac3b47b0e95ac3a8256bb36eeb";
+    const OLD_MERGE: &str = "cd90280a68b6818ba075f293f3ec54629568dd2d3e13dc891bcfb3164cdb9b18";
+    let mut changed = false;
+    for step in &mut profile.steps {
+        let replacement = match prompt_digest(&step.prompt).as_str() {
+            OLD_EDITOR => prompts::compiled_default("editor_synthesis"),
+            OLD_EDITOR_ISSUES => prompts::compiled_default("editor_synthesis_issues"),
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            step.prompt = replacement.to_string();
+            changed = true;
+        }
+    }
+    if prompt_digest(&profile.merge.prompt) == OLD_MERGE {
+        if let Some(replacement) = prompts::compiled_default("merge") {
+            profile.merge.prompt = replacement.to_string();
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Hide a retired built-in from the profile list without discarding any user
@@ -1544,7 +1608,7 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
 
     if !matches!(
         profile.extraction.method.as_str(),
-        "" | "auto" | "llm" | "marker" | "pdftotext"
+        "" | "auto" | "llm" | "marker" | "paddleocr-vl" | "pdftotext"
     ) {
         return Err(format!(
             "Invalid profile extraction method '{}'",

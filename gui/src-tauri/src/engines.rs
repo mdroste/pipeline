@@ -1,8 +1,8 @@
-//! Managed local-engine provisioning via uv.
+//! Managed local-engine provisioning.
 //!
-//! Downloads the uv binary (pinned version, SHA-256 verified) into
-//! `~/.pipeline/bin/` on demand, then provisions Python-based extraction
-//! engines into an app-owned toolchain under `~/.pipeline/`:
+//! Python engines are provisioned via a pinned uv binary. Native engines use
+//! pinned, SHA-256-verified runtime and model artifacts. Everything remains
+//! inside the app-owned toolchain under `~/.pipeline/`:
 //!
 //! ```text
 //! ~/.pipeline/
@@ -10,7 +10,8 @@
 //! ├── tools/     per-engine venvs              (UV_TOOL_DIR)
 //! ├── python/    managed CPython               (UV_PYTHON_INSTALL_DIR)
 //! ├── uv-cache/  wheel cache                   (UV_CACHE_DIR)
-//! └── hf/        model weights                 (HF_HOME)
+//! ├── hf/        model weights                 (HF_HOME)
+//! └── native/    native runtimes + GGUF models
 //! ```
 //!
 //! Nothing touches system Python, and deleting `~/.pipeline/` removes the
@@ -105,36 +106,146 @@ fn uv_download_url(target: &str) -> String {
     )
 }
 
+// ── Pinned PaddleOCR-VL native stack ───────────────────────────────
+
+const LLAMA_CPP_VERSION: &str = "b9637";
+const PADDLE_MODEL_REVISION: &str = "511b09642bb324401f15f97cc23bc67e8f0a291d";
+const PADDLE_MODEL_FILE: &str = "PaddleOCR-VL-1.6-GGUF.gguf";
+const PADDLE_MMPROJ_FILE: &str = "PaddleOCR-VL-1.6-GGUF-mmproj.gguf";
+const PADDLE_MODEL_SHA256: &str =
+    "f3ae46ec885050acf4b3d31944431e1fd90d50664fb09126af4a3c050ba14ee8";
+const PADDLE_MMPROJ_SHA256: &str =
+    "204d757d7610d9b3faab10d506d69e5b244e32bf765e2bab2d0167e65e0a058a";
+const MAX_PADDLE_MODEL_BYTES: u64 = 1_100_000_000;
+const MAX_LLAMA_ARCHIVE_BYTES: u64 = 500_000_000;
+const MAX_LLAMA_EXTRACTED_BYTES: u64 = 1_000_000_000;
+
+struct LlamaArtifact {
+    os: &'static str,
+    arch: &'static str,
+    filename: &'static str,
+    sha256: &'static str,
+}
+
+// SHA-256 digests are published on the official llama.cpp b9637 release.
+const LLAMA_ARTIFACTS: &[LlamaArtifact] = &[
+    LlamaArtifact {
+        os: "macos",
+        arch: "aarch64",
+        filename: "llama-b9637-bin-macos-arm64.tar.gz",
+        sha256: "72a93f3e68c31de3e438d462669aad1fcdb423b995e9c41033cc7d27a9a3ac69",
+    },
+    LlamaArtifact {
+        os: "macos",
+        arch: "x86_64",
+        filename: "llama-b9637-bin-macos-x64.tar.gz",
+        sha256: "71743f8db0958e7c266cceb7add7b16aa418a964667e471094aa6ae65b9c8298",
+    },
+    LlamaArtifact {
+        os: "linux",
+        arch: "x86_64",
+        filename: "llama-b9637-bin-ubuntu-x64.tar.gz",
+        sha256: "a50ee14f021a9d8e92e30f622f7e3be1318ee1125bb9a9ba8d2025388df48743",
+    },
+    LlamaArtifact {
+        os: "linux",
+        arch: "aarch64",
+        filename: "llama-b9637-bin-ubuntu-arm64.tar.gz",
+        sha256: "211d9e9ee738698beb7ca271be82661ae2b5da3fbb489cf7d9e4e6ed601be106",
+    },
+    LlamaArtifact {
+        os: "windows",
+        arch: "x86_64",
+        filename: "llama-b9637-bin-win-cpu-x64.zip",
+        sha256: "f7783c2b8c007f95e710ac40f26a24861a80b603b0b739fc54d7c926a4716c1e",
+    },
+    LlamaArtifact {
+        os: "windows",
+        arch: "aarch64",
+        filename: "llama-b9637-bin-win-cpu-arm64.zip",
+        sha256: "db1d3f4c13c08b693f539e100bf6d3a435148b0ffc186b044fdd65d490cc6df7",
+    },
+];
+
+fn llama_artifact_for(os: &str, arch: &str) -> Option<&'static LlamaArtifact> {
+    LLAMA_ARTIFACTS
+        .iter()
+        .find(|artifact| artifact.os == os && artifact.arch == arch)
+}
+
+fn llama_artifact() -> Result<&'static LlamaArtifact, String> {
+    llama_artifact_for(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
+        format!(
+            "No managed PaddleOCR-VL runtime for {}/{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })
+}
+
+fn llama_download_url(artifact: &LlamaArtifact) -> String {
+    format!(
+        "https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_CPP_VERSION}/{}",
+        artifact.filename
+    )
+}
+
+fn paddle_model_url(filename: &str) -> String {
+    format!(
+        "https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF/resolve/{PADDLE_MODEL_REVISION}/{filename}?download=true"
+    )
+}
+
 // ── Engine registry ─────────────────────────────────────────────────
 
 pub struct EngineSpec {
     pub id: &'static str,
     pub label: &'static str,
     pub description: &'static str,
-    /// The pip requirement passed to `uv tool install`.
-    pub pip_spec: &'static str,
-    /// The executable the install creates in the managed bin dir. Also how
-    /// the rest of the app detects the engine.
-    pub entry_point: &'static str,
+    pub kind: EngineKind,
     /// Rough total download (packages + model weights), for the UI and the
     /// pre-install disk check.
     pub est_download_mb: u64,
     pub est_disk_mb: u64,
 }
 
-pub const ENGINES: &[EngineSpec] = &[EngineSpec {
-    id: "marker",
-    label: "marker-pdf",
-    description: "Local PDF-to-Markdown conversion with equations preserved. \
-                  Runs on CPU or Apple Silicon; no API calls. GPL-3.0 code; \
-                  model weights under Datalab's revenue-capped OpenRAIL-M license.",
-    // Pin the last release exercised by Pipeline's extraction integration.
-    // A live index spec can replace the engine underneath an unchanged app.
-    pip_spec: "marker-pdf==1.10.2",
-    entry_point: "marker_single",
-    est_download_mb: 3500,
-    est_disk_mb: 6000,
-}];
+#[derive(Clone, Copy)]
+pub enum EngineKind {
+    Python {
+        pip_spec: &'static str,
+        entry_point: &'static str,
+    },
+    PaddleOcrVl,
+}
+
+pub const ENGINES: &[EngineSpec] = &[
+    EngineSpec {
+        id: "marker",
+        label: "marker-pdf",
+        description: "Local PDF-to-Markdown conversion with equations preserved. \
+                      Runs on CPU or Apple Silicon; no API calls. GPL-3.0 code; \
+                      model weights under Datalab's revenue-capped OpenRAIL-M license.",
+        // Pin the last release exercised by Pipeline's extraction integration.
+        // A live index spec can replace the engine underneath an unchanged app.
+        kind: EngineKind::Python {
+            pip_spec: "marker-pdf==1.10.2",
+            entry_point: "marker_single",
+        },
+        est_download_mb: 3500,
+        est_disk_mb: 6000,
+    },
+    EngineSpec {
+        id: "paddleocr-vl",
+        label: "PaddleOCR-VL 1.6 Q8",
+        description: "Compact local vision-language PDF extraction using the official \
+                      PaddleOCR-VL 1.6 Q8 GGUF model and a managed llama.cpp runtime. \
+                      About 1.9 GB; no Python, containers, API calls, or usage fees. \
+                      Apache-2.0 model and MIT runtime.",
+        kind: EngineKind::PaddleOcrVl,
+        est_download_mb: 1900,
+        est_disk_mb: 2300,
+    },
+];
 
 fn engine(id: &str) -> Result<&'static EngineSpec, String> {
     ENGINES
@@ -178,6 +289,70 @@ pub fn find_managed(name: &str) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct PaddleEnginePaths {
+    pub server: PathBuf,
+    pub model: PathBuf,
+    pub mmproj: PathBuf,
+}
+
+fn paddle_root() -> Result<PathBuf, String> {
+    Ok(pipeline_home()?.join("native").join("paddleocr-vl"))
+}
+
+fn find_file_named(root: &Path, name: &str) -> Option<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(dir) = stack.pop() {
+        if visited >= 10_000 {
+            return None;
+        }
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            visited += 1;
+            let file_type = entry.file_type().ok()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            } else if file_type.is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|value| value == name)
+            {
+                return Some(entry.path());
+            }
+        }
+    }
+    None
+}
+
+fn paddle_paths_at(root: &Path) -> Option<PaddleEnginePaths> {
+    let server = find_file_named(root, &exe("llama-server"))?;
+    let model = root.join("models").join(PADDLE_MODEL_FILE);
+    let mmproj = root.join("models").join(PADDLE_MMPROJ_FILE);
+    if !model.is_file() || !mmproj.is_file() {
+        return None;
+    }
+    Some(PaddleEnginePaths {
+        server,
+        model,
+        mmproj,
+    })
+}
+
+/// Resolve the complete managed Paddle stack. Partial installs are rejected
+/// so extraction never starts with a missing projector or runtime library.
+pub fn paddle_engine_paths() -> Result<PaddleEnginePaths, String> {
+    let root = paddle_root()?;
+    paddle_paths_at(&root).ok_or_else(|| {
+        "PaddleOCR-VL 1.6 Q8 is not installed. Install it from Settings → PDF Extraction."
+            .to_string()
+    })
 }
 
 /// Extra environment for *running* a managed tool: keeps model downloads
@@ -329,7 +504,7 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
 
     let stack_mb = pipeline_home()
         .map(|home| {
-            ["bin", "tools", "python", "uv-cache", "hf"]
+            ["bin", "tools", "python", "uv-cache", "hf", "native"]
                 .iter()
                 .map(|d| dir_size(&home.join(d)))
                 .sum::<u64>()
@@ -342,17 +517,36 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
     ENGINES
         .iter()
         .map(|spec| {
-            let entry = find_managed(spec.entry_point);
-            let version = tool_list
-                .as_deref()
-                .and_then(|out| parse_uv_tool_list(out, spec.pip_spec))
-                .unwrap_or_default();
-            // A copy elsewhere on PATH (pip/anaconda). Exclude the managed
-            // dir in case the user added ~/.pipeline/bin to PATH themselves.
-            let system_path = crate::deps::find_on_path(spec.entry_point)
-                .filter(|p| managed_dir.as_ref().is_none_or(|d| !p.starts_with(d)))
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
+            let (entry, version, system_path) = match spec.kind {
+                EngineKind::Python {
+                    pip_spec,
+                    entry_point,
+                } => {
+                    let entry = find_managed(entry_point);
+                    let version = tool_list
+                        .as_deref()
+                        .and_then(|out| parse_uv_tool_list(out, pip_spec))
+                        .unwrap_or_default();
+                    // A copy elsewhere on PATH (pip/anaconda). Exclude the
+                    // managed dir in case ~/.pipeline/bin is on PATH.
+                    let system_path = crate::deps::find_on_path(entry_point)
+                        .filter(|p| managed_dir.as_ref().is_none_or(|d| !p.starts_with(d)))
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    (entry, version, system_path)
+                }
+                EngineKind::PaddleOcrVl => {
+                    let paths = paddle_root().ok().and_then(|root| paddle_paths_at(&root));
+                    (
+                        paths.as_ref().map(|paths| paths.server.clone()),
+                        paths
+                            .as_ref()
+                            .map(|_| "1.6 Q8".to_string())
+                            .unwrap_or_default(),
+                        String::new(),
+                    )
+                }
+            };
             EngineStatus {
                 id: spec.id.to_string(),
                 label: spec.label.to_string(),
@@ -503,6 +697,229 @@ where
             return Ok(value);
         }
     }
+}
+
+async fn download_verified(
+    app: &AppHandle,
+    url: &str,
+    destination: &Path,
+    expected_sha256: &str,
+    max_bytes: u64,
+    label: &str,
+) -> Result<u64, String> {
+    log(app, format!("Downloading {label} ({url})"));
+    let client = &*crate::pipeline::api_common::HTTP_CLIENT;
+    let mut response = await_install_operation(
+        client
+            .get(url)
+            .timeout(std::time::Duration::from_secs(INSTALL_STEP_TIMEOUT_SECS))
+            .send(),
+    )
+    .await?
+    .map_err(|error| format!("Failed to download {label}: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "{label} download failed: HTTP {}",
+            response.status()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes)
+    {
+        return Err(format!("{label} exceeds its download safety limit"));
+    }
+
+    let mut output = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .map_err(|error| format!("Failed to stage {label}: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut downloaded = 0u64;
+    let mut next_progress = 100_000_000u64;
+    while let Some(chunk) = await_install_operation(response.chunk())
+        .await?
+        .map_err(|error| format!("Failed while downloading {label}: {error}"))?
+    {
+        downloaded = downloaded
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| format!("{label} size overflow"))?;
+        if downloaded > max_bytes {
+            return Err(format!("{label} exceeds its download safety limit"));
+        }
+        hasher.update(&chunk);
+        output
+            .write_all(&chunk)
+            .map_err(|error| format!("Failed to store {label}: {error}"))?;
+        if downloaded >= next_progress {
+            log(app, format!("{label}: {} MB", downloaded / 1_000_000));
+            next_progress = next_progress.saturating_add(100_000_000);
+        }
+    }
+    output
+        .sync_all()
+        .map_err(|error| format!("Failed to sync {label}: {error}"))?;
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected_sha256 {
+        return Err(format!(
+            "{label} checksum mismatch (expected {expected_sha256}, got {actual}). \
+             Refusing to install."
+        ));
+    }
+    log(
+        app,
+        format!("Verified {label} ({} MB)", downloaded / 1_000_000),
+    );
+    Ok(downloaded)
+}
+
+fn safe_archive_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+}
+
+fn unpack_llama_archive(
+    archive_path: &Path,
+    destination: &Path,
+    zip_archive: bool,
+) -> Result<(), String> {
+    std::fs::create_dir_all(destination)
+        .map_err(|error| format!("Failed to create runtime staging directory: {error}"))?;
+    if zip_archive {
+        let file = crate::safety::open_regular_file(archive_path)
+            .map_err(|error| format!("Failed to open llama.cpp archive: {error}"))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|error| format!("Invalid llama.cpp zip: {error}"))?;
+        let mut total = 0u64;
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|error| format!("Invalid llama.cpp zip entry: {error}"))?;
+            if entry
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 == 0o120000)
+            {
+                return Err("Symlinks are not allowed in a llama.cpp zip archive".to_string());
+            }
+            let relative = entry
+                .enclosed_name()
+                .ok_or("Unsafe path in llama.cpp archive")?
+                .to_path_buf();
+            if !safe_archive_path(&relative) {
+                return Err("Unsafe path in llama.cpp archive".to_string());
+            }
+            let target = destination.join(relative);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&target)
+                    .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+                continue;
+            }
+            total = total
+                .checked_add(entry.size())
+                .ok_or("llama.cpp extracted size overflow")?;
+            if total > MAX_LLAMA_EXTRACTED_BYTES {
+                return Err("llama.cpp archive exceeds its extraction limit".to_string());
+            }
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+            }
+            let mut output = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&target)
+                .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+            std::io::copy(&mut entry, &mut output)
+                .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+        }
+    } else {
+        let file = crate::safety::open_regular_file(archive_path)
+            .map_err(|error| format!("Failed to open llama.cpp archive: {error}"))?;
+        let decoder = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(decoder);
+        let mut total = 0u64;
+        for entry in archive
+            .entries()
+            .map_err(|error| format!("Invalid llama.cpp archive: {error}"))?
+        {
+            let mut entry =
+                entry.map_err(|error| format!("Invalid llama.cpp archive entry: {error}"))?;
+            let kind = entry.header().entry_type();
+            let relative = entry
+                .path()
+                .map_err(|error| format!("Invalid llama.cpp archive path: {error}"))?
+                .into_owned();
+            if !safe_archive_path(&relative) {
+                return Err("Unsafe path in llama.cpp archive".to_string());
+            }
+            let target = destination.join(relative);
+            if kind.is_symlink() {
+                let link_name = entry
+                    .link_name()
+                    .map_err(|error| format!("Invalid llama.cpp symlink: {error}"))?
+                    .ok_or("llama.cpp symlink has no target")?
+                    .into_owned();
+                // Release-library links are simple relative filenames. Reject
+                // absolute and parent-traversing targets rather than relying
+                // on platform-specific symlink normalization.
+                if !safe_archive_path(&link_name) {
+                    return Err("Unsafe symlink target in llama.cpp archive".to_string());
+                }
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+                }
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&link_name, &target)
+                    .map_err(|error| format!("Failed to extract llama.cpp symlink: {error}"))?;
+                #[cfg(not(unix))]
+                return Err("Unexpected symlink in llama.cpp archive".to_string());
+                continue;
+            }
+            if !kind.is_file() && !kind.is_dir() {
+                continue;
+            }
+            if kind.is_dir() {
+                std::fs::create_dir_all(&target)
+                    .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+                continue;
+            }
+            total = total
+                .checked_add(entry.size())
+                .ok_or("llama.cpp extracted size overflow")?;
+            if total > MAX_LLAMA_EXTRACTED_BYTES {
+                return Err("llama.cpp archive exceeds its extraction limit".to_string());
+            }
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+            }
+            let mut output = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&target)
+                .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+            std::io::copy(&mut entry, &mut output)
+                .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
+            #[cfg(unix)]
+            if let Ok(mode) = entry.header().mode() {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode))
+                    .map_err(|error| format!("Failed to set runtime permissions: {error}"))?;
+            }
+        }
+    }
+
+    if find_file_named(destination, &exe("llama-server")).is_none() {
+        return Err("llama-server was not found in the downloaded runtime".to_string());
+    }
+    Ok(())
 }
 
 /// Download uv (pinned version, checksum-verified) into `~/.pipeline/bin/`
@@ -868,6 +1285,153 @@ fn minimal_pdf_bytes() -> Vec<u8> {
     body.into_bytes()
 }
 
+async fn install_paddle_engine(app: &AppHandle, spec: &EngineSpec) -> Result<(), String> {
+    let artifact = llama_artifact()?;
+    let native_dir = pipeline_home()?.join("native");
+    std::fs::create_dir_all(&native_dir)
+        .map_err(|error| format!("Failed to create native engine directory: {error}"))?;
+    let staging = tempfile::Builder::new()
+        .prefix(".paddleocr-vl-staging-")
+        .tempdir_in(&native_dir)
+        .map_err(|error| format!("Failed to create PaddleOCR-VL staging directory: {error}"))?;
+
+    emit_phase(app, spec.id, "runtime", "running");
+    let runtime_archive = staging.path().join(if artifact.filename.ends_with(".zip") {
+        "llama-runtime.zip"
+    } else {
+        "llama-runtime.tar.gz"
+    });
+    if let Err(error) = download_verified(
+        app,
+        &llama_download_url(artifact),
+        &runtime_archive,
+        artifact.sha256,
+        MAX_LLAMA_ARCHIVE_BYTES,
+        "llama.cpp runtime",
+    )
+    .await
+    {
+        emit_phase(app, spec.id, "runtime", "failed");
+        return Err(error);
+    }
+    let runtime_dir = staging.path().join("runtime");
+    let archive_for_task = runtime_archive.clone();
+    let runtime_for_task = runtime_dir.clone();
+    let is_zip = artifact.filename.ends_with(".zip");
+    let unpacked = tokio::task::spawn_blocking(move || {
+        unpack_llama_archive(&archive_for_task, &runtime_for_task, is_zip)
+    })
+    .await
+    .map_err(|error| format!("Runtime extraction task failed: {error}"))?;
+    if let Err(error) = unpacked {
+        emit_phase(app, spec.id, "runtime", "failed");
+        return Err(error);
+    }
+    let _ = std::fs::remove_file(&runtime_archive);
+    let staged_server = find_file_named(&runtime_dir, &exe("llama-server"))
+        .ok_or("llama-server disappeared after extraction")?;
+    let mut probe = std::process::Command::new(&staged_server);
+    probe.arg("--version");
+    let output =
+        crate::process::run_bounded(&mut probe, std::time::Duration::from_secs(15), 256 * 1024)
+            .map_err(|error| format!("llama-server validation failed: {error}"))?;
+    if !output.status.success() || output.stdout_truncated || output.stderr_truncated {
+        emit_phase(app, spec.id, "runtime", "failed");
+        return Err("The downloaded llama-server failed its validation check".to_string());
+    }
+    emit_phase(app, spec.id, "runtime", "done");
+
+    // This engine deliberately has no Python/package-manager layer.
+    emit_phase(app, spec.id, "packages", "running");
+    log(app, "Native engine: no Python packages required");
+    emit_phase(app, spec.id, "packages", "done");
+
+    emit_phase(app, spec.id, "models", "running");
+    let model_dir = staging.path().join("models");
+    std::fs::create_dir_all(&model_dir)
+        .map_err(|error| format!("Failed to create model directory: {error}"))?;
+    for (filename, sha256, label) in [
+        (
+            PADDLE_MODEL_FILE,
+            PADDLE_MODEL_SHA256,
+            "PaddleOCR-VL Q8 model",
+        ),
+        (
+            PADDLE_MMPROJ_FILE,
+            PADDLE_MMPROJ_SHA256,
+            "PaddleOCR-VL vision projector",
+        ),
+    ] {
+        if let Err(error) = download_verified(
+            app,
+            &paddle_model_url(filename),
+            &model_dir.join(filename),
+            sha256,
+            MAX_PADDLE_MODEL_BYTES,
+            label,
+        )
+        .await
+        {
+            emit_phase(app, spec.id, "models", "failed");
+            return Err(error);
+        }
+    }
+    emit_phase(app, spec.id, "models", "done");
+
+    let manifest = serde_json::json!({
+        "engine": "paddleocr-vl",
+        "model_version": "1.6",
+        "quantization": "Q8",
+        "model_revision": PADDLE_MODEL_REVISION,
+        "llama_cpp_version": LLAMA_CPP_VERSION,
+        "runtime_archive": artifact.filename,
+        "runtime_sha256": artifact.sha256,
+        "model_sha256": PADDLE_MODEL_SHA256,
+        "mmproj_sha256": PADDLE_MMPROJ_SHA256,
+    });
+    std::fs::write(
+        staging.path().join("install.json"),
+        serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| format!("Failed to serialize install manifest: {error}"))?,
+    )
+    .map_err(|error| format!("Failed to write install manifest: {error}"))?;
+    if paddle_paths_at(staging.path()).is_none() {
+        return Err("The staged PaddleOCR-VL installation is incomplete".to_string());
+    }
+    if INSTALL_CANCEL.load(Ordering::Acquire) {
+        return Err("Install cancelled".to_string());
+    }
+
+    // Swap only after every checksum and executable check succeeds. If a prior
+    // install exists, retain it as a same-filesystem backup until the rename.
+    let target = paddle_root()?;
+    let backup = native_dir.join(".paddleocr-vl-backup");
+    if backup.exists() {
+        std::fs::remove_dir_all(&backup)
+            .map_err(|error| format!("Failed to clean an old engine backup: {error}"))?;
+    }
+    if target.exists() {
+        std::fs::rename(&target, &backup)
+            .map_err(|error| format!("Failed to stage the previous engine version: {error}"))?;
+    }
+    let staged_path = staging.keep();
+    if let Err(error) = std::fs::rename(&staged_path, &target) {
+        if backup.exists() {
+            let _ = std::fs::rename(&backup, &target);
+        }
+        return Err(format!("Failed to activate PaddleOCR-VL: {error}"));
+    }
+    if backup.exists() {
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+    let installed = paddle_engine_paths()?;
+    log(
+        app,
+        format!("{} installed at {}", spec.label, installed.server.display()),
+    );
+    Ok(())
+}
+
 /// Install an engine: uv runtime → packages → model pre-warm. Streams
 /// progress via `engines:phase` and `engines:log` events.
 pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
@@ -891,6 +1455,17 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
         }
     }
 
+    if matches!(spec.kind, EngineKind::PaddleOcrVl) {
+        return install_paddle_engine(app, spec).await;
+    }
+    let EngineKind::Python {
+        pip_spec,
+        entry_point,
+    } = spec.kind
+    else {
+        unreachable!("native engines return above");
+    };
+
     // Phase 1: runtime.
     emit_phase(app, engine_id, "runtime", "running");
     let uv = match ensure_uv(app).await {
@@ -909,11 +1484,7 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
     emit_phase(app, engine_id, "packages", "running");
     let env = uv_env()?;
     let mut args = vec![
-        "tool",
-        "install",
-        spec.pip_spec,
-        "--python",
-        "3.12",
+        "tool", "install", pip_spec, "--python", "3.12",
         // Reinstall cleanly over any prior (possibly broken) install; the
         // wheel cache makes a repeat run cheap.
         "--force",
@@ -940,10 +1511,10 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
         return Err("Install cancelled".to_string());
     }
 
-    let entry = find_managed(spec.entry_point).ok_or_else(|| {
+    let entry = find_managed(entry_point).ok_or_else(|| {
         format!(
             "Install finished but {} did not appear in the managed bin directory",
-            spec.entry_point
+            entry_point
         )
     })?;
 
@@ -1020,6 +1591,25 @@ pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), St
     let _guard = acquire_install_guard()?;
     INSTALL_CANCEL.store(false, Ordering::Release);
 
+    if matches!(spec.kind, EngineKind::PaddleOcrVl) {
+        let root = paddle_root()?;
+        if root.is_dir() {
+            tokio::task::spawn_blocking(move || std::fs::remove_dir_all(root))
+                .await
+                .map_err(|error| format!("PaddleOCR-VL cleanup task failed: {error}"))?
+                .map_err(|error| format!("Failed to remove PaddleOCR-VL: {error}"))?;
+        }
+        log(app, format!("{} uninstalled", spec.label));
+        return Ok(());
+    }
+    let EngineKind::Python {
+        pip_spec,
+        entry_point: _,
+    } = spec.kind
+    else {
+        unreachable!("native engines return above");
+    };
+
     let uv = uv_binary_path()?;
     if uv.is_file() {
         let env = uv_env()?;
@@ -1029,7 +1619,7 @@ pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), St
             &[
                 "tool",
                 "uninstall",
-                spec.pip_spec.split('=').next().unwrap_or(spec.pip_spec),
+                pip_spec.split('=').next().unwrap_or(pip_spec),
             ],
             &env,
             "uninstall",
@@ -1040,7 +1630,10 @@ pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), St
     let others_installed = ENGINES
         .iter()
         .filter(|e| e.id != engine_id)
-        .any(|e| find_managed(e.entry_point).is_some());
+        .any(|e| match e.kind {
+            EngineKind::Python { entry_point, .. } => find_managed(entry_point).is_some(),
+            EngineKind::PaddleOcrVl => paddle_engine_paths().is_ok(),
+        });
     if !others_installed {
         if let Ok(home) = pipeline_home() {
             let hf = home.join("hf");
@@ -1102,6 +1695,14 @@ mod tests {
             assert_eq!(a.sha256.len(), 64, "{} checksum length", a.target);
             assert!(a.sha256.chars().all(|c| c.is_ascii_hexdigit()));
         }
+        for checksum in [PADDLE_MODEL_SHA256, PADDLE_MMPROJ_SHA256] {
+            assert_eq!(checksum.len(), 64);
+            assert!(checksum.chars().all(|c| c.is_ascii_hexdigit()));
+        }
+        for artifact in LLAMA_ARTIFACTS {
+            assert_eq!(artifact.sha256.len(), 64, "{}", artifact.filename);
+            assert!(artifact.sha256.chars().all(|c| c.is_ascii_hexdigit()));
+        }
     }
 
     #[test]
@@ -1120,8 +1721,91 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for e in ENGINES {
             assert!(ids.insert(e.id), "duplicate engine id {}", e.id);
-            assert!(!e.pip_spec.is_empty() && !e.entry_point.is_empty());
+            if let EngineKind::Python {
+                pip_spec,
+                entry_point,
+            } = e.kind
+            {
+                assert!(!pip_spec.is_empty() && !entry_point.is_empty());
+            }
         }
+    }
+
+    #[test]
+    fn llama_artifacts_cover_desktop_release_platforms() {
+        for (os, arch) in [
+            ("macos", "aarch64"),
+            ("macos", "x86_64"),
+            ("linux", "aarch64"),
+            ("linux", "x86_64"),
+            ("windows", "aarch64"),
+            ("windows", "x86_64"),
+        ] {
+            assert!(
+                llama_artifact_for(os, arch).is_some(),
+                "missing llama.cpp artifact for {os}/{arch}"
+            );
+        }
+        assert!(llama_artifact_for("linux", "riscv64").is_none());
+    }
+
+    #[test]
+    fn archive_paths_reject_traversal_and_absolute_paths() {
+        assert!(safe_archive_path(Path::new("build/bin/llama-server")));
+        assert!(!safe_archive_path(Path::new("../llama-server")));
+        assert!(!safe_archive_path(Path::new("/tmp/llama-server")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn llama_unpack_preserves_safe_runtime_symlinks() {
+        use std::io::Cursor;
+
+        let temp = tempfile::tempdir().unwrap();
+        let archive_path = temp.path().join("runtime.tar.gz");
+        let archive_file = std::fs::File::create(&archive_path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(archive_file, flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (name, bytes, mode) in [
+            ("bundle/llama-server", b"server".as_slice(), 0o755),
+            ("bundle/libfoo.1.dylib", b"library".as_slice(), 0o644),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(mode);
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, name, Cursor::new(bytes))
+                .unwrap();
+        }
+        let mut link = tar::Header::new_gnu();
+        link.set_size(0);
+        link.set_mode(0o777);
+        link.set_entry_type(tar::EntryType::Symlink);
+        link.set_link_name("libfoo.1.dylib").unwrap();
+        link.set_cksum();
+        builder
+            .append_data(
+                &mut link,
+                "bundle/libfoo.dylib",
+                Cursor::new(Vec::<u8>::new()),
+            )
+            .unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+
+        let destination = temp.path().join("unpacked");
+        unpack_llama_archive(&archive_path, &destination, false).unwrap();
+        assert_eq!(
+            std::fs::read(destination.join("bundle/libfoo.dylib")).unwrap(),
+            b"library"
+        );
+        assert!(
+            std::fs::symlink_metadata(destination.join("bundle/libfoo.dylib"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]

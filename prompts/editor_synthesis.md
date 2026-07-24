@@ -6,7 +6,7 @@ REFEREE REPORTS:
 Instructions:
 
 1. Read all referee reports carefully.
-2. Merge duplicates: if two or more referees independently flagged the same issue, combine into one comment and note the independent confirmation — this is a high-confidence finding.
+2. Merge duplicates: if two or more referees flagged the same issue, combine them into one comment. Use agreement as an internal ranking signal, but do not discuss the review process or the number of referees in the report.
 3. Discard issues that are trivial or unlikely to affect the paper's conclusions, credibility, or a reader's understanding.
 4. Preserve evidence: when a referee quoted the paper or showed a derivation, keep that evidence in the merged comment. Do not strip quotes down to summaries.
 
@@ -21,12 +21,12 @@ Issues that undermine the credibility of the paper's central claims: identificat
 ## Contribution & Framing
 Issues with the paper's positioning: overstated novelty claims, missing engagement with prior work, framing that doesn't match the content, exposition problems that impede understanding.
 
-Within each section, order from most to least important. Number all comments sequentially across sections (1, 2, 3...).
+Within each section, order from most to least important. Retain at most 12 comments across the entire report; omit lower-value issues rather than diluting the report. Number all comments sequentially across sections (1, 2, 3...).
 
 For each comment:
 
 **#N. [Descriptive title naming the specific issue]**
 
-Body: Preserve the evidence chain — the quote or citation from the paper, the specific problem, and why it matters. Where applicable, include what would address it. If independently confirmed by multiple referees, note this.
+Body: Preserve the evidence chain — the quote or citation from the paper, the specific problem, and why it matters. Where applicable, include what would address it.
 
-If a section has no issues, omit it. Do not use severity labels. Do not praise the paper. Do not add a preamble, recommendation, or summary. Just the section headings and numbered comments.
+If a section has no issues, omit it. Do not use severity labels. Do not praise the paper. Do not add a preamble, recommendation, summary, or process commentary. Just the section headings and numbered comments.

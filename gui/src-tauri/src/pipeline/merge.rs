@@ -1,5 +1,8 @@
 use crate::models::{StepCallRecord, StepOutput};
-use crate::output::{capitalize, strip_to_report};
+use crate::output::{
+    capitalize, extract_report_envelope, new_report_nonce, normalize_math_delimiters,
+    report_output_format,
+};
 use crate::pipeline_config::MergeConfig;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -148,6 +151,15 @@ pub async fn merge_step_outputs(
             limit,
             "Merge prompt",
         )?;
+        let report_nonce = new_report_nonce()?;
+        let mut prompt = prompt;
+        crate::safety::push_str_limited(&mut prompt, "\n\n", limit, "Merge prompt")?;
+        crate::safety::push_str_limited(
+            &mut prompt,
+            &report_output_format(None, &report_nonce),
+            limit,
+            "Merge prompt",
+        )?;
         let original_calls: Vec<StepCallRecord> =
             group.iter().flat_map(call_records_for_output).collect();
         let original_duration = original_calls
@@ -239,6 +251,7 @@ pub async fn merge_step_outputs(
                 return Err(early_error(error));
             }
             let effort = run_settings.model_effort(&provider).to_string();
+            let model_policy = resolution.selection.label();
             let call = super::call::execute(super::call::Request {
                 app: &app_handle,
                 pass_key: &merge_key_done,
@@ -251,6 +264,8 @@ pub async fn merge_step_outputs(
                 read_dirs: &[],
                 write_dir: None,
                 command_model: resolution.command_model.as_deref(),
+                display_model: &resolution.resolved_model,
+                model_policy: &model_policy,
                 effort: &effort,
                 settings: &run_settings,
                 shared_context: None,
@@ -289,6 +304,24 @@ pub async fn merge_step_outputs(
             }
             match call.output {
                 Ok(raw_text) => {
+                    let report = match extract_report_envelope(&raw_text, &report_nonce) {
+                        Ok(report) => report,
+                        Err(error) => {
+                            let _ = app_handle.emit_event(
+                                "pipeline:pass",
+                                serde_json::json!({ "name": merge_key_done, "status": "error" }),
+                            );
+                            let mut failed = merge_call;
+                            failed.role = "failed_merge".to_string();
+                            return Err((
+                                idx,
+                                format!("Merge for {base_id} returned an invalid report: {error}"),
+                                call.usage,
+                                call.duration_secs,
+                                Some(failed),
+                            ));
+                        }
+                    };
                     let _ = app_handle.emit_event(
                         "pipeline:pass",
                         serde_json::json!({ "name": merge_key_done, "status": "done" }),
@@ -304,7 +337,7 @@ pub async fn merge_step_outputs(
                             phase: "parallel".to_string(),
                             provider,
                             agent: agents_joined,
-                            raw_text: strip_to_report(&raw_text),
+                            raw_text: normalize_math_delimiters(&report),
                             duration_secs: original_duration.saturating_add(call.duration_secs),
                             input_tokens: original_input.saturating_add(call.usage.input_tokens),
                             output_tokens: original_output.saturating_add(call.usage.output_tokens),

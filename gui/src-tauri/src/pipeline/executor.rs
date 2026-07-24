@@ -8,7 +8,10 @@
 use super::claude::{cli_parent_dir, normalize_cli_root};
 use super::merge;
 use crate::models::{StepFailure, StepOutput};
-use crate::output::{capitalize, strip_to_report};
+use crate::output::{
+    capitalize, extract_report_envelope, new_report_nonce, normalize_math_delimiters,
+    report_output_format,
+};
 use crate::pipeline_config::{Phase, PipelineConfig, StepConfig};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -45,6 +48,114 @@ impl OutputBudget {
     }
 }
 
+/// Persist each completed output immediately. Finalization still writes the
+/// human-facing numbered markdown artifacts, but these structured checkpoints
+/// make an interrupted run recoverable before the final report exists.
+async fn checkpoint_output(
+    write_dir: Option<&str>,
+    ordinal: usize,
+    output: &StepOutput,
+) -> Result<(), String> {
+    let Some(write_dir) = write_dir else {
+        return Ok(());
+    };
+    let directory = std::path::PathBuf::from(write_dir).join("checkpoints");
+    let destination = directory.join(format!("{ordinal:04}_{}.json", step_slug(&output.step_id)));
+    let output = output.clone();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write as _;
+        std::fs::create_dir_all(&directory)
+            .map_err(|error| format!("Failed to create checkpoint directory: {error}"))?;
+        let json = serde_json::to_vec_pretty(&output)
+            .map_err(|error| format!("Failed to serialize step checkpoint: {error}"))?;
+        let mut temp = tempfile::NamedTempFile::new_in(&directory)
+            .map_err(|error| format!("Failed to create checkpoint temp file: {error}"))?;
+        temp.write_all(&json)
+            .map_err(|error| format!("Failed to write step checkpoint: {error}"))?;
+        temp.flush()
+            .map_err(|error| format!("Failed to flush step checkpoint: {error}"))?;
+        temp.as_file()
+            .sync_all()
+            .map_err(|error| format!("Failed to sync step checkpoint: {error}"))?;
+        temp.persist(&destination)
+            .map_err(|error| format!("Failed to publish step checkpoint: {}", error.error))?;
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Step checkpoint task failed: {error}"))?
+}
+
+async fn checkpoint_outputs(
+    app: &crate::emit::EventBus,
+    write_dir: Option<&str>,
+    start: usize,
+    outputs: &[StepOutput],
+) {
+    for (offset, output) in outputs.iter().enumerate() {
+        if let Err(error) = checkpoint_output(write_dir, start + offset, output).await {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!(
+                        "WARNING: could not checkpoint completed step '{}': {error}",
+                        output.step_label
+                    )
+                }),
+            );
+        }
+    }
+}
+
+async fn checkpoint_failure(write_dir: Option<&str>, failure: &StepFailure) -> Result<(), String> {
+    let Some(write_dir) = write_dir else {
+        return Ok(());
+    };
+    let directory = std::path::PathBuf::from(write_dir).join("checkpoints");
+    let destination = directory.join(format!("failure_{}.json", step_slug(&failure.step_id)));
+    let failure = failure.clone();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write as _;
+        std::fs::create_dir_all(&directory)
+            .map_err(|error| format!("Failed to create checkpoint directory: {error}"))?;
+        let json = serde_json::to_vec_pretty(&serde_json::json!({ "failure": failure }))
+            .map_err(|error| format!("Failed to serialize failure checkpoint: {error}"))?;
+        let mut temp = tempfile::NamedTempFile::new_in(&directory)
+            .map_err(|error| format!("Failed to create checkpoint temp file: {error}"))?;
+        temp.write_all(&json)
+            .map_err(|error| format!("Failed to write failure checkpoint: {error}"))?;
+        temp.flush()
+            .map_err(|error| format!("Failed to flush failure checkpoint: {error}"))?;
+        temp.as_file()
+            .sync_all()
+            .map_err(|error| format!("Failed to sync failure checkpoint: {error}"))?;
+        temp.persist(&destination)
+            .map_err(|error| format!("Failed to publish failure checkpoint: {}", error.error))?;
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Failure checkpoint task failed: {error}"))?
+}
+
+async fn checkpoint_failures(
+    app: &crate::emit::EventBus,
+    write_dir: Option<&str>,
+    failures: &[StepFailure],
+) {
+    for failure in failures {
+        if let Err(error) = checkpoint_failure(write_dir, failure).await {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!(
+                        "WARNING: could not checkpoint failed step '{}': {error}",
+                        failure.step_label
+                    )
+                }),
+            );
+        }
+    }
+}
+
 /// Build the complete read-root set used by CLI providers for every step in a
 /// run. The source tree, private run-temp files (paper, orientation, named
 /// inputs), and any original named-input roots are all explicit. Provider
@@ -53,6 +164,7 @@ impl OutputBudget {
 fn provider_read_dirs(
     source_path: &str,
     paper_text_path: &str,
+    document_bundle_path: &str,
     orientation_path: &str,
     extra_inputs: &std::collections::HashMap<String, String>,
     run_read_dirs: &[String],
@@ -72,6 +184,7 @@ fn provider_read_dirs(
     }
 
     for path in std::iter::once(paper_text_path)
+        .chain((!document_bundle_path.is_empty()).then_some(document_bundle_path))
         .chain((!orientation_path.is_empty()).then_some(orientation_path))
         .chain(extra_inputs.values().map(String::as_str))
     {
@@ -102,6 +215,7 @@ pub async fn execute_steps(
     orientation_path: &str,
     orientation_value: &serde_json::Value,
     paper_text_path: &str,
+    document_bundle_path: &str,
     source_path: &str,
     paper_type: &str,
     survey_hint: &str,
@@ -137,6 +251,7 @@ pub async fn execute_steps(
     let read_dirs = provider_read_dirs(
         source_path,
         paper_text_path,
+        document_bundle_path,
         orientation_path,
         extra_inputs,
         run_read_dirs,
@@ -184,6 +299,13 @@ pub async fn execute_steps(
                             );
                             return Err(error);
                         }
+                        checkpoint_outputs(
+                            app,
+                            write_dir,
+                            all_outputs.len(),
+                            std::slice::from_ref(output),
+                        )
+                        .await;
                         all_outputs.push(output.clone());
                     }
                     let _ = app.emit_event(
@@ -222,6 +344,7 @@ pub async fn execute_steps(
                     &semaphore,
                     orientation_path,
                     paper_text_path,
+                    document_bundle_path,
                     source_path,
                     paper_type,
                     survey_hint,
@@ -239,6 +362,7 @@ pub async fn execute_steps(
                 // a StepOutput, so deriving completion from outputs alone
                 // leaves their dependents permanently blocked.
                 mark_steps_done(&mut done, &to_run);
+                checkpoint_failures(app, write_dir, &wave_failures).await;
                 failed_steps.extend(wave_failures);
 
                 let has_multi_agent = wave_outputs.iter().any(|o| !o.merge_group.is_empty());
@@ -269,6 +393,7 @@ pub async fn execute_steps(
                         }
                     }
                 }
+                checkpoint_outputs(app, write_dir, all_outputs.len(), &wave_outputs).await;
                 all_outputs.extend(wave_outputs);
             }
             continue;
@@ -289,6 +414,13 @@ pub async fn execute_steps(
                     );
                     return Err(error);
                 }
+                checkpoint_outputs(
+                    app,
+                    write_dir,
+                    all_outputs.len(),
+                    std::slice::from_ref(output),
+                )
+                .await;
                 all_outputs.push(output.clone());
             }
             let _ = app.emit_event(
@@ -330,6 +462,7 @@ pub async fn execute_steps(
             &prior,
             orientation_path,
             paper_text_path,
+            document_bundle_path,
             source_path,
             survey_hint,
             variables,
@@ -343,6 +476,13 @@ pub async fn execute_steps(
         {
             Ok(output) => {
                 output_budget.reserve(&output)?;
+                checkpoint_outputs(
+                    app,
+                    write_dir,
+                    all_outputs.len(),
+                    std::slice::from_ref(&output),
+                )
+                .await;
                 let _ = app.emit_event(
                     "pipeline:pass",
                     serde_json::json!({"name": step.id, "status": "done"}),
@@ -359,11 +499,13 @@ pub async fn execute_steps(
                     "pipeline:log",
                     serde_json::json!({ "line": format!("WARNING: step '{}' failed: {e}. Returning prior outputs.", step.label) }),
                 );
-                failed_steps.push(StepFailure {
+                let failure = StepFailure {
                     step_id: step.id.clone(),
                     step_label: step.label.clone(),
                     error: e,
-                });
+                };
+                checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await;
+                failed_steps.push(failure);
                 break;
             }
         }
@@ -487,28 +629,8 @@ fn step_slug(step_key: &str) -> String {
 }
 
 /// Build the OUTPUT FORMAT block appended to every step prompt.
-///
-/// Write mode: the model saves its report into the run's artifact directory
-/// (each provider confines writes to it — our own Write tool on the direct
-/// API paths, permission rules for `claude -p`, the OS sandbox for codex,
-/// the workspace boundary for gemini). A stdout-marker escape hatch remains
-/// for models that cannot write files; the executor accepts either.
-/// Read-only mode (no run directory): markers on stdout, as before.
-fn output_format_block(write_dir: Option<&str>, report_rel: &str) -> String {
-    match write_dir {
-        Some(dir) => format!(
-            "OUTPUT FORMAT:\n\
-             Write your complete markdown report to this file (create it with your file-writing tool):\n\
-             {dir}/{report_rel}\n\
-             Supporting files (data tables, extracted figures) may be saved under {dir}/files/ and referenced from the report by relative path.\n\
-             Do not print the report to stdout — after writing the file, reply with one line confirming it was written.\n\
-             Only if you have no file-writing tool available: print the report to stdout between `<!-- REPORT START -->` and `<!-- REPORT END -->` markers instead."
-        ),
-        None => "OUTPUT FORMAT:\n\
-             Begin your report with exactly `<!-- REPORT START -->` and end with exactly `<!-- REPORT END -->`.\n\
-             Include ONLY your markdown report between those markers — no preamble, no commentary, no acknowledgments outside them."
-            .to_string(),
-    }
+fn output_format_block(write_dir: Option<&str>, report_nonce: &str) -> String {
+    report_output_format(write_dir, report_nonce)
 }
 
 fn append_shared_context_note(mut prompt: String) -> Result<String, String> {
@@ -525,11 +647,9 @@ fn append_shared_context_note(mut prompt: String) -> Result<String, String> {
     Ok(prompt)
 }
 
-/// Read (and remove) a model-written report file. Returns `None` when the
-/// file is absent or empty — callers then fall back to stdout output. The
-/// file is removed because the canonical copy (with the step header) is
-/// written into the run artifacts when the run finishes; leaving it would
-/// duplicate every report in the artifact explorer.
+/// Read (and remove) a legacy model-written report file. New calls return the
+/// report through the terminal response; this remains only as a validated
+/// compatibility path for old sessions/templates.
 fn ingest_report_file_blocking(write_dir: Option<&str>, report_rel: &str) -> Option<String> {
     use std::io::Read as _;
     let dir = write_dir?;
@@ -561,9 +681,17 @@ async fn ingest_report_file(write_dir: Option<&str>, report_rel: &str) -> Option
     .flatten()
 }
 
-/// Step tool list, extended with Write when this run supports file handoff.
+/// Primary document access is a core pipeline capability, not an optional
+/// profile permission. Profiles may add tools, while every step can read the
+/// document view and request a visual bundle asset.
 fn tools_with_write(step_tools: &[String], write_dir: Option<&str>) -> Vec<String> {
     let mut tools = step_tools.to_vec();
+    if !tools.iter().any(|tool| tool == "Read") {
+        tools.push("Read".to_string());
+    }
+    if !tools.iter().any(|tool| tool == "ReadDocumentAsset") {
+        tools.push("ReadDocumentAsset".to_string());
+    }
     if write_dir.is_some() && !tools.iter().any(|t| t == "Write") {
         tools.push("Write".to_string());
     }
@@ -581,8 +709,11 @@ struct StepCallRequest<'a> {
     read_dirs: &'a [String],
     write_dir: Option<&'a str>,
     report_rel: &'a str,
+    report_nonce: &'a str,
     output_schema: Option<&'a serde_json::Value>,
     command_model: Option<&'a str>,
+    display_model: &'a str,
+    model_policy: &'a str,
     effort: &'a str,
     settings: &'a crate::settings::Settings,
     shared_context: Option<Arc<super::context_cache::PreparedContext>>,
@@ -623,11 +754,33 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             );
         }
 
+        // Consume any stale compatibility file before starting this attempt.
+        // New prompts never ask the model to write the report there, but old
+        // provider sessions/templates may still do so.
+        let _ = ingest_report_file(request.write_dir, request.report_rel).await;
+
+        let mut retry_prompt = String::new();
+        let prompt = if attempt > 0 {
+            retry_prompt.push_str(request.prompt);
+            crate::safety::push_str_limited(
+                &mut retry_prompt,
+                &format!(
+                    "\n\nRETRY NOTICE:\nThe previous response was rejected: {last_error}\n\
+                     Return the entire report again and obey the OUTPUT FORMAT contract exactly."
+                ),
+                crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+                "Step retry prompt",
+            )?;
+            retry_prompt.as_str()
+        } else {
+            request.prompt
+        };
+
         let call = super::call::execute(super::call::Request {
             app: request.app,
             pass_key: request.pass_key,
             log_label: request.log_label,
-            prompt: request.prompt,
+            prompt,
             tools: request.tools,
             timeout_secs: timeout,
             agent: request.agent,
@@ -635,6 +788,8 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             read_dirs: request.read_dirs,
             write_dir: request.write_dir,
             command_model: request.command_model,
+            display_model: request.display_model,
+            model_policy: request.model_policy,
             effort: request.effort,
             settings: request.settings,
             shared_context: request.shared_context.clone(),
@@ -647,31 +802,64 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             return Err(error);
         }
 
+        let compatibility_file = ingest_report_file(request.write_dir, request.report_rel).await;
         let text = match call.output {
-            Ok(stdout) => ingest_report_file(request.write_dir, request.report_rel)
-                .await
-                .unwrap_or_else(|| strip_to_report(&stdout)),
+            Ok(stdout) => match extract_report_envelope(&stdout, request.report_nonce) {
+                Ok(report) => report,
+                Err(stdout_error) => {
+                    if let Some(report_file) = compatibility_file {
+                        match extract_report_envelope(&report_file, request.report_nonce) {
+                            Ok(report) => {
+                                let _ = request.app.emit_event(
+                                    "pipeline:log",
+                                    serde_json::json!({ "line": format!(
+                                        "{}: terminal response was invalid; accepted a validated compatibility report file",
+                                        request.log_label,
+                                    )}),
+                                );
+                                report
+                            }
+                            Err(file_error) => {
+                                last_error = format!(
+                                    "invalid terminal report ({stdout_error}); compatibility report file was also invalid ({file_error})"
+                                );
+                                continue;
+                            }
+                        }
+                    } else {
+                        last_error = format!("invalid terminal report: {stdout_error}");
+                        continue;
+                    }
+                }
+            },
             Err(error) => {
                 if is_cancellation_error(&error) {
                     return Err(error);
                 }
-                if let Some(report) =
-                    ingest_report_file(request.write_dir, request.report_rel).await
-                {
-                    let _ = request.app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({ "line": format!(
-                            "{}: call reported an error but the report file was written; using it. ({error})",
-                            request.log_label,
-                        )}),
-                    );
-                    report
+                if let Some(report_file) = compatibility_file {
+                    if let Ok(report) = extract_report_envelope(&report_file, request.report_nonce)
+                    {
+                        let _ = request.app.emit_event(
+                            "pipeline:log",
+                            serde_json::json!({ "line": format!(
+                                "{}: call reported an error but wrote a complete validated compatibility report; using it. ({error})",
+                                request.log_label,
+                            )}),
+                        );
+                        report
+                    } else {
+                        last_error = format!(
+                            "{error}; compatibility report file did not contain a complete validated report"
+                        );
+                        continue;
+                    }
                 } else {
                     last_error = error;
                     continue;
                 }
             }
         };
+        let text = normalize_math_delimiters(&text);
 
         if let Some(schema) = request.output_schema {
             if let Err(reason) = crate::pipeline::structured::check(schema, &text) {
@@ -714,15 +902,17 @@ fn build_parallel_prompt(
     orientation_path: &str,
     survey_hint: &str,
     paper_text_path: &str,
+    document_bundle_path: &str,
     source_path: &str,
     template: &str,
     output_format: &str,
+    write_dir: Option<&str>,
 ) -> Result<String, String> {
     let normalized_path = paper_text_path.replace('\\', "/");
     let normalized_source = source_path.replace('\\', "/");
 
     let is_pdf = normalized_source.to_ascii_lowercase().ends_with(".pdf");
-    let figure_hint = if is_pdf {
+    let source_hint = if is_pdf {
         format!(
             "The original PDF is at: {normalized_source}\n\
              When the orientation map lists a figure or table with a page number, you can read that page of the PDF to inspect the visual content."
@@ -735,6 +925,23 @@ fn build_parallel_prompt(
         format!(
             "The LaTeX source directory is: {source_dir}\n\
              Figure files (PNG, PDF, etc.) referenced by \\includegraphics are in this directory or its subdirectories. You can read them to inspect visual content."
+        )
+    };
+    let normalized_bundle = document_bundle_path.replace('\\', "/");
+    let artifact_root = write_dir
+        .and_then(|directory| std::path::Path::new(directory).parent())
+        .map(|directory| directory.to_string_lossy().replace('\\', "/"));
+    let figure_hint = if normalized_bundle.is_empty() {
+        source_hint
+    } else {
+        format!(
+            "The canonical DocumentBundle (JSON) is at: {normalized_bundle}\n\
+             Its nodes identify equations, tables, figures, page references, provenance, and asset IDs.\n\
+             Asset rel_path values are relative to the run directory: {}\n\
+             Inspect images with ReadDocumentAsset on direct APIs or the provider's native Read tool on CLI transports.\n{source_hint}",
+            artifact_root
+                .as_deref()
+                .unwrap_or("(run artifact root unavailable)")
         )
     };
 
@@ -753,15 +960,16 @@ fn build_parallel_prompt(
         ("{orientation}", orientation_block.as_str()),
         ("{paper_path}", normalized_path.as_str()),
         ("{input_path}", normalized_path.as_str()),
+        ("{document_bundle}", normalized_bundle.as_str()),
         ("{figure_hint}", figure_hint.as_str()),
     ] {
         expanded =
             crate::safety::replace_all_limited(&expanded, needle, value, limit, "Parallel prompt")?;
     }
 
-    // Templates from before the file-handoff change carry a hardcoded
-    // marker instruction instead of the placeholder; they keep working
-    // through the stdout fallback.
+    // Custom templates created before `{output_format}` existed still need
+    // the current nonce contract. Append it when there is no placeholder so a
+    // stale static marker instruction cannot bypass validation.
     if expanded.contains("{output_format}") {
         crate::safety::replace_all_limited(
             &expanded,
@@ -770,7 +978,11 @@ fn build_parallel_prompt(
             limit,
             "Parallel prompt",
         )
+    } else if output_format.is_empty() {
+        Ok(expanded)
     } else {
+        crate::safety::push_str_limited(&mut expanded, "\n\n", limit, "Parallel prompt")?;
+        crate::safety::push_str_limited(&mut expanded, output_format, limit, "Parallel prompt")?;
         Ok(expanded)
     }
 }
@@ -952,6 +1164,7 @@ async fn run_parallel_wave(
     semaphore: &Arc<Semaphore>,
     orientation_path: &str,
     paper_text_path: &str,
+    document_bundle_path: &str,
     source_path: &str,
     paper_type: &str,
     survey_hint: &str,
@@ -1034,16 +1247,19 @@ async fn run_parallel_wave(
             };
 
             let report_rel = format!("steps/{}.md", step_slug(&step_key));
-            let output_format = output_format_block(write_dir, &report_rel);
+            let report_nonce = new_report_nonce()?;
+            let output_format = output_format_block(write_dir, &report_nonce);
             let prompt = build_parallel_prompt(
                 step,
                 paper_type,
                 orientation_path,
                 survey_hint,
                 paper_text_path,
+                document_bundle_path,
                 source_path,
                 context_template,
                 &output_format,
+                write_dir,
             )?;
             let prompt = substitute_run_context(&prompt, variables, extra_inputs)?;
             // Fan-out: bind {item} to this unit's file (empty otherwise).
@@ -1144,6 +1360,7 @@ async fn run_parallel_wave(
                     step_label: fail_label.clone(),
                     error,
                 })?;
+                let model_policy = resolution.selection.label();
                 let call = execute_step_call(StepCallRequest {
                     app: &app_handle,
                     pass_key: &step_key_emit,
@@ -1155,8 +1372,11 @@ async fn run_parallel_wave(
                     read_dirs: &task_read_dirs,
                     write_dir: task_write_dir.as_deref(),
                     report_rel: &report_rel,
+                    report_nonce: &report_nonce,
                     output_schema: output_schema.as_ref(),
                     command_model: resolution.command_model.as_deref(),
+                    display_model: &resolution.resolved_model,
+                    model_policy: &model_policy,
                     effort: &effort_override,
                     settings: &settings,
                     shared_context,
@@ -1254,6 +1474,7 @@ fn expand_template(
     survey_hint: &str,
     prior_outputs: &[StepOutput],
     paper_text_path: &str,
+    document_bundle_path: &str,
     source_path: &str,
 ) -> Result<String, String> {
     let orientation_ref = if orientation_path.is_empty() {
@@ -1304,6 +1525,7 @@ fn expand_template(
         ("{editor_synthesis}", last_output_text),
         ("{paper_path}", paper_text_path),
         ("{input_path}", paper_text_path),
+        ("{document_bundle}", document_bundle_path),
         ("{source_path}", source_path),
     ] {
         expanded = crate::safety::replace_all_limited(
@@ -1457,6 +1679,7 @@ async fn run_sequential_step(
     prior_outputs: &[StepOutput],
     orientation_path: &str,
     paper_text_path: &str,
+    document_bundle_path: &str,
     source_path: &str,
     survey_hint: &str,
     variables: &std::collections::HashMap<String, String>,
@@ -1480,12 +1703,32 @@ async fn run_sequential_step(
         survey_hint,
         prior_outputs,
         paper_text_path,
+        document_bundle_path,
         source_path,
     )?;
 
     let base_prompt = substitute_run_context(&base_prompt, variables, extra_inputs)?;
     let report_rel = format!("steps/{}.md", step_slug(&step.id));
+    let report_nonce = new_report_nonce()?;
     let mut prompt = base_prompt;
+    if !document_bundle_path.is_empty() {
+        let artifact_root = write_dir
+            .and_then(|directory| std::path::Path::new(directory).parent())
+            .map(|directory| directory.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|| "(run artifact root unavailable)".to_string());
+        crate::safety::push_str_limited(
+            &mut prompt,
+            &format!(
+                "\n\nDOCUMENT ACCESS:\nThe canonical DocumentBundle is at: {}\n\
+                 Its asset rel_path values are relative to: {artifact_root}\n\
+                 Use it to locate equations, tables, figures, page renders, and provenance. \
+                 Inspect images with ReadDocumentAsset on direct APIs or the provider's native Read tool on CLI transports.",
+                document_bundle_path.replace('\\', "/")
+            ),
+            crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+            "Sequential prompt",
+        )?;
+    }
     crate::safety::push_str_limited(
         &mut prompt,
         "\n\n",
@@ -1497,7 +1740,7 @@ async fn run_sequential_step(
     }
     crate::safety::push_str_limited(
         &mut prompt,
-        &output_format_block(write_dir, &report_rel),
+        &output_format_block(write_dir, &report_nonce),
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Sequential prompt",
     )?;
@@ -1523,6 +1766,7 @@ async fn run_sequential_step(
     )
     .await??;
     let effort = step.effort_for(settings, &provider);
+    let model_policy = resolution.selection.label();
     let call = execute_step_call(StepCallRequest {
         app,
         pass_key: &step.id,
@@ -1534,8 +1778,11 @@ async fn run_sequential_step(
         read_dirs,
         write_dir,
         report_rel: &report_rel,
+        report_nonce: &report_nonce,
         output_schema: step.output_schema.as_ref(),
         command_model: resolution.command_model.as_deref(),
+        display_model: &resolution.resolved_model,
+        model_policy: &model_policy,
         effort: &effort,
         settings,
         shared_context,
@@ -1576,6 +1823,7 @@ mod tests {
         let roots = provider_read_dirs(
             "/Users/Mike/Documents/Paper/main.tex",
             "/private/tmp/pipeline_run/paper/paper.txt",
+            "",
             "/private/tmp/pipeline_run/orientation/orientation.json",
             &inputs,
             &["/Users/Mike/Documents/Named Source".to_string()],
@@ -1604,6 +1852,7 @@ mod tests {
         let roots = provider_read_dirs(
             r"C:\Users\Mike\Documents\Paper\main.pdf",
             r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\paper\paper.txt",
+            "",
             r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\orientation\orientation.json",
             &inputs,
             &[r"D:\Shared Inputs\Data".to_string()],
@@ -1634,6 +1883,7 @@ mod tests {
         let roots = provider_read_dirs(
             folder.path().to_str().unwrap(),
             "/private/tmp/pipeline_run/paper.txt",
+            "",
             "",
             &std::collections::HashMap::new(),
             &[],
@@ -1847,6 +2097,7 @@ mod tests {
                 &semaphore,
                 "",
                 "",
+                "",
                 temp.path().to_str().unwrap(),
                 "mixed",
                 "",
@@ -1953,9 +2204,11 @@ mod tests {
             "/tmp/orient.json",
             "Read it for the paper's structure.",
             "/tmp/paper.txt",
+            "",
             "/tmp/paper.pdf",
             template,
             "",
+            None,
         )
         .unwrap();
         assert!(result.contains("empirical"));
@@ -1974,12 +2227,35 @@ mod tests {
             "",
             "",
             "/tmp/paper.txt",
+            "",
             "C:\\Papers\\DRAFT.PDF",
             "{figure_hint}",
             "",
+            None,
         )
         .unwrap();
         assert!(result.contains("original PDF"));
+    }
+
+    #[test]
+    fn build_parallel_prompt_exposes_bundle_and_asset_root() {
+        let step = make_step("test", Phase::Parallel);
+        let result = build_parallel_prompt(
+            &step,
+            "empirical",
+            "",
+            "",
+            "/tmp/document.md",
+            "/tmp/document_bundle.json",
+            "/tmp/paper.pdf",
+            "{document_bundle}\n{figure_hint}",
+            "",
+            Some("/runs/r1/artifacts"),
+        )
+        .unwrap();
+        assert!(result.contains("/tmp/document_bundle.json"));
+        assert!(result.contains("/runs/r1"));
+        assert!(result.contains("ReadDocumentAsset"));
     }
 
     #[test]
@@ -1992,9 +2268,11 @@ mod tests {
             "",
             "",
             "/tmp/paper.txt",
+            "",
             "/tmp/p.pdf",
             template,
             "",
+            None,
         )
         .unwrap();
         assert!(result.contains("old=/tmp/paper.txt"));
@@ -2011,9 +2289,11 @@ mod tests {
             "",
             "",
             "/tmp/paper.txt",
+            "",
             "/home/user/papers/main.tex",
             template,
             "",
+            None,
         )
         .unwrap();
         assert!(result.contains("LaTeX source directory"));
@@ -2029,9 +2309,11 @@ mod tests {
             "",
             "unused hint",
             "/tmp/paper.txt",
+            "",
             "/tmp/paper.pdf",
             template,
             "",
+            None,
         )
         .unwrap();
         assert_eq!(result, "[]");
@@ -2041,26 +2323,40 @@ mod tests {
     fn build_parallel_prompt_output_format_substitution() {
         let step = make_step("test", Phase::Parallel);
         let template = "{step_prompt}\n{output_format}";
-        let block = output_format_block(Some("/runs/r1/artifacts"), "steps/test.md");
+        let block = output_format_block(Some("/runs/r1/artifacts"), "testnonce");
         let result = build_parallel_prompt(
             &step,
             "",
             "",
             "",
             "/tmp/p.txt",
+            "",
             "/tmp/p.pdf",
             template,
             &block,
+            None,
         )
         .unwrap();
-        assert!(result.contains("/runs/r1/artifacts/steps/test.md"));
-        // Old templates without the placeholder pass through untouched.
+        assert!(result.contains("/runs/r1/artifacts/files/"));
+        assert!(result.contains("PIPELINE REPORT testnonce START"));
+        // Old templates without the placeholder receive the current contract.
         let old = "{step_prompt}\nREPORT START markers here";
-        let result =
-            build_parallel_prompt(&step, "", "", "", "/tmp/p.txt", "/tmp/p.pdf", old, &block)
-                .unwrap();
+        let result = build_parallel_prompt(
+            &step,
+            "",
+            "",
+            "",
+            "/tmp/p.txt",
+            "",
+            "/tmp/p.pdf",
+            old,
+            &block,
+            None,
+        )
+        .unwrap();
         assert!(!result.contains("{output_format}"));
         assert!(result.contains("REPORT START markers here"));
+        assert!(result.contains("PIPELINE REPORT testnonce START"));
     }
 
     // ── write handoff helpers ──────────────────────────────────────
@@ -2075,12 +2371,13 @@ mod tests {
 
     #[test]
     fn output_format_block_modes() {
-        let write = output_format_block(Some("/runs/x/artifacts"), "steps/s.md");
-        assert!(write.contains("/runs/x/artifacts/steps/s.md"));
-        assert!(write.contains("REPORT START")); // escape hatch stays available
-        let markers = output_format_block(None, "steps/s.md");
-        assert!(markers.contains("REPORT START"));
-        assert!(!markers.contains("steps/s.md"));
+        let write = output_format_block(Some("/runs/x/artifacts"), "nonce123");
+        assert!(write.contains("/runs/x/artifacts/files/"));
+        assert!(write.contains("PIPELINE REPORT nonce123 START"));
+        assert!(write.contains("Do not write the report itself to a file"));
+        let markers = output_format_block(None, "nonce456");
+        assert!(markers.contains("PIPELINE REPORT nonce456 START"));
+        assert!(!markers.contains("/runs/x/artifacts"));
     }
 
     #[test]
@@ -2120,10 +2417,19 @@ mod tests {
     #[test]
     fn tools_with_write_appends_once() {
         let base = vec!["Read".to_string()];
-        assert_eq!(tools_with_write(&base, Some("/d")), vec!["Read", "Write"]);
-        assert_eq!(tools_with_write(&base, None), vec!["Read"]);
+        assert_eq!(
+            tools_with_write(&base, Some("/d")),
+            vec!["Read", "ReadDocumentAsset", "Write"]
+        );
+        assert_eq!(
+            tools_with_write(&base, None),
+            vec!["Read", "ReadDocumentAsset"]
+        );
         let with = vec!["Read".to_string(), "Write".to_string()];
-        assert_eq!(tools_with_write(&with, Some("/d")), vec!["Read", "Write"]);
+        assert_eq!(
+            tools_with_write(&with, Some("/d")),
+            vec!["Read", "Write", "ReadDocumentAsset"]
+        );
     }
 
     // ── expand_template ────────────────────────────────────────────
@@ -2155,6 +2461,7 @@ mod tests {
             "Read it.",
             &prior,
             "/paper.txt",
+            "",
             "/source.tex",
         )
         .unwrap();
@@ -2176,7 +2483,7 @@ mod tests {
         }];
         let template = "{referee_reports} | {editor_synthesis}";
         let result =
-            expand_template(template, "", "", &prior, "/paper.txt", "/source.tex").unwrap();
+            expand_template(template, "", "", &prior, "/paper.txt", "", "/source.tex").unwrap();
         assert!(result.contains("## S1"));
         assert!(result.contains("text | text"));
     }
@@ -2184,7 +2491,8 @@ mod tests {
     #[test]
     fn expand_template_no_prior() {
         let template = "Last: {last_output}";
-        let result = expand_template(template, "", "", &[], "/paper.txt", "/source.tex").unwrap();
+        let result =
+            expand_template(template, "", "", &[], "/paper.txt", "", "/source.tex").unwrap();
         assert!(result.contains("(not yet generated)"));
     }
 
@@ -2207,7 +2515,8 @@ mod tests {
             out("technical", "Technical", "tech body"),
             out("empirical", "Empirical", "emp body"),
         ];
-        let result = expand_template("Tech: {step:technical}", "", "", &prior, "p", "s").unwrap();
+        let result =
+            expand_template("Tech: {step:technical}", "", "", &prior, "p", "", "s").unwrap();
         assert!(result.contains("Tech: tech body"));
         assert!(!result.contains("emp body"));
     }
@@ -2218,7 +2527,8 @@ mod tests {
             out("technical/claude", "Technical (Claude)", "claude says"),
             out("technical/gemini", "Technical (Gemini)", "gemini says"),
         ];
-        let result = expand_template("All: {step:technical}", "", "", &prior, "p", "s").unwrap();
+        let result =
+            expand_template("All: {step:technical}", "", "", &prior, "p", "", "s").unwrap();
         assert!(result.contains("claude says"));
         assert!(result.contains("gemini says"));
         assert!(result.contains("---"));
@@ -2236,6 +2546,7 @@ mod tests {
             "",
             &prior,
             "p",
+            "",
             "s",
         )
         .unwrap();
@@ -2247,21 +2558,21 @@ mod tests {
     fn step_ref_unknown_id_emits_notice() {
         let prior = vec![out("technical", "Technical", "tech body")];
         let result =
-            expand_template("Missing: {step:nonexistent}", "", "", &prior, "p", "s").unwrap();
+            expand_template("Missing: {step:nonexistent}", "", "", &prior, "p", "", "s").unwrap();
         assert!(result.contains("(no output for step 'nonexistent')"));
     }
 
     #[test]
     fn step_ref_unclosed_brace_passes_through() {
         let prior = vec![out("a", "A", "aa")];
-        let result = expand_template("Broken: {step:a", "", "", &prior, "p", "s").unwrap();
+        let result = expand_template("Broken: {step:a", "", "", &prior, "p", "", "s").unwrap();
         assert!(result.contains("{step:a"));
     }
 
     #[test]
     fn step_ref_empty_id() {
         let prior = vec![out("a", "A", "aa")];
-        let result = expand_template("{step:}", "", "", &prior, "p", "s").unwrap();
+        let result = expand_template("{step:}", "", "", &prior, "p", "", "s").unwrap();
         assert!(result.contains("(empty step reference)"));
     }
 }

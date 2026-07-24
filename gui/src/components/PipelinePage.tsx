@@ -1214,6 +1214,7 @@ const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   { value: "", label: "Inherit from global Settings", hint: "Use whatever PDF extractor is configured globally." },
   { value: "auto", label: "Auto", hint: "Try the global setting; same as inherit." },
   { value: "llm", label: "LLM", hint: "Have the active provider read the PDF and convert to Markdown." },
+  { value: "paddleocr-vl", label: "Local engine: PaddleOCR-VL 1.6 Q8", hint: "Managed native extraction with the compact local Q8 model. Install from Settings → PDF Extraction." },
   { value: "marker", label: "Local engine: marker-pdf", hint: "Local extraction, no LLM cost. Install from Settings → PDF Extraction." },
   { value: "pdftotext", label: "pdftotext (basic)", hint: "Fast, but equations are lost. Uses bundled poppler." },
 ];
@@ -1252,7 +1253,7 @@ function ExtractionEditor({
                        text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
                        focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
           >
-            <option value="document">Document — a single PDF or LaTeX file</option>
+            <option value="document">Document — a PDF, LaTeX, or Word file</option>
             <option value="folder">Folder — inventory a directory; steps Read files on demand</option>
             <option value="none">None — run from the step prompts alone</option>
           </select>

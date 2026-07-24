@@ -31,6 +31,17 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
             }
         }));
     }
+    if allowed_tools.contains(&"ReadDocumentAsset") {
+        let def = DocumentAssetToolDef::default();
+        tools.push(serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": def.name,
+                "description": def.description,
+                "parameters": def.input_schema,
+            }
+        }));
+    }
     if allowed_tools.contains(&"Write") {
         let def = WriteToolDef::default();
         tools.push(serde_json::json!({

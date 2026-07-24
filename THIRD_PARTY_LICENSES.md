@@ -90,6 +90,22 @@ the license, COPYING, copyright, and NOTICE files that installed crate/npm
 packages provide. This avoids a manually maintained dependency list drifting
 from the binaries.
 
+## Optional managed extraction engines
+
+These components are not bundled in Pipeline installers. They are downloaded
+only after the user selects Install in Settings, are stored under
+`~/.pipeline/`, and can be removed there:
+
+- PaddlePaddle's PaddleOCR-VL 1.6 GGUF model and vision projector are licensed
+  under Apache-2.0. Pipeline pins model revision
+  `511b09642bb324401f15f97cc23bc67e8f0a291d` and verifies both files with
+  SHA-256 before activation.
+- The managed Paddle engine downloads a pinned `llama.cpp` b9637 platform
+  runtime, licensed under MIT, from the project's official GitHub release and
+  verifies the release asset's published SHA-256.
+- marker-pdf and its downloaded model weights retain their upstream GPL-3.0
+  and model-license terms, shown on the install card.
+
 Operating-system frameworks (for example WebView2, WebKit, and macOS system
 frameworks) are not redistributed in Pipeline's resource bundle and are not
 listed as bundled components here.

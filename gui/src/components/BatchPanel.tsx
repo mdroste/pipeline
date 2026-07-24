@@ -104,7 +104,7 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
 
   const addFiles = useCallback(async () => {
     try {
-      const picked = await open({ multiple: true, filters: [{ name: "Papers", extensions: ["pdf", "tex"] }] });
+      const picked = await open({ multiple: true, filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }] });
       if (Array.isArray(picked)) setStaged((prev) => [...new Set([...prev, ...picked])]);
       else if (typeof picked === "string") setStaged((prev) => [...new Set([...prev, picked])]);
     } catch {
@@ -117,7 +117,7 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
       const dir = await open({ directory: true });
       if (typeof dir !== "string") return;
       const files = await invoke<string[]>("list_input_files", { dir });
-      if (files.length === 0) setError("No PDF or LaTeX files found directly in that folder.");
+      if (files.length === 0) setError("No PDF, LaTeX, or Word files found directly in that folder.");
       setStaged((prev) => [...new Set([...prev, ...files])]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -246,7 +246,7 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-gray-400 px-2">Add files or a folder of PDFs/LaTeX to queue.</p>
+              <p className="text-sm text-gray-400 px-2">Add files or a folder of PDF, LaTeX, or Word papers to queue.</p>
             )}
           </div>
         )}

@@ -1,4 +1,4 @@
-use super::claude::{call_llm, LlmOverrides};
+use super::call::{execute_text, OwnedRequest};
 use crate::models::ExtractionResult;
 
 const MAX_PAPER_TEXT: usize = 250_000;
@@ -95,21 +95,17 @@ pub async fn build_orientation_map(
 
     for attempt in 0..=MAX_RETRIES {
         let timeout = (crate::settings::load().step_timeout_secs / 2).max(60);
-        let read_dirs: Vec<&str> = source_read_root.into_iter().collect();
-        let raw = call_llm(
+        let mut request = OwnedRequest::new(
             app,
-            &prompt,
-            &["Read"],
-            None,
-            "text",
-            timeout,
+            "orientation",
             "Orientation map",
-            None,
-            source_read_root,
-            &read_dirs,
-            &LlmOverrides::default(),
-        )
-        .await?;
+            prompt.clone(),
+            timeout,
+        );
+        request.tools = vec!["Read".to_string()];
+        request.cwd = source_read_root.map(str::to_string);
+        request.read_dirs = source_read_root.into_iter().map(str::to_string).collect();
+        let raw = execute_text(request).await?;
         let cleaned = strip_json_fences(&raw);
 
         match serde_json::from_str::<serde_json::Value>(&cleaned) {

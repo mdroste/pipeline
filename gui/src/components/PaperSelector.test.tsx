@@ -31,7 +31,7 @@ describe("PaperSelector", () => {
 
     expect(openDialog).toHaveBeenCalledWith({
       multiple: false,
-      filters: [{ name: "Papers", extensions: ["pdf", "tex"] }],
+      filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }],
     });
     expect(onPathChange).toHaveBeenCalledWith("/papers/example/draft.pdf");
     expect(screen.getByRole("button", { name: "draft.pdf" })).toBeInTheDocument();

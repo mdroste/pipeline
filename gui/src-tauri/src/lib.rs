@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod deps;
+pub mod document_bundle;
 pub mod emit;
 pub mod engines;
 pub mod env;
@@ -68,6 +69,7 @@ pub fn run() {
         .setup(|app| {
             env::set_bundled_poppler_dir(locate_bundled_poppler(app));
             commands::cleanup_stale_print_exports();
+            let _ = runs::recover_resumable_runs();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

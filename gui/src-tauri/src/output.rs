@@ -8,9 +8,80 @@ use std::time::Duration;
 
 static PREAMBLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?mi)^(I'(?:ve|ll|m)|I (?:have|need|can|should|will)|Let me|Now (?:I|let)|OK[,.]|Alright[,.]|Here (?:is|are)|Looking at|After reading|Having read)[^\n]*\n*"
+        r"(?mi)^(I(?:'|’)(?:ve|ll|m)|I (?:have|need|can|should|will)|Let me|Now (?:I|let)|OK[,.]|Alright[,.]|Here (?:is|are)|Looking at|After reading|Having read)[^\n]*\n*"
     ).expect("preamble regex is invalid")
 });
+
+const RUN_DETAILS_START: &str = "<!-- PIPELINE RUN DETAILS START -->";
+const RUN_DETAILS_END: &str = "<!-- PIPELINE RUN DETAILS END -->";
+
+/// Generate a fresh identifier for one logical report-producing call. Static
+/// markers are easy for quoted source material or stale artifacts to collide
+/// with; a random call nonce makes the report boundary unambiguous.
+pub fn new_report_nonce() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes).map_err(|error| format!("RNG failed: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+pub fn report_markers(nonce: &str) -> (String, String) {
+    (
+        format!("<!-- PIPELINE REPORT {nonce} START -->"),
+        format!("<!-- PIPELINE REPORT {nonce} END -->"),
+    )
+}
+
+/// Produce the provider-neutral terminal response contract. Models may write
+/// supporting artifacts, but the report itself always travels through the
+/// provider's terminal assistant-response channel.
+pub fn report_output_format(write_dir: Option<&str>, nonce: &str) -> String {
+    let (start, end) = report_markers(nonce);
+    let artifact_note = write_dir
+        .map(|dir| {
+            format!(
+                "\nSupporting files (data tables, extracted figures) may be saved under \
+                 {dir}/files/ and referenced from the report by relative path. Do not write \
+                 the report itself to a file."
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "OUTPUT FORMAT:\n\
+         These instructions supersede any earlier output-format or report-file instructions.\n\
+         Return the complete markdown report in your final response between these exact markers:\n\
+         {start}\n\
+         [complete report]\n\
+         {end}\n\
+         Put nothing before the start marker or after the end marker. Do not include progress \
+         narration, acknowledgments, or a description of your process.{artifact_note}\n\
+         Use `$...$` for inline math and `$$...$$` for display math. Do not use `\\(...\\)` or \
+         `\\[...\\]` delimiters."
+    )
+}
+
+/// Extract a complete, nonce-delimited report. Unlike the legacy helper below,
+/// this fails closed: missing/duplicate markers, partial output, surrounding
+/// narration, and empty reports are all rejected and can trigger a retry.
+pub fn extract_report_envelope(text: &str, nonce: &str) -> Result<String, String> {
+    let (start, end) = report_markers(nonce);
+    if text.matches(&start).count() != 1 || text.matches(&end).count() != 1 {
+        return Err("missing or duplicate report boundary markers".to_string());
+    }
+    let start_pos = text.find(&start).ok_or("missing report start marker")?;
+    let content_start = start_pos + start.len();
+    let relative_end = text[content_start..]
+        .find(&end)
+        .ok_or("missing report end marker")?;
+    let end_pos = content_start + relative_end;
+    if !text[..start_pos].trim().is_empty() || !text[end_pos + end.len()..].trim().is_empty() {
+        return Err("text appeared outside the report boundary markers".to_string());
+    }
+    let report = text[content_start..end_pos].trim();
+    if report.is_empty() {
+        return Err("report between boundary markers was empty".to_string());
+    }
+    Ok(report.to_string())
+}
 
 /// Extract content between `<!-- REPORT START -->` and `<!-- REPORT END -->` markers.
 /// Falls back to the full text (with preamble stripping) if markers aren't present.
@@ -33,6 +104,111 @@ pub fn strip_to_report(text: &str) -> String {
 
     // No markers — fall back to preamble stripping
     strip_preamble(trimmed)
+}
+
+fn fence_marker(line: &str) -> Option<(u8, usize)> {
+    let bytes = line.trim_start().as_bytes();
+    let marker = *bytes.first()?;
+    if marker != b'`' && marker != b'~' {
+        return None;
+    }
+    let count = bytes.iter().take_while(|byte| **byte == marker).count();
+    (count >= 3).then_some((marker, count))
+}
+
+fn normalize_math_line(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut output = String::with_capacity(line.len());
+    let mut index = 0usize;
+    let mut inline_ticks = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'`' {
+            let count = bytes[index..]
+                .iter()
+                .take_while(|byte| **byte == b'`')
+                .count();
+            output.push_str(&line[index..index + count]);
+            if inline_ticks == 0 {
+                inline_ticks = count;
+            } else if inline_ticks == count {
+                inline_ticks = 0;
+            }
+            index += count;
+            continue;
+        }
+        if inline_ticks == 0
+            && bytes[index] == b'\\'
+            && index + 1 < bytes.len()
+            && (index == 0 || bytes[index - 1] != b'\\')
+        {
+            match bytes[index + 1] {
+                b'(' | b')' => {
+                    output.push('$');
+                    index += 2;
+                    continue;
+                }
+                b'[' | b']' => {
+                    output.push_str("$$");
+                    index += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        let character = line[index..]
+            .chars()
+            .next()
+            .expect("index remains on a UTF-8 boundary");
+        output.push(character);
+        index += character.len_utf8();
+    }
+    output
+}
+
+/// Canonicalize the two common LaTeX delimiter families to the dollar form
+/// understood consistently by remark-math, the Markdown export path, and
+/// KaTeX. Fenced and inline code are intentionally left untouched.
+pub fn normalize_math_delimiters(markdown: &str) -> String {
+    let mut output = String::with_capacity(markdown.len());
+    let mut fence: Option<(u8, usize)> = None;
+    for line in markdown.split_inclusive('\n') {
+        if let Some((marker, count)) = fence_marker(line) {
+            if let Some((open_marker, open_count)) = fence {
+                if marker == open_marker && count >= open_count {
+                    fence = None;
+                }
+            } else {
+                fence = Some((marker, count));
+            }
+            output.push_str(line);
+        } else if fence.is_some() {
+            output.push_str(line);
+        } else {
+            output.push_str(&normalize_math_line(line));
+        }
+    }
+    output
+}
+
+/// Remove UI-only run telemetry from a report before public export.
+pub fn clean_export_markdown(markdown: &str) -> String {
+    let mut clean = markdown.to_string();
+    loop {
+        let Some(start) = clean.find(RUN_DETAILS_START) else {
+            break;
+        };
+        let Some(relative_end) = clean[start + RUN_DETAILS_START.len()..].find(RUN_DETAILS_END)
+        else {
+            break;
+        };
+        let end = start + RUN_DETAILS_START.len() + relative_end + RUN_DETAILS_END.len();
+        let mut next = String::with_capacity(clean.len() - (end - start));
+        next.push_str(clean[..start].trim_end());
+        next.push_str("\n\n");
+        next.push_str(clean[end..].trim_start());
+        clean = next;
+    }
+    clean
 }
 
 /// Strip LLM chain-of-thought preamble from output.
@@ -432,11 +608,15 @@ pub fn render_markdown(
         .as_ref()
         .map(|m| format!("**Type**: {} · ", m.paper_type))
         .unwrap_or_default();
+    md.push_str(RUN_DETAILS_START);
+    md.push('\n');
     md.push_str(&format!(
         "{}**Reviewed**: {} · `{}`  \n**LLM**: {} · **Model**: {} · **Effort**: {} · **Generated in**: {}  \n*Report generated by Pipeline*\n\n",
         type_prefix, report.report_date, report.paper_hash,
         provider, model, effort, format_duration(elapsed)
     ));
+    md.push_str(RUN_DETAILS_END);
+    md.push_str("\n\n");
 
     // Warning for failed steps
     if !report.failed_steps.is_empty() {
@@ -455,7 +635,7 @@ pub fn render_markdown(
 
     // Consolidated issues — use final_output() which handles both new and legacy formats
     if let Some(final_text) = report.final_output() {
-        md.push_str(&strip_to_report(final_text));
+        md.push_str(&normalize_math_delimiters(&strip_to_report(final_text)));
         md.push_str("\n\n");
     }
 
@@ -463,14 +643,18 @@ pub fn render_markdown(
     if let Some(diff) = diff_text {
         md.push_str("---\n\n");
         md.push_str("## Revision Diff\n\n");
-        md.push_str(&strip_to_report(diff));
+        md.push_str(&normalize_math_delimiters(&strip_to_report(diff)));
         md.push_str("\n\n");
     }
 
     // Per-step timing / tokens / cost, when the run recorded any.
     if let Some(summary) = render_run_summary(report, settings) {
+        md.push_str(RUN_DETAILS_START);
+        md.push('\n');
         md.push_str("---\n\n");
         md.push_str(&summary);
+        md.push_str(RUN_DETAILS_END);
+        md.push_str("\n\n");
     }
 
     md.push_str("---\n");
@@ -492,6 +676,47 @@ pub(crate) fn capitalize(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nonce_report_envelope_accepts_only_complete_clean_boundaries() {
+        let nonce = "abc123";
+        let (start, end) = report_markers(nonce);
+        let clean = format!("{start}\n## Report\n\nClean.\n{end}");
+        assert_eq!(
+            extract_report_envelope(&clean, nonce).unwrap(),
+            "## Report\n\nClean."
+        );
+
+        assert!(extract_report_envelope(&format!("Narration\n{clean}"), nonce).is_err());
+        assert!(extract_report_envelope(&format!("{start}\npartial"), nonce).is_err());
+        assert!(extract_report_envelope(&clean, "different").is_err());
+        assert!(extract_report_envelope(&format!("{clean}\n{clean}"), nonce).is_err());
+    }
+
+    #[test]
+    fn report_nonces_are_fresh_and_fixed_width() {
+        let first = new_report_nonce().unwrap();
+        let second = new_report_nonce().unwrap();
+        assert_eq!(first.len(), 32);
+        assert_eq!(second.len(), 32);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn math_delimiters_are_normalized_outside_code() {
+        let input = "Inline \\(x+1\\).\n\n\\[\ny=2\n\\]\n\n`\\(code\\)`\n\n```tex\n\\[z\\]\n```\n";
+        let expected = "Inline $x+1$.\n\n$$\ny=2\n$$\n\n`\\(code\\)`\n\n```tex\n\\[z\\]\n```\n";
+        assert_eq!(normalize_math_delimiters(input), expected);
+    }
+
+    #[test]
+    fn clean_export_removes_run_details_but_retains_report_footer() {
+        let markdown = format!(
+            "# Report\n\n{RUN_DETAILS_START}\nModel metadata\n{RUN_DETAILS_END}\n\nBody\n\n{RUN_DETAILS_START}\n---\n\n## Run summary\n\nTelemetry\n{RUN_DETAILS_END}\n\n---\n"
+        );
+        let clean = clean_export_markdown(&markdown);
+        assert_eq!(clean, "# Report\n\nBody\n\n---\n");
+    }
 
     // ── strip_to_report ────────────────────────────────────────────
 
@@ -531,6 +756,13 @@ mod tests {
     #[test]
     fn strip_preamble_removes_chain_of_thought() {
         let input = "Let me analyze this paper.\nI'll focus on methodology.\n## Real Content";
+        assert_eq!(strip_preamble(input), "## Real Content");
+    }
+
+    #[test]
+    fn strip_preamble_handles_curly_apostrophes() {
+        let input =
+            "I’ll read the instructions first.\nI’m using the configured voice.\n## Real Content";
         assert_eq!(strip_preamble(input), "## Real Content");
     }
 

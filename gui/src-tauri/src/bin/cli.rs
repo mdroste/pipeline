@@ -264,7 +264,7 @@ async fn cmd_batch(args: &[String]) -> i32 {
     let files = match scan_inputs(dir) {
         Ok(f) if !f.is_empty() => f,
         Ok(_) => {
-            eprintln!("No .pdf or .tex files found in {dir}");
+            eprintln!("No .pdf, .tex, or .docx files found in {dir}");
             return 2;
         }
         Err(e) => {
@@ -325,7 +325,7 @@ fn scan_inputs(dir: &str) -> std::io::Result<Vec<String>> {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
             .unwrap_or_default();
-        if matches!(ext.as_str(), "pdf" | "tex") {
+        if matches!(ext.as_str(), "pdf" | "tex" | "docx") {
             files.push(path.to_string_lossy().replace('\\', "/"));
         }
     }

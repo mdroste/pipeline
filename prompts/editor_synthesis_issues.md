@@ -24,5 +24,5 @@ Rules:
 - `id` is a stable string, numbered "1", "2", … in the order you list them.
 - `severity` is exactly one of "high", "medium", or "low".
 - `title` is a terse noun phrase; put the detail in `body`.
-- Include every distinct substantive issue; do not cap the list.
+- Include at most 12 issues. Keep the most consequential, well-supported findings and omit lower-value items.
 - Emit only the JSON object — no prose before or after it.

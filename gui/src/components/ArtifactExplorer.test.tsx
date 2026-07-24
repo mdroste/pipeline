@@ -17,7 +17,10 @@ const manifest = {
   provider: "claude",
   artifacts: [
     { rel_path: "report.md", label: "Report", kind: "markdown", bytes: 100, sha256: "aa", group: "report" },
+    { rel_path: "context/document_bundle.json", label: "Document bundle", kind: "json", bytes: 500, sha256: "ab", group: "document" },
     { rel_path: "context/orientation.json", label: "Orientation map", kind: "json", bytes: 50, sha256: "bb", group: "context" },
+    { rel_path: "artifacts/pages/page-1.png", label: "Page 1", kind: "image", bytes: 500, sha256: "bc", group: "pages" },
+    { rel_path: "artifacts/figures/figure-1.png", label: "Figure 1 image", kind: "image", bytes: 500, sha256: "bd", group: "figures" },
     { rel_path: "artifacts/01_technical.md", label: "Technical", kind: "markdown", bytes: 80, sha256: "cc", group: "step" },
     { rel_path: "artifacts/02_analysis.py", label: "Analysis script", kind: "code", bytes: 60, sha256: "dd", group: "step" },
     { rel_path: "artifacts/03_results.csv", label: "Results table", kind: "csv", bytes: 40, sha256: "ee", group: "step" },
@@ -79,6 +82,71 @@ describe("ArtifactExplorer", () => {
     expect(container.querySelector("pre code")?.textContent).toContain("return 42");
     // highlight.js wraps tokens in .hljs-* spans
     expect(container.querySelector("[class*='hljs-']")).not.toBeNull();
+  });
+
+  it("shows every document artifact group and renders a human-readable bundle inspection", async () => {
+    const user = userEvent.setup();
+    const bundle = {
+      schema_version: "1.0",
+      bundle_id: "doc-0123456789abcdef",
+      source_kind: "pdf",
+      origins: [{ id: "origin-primary", kind: "pdf", path: "/papers/draft.pdf", role: "primary" }],
+      pages: [{ number: 1, label: "Page 1", asset_id: "asset-page" }],
+      nodes: [
+        {
+          id: "figure-00002",
+          kind: "figure",
+          order: 2,
+          page: 1,
+          label: "Figure 1",
+          number: "1",
+          text: "Impulse responses after a monetary policy shock.",
+          asset_ids: ["asset-figure"],
+          representations: [{ format: "orientation_summary", content: { what_it_shows: "Output falls." } }],
+          provenance: { origin_id: "origin-primary", method: "marker", confidence: 0.9 },
+        },
+      ],
+      assets: [
+        {
+          id: "asset-page",
+          kind: "page",
+          label: "Page 1",
+          rel_path: "artifacts/pages/page-1.png",
+          media_type: "image/png",
+          page: 1,
+          width: 1200,
+          height: 1600,
+          provenance: { origin_id: "origin-primary", method: "pdftoppm", confidence: 1 },
+        },
+        {
+          id: "asset-figure",
+          kind: "figure",
+          label: "Figure 1 image",
+          rel_path: "artifacts/figures/figure-1.png",
+          media_type: "image/png",
+          page: 1,
+          provenance: { origin_id: "origin-primary", method: "marker", confidence: 1 },
+        },
+      ],
+      links: [],
+      extraction: { method: "marker", source_path: "/papers/draft.pdf", paper_hash: "0123456789abcdef" },
+      quality: [{ severity: "warning", scope: "page 1", message: "OCR confidence was low." }],
+    };
+    mockBackend({
+      "report.md": textContent("markdown", "# R"),
+      "context/document_bundle.json": textContent("json", JSON.stringify(bundle)),
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+
+    expect(await screen.findByRole("heading", { name: "Document", level: 4 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pages", level: 4 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Figures", level: 4 })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Document bundle" }));
+
+    expect(await screen.findByRole("heading", { name: "DocumentBundle inspection" })).toBeInTheDocument();
+    expect(screen.getAllByText("Impulse responses after a monetary policy shock.").length).toBeGreaterThan(0);
+    expect(screen.getByText("OCR confidence was low.")).toBeInTheDocument();
+    expect(screen.getByText(/1200×1600 · image\/png/)).toBeInTheDocument();
   });
 
   it("clears the previous artifact while the next one is loading", async () => {
