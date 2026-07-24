@@ -1,15 +1,15 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import PaperSelector from "./components/PaperSelector";
 import PipelineProgress from "./components/PipelineProgress";
-import WorkflowPanel from "./components/WorkflowPanel";
 import ExportControls from "./components/ExportControls";
 import DepsCheck from "./components/DepsCheck";
 import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
 import UpdateBanner from "./components/UpdateBanner";
-import ResizeHandle from "./components/ResizeHandle";
+import NavRail, { type AppPage } from "./components/NavRail";
+import RunSetupPanel from "./components/RunSetupPanel";
 import { usePipeline } from "./hooks/usePipeline";
+import usePersistentPanelWidth from "./hooks/usePersistentPanelWidth";
 import { isMac } from "./lib/platform";
 import { detectReportIssues } from "./lib/issues";
 import { renderSurvey } from "./lib/surveyMarkdown";
@@ -23,8 +23,6 @@ const BatchPanel = lazy(() => import("./components/BatchPanel"));
 const ArtifactExplorer = lazy(() => import("./components/ArtifactExplorer"));
 const ReportViewer = lazy(() => import("./components/ReportViewer"));
 const IssuesTable = lazy(() => import("./components/IssuesTable"));
-
-type Page = "main" | "pipeline" | "settings" | "help" | "history" | "batch";
 
 function getArtifactMarkdown(
   artifact: string,
@@ -50,9 +48,22 @@ function App() {
   const [paperPath, setPaperPath] = useState<string | null>(null);
   const [depsReport, setDepsReport] = useState<DepsReport | null>(null);
   const [depsLoading, setDepsLoading] = useState(true);
-  const [page, setPage] = useState<Page>("main");
+  const [page, setPage] = useState<AppPage>("main");
   const [configVersion, setConfigVersion] = useState(0);
-  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [selectionKey, setSelectionKey] = useState(0);
+  const [workflowDirty, setWorkflowDirty] = useState(false);
+  const [navRailWidth, setNavRailWidth] = usePersistentPanelWidth(
+    "pipeline.ui.navRailWidth",
+    176,
+    152,
+    320,
+  );
+  const [runSetupWidth, setRunSetupWidth] = usePersistentPanelWidth(
+    "pipeline.ui.runSetupWidth",
+    288,
+    240,
+    440,
+  );
   const [artifact, setArtifact] = useState<string>("report");
   // Report vs. structured-issues view (shown only when issues are detected).
   const [reportView, setReportView] = useState<"report" | "issues">("report");
@@ -134,6 +145,11 @@ function App() {
       });
   }, [configVersion]);
 
+  const isRunning =
+    state.kind !== "idle" && state.kind !== "done" && state.kind !== "error";
+  const hasCurrentRun = state.kind !== "idle";
+  const showRunSetup = page === "main" && state.kind === "idle";
+
   const launch = (variables?: Record<string, string>, extraInputs?: Record<string, string>) => {
     setPage("main");
     setArtifact("report");
@@ -151,8 +167,40 @@ function App() {
     launch();
   };
 
-  const isRunning =
-    state.kind !== "idle" && state.kind !== "done" && state.kind !== "error";
+  const handleNewRun = () => {
+    if (isRunning) {
+      setPage("main");
+      return;
+    }
+    if (
+      page === "pipeline" &&
+      workflowDirty &&
+      !window.confirm("You have unsaved workflow changes. Leave and discard them?")
+    ) {
+      return;
+    }
+    reset();
+    setPaperPath(null);
+    setArtifact("report");
+    setReportView("report");
+    setHistoryRunId(null);
+    setVarModalOpen(false);
+    setSelectionKey((key) => key + 1);
+    setPage("main");
+  };
+
+  const handleNavigate = (nextPage: AppPage) => {
+    if (
+      page === "pipeline" &&
+      nextPage !== "pipeline" &&
+      workflowDirty &&
+      !window.confirm("You have unsaved workflow changes. Leave and discard them?")
+    ) {
+      return;
+    }
+    if (nextPage === "history") setHistoryRunId(null);
+    setPage(nextPage);
+  };
 
   // Structured issues detected in a finished report (enables the Issues view).
   const doneIssues = state.kind === "done" ? detectReportIssues(state.report) : null;
@@ -167,7 +215,7 @@ function App() {
   }, [depsReport]);
 
   return (
-    <div data-testid="app-shell" className="h-screen bg-gray-50 dark:bg-gray-950 flex flex-col overflow-hidden">
+    <div data-testid="app-shell" className="flex h-screen flex-col overflow-hidden bg-gray-50 dark:bg-gray-950">
       {showDeps && depsReport && (
         <DepsCheck
           report={depsReport}
@@ -191,162 +239,42 @@ function App() {
           Thin (16px) so it stays above the content panels' own controls,
           which start at 8px padding — grab the top edge anywhere to drag. */}
       {isMac && (
-        <div data-tauri-drag-region className="fixed top-0 inset-x-0 h-4 z-30" />
+        <div data-tauri-drag-region className="fixed inset-x-0 top-0 z-30 h-4" />
       )}
 
-      <main className="flex-1 flex min-h-0">
-        {/* Sidebar — on macOS it extends to the window top and hosts the
-            traffic lights; the padding above the content is the drag region */}
-        <aside
-          className={`border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 flex flex-col gap-4 overflow-y-auto shrink-0 relative ${isMac ? "pt-12" : ""}`}
-          style={{ width: sidebarWidth }}
-        >
-          {isMac && (
-            <div
-              data-tauri-drag-region
-              className="absolute top-0 left-0 right-0 h-12 z-10"
-            />
-          )}
-          <PaperSelector
-            onPathChange={(p) => {
-              setPaperPath(p);
-              if (state.kind === "error" || state.kind === "done") reset();
-            }}
-            disabled={isRunning}
+      <div className="flex min-h-0 flex-1">
+        <NavRail
+          activePage={page}
+          hasCurrentRun={hasCurrentRun}
+          runInProgress={isRunning}
+          isMac={isMac}
+          dependenciesReady={depsReport?.ready ?? null}
+          dependenciesLoading={depsLoading}
+          width={navRailWidth}
+          onResize={setNavRailWidth}
+          onNewRun={handleNewRun}
+          onNavigate={handleNavigate}
+          onDependencies={() => depsReport && setShowDeps(true)}
+        />
+
+        {showRunSetup && (
+          <RunSetupPanel
+            configVersion={configVersion}
+            dependenciesLoading={depsLoading}
+            inputMode={inputMode}
+            listenersReady={listenersReady}
+            paperPath={paperPath}
+            selectionKey={selectionKey}
+            width={runSetupWidth}
+            onConfigureWorkflow={() => setPage("pipeline")}
+            onGenerate={handleGenerate}
+            onPaperPathChange={setPaperPath}
+            onProfileChange={() => setConfigVersion((version) => version + 1)}
+            onResize={setRunSetupWidth}
           />
-          {inputMode === "none" && (
-            <p className="text-xs text-gray-400 dark:text-gray-500 -mt-2">
-              This workflow needs no input — you can generate directly.
-            </p>
-          )}
+        )}
 
-          <WorkflowPanel
-            disabled={isRunning}
-            editorOpen={page === "pipeline"}
-            onConfigure={() => setPage("pipeline")}
-            onProfileChange={() => setConfigVersion((v) => v + 1)}
-            refreshKey={configVersion}
-          />
-
-          <button
-            onClick={handleGenerate}
-            disabled={(!paperPath && inputMode !== "none") || isRunning || depsLoading || !listenersReady}
-            className="w-full py-2.5 px-4 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg font-medium
-                       hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed
-                       transition-colors"
-          >
-            {depsLoading
-              ? "Checking dependencies..."
-              : isRunning
-                ? "Running..."
-                : "Run"}
-          </button>
-
-          {isRunning && (
-            <button
-              onClick={cancel}
-              className="w-full py-2 px-4 border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 rounded-lg
-                         text-sm hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
-            >
-              Cancel
-            </button>
-          )}
-
-          {state.kind === "error" && (
-            <div className="p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
-              {state.message}
-            </div>
-          )}
-
-          {/* Footer: app navigation + dependency status */}
-          <div className="mt-auto pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center gap-1 -mx-2 -mb-2">
-            <button
-              onClick={() => { setHistoryRunId(null); setPage(page === "history" ? "main" : "history"); }}
-              className={`p-2 rounded-lg transition-colors ${
-                page === "history"
-                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
-                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
-              }`}
-              title="Run history"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-              </svg>
-            </button>
-            <button
-              onClick={() => setPage(page === "batch" ? "main" : "batch")}
-              className={`p-2 rounded-lg transition-colors ${
-                page === "batch"
-                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
-                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
-              }`}
-              title="Batch run"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-              </svg>
-            </button>
-            <button
-              onClick={() => setPage(page === "help" ? "main" : "help")}
-              className={`p-2 rounded-lg transition-colors ${
-                page === "help"
-                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
-                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
-              }`}
-              title="Help"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round"
-                  d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
-              </svg>
-            </button>
-            <button
-              onClick={() => setPage(page === "settings" ? "main" : "settings")}
-              aria-label="Settings"
-              className={`p-2 rounded-lg transition-colors ${
-                page === "settings"
-                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
-                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50 dark:text-gray-500 dark:hover:text-gray-300 dark:hover:bg-gray-800"
-              }`}
-              title="Settings"
-            >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                />
-              </svg>
-            </button>
-            {depsReport && !depsLoading && (
-              <button
-                onClick={() => setShowDeps(true)}
-                className="ml-auto px-2 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors text-right"
-              >
-                {depsReport.ready
-                  ? "All dependencies OK"
-                  : "Dependencies need attention"}
-              </button>
-            )}
-          </div>
-          <ResizeHandle onResize={setSidebarWidth} min={240} max={480} />
-        </aside>
-
-        {/* Main content */}
-        <div className="flex-1 flex flex-col min-h-0">
+        <main className="flex min-w-0 flex-1 flex-col">
           <UpdateBanner />
           <div className="flex-1 overflow-auto">
             <Suspense
@@ -357,14 +285,24 @@ function App() {
               )}
             >
             {page === "pipeline" ? (
-              <PipelinePage onClose={() => { setPage("main"); setConfigVersion((v) => v + 1); }} onProfileChange={() => setConfigVersion((v) => v + 1)} />
+              <PipelinePage
+                onClose={() => {
+                  setWorkflowDirty(false);
+                  setPage("main");
+                  setConfigVersion((v) => v + 1);
+                }}
+                onDirtyChange={setWorkflowDirty}
+                onProfileChange={() => setConfigVersion((v) => v + 1)}
+                showBack={false}
+              />
             ) : page === "help" ? (
-              <AboutPage onClose={() => setPage("main")} />
+              <AboutPage onClose={() => setPage("main")} showBack={false} />
             ) : page === "settings" ? (
-              <SettingsPage onClose={() => setPage("main")} dark={dark} onDarkChange={handleDarkChange} />
+              <SettingsPage onClose={() => setPage("main")} showBack={false} dark={dark} onDarkChange={handleDarkChange} />
             ) : page === "history" ? (
               <HistoryPage
                 onClose={() => setPage("main")}
+                showClose={false}
                 initialRunId={historyRunId}
                 onRerun={(runId, onlyFailed) => {
                   setPage("main");
@@ -375,6 +313,7 @@ function App() {
             ) : page === "batch" ? (
               <BatchPanel
                 onClose={() => setPage("main")}
+                showClose={false}
                 onOpenRun={(runId) => { setHistoryRunId(runId); setPage("history"); }}
               />
             ) : state.kind === "done" ? (
@@ -481,13 +420,45 @@ function App() {
                 </div>
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full">
+              <div className="flex h-full items-center justify-center px-8 py-12">
                 <div className="w-full max-w-sm">
                   <PipelineProgress state={state} runStartedAt={runStartedAt} passTimes={passTimes} />
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-6 text-center leading-relaxed">
-                    This may take 15–60 minutes depending on<br />
-                    paper length, number of agents, and LLM load.
-                  </p>
+                  {state.kind === "error" ? (
+                    <div className="mt-6">
+                      <div
+                        role="alert"
+                        className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm leading-5 text-red-700
+                                   dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                      >
+                        {state.message}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleNewRun}
+                        className="mt-3 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700
+                                   transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2
+                                   focus-visible:ring-gray-400 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+                      >
+                        Start a new run
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="mt-6 text-center text-xs leading-relaxed text-gray-400 dark:text-gray-500">
+                        This may take 15–60 minutes depending on<br />
+                        paper length, number of agents, and LLM load.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={cancel}
+                        className="mx-auto mt-4 block rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors
+                                   hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2
+                                   focus-visible:ring-red-300 dark:text-gray-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                      >
+                        Cancel run
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -495,8 +466,8 @@ function App() {
           </div>
 
           {logs.length > 0 && <Console logs={logs} usage={usage} />}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

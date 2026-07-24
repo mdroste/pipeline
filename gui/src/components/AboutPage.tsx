@@ -4,21 +4,24 @@ import { getVersion } from "@tauri-apps/api/app";
 
 interface Props {
   onClose: () => void;
+  showBack?: boolean;
 }
 
-export default function AboutPage({ onClose }: Props) {
+export default function AboutPage({ onClose, showBack = true }: Props) {
   return (
     <div className="p-8 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
           Help
         </h2>
-        <button
-          onClick={onClose}
-          className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-        >
-          Back
-        </button>
+        {showBack && (
+          <button
+            onClick={onClose}
+            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+          >
+            Back
+          </button>
+        )}
       </div>
 
       <HelpContent />

@@ -13,16 +13,19 @@ import {
   withProviderSelection,
 } from "../lib/providers";
 import EnginesPanel from "./EnginesPanel";
+import ResizeHandle from "./ResizeHandle";
+import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 
 interface Props {
   onClose: () => void;
+  showBack?: boolean;
   dark: boolean;
   onDarkChange: (v: boolean) => void;
 }
 
 type Section = "llm" | "extraction" | "general";
 
-export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
+export default function SettingsPage({ onClose, showBack = true, dark, onDarkChange }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -32,6 +35,12 @@ export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
   const [catalogLoading, setCatalogLoading] = useState<Record<string, boolean>>({});
+  const [navWidth, setNavWidth] = usePersistentPanelWidth(
+    "pipeline.ui.settingsNavWidth",
+    192,
+    160,
+    320,
+  );
 
   // Clear the "saved" indicator after 2 seconds, with proper cleanup
   useEffect(() => {
@@ -168,7 +177,10 @@ export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
   return (
     <div data-testid="settings-page" className="flex h-full">
       {/* Sidebar nav */}
-      <div className="w-48 shrink-0 border-r border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/50 p-4 flex flex-col">
+      <div
+        style={{ width: navWidth }}
+        className="relative flex shrink-0 flex-col border-r border-gray-200 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-gray-900/50"
+      >
         <h2 className="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4 px-2">
           Settings
         </h2>
@@ -188,15 +200,25 @@ export default function SettingsPage({ onClose, dark, onDarkChange }: Props) {
             </button>
           ))}
         </nav>
-        <button
-          onClick={onClose}
-          className="flex items-center gap-2 px-2.5 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-          </svg>
-          Back
-        </button>
+        {showBack && (
+          <button
+            onClick={onClose}
+            className="flex items-center gap-2 px-2.5 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+            </svg>
+            Back
+          </button>
+        )}
+        <ResizeHandle
+          currentWidth={navWidth}
+          defaultWidth={192}
+          label="Resize settings navigation"
+          min={160}
+          max={320}
+          onResize={setNavWidth}
+        />
       </div>
 
       {/* Content area */}

@@ -7,6 +7,7 @@ import type { BatchJob, WatchStatus, InputSlot, PipelineConfig } from "../lib/ty
 interface Props {
   onClose: () => void;
   onOpenRun: (runId: string) => void;
+  showClose?: boolean;
 }
 
 function fmtDuration(secs: number): string {
@@ -33,7 +34,7 @@ function statusColor(status: string): string {
 
 /** Run one profile over many inputs, one at a time. Each input becomes a normal
  *  run in history; progress arrives via batch:progress events. */
-export default function BatchPanel({ onClose, onOpenRun }: Props) {
+export default function BatchPanel({ onClose, onOpenRun, showClose = true }: Props) {
   // Inputs staged before a batch starts.
   const [staged, setStaged] = useState<string[]>([]);
   // Live job list from the backend once a batch is running.
@@ -159,13 +160,15 @@ export default function BatchPanel({ onClose, onOpenRun }: Props) {
         <span className="text-xs text-gray-400 dark:text-gray-500">
           Runs the active profile over each input, one at a time.
         </span>
-        <button
-          onClick={onClose}
-          className="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-          title="Close"
-        >
-          ✕
-        </button>
+        {showClose && (
+          <button
+            onClick={onClose}
+            className="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            title="Close"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-4">

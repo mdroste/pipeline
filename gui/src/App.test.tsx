@@ -30,8 +30,10 @@ vi.mock("./components/PaperSelector", () => ({
 vi.mock("./components/WorkflowPanel", () => ({
   default: () => <div>Test workflow</div>,
 }));
+vi.mock("./components/HistoryPage", () => ({
+  default: () => <div>History workspace</div>,
+}));
 vi.mock("./components/UpdateBanner", () => ({ default: () => null }));
-vi.mock("./components/ResizeHandle", () => ({ default: () => null }));
 
 describe("App run options", () => {
   beforeEach(() => {
@@ -77,5 +79,27 @@ describe("App run options", () => {
         undefined,
       );
     });
+  });
+
+  it("shows run setup only in the new-run workspace", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(screen.getByTestId("run-setup-panel")).toBeVisible();
+    expect(screen.getByRole("button", { name: "New run" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Runs" }));
+    expect(await screen.findByText("History workspace")).toBeVisible();
+    expect(screen.queryByTestId("run-setup-panel")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Runs" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    await user.click(screen.getByRole("button", { name: "New run" }));
+    expect(screen.getByTestId("run-setup-panel")).toBeVisible();
   });
 });

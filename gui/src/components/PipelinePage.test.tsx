@@ -109,6 +109,29 @@ describe("PipelinePage", () => {
     expect(saveCall?.[1].config.steps.length).toBe(3);
   });
 
+  it("reports dirty state to the shell and can hide its local back control", async () => {
+    const user = userEvent.setup();
+    const onDirtyChange = vi.fn();
+    mockLoad(makeConfig());
+    const { unmount } = render(
+      <PipelinePage
+        onClose={() => {}}
+        onDirtyChange={onDirtyChange}
+        showBack={false}
+      />,
+    );
+    await screen.findAllByText("Technical");
+
+    expect(onDirtyChange).toHaveBeenCalledWith(false);
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "+ Parallel" }));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenCalledWith(true));
+
+    unmount();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("offers an opt-in shared context cache in pipeline settings", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());

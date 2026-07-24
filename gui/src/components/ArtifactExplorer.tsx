@@ -9,6 +9,8 @@ import { open as openExternal } from "@tauri-apps/plugin-shell";
 import hljs from "highlight.js/lib/common";
 import "highlight.js/styles/github.css";
 import ReportViewer from "./ReportViewer";
+import ResizeHandle from "./ResizeHandle";
+import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 
 interface ArtifactEntry {
   rel_path: string;
@@ -552,6 +554,12 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
   const [selected, setSelected] = useState<string>("report.md");
   const [content, setContent] = useState<ArtifactContent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [treeWidth, setTreeWidth] = usePersistentPanelWidth(
+    "pipeline.ui.artifactTreeWidth",
+    224,
+    176,
+    360,
+  );
 
   useEffect(() => {
     let live = true;
@@ -640,35 +648,48 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
   return (
     <div className="flex h-full min-h-0">
       {/* Tree */}
-      <nav className="w-56 shrink-0 border-r border-gray-200 dark:border-gray-800 overflow-y-auto p-3 space-y-4">
-        {GROUPS.map((g) => {
-          const items = manifest.artifacts.filter((a) => a.group === g.id);
-          if (items.length === 0) return null;
-          return (
-            <div key={g.id}>
-              <h4 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5">
-                {g.label}
-              </h4>
-              <ul className="space-y-0.5">
-                {items.map((a) => (
-                  <li key={a.rel_path}>
-                    <button
-                      onClick={() => setSelected(a.rel_path)}
-                      title={`${a.rel_path} · ${formatBytes(a.bytes)}`}
-                      className={`w-full text-left text-xs px-2 py-1 rounded truncate transition-colors ${
-                        selected === a.rel_path
-                          ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                          : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-                      }`}
-                    >
-                      {a.label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
+      <nav
+        style={{ width: treeWidth }}
+        className="relative shrink-0 border-r border-gray-200 dark:border-gray-800"
+      >
+        <div className="h-full space-y-4 overflow-y-auto p-3">
+          {GROUPS.map((g) => {
+            const items = manifest.artifacts.filter((a) => a.group === g.id);
+            if (items.length === 0) return null;
+            return (
+              <div key={g.id}>
+                <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+                  {g.label}
+                </h4>
+                <ul className="space-y-0.5">
+                  {items.map((a) => (
+                    <li key={a.rel_path}>
+                      <button
+                        onClick={() => setSelected(a.rel_path)}
+                        title={`${a.rel_path} · ${formatBytes(a.bytes)}`}
+                        className={`w-full truncate rounded px-2 py-1 text-left text-xs transition-colors ${
+                          selected === a.rel_path
+                            ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                            : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                        }`}
+                      >
+                        {a.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+        <ResizeHandle
+          currentWidth={treeWidth}
+          defaultWidth={224}
+          label="Resize artifact browser"
+          min={176}
+          max={360}
+          onResize={setTreeWidth}
+        />
       </nav>
 
       {/* Viewer */}

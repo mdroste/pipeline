@@ -6,6 +6,7 @@ import type { RunSummary, RunsDiskUsage } from "../lib/types";
 
 interface Props {
   onClose: () => void;
+  showClose?: boolean;
   /** When set, open this run's detail view immediately (e.g. from a batch job). */
   initialRunId?: string | null;
   /** Re-run a past run (reusing cached extraction/orientation and steps). */
@@ -56,7 +57,7 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${cls}`}>{status || "done"}</span>;
 }
 
-export default function HistoryPage({ onClose, initialRunId, onRerun }: Props) {
+export default function HistoryPage({ onClose, showClose = true, initialRunId, onRerun }: Props) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [usage, setUsage] = useState<RunsDiskUsage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -195,13 +196,15 @@ export default function HistoryPage({ onClose, initialRunId, onRerun }: Props) {
         >
           Refresh
         </button>
-        <button
-          onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-          title="Close"
-        >
-          ✕
-        </button>
+        {showClose && (
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            title="Close"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       {compareMode && (

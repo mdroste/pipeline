@@ -25,10 +25,13 @@ import {
 import WaveDiagram, { type WaveSelection } from "./WaveDiagram";
 import PromptEditor from "./PromptEditor";
 import ResizeHandle from "./ResizeHandle";
+import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 
 interface Props {
   onClose: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onProfileChange?: () => void;
+  showBack?: boolean;
 }
 
 const DEFAULT_MERGE: MergeConfig = { enabled: true, prompt: "", agents: [] };
@@ -116,7 +119,12 @@ function outputSchemaError(schema: unknown, path = "$", depth = 0): string | nul
   return null;
 }
 
-export default function PipelinePage({ onClose, onProfileChange }: Props) {
+export default function PipelinePage({
+  onClose,
+  onDirtyChange,
+  onProfileChange,
+  showBack = true,
+}: Props) {
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -139,7 +147,12 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
     defaultValue: string;
     onSubmit: (value: string) => void;
   } | null>(null);
-  const [panelWidth, setPanelWidth] = useState(420);
+  const [panelWidth, setPanelWidth] = usePersistentPanelWidth(
+    "pipeline.ui.workflowPanelWidth",
+    420,
+    280,
+    640,
+  );
 
   // Drag-drop state. We track the dragged step's id and the drop target
   // (an insertion index plus the phase that drop site implies). The phase
@@ -147,6 +160,12 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
   // different section auto-flips the step's phase.
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ idx: number; phase: Phase } | null>(null);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   useEffect(() => {
     let live = true;
@@ -628,10 +647,12 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
         {/* Header */}
         <div className="px-4 pt-4 pb-2 flex items-center justify-between">
           <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Workflow Editor</h2>
-          <button onClick={() => {
-            if (dirty && !confirm("You have unsaved changes. Leave and discard them?")) return;
-            onClose();
-          }} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">Back</button>
+          {showBack && (
+            <button onClick={() => {
+              if (dirty && !confirm("You have unsaved changes. Leave and discard them?")) return;
+              onClose();
+            }} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">Back</button>
+          )}
         </div>
 
         {/* Profile selector */}
@@ -894,7 +915,14 @@ export default function PipelinePage({ onClose, onProfileChange }: Props) {
           </div>
           {saved && <p className="text-xs text-green-600 text-center">Saved.</p>}
         </div>
-        <ResizeHandle onResize={setPanelWidth} min={280} max={640} />
+        <ResizeHandle
+          currentWidth={panelWidth}
+          defaultWidth={420}
+          label="Resize workflow panel"
+          min={280}
+          max={640}
+          onResize={setPanelWidth}
+        />
       </div>
 
       {/* Right panel — editor */}
