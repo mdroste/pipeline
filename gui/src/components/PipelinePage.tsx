@@ -13,6 +13,11 @@ import type {
   InputSlot,
   Settings,
   ModelCatalog,
+  ArtifactSelector,
+  PrimaryArtifactPart,
+  NamedInputArtifactPart,
+  StepArtifactPart,
+  StepContext,
 } from "../lib/types";
 import { reorderSteps } from "../lib/pipelineHelpers";
 import {
@@ -37,8 +42,6 @@ interface Props {
 const DEFAULT_MERGE: MergeConfig = { enabled: true, prompt: "", agents: [] };
 const DEFAULT_EXTRACTION: ExtractionConfig = {
   method: "",
-  marker_disable_ocr: null,
-  marker_disable_images: null,
 };
 
 type EditingMode = WaveSelection | null;
@@ -49,17 +52,16 @@ function conditionUpstreamIds(steps: StepConfig[], targetId: string): string[] {
   const enabled = steps.filter((step) => step.enabled);
   const ids = new Set(enabled.map((step) => step.id));
   const deps = new Map<string, string[]>();
-  const allPrior: string[] = [];
-  let lastSequential: string | null = null;
   for (const step of enabled) {
-    const current = step.inputs?.length
-      ? step.inputs.filter((id) => ids.has(id))
-      : step.phase === "parallel"
-        ? (lastSequential ? [lastSequential] : [])
-        : [...allPrior];
-    deps.set(step.id, current);
-    allPrior.push(step.id);
-    if (step.phase === "sequential") lastSequential = step.id;
+    const selectedProducers = (step.context?.include ?? [])
+      .filter((selector): selector is Extract<ArtifactSelector, { kind: "step" }> =>
+        selector.kind === "step")
+      .map((selector) => selector.step);
+    deps.set(
+      step.id,
+      [...new Set([...(step.after ?? []), ...selectedProducers])]
+        .filter((id) => ids.has(id)),
+    );
   }
   const upstream = new Set<string>();
   const pending = [...(deps.get(targetId) ?? [])];
@@ -70,6 +72,36 @@ function conditionUpstreamIds(steps: StepConfig[], targetId: string): string[] {
     pending.push(...(deps.get(id) ?? []));
   }
   return enabled.filter((step) => upstream.has(step.id)).map((step) => step.id);
+}
+
+function primaryPartsForMode(inputMode: string): PrimaryArtifactPart[] {
+  if (inputMode === "none") return [];
+  if (inputMode === "folder") return ["text", "source"];
+  return ["text", "structure", "visuals", "source"];
+}
+
+function defaultStepContext(
+  phase: Phase,
+  inputMode: string,
+  useOrientation: boolean,
+  priorSteps: Array<Pick<StepConfig, "id" | "enabled">>,
+): StepContext {
+  const include: ArtifactSelector[] = [];
+  const primary = primaryPartsForMode(inputMode);
+  if (phase === "parallel" && primary.length) {
+    include.push({ kind: "primary", parts: primary });
+  }
+  if (useOrientation) include.push({ kind: "survey" });
+  if (phase === "sequential") {
+    include.push(...priorSteps
+      .filter((step) => step.enabled)
+      .map((step): ArtifactSelector => ({
+        kind: "step",
+        step: step.id,
+        parts: ["report"],
+      })));
+  }
+  return { include };
 }
 
 const OUTPUT_SCHEMA_TYPES = new Set([
@@ -214,11 +246,16 @@ export default function PipelinePage({
       });
   }, []);
 
-  // Backend may omit fields on older profiles; fill them in locally so the
-  // editor never has to guard against undefined.
+  // Fill optional collection fields so edits always serialize the current
+  // profile format.
   function normalizeConfig(c: PipelineConfig): PipelineConfig {
     return {
       ...c,
+      steps: (c.steps ?? []).map((step) => ({
+        ...step,
+        after: step.after ?? [],
+        context: step.context ?? { include: [] },
+      })),
       merge: c.merge ?? DEFAULT_MERGE,
       context_cache: c.context_cache ?? { enabled: false },
       extraction: c.extraction ?? DEFAULT_EXTRACTION,
@@ -388,13 +425,85 @@ export default function PipelinePage({
     setDirty(true);
   };
 
+  const updateStepPhase = (id: string, phase: Phase) => {
+    setConfig({
+      ...config,
+      steps: config.steps.map((step) => {
+        if (step.id !== id) return step;
+        return {
+          ...step,
+          phase,
+          context: phase === "parallel"
+            ? {
+                include: step.context.include.filter(
+                  (selector) => selector.kind !== "step",
+                ),
+              }
+            : step.context,
+        };
+      }),
+    });
+    setDirty(true);
+  };
+
   const updateMerge = (patch: Partial<MergeConfig>) => {
     setConfig({ ...config, merge: { ...config.merge, ...patch } });
     setDirty(true);
   };
 
   const updateExtraction = (patch: Partial<ExtractionConfig>) => {
-    setConfig({ ...config, extraction: { ...(config.extraction ?? DEFAULT_EXTRACTION), ...patch } });
+    const extraction = { ...(config.extraction ?? DEFAULT_EXTRACTION), ...patch };
+    const namedKeys = new Set((extraction.extra_inputs ?? []).map((slot) => slot.key));
+    const steps = config.steps.map((step) => ({
+      ...step,
+      context: {
+        include: step.context.include.filter((selector) => {
+          if (selector.kind === "primary" && extraction.input_mode === "none") return false;
+          if (selector.kind === "named_input" && !namedKeys.has(selector.key)) return false;
+          return true;
+        }),
+      },
+    }));
+    setConfig({ ...config, extraction, steps });
+    setDirty(true);
+  };
+
+  const updateUseOrientation = (enabled: boolean) => {
+    setConfig({
+      ...config,
+      use_orientation: enabled,
+      steps: enabled
+        ? config.steps
+        : config.steps.map((step) => ({
+            ...step,
+            context: {
+              include: step.context.include.filter((selector) => selector.kind !== "survey"),
+            },
+          })),
+    });
+    setDirty(true);
+  };
+
+  const updateStepEnabled = (id: string, enabled: boolean) => {
+    setConfig({
+      ...config,
+      steps: config.steps.map((step) => {
+        if (step.id === id) return { ...step, enabled };
+        if (enabled) return step;
+        return {
+          ...step,
+          after: (step.after ?? []).filter((dependency) => dependency !== id),
+          context: {
+            include: step.context.include.filter(
+              (selector) => selector.kind !== "step" || selector.step !== id,
+            ),
+          },
+          run_if: step.run_if?.kind === "output_matches" && step.run_if.step === id
+            ? null
+            : step.run_if,
+        };
+      }),
+    });
     setDirty(true);
   };
 
@@ -489,7 +598,12 @@ export default function PipelinePage({
       const envelope = await invoke<ExportEnvelope>("import_item", { path });
       switch (envelope.type) {
         case "step": {
-          const step = envelope.data as StepConfig;
+          const imported = envelope.data as StepConfig;
+          const step: StepConfig = {
+            ...imported,
+            after: imported.after ?? [],
+            context: imported.context ?? { include: [] },
+          };
           const agents = step.agents?.length || 1;
           const fanOut = step.for_each ? `; fan-out up to ${step.for_each.max} items` : "";
           const logicalCalls = (step.for_each?.max ?? 1) * agents;
@@ -573,14 +687,36 @@ export default function PipelinePage({
       ...config,
       steps: [...config.steps, {
         id, label: "Custom Step", enabled: true, phase,
-        tools: [], agents: [], prompt,
+        tools: [], agents: [], prompt, after: [],
+        context: defaultStepContext(
+          phase,
+          config.extraction?.input_mode || "document",
+          config.use_orientation,
+          config.steps,
+        ),
       }],
     });
     setEditing(id); setDirty(true);
   };
 
   const removeStep = (id: string) => {
-    setConfig({ ...config, steps: config.steps.filter((s) => s.id !== id) });
+    setConfig({
+      ...config,
+      steps: config.steps
+        .filter((step) => step.id !== id)
+        .map((step) => ({
+          ...step,
+          after: (step.after ?? []).filter((dependency) => dependency !== id),
+          context: {
+            include: step.context.include.filter(
+              (selector) => selector.kind !== "step" || selector.step !== id,
+            ),
+          },
+          run_if: step.run_if?.kind === "output_matches" && step.run_if.step === id
+            ? null
+            : step.run_if,
+        })),
+    });
     if (editing === id) setEditing(null);
     setDirty(true);
   };
@@ -730,7 +866,7 @@ export default function PipelinePage({
                 step={step}
                 selected={editing === step.id}
                 isDragging={dragId === step.id}
-                onToggle={() => updateStep(step.id, { enabled: !step.enabled })}
+                onToggle={() => updateStepEnabled(step.id, !step.enabled)}
                 onSelect={() => setEditing(editing === step.id ? null : step.id)}
                 onDelete={() => removeStep(step.id)}
                 onDragStart={() => setDragId(step.id)}
@@ -788,7 +924,7 @@ export default function PipelinePage({
                 step={step}
                 selected={editing === step.id}
                 isDragging={dragId === step.id}
-                onToggle={() => updateStep(step.id, { enabled: !step.enabled })}
+                onToggle={() => updateStepEnabled(step.id, !step.enabled)}
                 onSelect={() => setEditing(editing === step.id ? null : step.id)}
                 onDelete={() => removeStep(step.id)}
                 onDragStart={() => setDragId(step.id)}
@@ -974,7 +1110,7 @@ export default function PipelinePage({
           <OrientationEditor
             useOrientation={config.use_orientation}
             prompt={config.orientation_prompt}
-            onToggleUse={(v) => { setConfig({ ...config, use_orientation: v }); setDirty(true); }}
+            onToggleUse={updateUseOrientation}
             onPromptChange={(p) => { setConfig({ ...config, orientation_prompt: p }); setDirty(true); }}
           />
         ) : editing === "pipeline_settings" ? (
@@ -1036,7 +1172,7 @@ export default function PipelinePage({
               {/* Orientation map toggle */}
               <div className="flex items-start gap-3">
                 <button
-                  onClick={() => { setConfig({ ...config, use_orientation: !config.use_orientation }); setDirty(true); }}
+                  onClick={() => updateUseOrientation(!config.use_orientation)}
                   className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
                     config.use_orientation ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
                   }`}
@@ -1142,7 +1278,7 @@ export default function PipelinePage({
                   {(["parallel", "sequential"] as const).map((phase) => (
                     <button
                       key={phase}
-                      onClick={() => updateStep(editingStep.id, { phase })}
+                      onClick={() => updateStepPhase(editingStep.id, phase)}
                       className={`px-3 py-1 text-xs rounded-full border transition-colors ${
                         editingStep.phase === phase
                           ? phase === "parallel"
@@ -1192,10 +1328,18 @@ export default function PipelinePage({
                 onChange={(patch) => updateStep(editingStep.id, patch)}
               />
               <AdvancedStepOptions
+                key={editingStep.id}
                 step={editingStep}
-                otherStepIds={config.steps
+                otherSteps={config.steps
                   .filter((s) => s.enabled && s.id !== editingStep.id)
-                  .map((s) => s.id)}
+                  .map(({ id, label }) => ({ id, label }))}
+                defaultReportStepIds={config.steps
+                  .slice(0, config.steps.findIndex((step) => step.id === editingStep.id))
+                  .filter((step) => step.enabled)
+                  .map((step) => step.id)}
+                namedInputs={config.extraction?.extra_inputs ?? []}
+                inputMode={config.extraction?.input_mode || "document"}
+                surveyEnabled={config.use_orientation}
                 conditionStepIds={conditionStepIds}
                 onChange={(patch) => updateStep(editingStep.id, patch)}
               />
@@ -1241,9 +1385,9 @@ export default function PipelinePage({
 const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   { value: "", label: "Inherit from global Settings", hint: "Use whatever PDF extractor is configured globally." },
   { value: "auto", label: "Auto", hint: "Try the global setting; same as inherit." },
-  { value: "llm", label: "LLM", hint: "Have the active provider read the PDF and convert to Markdown." },
-  { value: "paddleocr-vl", label: "Local engine: PaddleOCR-VL 1.6 Q8", hint: "Managed native extraction with the compact local Q8 model. Install from Settings → PDF Extraction." },
-  { value: "marker", label: "Local engine: marker-pdf", hint: "Local extraction, no LLM cost. Install from Settings → PDF Extraction." },
+  { value: "llm", label: "LLM", hint: "Bounded, page-verified transcription through the active provider. Slower, but preserves equations and original typos." },
+  { value: "paddleocr-vl", label: "Local engine: PaddleOCR-VL 1.6 Q8", hint: "Managed page-parallel extraction with retries and resumable checkpoints. Tune it in Settings → PDF Extraction." },
+  { value: "marker", label: "Local engine: marker-pdf", hint: "Cached local extraction with automatic OCR detection and no LLM cost. Install from Settings → PDF Extraction." },
   { value: "pdftotext", label: "pdftotext (basic)", hint: "Fast, but equations are lost. Uses bundled poppler." },
 ];
 
@@ -1256,7 +1400,6 @@ function ExtractionEditor({
 }) {
   const method = extraction.method ?? "";
   const hint = EXTRACTION_METHODS.find((m) => m.value === method)?.hint;
-  const showMarker = method === "marker";
   const inputMode = extraction.input_mode || "document";
 
   return (
@@ -1323,77 +1466,13 @@ function ExtractionEditor({
           )}
         </div>
 
-        {showMarker && (
-          <div className="space-y-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">
-              marker_single flags. Leave on "Inherit" to use the global Settings value.
-            </p>
-            <TristateRow
-              label="Disable OCR"
-              value={extraction.marker_disable_ocr}
-              onChange={(v) => onChange({ marker_disable_ocr: v })}
-              hint="Skip OCR pass — much faster on text-only PDFs, fails on scans."
-            />
-            <TristateRow
-              label="Disable image extraction"
-              value={extraction.marker_disable_images}
-              onChange={(v) => onChange({ marker_disable_images: v })}
-              hint="Don't pull figures out of the PDF. Faster, smaller output."
-            />
-          </div>
-        )}
-
         <div className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
-          The cascade for PDFs is: chosen method → fallback to LLM extraction if the native
-          extractor fails (when the active provider supports PDF reads). LaTeX inputs bypass this
-          entirely.
+          The chosen PDF method is authoritative: incomplete or failed extraction stops before
+          orientation instead of silently switching engines. Parser-specific speed, memory, OCR,
+          and image settings are configured once in Settings → PDF Extraction. LaTeX inputs bypass
+          PDF extraction.
         </div>
       </div>
-    </div>
-  );
-}
-
-function TristateRow({
-  label,
-  value,
-  onChange,
-  hint,
-}: {
-  label: string;
-  value: boolean | null;
-  onChange: (v: boolean | null) => void;
-  hint?: string;
-}) {
-  // null = inherit; true/false = override. Render as a 3-state segmented control.
-  const states: { v: boolean | null; label: string }[] = [
-    { v: null, label: "Inherit" },
-    { v: false, label: "Off" },
-    { v: true, label: "On" },
-  ];
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{label}</span>
-        <div className="inline-flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
-          {states.map((s) => {
-            const active = (s.v === null && value == null) || s.v === value;
-            return (
-              <button
-                key={String(s.v)}
-                onClick={() => onChange(s.v)}
-                className={`px-2 py-0.5 text-[11px] transition-colors ${
-                  active
-                    ? "bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900"
-                    : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
-                }`}
-              >
-                {s.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      {hint && <p className="text-[10px] text-gray-500 dark:text-gray-500 mt-1">{hint}</p>}
     </div>
   );
 }
@@ -1416,8 +1495,8 @@ function OrientationEditor({
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Orientation Map</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
             Stage 0b. One LLM call that builds a structured JSON survey of the input before any
-            step runs — for a paper: sections, theorems, tables, notation. Every parallel step
-            receives it via {"{orientation}"}, which keeps steps grounded in what the input
+            step runs — for a paper: sections, theorems, tables, notation. Steps that select the
+            survey receive it via {"{orientation}"}, which keeps them grounded in what the input
             actually contains. The survey can use any JSON schema your prompt asks for.
           </p>
         </div>
@@ -1873,7 +1952,8 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
 // --- Extra named inputs (profile-level) ---
 //
 // Additional inputs beyond the primary one; each is extracted at run time and
-// exposed to prompts as {input:key} (a path to Read).
+// available for selection by each step. When text is selected, {input:key}
+// resolves to the step-private staged path.
 
 function ExtraInputsEditor({
   slots,
@@ -1897,9 +1977,10 @@ function ExtraInputsEditor({
         Extra inputs
       </label>
       <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
-        Additional files/folders the Run action asks for, exposed to prompts as{" "}
-        <code className="font-mono">{"{input:key}"}</code> (a path to Read). Useful for a response
-        letter, a rubric, or a prior report alongside the main input.
+        Additional files/folders the Run action asks for. A step can select the extracted text,
+        original source, or both; selected text is available as{" "}
+        <code className="font-mono">{"{input:key}"}</code>. Useful for a response letter, rubric,
+        or prior report alongside the main input.
       </p>
       <div className="space-y-2">
         {slots.map((s, i) => (
@@ -2038,11 +2119,315 @@ function VariablesEditor({
   );
 }
 
-// --- Advanced step options: dependencies, run_if condition, output schema ---
-//
-// These drive the generalized engine (Release 1.2). All optional; collapsed by
-// default so the common case stays uncluttered. Backend enforces cycle/unknown
-// dependency validation on save, so bad graphs surface as a save error.
+// --- Artifact access and advanced execution rules ---
+
+function replaceArtifactSelector(
+  include: ArtifactSelector[],
+  matches: (selector: ArtifactSelector) => boolean,
+  replacement: ArtifactSelector | null,
+): ArtifactSelector[] {
+  const next = include.filter((selector) => !matches(selector));
+  if (replacement) next.push(replacement);
+  return next;
+}
+
+function artifactContextSummary(context: StepContext): string {
+  const parts: string[] = [];
+  for (const selector of context.include) {
+    if (selector.kind === "primary") parts.push(`input ${selector.parts.length}`);
+    if (selector.kind === "survey") parts.push("survey");
+    if (selector.kind === "named_input") parts.push(selector.key);
+    if (selector.kind === "step") {
+      const labels = [
+        selector.parts.includes("report") ? "report" : "",
+        selector.parts.includes("files") ? "files" : "",
+      ].filter(Boolean).join("+");
+      parts.push(`${selector.step} ${labels}`);
+    }
+  }
+  return parts.length ? parts.join(" · ") : "isolated";
+}
+
+function ArtifactContextEditor({
+  step,
+  otherSteps,
+  defaultReportStepIds,
+  namedInputs,
+  inputMode,
+  surveyEnabled,
+  onChange,
+}: {
+  step: StepConfig;
+  otherSteps: Array<Pick<StepConfig, "id" | "label">>;
+  defaultReportStepIds: string[];
+  namedInputs: InputSlot[];
+  inputMode: string;
+  surveyEnabled: boolean;
+  onChange: (context: StepContext) => void;
+}) {
+  const include = step.context?.include ?? [];
+  const primary = include.find(
+    (selector): selector is Extract<ArtifactSelector, { kind: "primary" }> =>
+      selector.kind === "primary",
+  );
+  const hasSurvey = include.some((selector) => selector.kind === "survey");
+  const availablePrimary = primaryPartsForMode(inputMode);
+
+  const setInclude = (next: ArtifactSelector[]) => onChange({ include: next });
+  const setPrimaryPart = (part: PrimaryArtifactPart, checked: boolean) => {
+    const parts = new Set(primary?.parts ?? []);
+    if (checked) parts.add(part);
+    else parts.delete(part);
+    setInclude(replaceArtifactSelector(
+      include,
+      (selector) => selector.kind === "primary",
+      parts.size ? { kind: "primary", parts: [...parts] } : null,
+    ));
+  };
+  const setSurvey = (checked: boolean) => {
+    setInclude(replaceArtifactSelector(
+      include,
+      (selector) => selector.kind === "survey",
+      checked ? { kind: "survey" } : null,
+    ));
+  };
+  const setNamedPart = (
+    key: string,
+    part: NamedInputArtifactPart,
+    checked: boolean,
+  ) => {
+    const existing = include.find(
+      (selector): selector is Extract<ArtifactSelector, { kind: "named_input" }> =>
+        selector.kind === "named_input" && selector.key === key,
+    );
+    const parts = new Set(existing?.parts ?? []);
+    if (checked) parts.add(part);
+    else parts.delete(part);
+    setInclude(replaceArtifactSelector(
+      include,
+      (selector) => selector.kind === "named_input" && selector.key === key,
+      parts.size ? { kind: "named_input", key, parts: [...parts] } : null,
+    ));
+  };
+  const setStepPart = (
+    producer: string,
+    part: StepArtifactPart,
+    checked: boolean,
+  ) => {
+    const existing = include.find(
+      (selector): selector is Extract<ArtifactSelector, { kind: "step" }> =>
+        selector.kind === "step" && selector.step === producer,
+    );
+    const parts = new Set(existing?.parts ?? []);
+    if (checked) parts.add(part);
+    else parts.delete(part);
+    setInclude(replaceArtifactSelector(
+      include,
+      (selector) => selector.kind === "step" && selector.step === producer,
+      parts.size
+        ? { kind: "step", step: producer, parts: [...parts], ...(existing?.glob ? { glob: existing.glob } : {}) }
+        : null,
+    ));
+  };
+  const setStepGlob = (producer: string, glob: string) => {
+    const existing = include.find(
+      (selector): selector is Extract<ArtifactSelector, { kind: "step" }> =>
+        selector.kind === "step" && selector.step === producer,
+    );
+    if (!existing) return;
+    setInclude(replaceArtifactSelector(
+      include,
+      (selector) => selector.kind === "step" && selector.step === producer,
+      { ...existing, ...(glob ? { glob } : { glob: undefined }) },
+    ));
+  };
+
+  const standardContext = () =>
+    defaultStepContext(
+      step.phase,
+      inputMode,
+      surveyEnabled,
+      defaultReportStepIds.map((id) => ({ id, enabled: true })),
+    );
+  const reportsOnly = (): StepContext => ({
+    include: defaultReportStepIds.map((producer) => ({
+      kind: "step",
+      step: producer,
+      parts: ["report"],
+    })),
+  });
+
+  const checkboxClass = "rounded border-gray-300 dark:border-gray-600";
+  const chipClass =
+    "text-[10px] px-2 py-1 rounded-md border border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500";
+
+  return (
+    <div className="space-y-2.5">
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+            Artifact access
+          </label>
+          <span className="text-[10px] text-gray-400 truncate" title={artifactContextSummary(step.context)}>
+            {artifactContextSummary(step.context)}
+          </span>
+        </div>
+        <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+          {step.phase === "parallel"
+            ? "This is an exact allowlist. Parallel steps are independent and cannot read another step's output."
+            : "This is an exact allowlist. Selecting a step artifact also makes this step wait for its producer."}
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-1">
+        <button type="button" onClick={() => onChange(standardContext())} className={chipClass}>
+          Standard
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({
+            include: availablePrimary.length
+              ? [{ kind: "primary", parts: availablePrimary }]
+              : [],
+          })}
+          className={chipClass}
+        >
+          Input only
+        </button>
+        {step.phase === "sequential" && (
+          <button type="button" onClick={() => onChange(reportsOnly())} className={chipClass}>
+            Prior reports
+          </button>
+        )}
+        <button type="button" onClick={() => onChange({ include: [] })} className={chipClass}>
+          Isolated
+        </button>
+      </div>
+
+      <div className="rounded-md border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-800">
+        <div className="p-2">
+          <p className="text-[10px] font-medium text-gray-600 dark:text-gray-300 mb-1">Primary input</p>
+          {availablePrimary.length ? (
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {([
+                ["text", "Readable text"],
+                ["structure", "Document structure"],
+                ["visuals", "Pages & figures"],
+                ["source", "Original source"],
+              ] as Array<[PrimaryArtifactPart, string]>)
+                .filter(([part]) => availablePrimary.includes(part))
+                .map(([part, label]) => (
+                  <label key={part} className="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300">
+                    <input
+                      type="checkbox"
+                      className={checkboxClass}
+                      checked={primary?.parts.includes(part) ?? false}
+                      onChange={(event) => setPrimaryPart(part, event.target.checked)}
+                    />
+                    {label}
+                  </label>
+                ))}
+            </div>
+          ) : (
+            <p className="text-[10px] text-gray-400">This profile has no primary input.</p>
+          )}
+        </div>
+
+        <label className="flex items-center gap-2 p-2 text-[10px] text-gray-600 dark:text-gray-300">
+          <input
+            type="checkbox"
+            className={checkboxClass}
+            checked={hasSurvey}
+            disabled={!surveyEnabled}
+            onChange={(event) => setSurvey(event.target.checked)}
+          />
+          Survey / orientation JSON
+          {!surveyEnabled && <span className="text-gray-400">(disabled for profile)</span>}
+        </label>
+
+        {namedInputs.map((slot) => {
+          const selector = include.find(
+            (item): item is Extract<ArtifactSelector, { kind: "named_input" }> =>
+              item.kind === "named_input" && item.key === slot.key,
+          );
+          return (
+            <div key={slot.key} className="p-2">
+              <p className="text-[10px] font-medium text-gray-600 dark:text-gray-300 mb-1">
+                {slot.label || slot.key} <span className="font-mono text-gray-400">({slot.key})</span>
+              </p>
+              <div className="flex gap-3">
+                {([
+                  ["text", "Extracted text"],
+                  ["source", "Original source"],
+                ] as Array<[NamedInputArtifactPart, string]>).map(([part, label]) => (
+                  <label key={part} className="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300">
+                    <input
+                      type="checkbox"
+                      className={checkboxClass}
+                      checked={selector?.parts.includes(part) ?? false}
+                      onChange={(event) => setNamedPart(slot.key, part, event.target.checked)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+
+        {step.phase === "parallel" && otherSteps.length > 0 && (
+          <p className="p-2 text-[10px] text-gray-400">
+            Step reports and supporting files become selectable only in Sequential steps.
+          </p>
+        )}
+
+        {step.phase === "sequential" && otherSteps.map((producer) => {
+          const selector = include.find(
+            (item): item is Extract<ArtifactSelector, { kind: "step" }> =>
+              item.kind === "step" && item.step === producer.id,
+          );
+          return (
+            <div key={producer.id} className="p-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-medium text-gray-600 dark:text-gray-300 truncate">
+                  {producer.label} <span className="font-mono text-gray-400">({producer.id})</span>
+                </p>
+                <div className="flex gap-3 shrink-0">
+                  {([
+                    ["report", "Report"],
+                    ["files", "Files"],
+                  ] as Array<[StepArtifactPart, string]>).map(([part, label]) => (
+                    <label key={part} className="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300">
+                      <input
+                        type="checkbox"
+                        className={checkboxClass}
+                        checked={selector?.parts.includes(part) ?? false}
+                        onChange={(event) => setStepPart(producer.id, part, event.target.checked)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {selector?.parts.includes("files") && (
+                <input
+                  type="text"
+                  value={selector.glob ?? ""}
+                  onChange={(event) => setStepGlob(producer.id, event.target.value)}
+                  placeholder="All files, or filter with a glob such as **/*.csv"
+                  className="mt-1.5 w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-[10px] font-mono text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Artifact access is the core dataflow control. Conditions, output contracts,
+// and fan-out remain advanced execution rules in the same compact panel.
 
 /** Schema that makes a step emit a list of issues, enabling the Issues table +
  *  annotations in the report view (Release 1.4). Pair it with the issues
@@ -2060,17 +2445,25 @@ const ISSUES_SCHEMA = {
 
 function AdvancedStepOptions({
   step,
-  otherStepIds,
+  otherSteps,
+  defaultReportStepIds,
+  namedInputs,
+  inputMode,
+  surveyEnabled,
   conditionStepIds,
   onChange,
 }: {
   step: StepConfig;
-  otherStepIds: string[];
+  otherSteps: Array<Pick<StepConfig, "id" | "label">>;
+  defaultReportStepIds: string[];
+  namedInputs: InputSlot[];
+  inputMode: string;
+  surveyEnabled: boolean;
   conditionStepIds: string[];
   onChange: (patch: Partial<StepConfig>) => void;
 }) {
-  const hasAny = !!(step.inputs?.length || step.run_if || step.output_schema);
-  const [open, setOpen] = useState(hasAny);
+  const hasAny = !!(step.context.include.length || step.after?.length || step.run_if || step.output_schema);
+  const [open, setOpen] = useState(!!(step.run_if || step.output_schema));
   const [schemaText, setSchemaText] = useState(
     step.output_schema ? JSON.stringify(step.output_schema, null, 2) : ""
   );
@@ -2118,31 +2511,59 @@ function AdvancedStepOptions({
         className="text-[11px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1"
       >
         <span>{open ? "▾" : "▸"}</span>
-        <span>Dependencies &amp; conditions</span>
+        <span>Artifact access &amp; execution rules</span>
         {hasAny && !open && <span className="text-[10px] text-gray-400 ml-1">set</span>}
       </button>
       {open && (
         <div className="mt-2 space-y-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
-          {/* Dependencies */}
+          <ArtifactContextEditor
+            step={step}
+            otherSteps={otherSteps}
+            defaultReportStepIds={defaultReportStepIds}
+            namedInputs={namedInputs}
+            inputMode={inputMode}
+            surveyEnabled={surveyEnabled}
+            onChange={(context) => onChange({ context })}
+          />
+
+          {/* Order-only dependencies */}
           <div>
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
-              Depends on (step ids, comma-separated)
+              Wait for (order only)
             </label>
-            <input
-              type="text"
-              value={(step.inputs ?? []).join(", ")}
-              onChange={(e) =>
-                onChange({
-                  inputs: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
-                })
-              }
-              placeholder="(implicit schedule) e.g. contribution, technical"
-              className={inputClass}
-            />
-            {otherStepIds.length > 0 && (
-              <p className="text-[10px] text-gray-400 mt-0.5">
-                Available: {otherStepIds.join(", ")}
-              </p>
+            <p className="text-[10px] text-gray-400 mb-1">
+              Adds timing constraints without exposing the producer's artifacts.
+            </p>
+            {otherSteps.length ? (
+              <div className="flex flex-wrap gap-1">
+                {otherSteps.map((producer) => {
+                  const checked = (step.after ?? []).includes(producer.id);
+                  return (
+                    <label
+                      key={producer.id}
+                      className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border cursor-pointer ${
+                        checked
+                          ? "border-gray-500 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200"
+                          : "border-gray-200 dark:border-gray-700 text-gray-500"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => onChange({
+                          after: event.target.checked
+                            ? [...(step.after ?? []), producer.id]
+                            : (step.after ?? []).filter((id) => id !== producer.id),
+                        })}
+                        className="rounded border-gray-300 dark:border-gray-600"
+                      />
+                      {producer.label}
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-[10px] text-gray-400">No other steps.</p>
             )}
           </div>
 

@@ -3,7 +3,7 @@
 // (validated + size-capped in Rust) — never file:// URLs — so rendering is
 // identical across WKWebView / WebView2 / WebKitGTK.
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import hljs from "highlight.js/lib/common";
@@ -21,6 +21,13 @@ interface ArtifactEntry {
   group: string;
 }
 
+interface PageArtifactIndex {
+  count: number;
+  digit_width: number;
+  extension: string;
+  total_bytes: number;
+}
+
 interface RunManifest {
   run_id: string;
   created: string;
@@ -29,6 +36,7 @@ interface RunManifest {
   profile_name: string;
   provider: string;
   artifacts: ArtifactEntry[];
+  page_artifacts?: PageArtifactIndex | null;
 }
 
 interface ArtifactContent {
@@ -102,11 +110,15 @@ interface Props {
   runId: string;
   /** Rendered if the manifest can't be loaded (run dir missing, etc.). */
   fallbackMarkdown: string;
+  /** Load only the manifest until the user explicitly chooses an artifact. */
+  deferInitialArtifact?: boolean;
 }
 
 /** Skip syntax highlighting beyond this size — highlightAuto gets slow. */
 const MAX_HIGHLIGHT_CHARS = 200_000;
 const MAX_CSV_ROWS = 200;
+const MAX_INDEXED_PAGES = 5_000;
+const PAGE_SELECTION_PREFIX = "__page__:";
 
 const EXT_LANGUAGE: Record<string, string> = {
   rs: "rust", py: "python", ts: "typescript", tsx: "typescript", js: "javascript",
@@ -131,18 +143,42 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function pageSelection(page: number): string {
+  return `${PAGE_SELECTION_PREFIX}${page}`;
+}
+
+function selectedPage(selection: string): number | null {
+  if (!selection.startsWith(PAGE_SELECTION_PREFIX)) return null;
+  const page = Number(selection.slice(PAGE_SELECTION_PREFIX.length));
+  return Number.isInteger(page) && page > 0 ? page : null;
+}
+
+function indexedPageForPath(
+  relPath: string,
+  index?: PageArtifactIndex | null,
+): number | null {
+  if (!index) return null;
+  const match = relPath.match(/^artifacts\/pages\/page-(\d+)\.(?:jpe?g|png)$/i);
+  if (!match) return null;
+  const page = Number(match[1]);
+  const count = Number.isSafeInteger(index.count)
+    ? Math.min(Math.max(index.count, 0), MAX_INDEXED_PAGES)
+    : 0;
+  return Number.isInteger(page) && page > 0 && page <= count ? page : null;
+}
+
 function CodeView({ text, relPath }: { text: string; relPath: string }) {
   const lang = EXT_LANGUAGE[ext(relPath)];
-  let html: string | null = null;
-  if (text.length <= MAX_HIGHLIGHT_CHARS) {
+  const html = useMemo(() => {
+    if (text.length > MAX_HIGHLIGHT_CHARS) return null;
     try {
-      html = lang && hljs.getLanguage(lang)
+      return lang && hljs.getLanguage(lang)
         ? hljs.highlight(text, { language: lang }).value
         : hljs.highlightAuto(text).value;
     } catch {
-      html = null;
+      return null;
     }
-  }
+  }, [lang, text]);
   return (
     <pre className="p-4 text-xs font-mono leading-relaxed whitespace-pre overflow-auto bg-white rounded border border-gray-200 dark:border-gray-700">
       {html !== null ? (
@@ -218,36 +254,66 @@ function formatRepresentation(value: unknown): string {
 const STRUCTURAL_KINDS = new Set([
   "section", "equation", "table", "figure", "theorem", "proposition", "lemma", "corollary",
 ]);
+const INITIAL_BUNDLE_NODES = 100;
 
 function DocumentBundleView({
   text,
   artifacts,
+  pageArtifacts,
   onSelectArtifact,
 }: {
   text: string;
   artifacts: ArtifactEntry[];
+  pageArtifacts?: PageArtifactIndex | null;
   onSelectArtifact: (relPath: string) => void;
 }) {
   const [kindFilter, setKindFilter] = useState("structure");
-  let bundle: DocumentBundle;
-  try {
-    bundle = JSON.parse(text) as DocumentBundle;
-  } catch {
+  const [nodeLimit, setNodeLimit] = useState(INITIAL_BUNDLE_NODES);
+  const bundle = useMemo(() => {
+    try {
+      return JSON.parse(text) as DocumentBundle;
+    } catch {
+      return null;
+    }
+  }, [text]);
+  const counts = useMemo(() => {
+    const result = new Map<string, number>();
+    for (const node of bundle?.nodes ?? []) {
+      result.set(node.kind, (result.get(node.kind) ?? 0) + 1);
+    }
+    return result;
+  }, [bundle]);
+  const filters = useMemo(
+    () => ["structure", "all", ...Array.from(counts.keys()).sort()],
+    [counts],
+  );
+  const matchingNodes = useMemo(
+    () =>
+      (bundle?.nodes ?? []).filter((node) =>
+        kindFilter === "structure"
+          ? STRUCTURAL_KINDS.has(node.kind)
+          : kindFilter === "all" || node.kind === kindFilter,
+      ),
+    [bundle, kindFilter],
+  );
+  const visibleNodes = matchingNodes.slice(0, nodeLimit);
+  const artifactPaths = useMemo(
+    () => new Set(artifacts.map((artifact) => artifact.rel_path)),
+    [artifacts],
+  );
+  const assetById = useMemo(
+    () => new Map((bundle?.assets ?? []).map((asset) => [asset.id, asset])),
+    [bundle],
+  );
+  const visualAssets = useMemo(
+    () => (bundle?.assets ?? []).filter((asset) => asset.kind !== "page"),
+    [bundle],
+  );
+
+  if (!bundle) {
     return <CodeView text={text} relPath="document_bundle.json" />;
   }
 
-  const counts = new Map<string, number>();
-  for (const node of bundle.nodes ?? []) {
-    counts.set(node.kind, (counts.get(node.kind) ?? 0) + 1);
-  }
-  const filters = ["structure", "all", ...Array.from(counts.keys()).sort()];
-  const visibleNodes = (bundle.nodes ?? []).filter((node) =>
-    kindFilter === "structure"
-      ? STRUCTURAL_KINDS.has(node.kind)
-      : kindFilter === "all" || node.kind === kindFilter,
-  );
-  const artifactPaths = new Set(artifacts.map((artifact) => artifact.rel_path));
-  const assetById = new Map((bundle.assets ?? []).map((asset) => [asset.id, asset]));
   const summary = [
     ["Pages", bundle.pages?.length ?? 0],
     ["Blocks", bundle.nodes?.length ?? 0],
@@ -311,18 +377,26 @@ function DocumentBundleView({
 
       <section>
         <h3 className="text-sm font-semibold">Visual assets</h3>
-        {(bundle.assets ?? []).length === 0 ? (
-          <p className="mt-2 text-xs text-gray-500">No visual assets were extracted.</p>
+        {visualAssets.length === 0 ? (
+          <p className="mt-2 text-xs text-gray-500">
+            {bundle.pages?.length
+              ? `${bundle.pages.length} page renders are indexed in the compact Pages browser; no separate figures or media were extracted.`
+              : "No visual assets were extracted."}
+          </p>
         ) : (
           <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {bundle.assets.map((asset) => {
-              const canOpen = artifactPaths.has(asset.rel_path);
+            {visualAssets.map((asset) => {
+              const indexedPage = indexedPageForPath(asset.rel_path, pageArtifacts);
+              const canOpen = artifactPaths.has(asset.rel_path) || indexedPage !== null;
               return (
                 <button
                   key={asset.id}
                   type="button"
                   disabled={!canOpen}
-                  onClick={() => onSelectArtifact(asset.rel_path)}
+                  onClick={() =>
+                    onSelectArtifact(
+                      indexedPage === null ? asset.rel_path : pageSelection(indexedPage),
+                    )}
                   className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-left
                              enabled:hover:border-gray-400 enabled:hover:bg-gray-50 dark:enabled:hover:bg-gray-800
                              disabled:opacity-60 transition-colors"
@@ -353,7 +427,10 @@ function DocumentBundleView({
               <button
                 key={kind}
                 type="button"
-                onClick={() => setKindFilter(kind)}
+                onClick={() => {
+                  setKindFilter(kind);
+                  setNodeLimit(INITIAL_BUNDLE_NODES);
+                }}
                 className={`rounded-full border px-2 py-0.5 text-[11px] ${
                   kindFilter === kind
                     ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
@@ -402,12 +479,24 @@ function DocumentBundleView({
                   <div className="flex flex-wrap gap-1">
                     {node.asset_ids.map((assetId) => {
                       const asset = assetById.get(assetId);
+                      const indexedPage = asset
+                        ? indexedPageForPath(asset.rel_path, pageArtifacts)
+                        : null;
                       return (
                         <button
                           key={assetId}
                           type="button"
-                          disabled={!asset || !artifactPaths.has(asset.rel_path)}
-                          onClick={() => asset && onSelectArtifact(asset.rel_path)}
+                          disabled={
+                            !asset
+                            || (!artifactPaths.has(asset.rel_path) && indexedPage === null)
+                          }
+                          onClick={() =>
+                            asset
+                            && onSelectArtifact(
+                              indexedPage === null
+                                ? asset.rel_path
+                                : pageSelection(indexedPage),
+                            )}
                           className="rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-[11px] disabled:opacity-50"
                         >
                           View {asset?.label ?? assetId}
@@ -434,21 +523,35 @@ function DocumentBundleView({
               No nodes match this filter.
             </p>
           )}
+          {visibleNodes.length < matchingNodes.length && (
+            <button
+              type="button"
+              onClick={() => setNodeLimit((limit) => limit + INITIAL_BUNDLE_NODES)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-500
+                         hover:border-gray-400 hover:text-gray-700 dark:border-gray-700 dark:hover:border-gray-500
+                         dark:hover:text-gray-200"
+            >
+              Show {Math.min(INITIAL_BUNDLE_NODES, matchingNodes.length - visibleNodes.length)} more
+              {" "}({matchingNodes.length - visibleNodes.length} remaining)
+            </button>
+          )}
         </div>
       </section>
     </div>
   );
 }
 
-function Viewer({
+const Viewer = memo(function Viewer({
   entry,
   content,
   artifacts,
+  pageArtifacts,
   onSelectArtifact,
 }: {
   entry: ArtifactEntry | null;
   content: ArtifactContent;
   artifacts: ArtifactEntry[];
+  pageArtifacts?: PageArtifactIndex | null;
   onSelectArtifact: (relPath: string) => void;
 }) {
   if (content.kind === "image") {
@@ -490,6 +593,7 @@ function Viewer({
           <DocumentBundleView
             text={content.text}
             artifacts={artifacts}
+            pageArtifacts={pageArtifacts}
             onSelectArtifact={onSelectArtifact}
           />
         );
@@ -533,7 +637,7 @@ function Viewer({
         </div>
       );
   }
-}
+});
 
 const GROUPS: { id: string; label: string }[] = [
   { id: "report", label: "Report" },
@@ -547,13 +651,181 @@ const GROUPS: { id: string; label: string }[] = [
   { id: "files", label: "Files" },
 ];
 
-export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
+function pageNumber(entry: ArtifactEntry) {
+  const match = `${entry.label} ${entry.rel_path}`.match(/(?:page[-_\s]*)(\d+)/i);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+const PageBrowser = memo(function PageBrowser({
+  items,
+  index,
+  onSelect,
+  selected,
+}: {
+  items: ArtifactEntry[];
+  index?: PageArtifactIndex | null;
+  onSelect: (path: string) => void;
+  selected: string;
+}) {
+  const [query, setQuery] = useState("");
+  const [rangeStart, setRangeStart] = useState(0);
+  const sorted = useMemo(
+    () => [...items].sort((a, b) => pageNumber(a) - pageNumber(b)),
+    [items],
+  );
+  const rangeSize = 25;
+  const indexedCount = index && Number.isSafeInteger(index.count)
+    ? Math.min(Math.max(index.count, 0), MAX_INDEXED_PAGES)
+    : 0;
+  const pageCount = index ? indexedCount : sorted.length;
+  const ranges = Array.from(
+    { length: Math.ceil(pageCount / rangeSize) },
+    (_, index) => index * rangeSize,
+  );
+  const needle = query.trim().toLowerCase();
+  const visible = useMemo(() => {
+    if (!index) {
+      return (needle
+        ? sorted.filter((item) =>
+            `${item.label} ${pageNumber(item)}`.toLowerCase().includes(needle),
+          )
+        : sorted.slice(rangeStart, rangeStart + rangeSize)
+      ).map((item) => ({ number: pageNumber(item), item }));
+    }
+    const start = needle ? 1 : rangeStart + 1;
+    const end = needle
+      ? indexedCount
+      : Math.min(rangeStart + rangeSize, indexedCount);
+    const pages: Array<{ number: number; item: null }> = [];
+    for (let page = start; page <= end; page += 1) {
+      if (!needle || `page ${page} ${page}`.includes(needle)) {
+        pages.push({ number: page, item: null });
+      }
+    }
+    return pages;
+  }, [index, indexedCount, needle, rangeStart, sorted]);
+
+  return (
+    <div>
+      <div className="mb-2 flex gap-1.5">
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          aria-label="Search pages"
+          placeholder="Find page"
+          className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700
+                     outline-none focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+        />
+        {ranges.length > 1 && !needle && (
+          <select
+            aria-label="Page range"
+            value={rangeStart}
+            onChange={(event) => setRangeStart(Number(event.target.value))}
+            className="w-[5.5rem] rounded-md border border-gray-200 bg-white px-1 py-1 text-[11px] text-gray-500
+                       outline-none focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
+          >
+            {ranges.map((start) => (
+              <option key={start} value={start}>
+                {start + 1}–{Math.min(start + rangeSize, pageCount)}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      <div className="grid grid-cols-4 gap-1">
+        {visible.map(({ number, item }) => {
+          const selection = index ? pageSelection(number) : item!.rel_path;
+          const approximateBytes = index && index.count > 0
+            ? index.total_bytes / index.count
+            : item?.bytes;
+          return (
+            <button
+              key={selection}
+              type="button"
+              onClick={() => onSelect(selection)}
+              title={`Page ${number}${
+                approximateBytes ? ` · about ${formatBytes(approximateBytes)}` : ""
+              }`}
+              aria-label={`Page ${number}`}
+              className={`rounded-md px-1 py-1.5 text-center text-[11px] tabular-nums transition-colors ${
+                selected === selection
+                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                  : "bg-gray-100/70 text-gray-600 hover:bg-gray-200 dark:bg-gray-800/60 dark:text-gray-300 dark:hover:bg-gray-800"
+              }`}
+            >
+              {Number.isFinite(number) && number !== Number.MAX_SAFE_INTEGER
+                ? number
+                : item?.label}
+            </button>
+          );
+        })}
+      </div>
+      {visible.length === 0 && (
+        <p className="px-1 py-2 text-xs text-gray-400">No matching pages.</p>
+      )}
+    </div>
+  );
+});
+
+const ArtifactList = memo(function ArtifactList({
+  items,
+  onSelect,
+  selected,
+}: {
+  items: ArtifactEntry[];
+  onSelect: (path: string) => void;
+  selected: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? items : items.slice(0, 10);
+
+  return (
+    <>
+      <ul className="space-y-0.5">
+        {visible.map((item) => (
+          <li key={item.rel_path}>
+            <button
+              onClick={() => onSelect(item.rel_path)}
+              title={`${item.rel_path} · ${formatBytes(item.bytes)}`}
+              className={`w-full truncate rounded px-2 py-1 text-left text-xs transition-colors ${
+                selected === item.rel_path
+                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                  : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+              }`}
+            >
+              {item.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {items.length > 10 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-1 w-full rounded px-2 py-1 text-left text-[11px] text-gray-400 hover:bg-gray-100
+                     hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+        >
+          {expanded ? "Show fewer" : `Show ${items.length - 10} more`}
+        </button>
+      )}
+    </>
+  );
+});
+
+export default function ArtifactExplorer({
+  runId,
+  fallbackMarkdown,
+  deferInitialArtifact = false,
+}: Props) {
   const [manifest, setManifest] = useState<RunManifest | null>(null);
   const [manifestError, setManifestError] = useState<string | null>(null);
   const [manifestAttempt, setManifestAttempt] = useState(0);
-  const [selected, setSelected] = useState<string>("report.md");
+  const [selected, setSelected] = useState<string>(
+    deferInitialArtifact ? "" : "report.md",
+  );
   const [content, setContent] = useState<ArtifactContent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [navigationOpen, setNavigationOpen] = useState(true);
   const [treeWidth, setTreeWidth] = usePersistentPanelWidth(
     "pipeline.ui.artifactTreeWidth",
     224,
@@ -568,15 +840,17 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
     // previous run's selection.
     setManifest(null);
     setManifestError(null);
-    setSelected("report.md");
+    setSelected(deferInitialArtifact ? "" : "report.md");
     setContent(null);
     setLoadError(null);
     invoke<RunManifest>("get_run_manifest", { runId })
       .then((m) => {
         if (live) {
-          const initial = m.artifacts.some((artifact) => artifact.rel_path === "report.md")
-            ? "report.md"
-            : (m.artifacts[0]?.rel_path ?? "");
+          const initial = deferInitialArtifact
+            ? ""
+            : m.artifacts.some((artifact) => artifact.rel_path === "report.md")
+              ? "report.md"
+              : (m.artifacts[0]?.rel_path ?? "");
           setSelected(initial);
           setManifest(m);
         }
@@ -588,14 +862,18 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
     return () => {
       live = false;
     };
-  }, [runId, manifestAttempt]);
+  }, [deferInitialArtifact, runId, manifestAttempt]);
 
   useEffect(() => {
     if (!manifest || !selected) return;
     let live = true;
     setContent(null);
     setLoadError(null);
-    invoke<ArtifactContent>("read_artifact", { runId, relPath: selected })
+    const compactPage = manifest.page_artifacts ? selectedPage(selected) : null;
+    const request = compactPage === null
+      ? invoke<ArtifactContent>("read_artifact", { runId, relPath: selected })
+      : invoke<ArtifactContent>("read_page_artifact", { runId, page: compactPage });
+    request
       .then((c) => {
         if (live) setContent(c);
       })
@@ -610,6 +888,23 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
       live = false;
     };
   }, [manifest, runId, selected]);
+
+  const artifactsByGroup = useMemo(() => {
+    const grouped = new Map<string, ArtifactEntry[]>();
+    for (const artifact of manifest?.artifacts ?? []) {
+      const items = grouped.get(artifact.group);
+      if (items) {
+        items.push(artifact);
+      } else {
+        grouped.set(artifact.group, [artifact]);
+      }
+    }
+    return grouped;
+  }, [manifest]);
+  const artifactsByPath = useMemo(
+    () => new Map((manifest?.artifacts ?? []).map((artifact) => [artifact.rel_path, artifact])),
+    [manifest],
+  );
 
   // Graceful degradation: no manifest → plain report view.
   if (manifestError) {
@@ -643,54 +938,100 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
     );
   }
 
-  const entry = manifest.artifacts.find((a) => a.rel_path === selected) ?? null;
+  const pageIndex = manifest.page_artifacts ?? null;
+  const compactPage = pageIndex ? selectedPage(selected) : null;
+  const averagePageBytes = pageIndex && pageIndex.count > 0
+    ? Math.round(pageIndex.total_bytes / pageIndex.count)
+    : 0;
+  const entry = compactPage === null
+    ? (artifactsByPath.get(selected) ?? null)
+    : {
+        rel_path: `artifacts/pages/page-${compactPage}.${pageIndex?.extension ?? "jpg"}`,
+        label: `Page ${compactPage}`,
+        kind: "image",
+        bytes: averagePageBytes,
+        sha256: "",
+        group: "pages",
+      };
 
   return (
     <div className="flex h-full min-h-0">
       {/* Tree */}
-      <nav
-        style={{ width: treeWidth }}
-        className="relative shrink-0 border-r border-gray-200 dark:border-gray-800"
-      >
-        <div className="h-full space-y-4 overflow-y-auto p-3">
-          {GROUPS.map((g) => {
-            const items = manifest.artifacts.filter((a) => a.group === g.id);
-            if (items.length === 0) return null;
-            return (
-              <div key={g.id}>
-                <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
-                  {g.label}
-                </h4>
-                <ul className="space-y-0.5">
-                  {items.map((a) => (
-                    <li key={a.rel_path}>
-                      <button
-                        onClick={() => setSelected(a.rel_path)}
-                        title={`${a.rel_path} · ${formatBytes(a.bytes)}`}
-                        className={`w-full truncate rounded px-2 py-1 text-left text-xs transition-colors ${
-                          selected === a.rel_path
-                            ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                            : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
-                        }`}
-                      >
-                        {a.label}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </div>
-        <ResizeHandle
-          currentWidth={treeWidth}
-          defaultWidth={224}
-          label="Resize artifact browser"
-          min={176}
-          max={360}
-          onResize={setTreeWidth}
-        />
-      </nav>
+      {navigationOpen ? (
+        <nav
+          style={{ width: treeWidth }}
+          className="relative shrink-0 border-r border-gray-200 dark:border-gray-800"
+        >
+          <div className="h-full space-y-4 overflow-y-auto p-3">
+            <div className="flex items-center justify-between gap-2 px-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400 dark:text-gray-500">
+                Artifacts
+              </span>
+              <button
+                type="button"
+                onClick={() => setNavigationOpen(false)}
+                aria-label="Hide artifact browser"
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
+                           dark:hover:bg-gray-800 dark:hover:text-gray-200"
+              >
+                <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m9 6 6 6-6 6" />
+                </svg>
+              </button>
+            </div>
+            {GROUPS.map((g) => {
+              const items = artifactsByGroup.get(g.id) ?? [];
+              const compactPages = g.id === "pages" ? manifest.page_artifacts : null;
+              if (items.length === 0 && !compactPages?.count) return null;
+              return (
+                <div key={g.id}>
+                  <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+                    {g.label}
+                  </h4>
+                  {g.id === "pages" ? (
+                    <PageBrowser
+                      items={items}
+                      index={compactPages}
+                      selected={selected}
+                      onSelect={setSelected}
+                    />
+                  ) : (
+                    <ArtifactList
+                      items={items}
+                      selected={selected}
+                      onSelect={setSelected}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <ResizeHandle
+            currentWidth={treeWidth}
+            defaultWidth={224}
+            label="Resize artifact browser"
+            min={176}
+            max={360}
+            onResize={setTreeWidth}
+          />
+        </nav>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setNavigationOpen(true)}
+          aria-label="Show artifact browser"
+          title="Show artifacts"
+          className="flex w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-4 text-gray-400
+                     hover:bg-gray-50 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2
+                     focus-visible:ring-inset focus-visible:ring-gray-400 dark:border-gray-800 dark:hover:bg-gray-900
+                     dark:hover:text-gray-200"
+        >
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7 4.5h10M7 9.5h10M7 14.5h6M4 4.5h.01M4 9.5h.01M4 14.5h.01" />
+          </svg>
+        </button>
+      )}
 
       {/* Viewer */}
       <div className="flex-1 min-w-0 overflow-auto">
@@ -698,11 +1039,16 @@ export default function ArtifactExplorer({ runId, fallbackMarkdown }: Props) {
           <div className="p-6 text-sm text-gray-500 dark:text-gray-400">
             Could not read this artifact: {loadError}
           </div>
+        ) : !selected ? (
+          <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-400">
+            Select an artifact to preview it.
+          </div>
         ) : content ? (
           <Viewer
             entry={entry}
             content={content}
             artifacts={manifest.artifacts}
+            pageArtifacts={manifest.page_artifacts}
             onSelectArtifact={setSelected}
           />
         ) : (

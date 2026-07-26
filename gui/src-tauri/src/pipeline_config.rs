@@ -55,7 +55,7 @@ const MAX_EXTRA_INPUTS: usize = 100;
 const MAX_OUTPUT_SCHEMA_BYTES: usize = 1024 * 1024;
 const MAX_RUN_IF_PATTERN_BYTES: usize = 16 * 1024;
 const MAX_JSON_POINTER_BYTES: usize = 4 * 1024;
-const ALLOWED_TOOLS: &[&str] = &["Read", "Write", "WebSearch"];
+const ALLOWED_TOOLS: &[&str] = &["WebSearch"];
 const ALLOWED_AGENTS: &[&str] = &["claude", "codex", "gemini", "local"];
 
 fn read_profile_file(path: &Path) -> Result<String, String> {
@@ -90,6 +90,69 @@ fn default_tools() -> Vec<String> {
     vec![]
 }
 
+/// Which durable representation of the primary input a step may use.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PrimaryArtifactPart {
+    /// Human/LLM-readable `document.md`.
+    Text,
+    /// Canonical DocumentBundle JSON and block projection.
+    Structure,
+    /// Page renders and extracted/source-native visual assets.
+    Visuals,
+    /// The original file or folder tree selected by the user.
+    Source,
+}
+
+/// Which representation of a named extra input a step may use.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum NamedInputArtifactPart {
+    Text,
+    Source,
+}
+
+/// Which products of an upstream step a downstream step may use.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum StepArtifactPart {
+    /// The producer's terminal report.
+    Report,
+    /// Supporting files written below the producer-owned `files/` directory.
+    Files,
+}
+
+/// A logical artifact selection. Profiles name producers and artifact roles,
+/// never implementation paths inside a run directory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ArtifactSelector {
+    Primary {
+        parts: Vec<PrimaryArtifactPart>,
+    },
+    Survey,
+    NamedInput {
+        key: String,
+        parts: Vec<NamedInputArtifactPart>,
+    },
+    Step {
+        step: String,
+        parts: Vec<StepArtifactPart>,
+        /// Optional glob relative to the producer's supporting-files root.
+        /// Empty means all supporting files.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        glob: String,
+    },
+}
+
+/// The complete readable context for one step. The allow-list is explicit:
+/// an empty list is an intentionally isolated step.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StepContext {
+    #[serde(default)]
+    pub include: Vec<ArtifactSelector>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepConfig {
     pub id: String,
@@ -115,13 +178,13 @@ pub struct StepConfig {
     /// Provider/transport-specific effort overrides. Supersedes `effort`.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub effort_overrides: std::collections::HashMap<String, String>,
-    /// Explicit upstream dependencies (step ids). Empty = the implicit
-    /// adjacency schedule (parallel steps run in their wave; sequential steps
-    /// wait for everything before them). Non-empty = this step waits for
-    /// exactly these steps, and its `{prior_outputs}`/`{step:id}` placeholders
-    /// resolve against them.
+    /// Order-only dependencies. Artifact selectors that name an upstream step
+    /// add their own data dependency automatically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub inputs: Vec<String>,
+    pub after: Vec<String>,
+    /// Exact artifacts made available to this step.
+    #[serde(default)]
+    pub context: StepContext,
     /// Optional guard: when present and its condition is not met, the step is
     /// skipped (a skip placeholder is recorded so dependents can proceed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,7 +255,8 @@ impl Default for StepConfig {
             model_overrides: std::collections::HashMap::new(),
             effort: String::new(),
             effort_overrides: std::collections::HashMap::new(),
-            inputs: Vec::new(),
+            after: Vec::new(),
+            context: StepContext::default(),
             run_if: None,
             output_schema: None,
             for_each: None,
@@ -287,9 +351,8 @@ fn default_slot_mode() -> String {
     "document".to_string()
 }
 
-/// Per-profile extraction overrides. When `method` is empty, the global
-/// Settings value is used; same for the marker flags (which fall back to
-/// the global toggle when this struct is absent on a profile).
+/// Per-profile extraction configuration. Workflows may choose a method, but
+/// parser-specific tuning is centralized in global Settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtractionConfig {
     /// "auto" | "llm" | "marker" | "paddleocr-vl" | "pdftotext" | "" (= inherit global).
@@ -300,11 +363,6 @@ pub struct ExtractionConfig {
     /// "none" (runs from the prompts alone).
     #[serde(default)]
     pub input_mode: String,
-    /// `Some` overrides the global setting; `None` inherits.
-    #[serde(default)]
-    pub marker_disable_ocr: Option<bool>,
-    #[serde(default)]
-    pub marker_disable_images: Option<bool>,
     /// Extra named inputs (beyond the primary one) this profile accepts.
     #[serde(default)]
     pub extra_inputs: Vec<InputSlot>,
@@ -451,20 +509,19 @@ fn generic_starter_steps() -> Vec<StepConfig> {
         StepConfig {
             id: "analysis".into(),
             label: "Analysis".into(),
-            prompt: "Replace this with instructions for the step. Adjacent parallel steps run \
-                     concurrently, each in a clean context, with the survey (orientation map) \
-                     as shared grounding."
+            prompt: "Replace this with instructions for the step. It receives only the \
+                     artifacts selected in this step's context."
                 .into(),
             enabled: true,
             phase: Phase::Parallel,
-            tools: vec!["Read".into()],
+            tools: vec![],
             agents: vec![],
             ..Default::default()
         },
         StepConfig {
             id: "synthesis".into(),
             label: "Synthesize".into(),
-            prompt: "Consolidate the outputs of all prior steps into a single report. Merge \
+            prompt: "Consolidate the selected upstream reports into a single report. Merge \
                      duplicate findings, resolve contradictions, and order by importance.\n\n\
                      {prior_outputs}"
                 .into(),
@@ -472,6 +529,13 @@ fn generic_starter_steps() -> Vec<StepConfig> {
             phase: Phase::Sequential,
             tools: vec![],
             agents: vec![],
+            context: StepContext {
+                include: vec![ArtifactSelector::Step {
+                    step: "analysis".into(),
+                    parts: vec![StepArtifactPart::Report],
+                    glob: String::new(),
+                }],
+            },
             ..Default::default()
         },
     ]
@@ -491,10 +555,13 @@ pub struct ProfileSummary {
 
 /// Current profile/export schema version. v2 introduced the generalized
 /// engine; v3 added provider/model policy metadata; v4 adds optional shared
-/// context caching. v1 (unversioned) profiles read fine because every added
-/// field is `#[serde(default)]`; exports are tagged so future format changes
-/// can migrate or reject gracefully.
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+/// context caching; v5 centralizes parser tuning in global Settings; v6
+/// replaces implicit step inputs with explicit artifact context and order
+/// dependencies. v1
+/// (unversioned) profiles read fine because every added field is
+/// `#[serde(default)]`; exports are tagged so future format changes can
+/// migrate or reject gracefully.
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 fn default_schema_version() -> u32 {
     1
@@ -502,6 +569,7 @@ fn default_schema_version() -> u32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[allow(clippy::large_enum_variant)]
 pub enum ExportEnvelope {
     #[serde(rename = "step")]
     Step { data: StepConfig },
@@ -759,51 +827,55 @@ fn default_steps() -> Vec<StepConfig> {
         "validate_feedback",
     );
     validate.enabled = false;
-    vec![
-        prompt_step(
-            "contribution",
-            "Contribution",
-            Phase::Parallel,
-            &["WebSearch"],
-            "contribution",
-        ),
-        prompt_step(
-            "technical",
-            "Technical Correctness",
-            Phase::Parallel,
-            &[],
-            "technical",
-        ),
-        prompt_step(
-            "empirical",
-            "Empirical Strategy",
-            Phase::Parallel,
-            &[],
-            "empirical",
-        ),
-        prompt_step(
-            "consistency",
-            "Internal Consistency",
-            Phase::Parallel,
-            &[],
-            "consistency",
-        ),
-        prompt_step(
-            "exposition",
-            "Exposition & Framing",
-            Phase::Parallel,
-            &[],
-            "exposition",
-        ),
-        prompt_step(
-            "editor_synthesis",
-            "Consolidate Issues",
-            Phase::Sequential,
-            &[],
-            "editor_synthesis",
-        ),
-        validate,
-    ]
+    configure_artifact_flow(
+        vec![
+            prompt_step(
+                "contribution",
+                "Contribution",
+                Phase::Parallel,
+                &["WebSearch"],
+                "contribution",
+            ),
+            prompt_step(
+                "technical",
+                "Technical Correctness",
+                Phase::Parallel,
+                &[],
+                "technical",
+            ),
+            prompt_step(
+                "empirical",
+                "Empirical Strategy",
+                Phase::Parallel,
+                &[],
+                "empirical",
+            ),
+            prompt_step(
+                "consistency",
+                "Internal Consistency",
+                Phase::Parallel,
+                &[],
+                "consistency",
+            ),
+            prompt_step(
+                "exposition",
+                "Exposition & Framing",
+                Phase::Parallel,
+                &[],
+                "exposition",
+            ),
+            prompt_step(
+                "editor_synthesis",
+                "Consolidate Issues",
+                Phase::Sequential,
+                &[],
+                "editor_synthesis",
+            ),
+            validate,
+        ],
+        "document",
+        &["validate_feedback"],
+    )
 }
 
 fn defaults() -> PipelineConfig {
@@ -829,6 +901,14 @@ const BUILTIN_PROFILES: &[&str] = &[
     "replication-audit",
     "grant-review",
 ];
+
+fn builtin_primary_readers(id: &str) -> &'static [&'static str] {
+    match id {
+        "deep-review" => &["validate_feedback"],
+        "deep-code-review" => &["code_verify"],
+        _ => &[],
+    }
+}
 
 /// Profiles shipped by earlier releases that were removed from the catalog.
 /// A version marker makes the archival a one-time migration, so users may
@@ -873,6 +953,64 @@ fn prompt_step(
     }
 }
 
+fn primary_selector(input_mode: &str) -> Option<ArtifactSelector> {
+    match input_mode {
+        "none" => None,
+        "folder" => Some(ArtifactSelector::Primary {
+            parts: vec![PrimaryArtifactPart::Text, PrimaryArtifactPart::Source],
+        }),
+        _ => Some(ArtifactSelector::Primary {
+            parts: vec![
+                PrimaryArtifactPart::Text,
+                PrimaryArtifactPart::Structure,
+                PrimaryArtifactPart::Visuals,
+                PrimaryArtifactPart::Source,
+            ],
+        }),
+    }
+}
+
+/// Give shipped and newly-created profiles an explicit dataflow. Parallel
+/// analyses receive the primary input and survey. Sequential steps receive
+/// all earlier reports; a sequential step that declares Read additionally
+/// receives the primary input for evidence verification.
+fn configure_artifact_flow(
+    mut steps: Vec<StepConfig>,
+    input_mode: &str,
+    primary_readers: &[&str],
+) -> Vec<StepConfig> {
+    let primary = primary_selector(input_mode);
+    let mut prior = Vec::<String>::new();
+    for step in &mut steps {
+        let mut include = Vec::new();
+        let verifies_primary =
+            step.phase == Phase::Parallel || primary_readers.contains(&step.id.as_str());
+        if verifies_primary {
+            if let Some(selector) = primary.clone() {
+                include.push(selector);
+            }
+        }
+        include.push(ArtifactSelector::Survey);
+        if step.phase == Phase::Sequential {
+            include.extend(prior.iter().map(|producer| ArtifactSelector::Step {
+                step: producer.clone(),
+                parts: vec![StepArtifactPart::Report],
+                glob: String::new(),
+            }));
+        }
+        step.after.clear();
+        step.context = StepContext { include };
+        // Read and Write are derived from the selected artifact view and the
+        // producer-owned output directory. They are not profile permissions.
+        step.tools
+            .retain(|tool| !matches!(tool.as_str(), "Read" | "Write"));
+        if step.enabled {
+            prior.push(step.id.clone());
+        }
+    }
+    steps
+}
+
 fn folder_extraction() -> ExtractionConfig {
     ExtractionConfig {
         input_mode: "folder".into(),
@@ -887,12 +1025,14 @@ fn generic_profile(
     name: &str,
     steps: Vec<StepConfig>,
     extraction: ExtractionConfig,
+    primary_readers: &[&str],
 ) -> ProfileData {
     let survey = if extraction.input_mode == "folder" {
         "orientation_folder"
     } else {
         "orientation_generic"
     };
+    let steps = configure_artifact_flow(steps, &extraction.input_mode, primary_readers);
     let mut profile = ProfileData::new(name, steps, MergeConfig::default());
     profile.orientation_prompt = prompts::load_prompt(survey).unwrap_or_default();
     profile.extraction = extraction;
@@ -920,29 +1060,33 @@ fn create_builtin_profiles() -> Result<(), String> {
         &profiles.join("quick-review.json"),
         &ProfileData::new(
             "Paper Review (Quick)",
-            vec![
-                prompt_step(
-                    "contribution",
-                    "Contribution",
-                    Phase::Parallel,
-                    &[],
-                    "contribution",
-                ),
-                prompt_step(
-                    "consistency",
-                    "Internal Consistency",
-                    Phase::Parallel,
-                    &[],
-                    "consistency",
-                ),
-                prompt_step(
-                    "editor_synthesis",
-                    "Consolidate Issues",
-                    Phase::Sequential,
-                    &[],
-                    "editor_synthesis",
-                ),
-            ],
+            configure_artifact_flow(
+                vec![
+                    prompt_step(
+                        "contribution",
+                        "Contribution",
+                        Phase::Parallel,
+                        &[],
+                        "contribution",
+                    ),
+                    prompt_step(
+                        "consistency",
+                        "Internal Consistency",
+                        Phase::Parallel,
+                        &[],
+                        "consistency",
+                    ),
+                    prompt_step(
+                        "editor_synthesis",
+                        "Consolidate Issues",
+                        Phase::Sequential,
+                        &[],
+                        "editor_synthesis",
+                    ),
+                ],
+                "document",
+                &[],
+            ),
             MergeConfig::default(),
         ),
     )?;
@@ -958,49 +1102,49 @@ fn create_builtin_profiles() -> Result<(), String> {
                     "code_correctness",
                     "Correctness",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "code_correctness",
                 ),
                 prompt_step(
                     "code_security",
                     "Security",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "code_security",
                 ),
                 prompt_step(
                     "code_design",
                     "Design & Maintainability",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "code_design",
                 ),
                 prompt_step(
                     "code_concurrency",
                     "Concurrency & Resources",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "code_concurrency",
                 ),
                 prompt_step(
                     "code_errors",
                     "Error Handling & Edge Cases",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "code_errors",
                 ),
                 prompt_step(
                     "code_performance",
                     "Performance",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "code_performance",
                 ),
                 prompt_step(
                     "code_tests",
                     "Test Coverage & Quality",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "code_tests",
                 ),
                 prompt_step(
@@ -1014,11 +1158,12 @@ fn create_builtin_profiles() -> Result<(), String> {
                     "code_verify",
                     "Verify Findings",
                     Phase::Sequential,
-                    &["Read"],
+                    &[],
                     "code_verify",
                 ),
             ],
             folder_extraction(),
+            &["code_verify"],
         ),
     )?;
 
@@ -1033,28 +1178,28 @@ fn create_builtin_profiles() -> Result<(), String> {
                     "repl_completeness",
                     "Exhibit Completeness",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "repl_completeness",
                 ),
                 prompt_step(
                     "repl_consistency",
                     "Code–Paper Consistency",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "repl_consistency",
                 ),
                 prompt_step(
                     "repl_portability",
                     "Portability",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "repl_portability",
                 ),
                 prompt_step(
                     "repl_provenance",
                     "Data Provenance",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "repl_provenance",
                 ),
                 prompt_step(
@@ -1066,6 +1211,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                 ),
             ],
             folder_extraction(),
+            &[],
         ),
     )?;
 
@@ -1079,28 +1225,28 @@ fn create_builtin_profiles() -> Result<(), String> {
                     "grant_aims",
                     "Aims & Contribution",
                     Phase::Parallel,
-                    &["Read", "WebSearch"],
+                    &["WebSearch"],
                     "grant_aims",
                 ),
                 prompt_step(
                     "grant_feasibility",
                     "Feasibility & Design",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "grant_feasibility",
                 ),
                 prompt_step(
                     "grant_clarity",
                     "Panel Readability",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "grant_clarity",
                 ),
                 prompt_step(
                     "grant_consistency",
                     "Internal Consistency",
                     Phase::Parallel,
-                    &["Read"],
+                    &[],
                     "grant_consistency",
                 ),
                 prompt_step(
@@ -1112,6 +1258,7 @@ fn create_builtin_profiles() -> Result<(), String> {
                 ),
             ],
             ExtractionConfig::default(),
+            &[],
         ),
     )?;
 
@@ -1177,6 +1324,39 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
             format!(
                 "Failed to record the prompt catalog migration '{}': {error}",
                 prompt_marker.display()
+            )
+        })?;
+    }
+
+    // Artifact access is part of the workflow definition, not an ambient
+    // executor default. Refresh every shipped profile into the explicit
+    // producer/role format.
+    let artifact_marker = profiles.join(".builtin-catalog-v6");
+    if !artifact_marker.exists() {
+        for id in BUILTIN_PROFILES {
+            let path = profiles.join(format!("{id}.json"));
+            if !path.exists() {
+                continue;
+            }
+            let content = read_profile_file(&path)
+                .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+            let mut profile: ProfileData = serde_json::from_str(&content)
+                .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+            profile.steps = configure_artifact_flow(
+                profile.steps,
+                &profile.extraction.input_mode,
+                builtin_primary_readers(id),
+            );
+            validate_profile_data(&profile)?;
+            let json = serde_json::to_string_pretty(&profile)
+                .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+            restore_profile_bytes(&path, json.as_bytes())
+                .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+        }
+        fs::write(&artifact_marker, b"explicit-step-artifact-context\n").map_err(|error| {
+            format!(
+                "Failed to record the artifact-context migration '{}': {error}",
+                artifact_marker.display()
             )
         })?;
     }
@@ -1570,6 +1750,145 @@ fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_artifact_context(profile: &ProfileData) -> Result<(), String> {
+    const MAX_SELECTORS_PER_STEP: usize = 256;
+    let named_inputs: std::collections::HashSet<&str> = profile
+        .extraction
+        .extra_inputs
+        .iter()
+        .map(|input| input.key.as_str())
+        .collect();
+
+    for step in &profile.steps {
+        if step.context.include.len() > MAX_SELECTORS_PER_STEP {
+            return Err(format!(
+                "Step '{}' selects more than {MAX_SELECTORS_PER_STEP} artifact sources",
+                step.id
+            ));
+        }
+        let mut after = std::collections::HashSet::new();
+        for dependency in &step.after {
+            if !after.insert(dependency.as_str()) {
+                return Err(format!(
+                    "Step '{}' lists order dependency '{}' more than once",
+                    step.id, dependency
+                ));
+            }
+        }
+
+        let mut sources = std::collections::HashSet::new();
+        for selector in &step.context.include {
+            let source_key = match selector {
+                ArtifactSelector::Primary { parts } => {
+                    if parts.is_empty() {
+                        return Err(format!(
+                            "Step '{}' selects the primary input without selecting any representations",
+                            step.id
+                        ));
+                    }
+                    if profile.extraction.input_mode == "none" {
+                        return Err(format!(
+                            "Step '{}' selects the primary input, but this workflow has no input",
+                            step.id
+                        ));
+                    }
+                    let unique: std::collections::HashSet<_> = parts.iter().collect();
+                    if unique.len() != parts.len() {
+                        return Err(format!(
+                            "Step '{}' repeats a primary-input representation",
+                            step.id
+                        ));
+                    }
+                    "primary".to_string()
+                }
+                ArtifactSelector::Survey => {
+                    if !profile.use_orientation {
+                        return Err(format!(
+                            "Step '{}' selects the survey, but this workflow disables the survey",
+                            step.id
+                        ));
+                    }
+                    "survey".to_string()
+                }
+                ArtifactSelector::NamedInput { key, parts } => {
+                    if !named_inputs.contains(key.as_str()) {
+                        return Err(format!(
+                            "Step '{}' selects unknown named input '{}'",
+                            step.id, key
+                        ));
+                    }
+                    if parts.is_empty() {
+                        return Err(format!(
+                            "Step '{}' selects named input '{}' without a representation",
+                            step.id, key
+                        ));
+                    }
+                    let unique: std::collections::HashSet<_> = parts.iter().collect();
+                    if unique.len() != parts.len() {
+                        return Err(format!(
+                            "Step '{}' repeats a representation for named input '{}'",
+                            step.id, key
+                        ));
+                    }
+                    format!("named:{key}")
+                }
+                ArtifactSelector::Step {
+                    step: producer,
+                    parts,
+                    glob,
+                } => {
+                    if step.phase == Phase::Parallel {
+                        return Err(format!(
+                            "Parallel step '{}' cannot select output from step '{}'; parallel steps run independently",
+                            step.id, producer
+                        ));
+                    }
+                    if parts.is_empty() {
+                        return Err(format!(
+                            "Step '{}' selects artifacts from '{}' without selecting report or files",
+                            step.id, producer
+                        ));
+                    }
+                    let unique: std::collections::HashSet<_> = parts.iter().collect();
+                    if unique.len() != parts.len() {
+                        return Err(format!(
+                            "Step '{}' repeats an artifact type from '{}'",
+                            step.id, producer
+                        ));
+                    }
+                    if !glob.is_empty() {
+                        if !parts.contains(&StepArtifactPart::Files) {
+                            return Err(format!(
+                                "Step '{}' sets a file glob for '{}' without selecting files",
+                                step.id, producer
+                            ));
+                        }
+                        if glob.len() > 1024
+                            || glob.starts_with('/')
+                            || glob.contains('\\')
+                            || glob.split('/').any(|part| part == "..")
+                            || glob.contains(':')
+                        {
+                            return Err(format!(
+                                "Step '{}' has an invalid supporting-file glob for '{}'",
+                                step.id, producer
+                            ));
+                        }
+                    }
+                    format!("step:{producer}")
+                }
+            };
+            if !sources.insert(source_key.clone()) {
+                return Err(format!(
+                    "Step '{}' selects artifact source '{}' more than once; combine its parts in one entry",
+                    step.id, source_key
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
     if profile.name.trim().is_empty() || profile.name.chars().count() > MAX_PROFILE_NAME_CHARS {
         return Err(format!(
@@ -1577,6 +1896,7 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
         ));
     }
     validate_profile_steps(&profile.steps)?;
+    validate_artifact_context(profile)?;
 
     for (label, value) in [
         ("orientation prompt", profile.orientation_prompt.as_str()),
@@ -1700,30 +2020,35 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
     Ok(())
 }
 
-/// Compute each enabled step's dependency set. Explicit `inputs` win;
-/// otherwise the implicit adjacency schedule is used.
+impl StepConfig {
+    /// Step ids whose artifacts this step consumes.
+    pub fn artifact_dependencies(&self) -> impl Iterator<Item = &str> {
+        self.context
+            .include
+            .iter()
+            .filter_map(|selector| match selector {
+                ArtifactSelector::Step { step, .. } => Some(step.as_str()),
+                _ => None,
+            })
+    }
+}
+
+/// Compute each enabled step's dependency set. `after` contributes order-only
+/// edges; upstream artifact selections contribute data edges.
 pub(crate) fn resolve_dependencies(
     enabled: &[&StepConfig],
 ) -> Vec<std::collections::HashSet<String>> {
-    let mut deps = Vec::with_capacity(enabled.len());
-    let mut all_prior: Vec<String> = Vec::new();
-    let mut last_sequential: Option<String> = None;
-    for step in enabled {
-        let current = if step.inputs.is_empty() {
-            match step.phase {
-                Phase::Parallel => last_sequential.iter().cloned().collect(),
-                Phase::Sequential => all_prior.iter().cloned().collect(),
-            }
-        } else {
-            step.inputs.iter().cloned().collect()
-        };
-        deps.push(current);
-        all_prior.push(step.id.clone());
-        if step.phase == Phase::Sequential {
-            last_sequential = Some(step.id.clone());
-        }
-    }
-    deps
+    enabled
+        .iter()
+        .map(|step| {
+            step.after
+                .iter()
+                .map(String::as_str)
+                .chain(step.artifact_dependencies())
+                .map(str::to_string)
+                .collect()
+        })
+        .collect()
 }
 
 /// Reject enabled dependency graphs that cannot run. Disabled steps may retain
@@ -1740,17 +2065,22 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
 
     // Unknown / self dependencies.
     for s in steps.iter().filter(|step| step.enabled) {
-        for dep in &s.inputs {
-            if dep == &s.id {
+        for dep in s
+            .after
+            .iter()
+            .map(String::as_str)
+            .chain(s.artifact_dependencies())
+        {
+            if dep == s.id {
                 return Err(format!("Step '{}' lists itself as a dependency.", s.id));
             }
-            if !ids.contains(dep.as_str()) {
+            if !ids.contains(dep) {
                 return Err(format!(
                     "Step '{}' depends on unknown step '{}'.",
                     s.id, dep
                 ));
             }
-            if !enabled_ids.contains(dep.as_str()) {
+            if !enabled_ids.contains(dep) {
                 return Err(format!(
                     "Step '{}' depends on disabled step '{}'. Enable it or remove the dependency.",
                     s.id, dep
@@ -1760,7 +2090,7 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
     }
 
     // Cycle detection over the complete effective graph (DFS with a colour
-    // map), including implicit adjacency dependencies.
+    // map), including both order-only and artifact-dataflow dependencies.
     let enabled: Vec<&StepConfig> = steps.iter().filter(|step| step.enabled).collect();
     let resolved = resolve_dependencies(&enabled);
     let graph: HashMap<&str, Vec<&str>> = enabled
@@ -1983,7 +2313,12 @@ pub fn create_profile(name: &str) -> Result<ProfileSummary, String> {
     // New profiles start domain-neutral: generic starter steps, generic
     // context template, and an explicit generic survey prompt (empty would
     // fall back to the paper survey at runtime).
-    let profile = generic_profile(name, generic_starter_steps(), ExtractionConfig::default());
+    let profile = generic_profile(
+        name,
+        generic_starter_steps(),
+        ExtractionConfig::default(),
+        &[],
+    );
     save_profile_unlocked(&id, &profile)?;
     Ok(profile_summary(id, &profile))
 }
@@ -2291,7 +2626,21 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             current.local_model = imported_settings.local_model;
             current.pdf_extractor = imported_settings.pdf_extractor;
             current.marker_disable_ocr = imported_settings.marker_disable_ocr;
+            current.marker_force_ocr = imported_settings.marker_force_ocr;
             current.marker_disable_images = imported_settings.marker_disable_images;
+            current.marker_lowres_dpi = imported_settings.marker_lowres_dpi;
+            current.marker_highres_dpi = imported_settings.marker_highres_dpi;
+            current.marker_pdftext_workers = imported_settings.marker_pdftext_workers;
+            current.marker_layout_batch_size = imported_settings.marker_layout_batch_size;
+            current.marker_recognition_batch_size = imported_settings.marker_recognition_batch_size;
+            current.paddle_page_concurrency = imported_settings.paddle_page_concurrency;
+            current.paddle_mtmd_batch_tokens = imported_settings.paddle_mtmd_batch_tokens;
+            current.paddle_flash_attention = imported_settings.paddle_flash_attention;
+            current.paddle_max_output_tokens = imported_settings.paddle_max_output_tokens;
+            current.paddle_page_retries = imported_settings.paddle_page_retries;
+            current.paddle_render_dpi = imported_settings.paddle_render_dpi;
+            current.pdf_extraction_timeout_secs = imported_settings.pdf_extraction_timeout_secs;
+            current.reuse_pdf_extraction_cache = imported_settings.reuse_pdf_extraction_cache;
             current.verbose_logging = imported_settings.verbose_logging;
             current.step_timeout_secs = imported_settings.step_timeout_secs;
             current.max_retries = imported_settings.max_retries;
@@ -2423,6 +2772,20 @@ mod tests {
     }
 
     #[test]
+    fn legacy_profile_marker_overrides_are_ignored_and_not_reserialized() {
+        let extraction: ExtractionConfig = serde_json::from_value(serde_json::json!({
+            "method": "marker",
+            "marker_disable_ocr": true,
+            "marker_disable_images": true
+        }))
+        .unwrap();
+        assert_eq!(extraction.method, "marker");
+        let serialized = serde_json::to_value(extraction).unwrap();
+        assert!(serialized.get("marker_disable_ocr").is_none());
+        assert!(serialized.get("marker_disable_images").is_none());
+    }
+
+    #[test]
     fn unique_step_ids_pass_validation() {
         let steps = vec![step_with_id("a"), step_with_id("b")];
         assert!(validate_unique_step_ids(&steps).is_ok());
@@ -2476,13 +2839,13 @@ mod tests {
         StepConfig {
             id: id.to_string(),
             label: id.to_string(),
-            inputs: deps.iter().map(|s| s.to_string()).collect(),
+            after: deps.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
         }
     }
 
     #[test]
-    fn deps_no_explicit_inputs_always_valid() {
+    fn steps_without_dependency_edges_are_valid() {
         let steps = vec![step_with_id("a"), step_with_id("b"), step_with_id("c")];
         assert!(validate_dependencies(&steps).is_ok());
     }
@@ -2495,6 +2858,40 @@ mod tests {
             step_dep("c", &["a", "b"]),
         ];
         assert!(validate_dependencies(&steps).is_ok());
+    }
+
+    #[test]
+    fn selected_step_artifacts_create_dataflow_dependencies() {
+        let producer = step_with_id("producer");
+        let mut consumer = step_with_id("consumer");
+        consumer.phase = Phase::Sequential;
+        consumer.context.include = vec![ArtifactSelector::Step {
+            step: "producer".into(),
+            parts: vec![StepArtifactPart::Report],
+            glob: String::new(),
+        }];
+        let steps = [producer, consumer];
+        assert!(validate_dependencies(&steps).is_ok());
+        let enabled: Vec<&StepConfig> = steps.iter().collect();
+        let dependencies = resolve_dependencies(&enabled);
+        assert_eq!(
+            dependencies[1],
+            ["producer".to_string()].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn mixed_order_and_artifact_cycle_is_rejected() {
+        let mut a = step_dep("a", &["b"]);
+        a.context.include.clear();
+        let mut b = step_with_id("b");
+        b.phase = Phase::Sequential;
+        b.context.include = vec![ArtifactSelector::Step {
+            step: "a".into(),
+            parts: vec![StepArtifactPart::Files],
+            glob: "**/*.csv".into(),
+        }];
+        assert!(validate_dependencies(&[a, b]).is_err());
     }
 
     #[test]
@@ -2561,7 +2958,7 @@ mod tests {
             .unwrap_err()
             .contains("not an upstream dependency"));
 
-        same_wave.inputs = vec!["a".into()];
+        same_wave.after = vec!["a".into()];
         assert!(validate_run_conditions(&[a.clone(), same_wave.clone()]).is_ok());
 
         if let Some(RunCondition::OutputMatches { pattern, .. }) = &mut same_wave.run_if {
@@ -2678,6 +3075,82 @@ mod tests {
         assert_eq!(decoded.name, "Empty");
         assert!(decoded.steps.is_empty());
         assert!(!decoded.context_cache.enabled);
+    }
+
+    #[test]
+    fn current_profiles_serialize_explicit_artifact_context_only() {
+        let profile = ProfileData::new("Current", default_steps(), MergeConfig::default());
+        validate_profile_data(&profile).unwrap();
+        let value = serde_json::to_value(&profile).unwrap();
+        for step in value["steps"].as_array().unwrap() {
+            assert!(step.get("context").is_some());
+            assert!(step.get("inputs").is_none());
+            assert!(step["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tool| !matches!(tool.as_str(), Some("Read" | "Write"))));
+        }
+        let synthesis = profile
+            .steps
+            .iter()
+            .find(|step| step.id == "editor_synthesis")
+            .unwrap();
+        assert!(synthesis.context.include.iter().any(|selector| {
+            matches!(
+                selector,
+                ArtifactSelector::Step {
+                    step,
+                    parts,
+                    ..
+                } if step == "technical" && parts.contains(&StepArtifactPart::Report)
+            )
+        }));
+    }
+
+    #[test]
+    fn profile_validation_rejects_incoherent_artifact_selectors() {
+        let mut no_input = ProfileData::new(
+            "No input",
+            vec![step_with_id("reader")],
+            MergeConfig::default(),
+        );
+        no_input.extraction.input_mode = "none".into();
+        no_input.steps[0].context.include = vec![ArtifactSelector::Primary {
+            parts: vec![PrimaryArtifactPart::Text],
+        }];
+        assert!(validate_profile_data(&no_input)
+            .unwrap_err()
+            .contains("workflow has no input"));
+
+        let mut invalid_glob = ProfileData::new(
+            "Invalid glob",
+            vec![step_with_id("producer"), step_with_id("consumer")],
+            MergeConfig::default(),
+        );
+        invalid_glob.steps[1].phase = Phase::Sequential;
+        invalid_glob.steps[1].context.include = vec![ArtifactSelector::Step {
+            step: "producer".into(),
+            parts: vec![StepArtifactPart::Report],
+            glob: "*.csv".into(),
+        }];
+        assert!(validate_profile_data(&invalid_glob)
+            .unwrap_err()
+            .contains("without selecting files"));
+
+        let mut parallel_consumer = ProfileData::new(
+            "Parallel consumer",
+            vec![step_with_id("producer"), step_with_id("consumer")],
+            MergeConfig::default(),
+        );
+        parallel_consumer.steps[1].context.include = vec![ArtifactSelector::Step {
+            step: "producer".into(),
+            parts: vec![StepArtifactPart::Report],
+            glob: String::new(),
+        }];
+        assert!(validate_profile_data(&parallel_consumer)
+            .unwrap_err()
+            .contains("Parallel step 'consumer' cannot select output"));
     }
 
     #[test]
@@ -2968,7 +3441,7 @@ mod tests {
             .unwrap_err()
             .contains("unsupported tool 'Bash'"));
 
-        step.tools = vec!["Read".to_string()];
+        step.tools = vec!["WebSearch".to_string()];
         step.agents = vec!["unknown-provider".to_string()];
         profile.steps = vec![step];
         assert!(validate_profile_data(&profile)

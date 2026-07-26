@@ -110,8 +110,6 @@ impl Drop for PipelineGuard {
     fn drop(&mut self) {
         kill_all_children();
         PIPELINE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-        crate::pipeline::api_common::set_allowed_dirs(vec![]);
-        crate::pipeline::api_common::set_write_dir(None);
         // Stop mirroring the console to disk (also flushes/closes the file).
         crate::pipeline::logging::set_log_sink(None);
         reset_pass_cancels();
@@ -192,16 +190,13 @@ fn begin_run_state() -> RunStateGuard {
     reset_pass_cancels();
     crate::pipeline::logging::reset_run_usage();
     crate::pipeline::logging::set_log_sink(None);
-    crate::pipeline::api_common::set_allowed_dirs(Vec::new());
-    crate::pipeline::api_common::set_write_dir(None);
+    crate::pipeline::api_common::reset_write_budget();
     RunStateGuard
 }
 
 impl Drop for RunStateGuard {
     fn drop(&mut self) {
         crate::pipeline::logging::set_log_sink(None);
-        crate::pipeline::api_common::set_allowed_dirs(Vec::new());
-        crate::pipeline::api_common::set_write_dir(None);
         reset_pass_cancels();
     }
 }
@@ -656,6 +651,7 @@ fn create_run_workspace(
     app: &crate::emit::EventBus,
     paper_hash: &str,
     pending_meta: crate::runs::RunFinishMeta,
+    preprocessing_log: Option<&std::path::Path>,
 ) -> (Option<crate::runs::RunWriter>, Option<String>) {
     let mut writer = match crate::runs::RunWriter::create_unique(paper_hash) {
         Ok(writer) => Some(writer),
@@ -683,9 +679,17 @@ fn create_run_workspace(
 
     if let Some(writer) = writer.as_ref() {
         let logs_dir = writer.dir().join("logs");
-        match std::fs::create_dir_all(&logs_dir)
-            .and_then(|()| std::fs::File::create(logs_dir.join("run.log")))
-        {
+        let log_path = logs_dir.join("run.log");
+        let opened = std::fs::create_dir_all(&logs_dir).and_then(|()| {
+            if let Some(source) = preprocessing_log {
+                std::fs::copy(source, &log_path)?;
+            }
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+        });
+        match opened {
             Ok(file) => crate::pipeline::logging::set_log_sink(Some(file)),
             Err(error) => {
                 let _ = app.emit_event(
@@ -716,15 +720,54 @@ fn create_run_workspace(
             }
         }
     });
-    crate::pipeline::api_common::set_write_dir(artifact_dir.as_ref().map(std::path::PathBuf::from));
+    crate::pipeline::api_common::reset_write_budget();
     (writer, artifact_dir)
+}
+
+/// Begin mirroring logs before extraction has produced a paper hash/run
+/// directory. Failed extractions retain this transcript under
+/// ~/.pipeline/logs/preprocessing; successful runs adopt it as run.log.
+fn start_preprocessing_log() -> Option<std::path::PathBuf> {
+    let root = dirs::home_dir()?
+        .join(".pipeline")
+        .join("logs")
+        .join("preprocessing");
+    std::fs::create_dir_all(&root).ok()?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
+    let path = root.join(format!("extract-{stamp}-{}.log", std::process::id()));
+    let file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+        .ok()?;
+    crate::pipeline::logging::set_log_sink(Some(file));
+
+    // Retain a bounded set of failed/pre-run transcripts. Successful ones are
+    // moved into their run directory below.
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        let mut files: Vec<_> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let metadata = entry.metadata().ok()?;
+                metadata.is_file().then_some((
+                    metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
+                    entry.path(),
+                ))
+            })
+            .collect();
+        files.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+        for (_, stale) in files.into_iter().skip(20) {
+            let _ = std::fs::remove_file(stale);
+        }
+    }
+    Some(path)
 }
 
 fn write_run_input_file(
     root: &std::path::Path,
     prefix: &str,
     suffix: &str,
-    content: &[u8],
+    content: &str,
     label: &str,
 ) -> Result<(tempfile::NamedTempFile, String), String> {
     let mut file = tempfile::Builder::new()
@@ -732,7 +775,8 @@ fn write_run_input_file(
         .suffix(suffix)
         .tempfile_in(root)
         .map_err(|error| format!("Failed to create {label} temp file: {error}"))?;
-    file.write_all(content)
+    let clean_content = crate::safety::strip_span_tags(content);
+    file.write_all(clean_content.as_bytes())
         .map_err(|error| format!("Failed to write {label} temp file: {error}"))?;
     file.flush()
         .map_err(|error| format!("Failed to flush {label} temp file: {error}"))?;
@@ -821,6 +865,27 @@ fn finalize_run(
             }),
         );
     }
+    match w.compact_page_artifacts() {
+        Ok(count) if count > 0 => {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("Compacted {count} page records into one lazy artifact index")
+                }),
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            // Keep the ordinary per-page manifest entries as a compatible
+            // fallback if an imported or legacy filename is irregular.
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: could not compact page artifact index: {error}")
+                }),
+            );
+        }
+    }
     // Close the console transcript before registering it so the file is complete.
     crate::pipeline::logging::set_log_sink(None);
     let _ = w.register_existing("logs/run.log", "Console log", "context");
@@ -862,6 +927,7 @@ struct RunCompletion {
     profile_name: String,
     variables: std::collections::HashMap<String, String>,
     extra_inputs: std::collections::HashMap<String, String>,
+    extra_input_sources: std::collections::HashMap<String, String>,
     parent_run_id: Option<String>,
 }
 
@@ -900,6 +966,7 @@ fn complete_run(
             .collect(),
         variables: completion.variables,
         extra_inputs: completion.extra_inputs,
+        extra_input_sources: completion.extra_input_sources,
         parent_run_id: completion.parent_run_id,
     };
     let run_id = writer.and_then(|writer| finalize_run(app, writer, report, markdown, meta));
@@ -1050,7 +1117,6 @@ async fn run_pipeline_inner_with_snapshot(
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default()
     };
-    crate::pipeline::api_common::set_allowed_dirs(vec![source_dir.clone()]);
 
     // Effective run-time variables: the profile's declared defaults, overlaid
     // with whatever the caller provided. Unknown provided keys are kept (a
@@ -1064,6 +1130,8 @@ async fn run_pipeline_inner_with_snapshot(
     crate::safety::validate_runtime_context(&variables, "Run variables")?;
     crate::safety::validate_runtime_context(&provided_inputs, "Named input paths")?;
     crate::safety::validate_run_budget(&config, &settings)?;
+    let preprocessing_log = start_preprocessing_log();
+    crate::pipeline::logging::emit(app, format!("Preparing document bundle from {paper_path}"));
 
     // Extract paper text
     app.emit_event("pipeline:stage", serde_json::json!({"stage": "extracting"}))
@@ -1078,25 +1146,44 @@ async fn run_pipeline_inner_with_snapshot(
     .ok();
     let extract_start = std::time::Instant::now();
     let input_mode = extract::effective_input_mode(&config.extraction.input_mode, paper_path);
-    let extraction = match input_mode {
-        "folder" => extract::ingest_folder_async(paper_path).await?,
-        "none" => extract::ingest_none(),
-        _ => extract::extract(app, paper_path, &config.extraction).await?,
+    let extraction_result = match input_mode {
+        "folder" => extract::ingest_folder_async(paper_path).await,
+        "none" => Ok(extract::ingest_none()),
+        _ => extract::extract(app, paper_path, &config.extraction).await,
+    };
+    let extraction = match extraction_result {
+        Ok(value) => value,
+        Err(error) => {
+            crate::pipeline::logging::emit(
+                app,
+                format!("ERROR: document preparation failed: {error}"),
+            );
+            if let Some(path) = preprocessing_log.as_ref() {
+                crate::pipeline::logging::emit(
+                    app,
+                    format!("Preprocessing log retained at {}", path.display()),
+                );
+            }
+            return Err(error);
+        }
     };
     let extract_secs = extract_start.elapsed().as_secs();
-    app.emit_event("pipeline:log", serde_json::json!({
-        "line": format!("Extracted via {} ({} chars, {}s)", extraction.method, extraction.text.len(), extract_secs)
-    })).ok();
+    crate::pipeline::logging::emit(
+        app,
+        format!(
+            "Extracted via {} ({} chars, {}s)",
+            extraction.method,
+            extraction.text.len(),
+            extract_secs
+        ),
+    );
     for note in &extraction.quality_notes {
-        app.emit_event(
-            "pipeline:log",
-            serde_json::json!({
-                "line": format!("WARNING: {note}")
-            }),
-        )
-        .ok();
+        crate::pipeline::logging::emit(app, format!("WARNING: {note}"));
     }
 
+    // Close/flush the preprocessing sink before copying it into the newly
+    // addressable run directory.
+    crate::pipeline::logging::set_log_sink(None);
     let (mut run_writer, artifact_write_dir) = create_run_workspace(
         app,
         &extraction.paper_hash,
@@ -1109,7 +1196,13 @@ async fn run_pipeline_inner_with_snapshot(
             variables: variables.clone(),
             ..Default::default()
         },
+        preprocessing_log.as_deref(),
     );
+    if run_writer.is_some() {
+        if let Some(path) = preprocessing_log.as_ref() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
     if let Some(w) = run_writer.as_mut() {
         if let Err(e) = w.add_text(
             "context/extracted_text.md",
@@ -1155,8 +1248,10 @@ async fn run_pipeline_inner_with_snapshot(
                     let names = rendered.names;
                     let count = names.len();
                     for name in &names {
-                        let page_num = name
-                            .trim_end_matches(".png")
+                        let page_num = std::path::Path::new(name)
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or(name)
                             .rsplit('-')
                             .next()
                             .and_then(|n| n.parse::<u32>().ok());
@@ -1383,7 +1478,7 @@ async fn run_pipeline_inner_with_snapshot(
             run_input_dir.path(),
             "pipeline_orient_",
             ".json",
-            orientation_json.as_bytes(),
+            &orientation_json,
             "orientation",
         )?;
         orientation_path = path;
@@ -1503,7 +1598,7 @@ async fn run_pipeline_inner_with_snapshot(
         run_input_dir.path(),
         "pipeline_document_",
         ".md",
-        paper_document_text.as_bytes(),
+        paper_document_text,
         "document-view",
     )?;
     let mut _bundle_tmp = None;
@@ -1512,7 +1607,7 @@ async fn run_pipeline_inner_with_snapshot(
             run_input_dir.path(),
             "pipeline_document_bundle_",
             ".json",
-            json.as_bytes(),
+            json,
             "document-bundle",
         )?;
         _bundle_tmp = Some(file);
@@ -1535,7 +1630,8 @@ async fn run_pipeline_inner_with_snapshot(
     let mut persisted_inputs: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     let mut extra_tmps: Vec<tempfile::NamedTempFile> = Vec::new();
-    let mut extra_dirs: Vec<String> = Vec::new();
+    let mut extra_sources: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for (input_index, slot) in config.extraction.extra_inputs.iter().enumerate() {
         let provided = provided_inputs
             .get(&slot.key)
@@ -1555,14 +1651,9 @@ async fn run_pipeline_inner_with_snapshot(
                 continue;
             }
         };
-        let input_path = std::path::Path::new(path);
-        let read_root = if input_path.is_dir() {
-            Some(input_path)
-        } else {
-            input_path.parent()
-        };
-        if let Some(dir) = read_root {
-            extra_dirs.push(dir.to_string_lossy().to_string());
+        extra_sources.insert(slot.key.clone(), path.to_string());
+        if let Some(writer) = run_writer.as_mut() {
+            let _ = writer.record_extra_input_source(&slot.key, path);
         }
         let ex = match slot.mode.as_str() {
             "folder" => extract::ingest_folder_async(path).await?,
@@ -1581,34 +1672,19 @@ async fn run_pipeline_inner_with_snapshot(
                 persisted_inputs.insert(slot.key.clone(), rel_path);
             }
         }
-        let mut tf = tempfile::Builder::new()
-            .prefix("pipeline_input_")
-            .suffix(".txt")
-            .tempfile_in(run_input_dir.path())
-            .map_err(|e| format!("Failed to create temp file for input '{}': {e}", slot.key))?;
-        tf.write_all(ex.text.as_bytes())
-            .map_err(|e| format!("Failed to write input '{}': {e}", slot.key))?;
-        tf.flush().ok();
-        let p = crate::pipeline::claude::normalize_cli_root(&tf.path().to_string_lossy())
-            .ok_or_else(|| format!("Failed to resolve temp file for input '{}'", slot.key))?;
+        let (tf, p) = write_run_input_file(
+            run_input_dir.path(),
+            "pipeline_input_",
+            ".txt",
+            &ex.text,
+            &format!("input '{}'", slot.key),
+        )?;
         resolved_inputs.insert(slot.key.clone(), p);
         extra_tmps.push(tf);
         app.emit_event("pipeline:log", serde_json::json!({
             "line": format!("Extra input '{}' extracted via {} ({} chars)", slot.key, ex.method, ex.text.len())
         })).ok();
     }
-    // Register only this run's exact readable roots. In particular, do not
-    // grant the whole OS temp directory merely because our private temp root
-    // lives beneath it.
-    let mut api_read_dirs = vec![
-        source_dir.clone(),
-        run_input_dir.path().to_string_lossy().to_string(),
-    ];
-    api_read_dirs.extend(extra_dirs.iter().cloned());
-    if let Some(dir) = &artifact_write_dir {
-        api_read_dirs.push(dir.clone());
-    }
-    crate::pipeline::api_common::set_allowed_dirs(api_read_dirs);
     if is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
@@ -1625,7 +1701,7 @@ async fn run_pipeline_inner_with_snapshot(
         &survey_hint,
         &variables,
         &resolved_inputs,
-        &extra_dirs,
+        &extra_sources,
         &std::collections::HashMap::new(), // no preloaded steps for a fresh run
         artifact_write_dir.as_deref(),
         &settings,
@@ -1634,7 +1710,6 @@ async fn run_pipeline_inner_with_snapshot(
     drop(extra_tmps); // keep temp files alive until steps have run
 
     // Steps are done — close the write window before rendering/reconciling.
-    crate::pipeline::api_common::set_write_dir(None);
 
     if is_cancelled() {
         return Err("Pipeline cancelled".into());
@@ -1678,6 +1753,7 @@ async fn run_pipeline_inner_with_snapshot(
             profile_name,
             variables,
             extra_inputs: persisted_inputs,
+            extra_input_sources: extra_sources,
             parent_run_id: None,
         },
     ))
@@ -1830,7 +1906,6 @@ async fn rerun_run_inner(
                 .unwrap_or_default()
         }
     };
-    crate::pipeline::api_common::set_allowed_dirs(vec![source_dir.clone()]);
 
     // Active profile drives the re-run (edited prompts take effect).
     let (config, profile_name) =
@@ -1905,6 +1980,7 @@ async fn rerun_run_inner(
         "line": format!("Re-run of {parent_run_id}: reusing {} step(s), re-running the rest", preloaded.len())
     })).ok();
 
+    let extra_input_sources = parent.extra_input_sources.clone();
     let (mut run_writer, artifact_write_dir) = create_run_workspace(
         app,
         &parent_report.paper_hash,
@@ -1918,7 +1994,13 @@ async fn rerun_run_inner(
             parent_run_id: Some(parent_run_id.to_string()),
             ..Default::default()
         },
+        None,
     );
+    if let Some(writer) = run_writer.as_mut() {
+        for (key, path) in &extra_input_sources {
+            let _ = writer.record_extra_input_source(key, path);
+        }
+    }
     let resumed_extraction = crate::models::ExtractionResult {
         text: extracted_text.clone(),
         method: "resumed-cache".to_string(),
@@ -2021,7 +2103,7 @@ async fn rerun_run_inner(
         run_input_dir.path(),
         "pipeline_document_",
         ".md",
-        rerun_document_text.as_bytes(),
+        &rerun_document_text,
         "document-view",
     )?;
     let mut _bundle_tmp = None;
@@ -2030,7 +2112,7 @@ async fn rerun_run_inner(
             run_input_dir.path(),
             "pipeline_document_bundle_",
             ".json",
-            json.as_bytes(),
+            json,
             "document-bundle",
         )?;
         _bundle_tmp = Some(file);
@@ -2044,7 +2126,7 @@ async fn rerun_run_inner(
         run_input_dir.path(),
         "pipeline_orient_",
         ".json",
-        orient_json.as_bytes(),
+        &orient_json,
         "orientation",
     )?;
 
@@ -2083,19 +2165,14 @@ async fn rerun_run_inner(
                 persisted_inputs.insert(slot.key.clone(), rel_path);
             }
         }
-        let mut temp = tempfile::Builder::new()
-            .prefix("pipeline_input_")
-            .suffix(".txt")
-            .tempfile_in(run_input_dir.path())
-            .map_err(|e| format!("Failed to restore input '{}': {e}", slot.key))?;
-        temp.write_all(content.as_bytes())
-            .map_err(|e| format!("Failed to restore input '{}': {e}", slot.key))?;
-        temp.flush().ok();
-        resolved_inputs.insert(
-            slot.key.clone(),
-            crate::pipeline::claude::normalize_cli_root(&temp.path().to_string_lossy())
-                .ok_or_else(|| format!("Failed to resolve restored input '{}'", slot.key))?,
-        );
+        let (temp, path) = write_run_input_file(
+            run_input_dir.path(),
+            "pipeline_input_",
+            ".txt",
+            &content,
+            &format!("restored input '{}'", slot.key),
+        )?;
+        resolved_inputs.insert(slot.key.clone(), path);
         extra_tmps.push(temp);
     }
 
@@ -2104,15 +2181,6 @@ async fn rerun_run_inner(
         .unwrap_or_default();
     let survey_hint = crate::models::survey_hint(&orientation_value);
     let variables = parent.variables.clone();
-
-    let mut api_read_dirs = vec![
-        source_path.clone(),
-        run_input_dir.path().to_string_lossy().to_string(),
-    ];
-    if let Some(dir) = &artifact_write_dir {
-        api_read_dirs.push(dir.clone());
-    }
-    crate::pipeline::api_common::set_allowed_dirs(api_read_dirs);
 
     let result = executor::execute_steps(
         app,
@@ -2126,14 +2194,13 @@ async fn rerun_run_inner(
         &survey_hint,
         &variables,
         &resolved_inputs,
-        &[], // restored named inputs already live in the private run temp root
+        &extra_input_sources,
         &preloaded,
         artifact_write_dir.as_deref(),
         &settings,
     )
     .await?;
     drop(extra_tmps);
-    crate::pipeline::api_common::set_write_dir(None);
     if is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
@@ -2164,6 +2231,7 @@ async fn rerun_run_inner(
             profile_name,
             variables,
             extra_inputs: persisted_inputs,
+            extra_input_sources,
             parent_run_id: Some(parent_run_id.to_string()),
         },
     ))
@@ -2182,6 +2250,14 @@ pub async fn read_artifact(
     rel_path: String,
 ) -> Result<crate::runs::ArtifactContent, String> {
     crate::runs::read_artifact(&run_id, &rel_path)
+}
+
+#[tauri::command]
+pub async fn read_page_artifact(
+    run_id: String,
+    page: u32,
+) -> Result<crate::runs::ArtifactContent, String> {
+    crate::runs::read_page_artifact(&run_id, page)
 }
 
 /// The structured report for a past run (for run-vs-run comparison).
@@ -3428,6 +3504,22 @@ mod tests {
         assert_eq!(basename("/papers/main.pdf"), "main.pdf");
         assert_eq!(basename("relative.tex"), "relative.tex");
         assert_eq!(basename(""), "");
+    }
+
+    #[test]
+    fn model_readable_temp_files_exclude_span_markup() {
+        let root = tempfile::tempdir().unwrap();
+        let (file, _) = write_run_input_file(
+            root.path(),
+            "context_",
+            ".md",
+            r#"<span id="page-1">Readable text</span>"#,
+            "test context",
+        )
+        .unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+
+        assert_eq!(content, "Readable text");
     }
 
     #[test]

@@ -43,9 +43,16 @@ Each new document run records:
 | `context/document.md` | Full readable document with stable node markers |
 | `context/blocks.jsonl` | One semantic node per line for streaming/indexing |
 | `context/extracted_text.md` | Legacy extraction view for compatibility |
-| `artifacts/pages/*` | 150-DPI page renders, capped at 300 pages |
+| `artifacts/pages/*` | Compact 120-DPI JPEG page renders, capped at 300 pages |
 | `artifacts/figures/*` | Figures emitted by PDF extraction |
 | `artifacts/document/figures/*` | Original TeX/DOCX figure media |
+
+Completed runs keep the page files for agent inspection and re-runs but replace
+their individual manifest entries with one compact page index. The artifact
+viewer materializes only the current 25-page navigation window and reads a page
+only after selection. Opening the Sources tab loads the manifest alone; no
+artifact body is fetched until the reader chooses one. Interrupted and older
+manifests retain ordinary page entries and remain compatible.
 
 Re-runs preserve the parent's canonical bundle and copy its visual assets into
 the new run. Runs created before bundle v1 remain resumable: Pipeline builds a
@@ -102,14 +109,22 @@ This boundary is important:
 
 ## Model access
 
-Primary document access is a pipeline capability, not a profile option.
-Every step receives:
+Primary document access is selected per step. A profile may expose any subset
+of four independently useful representations:
 
-- the readable `document.md` path as its normal input;
-- the canonical bundle path through `{document_bundle}`;
-- an artifact-root hint for resolving each asset's `rel_path`;
-- `Read` plus `ReadDocumentAsset`, regardless of the profile's optional tool
-  list.
+- `primary.text`: a private staged copy of readable `document.md`;
+- `primary.structure`: a private staged copy of the canonical bundle through
+  `{document_bundle}`;
+- `primary.visuals`: the run's page, figure, and document-media roots plus the
+  artifact-root hint needed to resolve bundle `rel_path` values;
+- `primary.source`: the original file or exact source folder selected by the
+  user.
+
+The resolver constructs a private artifact view for every call. Unselected
+representations are absent from its prompt placeholders, generated artifact
+manifest, filesystem read roots, and shared-context cache. `Read` is derived
+from the resulting view, while `ReadDocumentAsset` is derived specifically from
+`primary.visuals`; neither is a profile-level tool permission.
 
 For direct APIs, `ReadDocumentAsset` validates the requested path against the
 run's allowed roots and returns a real multimodal image block:
@@ -119,8 +134,9 @@ run's allowed roots and returns a real multimodal image block:
 - Google: `inlineData` after the function response.
 
 Claude Code maps the capability to its native multimodal `Read` tool. Codex
-and Gemini CLI retain their native workspace read behavior. Text, image, PDF,
-call-count, and cumulative byte limits remain enforced.
+and Gemini CLI receive the same selected roots through their native workspace
+controls. Text, image, PDF, call-count, and cumulative byte limits remain
+enforced.
 
 ## Visual QA
 

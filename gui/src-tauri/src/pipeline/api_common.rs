@@ -205,23 +205,35 @@ impl Default for WriteToolDef {
 
 // ── Tool execution ─────────────────────────────────────────────────
 
-/// Allowed directories for API tool reads, set before each pipeline run.
-/// This restricts the LLM to reading only temp files and the paper's source directory.
-static ALLOWED_DIRS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// Per-provider-call filesystem authority. Keeping it owned by the call is
+/// what allows parallel steps to receive disjoint artifact views.
+#[derive(Debug, Clone, Default)]
+pub struct ToolAccess {
+    read_roots: Vec<std::path::PathBuf>,
+    write_root: Option<std::path::PathBuf>,
+}
 
-/// Set the allowed directories for file reads via the direct API path.
-/// Call this before starting a pipeline run.
-pub fn set_allowed_dirs(dirs: Vec<String>) {
-    if let Ok(mut allowed) = ALLOWED_DIRS.lock() {
-        *allowed = dirs;
+impl ToolAccess {
+    pub fn new(read_roots: &[&str], write_root: Option<&str>) -> Self {
+        let write_root = write_root
+            .filter(|root| !root.trim().is_empty())
+            .map(std::path::PathBuf::from);
+        let mut readable: Vec<std::path::PathBuf> = read_roots
+            .iter()
+            .filter(|root| !root.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+        if let Some(root) = write_root.as_ref() {
+            readable.push(root.clone());
+        }
+        Self {
+            read_roots: readable,
+            write_root,
+        }
     }
 }
 
-/// The single directory Write tool calls may target, set before each run
-/// (the run's `artifacts/` dir). `None` disables the Write tool entirely.
-static WRITE_DIR: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
-
-/// Write calls consumed this run, reset by `set_write_dir`.
+/// Write calls consumed this run, reset when a run workspace is created.
 static WRITE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static WRITE_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -288,12 +300,9 @@ impl Drop for WriteReservation {
     }
 }
 
-/// Set (or clear) the directory Write tool calls are confined to.
-/// Call this before starting a pipeline run; pass `None` to disable writes.
-pub fn set_write_dir(dir: Option<std::path::PathBuf>) {
-    if let Ok(mut wd) = WRITE_DIR.lock() {
-        *wd = dir;
-    }
+/// Reset the run-wide aggregate write quota. Filesystem authority itself is
+/// per call in [`ToolAccess`].
+pub fn reset_write_budget() {
     WRITE_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
     WRITE_BYTES.store(0, std::sync::atomic::Ordering::SeqCst);
 }
@@ -302,14 +311,17 @@ pub fn set_write_dir(dir: Option<std::path::PathBuf>) {
 /// inside the configured write dir; `..` components, absolute paths outside
 /// the dir, and symlinked destinations are rejected. Parent subdirectories
 /// are created as needed.
-pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> {
-    let root = WRITE_DIR
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+pub fn write_file_for_tool(
+    access: &ToolAccess,
+    path: &str,
+    content: &str,
+) -> Result<String, String> {
+    let raw_root = access
+        .write_root
         .clone()
-        .ok_or("File writing is not enabled for this run")?;
+        .ok_or("File writing is not enabled for this step")?;
     // The run dir is created before any LLM call, so this canonicalizes.
-    let root = root
+    let root = raw_root
         .canonicalize()
         .map_err(|e| format!("Artifact directory unavailable: {e}"))?;
 
@@ -324,13 +336,8 @@ pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> 
     // of the root, since models echo back whichever form the prompt used).
     let p = std::path::Path::new(path);
     let rel = if p.is_absolute() {
-        let raw = WRITE_DIR
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-            .unwrap_or_default();
         p.strip_prefix(&root)
-            .or_else(|_| p.strip_prefix(&raw))
+            .or_else(|_| p.strip_prefix(&raw_root))
             .map(|r| r.to_path_buf())
             .map_err(|_| format!("Access denied: {path} is outside the artifact directory"))?
     } else {
@@ -407,7 +414,11 @@ pub fn write_file_for_tool(path: &str, content: &str) -> Result<String, String> 
 
 /// Validate a tool-read path: resolve symlinks, check it's under an allowed
 /// directory, and enforce a size limit.  Returns the canonical path on success.
-fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf, String> {
+fn validate_tool_path(
+    access: &ToolAccess,
+    path: &str,
+    max_size: usize,
+) -> Result<std::path::PathBuf, String> {
     let p = std::path::Path::new(path);
 
     // Resolve to canonical path to prevent traversal via symlinks or ..
@@ -418,14 +429,12 @@ fn validate_tool_path(path: &str, max_size: usize) -> Result<std::path::PathBuf,
     // Validate the path against the exact roots registered for this run. The
     // OS-wide temporary directory is deliberately not implicit: unrelated
     // applications commonly place credentials and private documents there.
-    let allowed = ALLOWED_DIRS.lock().unwrap_or_else(|e| e.into_inner());
-    let is_allowed = allowed.iter().any(|dir| {
+    let is_allowed = access.read_roots.iter().any(|dir| {
         std::path::Path::new(dir)
             .canonicalize()
             .map(|d| canonical.starts_with(&d))
             .unwrap_or(false)
     });
-    drop(allowed);
 
     if !is_allowed {
         return Err(format!(
@@ -489,9 +498,13 @@ fn read_bytes_limited(path: &std::path::Path, limit: usize) -> Result<Vec<u8>, S
     Ok(bytes)
 }
 
-fn read_file_for_tool_limited(path: &str, limit: usize) -> Result<String, String> {
+fn read_file_for_tool_limited(
+    access: &ToolAccess,
+    path: &str,
+    limit: usize,
+) -> Result<String, String> {
     let limit = MAX_READ_SIZE.min(limit);
-    let canonical = validate_tool_path(path, limit)?;
+    let canonical = validate_tool_path(access, path, limit)?;
 
     if path.to_lowercase().ends_with(".pdf") {
         return Err("Cannot read PDF as text. Use the extracted paper text instead.".into());
@@ -502,14 +515,18 @@ fn read_file_for_tool_limited(path: &str, limit: usize) -> Result<String, String
 }
 
 /// Read a PDF file and return its contents as base64-encoded bytes.
-fn read_pdf_for_tool(path: &str, limit: usize) -> Result<String, String> {
+fn read_pdf_for_tool(access: &ToolAccess, path: &str, limit: usize) -> Result<String, String> {
     let limit = MAX_PDF_SIZE.min(limit);
-    let canonical = validate_tool_path(path, limit)?;
+    let canonical = validate_tool_path(access, path, limit)?;
     let bytes = read_bytes_limited(&canonical, limit)?;
     Ok(STANDARD.encode(&bytes))
 }
 
-fn read_image_for_tool(path: &str, limit: usize) -> Result<(String, String), String> {
+fn read_image_for_tool(
+    access: &ToolAccess,
+    path: &str,
+    limit: usize,
+) -> Result<(String, String), String> {
     let extension = PathBuf::from(path)
         .extension()
         .and_then(|value| value.to_str())
@@ -525,7 +542,7 @@ fn read_image_for_tool(path: &str, limit: usize) -> Result<(String, String), Str
         }
     };
     let limit = MAX_IMAGE_SIZE.min(limit);
-    let canonical = validate_tool_path(path, limit)?;
+    let canonical = validate_tool_path(access, path, limit)?;
     let bytes = read_bytes_limited(&canonical, limit)?;
     Ok((STANDARD.encode(bytes), media_type.to_string()))
 }
@@ -882,6 +899,7 @@ pub async fn anthropic_tool_loop(
     mut request: AnthropicRequest,
     timeout_secs: u64,
     label: &str,
+    access: &ToolAccess,
 ) -> Result<(String, Usage), String> {
     let mut usage = Usage::default();
     let mut tool_budget = ToolBudget::default();
@@ -958,7 +976,8 @@ pub async fn anthropic_tool_loop(
         for block in &body.content {
             if let AnthropicContentBlock::ToolUse { id, name, input } = block {
                 let result =
-                    execute_tool(app, name, input, label, iteration, &mut tool_budget).await;
+                    execute_tool(app, name, input, label, iteration, &mut tool_budget, access)
+                        .await;
                 let (content, is_error) = match result {
                     ToolResult::Text(text) => (serde_json::Value::String(text), None),
                     ToolResult::PdfBase64(data) => (
@@ -1040,6 +1059,7 @@ pub async fn openai_tool_loop(
     timeout_secs: u64,
     label: &str,
     drop_tools_on_400: bool,
+    access: &ToolAccess,
 ) -> Result<(String, Usage), String> {
     let mut usage = Usage::default();
     let mut tool_budget = ToolBudget::default();
@@ -1134,6 +1154,7 @@ pub async fn openai_tool_loop(
                         label,
                         iteration,
                         &mut tool_budget,
+                        access,
                     )
                     .await;
                     match result {
@@ -1217,6 +1238,7 @@ pub async fn google_tool_loop(
     mut request: GoogleRequest,
     timeout_secs: u64,
     label: &str,
+    access: &ToolAccess,
 ) -> Result<(String, Usage), String> {
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
@@ -1317,8 +1339,16 @@ pub async fn google_tool_loop(
             // Build function response parts
             let mut response_parts: Vec<GooglePart> = Vec::with_capacity(function_calls.len());
             for fc in function_calls {
-                let result =
-                    execute_tool(app, &fc.name, &fc.args, label, iteration, &mut tool_budget).await;
+                let result = execute_tool(
+                    app,
+                    &fc.name,
+                    &fc.args,
+                    label,
+                    iteration,
+                    &mut tool_budget,
+                    access,
+                )
+                .await;
                 let (content, image) = match result {
                     ToolResult::Text(text) => (text, None),
                     ToolResult::PdfBase64(_) => (
@@ -1413,6 +1443,7 @@ async fn execute_tool(
     label: &str,
     iteration: usize,
     budget: &mut ToolBudget,
+    access: &ToolAccess,
 ) -> ToolResult {
     match name {
         "Read" => {
@@ -1440,7 +1471,10 @@ async fn execute_tool(
             budget.read_calls += 1;
             if path.to_lowercase().ends_with(".pdf") {
                 let owned_path = path.to_string();
-                match run_blocking_tool(move || read_pdf_for_tool(&owned_path, remaining)).await {
+                let access = access.clone();
+                match run_blocking_tool(move || read_pdf_for_tool(&access, &owned_path, remaining))
+                    .await
+                {
                     Ok(data) => {
                         budget.read_bytes += data.len().saturating_mul(3) / 4;
                         ToolResult::PdfBase64(data)
@@ -1449,8 +1483,11 @@ async fn execute_tool(
                 }
             } else {
                 let owned_path = path.to_string();
-                match run_blocking_tool(move || read_file_for_tool_limited(&owned_path, remaining))
-                    .await
+                let access = access.clone();
+                match run_blocking_tool(move || {
+                    read_file_for_tool_limited(&access, &owned_path, remaining)
+                })
+                .await
                 {
                     Ok(content) => {
                         budget.read_bytes += content.len();
@@ -1487,7 +1524,10 @@ async fn execute_tool(
             }
             budget.read_calls += 1;
             let owned_path = path.to_string();
-            match run_blocking_tool(move || read_image_for_tool(&owned_path, remaining)).await {
+            let access = access.clone();
+            match run_blocking_tool(move || read_image_for_tool(&access, &owned_path, remaining))
+                .await
+            {
                 Ok((data, media_type)) => {
                     budget.read_bytes += data.len().saturating_mul(3) / 4;
                     ToolResult::ImageBase64 { data, media_type }
@@ -1512,7 +1552,11 @@ async fn execute_tool(
             );
             let owned_path = path.to_string();
             let owned_content = content.to_string();
-            match run_blocking_tool(move || write_file_for_tool(&owned_path, &owned_content)).await
+            let access = access.clone();
+            match run_blocking_tool(move || {
+                write_file_for_tool(&access, &owned_path, &owned_content)
+            })
+            .await
             {
                 Ok(msg) => ToolResult::Text(msg),
                 Err(e) => ToolResult::Error(e),
@@ -1582,25 +1626,39 @@ mod tests {
         tmp.write_all(b"paper text").unwrap();
         tmp.flush().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
-        set_allowed_dirs(vec![tmp
-            .path()
-            .parent()
-            .unwrap()
-            .to_string_lossy()
-            .to_string()]);
-        validate_tool_path(&path, 1024).expect("temp file should be readable");
-        set_allowed_dirs(vec![]);
+        let root = tmp.path().parent().unwrap().to_string_lossy().to_string();
+        let access = ToolAccess::new(&[root.as_str()], None);
+        validate_tool_path(&access, &path, 1024).expect("temp file should be readable");
     }
 
     #[test]
     fn validate_tool_path_rejects_outside_allowed_dirs() {
         let _guard = READ_DIR_TEST_MUTEX.lock().unwrap();
         // Cargo.toml in the crate root exists but is neither in the temp dir
-        // nor in ALLOWED_DIRS, so it must be denied.
+        // nor in the call's read grants, so it must be denied.
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
-        set_allowed_dirs(vec![]);
-        let err = validate_tool_path(path, usize::MAX).unwrap_err();
+        let err = validate_tool_path(&ToolAccess::default(), path, usize::MAX).unwrap_err();
         assert!(err.contains("Access denied"), "{err}");
+    }
+
+    #[test]
+    fn per_call_access_grants_remain_disjoint() {
+        let _guard = READ_DIR_TEST_MUTEX.lock().unwrap();
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let first_file = first.path().join("first.md");
+        let second_file = second.path().join("second.md");
+        std::fs::write(&first_file, "first").unwrap();
+        std::fs::write(&second_file, "second").unwrap();
+        let first_root = first.path().to_string_lossy().to_string();
+        let second_root = second.path().to_string_lossy().to_string();
+        let first_access = ToolAccess::new(&[first_root.as_str()], None);
+        let second_access = ToolAccess::new(&[second_root.as_str()], None);
+
+        assert!(validate_tool_path(&first_access, &first_file.to_string_lossy(), 1024).is_ok());
+        assert!(validate_tool_path(&first_access, &second_file.to_string_lossy(), 1024).is_err());
+        assert!(validate_tool_path(&second_access, &second_file.to_string_lossy(), 1024).is_ok());
+        assert!(validate_tool_path(&second_access, &first_file.to_string_lossy(), 1024).is_err());
     }
 
     #[test]
@@ -1609,15 +1667,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let image = dir.path().join("figure.png");
         std::fs::write(&image, b"\x89PNG\r\n\x1a\nvisual-bytes").unwrap();
-        set_allowed_dirs(vec![dir.path().to_string_lossy().to_string()]);
+        let root = dir.path().to_string_lossy().to_string();
+        let access = ToolAccess::new(&[root.as_str()], None);
         let (data, media_type) =
-            read_image_for_tool(&image.to_string_lossy(), MAX_IMAGE_SIZE).unwrap();
+            read_image_for_tool(&access, &image.to_string_lossy(), MAX_IMAGE_SIZE).unwrap();
         assert_eq!(media_type, "image/png");
         assert_eq!(
             STANDARD.decode(data).unwrap(),
             b"\x89PNG\r\n\x1a\nvisual-bytes"
         );
-        set_allowed_dirs(Vec::new());
     }
 
     #[test]
@@ -1672,15 +1730,15 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 
-    // Write-tool tests share the WRITE_DIR static, so they run under one
-    // test to avoid interleaving set_write_dir calls across threads.
     #[test]
     fn write_tool_confinement() {
         let dir = tempfile::tempdir().unwrap();
-        set_write_dir(Some(dir.path().to_path_buf()));
+        reset_write_budget();
+        let root = dir.path().to_string_lossy().to_string();
+        let access = ToolAccess::new(&[], Some(&root));
 
         // Relative path lands inside the dir, subdirs created.
-        let msg = write_file_for_tool("steps/report.md", "# hi").unwrap();
+        let msg = write_file_for_tool(&access, "steps/report.md", "# hi").unwrap();
         assert!(msg.contains("report.md"));
         assert_eq!(
             std::fs::read_to_string(dir.path().join("steps/report.md")).unwrap(),
@@ -1689,23 +1747,23 @@ mod tests {
 
         // Absolute path inside the dir is accepted (raw, non-canonical form).
         let abs = dir.path().join("notes.md");
-        write_file_for_tool(&abs.to_string_lossy(), "n").unwrap();
+        write_file_for_tool(&access, &abs.to_string_lossy(), "n").unwrap();
         assert!(abs.exists());
 
         // Traversal and outside-absolute paths are rejected.
-        assert!(write_file_for_tool("../escape.md", "x")
+        assert!(write_file_for_tool(&access, "../escape.md", "x")
             .unwrap_err()
             .contains("Access denied"));
-        assert!(write_file_for_tool("a/../../escape.md", "x")
+        assert!(write_file_for_tool(&access, "a/../../escape.md", "x")
             .unwrap_err()
             .contains("Access denied"));
         let outside = std::env::temp_dir().join("pipeline_write_escape.md");
-        assert!(write_file_for_tool(&outside.to_string_lossy(), "x").is_err());
+        assert!(write_file_for_tool(&access, &outside.to_string_lossy(), "x").is_err());
         assert!(!outside.exists());
 
         // Oversized content is rejected.
         let big = "x".repeat(MAX_WRITE_SIZE + 1);
-        assert!(write_file_for_tool("big.md", &big)
+        assert!(write_file_for_tool(&access, "big.md", &big)
             .unwrap_err()
             .contains("too large"));
 
@@ -1716,7 +1774,7 @@ mod tests {
             std::fs::write(&target, "t").unwrap();
             let link = dir.path().join("link.md");
             std::os::unix::fs::symlink(&target, &link).unwrap();
-            assert!(write_file_for_tool("link.md", "x")
+            assert!(write_file_for_tool(&access, "link.md", "x")
                 .unwrap_err()
                 .contains("symlink"));
 
@@ -1725,7 +1783,7 @@ mod tests {
             let fifo = dir.path().join("fifo.md");
             let fifo_c = CString::new(fifo.as_os_str().as_bytes()).unwrap();
             assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
-            assert!(write_file_for_tool("fifo.md", "x")
+            assert!(write_file_for_tool(&access, "fifo.md", "x")
                 .unwrap_err()
                 .contains("not a regular file"));
         }
@@ -1735,7 +1793,6 @@ mod tests {
         assert_eq!(WRITE_BYTES.load(std::sync::atomic::Ordering::SeqCst), 5);
 
         // Disabled state rejects everything.
-        set_write_dir(None);
-        assert!(write_file_for_tool("steps/report.md", "x").is_err());
+        assert!(write_file_for_tool(&ToolAccess::default(), "steps/report.md", "x").is_err());
     }
 }

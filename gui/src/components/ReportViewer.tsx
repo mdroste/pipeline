@@ -1,10 +1,20 @@
-import React, { useMemo, useRef } from "react";
+import React, { memo, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { useFindBar } from "../hooks/useFindBar";
-import { normalizeMathDelimiters } from "../lib/mathMarkdown";
+import {
+  normalizeMathDelimiters,
+  stripPresentationalHtml,
+} from "../lib/mathMarkdown";
+import {
+  rehypeValidateMath,
+  remarkRepairMath,
+  REPORT_KATEX_OPTIONS,
+} from "../lib/mathRepair";
+import ResizeHandle from "./ResizeHandle";
+import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 
 interface Props {
   markdown: string;
@@ -74,10 +84,79 @@ function slugify(text: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
-export default function ReportViewer({ markdown }: Props) {
+/**
+ * Reduce an inline Markdown heading to the label a reader expects in the TOC.
+ * Report headings can contain model-authored HTML and Markdown decoration, but
+ * the navigation should always be compact plain text.
+ */
+export function plainHeadingText(markdown: string): string {
+  const protectedText: string[] = [];
+  const protect = (value: string) => {
+    const token = `\uE000${protectedText.length}\uE001`;
+    protectedText.push(value);
+    return token;
+  };
+
+  let text = markdown
+    .trim()
+    .replace(/\s+#+\s*$/, "")
+    // Preserve literal formatting characters in code spans and escapes.
+    .replace(/(`+)(.*?)\1/g, (_match, _ticks, value: string) => protect(value))
+    .replace(
+      /\\([\\`*_[\]{}()#+\-.!<>])/g,
+      (_match, value: string) => protect(value),
+    )
+    .replace(/<!--.*?-->/g, "")
+    .replace(/<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*?)?\s*\/?>/g, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, "$1");
+
+  // Remove paired strong/emphasis/strikethrough delimiters, including nesting.
+  let previous = "";
+  while (text !== previous) {
+    previous = text;
+    text = text
+      .replace(/(\*\*|__|~~)(.+?)\1/g, "$2")
+      .replace(/(^|[\s([{"'])([*_])(?=\S)(.+?\S)\2(?=$|[\s)\]}"'.,!?;:])/g, "$1$3");
+  }
+
+  if (typeof document !== "undefined" && text.includes("&")) {
+    const decoder = document.createElement("textarea");
+    decoder.innerHTML = text;
+    text = decoder.value;
+  }
+
+  return text
+    .replace(/\uE000(\d+)\uE001/g, (_match, index: string) => {
+      return protectedText[Number(index)] ?? "";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Remove Pipeline's private markdown boundary tokens before presentation. */
+export function stripInternalReportMarkers(markdown: string): string {
+  return markdown.replace(
+    /<!--\s*PIPELINE RUN DETAILS (?:START|END)\s*-->/gi,
+    "",
+  );
+}
+
+function ReportViewer({ markdown }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const [contentsOpen, setContentsOpen] = useState(true);
+  const [contentsWidth, setContentsWidth] = usePersistentPanelWidth(
+    "pipeline.ui.reportContentsWidth",
+    240,
+    184,
+    360,
+  );
   const normalizedMarkdown = useMemo(
-    () => normalizeMathDelimiters(markdown),
+    () =>
+      normalizeMathDelimiters(
+        stripPresentationalHtml(stripInternalReportMarkers(markdown)),
+      ),
     [markdown],
   );
   const find = useFindBar(contentRef, normalizedMarkdown);
@@ -85,11 +164,14 @@ export default function ReportViewer({ markdown }: Props) {
   // Extract headings for table of contents
   const headings = useMemo(() => {
     const matches = normalizedMarkdown.matchAll(/^(#{1,3})\s+(.+)$/gm);
-    return Array.from(matches).map((m) => ({
-      level: m[1].length,
-      text: m[2],
-      id: slugify(m[2]),
-    }));
+    return Array.from(matches).map((m) => {
+      const text = plainHeadingText(m[2]);
+      return {
+        level: m[1].length,
+        text,
+        id: slugify(text),
+      };
+    });
   }, [normalizedMarkdown]);
 
   return (
@@ -116,11 +198,25 @@ export default function ReportViewer({ markdown }: Props) {
         </div>
       )}
       {/* Table of contents */}
-      {headings.length > 3 && (
-        <nav className="toc-nav">
-          <h4 className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-4">
-            Contents
-          </h4>
+      {headings.length > 3 && contentsOpen && (
+        <nav className="toc-nav relative" style={{ width: contentsWidth }}>
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+              Contents
+            </h4>
+            <button
+              type="button"
+              onClick={() => setContentsOpen(false)}
+              aria-label="Hide table of contents"
+              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
+                         dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            >
+              <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m9 6 6 6-6 6" />
+              </svg>
+            </button>
+          </div>
           <ul className="space-y-0.5">
             {headings
               .filter((h) => h.level <= 2)
@@ -137,7 +233,30 @@ export default function ReportViewer({ markdown }: Props) {
                 </li>
               ))}
           </ul>
+          <ResizeHandle
+            currentWidth={contentsWidth}
+            defaultWidth={240}
+            label="Resize table of contents"
+            min={184}
+            max={360}
+            onResize={setContentsWidth}
+          />
         </nav>
+      )}
+      {headings.length > 3 && !contentsOpen && (
+        <button
+          type="button"
+          onClick={() => setContentsOpen(true)}
+          aria-label="Show table of contents"
+          className="hidden w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-5 text-gray-400
+                     hover:bg-gray-50 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2
+                     focus-visible:ring-inset focus-visible:ring-gray-400 dark:border-gray-800 dark:hover:bg-gray-900
+                     dark:hover:text-gray-200 lg:flex"
+        >
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h11M8 12h11M8 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
+          </svg>
+        </button>
       )}
 
       {/* Report content */}
@@ -153,21 +272,32 @@ export default function ReportViewer({ markdown }: Props) {
                   </div>
                 )}
                 <ReactMarkdown
-                remarkPlugins={fallback ? [remarkGfm] : [remarkGfm, remarkMath]}
-                rehypePlugins={fallback ? [] : [rehypeKatex]}
+                remarkPlugins={
+                  fallback
+                    ? [remarkGfm]
+                    : [remarkGfm, remarkMath, remarkRepairMath]
+                }
+                rehypePlugins={
+                  fallback
+                    ? []
+                    : [
+                        rehypeValidateMath,
+                        [rehypeKatex, REPORT_KATEX_OPTIONS],
+                      ]
+                }
                 components={{
-                  h1: ({ children, ...props }) => (
-                    <h1 id={slugify(extractText(children))} {...props}>
+                  h1: ({ children, node: _node, ...props }) => (
+                    <h1 id={slugify(plainHeadingText(extractText(children)))} {...props}>
                       {children}
                     </h1>
                   ),
-                  h2: ({ children, ...props }) => (
-                    <h2 id={slugify(extractText(children))} {...props}>
+                  h2: ({ children, node: _node, ...props }) => (
+                    <h2 id={slugify(plainHeadingText(extractText(children)))} {...props}>
                       {children}
                     </h2>
                   ),
-                  h3: ({ children, ...props }) => (
-                    <h3 id={slugify(extractText(children))} {...props}>
+                  h3: ({ children, node: _node, ...props }) => (
+                    <h3 id={slugify(plainHeadingText(extractText(children)))} {...props}>
                       {children}
                     </h3>
                   ),
@@ -201,3 +331,5 @@ export default function ReportViewer({ markdown }: Props) {
     </div>
   );
 }
+
+export default memo(ReportViewer);

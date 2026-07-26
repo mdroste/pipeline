@@ -123,7 +123,10 @@
       "Bash(git branch *)",
       "Bash(cargo run *)",
       "Bash(echo \"exit \\(should be 0, no ambiguity error\\): $?\")",
-      "Bash(cargo metadata *)"
+      "Bash(cargo metadata *)",
+      "Read(//Users/Mike/.codex/**)",
+      "Bash(mdfind -name \"AGENTS.md\")",
+      "Bash(git diff *)"
     ]
   }
 }

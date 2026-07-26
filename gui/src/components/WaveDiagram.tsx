@@ -1,11 +1,11 @@
 // Compact pipeline shape visualization rendered above the step list.
 //
-// Layout: vertical stack of waves, top-to-bottom along execution order.
+// Layout: vertical stack of dependency-ready waves, top-to-bottom.
 // Within a parallel wave, branches flow horizontally and wrap to additional
 // rows when they exceed the sidebar width — so the diagram grows downward,
 // never sideways. A single thin vertical line between waves communicates
-// "all of these complete before the next runs". Clicking any node selects
-// the corresponding step in the editor.
+// "these are the next ready calls". Clicking any node selects the
+// corresponding step in the editor.
 
 import { useState } from "react";
 import { computeWaves } from "../lib/pipelineHelpers";

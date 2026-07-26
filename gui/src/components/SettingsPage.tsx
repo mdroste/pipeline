@@ -602,7 +602,11 @@ function ExtractionSection({
   settings: Settings;
   setSettings: (s: Settings) => void;
 }) {
-  const useMarker = settings.pdf_extractor === "marker";
+  const markerOcrMode = settings.marker_disable_ocr
+    ? "disabled"
+    : settings.marker_force_ocr
+      ? "forced"
+      : "auto";
 
   return (
     <>
@@ -616,9 +620,9 @@ function ExtractionSection({
           <div className="space-y-2">
             {(
               [
-                ["llm", "LLM (default)", "Your configured provider reads the PDF and extracts it to Markdown, verified page-by-page. Best quality."],
-                ["paddleocr-vl", "Local engine: PaddleOCR-VL 1.6 Q8", "Fast, high-quality local extraction for text, equations, tables, and scans. About 1.9 GB; install it below."],
-                ["marker", "Local engine: marker-pdf", "Local extraction, no LLM cost. Install it below."],
+                ["llm", "LLM", "Your configured provider reads the PDF and extracts it to Markdown in bounded page ranges. Most faithful, but slower and potentially costly."],
+                ["paddleocr-vl", "Local engine: PaddleOCR-VL 1.6 Q8", "Optimized local extraction for text, equations, tables, and scans, with page retries and resumable checkpoints. About 1.9 GB."],
+                ["marker", "Local engine: marker-pdf", "Fast local extraction with automatic OCR detection and reusable output caching. No LLM cost."],
                 ["pdftotext", "pdftotext (basic)", "Fast, but equations are lost."],
               ] as const
             ).map(([value, label, desc]) => (
@@ -653,32 +657,316 @@ function ExtractionSection({
           </div>
         </Field>
 
-        {/* marker-pdf options — only shown when marker is active */}
-        {useMarker && (
-          <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
+        <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
             <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 pl-4">
-              marker-pdf options
+              marker-pdf
             </p>
-            <div className="space-y-2 pl-4">
+            <div className="space-y-4 pl-4">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Used whenever a workflow selects Marker, regardless of the global extraction method above.
+              </p>
+              <Field label="OCR mode">
+                <select
+                  aria-label="Marker OCR mode"
+                  value={markerOcrMode}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      marker_disable_ocr: e.target.value === "disabled",
+                      marker_force_ocr: e.target.value === "forced",
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value="auto">Automatic — OCR only when needed</option>
+                  <option value="disabled">Embedded text only — fastest</option>
+                  <option value="forced">Force OCR — best for scans or broken text</option>
+                </select>
+              </Field>
               <Toggle
-                label="Disable OCR"
-                description="Skip optical character recognition. Much faster for PDFs with embedded text (most academic papers)."
-                checked={settings.marker_disable_ocr}
-                onChange={(v) =>
-                  setSettings({ ...settings, marker_disable_ocr: v })
-                }
-              />
-              <Toggle
-                label="Disable image extraction"
-                description="Skip extracting figure images from the PDF. Faster and smaller, but the run will retain page renders only instead of separate figure assets."
+                label="Skip figure extraction"
+                description="Faster and smaller, but the run retains page renders instead of separate figure assets."
                 checked={settings.marker_disable_images}
                 onChange={(v) =>
                   setSettings({ ...settings, marker_disable_images: v })
                 }
               />
+
+              <Field label="Layout resolution">
+                <select
+                  aria-label="Marker layout resolution"
+                  value={settings.marker_lowres_dpi}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      marker_lowres_dpi: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={72}>72 DPI — fastest</option>
+                  <option value={96}>96 DPI — recommended</option>
+                  <option value={120}>120 DPI — small-layout detail</option>
+                </select>
+              </Field>
+
+              <Field label="OCR resolution">
+                <select
+                  aria-label="Marker OCR resolution"
+                  value={settings.marker_highres_dpi}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      marker_highres_dpi: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={144}>144 DPI — faster OCR</option>
+                  <option value={192}>192 DPI — recommended</option>
+                  <option value={240}>240 DPI — fine print</option>
+                  <option value={300}>300 DPI — highest detail</option>
+                </select>
+              </Field>
+
+              <Field label="Embedded-text workers">
+                <select
+                  aria-label="Marker PDF text workers"
+                  value={settings.marker_pdftext_workers}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      marker_pdftext_workers: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={0}>Automatic (recommended)</option>
+                  <option value={1}>1 worker — lowest CPU use</option>
+                  <option value={2}>2 workers</option>
+                  <option value={4}>4 workers</option>
+                  <option value={8}>8 workers — high throughput</option>
+                  <option value={16}>16 workers — large workstation</option>
+                </select>
+              </Field>
+
+              <Field label="Layout batch">
+                <select
+                  aria-label="Marker layout batch"
+                  value={settings.marker_layout_batch_size}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      marker_layout_batch_size: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={0}>Automatic (recommended)</option>
+                  {[2, 4, 6, 8, 12, 16, 24, 32].map((value) => (
+                    <option key={value} value={value}>{value} pages</option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="OCR recognition batch">
+                <select
+                  aria-label="Marker OCR recognition batch"
+                  value={settings.marker_recognition_batch_size}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      marker_recognition_batch_size: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={0}>Automatic (recommended)</option>
+                  {[4, 8, 16, 24, 32, 48, 64, 96, 128].map((value) => (
+                    <option key={value} value={value}>{value} regions</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                  Larger batches improve throughput when memory permits. Reduce either batch after an out-of-memory error.
+                </p>
+              </Field>
             </div>
-          </div>
-        )}
+        </div>
+
+        <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
+            <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 pl-4">
+              PaddleOCR-VL
+            </p>
+            <div className="space-y-4 pl-4">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Used whenever a workflow selects PaddleOCR-VL, regardless of the global extraction method above.
+              </p>
+              <Field label="Concurrent pages">
+                <select
+                  aria-label="PaddleOCR-VL concurrent pages"
+                  value={settings.paddle_page_concurrency}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      paddle_page_concurrency: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={0}>Automatic (recommended)</option>
+                  <option value={1}>1 page — lowest memory</option>
+                  <option value={2}>2 pages — higher throughput</option>
+                  <option value={3}>3 pages — high-memory workstation</option>
+                  <option value={4}>4 pages — maximum throughput</option>
+                </select>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                  Automatic uses two slots on Apple Silicon and one elsewhere. Every slot receives a full 16K context; concurrency no longer halves a page&apos;s context.
+                </p>
+              </Field>
+
+              <Field label="Page resolution">
+                <select
+                  aria-label="PaddleOCR-VL page resolution"
+                  value={settings.paddle_render_dpi}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      paddle_render_dpi: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={120}>120 DPI — faster</option>
+                  <option value={150}>150 DPI — recommended</option>
+                  <option value={180}>180 DPI — fine print</option>
+                  <option value={200}>200 DPI — highest detail</option>
+                </select>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                  Lower resolution reduces image tokens and vision-prefill time; higher resolution helps small equations and dense tables.
+                </p>
+              </Field>
+
+              <Field label="Vision encoder batch">
+                <select
+                  aria-label="PaddleOCR-VL vision encoder batch"
+                  value={settings.paddle_mtmd_batch_tokens}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      paddle_mtmd_batch_tokens: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={0}>Automatic (recommended)</option>
+                  <option value={512}>512 tokens — lower memory</option>
+                  <option value={1024}>1,024 tokens — conservative</option>
+                  <option value={2048}>2,048 tokens — faster prefill</option>
+                  <option value={4096}>4,096 tokens — highest peak memory</option>
+                </select>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                  Larger batches can make image encoding faster when sufficient GPU memory is available. They do not reduce OCR resolution.
+                </p>
+              </Field>
+
+              <Field label="Maximum page output">
+                <select
+                  aria-label="PaddleOCR-VL maximum page output"
+                  value={settings.paddle_max_output_tokens}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      paddle_max_output_tokens: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={2048}>2,048 tokens — shorter pages</option>
+                  <option value={4096}>4,096 tokens — recommended</option>
+                  <option value={8192}>8,192 tokens — unusually dense pages</option>
+                </select>
+              </Field>
+
+              <Field label="Page retries">
+                <select
+                  aria-label="PaddleOCR-VL page retries"
+                  value={settings.paddle_page_retries}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      paddle_page_retries: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value={0}>No retries</option>
+                  <option value={1}>1 retry — recommended</option>
+                  <option value={2}>2 retries</option>
+                  <option value={3}>3 retries</option>
+                </select>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                  Length failures use adaptive page regions instead of repeating the same request.
+                </p>
+              </Field>
+
+              <Field label="Flash Attention">
+                <select
+                  aria-label="PaddleOCR-VL Flash Attention"
+                  value={settings.paddle_flash_attention}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      paddle_flash_attention: e.target.value,
+                    })
+                  }
+                  className={selectClass}
+                >
+                  <option value="auto">Automatic (default)</option>
+                  <option value="on">On</option>
+                  <option value="off">Off</option>
+                </select>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                  Automatic is safest across platforms. Force it on when benchmarking a supported GPU; turn it off only for compatibility troubleshooting.
+                </p>
+              </Field>
+
+              <p className="text-xs text-gray-500 dark:text-gray-400 rounded-md bg-gray-50 dark:bg-gray-800/50 p-3">
+                These controls change throughput and memory use, not the DocumentBundle format. Restart the extraction by starting a new run after saving.
+              </p>
+            </div>
+        </div>
+
+        <Toggle
+          label="Reuse verified extraction cache"
+          description="Reuse exact source-and-settings matches. Paddle resumes page checkpoints; Marker retains its Markdown and figures; verified LLM transcriptions can be reused without another provider call."
+          checked={settings.reuse_pdf_extraction_cache}
+          onChange={(v) =>
+            setSettings({ ...settings, reuse_pdf_extraction_cache: v })
+          }
+        />
+
+        <Field label="Extraction time budget">
+          <select
+            aria-label="PDF extraction time budget"
+            value={settings.pdf_extraction_timeout_secs}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                pdf_extraction_timeout_secs: parseInt(e.target.value, 10),
+              })
+            }
+            className={selectClass}
+          >
+            <option value={300}>5 minutes</option>
+            <option value={600}>10 minutes</option>
+            <option value={900}>15 minutes — recommended</option>
+            <option value={1800}>30 minutes</option>
+            <option value={3600}>60 minutes</option>
+          </select>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+            Applies to the complete extraction stage, including retries. An incomplete document fails before orientation instead of silently continuing.
+          </p>
+        </Field>
 
         <EnginesPanel />
       </div>

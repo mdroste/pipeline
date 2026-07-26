@@ -20,7 +20,21 @@ function makeSettings(): Settings {
     gemini_model: "",
     pdf_extractor: "llm",
     marker_disable_ocr: false,
+    marker_force_ocr: false,
     marker_disable_images: true,
+    marker_lowres_dpi: 96,
+    marker_highres_dpi: 192,
+    marker_pdftext_workers: 0,
+    marker_layout_batch_size: 0,
+    marker_recognition_batch_size: 0,
+    paddle_page_concurrency: 0,
+    paddle_mtmd_batch_tokens: 0,
+    paddle_flash_attention: "auto",
+    paddle_max_output_tokens: 4096,
+    paddle_page_retries: 1,
+    paddle_render_dpi: 150,
+    pdf_extraction_timeout_secs: 900,
+    reuse_pdf_extraction_cache: true,
     verbose_logging: false,
     step_timeout_secs: 1200,
     max_retries: 1,
@@ -68,6 +82,89 @@ describe("SettingsPage", () => {
         name: /Local engine: PaddleOCR-VL 1\.6 Q8/,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps Marker tuning available when another global extractor is selected", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+
+    expect(screen.getByLabelText("Marker OCR mode")).toHaveValue("auto");
+    await user.selectOptions(screen.getByLabelText("Marker OCR mode"), "forced");
+    await user.selectOptions(screen.getByLabelText("Marker layout resolution"), "72");
+    await user.selectOptions(screen.getByLabelText("Marker OCR resolution"), "144");
+    await user.selectOptions(screen.getByLabelText("Marker PDF text workers"), "8");
+    await user.selectOptions(screen.getByLabelText("Marker layout batch"), "12");
+    await user.selectOptions(screen.getByLabelText("Marker OCR recognition batch"), "32");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: {
+          ...makeSettings(),
+          marker_force_ocr: true,
+          marker_lowres_dpi: 72,
+          marker_highres_dpi: 144,
+          marker_pdftext_workers: 8,
+          marker_layout_batch_size: 12,
+          marker_recognition_batch_size: 32,
+        },
+      }),
+    );
+  });
+
+  it("shows and saves PaddleOCR-VL performance controls", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+    await user.click(
+      screen.getByRole("radio", {
+        name: /Local engine: PaddleOCR-VL 1\.6 Q8/,
+      }),
+    );
+
+    await user.selectOptions(
+      screen.getByLabelText("PaddleOCR-VL concurrent pages"),
+      "2",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("PaddleOCR-VL vision encoder batch"),
+      "2048",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("PaddleOCR-VL page resolution"),
+      "120",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("PaddleOCR-VL Flash Attention"),
+      "on",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("PaddleOCR-VL maximum page output"),
+      "8192",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("PaddleOCR-VL page retries"),
+      "2",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: {
+          ...makeSettings(),
+          pdf_extractor: "paddleocr-vl",
+          paddle_page_concurrency: 2,
+          paddle_render_dpi: 120,
+          paddle_mtmd_batch_tokens: 2048,
+          paddle_flash_attention: "on",
+          paddle_max_output_tokens: 8192,
+          paddle_page_retries: 2,
+        },
+      }),
+    );
   });
 
   it("surfaces backend warnings from settings load", async () => {

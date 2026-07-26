@@ -91,10 +91,10 @@ describe("App run options", () => {
       "page",
     );
 
-    await user.click(screen.getByRole("button", { name: "Runs" }));
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
     expect(screen.queryByTestId("run-setup-panel")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Runs" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "History" })).toHaveAttribute(
       "aria-current",
       "page",
     );

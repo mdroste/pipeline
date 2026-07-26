@@ -928,9 +928,9 @@ fn request_provider_label(provider: &str, transport: &str) -> &'static str {
         ("claude", "api") => "Anthropic",
         ("claude", _) => "Claude Code",
         ("codex", "api") => "OpenAI",
-        ("codex", _) => "Codex CLI",
+        ("codex", _) => "Codex",
         ("gemini", "api") => "Google",
-        ("gemini", _) => "Gemini CLI",
+        ("gemini", _) => "Gemini",
         ("local", _) => "Local server",
         _ => "Unknown provider",
     }
@@ -1114,6 +1114,7 @@ pub async fn call_llm(
                     timeout_secs,
                     label,
                     &settings,
+                    extra_read_dirs,
                     overrides,
                 )
                 .await;
@@ -1127,6 +1128,7 @@ pub async fn call_llm(
                     timeout_secs,
                     label,
                     &settings,
+                    extra_read_dirs,
                     overrides,
                 )
                 .await;
@@ -1140,6 +1142,7 @@ pub async fn call_llm(
                     timeout_secs,
                     label,
                     &settings,
+                    extra_read_dirs,
                     overrides,
                 )
                 .await;
@@ -1155,6 +1158,7 @@ pub async fn call_llm(
                     timeout_secs,
                     label,
                     &settings,
+                    extra_read_dirs,
                     overrides,
                 )
                 .await;
@@ -1316,6 +1320,16 @@ pub fn configure_silent_command(std_cmd: &mut std::process::Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_provider_labels_do_not_repeat_the_transport() {
+        assert_eq!(request_provider_label("claude", "cli"), "Claude Code");
+        assert_eq!(request_provider_label("codex", "cli"), "Codex");
+        assert_eq!(request_provider_label("gemini", "cli"), "Gemini");
+        assert_eq!(request_provider_label("claude", "api"), "Anthropic");
+        assert_eq!(request_provider_label("codex", "api"), "OpenAI");
+        assert_eq!(request_provider_label("gemini", "api"), "Google");
+    }
 
     #[test]
     fn request_effort_reports_what_each_transport_sends() {

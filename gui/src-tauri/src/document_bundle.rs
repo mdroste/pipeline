@@ -178,18 +178,81 @@ fn mime_type(path: &Path) -> &'static str {
     }
 }
 
-fn png_dimensions(path: &Path) -> (Option<u32>, Option<u32>) {
+fn image_dimensions(path: &Path) -> (Option<u32>, Option<u32>) {
     let Ok(mut file) = crate::safety::open_regular_file(path) else {
         return (None, None);
     };
     let mut header = [0u8; 24];
-    if file.read_exact(&mut header).is_err() || &header[..8] != b"\x89PNG\r\n\x1a\n" {
+    if file.read_exact(&mut header).is_err() {
         return (None, None);
     }
-    (
-        Some(u32::from_be_bytes(header[16..20].try_into().unwrap())),
-        Some(u32::from_be_bytes(header[20..24].try_into().unwrap())),
-    )
+    if &header[..8] == b"\x89PNG\r\n\x1a\n" {
+        return (
+            Some(u32::from_be_bytes(header[16..20].try_into().unwrap())),
+            Some(u32::from_be_bytes(header[20..24].try_into().unwrap())),
+        );
+    }
+    let mut bytes = header.to_vec();
+    if file
+        .take((1024 * 1024 - header.len()) as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return (None, None);
+    }
+    jpeg_dimensions(&bytes)
+}
+
+fn jpeg_dimensions(bytes: &[u8]) -> (Option<u32>, Option<u32>) {
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return (None, None);
+    }
+    let mut cursor = 2usize;
+    while cursor + 4 <= bytes.len() {
+        while cursor < bytes.len() && bytes[cursor] != 0xff {
+            cursor += 1;
+        }
+        while cursor < bytes.len() && bytes[cursor] == 0xff {
+            cursor += 1;
+        }
+        if cursor >= bytes.len() {
+            break;
+        }
+        let marker = bytes[cursor];
+        cursor += 1;
+        if marker == 0x01 || (0xd0..=0xd9).contains(&marker) {
+            continue;
+        }
+        if cursor + 2 > bytes.len() {
+            break;
+        }
+        let segment_len = u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]) as usize;
+        if segment_len < 2 || cursor + segment_len > bytes.len() {
+            break;
+        }
+        if matches!(
+            marker,
+            0xc0 | 0xc1
+                | 0xc2
+                | 0xc3
+                | 0xc5
+                | 0xc6
+                | 0xc7
+                | 0xc9
+                | 0xca
+                | 0xcb
+                | 0xcd
+                | 0xce
+                | 0xcf
+        ) && segment_len >= 7
+        {
+            let height = u16::from_be_bytes([bytes[cursor + 3], bytes[cursor + 4]]) as u32;
+            let width = u16::from_be_bytes([bytes[cursor + 5], bytes[cursor + 6]]) as u32;
+            return (Some(width), Some(height));
+        }
+        cursor += segment_len;
+    }
+    (None, None)
 }
 
 fn page_number_from_name(name: &str) -> Option<u32> {
@@ -222,7 +285,7 @@ fn asset_from_file(
     if !path.is_file() {
         return None;
     }
-    let (width, height) = png_dimensions(&path);
+    let (width, height) = image_dimensions(&path);
     Some(DocumentAsset {
         id: format!("asset-{}", stable_suffix(rel_path)),
         kind: kind.to_string(),
@@ -1312,6 +1375,20 @@ impl DocumentBundle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jpeg_dimension_parser_reads_start_of_frame() {
+        let bytes = [
+            0xff, 0xd8, // SOI
+            0xff, 0xc0, // baseline SOF
+            0x00, 0x11, // segment length
+            0x08, // precision
+            0x04, 0xb0, // 1200px high
+            0x03, 0xf0, // 1008px wide
+            0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00,
+        ];
+        assert_eq!(jpeg_dimensions(&bytes), (Some(1008), Some(1200)));
+    }
 
     fn extraction(text: &str) -> ExtractionResult {
         ExtractionResult {

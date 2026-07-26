@@ -35,6 +35,8 @@ impl PreparedContext {
             serde_json::to_string_pretty(orientation)
                 .map_err(|error| format!("Failed to prepare orientation cache: {error}"))?
         };
+        let clean_paper_text = crate::safety::strip_span_tags(paper_text);
+        let clean_orientation_text = crate::safety::strip_span_tags(&orientation_text);
 
         let mut content = String::new();
         push(
@@ -45,11 +47,11 @@ impl PreparedContext {
              a task specifically requires inspecting an original figure or another source asset.\n\n\
              <extracted_input>\n",
         )?;
-        push(&mut content, paper_text)?;
+        push(&mut content, clean_paper_text.as_ref())?;
         push(&mut content, "\n</extracted_input>")?;
-        if !orientation_text.is_empty() {
+        if !clean_orientation_text.is_empty() {
             push(&mut content, "\n\n<orientation_map>\n")?;
-            push(&mut content, &orientation_text)?;
+            push(&mut content, clean_orientation_text.as_ref())?;
             push(&mut content, "\n</orientation_map>")?;
         }
         push(
@@ -184,5 +186,17 @@ mod tests {
         assert!(first.content().contains("<orientation_map>"));
         let prompt = first.prefixed_prompt("Review the model.").unwrap();
         assert!(prompt.find("paper body") < prompt.find("Review the model."));
+    }
+
+    #[test]
+    fn shared_context_excludes_presentational_span_markup() {
+        let orientation = serde_json::json!({"title": "<span id=\"title\">Paper title</span>"});
+        let context =
+            PreparedContext::new("<span class='page-anchor'>Paper body</span>", &orientation)
+                .unwrap();
+
+        assert!(!context.content().to_ascii_lowercase().contains("<span"));
+        assert!(context.content().contains("Paper body"));
+        assert!(context.content().contains("Paper title"));
     }
 }

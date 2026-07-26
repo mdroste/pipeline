@@ -90,6 +90,7 @@ pub async fn call_google_api(
     timeout_secs: u64,
     label: &str,
     settings: &Settings,
+    read_dirs: &[&str],
     overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let start = Instant::now();
@@ -102,6 +103,7 @@ pub async fn call_google_api(
     );
 
     let client = &*super::api_common::HTTP_CLIENT;
+    let access = ToolAccess::new(read_dirs, overrides.write_dir);
     let tools = build_tools(allowed_tools);
 
     let system_instruction = system_prompt.map(|s| GoogleContent {
@@ -163,6 +165,7 @@ pub async fn call_google_api(
                 warm_request,
                 timeout_secs,
                 &warm_label,
+                &access,
             )
             .await
             {
@@ -193,6 +196,7 @@ pub async fn call_google_api(
         request,
         timeout_secs,
         label,
+        &access,
     )
     .await?;
     usage.merge(warm_usage);

@@ -120,6 +120,7 @@ pub async fn call_openai_api(
     timeout_secs: u64,
     label: &str,
     settings: &Settings,
+    read_dirs: &[&str],
     overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let start = Instant::now();
@@ -130,6 +131,7 @@ pub async fn call_openai_api(
     );
 
     let client = &*super::api_common::HTTP_CLIENT;
+    let access = ToolAccess::new(read_dirs, overrides.write_dir);
     let tools = build_tools(allowed_tools);
     let shared_context = overrides.shared_context.as_deref();
     let messages = build_messages(
@@ -204,6 +206,7 @@ pub async fn call_openai_api(
                 timeout_secs,
                 &warm_label,
                 false,
+                &access,
             )
             .await
             {
@@ -242,6 +245,7 @@ pub async fn call_openai_api(
         timeout_secs,
         label,
         false,
+        &access,
     )
     .await?;
     usage.merge(warm_usage);
@@ -280,6 +284,7 @@ pub async fn call_local_api(
     timeout_secs: u64,
     label: &str,
     settings: &Settings,
+    read_dirs: &[&str],
     overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let start = Instant::now();
@@ -317,6 +322,7 @@ pub async fn call_local_api(
     );
 
     let client = &*super::api_common::HTTP_CLIENT;
+    let access = ToolAccess::new(read_dirs, overrides.write_dir);
     let request = OpenAIRequest {
         model,
         messages: build_messages(
@@ -342,6 +348,7 @@ pub async fn call_local_api(
         timeout_secs,
         label,
         true,
+        &access,
     )
     .await?;
 

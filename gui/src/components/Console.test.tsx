@@ -152,4 +152,30 @@ describe("Console", () => {
     expect(screen.getByText("Return Markdown.")).toBeInTheDocument();
     expect(screen.getByText("Transcribe the attached paper.")).toBeInTheDocument();
   });
+
+  it("shows a CLI provider and transport without repeating CLI", () => {
+    const cliRequest: LlmRequestDetails = {
+      ...REQUEST,
+      provider: "codex",
+      provider_label: "Codex",
+      transport: "cli",
+      model: "gpt-5.6",
+    };
+    render(
+      <Console
+        logs={[
+          {
+            ...log("LLM request · Codex CLI", "info", 8),
+            label: "Technical",
+            request: cliRequest,
+          },
+        ]}
+        usage={EMPTY_USAGE}
+      />
+    );
+
+    const selector = screen.getByRole("combobox");
+    expect(selector).toHaveTextContent("Technical · Codex CLI · gpt-5.6");
+    expect(selector).not.toHaveTextContent("CLI CLI");
+  });
 });

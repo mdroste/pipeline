@@ -55,13 +55,15 @@ You need at least one LLM provider:
 
 ### PDF support
 
-Pipeline bundles `pdftoppm` and `pdftotext` (from [poppler](https://poppler.freedesktop.org/)) on all platforms, so PDF extraction works out of the box with no extra install. `pdftoppm` is what Claude Code uses internally to render PDF pages for the LLM; `pdftotext` is the fallback extractor.
+Pipeline bundles `pdftoppm` and `pdftotext` (from [poppler](https://poppler.freedesktop.org/)) on all platforms, so basic PDF extraction and page rendering work out of the box with no extra install. The extractor selected for a workflow is authoritative; Pipeline does not silently switch methods after a failure.
 
 For higher-quality local extraction, Settings → PDF Extraction can optionally
 install either [PaddleOCR-VL 1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF)
 Q8 with a native [llama.cpp](https://github.com/ggml-org/llama.cpp) runtime
 (about 1.9 GB), or [marker-pdf](https://github.com/VikParuchuri/marker). Both
 managed engines run locally and can be uninstalled from the same page.
+Marker and PaddleOCR-VL speed, memory, OCR, and quality controls also live on
+that page, even when another extractor is selected globally.
 
 LaTeX source files are read natively; a compiled companion PDF is used for
 visual page inspection when present. Word `.docx` papers are read from OOXML,
@@ -80,7 +82,7 @@ Pipeline processes a paper in three stages:
 
 1. **Extract and normalize**: Reads PDF, LaTeX, or DOCX and creates a versioned `DocumentBundle` containing text blocks, equations, tables, figures, page renders, source representations, provenance, and extraction warnings.
 2. **Orient**: One LLM call builds a structured map of the paper -- sections, formal results, tables, notation, stated contribution -- and enriches matching bundle nodes.
-3. **Execute**: Runs the configured pipeline steps. Parallel steps run concurrently; sequential steps run afterward and receive all prior outputs. Every step can read the canonical bundle and inspect its visual assets.
+3. **Execute**: Runs the configured dependency graph. Ready parallel steps run concurrently and cannot read any step output; sequential steps run alone and receive only the artifacts selected in their exact allowlists. Primary text, structure, visuals, source, survey data, and named inputs are likewise available only when selected.
 
 Each saved run includes a readable document, canonical JSON, streaming JSONL
 blocks, page images, and extracted or source-native figures. The run Artifact
@@ -100,7 +102,10 @@ or figure image.
 | Consolidate | Sequential | Merges parallel outputs, deduplicates, orders by severity. |
 | Validate | Sequential | Re-reads the paper to verify each comment. Disabled by default. |
 
-Each parallel step receives only the paper text, the orientation map, and its own prompt. The prompts instruct the LLM to identify issues, not to summarize or praise. The consolidation step deduplicates across all parallel outputs and ranks by severity.
+The built-in parallel steps explicitly select the paper text, document
+structure, visual assets, original source, and orientation survey. Consolidation
+steps select only the reports they synthesize; verification steps additionally
+select the primary evidence they need to re-check those reports.
 
 ### Built-in profiles
 
@@ -113,16 +118,31 @@ The app ships five profiles you can use as-is or copy and edit:
 
 ## Configuration
 
-The pipeline editor in the GUI lets you add, remove, reorder, enable, and disable steps. Each step has a phase (Parallel or Sequential), a prompt, optional tools (e.g., WebSearch), and one or more LLM agents. Assigning multiple agents to a step (e.g., Claude + Gemini) runs them independently; their outputs are merged automatically.
+The pipeline editor in the GUI lets you add, remove, reorder, enable, and disable steps. Each step has a phase (Parallel or Sequential), a prompt, optional tools (for example, WebSearch), and one or more LLM agents. Assigning multiple agents to a step (for example, Claude + Gemini) runs them independently; their outputs are merged automatically.
+
+Every step also has an exact **Artifact access** allowlist. Presets cover the
+common cases, while individual controls expose readable input text, document
+structure, pages/figures, original source, the survey, named inputs, upstream
+reports, and upstream supporting files. Supporting files can be narrowed with a
+glob such as `**/*.csv`. Only Sequential steps can select step outputs;
+Parallel steps remain mutually independent. Selecting an upstream artifact
+automatically creates the necessary dataflow dependency. **Wait for** adds a
+separate order-only dependency without revealing the producer's output. An
+empty allowlist is an intentionally isolated step.
 
 For long, multi-step inputs, **Pipeline Settings → Reuse shared input context**
-optionally prepares the extracted input and orientation map once. API providers
-reuse a warmed prompt prefix; Claude and Codex CLI calls fork a warmed base
-session. The setting is per profile and off by default. The console and saved
-run summary show cache-read and cache-write tokens when the provider reports
-them, and unsupported providers fall back to ordinary self-contained calls.
+optionally prepares the primary text and/or survey selected by each step. API
+providers reuse a warmed prompt prefix; Claude and Codex CLI calls fork a
+warmed base session. Unselected material is never added to the warmed context.
+The setting is per profile and off by default. The console and saved run summary
+show cache-read and cache-write tokens when the provider reports them, and
+unsupported providers fall back to ordinary self-contained calls.
 
-Steps also support a few optional controls for building your own workflows: **dependencies** (make a step wait for specific earlier steps), **conditions** (run a step only when the survey or an earlier step matches), a **JSON output shape** (which turns the report into a sortable, annotatable issues table), **variables** (values the app asks for at run time, referenced as `{var:name}`), **extra named inputs** (a response letter, rubric, or prior report, referenced as `{input:name}`), and **fan-out** (run a step once per file matching a glob, with `{item}` bound to each file).
+Steps also support **conditions** (run a step only when the survey or an upstream
+step matches), a **JSON output shape** (which turns the report into a sortable,
+annotatable issues table), **variables** (values the app asks for at run time,
+referenced as `{var:name}`), **extra named inputs**, and **fan-out** (run a step
+once per file matching a glob, with `{item}` bound to each file).
 
 Custom profiles can be created, exported, imported from a file or a URL, and shared. Settings and profiles are stored in `~/.pipeline/`.
 

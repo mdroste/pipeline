@@ -183,11 +183,37 @@ pub fn normalize_math_delimiters(markdown: &str) -> String {
             output.push_str(line);
         } else if fence.is_some() {
             output.push_str(line);
+        } else if let Some(normalized) = normalize_display_environment(line) {
+            output.push_str(&normalized);
         } else {
             output.push_str(&normalize_math_line(line));
         }
     }
     output
+}
+
+fn normalize_display_environment(line: &str) -> Option<String> {
+    static ENVIRONMENT_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"^([ \t]*)\\(begin|end)\{(equation\*?|displaymath|align\*?|gather\*?)\}[ \t]*(\r?\n)?$",
+        )
+        .expect("display-environment regex must compile")
+    });
+    let captures = ENVIRONMENT_RE.captures(line)?;
+    let indent = captures.get(1).map(|value| value.as_str()).unwrap_or("");
+    let boundary = captures.get(2)?.as_str();
+    let environment = captures.get(3)?.as_str();
+    let newline = captures.get(4).map(|value| value.as_str()).unwrap_or("");
+    let replacement = match (boundary, environment) {
+        ("begin", "equation" | "equation*" | "displaymath") => "$$",
+        ("end", "equation" | "equation*" | "displaymath") => "$$",
+        ("begin", "align" | "align*") => "$$\n\\begin{aligned}",
+        ("end", "align" | "align*") => "\\end{aligned}\n$$",
+        ("begin", "gather" | "gather*") => "$$\n\\begin{gathered}",
+        ("end", "gather" | "gather*") => "\\end{gathered}\n$$",
+        _ => return None,
+    };
+    Some(format!("{indent}{replacement}{newline}"))
 }
 
 /// Remove UI-only run telemetry from a report before public export.
@@ -706,6 +732,13 @@ mod tests {
     fn math_delimiters_are_normalized_outside_code() {
         let input = "Inline \\(x+1\\).\n\n\\[\ny=2\n\\]\n\n`\\(code\\)`\n\n```tex\n\\[z\\]\n```\n";
         let expected = "Inline $x+1$.\n\n$$\ny=2\n$$\n\n`\\(code\\)`\n\n```tex\n\\[z\\]\n```\n";
+        assert_eq!(normalize_math_delimiters(input), expected);
+    }
+
+    #[test]
+    fn latex_display_environments_are_normalized_outside_code() {
+        let input = "\\begin{equation}\ny=x+1\n\\end{equation}\n\n\\begin{align*}\na&=b\\\\\nc&=d\n\\end{align*}\n\n```tex\n\\begin{equation}\nx\n\\end{equation}\n```\n";
+        let expected = "$$\ny=x+1\n$$\n\n$$\n\\begin{aligned}\na&=b\\\\\nc&=d\n\\end{aligned}\n$$\n\n```tex\n\\begin{equation}\nx\n\\end{equation}\n```\n";
         assert_eq!(normalize_math_delimiters(input), expected);
     }
 

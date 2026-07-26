@@ -1,13 +1,35 @@
-# PDF extraction redesign: verified native-PDF LLM default, uv-managed local engines
+# PDF extraction: bounded verification and optimized local engines
 
-Design notes, 2026-07-03. Written against the codebase after the runs/artifacts
-generalization. Goal: state-of-the-art PDF → Markdown + page PNGs with faithful
-equations, while keeping the app small by default, modular, and user-controlled.
+Original design notes, 2026-07-03; reliability revision, 2026-07-24. Goal:
+faithful PDF → Markdown + page images with explicit user control, bounded
+latency, resumable local work, and enough provenance to audit the result.
+
+## Reliability revision (2026-07-24)
+
+Production traces exposed failure modes that the initial single-call design
+did not cover:
+
+| Failure | Consequence | Current behavior |
+|---|---|---|
+| One LLM call for a long paper under a 32K output cap | A 99-page paper returned only 11–15 pages | The paper is proactively divided into ranges of at most 8 pages and roughly 50K text-layer characters; two ranges may run concurrently. |
+| Three repairs, each with its own long timeout | Extraction could exceed 20–40 minutes | The whole extraction stage has a configurable wall-clock budget (15 minutes by default). |
+| Missing markers or failed repairs became warnings | Orientation and review could run on an incomplete paper | Page markers are mandatory. Missing or suspicious pages get one smaller-range retry; any remaining gap fails before orientation. |
+| Paddle used `--ctx-size 16384 --parallel 2` | llama.cpp divided 16K across two slots, leaving only 8K per page | Context is now 16K **per slot** (`ctx-size = 16384 × slots`). |
+| Paddle ignored `finish_reason` and aborted on the first page error | Truncation could look successful; one failure discarded completed work | Non-`stop` responses fail, pages retry individually, and verified pages are checkpointed. A length failure switches the retry to adaptive layout regions instead of repeating the same request. |
+| Extractor failure silently changed methods | A local-engine request could unexpectedly incur an LLM call, or an LLM failure could degrade to plain text | Extractors no longer fall back across methods. `pdftotext` is never used as extraction output unless explicitly configured; when available, per-page text-layer character counts serve only as a conservative completeness signal. |
+| The run log started after extraction | The slowest and most failure-prone stage had no durable transcript | Preprocessing logs begin before extraction. Successful logs are adopted by the run; failed logs remain under `~/.pipeline/logs/preprocessing/`. |
+| Fresh runs ignored prior extraction work | Re-running the same paper repeated the expensive stage | Exact source/engine/settings matches reuse versioned LLM or Marker output; Paddle resumes verified page checkpoints. |
+
+Extraction is evidence-preserving. Prompts explicitly preserve spelling and
+typographical errors verbatim; later review steps may flag them, but
+preprocessing never silently corrects the paper.
 
 ## Where extraction stands
 
-The cascade in `extract.rs` is: LaTeX source → LLM extraction (default) →
-marker_single (if the user pip-installed it) → bundled pdftotext. Weaknesses:
+The configured method in `extract.rs` is authoritative. LaTeX source is always
+preferred when present; PDF users explicitly select LLM, PaddleOCR-VL,
+marker-pdf, or pdftotext. There is no cross-extractor cascade. Historical
+weaknesses were:
 
 1. **LLM extraction is one giant call** — "Read the PDF and transcribe it."
    On a 40-page paper this invites truncation and silent summarization, and
@@ -17,7 +39,8 @@ marker_single (if the user pip-installed it) → bundled pdftotext. Weaknesses:
    forced down to native extraction.
 3. **marker was an afterthought** — this was subsequently addressed by the
    managed engine, retained figure artifacts, and the DocumentBundle layer.
-4. **pdftotext garbles equations** — that's why `scan_math_quality` exists.
+4. **Plain-text PDF extraction garbles equations** — it remains an explicit
+   basic option rather than an automatic fallback.
 
 ## What the research says (July 2026)
 
@@ -60,16 +83,16 @@ olmOCR-bench). Nothing here bets the architecture on a leaderboard position.
 
 All three providers accept PDFs natively now; the extraction call should hand
 the model the PDF directly rather than hoping a tool loop fetches it. The
-extraction stays a single call by default. What changes is the transport and
-that completeness stops being taken on faith. The settings value stays
-`"llm"` — no migration.
+extraction uses bounded page-range calls, and completeness is a hard
+precondition rather than a warning. The settings value stays `"llm"` — no
+migration.
 
 Transport per path:
 
 | Path | How the PDF reaches the model |
 |---|---|
 | Claude CLI / Gemini CLI | Unchanged — prompt references the path, the CLI's Read tool is multimodal. |
-| Codex CLI | Verify PDF-read support during implementation; if absent, fall back as today. |
+| Codex CLI | Prompt references the path and the CLI reads it from the granted source directory. |
 | Anthropic direct API | Attach as a base64 document block up front (the plumbing exists in `api_anthropic.rs` for the Read tool; attaching in the first request skips the tool round-trip). ~100-page / 32 MB request limit. |
 | OpenAI direct API | Attach as a file input (base64 `input_file` content part). ~100-page / 32 MB limit. |
 | Google direct API | Attach as `inline_data` (application/pdf), or the File API for large documents (up to ~1000 pages). |
@@ -82,29 +105,25 @@ Verification (the actual fix for silent truncation/summarization):
 1. The prompt asks for `<!-- PAGE n -->` markers before each page's content —
    cheap for the model, and it turns completeness into something Rust can
    check.
-2. After the call, deterministically verify: every page marker present, and
-   per-page text length sane against a `pdftotext` baseline (poppler is
-   bundled; the baseline is free). A page that's missing or suspiciously
-   short gets one targeted follow-up call for just that page range — the
-   same PDF is attached again with a "transcribe ONLY pages N–M"
-   instruction. (Implemented this way instead of splitting the PDF with a
-   library like `lopdf`: page extraction that preserves shared fonts and
-   resources is error-prone, and re-sending the input for the rare repair
-   call costs pennies.) Pages that still fail become extraction-quality
-   notes naming the page numbers, feeding the existing quality-notes path.
+2. A local text-layer map supplies page counts and conservative length checks.
+   Initial requests cover no more than 8 pages / roughly 50K baseline
+   characters. Missing or suspicious pages get one targeted retry in ranges
+   of at most two pages. A missing marker, truncated response, or page that
+   remains implausibly short fails the extraction before orientation.
 3. `scan_math_quality` runs on the result as today; final markdown lands in
    `cache/papers/{hash}.txt` and the run's `context/` as usual.
 
-Repair is therefore **reactive, not proactive** — a paper that extracts
-cleanly in one call costs one call. A PDF that exceeds a provider's hard
-request limit fails the attachment with a clear message and falls back to
-native extraction; range-splitting oversized PDFs is deferred until someone
-actually hits it.
+Chunking is proactive and bounded. The same PDF is attached/read for each
+range because splitting PDF object graphs while preserving shared resources is
+error-prone. Two ranges may run concurrently, and a document-level time budget
+stops cost and latency from growing without bound. There is no automatic
+native or plain-text fallback.
 
-Page PNGs (the PDF → PNG requirement) are decoupled from extraction: bundled
-`pdftoppm` renders `runs/{id}/artifacts/pages/page-NNN.png` as run artifacts
-for the ArtifactExplorer regardless of which extraction method ran. This is
-deterministic, fast, and has nothing to do with what the model sees.
+Page renders are decoupled from extraction: bundled `pdftoppm` renders compact
+120-DPI JPEGs under `runs/{id}/artifacts/pages/` for the ArtifactExplorer
+regardless of which extraction method ran. JPEG avoids the CPU and disk cost
+of lossless full-page PNGs while retaining enough detail for figures and
+visual extraction checks.
 
 Touches: `extract.rs` (`extract_llm` transport + verification loop),
 `api_anthropic.rs`/`api_openai.rs`/`api_google.rs` (up-front PDF attachment),
@@ -182,20 +201,58 @@ know the weights' terms are between them and Datalab.
 
 ## Move 3: marker invocation upgrade
 
-While in there: run `marker_single` with `--output_dir` pointing into
-`runs/{id}/artifacts/marker/` instead of scraping stdout. Read the emitted
+Marker runs with `--output_dir` pointing into the versioned
+`~/.pipeline/cache/marker/{hash}/` workspace instead of scraping stdout. Read the emitted
 `.md` as the extraction text; register extracted figure images in the
 manifest so the ArtifactExplorer shows them. Keep stdout capture as the
 fallback for older marker versions. `marker_disable_images` was initially
 retained as true. As of the DocumentBundle work (2026-07-23), new settings
 default it to false because figure retention is part of the normal document
 contract; users can still disable it when speed or disk use matters more.
+Marker's own automatic OCR detection remains the default; users may instead
+disable or force OCR. Settings also expose figure extraction, low/high
+resolution DPI, machine-aware PDF-text workers, and layout/OCR recognition
+batches. Successful Markdown, figures, and an engine/settings manifest are
+reused only on an exact match. These parser-specific controls are global and
+live only in Settings → PDF Extraction; workflows choose a parser but do not
+carry their own Marker flags.
+
+### PaddleOCR-VL runtime policy
+
+Paddle renders one lossless page image per request (150 DPI by default, with
+120/180/200-DPI overrides) and loads the Q8 model once per document. Automatic
+settings are platform-aware:
+
+- Apple Silicon: two page slots and a 2,048-token vision batch;
+- other platforms: one page slot and a 1,024-token vision batch;
+- every slot receives 16K context, so total llama.cpp context scales with
+  concurrency;
+- Flash Attention remains `auto`;
+- page output defaults to 4,096 tokens with one targeted retry;
+- a length, degeneration, or empty-output failure recursively bisects the page
+  along its long axis, with a small overlap, so the element-oriented model sees
+  smaller text or figure regions instead of receiving the same failing page
+  twice.
+
+Users may override concurrency (1–4), render DPI, vision batch (512–4,096),
+Flash Attention, output cap (2,048/4,096/8,192), page retries (0–3),
+extraction budget, and cache reuse. A non-`stop` finish reason, empty output, or output
+far shorter than the text-layer map triggers a page retry. Degenerate visual
+leaves that remain after bounded subdivision are replaced by an explicit
+source-page warning; an incomplete text-heavy page still fails closed. This
+prevents one pathological plot from discarding an otherwise usable long-paper
+extraction without accepting its looping output. Each verified page is written
+atomically to a cache keyed by source hash, managed model/runtime identity,
+render profile, and effective tuning settings.
+
+Text-layer completeness counts exclude whitespace. In particular, alignment
+spaces emitted for sparse chart layouts must not make a figure-only page appear
+to contain several pages' worth of prose.
 
 ## Move 4: UI
 
-- **SettingsPage** — extraction dropdown relabeled for honesty:
-  "LLM (default — uses your configured provider)", "Local engine:
-  marker", "pdftotext (basic, equations lost)", "auto". Below it, a **Local
+- **SettingsPage** — extraction dropdown is explicit: "LLM", "Local engine:
+  PaddleOCR-VL", "Local engine: marker", and "pdftotext (basic)". Below it, a **Local
   Engines** section: one card per registry entry — name, one-line
   description, size estimate ("~0.5 GB packages + ~2.5 GB models"), Install
   button → phase-labeled progress bar with streamed log lines → Installed
@@ -243,9 +300,10 @@ contract; users can still disable it when speed or disk use matters more.
 
 ## Compatibility
 
-- `pdf_extractor` values unchanged (`llm`/`auto`/`marker`/`pdftotext`);
+- `pdf_extractor` values include
+  (`llm`/`auto`/`marker`/`paddleocr-vl`/`pdftotext`);
   existing profiles and export bundles load untouched. `"llm"` silently gets
-  better; `"auto"` resolves managed-or-system marker → pdftotext as before.
+  bounded verification; profile `"auto"` inherits the global setting.
 - Old saved reports/runs unaffected; new runs gain `pages/` artifacts.
 - CI unchanged (no new bundled binaries to sign). Release workflow unchanged.
 
@@ -262,12 +320,11 @@ contract; users can still disable it when speed or disk use matters more.
   (CPU-pinned torch), each: install marker → extract a math-heavy paper →
   verify pages + figures in the explorer.
 
-## Open questions
+## Remaining validation
 
-- Codex CLI PDF-read support — verify during Move 1; affects only the
-  fallback table.
-- How aggressive the per-page length check can be before it false-positives
-  on figure-heavy pages (a page that is one figure has little pdftotext
-  baseline) — tune against a handful of real papers.
-- Whether `uv tool list` output is stable enough for version reporting or we
-  read the venv's `marker-pdf` dist-info directly.
+- Tune the conservative page-length threshold against a larger corpus of
+  native-text, scanned, figure-heavy, and appendix-dense economics papers.
+- Benchmark Paddle's automatic two-slot/2K-batch Apple Silicon default across
+  16 GB, 32 GB, and 64 GB machines; retain the explicit low-memory overrides.
+- Verify the Marker output-cache identity across managed engine upgrades on
+  all supported platforms.

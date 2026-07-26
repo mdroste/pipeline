@@ -34,22 +34,46 @@ export default function ResizeHandle({
       if (!parent) return;
       const startX = event.clientX;
       const startWidth = currentWidth ?? parent.getBoundingClientRect().width;
+      let pendingWidth = startWidth;
+      let didMove = false;
+      let animationFrame: number | null = null;
 
       const onMouseMove = (moveEvent: MouseEvent) => {
-        onResize(clamp(startWidth + moveEvent.clientX - startX));
+        pendingWidth = clamp(startWidth + moveEvent.clientX - startX);
+        didMove = didMove || pendingWidth !== startWidth;
+        if (animationFrame !== null) return;
+        animationFrame = window.requestAnimationFrame(() => {
+          // Keep React and localStorage out of the pointer-move hot path. A
+          // report can contain thousands of rendered nodes, so rerendering it
+          // for every mouse event makes the divider visibly trail the cursor.
+          parent.style.width = `${pendingWidth}px`;
+          animationFrame = null;
+        });
       };
-      const onMouseUp = () => {
+      const cleanup = () => {
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
+        if (animationFrame !== null) {
+          window.cancelAnimationFrame(animationFrame);
+          animationFrame = null;
+        }
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         cleanupRef.current = null;
+      };
+      const onMouseUp = () => {
+        cleanup();
+        if (!didMove) return;
+        parent.style.width = `${pendingWidth}px`;
+        // Commit once at the end so controlled state and persistence catch up
+        // with the width already displayed during the drag.
+        onResize(pendingWidth);
       };
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
-      cleanupRef.current = onMouseUp;
+      cleanupRef.current = cleanup;
     },
     [clamp, currentWidth, onResize],
   );

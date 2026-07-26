@@ -15,6 +15,7 @@ function step(overrides: Partial<StepConfig> & { id: string }): StepConfig {
     phase: "parallel",
     tools: [],
     agents: [],
+    context: { include: [] },
     ...overrides,
   } as StepConfig;
 }
@@ -24,8 +25,20 @@ describe("computeWaves", () => {
     const waves = computeWaves([
       step({ id: "a" }),
       step({ id: "b" }),
-      step({ id: "c", phase: "sequential" }),
-      step({ id: "d" }),
+      step({
+        id: "c",
+        phase: "sequential",
+        context: {
+          include: [
+            { kind: "step", step: "a", parts: ["report"] },
+            { kind: "step", step: "b", parts: ["report"] },
+          ],
+        },
+      }),
+      step({
+        id: "d",
+        after: ["c"],
+      }),
     ]);
     expect(waves.map((w) => w.kind)).toEqual([
       "parallel",

@@ -1,9 +1,9 @@
 //! Unified pipeline executor.
 //!
-//! Walks the step list top-to-bottom, grouping adjacent Parallel steps
-//! into waves. Sequential steps run one at a time after all prior steps.
-//! Merge auto-triggers between a parallel wave and the next step when
-//! any parallel step used multiple agents.
+//! Schedules the explicit dependency graph. All ready Parallel steps form a
+//! wave and run concurrently without access to any step output. Ready
+//! Sequential steps run one at a time and see only their selected artifacts.
+//! Merge auto-triggers when a multi-agent step needs its outputs combined.
 
 use super::claude::{cli_parent_dir, normalize_cli_root};
 use super::merge;
@@ -12,7 +12,10 @@ use crate::output::{
     capitalize, extract_report_envelope, new_report_nonce, normalize_math_delimiters,
     report_output_format,
 };
-use crate::pipeline_config::{Phase, PipelineConfig, StepConfig};
+use crate::pipeline_config::{
+    ArtifactSelector, NamedInputArtifactPart, Phase, PipelineConfig, PrimaryArtifactPart,
+    StepArtifactPart, StepConfig,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -156,58 +159,415 @@ async fn checkpoint_failures(
     }
 }
 
-/// Build the complete read-root set used by CLI providers for every step in a
-/// run. The source tree, private run-temp files (paper, orientation, named
-/// inputs), and any original named-input roots are all explicit. Provider
-/// request planning later canonicalizes/deduplicates ancestors and keeps the
-/// artifact directory separate as the writable cwd.
-fn provider_read_dirs(
-    source_path: &str,
-    paper_text_path: &str,
-    document_bundle_path: &str,
-    orientation_path: &str,
-    extra_inputs: &std::collections::HashMap<String, String>,
-    run_read_dirs: &[String],
-) -> Vec<String> {
-    let mut dirs: Vec<String> = run_read_dirs
+/// Runtime inventory from which a step's private, selector-filtered artifact
+/// view is constructed.
+struct ArtifactRuntime<'a> {
+    orientation_path: &'a str,
+    paper_text_path: &'a str,
+    document_bundle_path: &'a str,
+    source_path: &'a str,
+    extra_inputs: &'a std::collections::HashMap<String, String>,
+    extra_input_sources: &'a std::collections::HashMap<String, String>,
+    outputs: &'a [StepOutput],
+    run_artifact_dir: Option<&'a str>,
+}
+
+/// Concrete, call-owned view of a step's selected artifacts. App-controlled
+/// files are staged into one private root so directory-scoped CLI permissions
+/// cannot expose unselected siblings from the run temp directory.
+struct ResolvedArtifactContext {
+    _view: tempfile::TempDir,
+    orientation_path: String,
+    paper_text_path: String,
+    document_bundle_path: String,
+    source_path: String,
+    extra_inputs: std::collections::HashMap<String, String>,
+    prior_outputs: Vec<StepOutput>,
+    read_dirs: Vec<String>,
+    artifact_root: Option<String>,
+    manifest: String,
+    has_visuals: bool,
+    includes_primary_text: bool,
+    includes_survey: bool,
+}
+
+impl ResolvedArtifactContext {
+    fn stage_current_item(&mut self, source: &str) -> Result<String, String> {
+        let name = std::path::Path::new(source)
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("item"));
+        let staged = stage_artifact_file(
+            self._view.path(),
+            source,
+            &std::path::Path::new("input/current-item").join(name),
+        )?;
+        self.manifest
+            .push_str(&format!("\n- Current fan-out item: {staged}"));
+        Ok(staged)
+    }
+}
+
+fn normalized_path(path: &std::path::Path) -> String {
+    normalize_cli_root(&path.to_string_lossy())
+        .unwrap_or_else(|| path.to_string_lossy().replace('\\', "/"))
+}
+
+fn stage_artifact_file(
+    view: &std::path::Path,
+    source: &str,
+    relative: &std::path::Path,
+) -> Result<String, String> {
+    let source_path = std::path::Path::new(source);
+    let destination = view.join(relative);
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create artifact view: {error}"))?;
+    }
+    if std::fs::hard_link(source_path, &destination).is_err() {
+        std::fs::copy(source_path, &destination).map_err(|error| {
+            format!(
+                "Failed to stage selected artifact '{}': {error}",
+                source_path.display()
+            )
+        })?;
+    }
+    Ok(normalized_path(&destination))
+}
+
+fn add_read_root(read_dirs: &mut Vec<String>, path: &std::path::Path) {
+    if path.exists() {
+        read_dirs.push(normalized_path(path));
+    }
+}
+
+fn selected_primary_parts(step: &StepConfig) -> std::collections::HashSet<PrimaryArtifactPart> {
+    step.context
+        .include
         .iter()
-        .filter_map(|path| normalize_cli_root(path))
-        .collect();
+        .find_map(|selector| match selector {
+            ArtifactSelector::Primary { parts } => Some(parts.iter().copied().collect()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
 
-    let source = std::path::Path::new(source_path);
-    if source.is_dir() {
-        if let Some(root) = normalize_cli_root(source_path) {
-            dirs.push(root);
-        }
-    } else if let Some(root) = cli_parent_dir(source_path) {
-        dirs.push(root);
-    }
-
-    for path in std::iter::once(paper_text_path)
-        .chain((!document_bundle_path.is_empty()).then_some(document_bundle_path))
-        .chain((!orientation_path.is_empty()).then_some(orientation_path))
-        .chain(extra_inputs.values().map(String::as_str))
+fn resolve_artifact_context(
+    step: &StepConfig,
+    runtime: ArtifactRuntime<'_>,
+) -> Result<ResolvedArtifactContext, String> {
+    if step.phase == Phase::Parallel
+        && step
+            .context
+            .include
+            .iter()
+            .any(|selector| matches!(selector, ArtifactSelector::Step { .. }))
     {
-        if let Some(root) = cli_parent_dir(path) {
-            dirs.push(root);
+        return Err(format!(
+            "Parallel step '{}' cannot consume another step's output",
+            step.id
+        ));
+    }
+    let view = tempfile::Builder::new()
+        .prefix("pipeline_step_context_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create context view for '{}': {error}", step.id))?;
+    let mut read_dirs = Vec::new();
+    let mut manifest_lines = vec![format!("ARTIFACT CONTEXT FOR STEP '{}':", step.label)];
+    let primary_parts = selected_primary_parts(step);
+
+    let paper_text_path = if primary_parts.contains(&PrimaryArtifactPart::Text)
+        && !runtime.paper_text_path.is_empty()
+    {
+        let path = stage_artifact_file(
+            view.path(),
+            runtime.paper_text_path,
+            std::path::Path::new("input/main/document.md"),
+        )?;
+        manifest_lines.push(format!("- Primary readable document: {path}"));
+        path
+    } else {
+        String::new()
+    };
+
+    let document_bundle_path = if primary_parts.contains(&PrimaryArtifactPart::Structure)
+        && !runtime.document_bundle_path.is_empty()
+    {
+        let path = stage_artifact_file(
+            view.path(),
+            runtime.document_bundle_path,
+            std::path::Path::new("input/main/document_bundle.json"),
+        )?;
+        manifest_lines.push(format!("- Primary document structure: {path}"));
+        path
+    } else {
+        String::new()
+    };
+
+    let includes_survey = step
+        .context
+        .include
+        .iter()
+        .any(|selector| matches!(selector, ArtifactSelector::Survey));
+    let orientation_path = if includes_survey && !runtime.orientation_path.is_empty() {
+        let path = stage_artifact_file(
+            view.path(),
+            runtime.orientation_path,
+            std::path::Path::new("survey/orientation.json"),
+        )?;
+        manifest_lines.push(format!("- Survey: {path}"));
+        path
+    } else {
+        String::new()
+    };
+
+    let source_path = if primary_parts.contains(&PrimaryArtifactPart::Source)
+        && !runtime.source_path.is_empty()
+    {
+        let source = std::path::Path::new(runtime.source_path);
+        if source.is_dir() {
+            add_read_root(&mut read_dirs, source);
+            let path = normalized_path(source);
+            manifest_lines.push(format!("- Primary source tree: {path}"));
+            path
+        } else {
+            let name = source
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("source"));
+            let path = stage_artifact_file(
+                view.path(),
+                runtime.source_path,
+                &std::path::Path::new("input/main/source").join(name),
+            )?;
+            manifest_lines.push(format!("- Primary source file: {path}"));
+            path
+        }
+    } else {
+        String::new()
+    };
+
+    let has_visuals = primary_parts.contains(&PrimaryArtifactPart::Visuals);
+    let artifact_root = if has_visuals {
+        runtime
+            .run_artifact_dir
+            .and_then(|directory| std::path::Path::new(directory).parent())
+            .map(normalized_path)
+    } else {
+        None
+    };
+    if has_visuals {
+        if let Some(root) = runtime.run_artifact_dir {
+            let root = std::path::Path::new(root);
+            for subdir in ["pages", "figures", "document"] {
+                add_read_root(&mut read_dirs, &root.join(subdir));
+            }
+        }
+        if let Some(root) = artifact_root.as_deref() {
+            manifest_lines.push(format!(
+                "- Primary visual assets (bundle-relative root): {root}"
+            ));
         }
     }
 
-    dirs.sort();
-    dirs.dedup();
-    dirs
+    let mut extra_inputs = std::collections::HashMap::new();
+    for selector in &step.context.include {
+        let ArtifactSelector::NamedInput { key, parts } = selector else {
+            continue;
+        };
+        if parts.contains(&NamedInputArtifactPart::Text) {
+            if let Some(source) = runtime.extra_inputs.get(key) {
+                let path = stage_artifact_file(
+                    view.path(),
+                    source,
+                    &std::path::Path::new("input/named").join(format!("{key}.md")),
+                )?;
+                manifest_lines.push(format!("- Named input '{key}' text: {path}"));
+                extra_inputs.insert(key.clone(), path);
+            }
+        }
+        if parts.contains(&NamedInputArtifactPart::Source) {
+            if let Some(source) = runtime.extra_input_sources.get(key) {
+                let original = std::path::Path::new(source);
+                if original.is_dir() {
+                    add_read_root(&mut read_dirs, original);
+                    manifest_lines.push(format!(
+                        "- Named input '{key}' source tree: {}",
+                        normalized_path(original)
+                    ));
+                } else {
+                    let name = original
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("source"));
+                    let staged = stage_artifact_file(
+                        view.path(),
+                        source,
+                        &std::path::Path::new("input/named")
+                            .join(key)
+                            .join("source")
+                            .join(name),
+                    )?;
+                    manifest_lines.push(format!("- Named input '{key}' source file: {staged}"));
+                }
+            }
+        }
+    }
+
+    let report_steps: std::collections::HashSet<&str> = step
+        .context
+        .include
+        .iter()
+        .filter_map(|selector| match selector {
+            ArtifactSelector::Step { step, parts, .. }
+                if parts.contains(&StepArtifactPart::Report) =>
+            {
+                Some(step.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    let prior_outputs: Vec<StepOutput> = runtime
+        .outputs
+        .iter()
+        .filter(|output| report_steps.contains(base_id(&output.step_id)))
+        .cloned()
+        .collect();
+    for output in &prior_outputs {
+        let relative = std::path::Path::new("steps")
+            .join(step_slug(base_id(&output.step_id)))
+            .join(step_slug(&output.step_id))
+            .join("report.md");
+        let destination = view.path().join(relative);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Failed to stage upstream report: {error}"))?;
+        }
+        std::fs::write(&destination, &output.raw_text)
+            .map_err(|error| format!("Failed to stage upstream report: {error}"))?;
+        manifest_lines.push(format!(
+            "- Upstream report '{}' [{}]: {}",
+            output.step_label,
+            output.step_id,
+            normalized_path(&destination)
+        ));
+    }
+
+    if let Some(run_root) = runtime.run_artifact_dir {
+        for selector in &step.context.include {
+            let ArtifactSelector::Step {
+                step: producer,
+                parts,
+                glob,
+            } = selector
+            else {
+                continue;
+            };
+            if !parts.contains(&StepArtifactPart::Files) {
+                continue;
+            }
+            let producer_root = std::path::Path::new(run_root)
+                .join("by-step")
+                .join(step_slug(producer));
+            let Ok(instances) = std::fs::read_dir(&producer_root) else {
+                continue;
+            };
+            for instance in instances.flatten() {
+                let files = instance.path().join("files");
+                if !files.is_dir() {
+                    continue;
+                }
+                if glob.is_empty() {
+                    add_read_root(&mut read_dirs, &files);
+                    manifest_lines.push(format!(
+                        "- Supporting files from '{producer}': {}",
+                        normalized_path(&files)
+                    ));
+                } else {
+                    let expanded = crate::pipeline::glob::expand(&files, glob, 500);
+                    if expanded
+                        .limited_by
+                        .is_some_and(|reason| reason != "match limit")
+                    {
+                        return Err(format!(
+                            "Supporting-file selection for '{}' was incomplete ({})",
+                            producer,
+                            expanded.limited_by.unwrap_or("unknown limit")
+                        ));
+                    }
+                    for matched in expanded.matches {
+                        let source = std::path::Path::new(&matched);
+                        let relative = source
+                            .strip_prefix(&files)
+                            .map_err(|_| "Selected supporting file escaped its producer root")?;
+                        let staged = stage_artifact_file(
+                            view.path(),
+                            &matched,
+                            &std::path::Path::new("steps")
+                                .join(step_slug(producer))
+                                .join("files")
+                                .join(relative),
+                        )?;
+                        manifest_lines
+                            .push(format!("- Supporting file from '{producer}': {staged}"));
+                    }
+                }
+            }
+        }
+    }
+
+    // Every staged file is beneath this one root. Original source trees and
+    // unfiltered producer file roots were added separately above.
+    add_read_root(&mut read_dirs, view.path());
+    read_dirs.sort();
+    read_dirs.dedup();
+
+    Ok(ResolvedArtifactContext {
+        _view: view,
+        orientation_path,
+        paper_text_path,
+        document_bundle_path,
+        source_path,
+        extra_inputs,
+        prior_outputs,
+        read_dirs,
+        artifact_root,
+        manifest: manifest_lines.join("\n"),
+        has_visuals,
+        includes_primary_text: primary_parts.contains(&PrimaryArtifactPart::Text),
+        includes_survey,
+    })
+}
+
+fn prepare_selected_shared_context(
+    enabled: bool,
+    resolved: &ResolvedArtifactContext,
+    orientation: &serde_json::Value,
+) -> Result<Option<Arc<super::context_cache::PreparedContext>>, String> {
+    if !enabled || (!resolved.includes_primary_text && !resolved.includes_survey) {
+        return Ok(None);
+    }
+    let text = if resolved.includes_primary_text && !resolved.paper_text_path.is_empty() {
+        std::fs::read_to_string(&resolved.paper_text_path)
+            .map_err(|error| format!("Failed to prepare selected shared input: {error}"))?
+    } else {
+        String::new()
+    };
+    let empty_survey = serde_json::Value::Null;
+    let survey = if resolved.includes_survey {
+        orientation
+    } else {
+        &empty_survey
+    };
+    Ok(Some(Arc::new(super::context_cache::PreparedContext::new(
+        &text, survey,
+    )?)))
 }
 
 /// Execute all enabled steps in the pipeline.
 ///
-/// Steps run on a dependency schedule: each step becomes "ready" once its
-/// upstream steps have completed, and all ready parallel steps run as one wave
-/// under the `max_workers` semaphore. With no explicit `inputs`, the implicit
-/// adjacency dependencies reproduce the original wave behaviour exactly
-/// (parallel steps run together; a sequential step waits for everything before
-/// it). A step's `run_if` guard can skip it; a skipped step still "completes"
-/// so its dependents proceed. A failed sequential step stops further execution
-/// but does not discard prior outputs.
+/// Steps run on an explicit dependency schedule: `after` contributes
+/// order-only edges, while upstream step selectors contribute dataflow edges.
+/// A step's `run_if` guard can skip it; a skipped step still "completes" so its
+/// dependents proceed. A failed sequential step stops further execution but
+/// does not discard prior outputs.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_steps(
     app: &crate::emit::EventBus,
@@ -221,41 +581,15 @@ pub async fn execute_steps(
     survey_hint: &str,
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
-    run_read_dirs: &[String],
+    extra_input_sources: &std::collections::HashMap<String, String>,
     preloaded: &std::collections::HashMap<String, Vec<StepOutput>>,
     write_dir: Option<&str>,
     settings: &crate::settings::Settings,
 ) -> Result<ExecutionResult, String> {
     let semaphore = Arc::new(Semaphore::new(settings.max_workers.max(1) as usize));
     let output_budget = Arc::new(OutputBudget::default());
-    let shared_context = if config.context_cache.enabled {
-        let paper_text = std::fs::read_to_string(paper_text_path)
-            .map_err(|error| format!("Failed to prepare shared input context: {error}"))?;
-        let prepared = Arc::new(super::context_cache::PreparedContext::new(
-            &paper_text,
-            orientation_value,
-        )?);
-        super::logging::emit(
-            app,
-            format!(
-                "Shared input context enabled ({} bytes, provider-native caching selected per call)",
-                prepared.bytes()
-            ),
-        );
-        Some(prepared)
-    } else {
-        None
-    };
     let mut all_outputs: Vec<StepOutput> = Vec::new();
     let mut failed_steps: Vec<StepFailure> = Vec::new();
-    let read_dirs = provider_read_dirs(
-        source_path,
-        paper_text_path,
-        document_bundle_path,
-        orientation_path,
-        extra_inputs,
-        run_read_dirs,
-    );
 
     let enabled: Vec<&StepConfig> = config.steps.iter().filter(|s| s.enabled).collect();
     let deps = resolve_dependencies(&enabled);
@@ -343,6 +677,7 @@ pub async fn execute_steps(
                     settings,
                     &semaphore,
                     orientation_path,
+                    orientation_value,
                     paper_text_path,
                     document_bundle_path,
                     source_path,
@@ -351,10 +686,11 @@ pub async fn execute_steps(
                     &config.parallel_context_template,
                     variables,
                     extra_inputs,
-                    &read_dirs,
+                    extra_input_sources,
+                    &all_outputs,
                     write_dir,
                     &output_budget,
-                    shared_context.clone(),
+                    config.context_cache.enabled,
                 )
                 .await?;
                 // Every dispatched step is terminal once its wave returns. A
@@ -445,32 +781,37 @@ pub async fn execute_steps(
             serde_json::json!({"stage": "synthesizing"}),
         )
         .ok();
-        // A step with explicit inputs sees only those upstream outputs; the
-        // implicit-schedule case (empty inputs) sees everything prior, as before.
-        let prior: Vec<StepOutput> = if step.inputs.is_empty() {
-            all_outputs.clone()
-        } else {
-            all_outputs
-                .iter()
-                .filter(|o| deps[i].contains(base_id(&o.step_id)))
-                .cloned()
-                .collect()
-        };
+        let resolved = resolve_artifact_context(
+            step,
+            ArtifactRuntime {
+                orientation_path,
+                paper_text_path,
+                document_bundle_path,
+                source_path,
+                extra_inputs,
+                extra_input_sources,
+                outputs: &all_outputs,
+                run_artifact_dir: write_dir,
+            },
+        )?;
+        let shared_context = prepare_selected_shared_context(
+            config.context_cache.enabled,
+            &resolved,
+            orientation_value,
+        )?;
         match run_sequential_step(
             app,
             step,
-            &prior,
-            orientation_path,
-            paper_text_path,
-            document_bundle_path,
-            source_path,
-            survey_hint,
+            &resolved,
+            if resolved.includes_survey {
+                survey_hint
+            } else {
+                ""
+            },
             variables,
-            extra_inputs,
-            &read_dirs,
             write_dir,
             settings,
-            shared_context.clone(),
+            shared_context,
         )
         .await
         {
@@ -625,7 +966,58 @@ fn emit_skip(app: &crate::emit::EventBus, step: &StepConfig) {
 /// could silently ingest another step's output.
 fn step_slug(step_key: &str) -> String {
     use sha2::{Digest as _, Sha256};
-    format!("{:x}", Sha256::digest(step_key.as_bytes()))
+    let mut readable = String::new();
+    let mut previous_dash = false;
+    for character in step_key.chars() {
+        let normalized = if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+            character
+        } else {
+            '-'
+        };
+        if normalized == '-' {
+            if previous_dash {
+                continue;
+            }
+            previous_dash = true;
+        } else {
+            previous_dash = false;
+        }
+        readable.push(normalized);
+        if readable.len() >= 40 {
+            break;
+        }
+    }
+    let readable = readable.trim_matches('-');
+    let readable = if readable.is_empty() {
+        "step"
+    } else {
+        readable
+    };
+    let digest = format!("{:x}", Sha256::digest(step_key.as_bytes()));
+    format!("{readable}--{}", &digest[..12])
+}
+
+/// Allocate one producer-owned write root. Parallel agents and fan-out units
+/// never share a writable namespace.
+fn step_write_dir(
+    run_artifact_dir: Option<&str>,
+    step_key: &str,
+) -> Result<Option<String>, String> {
+    let Some(root) = run_artifact_dir else {
+        return Ok(None);
+    };
+    let base = base_id(step_key);
+    let directory = std::path::Path::new(root)
+        .join("by-step")
+        .join(step_slug(base))
+        .join(step_slug(step_key));
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        format!("Failed to create artifact directory for step '{step_key}': {error}")
+    })?;
+    Ok(Some(
+        normalize_cli_root(&directory.to_string_lossy())
+            .unwrap_or_else(|| directory.to_string_lossy().replace('\\', "/")),
+    ))
 }
 
 /// Build the OUTPUT FORMAT block appended to every step prompt.
@@ -633,14 +1025,25 @@ fn output_format_block(write_dir: Option<&str>, report_nonce: &str) -> String {
     report_output_format(write_dir, report_nonce)
 }
 
-fn append_shared_context_note(mut prompt: String) -> Result<String, String> {
+fn append_shared_context_note(
+    mut prompt: String,
+    includes_primary_text: bool,
+    includes_survey: bool,
+) -> Result<String, String> {
+    let material = match (includes_primary_text, includes_survey) {
+        (true, true) => "extracted input text and survey",
+        (true, false) => "extracted input text",
+        (false, true) => "survey",
+        (false, false) => "selected shared material",
+    };
     crate::safety::push_str_limited(
         &mut prompt,
-        "\n\nSHARED CONTEXT NOTE:\n\
-         The extracted input text and orientation map are already present in the shared context \
-         for this call. Do not read those two files again. You may still read original source \
-         assets when needed to inspect figures, tables, code, or other material not represented \
-         in the extracted text.",
+        &format!(
+            "\n\nSHARED CONTEXT NOTE:\n\
+             The selected {material} is already present in the shared context for this call. \
+             Do not read its staged file again. You may still use the other artifacts listed \
+             in this step's artifact context."
+        ),
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Shared-context prompt",
     )?;
@@ -681,15 +1084,23 @@ async fn ingest_report_file(write_dir: Option<&str>, report_rel: &str) -> Option
     .flatten()
 }
 
-/// Primary document access is a core pipeline capability, not an optional
-/// profile permission. Profiles may add tools, while every step can read the
-/// document view and request a visual bundle asset.
-fn tools_with_write(step_tools: &[String], write_dir: Option<&str>) -> Vec<String> {
-    let mut tools = step_tools.to_vec();
-    if !tools.iter().any(|tool| tool == "Read") {
+/// Derive filesystem tools from the resolved artifact view. Profiles declare
+/// optional external capabilities; they never grant Read or Write directly.
+fn tools_with_write(
+    step_tools: &[String],
+    has_readable_artifacts: bool,
+    has_visuals: bool,
+    write_dir: Option<&str>,
+) -> Vec<String> {
+    let mut tools: Vec<String> = step_tools
+        .iter()
+        .filter(|tool| !matches!(tool.as_str(), "Read" | "Write"))
+        .cloned()
+        .collect();
+    if has_readable_artifacts {
         tools.push("Read".to_string());
     }
-    if !tools.iter().any(|tool| tool == "ReadDocumentAsset") {
+    if has_visuals {
         tools.push("ReadDocumentAsset".to_string());
     }
     if write_dir.is_some() && !tools.iter().any(|t| t == "Write") {
@@ -906,13 +1317,15 @@ fn build_parallel_prompt(
     source_path: &str,
     template: &str,
     output_format: &str,
-    write_dir: Option<&str>,
+    artifact_root: Option<&str>,
 ) -> Result<String, String> {
     let normalized_path = paper_text_path.replace('\\', "/");
     let normalized_source = source_path.replace('\\', "/");
 
     let is_pdf = normalized_source.to_ascii_lowercase().ends_with(".pdf");
-    let source_hint = if is_pdf {
+    let source_hint = if normalized_source.is_empty() {
+        "The original source is not available to this step.".to_string()
+    } else if is_pdf {
         format!(
             "The original PDF is at: {normalized_source}\n\
              When the orientation map lists a figure or table with a page number, you can read that page of the PDF to inspect the visual content."
@@ -928,9 +1341,7 @@ fn build_parallel_prompt(
         )
     };
     let normalized_bundle = document_bundle_path.replace('\\', "/");
-    let artifact_root = write_dir
-        .and_then(|directory| std::path::Path::new(directory).parent())
-        .map(|directory| directory.to_string_lossy().replace('\\', "/"));
+    let artifact_root = artifact_root.map(|directory| directory.replace('\\', "/"));
     let figure_hint = if normalized_bundle.is_empty() {
         source_hint
     } else {
@@ -1163,6 +1574,7 @@ async fn run_parallel_wave(
     settings: &crate::settings::Settings,
     semaphore: &Arc<Semaphore>,
     orientation_path: &str,
+    orientation_value: &serde_json::Value,
     paper_text_path: &str,
     document_bundle_path: &str,
     source_path: &str,
@@ -1171,18 +1583,12 @@ async fn run_parallel_wave(
     context_template: &str,
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
-    read_dirs: &[String],
+    extra_input_sources: &std::collections::HashMap<String, String>,
+    prior_outputs: &[StepOutput],
     write_dir: Option<&str>,
     output_budget: &Arc<OutputBudget>,
-    shared_context: Option<Arc<super::context_cache::PreparedContext>>,
+    context_cache_enabled: bool,
 ) -> Result<(Vec<StepOutput>, Vec<StepFailure>), String> {
-    let source = std::path::Path::new(source_path);
-    let source_dir = if source.is_dir() {
-        normalize_cli_root(source_path)
-    } else {
-        cli_parent_dir(source_path)
-    };
-
     let mut tasks: JoinSet<ParallelTaskResult> = JoinSet::new();
     let mut immediate_results: Vec<((usize, String), StepOutput)> = Vec::new();
 
@@ -1223,7 +1629,6 @@ async fn run_parallel_wave(
             let id = step.id.clone();
             let label = step.label.clone();
             let agent_name = unit.agent.clone();
-            let tools = tools_with_write(&step.tools, write_dir);
             let model_selection = step.model_selection_for(settings, &agent_name);
             let effort_override = step.effort_for(settings, &agent_name);
             let output_schema = step.output_schema.clone();
@@ -1246,37 +1651,83 @@ async fn run_parallel_wave(
                 format!("{}/{}", id, unit.suffix)
             };
 
-            let report_rel = format!("steps/{}.md", step_slug(&step_key));
-            let report_nonce = new_report_nonce()?;
-            let output_format = output_format_block(write_dir, &report_nonce);
-            let prompt = build_parallel_prompt(
+            let mut resolved = resolve_artifact_context(
                 step,
-                paper_type,
-                orientation_path,
-                survey_hint,
-                paper_text_path,
-                document_bundle_path,
-                source_path,
+                ArtifactRuntime {
+                    orientation_path,
+                    paper_text_path,
+                    document_bundle_path,
+                    source_path,
+                    extra_inputs,
+                    extra_input_sources,
+                    outputs: prior_outputs,
+                    run_artifact_dir: write_dir,
+                },
+            )?;
+            let item_path = match unit.item.as_deref() {
+                Some(item) => resolved.stage_current_item(item)?,
+                None => String::new(),
+            };
+            let shared_context = prepare_selected_shared_context(
+                context_cache_enabled,
+                &resolved,
+                orientation_value,
+            )?;
+            let task_write_dir = step_write_dir(write_dir, &step_key)?;
+            let tools = tools_with_write(
+                &step.tools,
+                !resolved.read_dirs.is_empty(),
+                resolved.has_visuals,
+                task_write_dir.as_deref(),
+            );
+            let report_rel = "report.md".to_string();
+            let report_nonce = new_report_nonce()?;
+            let output_format = output_format_block(task_write_dir.as_deref(), &report_nonce);
+            let mut prompt = build_parallel_prompt(
+                step,
+                if resolved.includes_survey {
+                    paper_type
+                } else {
+                    ""
+                },
+                &resolved.orientation_path,
+                if resolved.includes_survey {
+                    survey_hint
+                } else {
+                    ""
+                },
+                &resolved.paper_text_path,
+                &resolved.document_bundle_path,
+                &resolved.source_path,
                 context_template,
                 &output_format,
-                write_dir,
+                resolved.artifact_root.as_deref(),
             )?;
-            let prompt = substitute_run_context(&prompt, variables, extra_inputs)?;
+            crate::safety::push_str_limited(
+                &mut prompt,
+                &format!("\n\n{}", resolved.manifest),
+                crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+                "Parallel artifact context",
+            )?;
+            let prompt = substitute_run_context(&prompt, variables, &resolved.extra_inputs)?;
             // Fan-out: bind {item} to this unit's file (empty otherwise).
             let prompt = crate::safety::replace_all_limited(
                 &prompt,
                 "{item}",
-                unit.item.as_deref().unwrap_or(""),
+                &item_path,
                 crate::safety::MAX_EXPANDED_PROMPT_BYTES,
                 "Parallel prompt",
             )?;
             let prompt = if shared_context.is_some() {
-                append_shared_context_note(prompt)?
+                append_shared_context_note(
+                    prompt,
+                    resolved.includes_primary_text,
+                    resolved.includes_survey,
+                )?
             } else {
                 prompt
             };
-            let task_write_dir = write_dir.map(|s| s.to_string());
-            let task_read_dirs = read_dirs.to_vec();
+            let task_read_dirs = resolved.read_dirs.clone();
 
             let app_handle = app.clone();
             let step_key_emit = step_key.clone();
@@ -1299,15 +1750,27 @@ async fn run_parallel_wave(
             };
             let sort_key = (idx, unit.suffix.clone());
             let sem = semaphore.clone();
-            let task_cwd = source_dir.clone();
+            let task_cwd = if resolved.source_path.is_empty() {
+                Some(normalized_path(resolved._view.path()))
+            } else {
+                let source = std::path::Path::new(&resolved.source_path);
+                if source.is_dir() {
+                    Some(resolved.source_path.clone())
+                } else {
+                    cli_parent_dir(&resolved.source_path)
+                }
+            };
             // display_label is moved into the success StepOutput; keep a copy
             // for failure reporting.
             let fail_label = display_label.clone();
             let settings = settings.clone();
             let output_budget = output_budget.clone();
-            let shared_context = shared_context.clone();
+            // Keep the staged artifact view alive until the provider call and
+            // all retries have completed.
+            let context_view = resolved._view;
 
             tasks.spawn(async move {
+                let _context_view = context_view;
                 if let Some(error) = cancellation_error(&step_key_emit) {
                     return Err(StepFailure {
                         step_id: step_key_emit.clone(),
@@ -1676,15 +2139,9 @@ fn substitute_run_context(
 async fn run_sequential_step(
     app: &crate::emit::EventBus,
     step: &StepConfig,
-    prior_outputs: &[StepOutput],
-    orientation_path: &str,
-    paper_text_path: &str,
-    document_bundle_path: &str,
-    source_path: &str,
+    artifacts: &ResolvedArtifactContext,
     survey_hint: &str,
     variables: &std::collections::HashMap<String, String>,
-    extra_inputs: &std::collections::HashMap<String, String>,
-    read_dirs: &[String],
     write_dir: Option<&str>,
     settings: &crate::settings::Settings,
     shared_context: Option<Arc<super::context_cache::PreparedContext>>,
@@ -1699,23 +2156,24 @@ async fn run_sequential_step(
 
     let base_prompt = expand_template(
         &step.prompt,
-        orientation_path,
+        &artifacts.orientation_path,
         survey_hint,
-        prior_outputs,
-        paper_text_path,
-        document_bundle_path,
-        source_path,
+        &artifacts.prior_outputs,
+        &artifacts.paper_text_path,
+        &artifacts.document_bundle_path,
+        &artifacts.source_path,
     )?;
 
-    let base_prompt = substitute_run_context(&base_prompt, variables, extra_inputs)?;
-    let report_rel = format!("steps/{}.md", step_slug(&step.id));
+    let base_prompt = substitute_run_context(&base_prompt, variables, &artifacts.extra_inputs)?;
+    let task_write_dir = step_write_dir(write_dir, &step.id)?;
+    let report_rel = "report.md";
     let report_nonce = new_report_nonce()?;
     let mut prompt = base_prompt;
-    if !document_bundle_path.is_empty() {
-        let artifact_root = write_dir
-            .and_then(|directory| std::path::Path::new(directory).parent())
-            .map(|directory| directory.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|| "(run artifact root unavailable)".to_string());
+    if !artifacts.document_bundle_path.is_empty() {
+        let artifact_root = artifacts
+            .artifact_root
+            .clone()
+            .unwrap_or_else(|| "(visual assets not selected)".to_string());
         crate::safety::push_str_limited(
             &mut prompt,
             &format!(
@@ -1723,7 +2181,7 @@ async fn run_sequential_step(
                  Its asset rel_path values are relative to: {artifact_root}\n\
                  Use it to locate equations, tables, figures, page renders, and provenance. \
                  Inspect images with ReadDocumentAsset on direct APIs or the provider's native Read tool on CLI transports.",
-                document_bundle_path.replace('\\', "/")
+                artifacts.document_bundle_path.replace('\\', "/")
             ),
             crate::safety::MAX_EXPANDED_PROMPT_BYTES,
             "Sequential prompt",
@@ -1735,26 +2193,43 @@ async fn run_sequential_step(
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Sequential prompt",
     )?;
+    crate::safety::push_str_limited(
+        &mut prompt,
+        &format!("\n\n{}", artifacts.manifest),
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Sequential artifact context",
+    )?;
     if shared_context.is_some() {
-        prompt = append_shared_context_note(prompt)?;
+        prompt = append_shared_context_note(
+            prompt,
+            artifacts.includes_primary_text,
+            artifacts.includes_survey,
+        )?;
     }
     crate::safety::push_str_limited(
         &mut prompt,
-        &output_format_block(write_dir, &report_nonce),
+        &output_format_block(task_write_dir.as_deref(), &report_nonce),
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Sequential prompt",
     )?;
 
-    let tools = tools_with_write(&step.tools, write_dir);
+    let tools = tools_with_write(
+        &step.tools,
+        !artifacts.read_dirs.is_empty(),
+        artifacts.has_visuals,
+        task_write_dir.as_deref(),
+    );
     let agent = step.agents.first().map(|s| s.as_str());
     let log_label = format!("Step: {}", step.label);
 
     // Use the paper's parent directory as CWD for steps with Read access
-    let source = std::path::Path::new(source_path);
-    let source_dir = if source.is_dir() {
-        normalize_cli_root(source_path)
+    let source = std::path::Path::new(&artifacts.source_path);
+    let source_dir = if artifacts.source_path.is_empty() {
+        Some(normalized_path(artifacts._view.path()))
+    } else if source.is_dir() {
+        normalize_cli_root(&artifacts.source_path)
     } else {
-        cli_parent_dir(source_path)
+        cli_parent_dir(&artifacts.source_path)
     };
     let provider = agent
         .map(|a| a.to_string())
@@ -1775,9 +2250,9 @@ async fn run_sequential_step(
         tools: &tools,
         agent,
         cwd: source_dir.as_deref(),
-        read_dirs,
-        write_dir,
-        report_rel: &report_rel,
+        read_dirs: &artifacts.read_dirs,
+        write_dir: task_write_dir.as_deref(),
+        report_rel,
         report_nonce: &report_nonce,
         output_schema: step.output_schema.as_ref(),
         command_model: resolution.command_model.as_deref(),
@@ -1815,90 +2290,179 @@ mod tests {
     }
 
     #[test]
-    fn provider_roots_include_paper_orientation_named_input_and_source() {
-        let inputs = std::collections::HashMap::from([(
-            "response".to_string(),
-            "/private/tmp/pipeline_run/named/response.txt".to_string(),
-        )]);
-        let roots = provider_read_dirs(
-            "/Users/Mike/Documents/Paper/main.tex",
-            "/private/tmp/pipeline_run/paper/paper.txt",
-            "",
-            "/private/tmp/pipeline_run/orientation/orientation.json",
-            &inputs,
-            &["/Users/Mike/Documents/Named Source".to_string()],
-        );
+    fn selected_artifacts_are_staged_without_exposing_unselected_inputs() {
+        let runtime_dir = tempfile::tempdir().unwrap();
+        let paper = runtime_dir.path().join("paper.md");
+        let survey = runtime_dir.path().join("survey.json");
+        let named = runtime_dir.path().join("rubric.md");
+        let source_dir = runtime_dir.path().join("source");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(&paper, "paper").unwrap();
+        std::fs::write(&survey, "{}").unwrap();
+        std::fs::write(&named, "rubric").unwrap();
+        std::fs::write(source_dir.join("main.tex"), "source").unwrap();
 
-        for expected in [
-            "/Users/Mike/Documents/Paper",
-            "/Users/Mike/Documents/Named Source",
-            "/private/tmp/pipeline_run/paper",
-            "/private/tmp/pipeline_run/orientation",
-            "/private/tmp/pipeline_run/named",
-        ] {
-            assert!(
-                roots.iter().any(|root| root == expected),
-                "missing {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn provider_roots_normalize_windows_path_shapes() {
-        let inputs = std::collections::HashMap::from([(
+        let mut step = make_step("reader", Phase::Parallel);
+        step.context.include = vec![
+            ArtifactSelector::Primary {
+                parts: vec![PrimaryArtifactPart::Text],
+            },
+            ArtifactSelector::NamedInput {
+                key: "rubric".into(),
+                parts: vec![NamedInputArtifactPart::Text],
+            },
+        ];
+        let named_inputs = std::collections::HashMap::from([(
             "rubric".to_string(),
-            r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\named\rubric.txt".to_string(),
+            named.to_string_lossy().to_string(),
         )]);
-        let roots = provider_read_dirs(
-            r"C:\Users\Mike\Documents\Paper\main.pdf",
-            r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\paper\paper.txt",
-            "",
-            r"C:\Users\Mike\AppData\Local\Temp\pipeline_run\orientation\orientation.json",
-            &inputs,
-            &[r"D:\Shared Inputs\Data".to_string()],
-        );
+        let named_sources = std::collections::HashMap::from([(
+            "rubric".to_string(),
+            source_dir.to_string_lossy().to_string(),
+        )]);
+        let resolved = resolve_artifact_context(
+            &step,
+            ArtifactRuntime {
+                orientation_path: survey.to_str().unwrap(),
+                paper_text_path: paper.to_str().unwrap(),
+                document_bundle_path: "",
+                source_path: source_dir.to_str().unwrap(),
+                extra_inputs: &named_inputs,
+                extra_input_sources: &named_sources,
+                outputs: &[],
+                run_artifact_dir: None,
+            },
+        )
+        .unwrap();
 
-        for expected in [
-            "C:/Users/Mike/Documents/Paper",
-            "C:/Users/Mike/AppData/Local/Temp/pipeline_run/paper",
-            "C:/Users/Mike/AppData/Local/Temp/pipeline_run/orientation",
-            "C:/Users/Mike/AppData/Local/Temp/pipeline_run/named",
-            "D:/Shared Inputs/Data",
-        ] {
-            assert!(
-                roots.iter().any(|root| root == expected),
-                "missing {expected}"
-            );
-        }
+        assert_eq!(
+            std::fs::read_to_string(&resolved.paper_text_path).unwrap(),
+            "paper"
+        );
+        assert_eq!(
+            std::fs::read_to_string(resolved.extra_inputs.get("rubric").unwrap()).unwrap(),
+            "rubric"
+        );
+        assert!(resolved.orientation_path.is_empty());
+        assert!(resolved.source_path.is_empty());
+        assert!(!resolved
+            .read_dirs
+            .iter()
+            .any(|root| root == &normalized_path(&source_dir)));
     }
 
     #[test]
-    fn folder_source_grants_the_folder_not_its_parent() {
+    fn selected_source_folder_grants_only_that_folder() {
         let folder = tempfile::tempdir().unwrap();
-        let canonical = folder.path().canonicalize().unwrap();
-        let expected = normalize_cli_root(&folder.path().to_string_lossy()).unwrap();
-        let parent = canonical
-            .parent()
-            .and_then(|path| normalize_cli_root(&path.to_string_lossy()));
-        let roots = provider_read_dirs(
-            folder.path().to_str().unwrap(),
-            "/private/tmp/pipeline_run/paper.txt",
-            "",
-            "",
-            &std::collections::HashMap::new(),
-            &[],
-        );
-        assert!(roots.iter().any(|root| root == &expected));
-        assert!(!roots
-            .iter()
-            .any(|root| parent.as_ref().is_some_and(|parent| root == parent)));
+        let source_dir = folder.path().join("source");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let expected = normalized_path(&source_dir);
+        let parent = normalized_path(folder.path());
+        let mut step = make_step("source-reader", Phase::Parallel);
+        step.context.include = vec![ArtifactSelector::Primary {
+            parts: vec![PrimaryArtifactPart::Source],
+        }];
+
+        let resolved = resolve_artifact_context(
+            &step,
+            ArtifactRuntime {
+                orientation_path: "",
+                paper_text_path: "",
+                document_bundle_path: "",
+                source_path: source_dir.to_str().unwrap(),
+                extra_inputs: &Default::default(),
+                extra_input_sources: &Default::default(),
+                outputs: &[],
+                run_artifact_dir: None,
+            },
+        )
+        .unwrap();
+
+        assert!(resolved.read_dirs.iter().any(|root| root == &expected));
+        assert!(!resolved.read_dirs.iter().any(|root| root == &parent));
     }
 
-    // ── resolve_dependencies (implicit adjacency schedule) ─────────
-    //
-    // With no explicit `inputs`, the dependency sets must reproduce the old
-    // wave behaviour: parallel steps wait only for the most recent sequential
-    // step; a sequential step waits for everything before it.
+    #[test]
+    fn supporting_file_glob_stages_only_matching_producer_files() {
+        let run = tempfile::tempdir().unwrap();
+        let artifacts = run.path().join("artifacts");
+        let files = artifacts
+            .join("by-step")
+            .join(step_slug("producer"))
+            .join(step_slug("producer"))
+            .join("files");
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::write(files.join("selected.csv"), "selected").unwrap();
+        std::fs::write(files.join("unselected.txt"), "unselected").unwrap();
+
+        let mut step = make_step("consumer", Phase::Sequential);
+        step.context.include = vec![ArtifactSelector::Step {
+            step: "producer".into(),
+            parts: vec![StepArtifactPart::Files],
+            glob: "*.csv".into(),
+        }];
+        let resolved = resolve_artifact_context(
+            &step,
+            ArtifactRuntime {
+                orientation_path: "",
+                paper_text_path: "",
+                document_bundle_path: "",
+                source_path: "",
+                extra_inputs: &Default::default(),
+                extra_input_sources: &Default::default(),
+                outputs: &[],
+                run_artifact_dir: Some(artifacts.to_str().unwrap()),
+            },
+        )
+        .unwrap();
+
+        assert!(resolved.manifest.contains("selected.csv"));
+        assert!(!resolved.manifest.contains("unselected.txt"));
+        assert!(resolved
+            ._view
+            .path()
+            .join("steps")
+            .join(step_slug("producer"))
+            .join("files")
+            .join("selected.csv")
+            .is_file());
+        assert!(!resolved
+            ._view
+            .path()
+            .join("steps")
+            .join(step_slug("producer"))
+            .join("files")
+            .join("unselected.txt")
+            .exists());
+    }
+
+    #[test]
+    fn parallel_artifact_resolution_rejects_step_outputs() {
+        let mut step = make_step("parallel-consumer", Phase::Parallel);
+        step.context.include = vec![ArtifactSelector::Step {
+            step: "producer".into(),
+            parts: vec![StepArtifactPart::Report],
+            glob: String::new(),
+        }];
+        let error = resolve_artifact_context(
+            &step,
+            ArtifactRuntime {
+                orientation_path: "",
+                paper_text_path: "",
+                document_bundle_path: "",
+                source_path: "",
+                extra_inputs: &Default::default(),
+                extra_input_sources: &Default::default(),
+                outputs: &[],
+                run_artifact_dir: None,
+            },
+        )
+        .err()
+        .unwrap();
+        assert!(error.contains("cannot consume another step's output"));
+    }
+
+    // ── resolve_dependencies (explicit order + artifact dataflow) ──
 
     fn deps_of(steps: &[StepConfig]) -> Vec<std::collections::HashSet<String>> {
         let refs: Vec<&StepConfig> = steps.iter().collect();
@@ -1906,7 +2470,7 @@ mod tests {
     }
 
     #[test]
-    fn implicit_parallel_wave_has_no_deps() {
+    fn parallel_steps_without_edges_have_no_dependencies() {
         let steps = [
             make_step("a", Phase::Parallel),
             make_step("b", Phase::Parallel),
@@ -1917,48 +2481,34 @@ mod tests {
     }
 
     #[test]
-    fn implicit_sequential_waits_for_all_prior() {
+    fn isolated_sequential_has_no_implicit_dependencies() {
         let steps = [
             make_step("a", Phase::Parallel),
-            make_step("b", Phase::Parallel),
             make_step("s", Phase::Sequential),
         ];
         let deps = deps_of(&steps);
+        assert!(deps[1].is_empty());
+    }
+
+    #[test]
+    fn order_and_artifact_dependencies_are_unioned() {
+        let a = make_step("a", Phase::Parallel);
+        let c = make_step("c", Phase::Parallel);
+        let mut b = make_step("b", Phase::Sequential);
+        b.after = vec!["a".into()];
+        b.context
+            .include
+            .push(crate::pipeline_config::ArtifactSelector::Step {
+                step: "c".into(),
+                parts: vec![crate::pipeline_config::StepArtifactPart::Report],
+                glob: String::new(),
+            });
+        let deps = deps_of(&[a, c, b]);
+        assert!(deps[0].is_empty());
         assert_eq!(
             deps[2],
-            ["a".to_string(), "b".to_string()].into_iter().collect()
+            ["a".to_string(), "c".to_string()].into_iter().collect()
         );
-    }
-
-    #[test]
-    fn implicit_second_wave_waits_for_last_sequential_only() {
-        let steps = [
-            make_step("p1", Phase::Parallel),
-            make_step("s1", Phase::Sequential),
-            make_step("p3", Phase::Parallel),
-            make_step("s2", Phase::Sequential),
-        ];
-        let deps = deps_of(&steps);
-        assert!(deps[0].is_empty()); // p1
-        assert_eq!(deps[1], ["p1".to_string()].into_iter().collect()); // s1 waits for p1
-        assert_eq!(deps[2], ["s1".to_string()].into_iter().collect()); // p3 waits for s1 only
-        assert_eq!(
-            deps[3],
-            ["p1".to_string(), "s1".to_string(), "p3".to_string()]
-                .into_iter()
-                .collect()
-        );
-    }
-
-    #[test]
-    fn explicit_inputs_override_implicit_schedule() {
-        let mut a = make_step("a", Phase::Parallel);
-        let mut b = make_step("b", Phase::Sequential);
-        b.inputs = vec!["a".into()];
-        a.inputs = vec![];
-        let deps = deps_of(&[a, b]);
-        assert!(deps[0].is_empty());
-        assert_eq!(deps[1], ["a".to_string()].into_iter().collect());
     }
 
     #[test]
@@ -2028,7 +2578,7 @@ mod tests {
     #[test]
     fn terminal_parallel_failure_unblocks_dependent_step() {
         let mut downstream = make_step("downstream", Phase::Sequential);
-        downstream.inputs = vec!["ok".into(), "failed".into()];
+        downstream.after = vec!["ok".into(), "failed".into()];
         let steps = [
             make_step("ok", Phase::Parallel),
             make_step("failed", Phase::Parallel),
@@ -2054,7 +2604,7 @@ mod tests {
             max: 20,
         });
         let mut downstream = make_step("downstream", Phase::Sequential);
-        downstream.inputs = vec!["fan".into()];
+        downstream.after = vec!["fan".into()];
         let steps = [fan, downstream];
         let refs: Vec<&StepConfig> = steps.iter().collect();
         let settings = crate::settings::Settings::default();
@@ -2096,6 +2646,7 @@ mod tests {
                 &settings,
                 &semaphore,
                 "",
+                &serde_json::Value::Null,
                 "",
                 "",
                 temp.path().to_str().unwrap(),
@@ -2104,10 +2655,11 @@ mod tests {
                 "{step_prompt}",
                 &Default::default(),
                 &Default::default(),
+                &Default::default(),
                 &[],
                 None,
                 &output_budget,
-                None,
+                false,
             ))
             .unwrap();
         assert!(failures.is_empty());
@@ -2122,11 +2674,17 @@ mod tests {
     #[test]
     fn dependents_of_finds_transitive_downstream() {
         use crate::pipeline_config::{MergeConfig, PipelineConfig};
+        let mut synthesis = make_step("s", Phase::Sequential);
+        synthesis.context.include = vec![ArtifactSelector::Step {
+            step: "a".into(),
+            parts: vec![StepArtifactPart::Report],
+            glob: String::new(),
+        }];
         let config = PipelineConfig {
             steps: vec![
                 make_step("a", Phase::Parallel),
                 make_step("b", Phase::Parallel),
-                make_step("s", Phase::Sequential), // implicitly depends on a, b
+                synthesis,
             ],
             merge: MergeConfig::default(),
             context_cache: Default::default(),
@@ -2364,7 +2922,7 @@ mod tests {
     #[test]
     fn step_file_keys_are_deterministic_and_collision_resistant() {
         assert_eq!(step_slug("technical"), step_slug("technical"));
-        assert_eq!(step_slug("technical").len(), 64);
+        assert!(step_slug("technical").starts_with("technical--"));
         assert_ne!(step_slug("a.b"), step_slug("a_b"));
         assert_ne!(step_slug("technical"), step_slug("technical/claude"));
     }
@@ -2381,13 +2939,16 @@ mod tests {
     }
 
     #[test]
-    fn shared_context_note_overrides_file_rereads_but_keeps_asset_access() {
-        let prompt =
-            append_shared_context_note("Read the paper text at /tmp/paper.txt.".to_string())
-                .unwrap();
-        assert!(prompt.contains("Do not read those two files again"));
-        assert!(prompt.contains("inspect figures, tables, code"));
-        assert!(prompt.ends_with("in the extracted text."));
+    fn shared_context_note_names_only_selected_material() {
+        let prompt = append_shared_context_note(
+            "Read the input at /tmp/paper.txt.".to_string(),
+            true,
+            false,
+        )
+        .unwrap();
+        assert!(prompt.contains("selected extracted input text"));
+        assert!(!prompt.contains("survey"));
+        assert!(prompt.contains("other artifacts listed"));
     }
 
     #[test]
@@ -2418,17 +2979,17 @@ mod tests {
     fn tools_with_write_appends_once() {
         let base = vec!["Read".to_string()];
         assert_eq!(
-            tools_with_write(&base, Some("/d")),
+            tools_with_write(&base, true, true, Some("/d")),
             vec!["Read", "ReadDocumentAsset", "Write"]
         );
         assert_eq!(
-            tools_with_write(&base, None),
+            tools_with_write(&base, true, true, None),
             vec!["Read", "ReadDocumentAsset"]
         );
         let with = vec!["Read".to_string(), "Write".to_string()];
         assert_eq!(
-            tools_with_write(&with, Some("/d")),
-            vec!["Read", "Write", "ReadDocumentAsset"]
+            tools_with_write(&with, false, false, Some("/d")),
+            vec!["Write"]
         );
     }
 

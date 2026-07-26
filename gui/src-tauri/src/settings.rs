@@ -152,9 +152,73 @@ pub struct Settings {
     #[serde(default)]
     pub marker_disable_ocr: bool,
 
+    /// Force OCR for every page when using marker-pdf. Mutually exclusive
+    /// with `marker_disable_ocr`.
+    #[serde(default)]
+    pub marker_force_ocr: bool,
+
     /// Disable image extraction when using marker-pdf.
     #[serde(default)]
     pub marker_disable_images: bool,
+
+    /// DPI used by Marker's layout model.
+    #[serde(default = "default_marker_lowres_dpi")]
+    pub marker_lowres_dpi: u32,
+
+    /// DPI used by Marker's OCR and equation models.
+    #[serde(default = "default_marker_highres_dpi")]
+    pub marker_highres_dpi: u32,
+
+    /// Number of workers Marker uses for embedded PDF text extraction.
+    /// 0 selects a machine-aware default.
+    #[serde(default = "default_marker_pdftext_workers")]
+    pub marker_pdftext_workers: u32,
+
+    /// Marker layout-model batch size. 0 leaves the upstream device-aware
+    /// default in effect.
+    #[serde(default = "default_marker_layout_batch_size")]
+    pub marker_layout_batch_size: u32,
+
+    /// Marker OCR recognition-model batch size. 0 leaves the upstream
+    /// device-aware default in effect.
+    #[serde(default = "default_marker_recognition_batch_size")]
+    pub marker_recognition_batch_size: u32,
+
+    /// Number of PDF pages PaddleOCR-VL may process concurrently. 0 selects
+    /// a platform-aware default; 1 through 4 are explicit expert overrides.
+    #[serde(default = "default_paddle_page_concurrency")]
+    pub paddle_page_concurrency: u32,
+
+    /// Maximum number of multimodal tokens encoded in one llama.cpp batch.
+    /// 0 selects a platform-aware default. Larger batches can improve
+    /// vision-prefill throughput at the cost of additional peak memory.
+    #[serde(default = "default_paddle_mtmd_batch_tokens")]
+    pub paddle_mtmd_batch_tokens: u32,
+
+    /// llama.cpp Flash Attention policy: "auto", "on", or "off".
+    #[serde(default = "default_paddle_flash_attention")]
+    pub paddle_flash_attention: String,
+
+    /// Maximum generated tokens for one PaddleOCR-VL page.
+    #[serde(default = "default_paddle_max_output_tokens")]
+    pub paddle_max_output_tokens: u32,
+
+    /// Number of retries for a failed or suspicious PaddleOCR-VL page.
+    #[serde(default = "default_paddle_page_retries")]
+    pub paddle_page_retries: u32,
+
+    /// DPI used to render each page before PaddleOCR-VL inference.
+    #[serde(default = "default_paddle_render_dpi")]
+    pub paddle_render_dpi: u32,
+
+    /// Wall-clock budget for the complete PDF extraction stage.
+    #[serde(default = "default_pdf_extraction_timeout_secs")]
+    pub pdf_extraction_timeout_secs: u64,
+
+    /// Reuse versioned local extraction checkpoints when the PDF and
+    /// extractor settings are unchanged.
+    #[serde(default = "default_reuse_pdf_extraction_cache")]
+    pub reuse_pdf_extraction_cache: bool,
 
     /// Show verbose LLM output in the console (command lines, stdout, stderr).
     #[serde(default)]
@@ -223,6 +287,88 @@ fn default_pdf_extractor() -> String {
     "llm".to_string()
 }
 
+fn default_marker_lowres_dpi() -> u32 {
+    96
+}
+
+fn default_marker_highres_dpi() -> u32 {
+    192
+}
+
+fn default_marker_pdftext_workers() -> u32 {
+    0
+}
+
+fn default_marker_layout_batch_size() -> u32 {
+    0
+}
+
+fn default_marker_recognition_batch_size() -> u32 {
+    0
+}
+
+fn default_paddle_page_concurrency() -> u32 {
+    0
+}
+
+fn default_paddle_mtmd_batch_tokens() -> u32 {
+    0
+}
+
+fn default_paddle_flash_attention() -> String {
+    "auto".to_string()
+}
+
+fn default_paddle_max_output_tokens() -> u32 {
+    4096
+}
+
+fn default_paddle_page_retries() -> u32 {
+    1
+}
+
+fn default_paddle_render_dpi() -> u32 {
+    150
+}
+
+fn default_pdf_extraction_timeout_secs() -> u64 {
+    900
+}
+
+fn default_reuse_pdf_extraction_cache() -> bool {
+    true
+}
+
+/// Resolve Paddle's automatic settings without persisting machine-specific
+/// values. Apple Silicon generally has enough unified-memory bandwidth to
+/// benefit from two slots and a larger vision-prefill batch. Conservative
+/// defaults remain preferable on other platforms, where GPU availability is
+/// not reliably discoverable before llama.cpp starts.
+pub fn resolved_paddle_page_concurrency(settings: &Settings) -> u32 {
+    match settings.paddle_page_concurrency {
+        0 if cfg!(all(target_os = "macos", target_arch = "aarch64")) => 2,
+        0 => 1,
+        value => value,
+    }
+}
+
+pub fn resolved_marker_pdftext_workers(settings: &Settings) -> u32 {
+    match settings.marker_pdftext_workers {
+        0 => std::thread::available_parallelism()
+            .map(|value| (value.get() / 2).clamp(1, 8) as u32)
+            .unwrap_or(4),
+        value => value,
+    }
+}
+
+pub fn resolved_paddle_mtmd_batch_tokens(settings: &Settings) -> u32 {
+    match settings.paddle_mtmd_batch_tokens {
+        0 if cfg!(all(target_os = "macos", target_arch = "aarch64")) => 2048,
+        0 => 1024,
+        value => value,
+    }
+}
+
 fn default_provider() -> String {
     "claude".to_string()
 }
@@ -266,7 +412,21 @@ impl Default for Settings {
             gemini_api_model_selection: ModelSelection::Automatic,
             pdf_extractor: "llm".to_string(),
             marker_disable_ocr: false,
+            marker_force_ocr: false,
             marker_disable_images: false,
+            marker_lowres_dpi: default_marker_lowres_dpi(),
+            marker_highres_dpi: default_marker_highres_dpi(),
+            marker_pdftext_workers: default_marker_pdftext_workers(),
+            marker_layout_batch_size: default_marker_layout_batch_size(),
+            marker_recognition_batch_size: default_marker_recognition_batch_size(),
+            paddle_page_concurrency: default_paddle_page_concurrency(),
+            paddle_mtmd_batch_tokens: default_paddle_mtmd_batch_tokens(),
+            paddle_flash_attention: default_paddle_flash_attention(),
+            paddle_max_output_tokens: default_paddle_max_output_tokens(),
+            paddle_page_retries: default_paddle_page_retries(),
+            paddle_render_dpi: default_paddle_render_dpi(),
+            pdf_extraction_timeout_secs: default_pdf_extraction_timeout_secs(),
+            reuse_pdf_extraction_cache: default_reuse_pdf_extraction_cache(),
             verbose_logging: false,
             step_timeout_secs: 1200,
             max_retries: 1,
@@ -311,6 +471,63 @@ impl Settings {
             "llm" | "auto" | "marker" | "paddleocr-vl" | "pdftotext"
         ) {
             return Err(format!("Invalid PDF extractor '{}'", self.pdf_extractor));
+        }
+        if self.marker_disable_ocr && self.marker_force_ocr {
+            return Err(
+                "Marker OCR mode cannot disable and force OCR at the same time".to_string(),
+            );
+        }
+        if !(72..=200).contains(&self.marker_lowres_dpi) {
+            return Err("Marker layout resolution must be between 72 and 200 DPI".to_string());
+        }
+        if !(96..=300).contains(&self.marker_highres_dpi)
+            || self.marker_highres_dpi < self.marker_lowres_dpi
+        {
+            return Err(
+                "Marker OCR resolution must be between 96 and 300 DPI and at least the layout resolution"
+                    .to_string(),
+            );
+        }
+        if self.marker_pdftext_workers > 16 {
+            return Err(
+                "Marker PDF text workers must be automatic or between 1 and 16".to_string(),
+            );
+        }
+        if self.marker_layout_batch_size > 32 {
+            return Err(
+                "Marker layout batch size must be automatic or between 1 and 32".to_string(),
+            );
+        }
+        if self.marker_recognition_batch_size > 128 {
+            return Err("Marker OCR batch size must be automatic or between 1 and 128".to_string());
+        }
+        if self.paddle_page_concurrency > 4 {
+            return Err(
+                "PaddleOCR-VL concurrent pages must be automatic or between 1 and 4".to_string(),
+            );
+        }
+        if !matches!(self.paddle_mtmd_batch_tokens, 0 | 512 | 1024 | 2048 | 4096) {
+            return Err(
+                "PaddleOCR-VL vision batch must be automatic, 512, 1024, 2048, or 4096 tokens"
+                    .to_string(),
+            );
+        }
+        if !matches!(self.paddle_flash_attention.as_str(), "auto" | "on" | "off") {
+            return Err("PaddleOCR-VL Flash Attention must be auto, on, or off".to_string());
+        }
+        if !matches!(self.paddle_max_output_tokens, 2048 | 4096 | 8192) {
+            return Err("PaddleOCR-VL page output must be 2048, 4096, or 8192 tokens".to_string());
+        }
+        if self.paddle_page_retries > 3 {
+            return Err("PaddleOCR-VL page retries must be between 0 and 3".to_string());
+        }
+        if !matches!(self.paddle_render_dpi, 120 | 150 | 180 | 200) {
+            return Err(
+                "PaddleOCR-VL render resolution must be 120, 150, 180, or 200 DPI".to_string(),
+            );
+        }
+        if !(120..=7200).contains(&self.pdf_extraction_timeout_secs) {
+            return Err("PDF extraction timeout must be between 120 and 7200 seconds".to_string());
         }
         if self.active_profile.is_empty()
             || self.active_profile.len() > 64
@@ -1144,6 +1361,65 @@ mod tests {
     }
 
     #[test]
+    fn marker_tuning_defaults_match_upstream_quality_and_use_automatic_throughput() {
+        let defaults = Settings::default();
+        assert!(!defaults.marker_disable_ocr);
+        assert!(!defaults.marker_force_ocr);
+        assert_eq!(defaults.marker_lowres_dpi, 96);
+        assert_eq!(defaults.marker_highres_dpi, 192);
+        assert_eq!(defaults.marker_pdftext_workers, 0);
+        assert_eq!(defaults.marker_layout_batch_size, 0);
+        assert_eq!(defaults.marker_recognition_batch_size, 0);
+        assert!((1..=8).contains(&resolved_marker_pdftext_workers(&defaults)));
+
+        let legacy: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.marker_lowres_dpi, 96);
+        assert_eq!(legacy.marker_highres_dpi, 192);
+        assert_eq!(legacy.marker_pdftext_workers, 0);
+    }
+
+    #[test]
+    fn paddle_tuning_defaults_are_automatic_and_bounded() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.paddle_page_concurrency, 0);
+        assert_eq!(defaults.paddle_mtmd_batch_tokens, 0);
+        assert_eq!(defaults.paddle_flash_attention, "auto");
+        assert_eq!(defaults.paddle_max_output_tokens, 4096);
+        assert_eq!(defaults.paddle_page_retries, 1);
+        assert_eq!(defaults.paddle_render_dpi, 150);
+        assert_eq!(defaults.pdf_extraction_timeout_secs, 900);
+        assert!(defaults.reuse_pdf_extraction_cache);
+
+        let legacy: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.paddle_page_concurrency, 0);
+        assert_eq!(legacy.paddle_mtmd_batch_tokens, 0);
+        assert_eq!(legacy.paddle_flash_attention, "auto");
+        assert_eq!(legacy.paddle_max_output_tokens, 4096);
+        assert_eq!(legacy.paddle_page_retries, 1);
+        assert_eq!(legacy.paddle_render_dpi, 150);
+        assert_eq!(legacy.pdf_extraction_timeout_secs, 900);
+        assert!(legacy.reuse_pdf_extraction_cache);
+    }
+
+    #[test]
+    fn paddle_automatic_settings_resolve_to_supported_values() {
+        let defaults = Settings::default();
+        assert!(matches!(resolved_paddle_page_concurrency(&defaults), 1 | 2));
+        assert!(matches!(
+            resolved_paddle_mtmd_batch_tokens(&defaults),
+            1024 | 2048
+        ));
+
+        let explicit = Settings {
+            paddle_page_concurrency: 1,
+            paddle_mtmd_batch_tokens: 512,
+            ..Default::default()
+        };
+        assert_eq!(resolved_paddle_page_concurrency(&explicit), 1);
+        assert_eq!(resolved_paddle_mtmd_batch_tokens(&explicit), 512);
+    }
+
+    #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let mut key = [0u8; KEY_SIZE];
         getrandom::getrandom(&mut key).unwrap();
@@ -1264,6 +1540,86 @@ mod tests {
 
         invalid = Settings {
             active_profile: "profile.with.dots".into(),
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            marker_disable_ocr: true,
+            marker_force_ocr: true,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            marker_lowres_dpi: 220,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            marker_lowres_dpi: 180,
+            marker_highres_dpi: 150,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            marker_pdftext_workers: 17,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            marker_layout_batch_size: 33,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            marker_recognition_batch_size: 129,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            paddle_page_concurrency: 5,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            paddle_mtmd_batch_tokens: 1536,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            paddle_flash_attention: "sometimes".into(),
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            paddle_max_output_tokens: 3072,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            paddle_page_retries: 4,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            paddle_render_dpi: 160,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            pdf_extraction_timeout_secs: 60,
             ..Default::default()
         };
         assert!(invalid.validate().is_err());

@@ -47,4 +47,46 @@ describe("ResizeHandle", () => {
     fireEvent.doubleClick(screen.getByRole("separator"));
     expect(onResize).toHaveBeenCalledWith(200);
   });
+
+  it("updates the panel directly while dragging and commits once on release", () => {
+    const onResize = vi.fn();
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const requestFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      });
+    const cancelFrame = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => {});
+    const { container } = render(
+      <div style={{ width: 200 }}>
+        <ResizeHandle
+          currentWidth={200}
+          min={160}
+          max={240}
+          onResize={onResize}
+        />
+      </div>,
+    );
+
+    const panel = container.firstElementChild as HTMLElement;
+    const divider = screen.getByRole("separator");
+    fireEvent.mouseDown(divider, { clientX: 100 });
+    fireEvent.mouseMove(document, { clientX: 120 });
+    fireEvent.mouseMove(document, { clientX: 130 });
+
+    expect(frameCallbacks).toHaveLength(1);
+    expect(onResize).not.toHaveBeenCalled();
+    frameCallbacks[0](0);
+    expect(panel.style.width).toBe("230px");
+
+    fireEvent.mouseUp(document);
+    expect(onResize).toHaveBeenCalledTimes(1);
+    expect(onResize).toHaveBeenCalledWith(230);
+
+    requestFrame.mockRestore();
+    cancelFrame.mockRestore();
+  });
 });

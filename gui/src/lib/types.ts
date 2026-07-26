@@ -46,6 +46,22 @@ export type RunCondition =
   | { kind: "output_matches"; step: string; pattern: string; negate?: boolean }
   | { kind: "survey_path"; pointer: string; equals?: unknown; exists?: boolean };
 
+export type PrimaryArtifactPart = "text" | "structure" | "visuals" | "source";
+export type NamedInputArtifactPart = "text" | "source";
+export type StepArtifactPart = "report" | "files";
+
+/** A logical artifact selection. Paths are resolved privately for each call. */
+export type ArtifactSelector =
+  | { kind: "primary"; parts: PrimaryArtifactPart[] }
+  | { kind: "survey" }
+  | { kind: "named_input"; key: string; parts: NamedInputArtifactPart[] }
+  | { kind: "step"; step: string; parts: StepArtifactPart[]; glob?: string };
+
+/** Exact artifact allowlist for a step. Empty means intentionally isolated. */
+export interface StepContext {
+  include: ArtifactSelector[];
+}
+
 export interface StepConfig {
   id: string;
   label: string;
@@ -61,8 +77,10 @@ export interface StepConfig {
   /** Per-step effort override; empty/undefined = use the global setting. */
   effort?: string;
   effort_overrides?: Record<string, string>;
-  /** Explicit upstream dependencies (step ids). Empty = implicit adjacency schedule. */
-  inputs?: string[];
+  /** Order-only dependencies. Upstream artifact selectors add dataflow edges automatically. */
+  after?: string[];
+  /** Exact artifacts available to this step. */
+  context: StepContext;
   /** Optional guard: skip the step unless this condition holds. */
   run_if?: RunCondition | null;
   /** Optional JSON-shape contract the step's output must satisfy (with retry). */
@@ -92,16 +110,13 @@ export interface InputSlot {
   required?: boolean;
 }
 
-/** Per-profile extraction overrides. Empty/null fields inherit from global Settings. */
+/** Per-profile extraction configuration. Parser tuning lives in global Settings. */
 export interface ExtractionConfig {
   /** "" | "auto" | "llm" | "paddleocr-vl" | "marker" | "pdftotext". Empty = inherit. */
   method: string;
-  /** null = inherit; true/false = override. */
-  marker_disable_ocr: boolean | null;
-  marker_disable_images: boolean | null;
   /** "" or "document" | "folder" | "none". Empty = document. */
   input_mode?: string;
-  /** Extra named inputs exposed to prompts as {input:key}. */
+  /** Extra named inputs that steps may select; selected text resolves as {input:key}. */
   extra_inputs?: InputSlot[];
 }
 
@@ -115,7 +130,7 @@ export interface VarSpec {
   choices?: string[];
 }
 
-/** Optional, profile-scoped reuse of the extracted input and orientation map. */
+/** Optional, profile-scoped reuse of each step's selected primary text/survey. */
 export interface ContextCacheConfig {
   enabled: boolean;
 }
@@ -367,7 +382,34 @@ export interface Settings {
   gemini_api_model_selection?: ModelSelection;
   pdf_extractor: string;
   marker_disable_ocr: boolean;
+  marker_force_ocr: boolean;
   marker_disable_images: boolean;
+  /** DPI used by Marker's layout model. */
+  marker_lowres_dpi: number;
+  /** DPI used by Marker's OCR and equation models. */
+  marker_highres_dpi: number;
+  /** Embedded PDF text workers; 0 = machine-aware automatic selection. */
+  marker_pdftext_workers: number;
+  /** Layout-model batch size; 0 = Marker's device-aware default. */
+  marker_layout_batch_size: number;
+  /** OCR recognition batch size; 0 = Marker's device-aware default. */
+  marker_recognition_batch_size: number;
+  /** PaddleOCR-VL page slots; 0 = platform-aware automatic selection. */
+  paddle_page_concurrency: number;
+  /** llama.cpp multimodal encoder batch size; 0 = automatic. */
+  paddle_mtmd_batch_tokens: number;
+  /** "auto" | "on" | "off". */
+  paddle_flash_attention: string;
+  /** Maximum generated tokens for one OCR page. */
+  paddle_max_output_tokens: number;
+  /** Retries for a failed or suspicious OCR page. */
+  paddle_page_retries: number;
+  /** Page render resolution used for local vision inference. */
+  paddle_render_dpi: number;
+  /** Wall-clock budget for the complete PDF extraction stage. */
+  pdf_extraction_timeout_secs: number;
+  /** Reuse versioned local extraction checkpoints. */
+  reuse_pdf_extraction_cache: boolean;
   verbose_logging: boolean;
   step_timeout_secs: number;
   max_retries: number;

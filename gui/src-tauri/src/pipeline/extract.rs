@@ -17,6 +17,13 @@ const MAX_INVENTORY_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Page images are useful artifacts but can consume substantial disk space.
 /// Keep this aligned with the documented run-artifact contract.
 pub const MAX_RENDERED_PDF_PAGES: u32 = 300;
+const PADDLE_REGION_WARNING_PREFIX: &str =
+    "PaddleOCR-VL warning: this visual region remained degenerate";
+const PADDLE_REGION_WARNING: &str = "PaddleOCR-VL warning: this visual region remained degenerate after adaptive subdivision and was not transcribed. Consult the rendered source page.";
+
+fn extraction_log(app: &crate::emit::EventBus, line: impl Into<String>) {
+    crate::pipeline::logging::emit(app, line.into());
+}
 
 fn open_regular_file(path: &Path) -> Result<fs::File, String> {
     crate::safety::open_regular_file(path)
@@ -524,43 +531,140 @@ fn find_marker_markdown(root: &Path) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
+const EXTRACTION_CACHE_SCHEMA: u32 = 2;
+
+fn executable_identity(path: &Path) -> String {
+    let metadata = fs::metadata(path).ok();
+    let len = metadata.as_ref().map(|value| value.len()).unwrap_or(0);
+    let modified = metadata
+        .and_then(|value| value.modified().ok())
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| value.as_secs())
+        .unwrap_or(0);
+    format!("{}:{len}:{modified}", path.display())
+}
+
+fn cache_fingerprint(value: &serde_json::Value) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
+    format!("{:x}", Sha256::digest(bytes))[..16].to_string()
+}
+
+fn atomic_write_cache(path: &Path, content: &[u8]) -> Result<(), String> {
+    use std::io::Write as _;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Cache path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Failed to create extraction cache: {error}"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("Failed to create extraction cache file: {error}"))?;
+    temporary
+        .write_all(content)
+        .map_err(|error| format!("Failed to write extraction cache: {error}"))?;
+    temporary
+        .as_file_mut()
+        .sync_all()
+        .map_err(|error| format!("Failed to flush extraction cache: {error}"))?;
+    temporary
+        .persist(path)
+        .map_err(|error| format!("Failed to publish extraction cache: {}", error.error))?;
+    Ok(())
+}
+
+fn marker_cache_manifest(
+    marker_bin: &crate::deps::ResolvedCommand,
+    settings: &crate::settings::Settings,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": EXTRACTION_CACHE_SCHEMA,
+        "engine": "marker",
+        "executable": executable_identity(marker_bin.discovered_path()),
+        "disable_ocr": settings.marker_disable_ocr,
+        "force_ocr": settings.marker_force_ocr,
+        "disable_images": settings.marker_disable_images,
+        "lowres_dpi": settings.marker_lowres_dpi,
+        "highres_dpi": settings.marker_highres_dpi,
+        "pdftext_workers": crate::settings::resolved_marker_pdftext_workers(settings),
+        "layout_batch_size": settings.marker_layout_batch_size,
+        "recognition_batch_size": settings.marker_recognition_batch_size,
+    })
+}
+
+fn marker_tuning_args(settings: &crate::settings::Settings) -> Vec<String> {
+    let mut args = vec![
+        "--disable_tqdm".to_string(),
+        "--lowres_image_dpi".to_string(),
+        settings.marker_lowres_dpi.to_string(),
+        "--highres_image_dpi".to_string(),
+        settings.marker_highres_dpi.to_string(),
+        "--pdftext_workers".to_string(),
+        crate::settings::resolved_marker_pdftext_workers(settings).to_string(),
+    ];
+    if settings.marker_disable_images {
+        args.push("--disable_image_extraction".to_string());
+    }
+    if settings.marker_disable_ocr {
+        args.push("--disable_ocr".to_string());
+    }
+    if settings.marker_force_ocr {
+        args.push("--force_ocr".to_string());
+    }
+    if settings.marker_layout_batch_size > 0 {
+        args.push("--layout_batch_size".to_string());
+        args.push(settings.marker_layout_batch_size.to_string());
+    }
+    if settings.marker_recognition_batch_size > 0 {
+        args.push("--recognition_batch_size".to_string());
+        args.push(settings.marker_recognition_batch_size.to_string());
+    }
+    args
+}
+
 /// Extract text from PDF using marker_single.
-/// Timeout is half the user's step timeout, floored at 120s to accommodate first-run model downloads.
+/// Successful output is retained by content hash and exact engine/settings
+/// identity. This makes repeated runs nearly free while preserving marker's
+/// extracted figure assets.
 fn extract_marker(
     app: &crate::emit::EventBus,
     path: &Path,
     paper_hash: &str,
-    marker_disable_ocr: bool,
-    marker_disable_images: bool,
 ) -> Result<String, String> {
     let path_str = path
         .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
     let settings = crate::settings::load();
+    let marker_bin = find_command("marker_single").ok_or("marker_single not found on PATH")?;
+    let manifest = marker_cache_manifest(&marker_bin, &settings);
     let mut marker_args = vec![
         path_str.to_string(),
         "--output_format".to_string(),
         "markdown".to_string(),
     ];
+    marker_args.extend(marker_tuning_args(&settings));
     // Write into the per-paper cache dir so the emitted markdown and figure
-    // images land somewhere the run can collect them. Cleared first so a
-    // prior run's files can't leak into this one.
+    // images land somewhere the run can collect them.
     let out_dir = marker_output_dir(paper_hash);
     prune_marker_cache(paper_hash);
     if let Some(dir) = &out_dir {
+        let manifest_path = dir.join(".pipeline-cache.json");
+        let cached_manifest = read_utf8_capped(&manifest_path, 64 * 1024)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        if settings.reuse_pdf_extraction_cache && cached_manifest.as_ref() == Some(&manifest) {
+            if let Some(markdown) = find_marker_markdown(dir)? {
+                let content = read_utf8_capped(&markdown, super::claude::MAX_STDOUT_BYTES)?;
+                if !content.trim().is_empty() {
+                    extraction_log(app, "Marker: reused cached extraction and figure assets");
+                    return Ok(content.trim().to_string());
+                }
+            }
+        }
         let _ = fs::remove_dir_all(dir);
         if fs::create_dir_all(dir).is_ok() {
             marker_args.push("--output_dir".to_string());
             marker_args.push(dir.to_string_lossy().to_string());
         }
     }
-    if marker_disable_images {
-        marker_args.push("--disable_image_extraction".to_string());
-    }
-    if marker_disable_ocr {
-        marker_args.push("--disable_ocr".to_string());
-    }
-    let marker_bin = find_command("marker_single").ok_or("marker_single not found on PATH")?;
     let mut cmd = marker_bin.command(&marker_args);
     cmd.env("PATH", env::full_path());
     // Managed installs keep their model weights under ~/.pipeline/hf.
@@ -573,15 +677,34 @@ fn extract_marker(
             cmd.env(k, v);
         }
     }
-    // Wait with timeout — use half the user's step timeout (same convention as LLM extraction),
-    // with a floor of 120s to handle first-run model downloads.
-    let timeout_secs = (settings.step_timeout_secs / 2).max(120);
-    let _ = app.emit_event(
-        "pipeline:log",
-        serde_json::json!({
-            "line": "Marker: invoking marker_single for PDF extraction"
-        }),
+    let timeout_secs = settings.pdf_extraction_timeout_secs.max(120);
+    extraction_log(
+        app,
+        format!(
+            "Marker tuning: OCR {}, {}→{} DPI, {} PDF text worker(s), layout batch {}, OCR batch {}",
+            if settings.marker_disable_ocr {
+                "disabled"
+            } else if settings.marker_force_ocr {
+                "forced"
+            } else {
+                "automatic"
+            },
+            settings.marker_lowres_dpi,
+            settings.marker_highres_dpi,
+            crate::settings::resolved_marker_pdftext_workers(&settings),
+            if settings.marker_layout_batch_size == 0 {
+                "automatic".to_string()
+            } else {
+                settings.marker_layout_batch_size.to_string()
+            },
+            if settings.marker_recognition_batch_size == 0 {
+                "automatic".to_string()
+            } else {
+                settings.marker_recognition_batch_size.to_string()
+            },
+        ),
     );
+    extraction_log(app, "Marker: invoking marker_single for PDF extraction");
     let output = run_bounded_output(
         cmd,
         "marker_single",
@@ -602,6 +725,12 @@ fn extract_marker(
             let content = read_utf8_capped(&md, super::claude::MAX_STDOUT_BYTES)?;
             let content = content.trim().to_string();
             if !content.is_empty() {
+                let _ = atomic_write_cache(
+                    &dir.join(".pipeline-cache.json"),
+                    serde_json::to_string_pretty(&manifest)
+                        .unwrap_or_default()
+                        .as_bytes(),
+                );
                 return Ok(content);
             }
         }
@@ -612,6 +741,14 @@ fn extract_marker(
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if text.is_empty() {
         return Err("marker_single returned empty output".to_string());
+    }
+    if let Some(dir) = &out_dir {
+        let _ = atomic_write_cache(
+            &dir.join(".pipeline-cache.json"),
+            serde_json::to_string_pretty(&manifest)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
     }
     Ok(text)
 }
@@ -671,6 +808,7 @@ impl Drop for PaddleServer {
 
 async fn start_paddle_server(
     paths: &crate::engines::PaddleEnginePaths,
+    settings: &crate::settings::Settings,
 ) -> Result<PaddleServer, String> {
     use std::process::Stdio;
 
@@ -682,28 +820,45 @@ async fn start_paddle_server(
         .port();
     drop(listener);
 
+    let model = paths
+        .model
+        .to_str()
+        .ok_or("PaddleOCR-VL model path is not valid UTF-8")?;
+    let projector = paths
+        .mmproj
+        .to_str()
+        .ok_or("PaddleOCR-VL projector path is not valid UTF-8")?;
+    let port = port.to_string();
+    let resolved_concurrency = crate::settings::resolved_paddle_page_concurrency(settings);
+    let page_concurrency = resolved_concurrency.to_string();
+    // llama.cpp's --ctx-size is the total KV budget shared by all parallel
+    // slots. Scale it with concurrency so a two-page run still gives every
+    // page the model's full 16K context.
+    let total_context = (16_384u32 * resolved_concurrency).to_string();
+    let mtmd_batch_tokens =
+        crate::settings::resolved_paddle_mtmd_batch_tokens(settings).to_string();
     let mut command = StdCommand::new(&paths.server);
     command.args([
         "-m",
-        paths
-            .model
-            .to_str()
-            .ok_or("PaddleOCR-VL model path is not valid UTF-8")?,
+        model,
         "--mmproj",
-        paths
-            .mmproj
-            .to_str()
-            .ok_or("PaddleOCR-VL projector path is not valid UTF-8")?,
+        projector,
         "--host",
         "127.0.0.1",
         "--port",
-        &port.to_string(),
+        &port,
         "--temp",
         "0",
         "--ctx-size",
-        "16384",
+        &total_context,
         "--n-gpu-layers",
         "99",
+        "--parallel",
+        &page_concurrency,
+        "--mtmd-batch-max-tokens",
+        &mtmd_batch_tokens,
+        "--flash-attn",
+        &settings.paddle_flash_attention,
         "--alias",
         "paddleocr-vl-1.6",
         "--no-ui",
@@ -788,8 +943,15 @@ fn read_image_data_url(path: &Path) -> Result<String, String> {
             MAX_PAGE_IMAGE_BYTES / 1_000_000
         ));
     }
+    let media_type = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if bytes.starts_with(&[0xff, 0xd8]) {
+        "image/jpeg"
+    } else {
+        return Err("Rendered PDF page is not a supported PNG or JPEG image".to_string());
+    };
     Ok(format!(
-        "data:image/png;base64,{}",
+        "data:{media_type};base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     ))
 }
@@ -802,26 +964,43 @@ fn paddle_response_text(value: &serde_json::Value) -> Result<String, String> {
     {
         return Err(format!("PaddleOCR-VL inference failed: {message}"));
     }
-    let content = value
+    let choice = value
         .get("choices")
         .and_then(|choices| choices.get(0))
-        .and_then(|choice| choice.get("message"))
+        .ok_or("PaddleOCR-VL returned an invalid response")?;
+    if let Some(reason) = choice
+        .get("finish_reason")
+        .and_then(|reason| reason.as_str())
+    {
+        if reason != "stop" {
+            return Err(format!(
+                "PaddleOCR-VL stopped before completing the page (finish_reason={reason})"
+            ));
+        }
+    }
+    let content = choice
+        .get("message")
         .and_then(|message| message.get("content"))
         .and_then(|content| content.as_str())
         .ok_or("PaddleOCR-VL returned an invalid response")?;
-    Ok(strip_markdown_fence(content).trim().to_string())
+    let content = strip_markdown_fence(content).trim().to_string();
+    if content.is_empty() {
+        return Err("PaddleOCR-VL returned empty page output".to_string());
+    }
+    Ok(content)
 }
 
 async fn paddle_extract_page(
-    server: &PaddleServer,
+    base_url: &str,
     image_path: &Path,
     timeout: std::time::Duration,
+    max_output_tokens: u32,
 ) -> Result<String, String> {
     let image_url = read_image_data_url(image_path)?;
     let body = serde_json::json!({
         "model": "paddleocr-vl-1.6",
         "temperature": 0,
-        "max_tokens": 8192,
+        "max_tokens": max_output_tokens,
         "messages": [{
             "role": "user",
             "content": [
@@ -831,7 +1010,7 @@ async fn paddle_extract_page(
         }]
     });
     let response = crate::pipeline::api_common::HTTP_CLIENT
-        .post(format!("{}/v1/chat/completions", server.base_url))
+        .post(format!("{base_url}/v1/chat/completions"))
         .timeout(timeout)
         .json(&body)
         .send()
@@ -855,6 +1034,332 @@ async fn paddle_extract_page(
     paddle_response_text(&value)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PaddleTile {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    depth: u8,
+    order: Vec<u8>,
+}
+
+fn paddle_png_dimensions(path: &Path) -> Result<(u32, u32), String> {
+    use std::io::Read as _;
+    let mut file = open_regular_file(path)?;
+    let mut header = [0u8; 24];
+    file.read_exact(&mut header)
+        .map_err(|error| format!("Failed to inspect rendered PDF page: {error}"))?;
+    if !header.starts_with(b"\x89PNG\r\n\x1a\n") || &header[12..16] != b"IHDR" {
+        return Err("Rendered PaddleOCR-VL page is not a valid PNG image".to_string());
+    }
+    let width = u32::from_be_bytes(header[16..20].try_into().unwrap());
+    let height = u32::from_be_bytes(header[20..24].try_into().unwrap());
+    if width == 0 || height == 0 {
+        return Err("Rendered PaddleOCR-VL page has invalid dimensions".to_string());
+    }
+    Ok((width, height))
+}
+
+fn split_paddle_tile(tile: &PaddleTile) -> Option<[PaddleTile; 2]> {
+    const MIN_TILE_EDGE: u32 = 256;
+    let split_vertically = tile.width >= tile.height;
+    let dimension = if split_vertically {
+        tile.width
+    } else {
+        tile.height
+    };
+    if dimension < MIN_TILE_EDGE.saturating_mul(2) {
+        return None;
+    }
+    // A small overlap keeps a text line or chart label that crosses the
+    // midpoint intact in at least one child. The page-level verifier remains
+    // responsible for rejecting an incomplete aggregate.
+    let overlap = (dimension / 20).max(16);
+    let first_extent = dimension.saturating_add(overlap) / 2;
+    let second_offset = dimension.saturating_sub(first_extent);
+    let mut first_order = tile.order.clone();
+    first_order.push(0);
+    let mut second_order = tile.order.clone();
+    second_order.push(1);
+    let next_depth = tile.depth.saturating_add(1);
+    if split_vertically {
+        Some([
+            PaddleTile {
+                x: tile.x,
+                y: tile.y,
+                width: first_extent,
+                height: tile.height,
+                depth: next_depth,
+                order: first_order,
+            },
+            PaddleTile {
+                x: tile.x.saturating_add(second_offset),
+                y: tile.y,
+                width: dimension.saturating_sub(second_offset),
+                height: tile.height,
+                depth: next_depth,
+                order: second_order,
+            },
+        ])
+    } else {
+        Some([
+            PaddleTile {
+                x: tile.x,
+                y: tile.y,
+                width: tile.width,
+                height: first_extent,
+                depth: next_depth,
+                order: first_order,
+            },
+            PaddleTile {
+                x: tile.x,
+                y: tile.y.saturating_add(second_offset),
+                width: tile.width,
+                height: dimension.saturating_sub(second_offset),
+                depth: next_depth,
+                order: second_order,
+            },
+        ])
+    }
+}
+
+fn render_paddle_tile(
+    pdf: &Path,
+    output_dir: &Path,
+    page: usize,
+    tile: &PaddleTile,
+    render_dpi: u32,
+) -> Result<PathBuf, String> {
+    let bin = find_command("pdftoppm").ok_or("pdftoppm not found on PATH")?;
+    let pdf_str = pdf
+        .to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", pdf.display()))?;
+    let tile_id = tile
+        .order
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join("-");
+    let prefix = output_dir.join(format!("recovery-{page:04}-{tile_id}"));
+    let prefix_str = prefix
+        .to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
+    let page = page.to_string();
+    let x = tile.x.to_string();
+    let y = tile.y.to_string();
+    let width = tile.width.to_string();
+    let height = tile.height.to_string();
+    let render_dpi = render_dpi.to_string();
+    let mut command = bin.command([
+        "-png",
+        "-r",
+        &render_dpi,
+        "-f",
+        &page,
+        "-l",
+        &page,
+        "-singlefile",
+        "-x",
+        &x,
+        "-y",
+        &y,
+        "-W",
+        &width,
+        "-H",
+        &height,
+        pdf_str,
+        prefix_str,
+    ]);
+    command.env("PATH", env::full_path());
+    let output = run_bounded_output(
+        command,
+        "pdftoppm PaddleOCR-VL recovery crop",
+        std::time::Duration::from_secs(120),
+        1_000_000,
+        Some(output_dir),
+    )?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Failed to render PaddleOCR-VL recovery region: {}",
+            stderr.trim()
+        ));
+    }
+    let image_path = prefix.with_extension("png");
+    if !image_path.is_file() {
+        return Err("pdftoppm did not produce a PaddleOCR-VL recovery region".to_string());
+    }
+    Ok(image_path)
+}
+
+fn paddle_failure_suggests_decomposition(error: &str) -> bool {
+    error.contains("finish_reason=length")
+        || error.contains("degenerate output")
+        || error.contains("empty page output")
+        || error.contains("far shorter than the PDF text-layer baseline")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn paddle_extract_page_tiled(
+    base_url: &str,
+    pdf_path: &Path,
+    image_path: &Path,
+    output_dir: &Path,
+    page: usize,
+    timeout: std::time::Duration,
+    max_output_tokens: u32,
+    max_depth: u8,
+    render_dpi: u32,
+) -> Result<String, String> {
+    use std::collections::VecDeque;
+
+    let (width, height) = paddle_png_dimensions(image_path)?;
+    let root = PaddleTile {
+        x: 0,
+        y: 0,
+        width,
+        height,
+        depth: 0,
+        order: Vec::new(),
+    };
+    let children = split_paddle_tile(&root)
+        .ok_or("PaddleOCR-VL page is too small for adaptive layout recovery")?;
+    let mut pending = VecDeque::from(children);
+    let mut completed: Vec<(Vec<u8>, String)> = Vec::new();
+    while let Some(tile) = pending.pop_front() {
+        if crate::commands::is_cancelled() {
+            return Err("Pipeline cancelled".to_string());
+        }
+        let pdf = pdf_path.to_path_buf();
+        let output_dir = output_dir.to_path_buf();
+        let render_tile = tile.clone();
+        let tile_path = tokio::task::spawn_blocking(move || {
+            render_paddle_tile(&pdf, &output_dir, page, &render_tile, render_dpi)
+        })
+        .await
+        .map_err(|error| format!("PaddleOCR-VL recovery render task failed: {error}"))??;
+        match paddle_extract_page(base_url, &tile_path, timeout, max_output_tokens).await {
+            Ok(text) => completed.push((tile.order, text)),
+            Err(error)
+                if paddle_failure_suggests_decomposition(&error) && tile.depth < max_depth =>
+            {
+                let children = split_paddle_tile(&tile).ok_or_else(|| {
+                    format!("PaddleOCR-VL recovery region could not be divided after: {error}")
+                })?;
+                pending.push_back(children[0].clone());
+                pending.push_back(children[1].clone());
+            }
+            Err(error) if paddle_failure_suggests_decomposition(&error) => {
+                completed.push((
+                    tile.order,
+                    format!(
+                        "> [{PADDLE_REGION_WARNING} Region: x={}, y={}, width={}, height={}.]",
+                        tile.x, tile.y, tile.width, tile.height
+                    ),
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "PaddleOCR-VL adaptive layout recovery failed on a page region: {error}"
+                ));
+            }
+        }
+    }
+    completed.sort_by(|left, right| left.0.cmp(&right.0));
+    let text = completed
+        .into_iter()
+        .map(|(_, text)| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if text.is_empty() {
+        return Err("PaddleOCR-VL adaptive layout recovery returned empty output".to_string());
+    }
+    Ok(text)
+}
+
+fn paddle_page_is_suspicious(text: &str, baseline_len: Option<usize>) -> bool {
+    baseline_len.is_some_and(|baseline_len| {
+        let extracted_chars = text
+            .lines()
+            .filter(|line| !line.contains(PADDLE_REGION_WARNING_PREFIX))
+            .flat_map(str::chars)
+            .filter(|value| !value.is_whitespace())
+            .count();
+        baseline_len >= SUSPECT_BASELINE_MIN_CHARS && extracted_chars < baseline_len / 10
+    })
+}
+
+fn paddle_checkpoint_dir(
+    hash: &str,
+    paths: &crate::engines::PaddleEnginePaths,
+    settings: &crate::settings::Settings,
+) -> Option<PathBuf> {
+    if hash.len() != 16 || !hash.chars().all(|value| value.is_ascii_hexdigit()) {
+        return None;
+    }
+    let identity = serde_json::json!({
+        "schema": EXTRACTION_CACHE_SCHEMA,
+        "engine": "paddleocr-vl-1.6-q8",
+        "server": executable_identity(&paths.server),
+        "model": executable_identity(&paths.model),
+        "projector": executable_identity(&paths.mmproj),
+        "concurrency": crate::settings::resolved_paddle_page_concurrency(settings),
+        "vision_batch": crate::settings::resolved_paddle_mtmd_batch_tokens(settings),
+        "flash_attention": settings.paddle_flash_attention,
+        "max_output_tokens": settings.paddle_max_output_tokens,
+        "render_dpi": settings.paddle_render_dpi,
+    });
+    Some(
+        dirs::home_dir()?
+            .join(".pipeline")
+            .join("cache")
+            .join("paddleocr-vl")
+            .join(hash)
+            .join(cache_fingerprint(&identity)),
+    )
+}
+
+fn paddle_page_checkpoint_path(root: &Path, index: usize) -> PathBuf {
+    root.join(format!("page-{:04}.md", index + 1))
+}
+
+fn llm_extraction_cache_path(hash: &str, settings: &crate::settings::Settings) -> Option<PathBuf> {
+    if hash.len() != 16 || !hash.chars().all(|value| value.is_ascii_hexdigit()) {
+        return None;
+    }
+    let identity = serde_json::json!({
+        "schema": EXTRACTION_CACHE_SCHEMA,
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "engine": "llm-pdf-bounded-v2",
+        "provider": settings.preferred_provider,
+        "transport": if provider_uses_direct_api(settings) { "api" } else { "cli" },
+        "claude_model": settings.claude_model,
+        "claude_cli_selection": settings.claude_cli_model_selection,
+        "claude_api_selection": settings.claude_api_model_selection,
+        "claude_effort": settings.claude_effort,
+        "codex_model": settings.codex_model,
+        "codex_cli_selection": settings.codex_cli_model_selection,
+        "codex_api_selection": settings.codex_api_model_selection,
+        "codex_effort": settings.codex_effort,
+        "gemini_model": settings.gemini_model,
+        "gemini_cli_selection": settings.gemini_cli_model_selection,
+        "gemini_api_selection": settings.gemini_api_model_selection,
+        "chunk_pages": LLM_CHUNK_MAX_PAGES,
+        "chunk_chars": LLM_CHUNK_TARGET_BASELINE_CHARS,
+        "max_output_tokens": EXTRACTION_MAX_OUTPUT_TOKENS,
+    });
+    Some(
+        dirs::home_dir()?
+            .join(".pipeline")
+            .join("cache")
+            .join("llm-pdf")
+            .join(hash)
+            .join(format!("{}.md", cache_fingerprint(&identity))),
+    )
+}
+
 /// Extract every rendered PDF page through one managed llama.cpp process.
 /// Loading the Q8 model once per document is the important performance
 /// property; page boundaries also make completeness checks deterministic.
@@ -862,16 +1367,19 @@ async fn extract_paddle(
     app: &crate::emit::EventBus,
     path: &Path,
     hash: &str,
+    settings: &crate::settings::Settings,
 ) -> Result<ExtractionResult, String> {
     let paths = crate::engines::paddle_engine_paths()?;
+    let render_started = std::time::Instant::now();
     let render_dir = tempfile::Builder::new()
         .prefix("pipeline_paddle_pages_")
         .tempdir()
         .map_err(|error| format!("Failed to create PaddleOCR-VL page directory: {error}"))?;
     let pdf = path.to_path_buf();
     let output_dir = render_dir.path().to_path_buf();
+    let render_dpi = settings.paddle_render_dpi;
     let rendered = tokio::task::spawn_blocking(move || {
-        render_pdf_pages(&pdf, &output_dir, MAX_RENDERED_PDF_PAGES)
+        render_pdf_pages_for_ocr(&pdf, &output_dir, MAX_RENDERED_PDF_PAGES, render_dpi)
     })
     .await
     .map_err(|error| format!("PDF rendering task failed: {error}"))??;
@@ -880,18 +1388,30 @@ async fn extract_paddle(
             "PaddleOCR-VL extraction is limited to {MAX_RENDERED_PDF_PAGES} pages per PDF"
         ));
     }
-
-    let _ = app.emit_event(
-        "pipeline:log",
-        serde_json::json!({
-            "line": format!(
-                "PaddleOCR-VL: loading the managed Q8 model for {} page(s)",
-                rendered.names.len()
-            )
-        }),
+    extraction_log(
+        app,
+        format!(
+            "PaddleOCR-VL: rendered {} OCR page(s) in {:.1}s",
+            rendered.names.len(),
+            render_started.elapsed().as_secs_f64()
+        ),
     );
-    let server = start_paddle_server(&paths).await?;
-    let settings = crate::settings::load();
+
+    let page_concurrency = crate::settings::resolved_paddle_page_concurrency(settings) as usize;
+    let mtmd_batch_tokens = crate::settings::resolved_paddle_mtmd_batch_tokens(settings);
+    extraction_log(
+        app,
+        format!(
+            "PaddleOCR-VL tuning: {} page slot(s) × 16K context, {} DPI, {} vision batch tokens, Flash Attention {}, {} output tokens/page, {} retr{}",
+            page_concurrency,
+            settings.paddle_render_dpi,
+            mtmd_batch_tokens,
+            settings.paddle_flash_attention,
+            settings.paddle_max_output_tokens,
+            settings.paddle_page_retries,
+            if settings.paddle_page_retries == 1 { "y" } else { "ies" }
+        ),
+    );
     let page_timeout =
         std::time::Duration::from_secs((settings.step_timeout_secs / 2).clamp(120, 900));
     let baseline = {
@@ -900,34 +1420,151 @@ async fn extract_paddle(
             .await
             .unwrap_or(None)
     };
-    let mut text = String::new();
-    let mut quality_notes = Vec::new();
-    for (index, name) in rendered.names.iter().enumerate() {
+    let page_count = rendered.names.len();
+    let mut page_texts = vec![None; page_count];
+    let checkpoint_root = settings
+        .reuse_pdf_extraction_cache
+        .then(|| paddle_checkpoint_dir(hash, &paths, settings))
+        .flatten();
+    let mut cached_pages = 0usize;
+    if let Some(root) = &checkpoint_root {
+        for (index, slot) in page_texts.iter_mut().enumerate() {
+            let content =
+                read_utf8_capped(&paddle_page_checkpoint_path(root, index), 2 * 1024 * 1024).ok();
+            if let Some(content) = content.filter(|content| {
+                !content.trim().is_empty()
+                    && !paddle_page_is_suspicious(
+                        content,
+                        baseline
+                            .as_ref()
+                            .and_then(|pages| pages.get(index))
+                            .copied(),
+                    )
+            }) {
+                *slot = Some(content.trim().to_string());
+                cached_pages += 1;
+            }
+        }
+    }
+    if cached_pages > 0 {
+        extraction_log(
+            app,
+            format!(
+                "PaddleOCR-VL: resumed {cached_pages}/{page_count} page(s) from verified checkpoints"
+            ),
+        );
+    }
+    let pending_pages: Vec<usize> = page_texts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, content)| content.is_none().then_some(index))
+        .collect();
+    let server = if pending_pages.is_empty() {
+        None
+    } else {
+        extraction_log(
+            app,
+            format!(
+                "PaddleOCR-VL: loading the managed Q8 model for {} remaining page(s)",
+                pending_pages.len()
+            ),
+        );
+        let load_started = std::time::Instant::now();
+        let server = start_paddle_server(&paths, settings).await?;
+        extraction_log(
+            app,
+            format!(
+                "PaddleOCR-VL: model server ready in {:.1}s",
+                load_started.elapsed().as_secs_f64()
+            ),
+        );
+        Some(server)
+    };
+    let mut tasks = tokio::task::JoinSet::new();
+    let mut next_pending = 0usize;
+    while next_pending < pending_pages.len() && tasks.len() < page_concurrency {
+        let index = pending_pages[next_pending];
+        spawn_paddle_page_task(
+            &mut tasks,
+            app,
+            index,
+            page_count,
+            server
+                .as_ref()
+                .expect("pending pages require server")
+                .base_url
+                .clone(),
+            render_dir.path().join(&rendered.names[index]),
+            path.to_path_buf(),
+            render_dir.path().to_path_buf(),
+            page_timeout,
+            settings.paddle_max_output_tokens,
+            settings.paddle_page_retries,
+            settings.paddle_render_dpi,
+            baseline
+                .as_ref()
+                .and_then(|pages| pages.get(index))
+                .copied(),
+            checkpoint_root
+                .as_ref()
+                .map(|root| paddle_page_checkpoint_path(root, index)),
+        );
+        next_pending += 1;
+    }
+    while let Some(result) = tasks.join_next().await {
         if crate::commands::is_cancelled() {
+            tasks.abort_all();
             return Err("Pipeline cancelled".to_string());
         }
+        let (index, page_text) =
+            result.map_err(|error| format!("PaddleOCR-VL page task failed: {error}"))??;
+        page_texts[index] = Some(page_text);
+        if next_pending < pending_pages.len() {
+            let index = pending_pages[next_pending];
+            spawn_paddle_page_task(
+                &mut tasks,
+                app,
+                index,
+                page_count,
+                server
+                    .as_ref()
+                    .expect("pending pages require server")
+                    .base_url
+                    .clone(),
+                render_dir.path().join(&rendered.names[index]),
+                path.to_path_buf(),
+                render_dir.path().to_path_buf(),
+                page_timeout,
+                settings.paddle_max_output_tokens,
+                settings.paddle_page_retries,
+                settings.paddle_render_dpi,
+                baseline
+                    .as_ref()
+                    .and_then(|pages| pages.get(index))
+                    .copied(),
+                checkpoint_root
+                    .as_ref()
+                    .map(|root| paddle_page_checkpoint_path(root, index)),
+            );
+            next_pending += 1;
+        }
+    }
+
+    let mut text = String::new();
+    let mut quality_notes = Vec::new();
+    for (index, page_text) in page_texts.into_iter().enumerate() {
         let page = index + 1;
-        let _ = app.emit_event(
-            "pipeline:log",
-            serde_json::json!({
-                "line": format!(
-                    "PaddleOCR-VL: extracting page {page}/{}",
-                    rendered.names.len()
-                )
-            }),
-        );
-        let page_text =
-            paddle_extract_page(&server, &render_dir.path().join(name), page_timeout).await?;
-        if baseline
-            .as_ref()
-            .and_then(|pages| pages.get(index))
-            .is_some_and(|baseline_len| {
-                *baseline_len >= SUSPECT_BASELINE_MIN_CHARS
-                    && page_text.chars().count() < *baseline_len / 10
-            })
-        {
-            quality_notes.push(format!(
-                "PaddleOCR-VL returned unusually little text for page {page}; verify that page against the original PDF."
+        let page_text = page_text
+            .ok_or_else(|| format!("PaddleOCR-VL did not return output for page {page}"))?;
+        if paddle_page_is_suspicious(
+            &page_text,
+            baseline
+                .as_ref()
+                .and_then(|pages| pages.get(index))
+                .copied(),
+        ) {
+            return Err(format!(
+                "PaddleOCR-VL returned incomplete output for page {page} after retries"
             ));
         }
         text.push_str(&format!("<!-- PAGE {page} -->\n"));
@@ -939,6 +1576,12 @@ async fn extract_paddle(
         return Err("PaddleOCR-VL returned empty output".to_string());
     }
     quality_notes.extend(scan_math_quality(&text));
+    if text.contains(PADDLE_REGION_WARNING_PREFIX) {
+        quality_notes.push(
+            "PaddleOCR-VL could not reliably transcribe one or more visual regions; consult the rendered source pages at the embedded warnings."
+                .to_string(),
+        );
+    }
     Ok(ExtractionResult {
         text,
         method: "paddleocr-vl".to_string(),
@@ -946,6 +1589,107 @@ async fn extract_paddle(
         paper_hash: hash.to_string(),
         quality_notes,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_paddle_page_task(
+    tasks: &mut tokio::task::JoinSet<Result<(usize, String), String>>,
+    app: &crate::emit::EventBus,
+    index: usize,
+    page_count: usize,
+    base_url: String,
+    image_path: PathBuf,
+    pdf_path: PathBuf,
+    recovery_dir: PathBuf,
+    timeout: std::time::Duration,
+    max_output_tokens: u32,
+    retries: u32,
+    render_dpi: u32,
+    baseline_len: Option<usize>,
+    checkpoint_path: Option<PathBuf>,
+) {
+    let app = app.clone();
+    tasks.spawn(async move {
+        if crate::commands::is_cancelled() {
+            return Err("Pipeline cancelled".to_string());
+        }
+        let page = index + 1;
+        let page_started = std::time::Instant::now();
+        extraction_log(
+            &app,
+            format!("PaddleOCR-VL: extracting page {page}/{page_count}"),
+        );
+        let mut last_error = String::new();
+        let mut use_layout_recovery = false;
+        for attempt in 0..=retries {
+            let result = if use_layout_recovery {
+                extraction_log(
+                    &app,
+                    format!(
+                        "PaddleOCR-VL: decomposing page {page}/{page_count} into smaller layout regions"
+                    ),
+                );
+                paddle_extract_page_tiled(
+                    &base_url,
+                    &pdf_path,
+                    &image_path,
+                    &recovery_dir,
+                    page,
+                    timeout,
+                    max_output_tokens,
+                    (attempt as u8).saturating_add(2).min(3),
+                    render_dpi,
+                )
+                .await
+            } else {
+                paddle_extract_page(&base_url, &image_path, timeout, max_output_tokens).await
+            };
+            match result {
+                Ok(text) if !paddle_page_is_suspicious(&text, baseline_len) => {
+                    if let Some(path) = &checkpoint_path {
+                        if let Err(error) = atomic_write_cache(path, text.as_bytes()) {
+                            extraction_log(
+                                &app,
+                                format!(
+                                    "WARNING: could not save PaddleOCR-VL page {page} checkpoint: {error}"
+                                ),
+                            );
+                        }
+                    }
+                    extraction_log(
+                        &app,
+                        format!(
+                            "PaddleOCR-VL: completed page {page}/{page_count} in {:.1}s (attempt {})",
+                            page_started.elapsed().as_secs_f64(),
+                            attempt + 1
+                        ),
+                    );
+                    return Ok((index, text));
+                }
+                Ok(_) => {
+                    last_error =
+                        "output was far shorter than the PDF text-layer baseline".to_string();
+                    use_layout_recovery = true;
+                }
+                Err(error) => {
+                    use_layout_recovery = paddle_failure_suggests_decomposition(&error);
+                    last_error = error;
+                }
+            }
+            if attempt < retries {
+                extraction_log(
+                    &app,
+                    format!(
+                        "PaddleOCR-VL: retrying page {page}/{page_count} after: {last_error}"
+                    ),
+                );
+            }
+        }
+        Err(format!(
+            "PaddleOCR-VL page {page} failed after {} attempt(s): {last_error}",
+            retries + 1
+        ))
+    });
 }
 
 /// Find a command by scanning the managed tool directory (~/.pipeline/bin),
@@ -963,9 +1707,12 @@ fn find_command(name: &str) -> Option<crate::deps::ResolvedCommand> {
 /// steps keep the smaller default; transcribing a whole paper needs more.
 const EXTRACTION_MAX_OUTPUT_TOKENS: u32 = 32_768;
 
-/// Give up on targeted repair after this many page ranges per run; anything
-/// left becomes a quality note instead of more LLM calls.
-const MAX_REPAIR_RANGES: usize = 3;
+/// Bound individual LLM transcription calls so the response cap cannot
+/// silently cut off a long economics paper. Two ranges run concurrently;
+/// the document-level timeout remains the hard cost/latency ceiling.
+const LLM_CHUNK_MAX_PAGES: usize = 8;
+const LLM_CHUNK_TARGET_BASELINE_CHARS: usize = 50_000;
+const LLM_EXTRACTION_CONCURRENCY: usize = 2;
 
 /// A page's extraction is suspect when the pdftotext baseline has at least
 /// this many characters but the LLM produced less than a quarter of it.
@@ -1011,9 +1758,14 @@ fn pdftotext_page_baseline(path: &Path) -> Option<Vec<usize>> {
     }
 }
 
-/// Split pdftotext output on form feeds and return trimmed char counts.
+/// Split pdftotext output on form feeds and count substantive characters.
+/// `-layout` can emit thousands of alignment spaces on a sparse figure page;
+/// counting those as source text makes complete OCR look implausibly short.
 fn baseline_page_lengths(text: &str) -> Vec<usize> {
-    let mut pages: Vec<usize> = text.split('\u{0C}').map(|p| p.trim().len()).collect();
+    let mut pages: Vec<usize> = text
+        .split('\u{0C}')
+        .map(|page| page.chars().filter(|value| !value.is_whitespace()).count())
+        .collect();
     // pdftotext terminates every page with a form feed, leaving a trailing
     // empty segment.
     if pages.last() == Some(&0) {
@@ -1146,6 +1898,7 @@ fn strip_markdown_fence(text: &str) -> &str {
 fn extraction_requirements() -> &'static str {
     "- Start each page's content with the marker <!-- PAGE n --> (1-based page number)\n\
      - Reproduce ALL text content, including abstract, all sections, footnotes, references, and appendices\n\
+     - Preserve spelling, wording, and typographical errors verbatim; do not silently correct the paper\n\
      - Preserve mathematical notation using LaTeX syntax (inline $...$ and display $$...$$)\n\
      - Format tables using markdown table syntax\n\
      - Note figure/table captions and their numbers\n\
@@ -1165,18 +1918,58 @@ fn source_line(attach: bool, prompt_path: &str) -> String {
     }
 }
 
-/// Re-request a specific page range that verification flagged.
+fn llm_initial_ranges(baseline: &[usize]) -> Vec<(u32, u32)> {
+    let mut ranges = Vec::new();
+    let mut start = 1u32;
+    let mut pages = 0usize;
+    let mut chars = 0usize;
+    for (index, baseline_chars) in baseline.iter().copied().enumerate() {
+        if pages > 0
+            && (pages >= LLM_CHUNK_MAX_PAGES
+                || chars.saturating_add(baseline_chars) > LLM_CHUNK_TARGET_BASELINE_CHARS)
+        {
+            ranges.push((start, index as u32));
+            start = index as u32 + 1;
+            pages = 0;
+            chars = 0;
+        }
+        pages += 1;
+        chars = chars.saturating_add(baseline_chars);
+    }
+    if pages > 0 {
+        ranges.push((start, baseline.len() as u32));
+    }
+    ranges
+}
+
+fn split_ranges(ranges: &[(u32, u32)], max_pages: u32) -> Vec<(u32, u32)> {
+    let mut split = Vec::new();
+    for &(start, end) in ranges {
+        let mut cursor = start;
+        while cursor <= end {
+            let chunk_end = end.min(cursor.saturating_add(max_pages.saturating_sub(1)));
+            split.push((cursor, chunk_end));
+            cursor = chunk_end.saturating_add(1);
+        }
+    }
+    split
+}
+
+/// Request one bounded, explicit page range. Every requested page marker is
+/// mandatory, including blank/figure-only pages, because page completeness is
+/// a contract rather than a best-effort quality note.
 #[allow(clippy::too_many_arguments)]
-async fn repair_pages(
-    app: &crate::emit::EventBus,
-    path: &Path,
-    prompt_path: &str,
+async fn request_llm_pages(
+    app: crate::emit::EventBus,
+    path: PathBuf,
+    prompt_path: String,
     start: u32,
     end: u32,
     attach: bool,
     timeout_secs: u64,
-    extra_dirs: &[&str],
-) -> Result<Vec<(u32, String)>, String> {
+    read_dirs: Vec<String>,
+    settings: std::sync::Arc<crate::settings::Settings>,
+) -> Result<std::collections::BTreeMap<u32, String>, String> {
     let span = if start == end {
         format!("page {start}")
     } else {
@@ -1184,41 +1977,108 @@ async fn repair_pages(
     };
     let prompt = format!(
         "{} Transcribe ONLY {span} to well-formatted Markdown.\n\nRequirements:\n{}",
-        source_line(attach, prompt_path),
+        source_line(attach, &prompt_path),
         extraction_requirements()
     );
-    let label = format!("LLM extraction repair (pages {start}-{end})");
+    let label = format!("LLM PDF extraction (pages {start}-{end})");
     let mut request = super::call::OwnedRequest::new(
-        app,
-        format!("extraction-repair-{start}-{end}"),
+        &app,
+        format!("extraction-pages-{start}-{end}"),
         label,
         prompt,
         timeout_secs,
     );
     request.tools = vec!["Read".to_string()];
-    request.read_dirs = extra_dirs.iter().map(|dir| (*dir).to_string()).collect();
-    request.pdf_attachment = attach.then(|| path.to_path_buf());
+    request.read_dirs = read_dirs;
+    request.pdf_attachment = attach.then_some(path);
     request.max_output_tokens = Some(EXTRACTION_MAX_OUTPUT_TOKENS);
+    request.settings = settings;
     let raw = super::call::execute_text(request).await?;
     let text = strip_markdown_fence(&raw).to_string();
-    match parse_page_sections(&text) {
-        Some((_, sections)) if !sections.is_empty() => Ok(sections
-            .into_iter()
-            .filter(|(p, _)| *p >= start && *p <= end)
-            .collect()),
-        // A single-page repair without markers is still usable as-is.
-        _ if start == end && !text.is_empty() => Ok(vec![(start, text)]),
-        _ => Err("repair response contained no page markers".to_string()),
+    let (_, sections) = parse_page_sections(&text)
+        .ok_or_else(|| format!("LLM response for pages {start}-{end} contained no page markers"))?;
+    let missing: Vec<u32> = (start..=end)
+        .filter(|page| !sections.contains_key(page))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "LLM response for pages {start}-{end} omitted page marker(s): {}",
+            missing
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
+    Ok(sections
+        .into_iter()
+        .filter(|(page, _)| *page >= start && *page <= end)
+        .collect())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_llm_ranges(
+    app: &crate::emit::EventBus,
+    path: &Path,
+    prompt_path: &str,
+    ranges: &[(u32, u32)],
+    attach: bool,
+    timeout_secs: u64,
+    read_dirs: &[String],
+    settings: std::sync::Arc<crate::settings::Settings>,
+) -> Result<std::collections::BTreeMap<u32, String>, String> {
+    let mut tasks = tokio::task::JoinSet::new();
+    let mut next = 0usize;
+    let mut sections = std::collections::BTreeMap::new();
+    while next < ranges.len() && tasks.len() < LLM_EXTRACTION_CONCURRENCY {
+        let (start, end) = ranges[next];
+        tasks.spawn(request_llm_pages(
+            app.clone(),
+            path.to_path_buf(),
+            prompt_path.to_string(),
+            start,
+            end,
+            attach,
+            timeout_secs,
+            read_dirs.to_vec(),
+            settings.clone(),
+        ));
+        next += 1;
+    }
+    while let Some(result) = tasks.join_next().await {
+        if crate::commands::is_cancelled() {
+            tasks.abort_all();
+            return Err("Pipeline cancelled".to_string());
+        }
+        let range_sections =
+            result.map_err(|error| format!("LLM extraction task failed: {error}"))??;
+        sections.extend(range_sections);
+        if next < ranges.len() {
+            let (start, end) = ranges[next];
+            tasks.spawn(request_llm_pages(
+                app.clone(),
+                path.to_path_buf(),
+                prompt_path.to_string(),
+                start,
+                end,
+                attach,
+                timeout_secs,
+                read_dirs.to_vec(),
+                settings.clone(),
+            ));
+            next += 1;
+        }
+    }
+    Ok(sections)
 }
 
 /// Extract from a PDF using an LLM (Claude, Codex, or Gemini).
 ///
 /// Direct-API providers get the PDF attached to the request; CLI providers
 /// read it with their multimodal Read tool. The output is verified against
-/// a pdftotext per-page baseline: pages that are missing or far too short
-/// are re-requested once, and anything still failing becomes an
-/// extraction-quality note instead of a silent gap.
+/// a local per-page text-layer map. Calls are proactively chunked, suspicious
+/// pages are retried in smaller ranges, and any remaining gap fails before
+/// orientation.
 async fn extract_llm(
     app: &crate::emit::EventBus,
     path: &Path,
@@ -1237,15 +2097,16 @@ async fn extract_llm(
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let extra_dirs: Vec<&str> = if parent_dir.is_empty() {
+    let read_dirs: Vec<String> = if parent_dir.is_empty() {
         vec![]
     } else {
-        vec![&parent_dir]
+        vec![parent_dir]
     };
 
     let settings = crate::settings::load();
     let attach = provider_uses_direct_api(&settings);
-    let timeout = (settings.step_timeout_secs / 2).max(60);
+    let timeout = (settings.step_timeout_secs / 2).clamp(60, 600);
+    let settings = std::sync::Arc::new(settings);
 
     // Completeness baseline (best-effort; poppler is bundled so this is
     // normally available).
@@ -1254,108 +2115,114 @@ async fn extract_llm(
         tokio::task::spawn_blocking(move || pdftotext_page_baseline(&p))
             .await
             .unwrap_or(None)
-    };
-
-    let pages_line = baseline
-        .as_ref()
-        .map(|b| format!("The document has {} pages.\n\n", b.len()))
-        .unwrap_or_default();
-    let prompt = format!(
-        "{} Convert its entire contents to well-formatted Markdown.\n\n{pages_line}Requirements:\n{}\n\
-         - If the full text cannot fit in your output, stop cleanly at a page boundary; the remaining pages will be requested separately",
-        source_line(attach, &prompt_path),
-        extraction_requirements()
-    );
-
-    let mut request =
-        super::call::OwnedRequest::new(app, "extraction", "LLM PDF extraction", prompt, timeout);
-    request.tools = vec!["Read".to_string()];
-    request.read_dirs = extra_dirs.iter().map(|dir| (*dir).to_string()).collect();
-    request.pdf_attachment = attach.then(|| path.to_path_buf());
-    request.max_output_tokens = Some(EXTRACTION_MAX_OUTPUT_TOKENS);
-    request.settings = std::sync::Arc::new(settings);
-    let raw = super::call::execute_text(request).await?;
-    let text = strip_markdown_fence(&raw).to_string();
-    if text.is_empty() {
-        return Err("LLM returned empty output for PDF extraction".to_string());
     }
-
-    let mut quality_notes = Vec::new();
-    let final_text = match (&baseline, parse_page_sections(&text)) {
-        (Some(bl), Some((preamble, mut sections))) => {
-            let suspects = find_suspect_pages(&sections, bl);
-            if !suspects.is_empty() {
-                let ranges = group_into_ranges(&suspects);
-                if ranges.len() > MAX_REPAIR_RANGES {
-                    let _ = app.emit_event("pipeline:log", serde_json::json!({
-                        "line": format!(
-                            "Extraction verification: {} suspect ranges, repairing the first {MAX_REPAIR_RANGES}",
-                            ranges.len()
-                        )
-                    }));
-                }
-                for &(start, end) in ranges.iter().take(MAX_REPAIR_RANGES) {
-                    if crate::commands::is_cancelled() {
-                        return Err("Pipeline cancelled".into());
-                    }
-                    let _ = app.emit_event("pipeline:log", serde_json::json!({
-                        "line": format!("Extraction verification: pages {start}-{end} missing or short, re-requesting")
-                    }));
-                    match repair_pages(
+    .ok_or_else(|| {
+        "LLM extraction could not build the local page-completeness map; \
+         refusing to run an unverified whole-document transcription"
+            .to_string()
+    })?;
+    if baseline.is_empty() {
+        return Err("LLM extraction found no PDF pages".to_string());
+    }
+    let cache_path = settings
+        .reuse_pdf_extraction_cache
+        .then(|| llm_extraction_cache_path(hash, &settings))
+        .flatten();
+    if let Some(path) = &cache_path {
+        if let Ok(cached) = read_utf8_capped(path, super::claude::MAX_STDOUT_BYTES) {
+            if let Some((_, sections)) = parse_page_sections(&cached) {
+                if find_suspect_pages(&sections, &baseline).is_empty() {
+                    extraction_log(
                         app,
-                        path,
-                        &prompt_path,
-                        start,
-                        end,
-                        attach,
-                        timeout,
-                        &extra_dirs,
-                    )
-                    .await
-                    {
-                        Ok(repaired) => {
-                            for (page, content) in repaired {
-                                sections.insert(page, content);
-                            }
-                        }
-                        Err(e) => {
-                            let _ = app.emit_event("pipeline:log", serde_json::json!({
-                                "line": format!("WARNING: repair of pages {start}-{end} failed: {e}")
-                            }));
-                        }
-                    }
-                }
-                let still = find_suspect_pages(&sections, bl);
-                if !still.is_empty() {
-                    let list = still
-                        .iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    quality_notes.push(format!(
-                        "Extraction may be incomplete on page(s) {list}. \
-                         Findings that depend on those pages should be verified against the original PDF."
-                    ));
+                        format!(
+                            "LLM extraction: reused a verified cached transcription for {hash}"
+                        ),
+                    );
+                    let mut quality_notes = scan_math_quality(&cached);
+                    quality_notes.sort();
+                    quality_notes.dedup();
+                    return Ok(ExtractionResult {
+                        text: cached,
+                        method: "llm".to_string(),
+                        source_path: path_str.to_string(),
+                        paper_hash: hash.to_string(),
+                        quality_notes,
+                    });
                 }
             }
-            rebuild_from_sections(&preamble, &sections)
         }
-        (Some(_), None) => {
-            quality_notes.push(
-                "The extraction has no page markers, so completeness could not be verified against the PDF."
-                    .to_string(),
-            );
-            text
-        }
-        (None, _) => {
-            quality_notes.push(
-                "pdftotext is unavailable, so extraction completeness was not verified."
-                    .to_string(),
-            );
-            text
-        }
-    };
+    }
+
+    let ranges = llm_initial_ranges(&baseline);
+    extraction_log(
+        app,
+        format!(
+            "LLM extraction: {} pages in {} bounded range(s), up to {} concurrent",
+            baseline.len(),
+            ranges.len(),
+            LLM_EXTRACTION_CONCURRENCY
+        ),
+    );
+    let mut sections = run_llm_ranges(
+        app,
+        path,
+        &prompt_path,
+        &ranges,
+        attach,
+        timeout,
+        &read_dirs,
+        settings.clone(),
+    )
+    .await?;
+
+    let suspects = find_suspect_pages(&sections, &baseline);
+    if !suspects.is_empty() {
+        let retry_ranges = split_ranges(&group_into_ranges(&suspects), 2);
+        extraction_log(
+            app,
+            format!(
+                "Extraction verification: retrying {} suspect page(s) in {} smaller range(s)",
+                suspects.len(),
+                retry_ranges.len()
+            ),
+        );
+        sections.extend(
+            run_llm_ranges(
+                app,
+                path,
+                &prompt_path,
+                &retry_ranges,
+                attach,
+                timeout,
+                &read_dirs,
+                settings,
+            )
+            .await?,
+        );
+    }
+
+    let still_suspect = find_suspect_pages(&sections, &baseline);
+    if !still_suspect.is_empty() {
+        return Err(format!(
+            "LLM extraction remained incomplete after targeted retry on page(s): {}",
+            still_suspect
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let final_text = rebuild_from_sections("", &sections);
+    let mut quality_notes = Vec::new();
     quality_notes.extend(scan_math_quality(&final_text));
+    if let Some(path) = cache_path {
+        if let Err(error) = atomic_write_cache(&path, final_text.as_bytes()) {
+            extraction_log(
+                app,
+                format!("WARNING: could not save verified LLM extraction cache: {error}"),
+            );
+        }
+    }
 
     Ok(ExtractionResult {
         text: final_text,
@@ -1366,12 +2233,21 @@ async fn extract_llm(
     })
 }
 
-/// Render each page of a PDF to a PNG in `out_dir` using bundled pdftoppm.
+/// Render each page of a PDF to a compact JPEG in `out_dir` using bundled
+/// pdftoppm. Page images are visual references rather than archival copies:
+/// 120 DPI preserves readable text and figures while avoiding the much higher
+/// CPU and disk cost of lossless 150-DPI PNGs on long papers.
 /// Returns the sorted file names. Used to populate the run's page-image
 /// artifacts; independent of which extraction method ran.
 pub struct RenderedPdfPages {
     pub names: Vec<String>,
     pub truncated: bool,
+}
+
+#[derive(Clone, Copy)]
+enum PageRenderProfile {
+    Artifact,
+    Ocr(u32),
 }
 
 fn rendered_page_limit(requested: u32) -> u32 {
@@ -1382,6 +2258,26 @@ pub fn render_pdf_pages(
     pdf: &Path,
     out_dir: &Path,
     max_pages: u32,
+) -> Result<RenderedPdfPages, String> {
+    render_pdf_pages_with_profile(pdf, out_dir, max_pages, PageRenderProfile::Artifact)
+}
+
+fn render_pdf_pages_for_ocr(
+    pdf: &Path,
+    out_dir: &Path,
+    max_pages: u32,
+    dpi: u32,
+) -> Result<RenderedPdfPages, String> {
+    // OCR keeps a lossless profile whose resolution is independently tunable
+    // from the compact, durable page artifacts.
+    render_pdf_pages_with_profile(pdf, out_dir, max_pages, PageRenderProfile::Ocr(dpi))
+}
+
+fn render_pdf_pages_with_profile(
+    pdf: &Path,
+    out_dir: &Path,
+    max_pages: u32,
+    profile: PageRenderProfile,
 ) -> Result<RenderedPdfPages, String> {
     let bin = find_command("pdftoppm").ok_or("pdftoppm not found on PATH")?;
     let pdf_str = pdf
@@ -1395,15 +2291,36 @@ pub fn render_pdf_pages(
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
     let max_pages = rendered_page_limit(max_pages);
     let probe_pages = max_pages.saturating_add(1);
-    let mut command = bin.command([
-        "-png",
-        "-r",
-        "150",
-        "-l",
-        &probe_pages.to_string(),
-        pdf_str,
-        prefix_str,
-    ]);
+    let probe_pages = probe_pages.to_string();
+    let (extension, args): (&str, Vec<String>) = match profile {
+        PageRenderProfile::Artifact => (
+            ".jpg",
+            vec![
+                "-jpeg".into(),
+                "-r".into(),
+                "120".into(),
+                "-jpegopt".into(),
+                "quality=85".into(),
+                "-l".into(),
+                probe_pages.clone(),
+                pdf_str.into(),
+                prefix_str.into(),
+            ],
+        ),
+        PageRenderProfile::Ocr(dpi) => (
+            ".png",
+            vec![
+                "-png".into(),
+                "-r".into(),
+                dpi.to_string(),
+                "-l".into(),
+                probe_pages,
+                pdf_str.into(),
+                prefix_str.into(),
+            ],
+        ),
+    };
+    let mut command = bin.command(args);
     command.env("PATH", env::full_path());
     let output = match run_bounded_output(
         command,
@@ -1431,7 +2348,7 @@ pub fn render_pdf_pages(
         .map_err(|e| format!("Failed to list {}: {e}", out_dir.display()))?
         .filter_map(|e| e.ok())
         .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
-        .filter(|n| n.starts_with("page") && n.ends_with(".png"))
+        .filter(|n| n.starts_with("page") && n.ends_with(extension))
         .collect();
     names.sort();
     let truncated = names.len() > max_pages as usize;
@@ -1453,8 +2370,6 @@ fn extract_pdf_native(
     app: &crate::emit::EventBus,
     path: &Path,
     method: &str,
-    marker_disable_ocr: bool,
-    marker_disable_images: bool,
 ) -> Result<ExtractionResult, String> {
     let hash = compute_hash(path)?;
 
@@ -1465,11 +2380,11 @@ fn extract_pdf_native(
         if find_command("marker_single").is_none() {
             return Err(
                 "PDF extractor is set to 'marker' but marker_single is not installed. \
-                        Install it from Settings → Text Extraction, or change the setting."
+                        Install it from Settings → PDF Extraction, or change the setting."
                     .to_string(),
             );
         }
-        let text = extract_marker(app, path, &hash, marker_disable_ocr, marker_disable_images)?;
+        let text = extract_marker(app, path, &hash)?;
         let quality_notes = scan_math_quality(&text);
         return Ok(ExtractionResult {
             text,
@@ -1665,13 +2580,17 @@ pub async fn extract(
     } else {
         cfg_method.to_string()
     };
-    let effective_marker_disable_ocr = extraction_cfg
-        .marker_disable_ocr
-        .unwrap_or(settings.marker_disable_ocr);
-    let effective_marker_disable_images = extraction_cfg
-        .marker_disable_images
-        .unwrap_or(settings.marker_disable_images);
-
+    if ext_eq(&path, "pdf") || (path.is_dir() && find_main_tex(&path).is_none()) {
+        let source = if cfg_method.is_empty() || cfg_method == "auto" {
+            "global setting"
+        } else {
+            "profile override"
+        };
+        extraction_log(
+            app,
+            format!("PDF extractor resolved to {effective_method} ({source})"),
+        );
+    }
     // All providers can extract PDFs now: direct APIs get the PDF attached
     // to the request, CLIs read it with their multimodal Read tool.
     let use_llm = effective_method == "llm";
@@ -1698,25 +2617,17 @@ pub async fn extract(
                     .await
                     .map_err(|error| format!("Hash computation failed: {error}"))??
             };
-            match extract_paddle(app, &pdf, &hash).await {
-                Ok(result) => return Ok(result),
-                Err(error) if crate::commands::is_cancelled() => return Err(error),
-                Err(error) => {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!(
-                                "WARNING: PaddleOCR-VL extraction failed: {error}. Falling back to LLM extraction."
-                            )
-                        }),
-                    );
-                    return extract_llm(app, &pdf, &hash).await.map_err(|fallback| {
-                        format!(
-                            "PaddleOCR-VL extraction failed ({error}); LLM fallback also failed ({fallback})"
-                        )
-                    });
-                }
-            }
+            return tokio::time::timeout(
+                std::time::Duration::from_secs(settings.pdf_extraction_timeout_secs),
+                extract_paddle(app, &pdf, &hash, &settings),
+            )
+            .await
+            .map_err(|_| {
+                format!(
+                    "PaddleOCR-VL extraction exceeded the {} second document budget",
+                    settings.pdf_extraction_timeout_secs
+                )
+            })?;
         }
     }
 
@@ -1742,50 +2653,21 @@ pub async fn extract(
                     .await
                     .map_err(|e| format!("Hash computation failed: {e}"))??
             };
-            match extract_llm(app, &pdf, &hash).await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    // Fall back to native extraction unless the run was
-                    // cancelled or there is nothing to fall back to.
-                    if crate::commands::is_cancelled() || find_command("pdftotext").is_none() {
-                        return Err(e);
-                    }
-                    let _ = app.emit_event("pipeline:log", serde_json::json!({
-                        "line": format!("WARNING: LLM extraction failed: {e}. Falling back to pdftotext.")
-                    }));
-                    let p = pdf.clone();
-                    let native_app = app.clone();
-                    return tokio::task::spawn_blocking(move || {
-                        extract_pdf_native(&native_app, &p, "pdftotext", false, false)
-                    })
-                    .await
-                    .map_err(|e| format!("Extraction task failed: {e}"))?;
-                }
-            }
+            return tokio::time::timeout(
+                std::time::Duration::from_secs(settings.pdf_extraction_timeout_secs),
+                extract_llm(app, &pdf, &hash),
+            )
+            .await
+            .map_err(|_| {
+                format!(
+                    "LLM PDF extraction exceeded the {} second document budget",
+                    settings.pdf_extraction_timeout_secs
+                )
+            })?;
         }
     }
 
-    // Identify the PDF path (if any) before entering spawn_blocking, so we
-    // can fall back to LLM extraction if the native extractor fails.
-    let fallback_pdf: Option<PathBuf> = if !use_llm {
-        if path.is_dir() {
-            if find_main_tex(&path).is_some() {
-                None // LaTeX takes priority
-            } else {
-                find_pdf_in_dir(&path)
-            }
-        } else if ext_eq(&path, "pdf") {
-            Some(path.clone())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let extractor_name = effective_method.clone();
     let blocking_method = effective_method.clone();
-    let blocking_disable_ocr = effective_marker_disable_ocr;
-    let blocking_disable_images = effective_marker_disable_images;
     let native_app = app.clone();
 
     // Non-LLM paths: run blocking I/O on a separate thread
@@ -1814,13 +2696,7 @@ pub async fn extract(
             }
 
             if let Some(pdf) = find_pdf_in_dir(&path) {
-                return extract_pdf_native(
-                    &native_app,
-                    &pdf,
-                    &blocking_method,
-                    blocking_disable_ocr,
-                    blocking_disable_images,
-                );
+                return extract_pdf_native(&native_app, &pdf, &blocking_method);
             }
 
             if let Some(docx) = find_docx_in_dir(&path) {
@@ -1858,13 +2734,7 @@ pub async fn extract(
                 quality_notes: warnings,
             })
         } else if ext_eq(&path, "pdf") {
-            extract_pdf_native(
-                &native_app,
-                &path,
-                &blocking_method,
-                blocking_disable_ocr,
-                blocking_disable_images,
-            )
+            extract_pdf_native(&native_app, &path, &blocking_method)
         } else if ext_eq(&path, "docx") {
             extract_docx(&path)
         } else {
@@ -1878,29 +2748,40 @@ pub async fn extract(
     .await
     .map_err(|e| format!("Extraction task failed: {e}"))?;
 
-    // If native PDF extraction failed, fall back to LLM extraction
-    match native_result {
-        Ok(result) => Ok(result),
-        Err(e) if fallback_pdf.is_some() => {
-            let pdf = fallback_pdf.unwrap();
-            let _ = app.emit_event("pipeline:log", serde_json::json!({
-                "line": format!("WARNING: {extractor_name} failed: {e}. Falling back to LLM extraction.")
-            }));
-            let hash = {
-                let p = pdf.clone();
-                tokio::task::spawn_blocking(move || compute_hash(&p))
-                    .await
-                    .map_err(|e| format!("Hash computation failed: {e}"))??
-            };
-            extract_llm(app, &pdf, &hash).await
-        }
-        Err(e) => Err(e),
-    }
+    native_result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn marker_tuning_args_cover_global_parser_settings() {
+        let settings = crate::settings::Settings {
+            marker_force_ocr: true,
+            marker_disable_images: true,
+            marker_lowres_dpi: 72,
+            marker_highres_dpi: 144,
+            marker_pdftext_workers: 8,
+            marker_layout_batch_size: 12,
+            marker_recognition_batch_size: 32,
+            ..Default::default()
+        };
+        let args = marker_tuning_args(&settings);
+        assert!(args.contains(&"--force_ocr".to_string()));
+        assert!(args.contains(&"--disable_image_extraction".to_string()));
+        assert!(!args.contains(&"--disable_ocr".to_string()));
+        for expected in ["72", "144", "8", "12", "32"] {
+            assert!(args.contains(&expected.to_string()));
+        }
+    }
+
+    #[test]
+    fn marker_automatic_batches_do_not_override_upstream_device_defaults() {
+        let args = marker_tuning_args(&crate::settings::Settings::default());
+        assert!(!args.contains(&"--layout_batch_size".to_string()));
+        assert!(!args.contains(&"--recognition_batch_size".to_string()));
+    }
 
     #[test]
     fn paddle_response_extracts_openai_message_content() {
@@ -1928,11 +2809,93 @@ mod tests {
     }
 
     #[test]
+    fn paddle_response_rejects_truncated_generation() {
+        let response = serde_json::json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": { "content": "partial page" }
+            }]
+        });
+        assert!(paddle_response_text(&response)
+            .unwrap_err()
+            .contains("finish_reason=length"));
+    }
+
+    #[test]
+    fn paddle_short_page_check_uses_a_conservative_floor() {
+        assert!(paddle_page_is_suspicious("tiny", Some(1_000)));
+        assert!(!paddle_page_is_suspicious("tiny", Some(100)));
+        assert!(!paddle_page_is_suspicious("complete enough", None));
+        let warnings = format!(
+            "> [{PADDLE_REGION_WARNING}]\n\n> [{PADDLE_REGION_WARNING}]\n\n\
+             > [{PADDLE_REGION_WARNING}]"
+        );
+        assert!(paddle_page_is_suspicious(&warnings, Some(1_000)));
+    }
+
+    #[test]
     fn rendered_page_limit_matches_documented_cap() {
         assert_eq!(rendered_page_limit(0), 1);
         assert_eq!(rendered_page_limit(50), 50);
         assert_eq!(rendered_page_limit(500), MAX_RENDERED_PDF_PAGES);
         assert_eq!(MAX_RENDERED_PDF_PAGES, 300);
+    }
+
+    #[test]
+    fn paddle_page_data_url_uses_the_rendered_image_media_type() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, &[0xff, 0xd8, 0xff, 0xd9]).unwrap();
+        assert!(read_image_data_url(file.path())
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,"));
+    }
+
+    #[test]
+    fn paddle_png_dimensions_reads_ihdr_without_decoding_the_page() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let mut header = Vec::from(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".as_slice());
+        header.extend_from_slice(&1275u32.to_be_bytes());
+        header.extend_from_slice(&1650u32.to_be_bytes());
+        std::io::Write::write_all(&mut file, &header).unwrap();
+        assert_eq!(paddle_png_dimensions(file.path()).unwrap(), (1275, 1650));
+    }
+
+    #[test]
+    fn paddle_tiles_bisect_the_long_axis_with_overlap_and_reading_order() {
+        let page = PaddleTile {
+            x: 0,
+            y: 0,
+            width: 1275,
+            height: 1650,
+            depth: 0,
+            order: Vec::new(),
+        };
+        let [top, bottom] = split_paddle_tile(&page).unwrap();
+        assert_eq!(top.order, vec![0]);
+        assert_eq!(bottom.order, vec![1]);
+        assert_eq!(top.width, page.width);
+        assert_eq!(bottom.width, page.width);
+        assert!(top.y + top.height > bottom.y);
+        assert_eq!(bottom.y + bottom.height, page.height);
+
+        let [left, right] = split_paddle_tile(&top).unwrap();
+        assert_eq!(left.order, vec![0, 0]);
+        assert_eq!(right.order, vec![0, 1]);
+        assert!(left.x + left.width > right.x);
+        assert_eq!(right.x + right.width, page.width);
+    }
+
+    #[test]
+    fn paddle_length_failures_trigger_layout_decomposition() {
+        assert!(paddle_failure_suggests_decomposition(
+            "PaddleOCR-VL stopped before completing the page (finish_reason=length)"
+        ));
+        assert!(paddle_failure_suggests_decomposition(
+            "PaddleOCR-VL returned empty page output"
+        ));
+        assert!(!paddle_failure_suggests_decomposition(
+            "PaddleOCR-VL request failed: connection reset"
+        ));
     }
 
     #[test]
@@ -2014,9 +2977,9 @@ mod tests {
 
     #[test]
     fn baseline_splits_on_form_feeds_and_drops_trailing_empty() {
-        let text = "page one text\u{0C}page two\u{0C}";
+        let text = "page   one text\u{0C}page two\u{0C}";
         let pages = baseline_page_lengths(text);
-        assert_eq!(pages, vec!["page one text".len(), "page two".len()]);
+        assert_eq!(pages, vec!["pageonetext".len(), "pagetwo".len()]);
     }
 
     #[test]
@@ -2062,6 +3025,31 @@ mod tests {
             vec![(2, 4), (7, 7), (9, 10)]
         );
         assert!(group_into_ranges(&[]).is_empty());
+    }
+
+    #[test]
+    fn llm_initial_ranges_bound_pages_and_expected_output() {
+        assert_eq!(
+            llm_initial_ranges(&[1_000; 20]),
+            vec![(1, 8), (9, 16), (17, 20)]
+        );
+        assert_eq!(
+            llm_initial_ranges(&[30_000, 30_000, 1_000]),
+            vec![(1, 1), (2, 3)]
+        );
+    }
+
+    #[test]
+    fn retry_ranges_are_split_into_small_requests() {
+        assert_eq!(
+            split_ranges(&[(2, 6), (10, 10)], 2),
+            vec![(2, 3), (4, 5), (6, 6), (10, 10)]
+        );
+    }
+
+    #[test]
+    fn extraction_prompt_preserves_typos_as_evidence() {
+        assert!(extraction_requirements().contains("typographical errors verbatim"));
     }
 
     #[test]

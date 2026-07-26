@@ -1,7 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PipelineProgress from "./components/PipelineProgress";
-import ExportControls from "./components/ExportControls";
 import DepsCheck from "./components/DepsCheck";
 import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
@@ -11,37 +10,14 @@ import RunSetupPanel from "./components/RunSetupPanel";
 import { usePipeline } from "./hooks/usePipeline";
 import usePersistentPanelWidth from "./hooks/usePersistentPanelWidth";
 import { isMac } from "./lib/platform";
-import { detectReportIssues } from "./lib/issues";
-import { renderSurvey } from "./lib/surveyMarkdown";
-import type { PipelineReport, DepsReport, VarSpec, InputSlot } from "./lib/types";
+import type { DepsReport, VarSpec, InputSlot } from "./lib/types";
 
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
 const AboutPage = lazy(() => import("./components/AboutPage"));
 const HistoryPage = lazy(() => import("./components/HistoryPage"));
 const BatchPanel = lazy(() => import("./components/BatchPanel"));
-const ArtifactExplorer = lazy(() => import("./components/ArtifactExplorer"));
-const ReportViewer = lazy(() => import("./components/ReportViewer"));
-const IssuesTable = lazy(() => import("./components/IssuesTable"));
-
-function getArtifactMarkdown(
-  artifact: string,
-  reportMarkdown: string,
-  extractedText: string,
-  report: PipelineReport,
-): string {
-  if (artifact === "report") return reportMarkdown;
-  if (artifact === "extracted_text") return extractedText;
-  if (artifact === "orientation") return renderSurvey(report.orientation);
-  if (artifact.startsWith("step:")) {
-    const stepId = artifact.slice(5);
-    const output = report.step_outputs.find((s) => s.step_id === stepId);
-    if (output) {
-      return `# ${output.step_label}\n\n**Phase**: ${output.phase} · **Agent**: ${output.agent || "default"}\n\n---\n\n${output.raw_text}`;
-    }
-  }
-  return reportMarkdown;
-}
+const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
 
 function App() {
   const { state, logs, usage, startPipeline, rerunPipeline, cancel, reset, listenersReady, runStartedAt, passTimes } = usePipeline();
@@ -64,9 +40,6 @@ function App() {
     240,
     440,
   );
-  const [artifact, setArtifact] = useState<string>("report");
-  // Report vs. structured-issues view (shown only when issues are detected).
-  const [reportView, setReportView] = useState<"report" | "issues">("report");
   // Active profile's input mode ("document" | "folder" | "none") — refetched
   // whenever the pipeline config may have changed. "none" workflows can run
   // without selecting an input.
@@ -152,7 +125,6 @@ function App() {
 
   const launch = (variables?: Record<string, string>, extraInputs?: Record<string, string>) => {
     setPage("main");
-    setArtifact("report");
     startPipeline(paperPath ?? "", false, variables, extraInputs);
   };
 
@@ -181,8 +153,6 @@ function App() {
     }
     reset();
     setPaperPath(null);
-    setArtifact("report");
-    setReportView("report");
     setHistoryRunId(null);
     setVarModalOpen(false);
     setSelectionKey((key) => key + 1);
@@ -201,9 +171,6 @@ function App() {
     if (nextPage === "history") setHistoryRunId(null);
     setPage(nextPage);
   };
-
-  // Structured issues detected in a finished report (enables the Issues view).
-  const doneIssues = state.kind === "done" ? detectReportIssues(state.report) : null;
 
   const [showDeps, setShowDeps] = useState(false);
 
@@ -306,7 +273,6 @@ function App() {
                 initialRunId={historyRunId}
                 onRerun={(runId, onlyFailed) => {
                   setPage("main");
-                  setArtifact("report");
                   rerunPipeline(runId, { onlyFailed });
                 }}
               />
@@ -317,68 +283,13 @@ function App() {
                 onOpenRun={(runId) => { setHistoryRunId(runId); setPage("history"); }}
               />
             ) : state.kind === "done" ? (
-              <div className="flex flex-col h-full">
-                {/* Warning banner for failed steps */}
-                {state.report.failed_steps && state.report.failed_steps.length > 0 && (
-                  <div className="px-6 py-2.5 bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300">
-                    <span className="font-medium">Incomplete report.</span>{" "}
-                    {state.report.failed_steps.map((f) => f.step_label).join(", ")} failed and {state.report.failed_steps.length === 1 ? "is" : "are"} not reflected below.
-                  </div>
-                )}
-                {/* Artifact selector */}
-                <div className="flex items-center gap-3 px-6 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
-                  <label className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
-                    {state.runId ? "Run artifacts" : "Viewing:"}
-                  </label>
-                  {doneIssues && (
-                    <div className="flex items-center rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden shrink-0">
-                      <button
-                        onClick={() => setReportView("report")}
-                        className={`px-2 py-1 text-xs transition-colors ${reportView === "report" ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900" : "text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"}`}
-                      >
-                        Report
-                      </button>
-                      <button
-                        onClick={() => setReportView("issues")}
-                        className={`px-2 py-1 text-xs transition-colors ${reportView === "issues" ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900" : "text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"}`}
-                      >
-                        Issues ({doneIssues.length})
-                      </button>
-                    </div>
-                  )}
-                  {!state.runId && <select
-                    value={artifact}
-                    onChange={(e) => setArtifact(e.target.value)}
-                    className="py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
-                               focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
-                  >
-                    <option value="report">Final Report</option>
-                    <option value="extracted_text">Extracted Text</option>
-                    <option value="orientation">Orientation Map</option>
-                    {state.report.step_outputs.map((s) => (
-                      <option key={s.step_id} value={`step:${s.step_id}`}>
-                        Step: {s.step_label}
-                      </option>
-                    ))}
-                  </select>}
-                  <div className="ml-auto">
-                    <ExportControls
-                      markdown={state.markdown}
-                      report={state.report}
-                      extractedText={state.extractedText}
-                    />
-                  </div>
-                </div>
-                <div className="flex-1 overflow-auto min-h-0">
-                  {doneIssues && reportView === "issues" ? (
-                    <IssuesTable issues={doneIssues} runId={state.runId} />
-                  ) : state.runId ? (
-                    <ArtifactExplorer runId={state.runId} fallbackMarkdown={state.markdown} />
-                  ) : (
-                    <ReportViewer markdown={getArtifactMarkdown(artifact, state.markdown, state.extractedText, state.report)} />
-                  )}
-                </div>
-              </div>
+              <ReportWorkspace
+                runId={state.runId}
+                markdown={state.markdown}
+                report={state.report}
+                extractedText={state.extractedText}
+                durationSecs={runStartedAt ? (Date.now() - runStartedAt) / 1000 : null}
+              />
             ) : state.kind === "idle" ? (
               <div className="flex items-center justify-center min-h-full px-8 py-16">
                 <div className="w-full max-w-3xl">

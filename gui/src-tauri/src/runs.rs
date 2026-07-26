@@ -56,6 +56,42 @@ pub struct ArtifactEntry {
     pub group: String,
 }
 
+/// Constant-size index for the many homogeneous page images in a completed
+/// run. The files remain individually addressable for visual inspection and
+/// re-runs, but do not each occupy a full artifact-manifest record.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PageArtifactIndex {
+    pub count: u32,
+    pub digit_width: u8,
+    pub extension: String,
+    pub total_bytes: u64,
+}
+
+impl PageArtifactIndex {
+    fn rel_path(&self, page: u32) -> Result<String, String> {
+        if self.count == 0 || self.count as usize > MAX_MANIFEST_ARTIFACTS {
+            return Err("Invalid page artifact count".to_string());
+        }
+        if page == 0 || page > self.count {
+            return Err(format!(
+                "Page {page} is outside this run's 1-{} page range",
+                self.count
+            ));
+        }
+        if self.digit_width == 0 || self.digit_width > 8 {
+            return Err("Invalid page artifact index".to_string());
+        }
+        if !matches!(self.extension.as_str(), "jpg" | "jpeg" | "png") {
+            return Err("Invalid page artifact format".to_string());
+        }
+        let width = self.digit_width as usize;
+        Ok(format!(
+            "artifacts/pages/page-{page:0width$}.{}",
+            self.extension
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunManifest {
     pub run_id: String,
@@ -66,6 +102,10 @@ pub struct RunManifest {
     pub profile_name: String,
     pub provider: String,
     pub artifacts: Vec<ArtifactEntry>,
+    /// Completed runs compact homogeneous page records into this descriptor.
+    /// Older and interrupted runs keep page entries in `artifacts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_artifacts: Option<PageArtifactIndex>,
     // ── Run-level metadata (all defaulted so pre-1.1 manifests still load) ──
     /// Outcome: "done" | "partial" (some steps failed) | "failed" |
     /// "cancelled" | "interrupted" (process ended before finalization).
@@ -96,6 +136,10 @@ pub struct RunManifest {
     /// are paths relative to the run directory.
     #[serde(default)]
     pub extra_inputs: std::collections::HashMap<String, String>,
+    /// Original named-input file/folder paths. These let an explicit
+    /// `named_input.source` selector retain its meaning on a re-run.
+    #[serde(default)]
+    pub extra_input_sources: std::collections::HashMap<String, String>,
     /// The run this one was re-run from, if any (resume / partial re-run).
     #[serde(default)]
     pub parent_run_id: Option<String>,
@@ -117,6 +161,7 @@ pub struct RunFinishMeta {
     pub failed_steps: Vec<String>,
     pub variables: std::collections::HashMap<String, String>,
     pub extra_inputs: std::collections::HashMap<String, String>,
+    pub extra_input_sources: std::collections::HashMap<String, String>,
     pub parent_run_id: Option<String>,
 }
 
@@ -188,7 +233,12 @@ impl RunManifest {
             cached_input_tokens: self.usage.cached_input_tokens,
             cache_write_input_tokens: self.usage.cache_write_input_tokens,
             step_count: self.step_count,
-            artifact_count: self.artifacts.len() as u32,
+            artifact_count: self.artifacts.len() as u32
+                + self
+                    .page_artifacts
+                    .as_ref()
+                    .map(|pages| pages.count)
+                    .unwrap_or(0),
             failed_steps: self.failed_steps.clone(),
             resumable: false,
             title: self.title.clone(),
@@ -326,6 +376,7 @@ pub struct RunWriter {
     dir: PathBuf,
     run_id: String,
     artifacts: Vec<ArtifactEntry>,
+    page_artifacts: Option<PageArtifactIndex>,
     created: String,
     meta: RunFinishMeta,
     finished: bool,
@@ -366,6 +417,7 @@ impl RunWriter {
             dir,
             run_id: run_id.to_string(),
             artifacts: Vec::new(),
+            page_artifacts: None,
             created: chrono::Local::now().to_rfc3339(),
             meta: RunFinishMeta {
                 status: "running".to_string(),
@@ -400,6 +452,13 @@ impl RunWriter {
         self.meta
             .extra_inputs
             .insert(key.to_string(), rel_path.to_string());
+        self.persist_current().map(|_| ())
+    }
+
+    pub fn record_extra_input_source(&mut self, key: &str, path: &str) -> Result<(), String> {
+        self.meta
+            .extra_input_sources
+            .insert(key.to_string(), path.to_string());
         self.persist_current().map(|_| ())
     }
 
@@ -542,6 +601,104 @@ impl RunWriter {
         added
     }
 
+    /// Replace homogeneous per-page manifest entries with one compact index.
+    /// Files stay in place because providers, re-runs, and the on-demand page
+    /// reader address them directly.
+    pub fn compact_page_artifacts(&mut self) -> Result<usize, String> {
+        let pages: Vec<(usize, u32, usize, String, u64)> = self
+            .artifacts
+            .iter()
+            .enumerate()
+            .filter(|(_, artifact)| artifact.group == "pages")
+            .map(|(index, artifact)| {
+                let path = Path::new(&artifact.rel_path);
+                let parent = path
+                    .parent()
+                    .map(|value| value.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                if parent != "artifacts/pages" {
+                    return Err(format!(
+                        "Page artifact has an unexpected path: {}",
+                        artifact.rel_path
+                    ));
+                }
+                let extension = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.to_ascii_lowercase())
+                    .ok_or_else(|| {
+                        format!("Page artifact has no extension: {}", artifact.rel_path)
+                    })?;
+                if !matches!(extension.as_str(), "jpg" | "jpeg" | "png") {
+                    return Err(format!("Unsupported page artifact format: {extension}"));
+                }
+                let digits = path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .and_then(|value| value.strip_prefix("page-"))
+                    .ok_or_else(|| {
+                        format!(
+                            "Page artifact has an unexpected name: {}",
+                            artifact.rel_path
+                        )
+                    })?;
+                if digits.is_empty() || !digits.chars().all(|value| value.is_ascii_digit()) {
+                    return Err(format!(
+                        "Page artifact has an invalid number: {}",
+                        artifact.rel_path
+                    ));
+                }
+                let page = digits
+                    .parse::<u32>()
+                    .map_err(|_| format!("Invalid page number in {}", artifact.rel_path))?;
+                Ok((index, page, digits.len(), extension, artifact.bytes))
+            })
+            .collect::<Result<_, String>>()?;
+        if pages.is_empty() {
+            return Ok(0);
+        }
+        let digit_width = pages[0].2;
+        let extension = pages[0].3.clone();
+        if digit_width == 0
+            || digit_width > 8
+            || pages
+                .iter()
+                .any(|(_, _, width, ext, _)| *width != digit_width || *ext != extension)
+        {
+            return Err("Page artifacts do not share one filename format".to_string());
+        }
+        let mut page_numbers: Vec<u32> = pages.iter().map(|(_, page, _, _, _)| *page).collect();
+        page_numbers.sort_unstable();
+        if page_numbers
+            .iter()
+            .copied()
+            .ne(1..=page_numbers.len() as u32)
+        {
+            return Err(
+                "Page artifacts are not a contiguous sequence starting at page 1".to_string(),
+            );
+        }
+        let page_indices: std::collections::HashSet<usize> =
+            pages.iter().map(|(index, _, _, _, _)| *index).collect();
+        let total_bytes = pages.iter().fold(0u64, |total, (_, _, _, _, bytes)| {
+            total.saturating_add(*bytes)
+        });
+        let count = pages.len();
+        self.artifacts = self
+            .artifacts
+            .drain(..)
+            .enumerate()
+            .filter_map(|(index, artifact)| (!page_indices.contains(&index)).then_some(artifact))
+            .collect();
+        self.page_artifacts = Some(PageArtifactIndex {
+            count: count as u32,
+            digit_width: digit_width as u8,
+            extension,
+            total_bytes,
+        });
+        Ok(count)
+    }
+
     /// Write manifest.json. Call once, last.
     pub fn finish(mut self, meta: RunFinishMeta) -> Result<RunManifest, String> {
         self.meta = meta;
@@ -573,6 +730,7 @@ impl RunWriter {
             profile_name: self.meta.profile_name.clone(),
             provider: self.meta.provider.clone(),
             artifacts: self.artifacts.clone(),
+            page_artifacts: self.page_artifacts.clone(),
             status: self.meta.status.clone(),
             duration_secs: self.meta.duration_secs,
             usage: self.meta.usage,
@@ -582,6 +740,7 @@ impl RunWriter {
             tags,
             variables: self.meta.variables.clone(),
             extra_inputs: self.meta.extra_inputs.clone(),
+            extra_input_sources: self.meta.extra_input_sources.clone(),
             parent_run_id: self.meta.parent_run_id.clone(),
         }
     }
@@ -1137,6 +1296,7 @@ fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
         profile_name: String::new(),
         provider: String::new(),
         artifacts: Vec::new(),
+        page_artifacts: None,
         status: "failed".to_string(),
         duration_secs: 0,
         usage: Default::default(),
@@ -1146,6 +1306,7 @@ fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
         tags: Vec::new(),
         variables: Default::default(),
         extra_inputs: Default::default(),
+        extra_input_sources: Default::default(),
         parent_run_id: None,
     };
     write_manifest(dir, &manifest).ok()?;
@@ -1502,6 +1663,17 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
     }
 }
 
+/// Read one image from a completed run's compact page index. Only the selected
+/// page reaches the webview; the other page files are never opened.
+pub fn read_page_artifact(run_id: &str, page: u32) -> Result<ArtifactContent, String> {
+    let manifest = load_manifest(run_id)?;
+    let index = manifest
+        .page_artifacts
+        .ok_or_else(|| "This run does not have a compact page index".to_string())?;
+    let rel_path = index.rel_path(page)?;
+    read_artifact(run_id, &rel_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1532,6 +1704,47 @@ mod tests {
         assert!(read_artifact("some-run", "../other/file.md").is_err());
         assert!(read_artifact("some-run", "/etc/passwd").is_err());
         assert!(read_artifact("some-run", "a/../../b").is_err());
+    }
+
+    #[test]
+    fn completed_page_entries_compact_without_removing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let mut writer = RunWriter::create_in(root.path(), "compact-pages").unwrap();
+        writer
+            .add_text("report.md", "Report", "report", "# Report")
+            .unwrap();
+        fs::create_dir_all(writer.dir().join("artifacts/pages")).unwrap();
+        for page in 1..=3 {
+            let rel_path = format!("artifacts/pages/page-{page:02}.jpg");
+            fs::write(writer.dir().join(&rel_path), [0xff, 0xd8, page as u8]).unwrap();
+            writer
+                .register_existing(&rel_path, &format!("Page {page}"), "pages")
+                .unwrap();
+        }
+
+        assert_eq!(writer.compact_page_artifacts().unwrap(), 3);
+        let manifest = writer.current_manifest();
+        assert_eq!(manifest.artifacts.len(), 1);
+        assert_eq!(
+            manifest.page_artifacts,
+            Some(PageArtifactIndex {
+                count: 3,
+                digit_width: 2,
+                extension: "jpg".to_string(),
+                total_bytes: 9,
+            })
+        );
+        assert_eq!(
+            manifest
+                .page_artifacts
+                .as_ref()
+                .unwrap()
+                .rel_path(2)
+                .unwrap(),
+            "artifacts/pages/page-02.jpg"
+        );
+        assert_eq!(manifest.to_summary().artifact_count, 4);
+        assert!(writer.dir().join("artifacts/pages/page-03.jpg").is_file());
     }
 
     #[test]
@@ -1571,6 +1784,7 @@ mod tests {
         assert_eq!(m.duration_secs, 0);
         assert_eq!(m.usage.input_tokens, 0);
         assert!(m.tags.is_empty());
+        assert!(m.page_artifacts.is_none());
         // Summary fills a sensible default status and derives the input name.
         let s = m.to_summary();
         assert_eq!(s.status, "done");
@@ -1588,6 +1802,7 @@ mod tests {
             profile_name: "Deep Review".into(),
             provider: "claude".into(),
             artifacts: vec![],
+            page_artifacts: None,
             status: "partial".into(),
             duration_secs: 125,
             usage: crate::pipeline::logging::CallUsage {
@@ -1603,6 +1818,7 @@ mod tests {
             tags: vec!["urgent".into()],
             variables: std::collections::HashMap::new(),
             extra_inputs: std::collections::HashMap::new(),
+            extra_input_sources: std::collections::HashMap::new(),
             parent_run_id: None,
         };
         let s = m.to_summary();
@@ -1636,6 +1852,9 @@ mod tests {
             writer
                 .record_extra_input("letter", "context/input.md")
                 .unwrap();
+            writer
+                .record_extra_input_source("letter", "/inputs/letter.docx")
+                .unwrap();
         }
 
         let content = fs::read_to_string(temp.path().join("run-1/manifest.json")).unwrap();
@@ -1645,6 +1864,13 @@ mod tests {
         assert_eq!(
             manifest.extra_inputs.get("letter").map(String::as_str),
             Some("context/input.md")
+        );
+        assert_eq!(
+            manifest
+                .extra_input_sources
+                .get("letter")
+                .map(String::as_str),
+            Some("/inputs/letter.docx")
         );
     }
 

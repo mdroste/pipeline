@@ -20,8 +20,14 @@ function makeConfig(): PipelineConfig {
         prompt: "Check the proofs.",
         enabled: true,
         phase: "parallel",
-        tools: ["Read"],
+        tools: [],
         agents: ["claude"],
+        context: {
+          include: [
+            { kind: "primary", parts: ["text", "structure", "visuals", "source"] },
+            { kind: "survey" },
+          ],
+        },
       },
       {
         id: "consolidate",
@@ -31,12 +37,15 @@ function makeConfig(): PipelineConfig {
         phase: "sequential",
         tools: [],
         agents: ["claude"],
+        context: {
+          include: [{ kind: "step", step: "technical", parts: ["report"] }],
+        },
       },
     ],
     merge: { enabled: true, prompt: "", agents: [] },
     use_orientation: true,
     orientation_prompt: "",
-    extraction: { method: "", marker_disable_ocr: null, marker_disable_images: null },
+    extraction: { method: "" },
     parallel_context_template: "",
   };
 }
@@ -107,6 +116,64 @@ describe("PipelinePage", () => {
       (c) => c[0] === "save_pipeline_config",
     );
     expect(saveCall?.[1].config.steps.length).toBe(3);
+    expect(saveCall?.[1].config.steps[2]).toMatchObject({
+      after: [],
+      context: {
+        include: [
+          { kind: "primary", parts: ["text", "structure", "visuals", "source"] },
+          { kind: "survey" },
+        ],
+      },
+    });
+  });
+
+  it("edits the exact artifact allowlist for a step", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
+    await user.click(screen.getByRole("button", { name: /Artifact access & execution rules/ }));
+    expect(screen.queryByRole("button", { name: "Prior reports" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Report" })).not.toBeInTheDocument();
+    const readableText = screen.getByRole("checkbox", { name: "Readable text" });
+    expect(readableText).toBeChecked();
+    await user.click(readableText);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const technical = saveCall?.[1].config.steps.find(
+        (step: { id: string }) => step.id === "technical",
+      );
+      expect(technical.context.include).toContainEqual({
+        kind: "primary",
+        parts: ["structure", "visuals", "source"],
+      });
+    });
+  });
+
+  it("removes step-output access when a step becomes parallel", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Consolidate Issues");
+
+    await user.click(screen.getAllByRole("button", { name: "Consolidate Issues" })[0]);
+    await user.click(screen.getByRole("button", { name: "Parallel" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const consolidate = saveCall?.[1].config.steps.find(
+        (step: { id: string }) => step.id === "consolidate",
+      );
+      expect(consolidate).toMatchObject({
+        phase: "parallel",
+        context: { include: [] },
+      });
+    });
   });
 
   it("reports dirty state to the shell and can hide its local back control", async () => {

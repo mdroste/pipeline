@@ -1,7 +1,29 @@
 # Generalizing Pipeline: from paper reviews to arbitrary LLM workflows
 
-Design notes, 2026-07-02. Not a commitment — a map of what generalization would
-take, written against the codebase as it stands after the July 2026 dust-off.
+Original design notes, 2026-07-02. Generalization is now implemented. The
+sections below retain the original motivation; `CLAUDE.md` is authoritative
+for the current engine.
+
+## Current artifact-access contract
+
+The implementation keeps the flat step list and uses an explicit dependency
+graph rather than an implicit wave schedule:
+
+- `after` is order-only and never exposes a producer's data.
+- `context.include` is an exact artifact allowlist. Sequential steps may select
+  an upstream step's report or supporting files, which automatically adds a
+  dataflow edge. Parallel steps cannot select any step output.
+- Primary input representations are independently selectable as readable text,
+  canonical structure, visuals, and original source.
+- Survey data, named-input text/source, upstream reports, and upstream files
+  are separate selectors. Supporting files may be filtered by a producer-rooted
+  glob.
+- Every call receives a private staged artifact view and per-call filesystem
+  authority. Every agent/fan-out unit writes to its own producer directory.
+- An empty context is intentional isolation. There is no adjacency fallback.
+
+Profiles are schema v6 and all built-in/new profiles serialize this explicit
+format. `Read` and `Write` are derived capabilities, not profile tool flags.
 
 ## The core insight: most of the architecture is already general
 
@@ -37,12 +59,11 @@ Generalization = replacing those five assumptions, not the engine.
   built-in profile among several (e.g. "Codebase review", "Grant proposal",
   "Data-analysis writeup"). The existing export/import bundle is already the
   sharing format.
-- **Keep the flat list + phases model.** No DAG editor. Parallel waves +
-  sequential steps cover the real use cases; the wave diagram stays readable.
-  This is the simplicity budget — spend complexity on artifacts instead.
-- **Artifacts are files, not a new abstraction.** A step's products live in a
-  per-run directory on disk. The report stays the human-readable narrative;
-  artifacts are everything else the step wrote.
+- **Keep the flat list + phases model.** The editor presents a readable list
+  and wave diagram while explicit order/dataflow edges determine readiness.
+- **Artifact roles are logical; files are the runtime representation.** Profiles
+  select producer/role pairs rather than run-directory paths. The resolver maps
+  those roles to a private per-call view.
 - **The viewer renders by file kind, in the webview, with zero native deps.**
   That is what makes it robust on macOS/Windows/Linux.
 

@@ -31,8 +31,8 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
     case "sequential": {
       const base: PlaceholderEntry[] = [
         { token: "{orientation}", description: "Path to orientation map JSON" },
-        { token: "{prior_outputs}", description: "All prior step outputs concatenated" },
-        { token: "{last_output}", description: "Most recent prior step's output" },
+        { token: "{prior_outputs}", description: "Selected upstream reports concatenated" },
+        { token: "{last_output}", description: "Most recent selected upstream report" },
         { token: "{input_path}", description: "Path to the extracted input text" },
         { token: "{document_bundle}", description: "Path to canonical DocumentBundle JSON" },
         { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
@@ -112,11 +112,9 @@ export function findUnknownPlaceholders(
 
 // ── Wave structure ──────────────────────────────────────────────────
 //
-// Mirrors the grouping logic in src-tauri/src/pipeline/executor.rs::group_into_waves.
-// Adjacent enabled Parallel steps form one wave; each enabled Sequential step is its
-// own wave. We only consider enabled steps because disabled ones don't affect the
-// runtime shape — but for editor visibility we still surface them as ghosts via the
-// `disabled` flag so users can see what's switched off.
+// Mirrors executor readiness: explicit `after` edges and selected upstream
+// artifacts form the dependency graph. All ready Parallel steps run together;
+// when no Parallel step is ready, the first ready Sequential step runs alone.
 
 export interface ParallelWave {
   kind: "parallel";
@@ -135,26 +133,59 @@ export type Wave = ParallelWave | SequentialWave;
 
 export function computeWaves(steps: StepConfig[], includeDisabled = false): Wave[] {
   const eligible = includeDisabled ? steps : steps.filter((s) => s.enabled);
+  const eligibleIds = new Set(eligible.map((step) => step.id));
+  const dependencies = eligible.map((step) =>
+    new Set([
+      ...(step.after ?? []),
+      ...(step.context?.include ?? [])
+        .filter((selector) => selector.kind === "step")
+        .map((selector) => selector.step),
+    ].filter((id) => eligibleIds.has(id))),
+  );
   const waves: Wave[] = [];
-  let buffer: StepConfig[] = [];
-  const flush = () => {
-    if (buffer.length === 0) return;
-    waves.push({
-      kind: "parallel",
-      steps: buffer,
-      hasMultiAgent: buffer.some((s) => (s.agents?.length ?? 0) > 1),
-    });
-    buffer = [];
-  };
-  for (const step of eligible) {
-    if (step.phase === "parallel") {
-      buffer.push(step);
-    } else {
-      flush();
-      waves.push({ kind: "sequential", step });
+  const done = new Set<string>();
+  let remaining = eligible.map((_, index) => index);
+
+  while (remaining.length) {
+    const ready = remaining.filter((index) =>
+      [...dependencies[index]].every((dependency) => done.has(dependency)),
+    );
+    if (!ready.length) {
+      // Keep invalid/cyclic drafts visible. Backend validation will explain the
+      // graph error when the user saves.
+      const index = remaining[0];
+      const step = eligible[index];
+      waves.push(step.phase === "parallel"
+        ? { kind: "parallel", steps: [step], hasMultiAgent: (step.agents?.length ?? 0) > 1 }
+        : { kind: "sequential", step });
+      done.add(step.id);
+      remaining = remaining.filter((candidate) => candidate !== index);
+      continue;
     }
+
+    const readyParallel = ready.filter((index) => eligible[index].phase === "parallel");
+    if (readyParallel.length) {
+      const waveSteps = readyParallel.map((index) => eligible[index]);
+      waves.push({
+        kind: "parallel",
+        steps: waveSteps,
+        hasMultiAgent: waveSteps.some((step) => (step.agents?.length ?? 0) > 1),
+      });
+      waveSteps.forEach((step) => done.add(step.id));
+      remaining = remaining.filter((index) => !readyParallel.includes(index));
+      continue;
+    }
+
+    const index = ready[0];
+    const step = eligible[index];
+    waves.push({
+      kind: "sequential",
+      step,
+    });
+    done.add(step.id);
+    remaining = remaining.filter((candidate) => candidate !== index);
   }
-  flush();
+
   return waves;
 }
 

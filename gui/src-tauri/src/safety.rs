@@ -5,7 +5,13 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
+
+static SPAN_TAG_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"(?is)<\s*/?\s*span\b(?:[^>"']|"[^"]*"|'[^']*')*>"#)
+        .expect("span-tag regex must compile")
+});
 
 pub const MAX_EXPANDED_PROMPT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_RUNTIME_VALUE_BYTES: usize = 1024 * 1024;
@@ -18,6 +24,13 @@ pub const MAX_RUNTIME_VALUES: usize = 256;
 pub const MAX_WALK_ENTRIES: usize = 100_000;
 pub const MAX_WALK_DIRS: usize = 10_000;
 pub const MAX_WALK_TIME: Duration = Duration::from_secs(5);
+
+/// Remove HTML span wrappers from model-facing text without altering their
+/// contents. Span IDs/classes are presentational extraction noise and provide
+/// no useful semantic context to a model.
+pub fn strip_span_tags(input: &str) -> std::borrow::Cow<'_, str> {
+    SPAN_TAG_RE.replace_all(input, "")
+}
 
 pub fn validate_runtime_context(
     values: &std::collections::HashMap<String, String>,
@@ -290,6 +303,15 @@ mod tests {
         assert_eq!(
             replace_all_limited("a {x} b {x}", "{x}", "ok", 100, "prompt").unwrap(),
             "a ok b ok"
+        );
+    }
+
+    #[test]
+    fn span_cleanup_preserves_text_and_non_span_markup() {
+        let input = r#"<SPAN id="equation>1">Estimate</SPAN> and <span class='x'>evidence</span> <div>kept</div>"#;
+        assert_eq!(
+            strip_span_tags(input),
+            "Estimate and evidence <div>kept</div>"
         );
     }
 

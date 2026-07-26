@@ -82,6 +82,7 @@ pub fn run() {
             commands::cancel_pass,
             commands::get_run_manifest,
             commands::read_artifact,
+            commands::read_page_artifact,
             commands::list_runs,
             commands::get_run_report,
             commands::reconcile_runs,

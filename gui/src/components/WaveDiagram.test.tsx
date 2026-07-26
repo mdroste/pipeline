@@ -12,6 +12,7 @@ function step(overrides: Partial<StepConfig> & { id: string }): StepConfig {
     phase: "parallel",
     tools: [],
     agents: [],
+    context: { include: [] },
     ...overrides,
   } as StepConfig;
 }

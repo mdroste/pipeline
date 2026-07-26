@@ -39,7 +39,7 @@ describe("NavRail", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "System ready" })).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Runs" }));
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(props.onNavigate).toHaveBeenCalledWith("history");
   });
 

@@ -16,8 +16,9 @@ function makeConfig(): PipelineConfig {
         prompt: "",
         enabled: true,
         phase: "parallel",
-        tools: ["Read"],
+        tools: [],
         agents: ["claude", "gemini"],
+        context: { include: [{ kind: "primary", parts: ["text", "source"] }] },
       },
       {
         id: "technical",
@@ -25,8 +26,9 @@ function makeConfig(): PipelineConfig {
         prompt: "",
         enabled: false,
         phase: "parallel",
-        tools: ["Read"],
+        tools: [],
         agents: ["claude"],
+        context: { include: [{ kind: "primary", parts: ["text", "source"] }] },
       },
       {
         id: "consolidate",
@@ -36,12 +38,15 @@ function makeConfig(): PipelineConfig {
         phase: "sequential",
         tools: [],
         agents: ["claude"],
+        context: {
+          include: [{ kind: "step", step: "contribution", parts: ["report"] }],
+        },
       },
     ],
     merge: { enabled: true, prompt: "", agents: ["claude"] },
     use_orientation: true,
     orientation_prompt: "",
-    extraction: { method: "", marker_disable_ocr: null, marker_disable_images: null },
+    extraction: { method: "" },
     parallel_context_template: "",
   };
 }

@@ -218,7 +218,7 @@ export default function NavRail({
         <RailButton
           active={activePage === "history"}
           icon="runs"
-          label="Runs"
+          label="History"
           onClick={() => onNavigate("history")}
         />
         <RailButton

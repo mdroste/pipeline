@@ -211,7 +211,8 @@ pub async fn execute(request: Request<'_>) -> Result {
 }
 
 /// Execute any owned call through the single scheduler-rooted dispatch path.
-pub async fn execute_owned(request: OwnedRequest) -> Result {
+pub async fn execute_owned(mut request: OwnedRequest) -> Result {
+    sanitize_model_request(&mut request);
     CallTask::spawn(request).join().await
 }
 
@@ -219,6 +220,17 @@ pub async fn execute_owned(request: OwnedRequest) -> Result {
 /// duration are still emitted/accumulated by the unified runner.
 pub async fn execute_text(request: OwnedRequest) -> std::result::Result<String, String> {
     execute_owned(request).await.output
+}
+
+fn sanitize_model_request(request: &mut OwnedRequest) {
+    if let std::borrow::Cow::Owned(prompt) = crate::safety::strip_span_tags(&request.prompt) {
+        request.prompt = prompt;
+    }
+    if let Some(system_prompt) = request.system_prompt.as_mut() {
+        if let std::borrow::Cow::Owned(clean) = crate::safety::strip_span_tags(system_prompt) {
+            *system_prompt = clean;
+        }
+    }
 }
 
 async fn execute_inner(request: OwnedRequest) -> Result {
@@ -336,6 +348,28 @@ mod tests {
         assert!(
             size <= 8 * 1024,
             "call::execute future grew to {size} bytes; keep provider state behind boxed/spawned boundaries"
+        );
+    }
+
+    #[test]
+    fn model_request_drops_span_markup_but_keeps_its_contents() {
+        let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
+        let mut request = OwnedRequest::new(
+            &app,
+            "sanitize-test",
+            "Sanitize test",
+            r#"Review <span id="claim-1">this claim</span>."#,
+            60,
+        );
+        request.system_prompt =
+            Some("Use <SPAN class='context'>the supplied context</SPAN>.".to_string());
+
+        sanitize_model_request(&mut request);
+
+        assert_eq!(request.prompt, "Review this claim.");
+        assert_eq!(
+            request.system_prompt.as_deref(),
+            Some("Use the supplied context.")
         );
     }
 

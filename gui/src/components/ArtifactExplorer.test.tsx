@@ -15,11 +15,11 @@ const manifest = {
   input_mode: "document",
   profile_name: "Deep Review",
   provider: "claude",
+  page_artifacts: { count: 1, digit_width: 1, extension: "jpg", total_bytes: 500 },
   artifacts: [
     { rel_path: "report.md", label: "Report", kind: "markdown", bytes: 100, sha256: "aa", group: "report" },
     { rel_path: "context/document_bundle.json", label: "Document bundle", kind: "json", bytes: 500, sha256: "ab", group: "document" },
     { rel_path: "context/orientation.json", label: "Orientation map", kind: "json", bytes: 50, sha256: "bb", group: "context" },
-    { rel_path: "artifacts/pages/page-1.png", label: "Page 1", kind: "image", bytes: 500, sha256: "bc", group: "pages" },
     { rel_path: "artifacts/figures/figure-1.png", label: "Figure 1 image", kind: "image", bytes: 500, sha256: "bd", group: "figures" },
     { rel_path: "artifacts/01_technical.md", label: "Technical", kind: "markdown", bytes: 80, sha256: "cc", group: "step" },
     { rel_path: "artifacts/02_analysis.py", label: "Analysis script", kind: "code", bytes: 60, sha256: "dd", group: "step" },
@@ -39,6 +39,11 @@ function mockBackend(contents: Record<string, unknown>) {
       const rel = args?.relPath as string;
       if (rel in contents) return Promise.resolve(contents[rel]);
       return Promise.reject(new Error(`no content for ${rel}`));
+    }
+    if (cmd === "read_page_artifact") {
+      const key = `page:${args?.page}`;
+      if (key in contents) return Promise.resolve(contents[key]);
+      return Promise.reject(new Error(`no content for ${key}`));
     }
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   });
@@ -63,6 +68,136 @@ describe("ArtifactExplorer", () => {
     expect(screen.getByRole("heading", { name: "Steps", level: 4 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Analysis script" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Final Report" })).toBeInTheDocument();
+  });
+
+  it("can defer all artifact reads until the user chooses a source", async () => {
+    const user = userEvent.setup();
+    mockBackend({
+      "artifacts/01_technical.md": textContent("markdown", "# Technical source"),
+    });
+    render(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        deferInitialArtifact
+      />,
+    );
+
+    expect(await screen.findByText("Select an artifact to preview it.")).toBeVisible();
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "read_artifact"),
+    ).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Technical" }));
+    expect(await screen.findByRole("heading", { name: "Technical source" })).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith("read_artifact", {
+      runId: manifest.run_id,
+      relPath: "artifacts/01_technical.md",
+    });
+  });
+
+  it("uses a searchable compact page browser and lets the artifact rail collapse", async () => {
+    const user = userEvent.setup();
+    mockBackend({
+      "report.md": textContent("markdown", "# R"),
+      "page:1": {
+        kind: "image",
+        bytes: 500,
+        text: null,
+        base64: "aGVsbG8=",
+        truncated: false,
+        abs_path: "/runs/x/page-1.jpg",
+      },
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+
+    expect(await screen.findByRole("textbox", { name: "Search pages" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Page 1" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Page 1" }));
+    expect(await screen.findByRole("img", { name: "Page 1" })).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith("read_page_artifact", {
+      runId: manifest.run_id,
+      page: 1,
+    });
+    await user.click(screen.getByRole("button", { name: "Hide artifact browser" }));
+    expect(screen.queryByRole("textbox", { name: "Search pages" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show artifact browser" }));
+    expect(screen.getByRole("textbox", { name: "Search pages" })).toBeVisible();
+  });
+
+  it("materializes only one page-index window for long papers", async () => {
+    const user = userEvent.setup();
+    const longManifest = {
+      ...manifest,
+      page_artifacts: {
+        count: 200,
+        digit_width: 3,
+        extension: "jpg",
+        total_bytes: 30_000_000,
+      },
+    };
+    invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "get_run_manifest") return Promise.resolve(longManifest);
+      if (cmd === "read_artifact" && args?.relPath === "report.md") {
+        return Promise.resolve(textContent("markdown", "# R"));
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+
+    expect(await screen.findByRole("button", { name: "Page 1" })).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: /^Page \d+$/ }),
+    ).toHaveLength(25);
+    expect(screen.queryByRole("button", { name: "Page 26" })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Page range" }), "25");
+    expect(screen.getByRole("button", { name: "Page 26" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Page 1" })).not.toBeInTheDocument();
+  });
+
+  it("keeps legacy per-page manifest entries readable", async () => {
+    const user = userEvent.setup();
+    const legacyManifest = {
+      ...manifest,
+      page_artifacts: undefined,
+      artifacts: [
+        ...manifest.artifacts,
+        {
+          rel_path: "artifacts/pages/page-1.png",
+          label: "Page 1",
+          kind: "image",
+          bytes: 600,
+          sha256: "legacy",
+          group: "pages",
+        },
+      ],
+    };
+    invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "get_run_manifest") return Promise.resolve(legacyManifest);
+      if (cmd === "read_artifact" && args?.relPath === "report.md") {
+        return Promise.resolve(textContent("markdown", "# R"));
+      }
+      if (cmd === "read_artifact" && args?.relPath === "artifacts/pages/page-1.png") {
+        return Promise.resolve({
+          kind: "image",
+          bytes: 600,
+          text: null,
+          base64: "aGVsbG8=",
+          truncated: false,
+          abs_path: "/runs/x/page-1.png",
+        });
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+
+    await user.click(await screen.findByRole("button", { name: "Page 1" }));
+    expect(await screen.findByRole("img", { name: "Page 1" })).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith("read_artifact", {
+      runId: manifest.run_id,
+      relPath: "artifacts/pages/page-1.png",
+    });
   });
 
   it("renders code artifacts with syntax highlighting", async () => {
@@ -111,8 +246,8 @@ describe("ArtifactExplorer", () => {
           id: "asset-page",
           kind: "page",
           label: "Page 1",
-          rel_path: "artifacts/pages/page-1.png",
-          media_type: "image/png",
+          rel_path: "artifacts/pages/page-1.jpg",
+          media_type: "image/jpeg",
           page: 1,
           width: 1200,
           height: 1600,
@@ -146,7 +281,10 @@ describe("ArtifactExplorer", () => {
     expect(await screen.findByRole("heading", { name: "DocumentBundle inspection" })).toBeInTheDocument();
     expect(screen.getAllByText("Impulse responses after a monetary policy shock.").length).toBeGreaterThan(0);
     expect(screen.getByText("OCR confidence was low.")).toBeInTheDocument();
-    expect(screen.getByText(/1200×1600 · image\/png/)).toBeInTheDocument();
+    expect(screen.getAllByText("Figure 1 image").length).toBeGreaterThan(0);
+    // Page renders already have a paged browser in the artifact rail; the
+    // bundle inspector must not duplicate hundreds of page cards.
+    expect(screen.queryByText(/1200×1600 · image\/jpeg/)).not.toBeInTheDocument();
   });
 
   it("clears the previous artifact while the next one is loading", async () => {

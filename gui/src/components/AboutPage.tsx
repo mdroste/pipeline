@@ -138,22 +138,28 @@ function HelpContent() {
             description="Reads OOXML directly, retaining Word equation markup, table grids, and embedded figure images."
           />
           <TierCard
-            tier="Default"
+            tier="Configured"
             tierColor="text-blue-700 bg-blue-50"
             title="LLM extraction"
-            description="The model reads the PDF and rewrites it as Markdown, with equations in LaTeX. Works out of the box."
+            description="The model transcribes bounded page ranges, preserves original typos, and must pass page-completeness checks before review."
           />
           <TierCard
-            tier="Optional"
+            tier="Optional local"
+            tierColor="text-blue-700 bg-blue-50"
+            title="PaddleOCR-VL"
+            description="Page-parallel local OCR with full context per worker, targeted retries, and resumable checkpoints."
+          />
+          <TierCard
+            tier="Optional local"
             tierColor="text-blue-700 bg-blue-50"
             title="marker-pdf"
-            description="Converts PDFs locally and preserves equations. Requires a separate install."
+            description="Converts PDFs locally, chooses OCR automatically, preserves equations and figures, and reuses exact cached results."
           />
           <TierCard
-            tier="Fallback"
+            tier="Explicit only"
             tierColor="text-amber-700 bg-amber-50"
             title="pdftotext"
-            description="Plain text only. Equations come out garbled, so technical findings carry a warning."
+            description="Available only when selected directly. Plain text only; equations are not reliable."
           />
         </div>
       </Section>
@@ -184,7 +190,7 @@ function HelpContent() {
             name="poppler (pdftoppm + pdftotext)"
             tag="Bundled"
             tagColor="text-green-700 bg-green-50"
-            description="Included with Pipeline. Renders PDFs for the model and provides the pdftotext fallback."
+            description="Included with Pipeline for page rendering and deterministic completeness checks. pdftotext extraction itself is used only when explicitly selected."
           />
           <ReqCard
             name="marker-pdf"
