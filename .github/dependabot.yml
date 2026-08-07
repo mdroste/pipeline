@@ -1,11 +1,20 @@
 version: 2
+
+# One grouped pull request per ecosystem, once a month. Each PR still triggers a
+# Build run, so extra groups and a weekly cadence mostly buy CI minutes and noise.
+#
+# Caveat: Dependabot security updates are OFF for this repository, so these
+# scheduled version bumps are the only automatic route for a vulnerability fix
+# and a monthly cadence delays one by up to a month. Turning on "Dependabot
+# security updates" (Settings -> Code security) opens advisory-driven PRs
+# immediately, independent of the schedule below, and is the reason this cadence
+# is safe to slow down.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "ci"
     groups:
@@ -16,23 +25,20 @@ updates:
   - package-ecosystem: npm
     directory: /gui
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "deps(npm)"
     groups:
-      npm-runtime:
-        dependency-type: production
-      npm-build-and-test:
-        dependency-type: development
+      npm:
+        patterns:
+          - "*"
 
   - package-ecosystem: cargo
     directory: /gui/src-tauri
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     commit-message:
       prefix: "deps(cargo)"
     groups:

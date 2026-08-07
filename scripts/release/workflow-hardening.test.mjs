@@ -6,9 +6,14 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
+// Windows runners check out with core.autocrlf=true, so every assertion below
+// that spans a line boundary has to see LF regardless of the working tree.
+const readText = (...segments) =>
+  fs.readFileSync(path.join(ROOT, ...segments), "utf8").replaceAll("\r\n", "\n");
+
 test("all third-party GitHub Actions are pinned to immutable commit SHAs", () => {
   for (const workflow of ["build.yml", "release.yml"]) {
-    const contents = fs.readFileSync(path.join(ROOT, ".github", "workflows", workflow), "utf8");
+    const contents = readText(".github", "workflows", workflow);
     const actions = [...contents.matchAll(/\buses:\s+([^@\s]+)@([^\s#]+)/g)];
     assert.ok(actions.length > 0, `${workflow} must use at least one Action`);
     for (const [, action, reference] of actions) {
@@ -22,14 +27,14 @@ test("all third-party GitHub Actions are pinned to immutable commit SHAs", () =>
 });
 
 test("CI and release use the repository's exact supported toolchains", () => {
-  const nodeVersion = fs.readFileSync(path.join(ROOT, "gui", ".nvmrc"), "utf8").trim();
-  const rustToolchain = fs.readFileSync(path.join(ROOT, "rust-toolchain.toml"), "utf8");
+  const nodeVersion = readText("gui", ".nvmrc").trim();
+  const rustToolchain = readText("rust-toolchain.toml");
   const rustVersion = rustToolchain.match(/^channel\s*=\s*"([^"]+)"$/m)?.[1];
   assert.match(nodeVersion, /^\d+\.\d+\.\d+$/);
   assert.match(rustVersion, /^\d+\.\d+\.\d+$/);
 
   for (const workflow of ["build.yml", "release.yml"]) {
-    const contents = fs.readFileSync(path.join(ROOT, ".github", "workflows", workflow), "utf8");
+    const contents = readText(".github", "workflows", workflow);
     assert.ok(contents.includes(`NODE_VERSION: ${nodeVersion}`), `${workflow} Node version drifted`);
     assert.ok(contents.includes(`RUST_VERSION: ${rustVersion}`), `${workflow} Rust version drifted`);
     assert.ok(!contents.includes("toolchain: stable"), `${workflow} must not float Rust stable`);
@@ -44,16 +49,13 @@ test("CI and release use the repository's exact supported toolchains", () => {
     );
   }
 
-  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "gui", "package.json"), "utf8"));
+  const packageJson = JSON.parse(readText("gui", "package.json"));
   assert.equal(packageJson.packageManager, "npm@11.16.0");
   assert.match(packageJson.engines.node, new RegExp(`(?:\\^|>=)${nodeVersion.replaceAll(".", "\\.")}`));
 });
 
 test("release workflow retains signing, protected-environment, and completeness gates", () => {
-  const contents = fs.readFileSync(
-    path.join(ROOT, ".github", "workflows", "release.yml"),
-    "utf8",
-  );
+  const contents = readText(".github", "workflows", "release.yml");
   for (const required of [
     "Require a verified signed annotated tag",
     "git/ref/tags/$encoded_tag",
@@ -122,10 +124,7 @@ test("release workflow retains signing, protected-environment, and completeness 
 });
 
 test("Linux release packages resolve only through the fixed Ubuntu snapshot", () => {
-  const contents = fs.readFileSync(
-    path.join(ROOT, ".github", "workflows", "release.yml"),
-    "utf8",
-  );
+  const contents = readText(".github", "workflows", "release.yml");
   const releaseJob = contents.slice(
     contents.indexOf("\n  release:"),
     contents.indexOf("\n  release-complete:"),
@@ -162,7 +161,7 @@ test("Linux release packages resolve only through the fixed Ubuntu snapshot", ()
 
 test("Windows release uses a complete versioned conda attribution lock", () => {
   const lock = JSON.parse(
-    fs.readFileSync(path.join(ROOT, "scripts", "release", "poppler-lock.json"), "utf8"),
+    readText("scripts", "release", "poppler-lock.json"),
   );
   const packages = lock.windows.packages;
   assert.equal(packages.length, 20);
@@ -187,10 +186,7 @@ test("Windows release uses a complete versioned conda attribution lock", () => {
   assert.equal(new Set(files.map((file) => file.path)).size, files.length);
   assert.ok(files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256)));
 
-  const workflow = fs.readFileSync(
-    path.join(ROOT, ".github", "workflows", "release.yml"),
-    "utf8",
-  );
+  const workflow = readText(".github", "workflows", "release.yml");
   assert.ok(workflow.includes("packages: .windows.packages"));
   assert.ok(!workflow.includes(".windows.components"));
   assert.ok(workflow.includes("7z x -y \"$package_archive\""));
@@ -198,10 +194,7 @@ test("Windows release uses a complete versioned conda attribution lock", () => {
 });
 
 test("native SBOM scan uses the reviewed Anchore action and supported v7.4.0 inputs", () => {
-  const contents = fs.readFileSync(
-    path.join(ROOT, ".github", "workflows", "release.yml"),
-    "utf8",
-  );
+  const contents = readText(".github", "workflows", "release.yml");
   const expectedUse = "anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0";
   const scanSteps = contents.split(`uses: ${expectedUse}`).slice(1);
   assert.equal(scanSteps.length, 4);
@@ -228,10 +221,7 @@ test("native SBOM scan uses the reviewed Anchore action and supported v7.4.0 inp
 });
 
 test("reusable signed-tag check binds the current annotated tag to the event SHA", () => {
-  const contents = fs.readFileSync(
-    path.join(ROOT, "scripts", "release", "validate-signed-tag-binding.sh"),
-    "utf8",
-  );
+  const contents = readText("scripts", "release", "validate-signed-tag-binding.sh");
   for (const required of [
     "git/ref/tags/$encoded_tag",
     "git/tags/$tag_object_sha",
