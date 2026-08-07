@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPage from "./SettingsPage";
-import type { Settings } from "../lib/types";
+import type { ModelCatalog, Settings } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
+const openUrl = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}));
 
 function makeSettings(): Settings {
   return {
@@ -33,7 +37,7 @@ function makeSettings(): Settings {
     paddle_max_output_tokens: 4096,
     paddle_page_retries: 1,
     paddle_render_dpi: 150,
-    pdf_extraction_timeout_secs: 900,
+    pdf_extraction_timeout_secs: 1800,
     reuse_pdf_extraction_cache: true,
     verbose_logging: false,
     step_timeout_secs: 1200,
@@ -55,13 +59,35 @@ function mockLoad(settings: Settings, warnings: string[] = []) {
     if (cmd === "get_settings") return Promise.resolve({ settings, warnings });
     if (cmd === "save_settings") return Promise.resolve();
     if (cmd === "list_engines") return Promise.resolve([]);
+    if (cmd === "retired_marker_status") {
+      return Promise.resolve({ present: false, bytes: 0 });
+    }
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   });
+}
+
+function catalog(
+  provider: string,
+  transport: "cli" | "api",
+  sourceVersion: string,
+): ModelCatalog {
+  return {
+    provider,
+    transport,
+    source: "test",
+    source_version: sourceVersion,
+    fetched_at: "2026-07-27T00:00:00Z",
+    stale: false,
+    models: [],
+    roles: [],
+  };
 }
 
 describe("SettingsPage", () => {
   beforeEach(() => {
     invoke.mockReset();
+    openUrl.mockReset();
+    openUrl.mockResolvedValue(undefined);
   });
 
   it("loads settings and renders the LLM provider section", async () => {
@@ -70,7 +96,22 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("Preferred Provider")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Claude (Anthropic)" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "ChatGPT (OpenAI)" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Preferred Provider" })).toBeVisible();
+    expect(screen.getByLabelText("Claude API Key")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "claude model" })).toBeVisible();
     expect(invoke).toHaveBeenCalledWith("get_settings");
+  });
+
+  it("surfaces a shell-plugin failure when opening the Ollama site", async () => {
+    mockLoad(makeSettings());
+    openUrl.mockRejectedValueOnce(new Error("no browser"));
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    await userEvent.setup().click(await screen.findByRole("link", { name: "ollama.com" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not open ollama.com: no browser",
+    );
   });
 
   it("offers PaddleOCR-VL as a PDF extraction method", async () => {
@@ -84,31 +125,28 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps Marker tuning available when another global extractor is selected", async () => {
+  it("explains a legacy Marker selection and saves a supported replacement", async () => {
     const user = userEvent.setup();
-    mockLoad(makeSettings());
+    mockLoad({ ...makeSettings(), pdf_extractor: "marker" });
     render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
 
-    expect(screen.getByLabelText("Marker OCR mode")).toHaveValue("auto");
-    await user.selectOptions(screen.getByLabelText("Marker OCR mode"), "forced");
-    await user.selectOptions(screen.getByLabelText("Marker layout resolution"), "72");
-    await user.selectOptions(screen.getByLabelText("Marker OCR resolution"), "144");
-    await user.selectOptions(screen.getByLabelText("Marker PDF text workers"), "8");
-    await user.selectOptions(screen.getByLabelText("Marker layout batch"), "12");
-    await user.selectOptions(screen.getByLabelText("Marker OCR recognition batch"), "32");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Marker is unavailable in Pipeline 1.0.1",
+    );
+    expect(
+      screen.queryByRole("radio", { name: /marker-pdf/i }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("radio", { name: /pdftotext \(basic\)/i }),
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
         settings: {
           ...makeSettings(),
-          marker_force_ocr: true,
-          marker_lowres_dpi: 72,
-          marker_highres_dpi: 144,
-          marker_pdftext_workers: 8,
-          marker_layout_batch_size: 12,
-          marker_recognition_batch_size: 32,
+          pdf_extractor: "pdftotext",
         },
       }),
     );
@@ -193,6 +231,181 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("Settings saved.")).toBeInTheDocument();
   });
 
+  it("keeps edits made during a save dirty", async () => {
+    const user = userEvent.setup();
+    let finishSave!: () => void;
+    const pendingSave = new Promise<void>((resolve) => {
+      finishSave = resolve;
+    });
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "save_settings") return pendingSave;
+      if (cmd === "list_engines") return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    const onDirtyChange = vi.fn();
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        onDirtyChange={onDirtyChange}
+        dark={false}
+        onDarkChange={() => {}}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "General" }));
+    const reconciliation = screen.getByRole("switch", {
+      name: /automatic revision reconciliation/i,
+    });
+    await user.click(reconciliation);
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(reconciliation);
+    await act(async () => finishSave());
+
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
+    expect(screen.queryByText("Settings saved.")).not.toBeInTheDocument();
+  });
+
+  it("does not discover a partial unsaved credential and disables its stale catalog", async () => {
+    let claudeRequests = 0;
+    invoke.mockImplementation((cmd: string, args?: { provider?: string }) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "get_model_catalog") {
+        if (args?.provider === "claude") {
+          claudeRequests += 1;
+          return Promise.resolve(catalog("claude", "cli", "saved-account"));
+        }
+        return Promise.resolve(catalog(args?.provider ?? "local", "cli", "current"));
+      }
+      return Promise.resolve();
+    });
+    const user = userEvent.setup();
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    expect(await screen.findByText("CLI · saved-account")).toBeVisible();
+    expect(claudeRequests).toBe(1);
+    invoke.mockClear();
+
+    await user.type(screen.getByLabelText("Claude API Key"), "s");
+    const model = screen.getByRole("combobox", { name: "claude model" });
+    await waitFor(() => expect(model).toBeDisabled());
+    expect(screen.queryByText("CLI · saved-account")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Save settings or Refresh to discover models for these values"),
+    ).toBeVisible();
+    expect(
+      invoke.mock.calls.filter(
+        ([command, args]) =>
+          command === "get_model_catalog" &&
+          (args as { provider?: string } | undefined)?.provider === "claude",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("forces a cloud catalog refresh only after the changed credential is saved", async () => {
+    let claudeRequests = 0;
+    invoke.mockImplementation((cmd: string, args?: {
+      provider?: string;
+      refresh?: boolean;
+      settings?: Settings;
+    }) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "get_model_catalog") {
+        if (args?.provider === "claude") {
+          claudeRequests += 1;
+          return Promise.resolve(
+            catalog(
+              "claude",
+              claudeRequests === 1 ? "cli" : "api",
+              claudeRequests === 1 ? "saved-account" : "new-account",
+            ),
+          );
+        }
+        return Promise.resolve(catalog(args?.provider ?? "local", "cli", "current"));
+      }
+      if (cmd === "save_settings") return Promise.resolve();
+      return Promise.resolve();
+    });
+    const user = userEvent.setup();
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    expect(await screen.findByText("CLI · saved-account")).toBeVisible();
+    await user.type(screen.getByLabelText("Claude API Key"), "sk-complete-key");
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "claude model" })).toBeDisabled(),
+    );
+    expect(claudeRequests).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("API · new-account")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "claude model" })).toBeEnabled();
+    expect(claudeRequests).toBe(2);
+    expect(invoke).toHaveBeenCalledWith("get_model_catalog", expect.objectContaining({
+      provider: "claude",
+      refresh: true,
+      settings: expect.objectContaining({ anthropic_api_key: "sk-complete-key" }),
+    }));
+  });
+
+  it("ignores an in-flight saved-account response after a draft key is saved", async () => {
+    let resolveOld!: (value: ModelCatalog) => void;
+    const oldCatalog = new Promise<ModelCatalog>((resolve) => {
+      resolveOld = resolve;
+    });
+    let claudeRequests = 0;
+    invoke.mockImplementation((cmd: string, args?: {
+      provider?: string;
+      refresh?: boolean;
+      settings?: Settings;
+    }) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "get_model_catalog") {
+        if (args?.provider === "claude") {
+          claudeRequests += 1;
+          return claudeRequests === 1
+            ? oldCatalog
+            : Promise.resolve(catalog("claude", "api", "api-new"));
+        }
+        return Promise.resolve(catalog(args?.provider ?? "local", "cli", "current"));
+      }
+      if (cmd === "list_engines") return Promise.resolve([]);
+      if (cmd === "retired_marker_status") return Promise.resolve({ present: false, bytes: 0 });
+      if (cmd === "save_settings") return Promise.resolve();
+      return Promise.resolve();
+    });
+    const user = userEvent.setup();
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    const key = await screen.findByPlaceholderText("sk-ant-... (optional, enables direct API)");
+    await waitFor(() => expect(claudeRequests).toBe(1));
+    await user.type(key, "sk-complete-key");
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "claude model" })).toBeDisabled(),
+    );
+    expect(claudeRequests).toBe(1);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("API · api-new")).toBeVisible();
+    expect(claudeRequests).toBe(2);
+    expect(invoke).toHaveBeenCalledWith("get_model_catalog", expect.objectContaining({
+      provider: "claude",
+      refresh: true,
+      settings: expect.objectContaining({ anthropic_api_key: "sk-complete-key" }),
+    }));
+
+    await act(async () => resolveOld(catalog("claude", "cli", "cli-old")));
+    expect(screen.getByText("API · api-new")).toBeVisible();
+    expect(screen.queryByText("CLI · cli-old")).not.toBeInTheDocument();
+  });
+
   it("keeps automatic revision reconciliation off by default and persists opt-in", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
@@ -216,6 +429,153 @@ describe("SettingsPage", () => {
         },
       }),
     );
+  });
+
+  it("previews an exact purge and reports the number actually removed", async () => {
+    const user = userEvent.setup();
+    let usageCalls = 0;
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "list_engines") return Promise.resolve([]);
+      if (cmd === "runs_disk_usage") {
+        usageCalls += 1;
+        return Promise.resolve(
+          usageCalls === 1
+            ? { count: 8, bytes: 7_000_000_000 }
+            : { count: 5, bytes: 4_500_000_000 },
+        );
+      }
+      if (cmd === "preview_purge_runs") {
+        return Promise.resolve({
+          delete_count: 3,
+          delete_bytes: 2_500_000_000,
+          remaining_count: 5,
+          remaining_bytes: 4_500_000_000,
+          preview_token: "confirmed-plan",
+        });
+      }
+      if (cmd === "purge_runs") return Promise.resolve(3);
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: "General" }));
+    await screen.findByText(/Currently 8 runs, 7\.0 GB/);
+    await user.click(screen.getByRole("button", { name: "Purge now" }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("preview_purge_runs", {
+        keep: 0,
+        maxBytes: 5_000_000_000,
+      });
+      expect(invoke).toHaveBeenCalledWith("purge_runs", {
+        keep: 0,
+        maxBytes: 5_000_000_000,
+        previewToken: "confirmed-plan",
+      });
+    });
+    expect(confirmSpy.mock.calls[0][0]).toContain(
+      "permanently delete 3 completed runs (2.5 GB)",
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Removed 3 completed runs.",
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it("does not ask for destructive confirmation when the preview is empty", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "list_engines") return Promise.resolve([]);
+      if (cmd === "runs_disk_usage") {
+        return Promise.resolve({ count: 5, bytes: 4_500_000_000 });
+      }
+      if (cmd === "preview_purge_runs") {
+        return Promise.resolve({
+          delete_count: 0,
+          delete_bytes: 0,
+          remaining_count: 5,
+          remaining_bytes: 4_500_000_000,
+          preview_token: "empty-plan",
+        });
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    const confirmSpy = vi.spyOn(window, "confirm");
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(screen.getByRole("button", { name: "Purge now" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "No completed runs were beyond the configured limits.",
+    );
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
+    confirmSpy.mockRestore();
+  });
+
+  it("does not purge when the exact preview is not confirmed", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "list_engines") return Promise.resolve([]);
+      if (cmd === "runs_disk_usage") {
+        return Promise.resolve({ count: 8, bytes: 7_000_000_000 });
+      }
+      if (cmd === "preview_purge_runs") {
+        return Promise.resolve({
+          delete_count: 3,
+          delete_bytes: 2_500_000_000,
+          remaining_count: 5,
+          remaining_bytes: 4_500_000_000,
+          preview_token: "confirmed-plan",
+        });
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(screen.getByRole("button", { name: "Purge now" }));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1));
+    expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
+    confirmSpy.mockRestore();
+  });
+
+  it("stops safely and shows an error when purge preview fails", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "list_engines") return Promise.resolve([]);
+      if (cmd === "runs_disk_usage") {
+        return Promise.resolve({ count: 8, bytes: 7_000_000_000 });
+      }
+      if (cmd === "preview_purge_runs") {
+        return Promise.reject(new Error("history index unavailable"));
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(screen.getByRole("button", { name: "Purge now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The purge preview could not be loaded; no runs were deleted: history index unavailable",
+    );
+    expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
   });
 
   it("shows an error state with a working back button when loading fails", async () => {

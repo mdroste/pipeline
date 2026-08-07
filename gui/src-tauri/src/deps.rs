@@ -44,6 +44,28 @@ pub struct DepsReport {
     pub ready: bool,
 }
 
+pub(crate) fn dependency_ready(dependency: &DepStatus) -> bool {
+    if !dependency.required {
+        return true;
+    }
+    if !dependency.found {
+        return false;
+    }
+    if let Some(authenticated) = dependency.authenticated {
+        return authenticated;
+    }
+    match dependency.cli_auth_status {
+        Some(CliAuthStatus::SignedIn) => true,
+        Some(CliAuthStatus::SignedOut) => false,
+        // Gemini CLI cannot verify OAuth without making a model request. The
+        // CLI's isolation capability is checked separately before `found` is
+        // set, so its unknown auth state remains launchable.
+        Some(CliAuthStatus::Unknown) => dependency.name == "Gemini CLI",
+        // Native binaries and managed engines have no authentication state.
+        None => true,
+    }
+}
+
 /// A command resolved to the exact program and fixed prefix arguments that can
 /// actually be passed to `CreateProcess`/`execve`.
 ///
@@ -345,25 +367,6 @@ pub(crate) fn resolve_command(name: &str) -> Option<ResolvedCommand> {
     resolve_command_in(name, &directories, cfg!(windows), pathext.as_deref())
 }
 
-/// Harden an already-discovered command path (for managed tools). On Windows
-/// this applies the same native-executable/npm-shim rules as PATH discovery;
-/// arbitrary batch files are rejected.
-pub(crate) fn resolve_discovered_command(path: PathBuf) -> Option<ResolvedCommand> {
-    if !path.is_file() {
-        return None;
-    }
-    if !cfg!(windows) {
-        return Some(ResolvedCommand::direct(path));
-    }
-    let path_var = OsString::from(env::full_path());
-    let mut directories: Vec<PathBuf> = std::env::split_paths(&path_var).collect();
-    if let Some(parent) = path.parent() {
-        directories.insert(0, parent.to_path_buf());
-    }
-    let extensions = windows_pathexts(std::env::var_os("PATHEXT").as_deref());
-    resolve_windows_candidate(path, &directories, &extensions)
-}
-
 /// Find a launchable binary on PATH by scanning directories directly.
 pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     resolve_command(name).map(|command| command.discovered_path)
@@ -417,6 +420,28 @@ fn probe(name: &str, version_args: &[&str]) -> ProbeResult {
         version,
         path,
     }
+}
+
+fn help_text_supports_option(stdout: &[u8], stderr: &[u8], option: &str) -> bool {
+    String::from_utf8_lossy(stdout).contains(option)
+        || String::from_utf8_lossy(stderr).contains(option)
+}
+
+/// The admin policy tier is the boundary that prevents ambient Gemini CLI
+/// policy from broadening Pipeline's exact tool allowlist.
+fn supports_gemini_admin_policy(command: &ResolvedCommand) -> Option<bool> {
+    let mut process = command.command(["--help"]);
+    configure_probe_command(&mut process);
+    let output =
+        crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT).ok()?;
+    if !output.status.success() || output.stdout_truncated || output.stderr_truncated {
+        return None;
+    }
+    Some(help_text_supports_option(
+        &output.stdout,
+        &output.stderr,
+        "--admin-policy",
+    ))
 }
 
 /// Check if Claude CLI is authenticated via `claude auth status`. Claude
@@ -536,6 +561,9 @@ fn parse_host_port(base_url: &str) -> Option<(String, u16)> {
 /// Protocol-level probe for the local OpenAI-compatible server. A listener is
 /// ready only if `/v1/models` returns a bounded OpenAI-style model list.
 fn probe_local_server(base_url: &str, api_key: &str) -> (bool, String) {
+    if crate::settings::validate_local_base_url(base_url).is_err() {
+        return (false, String::new());
+    }
     let Some((host, port)) = parse_host_port(base_url) else {
         return (false, String::new());
     };
@@ -553,7 +581,7 @@ fn probe_local_server(base_url: &str, api_key: &str) -> (bool, String) {
         Err(_) => return (false, desc),
     };
     let reachable = runtime.block_on(async {
-        let mut request = crate::pipeline::api_common::HTTP_CLIENT
+        let mut request = crate::pipeline::api_common::custom_endpoint_client(base_url)
             .get(models_url)
             .timeout(std::time::Duration::from_secs(3));
         if !api_key.is_empty() {
@@ -584,13 +612,158 @@ fn probe_local_server(base_url: &str, api_key: &str) -> (bool, String) {
     (reachable.is_some(), desc)
 }
 
-/// Run all dependency checks in parallel. Provider CLIs are still probed when
-/// a direct-API key is configured so their own sign-in state can be reported
-/// separately. Uses existence checks instead of --version/--help for optional
-/// tools.
-pub fn check_all() -> DepsReport {
-    let settings = crate::settings::load_persisted();
-    let provider = settings.preferred_provider.clone();
+fn effective_pdf_extractor<'a>(
+    settings: &'a crate::settings::Settings,
+    config: &'a crate::pipeline_config::PipelineConfig,
+) -> &'a str {
+    let method = config.extraction.method.trim();
+    if method.is_empty() || method == "auto" {
+        settings.pdf_extractor.as_str()
+    } else {
+        method
+    }
+}
+
+fn document_path_may_need_pdf(path: &str) -> bool {
+    let path = std::path::Path::new(path);
+    if path.is_dir() {
+        // A primary directory is ingested as a folder. Named document inputs
+        // normally come from a file picker; treating a directory as possibly
+        // PDF-backed is the conservative choice for direct IPC callers.
+        return true;
+    }
+    !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("tex") || extension.eq_ignore_ascii_case("docx")
+        })
+}
+
+fn pdf_extraction_may_run(
+    config: &crate::pipeline_config::PipelineConfig,
+    input_path: Option<&str>,
+    extra_inputs: Option<&std::collections::HashMap<String, String>>,
+) -> bool {
+    let primary_may_need_pdf = input_path
+        .map(|path| {
+            crate::pipeline::extract::effective_input_mode(&config.extraction.input_mode, path)
+                == "document"
+                && document_path_may_need_pdf(path)
+        })
+        .unwrap_or_else(|| !matches!(config.extraction.input_mode.trim(), "folder" | "none"));
+    if primary_may_need_pdf {
+        return true;
+    }
+
+    let Some(extra_inputs) = extra_inputs else {
+        return false;
+    };
+    config.extraction.extra_inputs.iter().any(|slot| {
+        slot.mode != "folder"
+            && extra_inputs
+                .get(&slot.key)
+                .map(|path| path.trim())
+                .filter(|path| !path.is_empty())
+                .is_some_and(document_path_may_need_pdf)
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PdfDependencyRequirements {
+    extraction: bool,
+    pdftotext: bool,
+    pdftoppm: bool,
+    paddle: bool,
+    configuration_ready: bool,
+}
+
+fn pdf_dependency_requirements(
+    settings: &crate::settings::Settings,
+    config: Option<&crate::pipeline_config::PipelineConfig>,
+    input_path: Option<&str>,
+    extra_inputs: Option<&std::collections::HashMap<String, String>>,
+) -> PdfDependencyRequirements {
+    let Some(config) = config else {
+        return PdfDependencyRequirements {
+            extraction: false,
+            pdftotext: false,
+            pdftoppm: false,
+            paddle: false,
+            configuration_ready: true,
+        };
+    };
+    let extraction = pdf_extraction_may_run(config, input_path, extra_inputs);
+    let method = effective_pdf_extractor(settings, config);
+    PdfDependencyRequirements {
+        extraction,
+        // LLM extraction treats the pdftotext page map as a mandatory
+        // completeness check rather than a best-effort enhancement.
+        pdftotext: extraction && matches!(method, "llm" | "pdftotext"),
+        // Paddle renders every page through Poppler before sending it to the
+        // managed vision model.
+        pdftoppm: extraction && method == "paddleocr-vl",
+        paddle: extraction && method == "paddleocr-vl",
+        configuration_ready: !extraction
+            || matches!(method, "llm" | "paddleocr-vl" | "pdftotext")
+                && !(method == "llm" && settings.preferred_provider == "local"),
+    }
+}
+
+fn required_providers(
+    settings: &crate::settings::Settings,
+    config: Option<&crate::pipeline_config::PipelineConfig>,
+    diff: bool,
+    input_path: Option<&str>,
+    extra_inputs: Option<&std::collections::HashMap<String, String>>,
+) -> std::collections::HashSet<String> {
+    let mut required = std::collections::HashSet::new();
+    let preferred = settings.preferred_provider.clone();
+    let Some(config) = config else {
+        required.insert(preferred);
+        return required;
+    };
+
+    let extraction_uses_preferred = pdf_extraction_may_run(config, input_path, extra_inputs)
+        && effective_pdf_extractor(settings, config) == "llm";
+
+    if config.use_orientation
+        || settings.auto_revision_reconciliation
+        || diff
+        || extraction_uses_preferred
+    {
+        required.insert(preferred.clone());
+    }
+
+    let enabled = config.steps.iter().filter(|step| step.enabled);
+    let mut needs_merge = false;
+    for step in enabled {
+        if step.agents.is_empty() {
+            required.insert(preferred.clone());
+        } else {
+            required.extend(step.agents.iter().cloned());
+            needs_merge |= step.agents.len() > 1;
+        }
+    }
+    if config.merge.enabled && needs_merge {
+        required.insert(config.merge.agents.first().cloned().unwrap_or(preferred));
+    }
+    required
+}
+
+/// Run all dependency checks against one already-loaded settings/profile
+/// snapshot. Provider CLIs are still probed when a direct-API key is
+/// configured so their own sign-in state can be reported separately.
+fn check_all_for(
+    settings: &crate::settings::Settings,
+    config: Option<&crate::pipeline_config::PipelineConfig>,
+    diff: bool,
+    input_path: Option<&str>,
+    extra_inputs: Option<&std::collections::HashMap<String, String>>,
+) -> DepsReport {
+    let required_providers = required_providers(settings, config, diff, input_path, extra_inputs);
+    let pdf_requirements = pdf_dependency_requirements(settings, config, input_path, extra_inputs);
+    let effective_extractor = config.map(|config| effective_pdf_extractor(settings, config));
     let has_anthropic_key = !settings.anthropic_api_key.is_empty();
     let has_openai_key = !settings.openai_api_key.is_empty();
     let has_google_key = !settings.google_api_key.is_empty();
@@ -628,22 +801,25 @@ pub fn check_all() -> DepsReport {
                 path,
             } = probe("gemini", &["--version"]);
             let auth = command.as_ref().and_then(|_| check_gemini_auth());
-            (command.is_some(), version, path, auth)
+            let supports_admin_policy = command.as_ref().and_then(supports_gemini_admin_policy);
+            (
+                command.is_some(),
+                version,
+                path,
+                auth,
+                supports_admin_policy,
+            )
         });
 
-        // pdftoppm: used by Claude Code's Read tool to render PDF pages.
-        // Normally bundled; falls back to system poppler if present.
+        // Poppler binaries are normally bundled, with a system fallback.
         let pdftoppm_h = s.spawn(|| find_on_path("pdftoppm"));
 
         // pdftotext: just check existence (no subprocess needed)
         let pdftotext_h = s.spawn(|| find_on_path("pdftotext"));
 
-        // marker_single: just check existence (--help would spawn Python, very
-        // slow). A managed install (~/.pipeline/bin) wins over PATH, matching
-        // the resolution order in extract.rs.
-        let marker_h = s.spawn(|| {
-            crate::engines::find_managed("marker_single").or_else(|| find_on_path("marker_single"))
-        });
+        // PaddleOCR-VL is a managed stack rather than a PATH dependency. Its
+        // resolver verifies the server, model, and vision projector together.
+        let paddle_h = s.spawn(crate::engines::paddle_engine_paths);
 
         // Local OpenAI-compatible server: TCP reachability of the configured
         // base URL (fast, no HTTP parse — a listener there is a good signal).
@@ -672,7 +848,7 @@ pub fn check_all() -> DepsReport {
                 ver
             },
             path,
-            required: provider == "claude",
+            required: required_providers.contains("claude"),
             hint: claude_hint.into(),
             authenticated: if has_anthropic_key {
                 Some(true)
@@ -703,7 +879,7 @@ pub fn check_all() -> DepsReport {
                 ver
             },
             path,
-            required: provider == "codex",
+            required: required_providers.contains("codex"),
             hint: codex_hint.into(),
             authenticated: if has_openai_key {
                 Some(true)
@@ -713,28 +889,33 @@ pub fn check_all() -> DepsReport {
             cli_auth_status: cli_auth_status(found, codex_auth),
         };
 
-        let (found, ver, path, gemini_auth) = gemini_h
+        let (found, ver, path, gemini_auth, gemini_admin_policy) = gemini_h
             .join()
-            .unwrap_or_else(|_| (false, String::new(), String::new(), None));
+            .unwrap_or_else(|_| (false, String::new(), String::new(), None, None));
+        let gemini_cli_usable = found && gemini_admin_policy == Some(true);
         let gemini_hint = if has_google_key {
             "API key configured — CLI not required."
+        } else if found && gemini_admin_policy == Some(false) {
+            "The installed Gemini CLI lacks the required --admin-policy isolation. Upgrade it with `npm install -g @google/gemini-cli@latest`."
+        } else if found && gemini_admin_policy.is_none() {
+            "Could not verify the Gemini CLI's required --admin-policy support. Upgrade with `npm install -g @google/gemini-cli@latest` and run the dependency check again."
         } else if found && gemini_auth == Some(false) {
             "Gemini CLI is installed but not authenticated. Set GEMINI_API_KEY or run `gemini` to log in."
         } else if found && gemini_auth.is_none() {
-            "Gemini CLI is installed, but authentication cannot be verified noninteractively. Set GEMINI_API_KEY/GOOGLE_API_KEY or verify login before running."
+            "Gemini CLI OAuth sign-in cannot be verified without a model request. Pipeline will use the existing CLI session; run `gemini` to sign in if launch reports an authentication error."
         } else {
             "Install Gemini CLI: npm install -g @google/gemini-cli"
         };
         let gemini = DepStatus {
             name: "Gemini CLI".into(),
-            found: found || has_google_key,
+            found: gemini_cli_usable || has_google_key,
             version: if has_google_key && !found {
                 "direct API".into()
             } else {
                 ver
             },
             path,
-            required: provider == "gemini",
+            required: required_providers.contains("gemini"),
             hint: gemini_hint.into(),
             authenticated: if has_google_key {
                 Some(true)
@@ -772,11 +953,14 @@ pub fn check_all() -> DepsReport {
                 .as_ref()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default(),
-            required: false,
+            required: pdf_requirements.pdftoppm,
             hint: if pdftoppm_path.is_some() {
-                "Used by Claude Code to read PDFs. Bundled with Pipeline.".into()
+                "Renders PDF pages for PaddleOCR-VL and run artifacts. Bundled with Pipeline."
+                    .into()
+            } else if pdf_requirements.pdftoppm {
+                format!("{install_hint} — required by the selected PaddleOCR-VL extraction.")
             } else {
-                format!("{install_hint} — needed for PDF support in the LLM Read tool.")
+                format!("{install_hint} — enables PaddleOCR-VL and PDF page artifacts.")
             },
             authenticated: None,
             cli_auth_status: None,
@@ -794,43 +978,67 @@ pub fn check_all() -> DepsReport {
                 .as_ref()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default(),
-            required: false,
+            required: pdf_requirements.pdftotext,
             hint: if pdftotext_path.is_some() {
-                "Native PDF text fallback. Bundled with Pipeline.".into()
+                "PDF text extraction and LLM completeness verification. Bundled with Pipeline."
+                    .into()
+            } else if pdf_requirements.pdftotext {
+                format!("{install_hint} — required by the selected PDF extraction workflow.")
             } else {
-                format!("{install_hint} — needed for the pdftotext extraction fallback.")
+                format!("{install_hint} — enables pdftotext and LLM PDF extraction.")
             },
             authenticated: None,
             cli_auth_status: None,
         };
 
-        let marker_path = marker_h.join().unwrap_or(None);
-        let marker_managed = marker_path
-            .as_ref()
-            .zip(crate::engines::managed_bin_dir())
-            .map(|(p, dir)| p.starts_with(&dir))
-            .unwrap_or(false);
-        let marker_hint = if marker_managed {
-            "Managed install (~/.pipeline) — this copy is used for extraction."
-        } else if marker_path.is_some() {
-            "System install on PATH — used only because no managed install exists. \
-             Installing from Settings → Text Extraction takes precedence."
-        } else {
-            "Optional local PDF equation extraction. Install from Settings → Text Extraction."
-        };
-        let marker = DepStatus {
-            name: "marker-pdf".into(),
-            found: marker_path.is_some(),
-            version: match (&marker_path, marker_managed) {
-                (Some(_), true) => "managed".into(),
-                (Some(_), false) => "system".into(),
-                (None, _) => String::new(),
-            },
-            path: marker_path
-                .map(|p| p.to_string_lossy().to_string())
+        let paddle_paths = paddle_h.join().ok().and_then(Result::ok);
+        let paddle = DepStatus {
+            name: "PaddleOCR-VL".into(),
+            found: paddle_paths.is_some(),
+            version: paddle_paths
+                .as_ref()
+                .map(|_| "managed 1.6 Q8".to_string())
                 .unwrap_or_default(),
-            required: false,
-            hint: marker_hint.into(),
+            path: paddle_paths
+                .as_ref()
+                .map(|paths| paths.server.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            required: pdf_requirements.paddle,
+            hint: if paddle_paths.is_some() {
+                "Managed PaddleOCR-VL runtime and model are installed.".into()
+            } else if pdf_requirements.paddle {
+                "Install PaddleOCR-VL from Settings → PDF Extraction before running this workflow."
+                    .into()
+            } else {
+                "Install PaddleOCR-VL from Settings → PDF Extraction to use local PDF extraction."
+                    .into()
+            },
+            authenticated: None,
+            cli_auth_status: None,
+        };
+
+        let extractor = DepStatus {
+            name: "PDF extractor configuration".into(),
+            found: pdf_requirements.configuration_ready,
+            version: effective_extractor.unwrap_or("not needed").to_string(),
+            path: String::new(),
+            required: pdf_requirements.extraction,
+            hint: match effective_extractor {
+                Some("marker") => {
+                    "Marker is unavailable in Pipeline 1.0.1. Choose LLM, PaddleOCR-VL, or pdftotext extraction."
+                        .into()
+                }
+                Some("llm") if settings.preferred_provider == "local" => {
+                    "LLM PDF extraction is unavailable for local OpenAI-compatible servers. Choose PaddleOCR-VL or pdftotext extraction."
+                        .into()
+                }
+                Some("llm" | "paddleocr-vl" | "pdftotext") | None => {
+                    "The selected PDF extraction method is supported.".into()
+                }
+                Some(_) => {
+                    "Choose LLM, PaddleOCR-VL, or pdftotext extraction in Settings.".into()
+                }
+            },
             authenticated: None,
             cli_auth_status: None,
         };
@@ -845,7 +1053,7 @@ pub fn check_all() -> DepsReport {
                 String::new()
             },
             path: local_desc,
-            required: provider == "local",
+            required: required_providers.contains("local"),
             hint: if local_reachable {
                 "OpenAI-compatible server responding at the configured URL.".into()
             } else {
@@ -858,19 +1066,36 @@ pub fn check_all() -> DepsReport {
             cli_auth_status: None,
         };
 
-        let deps = vec![claude, codex, gemini, local, pdftoppm, pdftotext, marker];
-        let ready = deps.iter().all(|d| {
-            if !d.required {
-                return true;
-            }
-            if !d.found {
-                return false;
-            }
-            d.authenticated
-                .map_or(d.name == "Local LLM server", |authenticated| authenticated)
-        });
+        let deps = vec![
+            claude, codex, gemini, local, pdftoppm, pdftotext, paddle, extractor,
+        ];
+        let ready = deps.iter().all(dependency_ready);
         DepsReport { deps, ready }
     })
+}
+
+pub fn check_snapshot(
+    settings: crate::settings::Settings,
+    config: crate::pipeline_config::PipelineConfig,
+    diff: bool,
+    input_path: Option<String>,
+    extra_inputs: std::collections::HashMap<String, String>,
+) -> DepsReport {
+    check_all_for(
+        &settings,
+        Some(&config),
+        diff,
+        input_path.as_deref(),
+        Some(&extra_inputs),
+    )
+}
+
+pub fn check_all() -> DepsReport {
+    let settings = crate::settings::load_persisted();
+    let config = crate::pipeline_config::load_required_profile_for(&settings.active_profile)
+        .ok()
+        .map(|(config, _)| config);
+    check_all_for(&settings, config.as_ref(), false, None, None)
 }
 
 #[cfg(test)]
@@ -878,7 +1103,9 @@ mod tests {
     #[cfg(unix)]
     use super::{check_claude_auth, probe_resolved};
     use super::{
-        cli_auth_status, parse_host_port, resolve_command_in, windows_pathexts, CliAuthStatus,
+        cli_auth_status, dependency_ready, help_text_supports_option, parse_host_port,
+        pdf_dependency_requirements, pdf_extraction_may_run, required_providers,
+        resolve_command_in, windows_pathexts, CliAuthStatus, DepStatus,
     };
     use std::ffi::{OsStr, OsString};
     use std::path::Path;
@@ -957,6 +1184,195 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
         assert_eq!(parse_host_port("localhost:11434"), None); // no scheme
         assert_eq!(parse_host_port("http://"), None);
         assert_eq!(parse_host_port("http://host:notaport/v1"), None);
+    }
+
+    #[test]
+    fn gemini_help_requires_the_admin_policy_option() {
+        assert!(help_text_supports_option(
+            b"Usage: gemini [options]\n  --admin-policy <path>",
+            b"",
+            "--admin-policy"
+        ));
+        assert!(help_text_supports_option(
+            b"",
+            b"Options:\n  --admin-policy FILE",
+            "--admin-policy"
+        ));
+        assert!(!help_text_supports_option(
+            b"Usage: gemini [options]\n  --policy <path>",
+            b"",
+            "--admin-policy"
+        ));
+    }
+
+    #[test]
+    fn active_profile_explicit_agents_are_required() {
+        let settings = crate::settings::Settings {
+            preferred_provider: "claude".to_string(),
+            ..Default::default()
+        };
+        let explicit = crate::pipeline_config::StepConfig {
+            id: "gemini-review".to_string(),
+            agents: vec!["gemini".to_string()],
+            ..Default::default()
+        };
+        let config = crate::pipeline_config::PipelineConfig {
+            steps: vec![explicit],
+            merge: Default::default(),
+            context_cache: Default::default(),
+            use_orientation: false,
+            orientation_prompt: String::new(),
+            extraction: crate::pipeline_config::ExtractionConfig {
+                method: "pdftotext".to_string(),
+                ..Default::default()
+            },
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        };
+
+        let required = required_providers(&settings, Some(&config), false, None, None);
+        assert_eq!(required, ["gemini".to_string()].into_iter().collect());
+    }
+
+    #[test]
+    fn llm_extraction_requires_a_provider_only_for_a_possible_pdf_input() {
+        let settings = crate::settings::Settings {
+            preferred_provider: "claude".to_string(),
+            pdf_extractor: "llm".to_string(),
+            ..Default::default()
+        };
+        let mut config = crate::pipeline_config::PipelineConfig {
+            steps: Vec::new(),
+            merge: Default::default(),
+            context_cache: Default::default(),
+            use_orientation: false,
+            orientation_prompt: String::new(),
+            extraction: Default::default(),
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        };
+        assert!(required_providers(
+            &settings,
+            Some(&config),
+            false,
+            Some("/papers/paper.pdf"),
+            None,
+        )
+        .contains("claude"));
+        assert!(required_providers(
+            &settings,
+            Some(&config),
+            false,
+            Some("/papers/paper.tex"),
+            None,
+        )
+        .is_empty());
+
+        config.extraction.input_mode = "none".to_string();
+        assert!(required_providers(&settings, Some(&config), false, None, None).is_empty());
+        config.extraction.input_mode = "folder".to_string();
+        assert!(required_providers(&settings, Some(&config), false, None, None).is_empty());
+    }
+
+    #[test]
+    fn selected_named_pdf_inputs_participate_in_readiness() {
+        let settings = crate::settings::Settings {
+            preferred_provider: "claude".to_string(),
+            pdf_extractor: "llm".to_string(),
+            ..Default::default()
+        };
+        let mut config = crate::pipeline_config::PipelineConfig {
+            steps: Vec::new(),
+            merge: Default::default(),
+            context_cache: Default::default(),
+            use_orientation: false,
+            orientation_prompt: String::new(),
+            extraction: crate::pipeline_config::ExtractionConfig {
+                input_mode: "none".to_string(),
+                extra_inputs: vec![crate::pipeline_config::InputSlot {
+                    key: "appendix".to_string(),
+                    label: String::new(),
+                    mode: "document".to_string(),
+                    required: false,
+                }],
+                ..Default::default()
+            },
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        };
+        let pdf = std::collections::HashMap::from([(
+            "appendix".to_string(),
+            "/papers/appendix.PDF".to_string(),
+        )]);
+        assert!(pdf_extraction_may_run(&config, None, Some(&pdf)));
+        assert!(
+            required_providers(&settings, Some(&config), false, None, Some(&pdf))
+                .contains("claude")
+        );
+
+        let tex = std::collections::HashMap::from([(
+            "appendix".to_string(),
+            "/papers/appendix.tex".to_string(),
+        )]);
+        assert!(!pdf_extraction_may_run(&config, None, Some(&tex)));
+        assert!(required_providers(&settings, Some(&config), false, None, Some(&tex)).is_empty());
+
+        config.extraction.extra_inputs[0].mode = "folder".to_string();
+        assert!(!pdf_extraction_may_run(&config, None, Some(&pdf)));
+    }
+
+    #[test]
+    fn pdf_dependencies_follow_the_effective_extractor() {
+        let mut settings = crate::settings::Settings {
+            preferred_provider: "claude".to_string(),
+            pdf_extractor: "llm".to_string(),
+            ..Default::default()
+        };
+        let mut config = crate::pipeline_config::PipelineConfig {
+            steps: Vec::new(),
+            merge: Default::default(),
+            context_cache: Default::default(),
+            use_orientation: false,
+            orientation_prompt: String::new(),
+            extraction: Default::default(),
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        };
+
+        let llm =
+            pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.pdf"), None);
+        assert!(llm.extraction);
+        assert!(llm.pdftotext);
+        assert!(!llm.pdftoppm);
+        assert!(!llm.paddle);
+        assert!(llm.configuration_ready);
+
+        config.extraction.method = "paddleocr-vl".to_string();
+        let paddle =
+            pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.pdf"), None);
+        assert!(paddle.extraction);
+        assert!(!paddle.pdftotext);
+        assert!(paddle.pdftoppm);
+        assert!(paddle.paddle);
+        assert!(paddle.configuration_ready);
+
+        config.extraction.method = "marker".to_string();
+        let retired =
+            pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.pdf"), None);
+        assert!(retired.extraction);
+        assert!(!retired.configuration_ready);
+
+        config.extraction.method = "llm".to_string();
+        settings.preferred_provider = "local".to_string();
+        let unsupported =
+            pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.pdf"), None);
+        assert!(!unsupported.configuration_ready);
+
+        config.extraction.method = "marker".to_string();
+        let tex =
+            pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.tex"), None);
+        assert!(!tex.extraction);
+        assert!(tex.configuration_ready);
     }
 
     #[test]
@@ -1174,5 +1590,38 @@ CALL :find_dp0
             Some(CliAuthStatus::SignedOut)
         );
         assert_eq!(cli_auth_status(true, None), Some(CliAuthStatus::Unknown));
+    }
+
+    #[test]
+    fn gemini_oauth_is_verified_by_invocation_without_weakening_binary_checks() {
+        let status = |name: &str, found: bool| DepStatus {
+            name: name.to_string(),
+            found,
+            version: String::new(),
+            path: String::new(),
+            required: true,
+            hint: String::new(),
+            authenticated: None,
+            cli_auth_status: Some(CliAuthStatus::Unknown),
+        };
+        assert!(dependency_ready(&status("Gemini CLI", true)));
+        assert!(!dependency_ready(&status("Gemini CLI", false)));
+        assert!(!dependency_ready(&status("Claude CLI", true)));
+    }
+
+    #[test]
+    fn required_native_dependencies_do_not_need_authentication_metadata() {
+        let status = |found| DepStatus {
+            name: "pdftotext".to_string(),
+            found,
+            version: String::new(),
+            path: String::new(),
+            required: true,
+            hint: String::new(),
+            authenticated: None,
+            cli_auth_status: None,
+        };
+        assert!(dependency_ready(&status(true)));
+        assert!(!dependency_ready(&status(false)));
     }
 }

@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Issue } from "../lib/issues";
 import { severityRank } from "../lib/issues";
+import SafeMarkdownLink from "./SafeMarkdownLink";
 
 interface Props {
   issues: Issue[];
@@ -29,7 +30,7 @@ function sevStyle(sev: string): string {
 }
 
 const VERDICT_STYLES: Record<Verdict, string> = {
-  accept: "bg-green-600 text-white",
+  accept: "bg-green-700 text-white",
   reject: "bg-red-600 text-white",
   done: "bg-gray-500 text-white",
   "": "",
@@ -73,6 +74,8 @@ export default function IssuesTable({ issues, runId }: Props) {
     dirtyRunRef.current = null;
     annotationsRef.current = {};
     setAnnotations({});
+    setSaved(false);
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
     setPersistenceError(null);
     if (!runId) {
       return;
@@ -122,13 +125,14 @@ export default function IssuesTable({ issues, runId }: Props) {
       const { request } = enqueueSave(runId, annotations);
       request
         .then(() => {
-          if (runId === loadedRunRef.current && JSON.stringify(annotationsRef.current) === snapshot) {
-            dirtyRunRef.current = null;
-          }
-          setSaved(true);
+          if (runId !== loadedRunRef.current) return;
           setPersistenceError(null);
-          if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
-          savedTimerRef.current = setTimeout(() => setSaved(false), 1200);
+          if (JSON.stringify(annotationsRef.current) === snapshot) {
+            dirtyRunRef.current = null;
+            setSaved(true);
+            if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+            savedTimerRef.current = setTimeout(() => setSaved(false), 1200);
+          }
         })
         .catch((error) => {
           if (runId === loadedRunRef.current) {
@@ -217,21 +221,25 @@ export default function IssuesTable({ issues, runId }: Props) {
       const { request } = enqueueSave(runId, annotationsRef.current);
       request
         .then(() => {
+          if (runId !== loadedRunRef.current) return;
+          setPersistenceError(null);
           if (
-            runId === loadedRunRef.current &&
             JSON.stringify(annotationsRef.current) === snapshot
           ) {
             dirtyRunRef.current = null;
+            setSaved(true);
+            if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+            savedTimerRef.current = setTimeout(() => setSaved(false), 1200);
           }
-          setPersistenceError(null);
-          setSaved(true);
         })
-        .catch((error) =>
-          setPersistenceError({
-            operation: "save",
-            message: error instanceof Error ? error.message : String(error),
-          }),
-        );
+        .catch((error) => {
+          if (runId === loadedRunRef.current) {
+            setPersistenceError({
+              operation: "save",
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        });
     }
   };
 
@@ -246,6 +254,7 @@ export default function IssuesTable({ issues, runId }: Props) {
             <button
               key={s}
               onClick={() => setSeverityFilter(s)}
+              aria-pressed={severityFilter === s}
               className={`px-2 py-0.5 rounded text-xs capitalize transition-colors ${
                 severityFilter === s
                   ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
@@ -257,9 +266,9 @@ export default function IssuesTable({ issues, runId }: Props) {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-          {counts.accept > 0 && <span className="text-green-600 dark:text-green-400">{counts.accept} accepted</span>}
+          {counts.accept > 0 && <span className="text-green-700 dark:text-green-400">{counts.accept} accepted</span>}
           {counts.reject > 0 && <span className="text-red-600 dark:text-red-400">{counts.reject} rejected</span>}
-          {saved && <span className="text-gray-400">saved ✓</span>}
+          {saved && <span className="text-gray-500 dark:text-gray-400">saved ✓</span>}
           <button
             onClick={exportAccepted}
             disabled={counts.accept === 0}
@@ -273,7 +282,9 @@ export default function IssuesTable({ issues, runId }: Props) {
       {persistenceError && (
         <div role="alert" className="mb-4 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300">
           <span className="font-medium">
-            Annotation {persistenceError.operation} failed:
+            {persistenceError.operation === "export"
+              ? "Accepted-issues export failed:"
+              : `Annotation ${persistenceError.operation} failed:`}
           </span>{" "}
           {persistenceError.message}
           {persistenceError.operation !== "export" && (
@@ -307,9 +318,13 @@ export default function IssuesTable({ issues, runId }: Props) {
                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}>
                   {issue.severity || "—"}
                 </span>
-                <button onClick={() => toggleExpand(issue.id)} className="flex-1 text-left min-w-0">
+                <button
+                  onClick={() => toggleExpand(issue.id)}
+                  aria-expanded={isOpen}
+                  className="flex-1 text-left min-w-0"
+                >
                   <span className="text-sm text-gray-900 dark:text-gray-100">{issue.title}</span>
-                  {issue.section && <span className="text-xs text-gray-400 ml-2">§{issue.section}</span>}
+                  {issue.section && <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">§{issue.section}</span>}
                 </button>
                 {ann?.status && (
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${VERDICT_STYLES[ann.status]}`}>
@@ -321,6 +336,8 @@ export default function IssuesTable({ issues, runId }: Props) {
                     <button
                       key={v}
                       onClick={() => setVerdict(issue.id, v)}
+                      aria-label={`${v} issue: ${issue.title}`}
+                      aria-pressed={ann?.status === v}
                       className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
                         ann?.status === v
                           ? VERDICT_STYLES[v]
@@ -336,9 +353,15 @@ export default function IssuesTable({ issues, runId }: Props) {
               {isOpen && (
                 <div className="px-3 pb-3 border-t border-gray-100 dark:border-gray-800 pt-2">
                   <div className="report-content !max-w-none !p-0 text-sm">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{issue.body}</ReactMarkdown>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{ a: SafeMarkdownLink }}
+                    >
+                      {issue.body}
+                    </ReactMarkdown>
                   </div>
                   <input
+                    aria-label={`Note for issue: ${issue.title}`}
                     value={ann?.note ?? ""}
                     onChange={(e) => setNote(issue.id, e.target.value)}
                     placeholder="Add a note…"
@@ -349,10 +372,10 @@ export default function IssuesTable({ issues, runId }: Props) {
             </div>
           );
         })}
-        {visible.length === 0 && <p className="text-sm text-gray-400 px-2">No issues at this severity.</p>}
+        {visible.length === 0 && <p className="text-sm text-gray-500 dark:text-gray-400 px-2">No issues at this severity.</p>}
       </div>
       {!runId && (
-        <p className="text-[11px] text-gray-400 mt-4">Annotations aren't saved for this view (no run directory).</p>
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-4">Annotations aren't saved for this view (no run directory).</p>
       )}
     </div>
   );

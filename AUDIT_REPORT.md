@@ -1,16 +1,25 @@
-# Pipeline Codebase Audit Report
+# Archived Pipeline codebase audit report
 
 Date: 2026-07-18
+
+> **Archived audit snapshot.** This document preserves evidence and remediation
+> notes for the tree audited on the date above. It is not the current issue
+> tracker, release recommendation, supported-version policy, or test report.
+> File/line references and toolchain versions are historical. See
+> [CHANGELOG.md](CHANGELOG.md), [SUPPORT.md](SUPPORT.md), current CI, and GitHub
+> issues for current status.
 
 ## Executive summary
 
 The audit identified 18 concrete correctness, cancellation, resource-lifecycle, persistence, memory-exhaustion, and tooling defects. Each finding was subsequently reproduced or confirmed against the implementation, fixed in the order listed below, and covered by focused regression tests where practical.
 
-All 18 findings are resolved in the current worktree. The complete Rust and frontend test suites, production frontend build, Rust formatting check, strict Clippy check, and whitespace validation all pass.
+At the end of that remediation pass, all 18 findings were reported resolved and
+the then-current Rust/frontend suites, production build, formatting, Clippy,
+and whitespace checks passed. Those results do not certify the current tree.
 
 The file-and-line references below record the original audit evidence and may no longer match the post-remediation line numbers.
 
-## Remediation status
+## Recorded remediation status
 
 | # | Result | Implemented remediation |
 |---:|:---:|---|

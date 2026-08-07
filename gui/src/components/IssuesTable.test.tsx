@@ -4,15 +4,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import IssuesTable from "./IssuesTable";
 
 const invoke = vi.hoisted(() => vi.fn());
+const save = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save }));
 
 const issues = [
   { id: "i1", title: "First issue", severity: "high", section: "1", body: "Details" },
 ];
 
 describe("IssuesTable annotation lifecycle", () => {
-  beforeEach(() => invoke.mockReset());
+  beforeEach(() => {
+    invoke.mockReset();
+    save.mockReset();
+  });
 
   it("ignores a stale annotation load after switching runs", async () => {
     const resolvers = new Map<string, (value: string) => void>();
@@ -24,7 +28,7 @@ describe("IssuesTable annotation lifecycle", () => {
     const view = render(<IssuesTable issues={issues} runId="run-a" />);
     view.rerender(<IssuesTable issues={issues} runId="run-b" />);
     await act(async () => resolvers.get("run-b")?.(JSON.stringify({ i1: { status: "", note: "new" } })));
-    await userEvent.setup().click(screen.getByRole("button", { name: /First issue/i }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /^First issue/i }));
     expect(screen.getByPlaceholderText("Add a note…")).toHaveValue("new");
 
     await act(async () => resolvers.get("run-a")?.(JSON.stringify({ i1: { status: "", note: "stale" } })));
@@ -70,5 +74,62 @@ describe("IssuesTable annotation lifecycle", () => {
         content: expect.stringContaining('"status":"accept"'),
       }),
     );
+  });
+
+  it("does not let an old run's save clear the current run's persistence state", async () => {
+    let finishOldSave!: () => void;
+    let saveCalls = 0;
+    invoke.mockImplementation((command: string, args: { runId: string }) => {
+      if (command === "get_annotations") {
+        return args.runId === "run-a"
+          ? Promise.resolve("{}")
+          : Promise.reject(new Error("run-b load failed"));
+      }
+      if (command === "save_annotations" && saveCalls++ === 0) {
+        return new Promise<void>((resolve) => {
+          finishOldSave = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
+
+    const view = render(<IssuesTable issues={issues} runId="run-a" />);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("get_annotations", { runId: "run-a" }),
+    );
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "accept issue: First issue" }),
+    );
+    await waitFor(
+      () =>
+        expect(invoke).toHaveBeenCalledWith(
+          "save_annotations",
+          expect.objectContaining({ runId: "run-a" }),
+        ),
+      { timeout: 1500 },
+    );
+
+    view.rerender(<IssuesTable issues={issues} runId="run-b" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("run-b load failed");
+    await act(async () => finishOldSave());
+
+    expect(screen.getByRole("alert")).toHaveTextContent("run-b load failed");
+    expect(screen.queryByText("saved ✓")).not.toBeInTheDocument();
+  });
+
+  it("accurately surfaces an accepted-issues save-dialog failure", async () => {
+    save.mockRejectedValueOnce(new Error("dialog plugin unavailable"));
+    const user = userEvent.setup();
+    render(<IssuesTable issues={issues} runId="" />);
+
+    await user.click(
+      screen.getByRole("button", { name: "accept issue: First issue" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Export accepted" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Accepted-issues export failed: dialog plugin unavailable",
+    );
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

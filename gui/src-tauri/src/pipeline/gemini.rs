@@ -15,46 +15,307 @@ use super::cli_process::{
 /// supplies an absolute artifact path; relative edit attempts are denied and
 /// can still use the executor's stdout fallback.
 const GEMINI_TRAVERSAL_PATTERN: &str = r#""file_path":"[^"]*\.\."#;
+const GEMINI_READ_TOOLS: &[&str] = &[
+    "read_file",
+    "read_many_files",
+    "list_directory",
+    "glob",
+    "grep_search",
+];
+const MAX_GEMINI_SYSTEM_SETTINGS_BYTES: u64 = 4 * 1024 * 1024;
 
 fn gemini_allowed_write_pattern(write_dir: &str) -> String {
     let escaped_root = regex::escape(write_dir.trim_end_matches('/'));
     format!(r#""file_path":"{escaped_root}(?:/[^"]*)?""#)
 }
 
-fn gemini_write_policy(write_dir: &str) -> String {
-    let allowed_pattern = gemini_allowed_write_pattern(write_dir);
-    // Match any `..` in the serialized file_path value. This deliberately
-    // rejects benign double-dot filenames too: report handoff paths never
-    // need them, and the conservative rule covers both slash styles after
-    // JSON serialization.
-    let pattern_literal =
-        serde_json::to_string(&allowed_pattern).expect("serializing a regex string cannot fail");
-    let traversal_literal = serde_json::to_string(GEMINI_TRAVERSAL_PATTERN)
-        .expect("serializing a regex string cannot fail");
-    format!(
+fn gemini_core_tools(allowed_tools: &[&str], needs_write: bool) -> Vec<&'static str> {
+    let mut tools = GEMINI_READ_TOOLS.to_vec();
+    if allowed_tools.contains(&"WebSearch") {
+        tools.push("google_web_search");
+    }
+    if needs_write {
+        tools.extend(["write_file", "replace"]);
+    }
+    tools
+}
+
+fn gemini_tool_policy(write_dir: Option<&str>, core_tools: &[&str]) -> String {
+    let read_tools: Vec<&str> = core_tools
+        .iter()
+        .copied()
+        .filter(|tool| !matches!(*tool, "write_file" | "replace"))
+        .collect();
+    let read_tools =
+        serde_json::to_string(&read_tools).expect("serializing Gemini tool names cannot fail");
+    let mode = if write_dir.is_some() {
+        "autoEdit"
+    } else {
+        "plan"
+    };
+    let mut policy = format!(
         "[[rule]]\n\
-         toolName = [\"write_file\", \"replace\"]\n\
-         argsPattern = {traversal_literal}\n\
-         decision = \"deny\"\n\
-         priority = 999\n\
-         modes = [\"autoEdit\"]\n\
-         interactive = false\n\
-         denyMessage = \"Pipeline does not permit path traversal.\"\n\n\
-         [[rule]]\n\
-         toolName = [\"write_file\", \"replace\"]\n\
-         argsPattern = {pattern_literal}\n\
+         toolName = {read_tools}\n\
          decision = \"allow\"\n\
          priority = 998\n\
-         modes = [\"autoEdit\"]\n\
-         interactive = false\n\n\
-         [[rule]]\n\
-         toolName = [\"write_file\", \"replace\"]\n\
+         modes = [\"{mode}\"]\n\
+         interactive = false\n\n"
+    );
+    if let Some(write_dir) = write_dir {
+        let allowed_pattern = gemini_allowed_write_pattern(write_dir);
+        // Match any `..` in the serialized file_path value. This deliberately
+        // rejects benign double-dot filenames too: report handoff paths never
+        // need them, and the conservative rule covers both slash styles after
+        // JSON serialization.
+        let pattern_literal = serde_json::to_string(&allowed_pattern)
+            .expect("serializing a regex string cannot fail");
+        let traversal_literal = serde_json::to_string(GEMINI_TRAVERSAL_PATTERN)
+            .expect("serializing a regex string cannot fail");
+        policy.push_str(&format!(
+            "[[rule]]\n\
+             toolName = [\"write_file\", \"replace\"]\n\
+             argsPattern = {traversal_literal}\n\
+             decision = \"deny\"\n\
+             priority = 999\n\
+             modes = [\"autoEdit\"]\n\
+             interactive = false\n\
+             denyMessage = \"Pipeline does not permit path traversal.\"\n\n\
+             [[rule]]\n\
+             toolName = [\"write_file\", \"replace\"]\n\
+             argsPattern = {pattern_literal}\n\
+             decision = \"allow\"\n\
+             priority = 998\n\
+             modes = [\"autoEdit\"]\n\
+             interactive = false\n\n"
+        ));
+    }
+    // A global deny removes every non-allowlisted tool from the model's
+    // context. tools.core and the admin settings below independently prevent
+    // ambient built-ins, extensions, MCP servers, skills, and hooks from
+    // registering capabilities.
+    policy.push_str(&format!(
+        "[[rule]]\n\
+         toolName = \"*\"\n\
          decision = \"deny\"\n\
-         priority = 997\n\
-         modes = [\"autoEdit\"]\n\
+         priority = 900\n\
+         modes = [\"{mode}\"]\n\
          interactive = false\n\
-         denyMessage = \"Pipeline only permits writes inside this run's artifact directory.\"\n"
-    )
+         denyMessage = \"Pipeline did not grant this capability to the step.\"\n"
+    ));
+    policy
+}
+
+fn default_gemini_system_settings_path() -> Option<std::path::PathBuf> {
+    if let Some(path) =
+        std::env::var_os("GEMINI_CLI_SYSTEM_SETTINGS_PATH").filter(|path| !path.is_empty())
+    {
+        return Some(path.into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Some(
+            std::path::PathBuf::from("/Library/Application Support/GeminiCli")
+                .join("settings.json"),
+        )
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Some(std::path::PathBuf::from("/etc/gemini-cli/settings.json"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("ProgramData")
+            .map(std::path::PathBuf::from)
+            .map(|root| root.join("gemini-cli").join("settings.json"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+fn load_gemini_system_settings() -> Result<serde_json::Value, String> {
+    use std::io::Read as _;
+    let Some(path) = default_gemini_system_settings_path() else {
+        return Ok(serde_json::json!({}));
+    };
+    if !path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let file = crate::safety::open_regular_file(&path).map_err(|error| {
+        format!(
+            "Cannot preserve existing Gemini system settings '{}': {error}",
+            path.display()
+        )
+    })?;
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(MAX_GEMINI_SYSTEM_SETTINGS_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            format!(
+                "Cannot read existing Gemini system settings '{}': {error}",
+                path.display()
+            )
+        })?;
+    if bytes.len() as u64 > MAX_GEMINI_SYSTEM_SETTINGS_BYTES {
+        return Err(format!(
+            "Gemini system settings '{}' exceed the 4 MB safety limit",
+            path.display()
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        format!(
+            "Existing Gemini system settings '{}' are invalid JSON: {error}",
+            path.display()
+        )
+    })?;
+    if !value.is_object() {
+        return Err(format!(
+            "Existing Gemini system settings '{}' must contain a JSON object",
+            path.display()
+        ));
+    }
+    Ok(value)
+}
+
+fn set_gemini_setting(root: &mut serde_json::Value, path: &[&str], value: serde_json::Value) {
+    let mut current = root;
+    for key in &path[..path.len().saturating_sub(1)] {
+        if !current.get(*key).is_some_and(serde_json::Value::is_object) {
+            current[*key] = serde_json::json!({});
+        }
+        current = &mut current[*key];
+    }
+    current[path[path.len() - 1]] = value;
+}
+
+fn restricted_gemini_settings(
+    mut settings: serde_json::Value,
+    core_tools: &[&str],
+) -> serde_json::Value {
+    set_gemini_setting(
+        &mut settings,
+        &["tools", "core"],
+        serde_json::json!(core_tools),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["tools", "discoveryCommand"],
+        serde_json::json!(""),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["tools", "callCommand"],
+        serde_json::json!(""),
+    );
+    set_gemini_setting(&mut settings, &["mcp", "allowed"], serde_json::json!([]));
+    set_gemini_setting(&mut settings, &["mcpServers"], serde_json::json!({}));
+    set_gemini_setting(&mut settings, &["policyPaths"], serde_json::json!([]));
+    if settings.get("adminPolicyPaths").is_none() {
+        set_gemini_setting(&mut settings, &["adminPolicyPaths"], serde_json::json!([]));
+    }
+    set_gemini_setting(
+        &mut settings,
+        &["skills", "enabled"],
+        serde_json::json!(false),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["hooksConfig", "enabled"],
+        serde_json::json!(false),
+    );
+    set_gemini_setting(&mut settings, &["useWriteTodos"], serde_json::json!(false));
+    set_gemini_setting(
+        &mut settings,
+        &["security", "disableYoloMode"],
+        serde_json::json!(true),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["security", "disableAlwaysAllow"],
+        serde_json::json!(true),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["security", "enablePermanentToolApproval"],
+        serde_json::json!(false),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["security", "blockGitExtensions"],
+        serde_json::json!(true),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["security", "allowedExtensions"],
+        serde_json::json!([]),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["admin", "secureModeEnabled"],
+        serde_json::json!(true),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["admin", "extensions", "enabled"],
+        serde_json::json!(false),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["admin", "mcp", "enabled"],
+        serde_json::json!(false),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["admin", "mcp", "config"],
+        serde_json::json!({}),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["admin", "mcp", "requiredConfig"],
+        serde_json::json!({}),
+    );
+    set_gemini_setting(
+        &mut settings,
+        &["admin", "skills", "enabled"],
+        serde_json::json!(false),
+    );
+    settings
+}
+
+fn create_gemini_system_settings(core_tools: &[&str]) -> Result<NamedTempFile, String> {
+    let settings = restricted_gemini_settings(load_gemini_system_settings()?, core_tools);
+    let mut file = tempfile::Builder::new()
+        .prefix("pipeline_gemini_settings_")
+        .suffix(".json")
+        .tempfile()
+        .map_err(|error| format!("Failed to create isolated Gemini settings: {error}"))?;
+    serde_json::to_writer(&mut file, &settings)
+        .map_err(|error| format!("Failed to write isolated Gemini settings: {error}"))?;
+    file.flush()
+        .map_err(|error| format!("Failed to flush isolated Gemini settings: {error}"))?;
+    Ok(file)
+}
+
+fn create_gemini_policy(
+    write_dir: Option<&str>,
+    core_tools: &[&str],
+) -> Result<NamedTempFile, String> {
+    let policy_text = gemini_tool_policy(write_dir, core_tools);
+    // Match any `..` in the serialized file_path value. This deliberately
+    // rejects benign double-dot filenames too.
+    let mut policy = tempfile::Builder::new()
+        .prefix("pipeline_gemini_")
+        .suffix(".toml")
+        .tempfile()
+        .map_err(|e| format!("Failed to create Gemini policy file: {e}"))?;
+    policy
+        .write_all(policy_text.as_bytes())
+        .map_err(|e| format!("Failed to write Gemini policy file: {e}"))?;
+    policy
+        .flush()
+        .map_err(|e| format!("Failed to flush Gemini policy file: {e}"))?;
+    Ok(policy)
 }
 
 fn append_gemini_read_dirs(cmd_args: &mut Vec<String>, read_dirs: &[String]) {
@@ -62,21 +323,6 @@ fn append_gemini_read_dirs(cmd_args: &mut Vec<String>, read_dirs: &[String]) {
         cmd_args.push("--include-directories".to_string());
         cmd_args.push(dir.clone());
     }
-}
-
-fn create_gemini_write_policy(write_dir: &str) -> Result<NamedTempFile, String> {
-    let mut policy = tempfile::Builder::new()
-        .prefix("pipeline_gemini_")
-        .suffix(".toml")
-        .tempfile()
-        .map_err(|e| format!("Failed to create Gemini policy file: {e}"))?;
-    policy
-        .write_all(gemini_write_policy(write_dir).as_bytes())
-        .map_err(|e| format!("Failed to write Gemini policy file: {e}"))?;
-    policy
-        .flush()
-        .map_err(|e| format!("Failed to flush Gemini policy file: {e}"))?;
-    Ok(policy)
 }
 
 /// Parse Gemini CLI's one-shot JSON envelope. The `response` field is the
@@ -104,22 +350,51 @@ fn parse_gemini_result(
     let mut input_tokens = 0u64;
     let mut output_tokens = 0u64;
     let mut cached_input_tokens = 0u64;
+    let mut model_round_trips = 0u64;
     if let Some(models) = value
         .get("stats")
         .and_then(|stats| stats.get("models"))
         .and_then(|models| models.as_object())
     {
         for model in models.values() {
+            model_round_trips = model_round_trips.saturating_add(
+                model
+                    .get("api")
+                    .and_then(|api| {
+                        api.get("totalRequests")
+                            .or_else(|| api.get("total_requests"))
+                    })
+                    .and_then(|count| count.as_u64())
+                    .unwrap_or(0),
+            );
             if let Some(tokens) = model.get("tokens") {
+                // Gemini CLI's `prompt` mirrors UsageMetadata.promptTokenCount,
+                // which is the total effective prompt and already includes
+                // cachedContentTokenCount. Treat `cached` as a subset of
+                // logical input; only the separately reported tool-use prompt
+                // tokens are additive here.
                 input_tokens = input_tokens.saturating_add(
                     tokens
                         .get("prompt")
                         .and_then(|count| count.as_u64())
                         .unwrap_or(0),
                 );
+                input_tokens = input_tokens.saturating_add(
+                    tokens
+                        .get("tool")
+                        .or_else(|| tokens.get("toolUsePrompt"))
+                        .and_then(|count| count.as_u64())
+                        .unwrap_or(0),
+                );
                 output_tokens = output_tokens.saturating_add(
                     tokens
                         .get("candidates")
+                        .and_then(|count| count.as_u64())
+                        .unwrap_or(0),
+                );
+                output_tokens = output_tokens.saturating_add(
+                    tokens
+                        .get("thoughts")
                         .and_then(|count| count.as_u64())
                         .unwrap_or(0),
                 );
@@ -132,15 +407,47 @@ fn parse_gemini_result(
             }
         }
     }
-    let usage = (input_tokens > 0 || output_tokens > 0 || cached_input_tokens > 0).then_some(
-        crate::pipeline::logging::CallUsage {
-            input_tokens,
-            output_tokens,
-            cached_input_tokens,
-            cache_write_input_tokens: 0,
-            ..Default::default()
-        },
-    );
+    let mut tool_calls = crate::models::ToolCallCounts::default();
+    if let Some(tools) = value.get("stats").and_then(|stats| stats.get("tools")) {
+        let reported_total = tools
+            .get("totalCalls")
+            .or_else(|| tools.get("total_calls"))
+            .and_then(|count| count.as_u64())
+            .unwrap_or(0);
+        if let Some(by_name) = tools
+            .get("byName")
+            .or_else(|| tools.get("by_name"))
+            .and_then(|counts| counts.as_object())
+        {
+            for (name, entry) in by_name {
+                let count = entry.as_u64().or_else(|| {
+                    entry.as_object().and_then(|detail| {
+                        ["totalCalls", "total_calls", "calls", "count"]
+                            .iter()
+                            .find_map(|field| detail.get(*field).and_then(|value| value.as_u64()))
+                    })
+                });
+                tool_calls.add_kind(super::logging::classify_tool_name(name), count.unwrap_or(0));
+            }
+        }
+        tool_calls.unknown = tool_calls
+            .unknown
+            .saturating_add(reported_total.saturating_sub(tool_calls.total()));
+    }
+    let usage = (input_tokens > 0
+        || output_tokens > 0
+        || cached_input_tokens > 0
+        || model_round_trips > 0
+        || !tool_calls.is_empty())
+    .then_some(crate::pipeline::logging::CallUsage {
+        input_tokens,
+        output_tokens,
+        cached_input_tokens,
+        cache_write_input_tokens: 0,
+        model_round_trips,
+        tool_calls,
+        ..Default::default()
+    });
     Ok((text, usage))
 }
 
@@ -189,23 +496,27 @@ pub async fn call_gemini(
     )?;
     cmd_args.push("--approval-mode".to_string());
     cmd_args.push(if needs_write { "auto_edit" } else { "plan" }.to_string());
+    let core_tools = gemini_core_tools(allowed_tools, needs_write);
 
     // Keep artifacts as cwd in write mode. Every source/input root remains
     // available through a repeated flag (rather than a comma-delimited value,
     // which would break valid directory names containing commas).
     append_gemini_read_dirs(&mut cmd_args, &workspace.read_dirs);
 
-    let mut _write_policy: Option<NamedTempFile> = None;
-    if needs_write {
-        let write_root = workspace
-            .cwd
-            .as_deref()
-            .ok_or("Gemini write mode requires an absolute artifact directory")?;
-        let policy = create_gemini_write_policy(write_root)?;
-        cmd_args.push("--policy".to_string());
-        cmd_args.push(policy.path().to_string_lossy().replace('\\', "/"));
-        _write_policy = Some(policy);
-    }
+    let write_root = if needs_write {
+        Some(
+            workspace
+                .cwd
+                .as_deref()
+                .ok_or("Gemini write mode requires an absolute artifact directory")?,
+        )
+    } else {
+        None
+    };
+    let _tool_policy = create_gemini_policy(write_root, &core_tools)?;
+    cmd_args.push("--admin-policy".to_string());
+    cmd_args.push(_tool_policy.path().to_string_lossy().replace('\\', "/"));
+    let _system_settings = create_gemini_system_settings(&core_tools)?;
 
     // Gemini's JSON envelope keeps the terminal response separate from
     // diagnostics and stats.
@@ -254,6 +565,7 @@ pub async fn call_gemini(
     // be the artifact dir regardless of what the caller passed.
     let effective_cwd = workspace.cwd.as_deref();
     let mut cmd = build_provider_command("gemini", effective_cwd, &cmd_args)?;
+    cmd.env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", _system_settings.path());
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -461,13 +773,15 @@ mod tests {
         assert!(traversal.is_match(&posix));
         assert!(traversal.is_match(&windows));
 
-        let policy = gemini_write_policy("C:/Users/Mike/.pipeline/runs/r1/artifacts");
+        let tools = gemini_core_tools(&["WebSearch", "Write"], true);
+        let policy = gemini_tool_policy(Some("C:/Users/Mike/.pipeline/runs/r1/artifacts"), &tools);
         let traversal_pos = policy.find("priority = 999").unwrap();
         let allow_pos = policy.find("priority = 998").unwrap();
-        let fallback_deny_pos = policy.find("priority = 997").unwrap();
-        assert!(traversal_pos < allow_pos && allow_pos < fallback_deny_pos);
+        let fallback_deny_pos = policy.rfind("priority = 900").unwrap();
+        assert!(traversal_pos < fallback_deny_pos && allow_pos < fallback_deny_pos);
         assert!(policy.contains("toolName = [\"write_file\", \"replace\"]"));
         assert!(policy.contains("argsPattern"));
+        assert!(policy.contains("toolName = \"*\""));
     }
 
     #[test]
@@ -485,26 +799,96 @@ mod tests {
     }
 
     #[test]
+    fn exact_capabilities_exclude_ambient_gemini_tools() {
+        let read_only = gemini_core_tools(&[], false);
+        assert_eq!(read_only, GEMINI_READ_TOOLS);
+        for forbidden in [
+            "run_shell_command",
+            "web_fetch",
+            "google_web_search",
+            "write_file",
+            "replace",
+            "activate_skill",
+            "list_mcp_resources",
+        ] {
+            assert!(!read_only.contains(&forbidden), "{forbidden}");
+        }
+
+        let web_and_write = gemini_core_tools(&["WebSearch", "Write"], true);
+        assert!(web_and_write.contains(&"google_web_search"));
+        assert!(web_and_write.contains(&"write_file"));
+        assert!(web_and_write.contains(&"replace"));
+        assert!(!web_and_write.contains(&"web_fetch"));
+        assert!(!web_and_write.contains(&"run_shell_command"));
+    }
+
+    #[test]
+    fn isolated_settings_disable_ambient_extension_points() {
+        let settings = restricted_gemini_settings(
+            serde_json::json!({
+                "mcpServers": {"ambient": {"command": "dangerous"}},
+                "skills": {"enabled": true},
+                "hooksConfig": {"enabled": true},
+                "tools": {"discoveryCommand": "discover-tools"},
+                "adminPolicyPaths": ["/managed/policies"]
+            }),
+            GEMINI_READ_TOOLS,
+        );
+        assert_eq!(
+            settings["tools"]["core"],
+            serde_json::json!(GEMINI_READ_TOOLS)
+        );
+        assert_eq!(settings["tools"]["discoveryCommand"], "");
+        assert_eq!(settings["tools"]["callCommand"], "");
+        assert_eq!(settings["mcpServers"], serde_json::json!({}));
+        assert_eq!(settings["mcp"]["allowed"], serde_json::json!([]));
+        assert_eq!(settings["skills"]["enabled"], false);
+        assert_eq!(settings["hooksConfig"]["enabled"], false);
+        assert_eq!(settings["admin"]["extensions"]["enabled"], false);
+        assert_eq!(settings["admin"]["mcp"]["enabled"], false);
+        assert_eq!(settings["admin"]["skills"]["enabled"], false);
+        assert_eq!(
+            settings["adminPolicyPaths"],
+            serde_json::json!(["/managed/policies"])
+        );
+    }
+
+    #[test]
     fn json_envelope_returns_only_terminal_response_and_usage() {
         let raw = r#"{
           "session_id":"s1",
           "response":"  ## Final report\n\nClean.  ",
           "stats":{"models":{
-            "gemini-3-pro":{"tokens":{"prompt":120,"candidates":30,"cached":10}}
-          }}
+            "gemini-3-pro":{"api":{"totalRequests":4},"tokens":{
+              "prompt":120,"tool":7,"candidates":30,"thoughts":11,"cached":10
+            }}
+          },"tools":{"totalCalls":5,"byName":{
+            "read_file":{"count":2},"google_web_search":{"calls":1},
+            "future_tool":{"totalCalls":1}
+          }}}
         }"#;
         let (text, usage) = parse_gemini_result(raw).unwrap();
         assert_eq!(text, "## Final report\n\nClean.");
         assert_eq!(
             usage,
             Some(crate::pipeline::logging::CallUsage {
-                input_tokens: 120,
-                output_tokens: 30,
+                input_tokens: 127,
+                output_tokens: 41,
                 cached_input_tokens: 10,
                 cache_write_input_tokens: 0,
+                model_round_trips: 4,
+                tool_calls: crate::models::ToolCallCounts {
+                    text_file: 2,
+                    web: 1,
+                    unknown: 2,
+                    ..Default::default()
+                },
                 ..Default::default()
             })
         );
+        // Cached prompt tokens are already inside `prompt`: 120 prompt + 7
+        // tool-use prompt = 127 logical input, not 137.
+        assert_eq!(usage.unwrap().input_tokens, 127);
     }
 
     #[test]

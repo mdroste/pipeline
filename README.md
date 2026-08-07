@@ -8,7 +8,13 @@
 
 Pipeline generates referee reports for academic papers. It takes a PDF, LaTeX source, or Word `.docx`, runs several independent analyses in parallel (contribution, technical correctness, empirical strategy, internal consistency, exposition), then consolidates the results into a single structured report.
 
-It is a desktop app for macOS, Windows, and Linux. No API key is required if you have a Claude subscription.
+It is a desktop app for macOS, Windows, and Linux. A separate API key is not
+required when your authenticated Claude Code subscription includes CLI access;
+provider account, plan, and usage terms still apply.
+
+[Privacy and data flow](PRIVACY.md) · [Security policy](SECURITY.md) ·
+[Supported platforms](SUPPORT.md) · [Contributing](CONTRIBUTING.md) ·
+[Changelog](CHANGELOG.md) · [Release process](RELEASING.md)
 
 ## Installation
 
@@ -20,18 +26,34 @@ Release system baselines:
   The minimum is intentionally set to the newest requirement in the complete
   bundled Poppler library closure; the installer does not claim compatibility
   with older macOS versions that its PDF tools cannot satisfy.
-- **Windows:** 64-bit Windows. The installer is currently unsigned and may be
-  rejected by Windows or organization-managed security policy. Do not weaken a
-  device's security policy to install it.
+- **Windows:** Windows 11 on a supported servicing release, x86-64. Windows 10
+  22H2 is the compatibility floor but is supported only on systems still
+  receiving Microsoft security updates, such as eligible ESU-managed devices.
+  Public release CI requires the application and installer to carry a valid,
+  timestamped Authenticode signature. Microsoft WebView2's offline installer
+  is embedded so first installation does not depend on a WebView download;
+  this adds roughly 127 MB to the installer.
 - **Linux:** x86-64 Ubuntu 22.04 or a compatible newer distribution (AppImage).
+  Direct execution requires FUSE 2 (`sudo apt-get install libfuse2` on a
+  minimal Ubuntu 22.04 installation). If FUSE cannot be enabled, AppImage's
+  documented extract-and-run mode remains available as a compatibility
+  fallback.
 
-To build from source (requires [Node.js](https://nodejs.org/) 22.12 or 24 LTS;
-Node.js 24 is recommended, plus the [Rust toolchain](https://rustup.rs/)):
+Each public installer is accompanied by a same-named `.sha256` record, an
+artifact SBOM, a build-input SBOM, Poppler provenance, and a GitHub
+build-provenance attestation. The artifact SBOM records the installer's SHA-256
+and the hashes of the other two evidence files. Verify the downloaded file
+against the checksum before running it; the release is incomplete if any of
+these records is missing.
+
+To build from source, use the pinned [Node.js](https://nodejs.org/) 24.18.0
+version in `gui/.nvmrc` and the Rust 1.97.1 toolchain declared in
+`rust-toolchain.toml`:
 
 ```bash
 git clone https://github.com/mdroste/pipeline.git
 cd pipeline/gui
-npm install
+npm ci
 npm run tauri build
 ```
 
@@ -41,9 +63,15 @@ The output is in `gui/src-tauri/target/release/bundle/`.
 
 Every pull request runs the Rust and frontend suites and opens a compiled test
 binary on Ubuntu 22.04, Windows Server 2022, Apple Silicon macOS 15, and Intel
-macOS 15. Release builds additionally launch the AppImage, silently install and
-launch the Windows NSIS package, and assess and launch a quarantined,
+macOS 15. Release builds additionally launch the AppImage directly through its
+FUSE entry point, silently install and launch the Windows NSIS package, and
+assess and launch a quarantined,
 notarized macOS app before release assets are finalized.
+
+Pipeline checks GitHub for newer stable releases and links to the release page,
+but it does not update itself in place. Download and install the newer signed
+package manually. Prereleases are not offered by the in-app check. See the
+complete [support and update policy](SUPPORT.md).
 
 ### LLM setup
 
@@ -51,19 +79,25 @@ You need at least one LLM provider:
 
 - **Claude** (default): Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) and sign in. Or set an Anthropic API key in Settings.
 - **Codex**: Install the [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`), or set an OpenAI API key in Settings.
-- **Gemini**: Install the [Gemini CLI](https://github.com/google/gemini-cli) (`npm install -g @google/gemini-cli`), or set a Google API key in Settings.
+- **Gemini**: Install the latest [Gemini CLI](https://github.com/google/gemini-cli) (`npm install -g @google/gemini-cli@latest`) and run `gemini` once to sign in with OAuth, or set a Google API key in Settings. Pipeline requires a CLI version that supports `--admin-policy`.
 
 ### PDF support
 
 Pipeline bundles `pdftoppm` and `pdftotext` (from [poppler](https://poppler.freedesktop.org/)) on all platforms, so basic PDF extraction and page rendering work out of the box with no extra install. The extractor selected for a workflow is authoritative; Pipeline does not silently switch methods after a failure.
 
 For higher-quality local extraction, Settings → PDF Extraction can optionally
-install either [PaddleOCR-VL 1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF)
+install [PaddleOCR-VL 1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF)
 Q8 with a native [llama.cpp](https://github.com/ggml-org/llama.cpp) runtime
-(about 1.9 GB), or [marker-pdf](https://github.com/VikParuchuri/marker). Both
-managed engines run locally and can be uninstalled from the same page.
-Marker and PaddleOCR-VL speed, memory, OCR, and quality controls also live on
-that page, even when another extractor is selected globally.
+(about 1.9 GB). The managed engine runs locally and can be uninstalled from
+the same page. Its speed, memory, retry, and quality controls also live there,
+even when another extractor is selected globally.
+
+Marker extraction is unavailable in Pipeline 1.0.1 because the Python
+dependency versions compatible with Pipeline's integration contain known
+security vulnerabilities. Pipeline neither installs nor executes Marker.
+Upgrades that retain an older Pipeline-managed Marker environment show a
+one-time removal control in Settings; saved runs and historical Marker
+artifacts remain readable.
 
 LaTeX source files are read natively; a compiled companion PDF is used for
 visual page inspection when present. Word `.docx` papers are read from OOXML,
@@ -73,8 +107,8 @@ not supported.
 Bundled Poppler is GPL-licensed. Exact platform inputs, source hashes, dynamic
 library notices, and SBOM details are in
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md). The same notice, license
-texts supplied by the packages, a CycloneDX SBOM, and exact Poppler file hashes
-are available offline inside every release build.
+texts supplied by the packages, a CycloneDX build-input SBOM, and exact Poppler
+file hashes are available offline inside every release build.
 
 ## What it does
 
@@ -134,9 +168,30 @@ For long, multi-step inputs, **Pipeline Settings → Reuse shared input context*
 optionally prepares the primary text and/or survey selected by each step. API
 providers reuse a warmed prompt prefix; Claude and Codex CLI calls fork a
 warmed base session. Unselected material is never added to the warmed context.
-The setting is per profile and off by default. The console and saved run summary
-show cache-read and cache-write tokens when the provider reports them, and
-unsupported providers fall back to ordinary self-contained calls.
+The setting is per profile: Paper Review (Full) enables it by default, while
+generic and custom profiles remain opt-in. Unsupported providers fall back to
+ordinary self-contained calls.
+
+The Console and History use one accounting convention across providers:
+**logical input = fresh input + cache-read input + cache-write input**.
+Cache-read and cache-write counts are therefore subsets of logical input, not
+tokens to add on top; fresh input is obtained by subtracting both. The report's
+run summary prices saved per-model calls and their partitions separately at
+known list rates, while noting any run-wide work it cannot attribute to a
+saved model row. For CLI and subscription calls this is explicitly an
+API-equivalent estimate, not an amount charged to the subscription.
+Provider-reported model round trips and tool calls are shown alongside the
+token totals, which makes repeated read/search loops visible.
+
+When a step needs several independent passages or images, direct APIs expose
+bounded batch readers in addition to the single-item tools. Prompts ask every
+transport to group independent text reads, visual inspections, and eligible
+web queries into one tool turn when supported, then continue sequentially for
+anything missing or truncated. This changes retrieval granularity, not the
+evidence or review instructions. Anthropic and Google direct APIs use hosted
+search when a step declares `WebSearch`; OpenAI Chat Completions and local
+OpenAI-compatible endpoints retain text/image batching but do not expose
+hosted search.
 
 Steps also support **conditions** (run a step only when the survey or an upstream
 step matches), a **JSON output shape** (which turns the report into a sortable,
@@ -156,10 +211,23 @@ Reports are stored as self-contained runs under `~/.pipeline/runs/`. Pipeline li
 
 ## Limitations
 
-- Each parallel step reads the full paper. On subscription plans with usage limits, a single report consumes a meaningful share of your allowance.
+- Each model generation still accounts for the paper context it receives.
+  Shared sessions and provider caches can make repeated input cheaper, but do
+  not make those logical tokens disappear from usage reports.
 - Concurrent LLM calls may queue on some subscription tiers. Wall-clock time varies.
-- LLM training data has a knowledge cutoff. The contribution step's web search partially compensates for this, but coverage of very recent work is not guaranteed.
-- PDF extraction without marker or LLM extraction will garble equations. Use LaTeX source when possible.
+- LLM training data has a knowledge cutoff. The contribution step's web search partially compensates for this when the selected transport supports search, but coverage of very recent work is not guaranteed.
+- Basic pdftotext extraction will garble equations. Use LaTeX source, LLM
+  extraction, or PaddleOCR-VL when equations matter.
+
+## Privacy
+
+Pipeline does not operate a hosted service or collect application telemetry,
+but remote-provider runs transmit the prompt and the document material allowed
+for each step to the selected provider or CLI. Runs can persist full source
+material, page images, intermediate responses, reports, and logs under
+`~/.pipeline/`; uninstalling the app does not necessarily remove that data.
+Read [PRIVACY.md](PRIVACY.md) before processing confidential or restricted
+material.
 
 ## License
 

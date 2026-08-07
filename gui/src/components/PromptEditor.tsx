@@ -12,13 +12,22 @@ interface Props {
   value: string;
   onChange: (next: string) => void;
   context: PromptContext;
+  /** Concise accessible name for the prompt textarea. */
+  ariaLabel: string;
   /** Optional rows hint when the textarea isn't height-bound by its parent. */
   rows?: number;
   /** Override the default fill-parent layout when the editor sits in a fixed-height area. */
   fillHeight?: boolean;
 }
 
-export default function PromptEditor({ value, onChange, context, rows, fillHeight = true }: Props) {
+export default function PromptEditor({
+  value,
+  onChange,
+  context,
+  ariaLabel,
+  rows,
+  fillHeight = true,
+}: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const placeholders = useMemo(() => placeholdersFor(context), [context]);
@@ -46,7 +55,7 @@ export default function PromptEditor({ value, onChange, context, rows, fillHeigh
     <div className={fillHeight ? "flex flex-col h-full min-h-0" : "flex flex-col"}>
       {placeholders.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap mb-2 text-[10px]">
-          <span className="text-gray-400 dark:text-gray-500 mr-1">Insert:</span>
+          <span className="text-gray-500 dark:text-gray-400 mr-1">Insert:</span>
           {placeholders.map((p) => (
             <button
               key={p.token}
@@ -65,6 +74,7 @@ export default function PromptEditor({ value, onChange, context, rows, fillHeigh
       )}
       <textarea
         ref={textareaRef}
+        aria-label={ariaLabel}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         spellCheck={false}

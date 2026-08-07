@@ -76,6 +76,7 @@ pub fn run() {
             commands::run_pipeline,
             commands::save_report_md,
             commands::save_all_artifacts,
+            commands::export_run_artifacts,
             commands::print_report_html,
             commands::list_history,
             commands::cancel_pipeline,
@@ -89,6 +90,7 @@ pub fn run() {
             commands::update_run_meta,
             commands::delete_run,
             commands::runs_disk_usage,
+            commands::preview_purge_runs,
             commands::purge_runs,
             commands::save_text_file,
             // Batch queue
@@ -110,6 +112,7 @@ pub fn run() {
             commands::save_settings,
             commands::get_model_catalog,
             commands::get_pipeline_config,
+            commands::get_execution_plan,
             commands::save_pipeline_config,
             commands::get_default_parallel_template,
             commands::get_default_prompt,
@@ -139,6 +142,8 @@ pub fn run() {
             commands::list_engines,
             commands::install_engine,
             commands::uninstall_engine,
+            commands::retired_marker_status,
+            commands::remove_retired_marker,
             commands::cancel_engine_install,
             mark_smoke_ready,
         ])

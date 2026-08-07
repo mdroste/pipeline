@@ -5,27 +5,85 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  NODE_VERSION: 24.18.0
+  RUST_VERSION: 1.97.1
+  GRYPE_VERSION: v0.110.0
+  SYFT_VERSION: 1.42.3
+  SYFT_LINUX_AMD64_SHA256: 0d6be741479eddd2c8644a288990c04f3df0d609bbc1599a005532a9dff63509
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   quality:
     name: Tagged SHA quality gate
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - name: Require a verified signed annotated tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          encoded_tag="$(jq -rn --arg tag "$GITHUB_REF_NAME" '$tag | @uri')"
+          ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$encoded_tag")"
+          object_type="$(jq -r '.object.type // empty' <<<"$ref_json")"
+          if [ "$object_type" != "tag" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME is lightweight. Public releases require an annotated, cryptographically signed tag."
+            exit 1
+          fi
+
+          tag_object_sha="$(jq -r '.object.sha // empty' <<<"$ref_json")"
+          if ! [[ "$tag_object_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub did not return a valid annotated tag object for $GITHUB_REF_NAME."
+            exit 1
+          fi
+
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          verified="$(jq -r '.verification.verified // false' <<<"$tag_json")"
+          reason="$(jq -r '.verification.reason // "no verification reason returned"' <<<"$tag_json")"
+          if [ "$verified" != "true" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME is not cryptographically verified by GitHub (reason: $reason)."
+            exit 1
+          fi
+          target_type="$(jq -r '.object.type // empty' <<<"$tag_json")"
+          target_sha="$(jq -r '.object.sha // empty' <<<"$tag_json")"
+          if [ "$target_type" != "commit" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME must point directly to a commit, not $target_type."
+            exit 1
+          fi
+          if [ "$target_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Verified release tag target $target_sha does not match the immutable workflow SHA $GITHUB_SHA."
+            exit 1
+          fi
+          echo "Verified signed annotated release tag $GITHUB_REF_NAME at $GITHUB_SHA."
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: gui/src-tauri -> target
 
       - name: Install Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: gui/package-lock.json
 
@@ -43,15 +101,15 @@ jobs:
         run: npm ci
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --version 0.22.2 --locked
 
       - name: Rust dependency audit
         working-directory: gui/src-tauri
         run: cargo audit
 
-      - name: npm production dependency audit
+      - name: npm dependency and build-chain audit
         working-directory: gui
-        run: npm audit --omit=dev
+        run: npm audit --audit-level=low
 
       - name: Release metadata tests
         working-directory: gui
@@ -59,7 +117,7 @@ jobs:
 
       - name: Rust tests
         working-directory: gui/src-tauri
-        run: cargo test --all-targets
+        run: cargo test --locked --all-targets
 
       - name: Rust formatting
         working-directory: gui/src-tauri
@@ -67,7 +125,7 @@ jobs:
 
       - name: Rust Clippy
         working-directory: gui/src-tauri
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Frontend tests
         working-directory: gui
@@ -78,14 +136,21 @@ jobs:
         run: npm run build
 
       - name: Install declared minimum Rust version
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
+        with:
+          toolchain: 1.88.0
 
       - name: Check declared MSRV
         working-directory: gui/src-tauri
-        run: cargo check --locked
+        run: cargo +1.88.0 check --locked
 
   release:
     needs: quality
+    permissions:
+      contents: write
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     strategy:
       fail-fast: false
       matrix:
@@ -111,34 +176,39 @@ jobs:
             expected_arch: ""
             asset_arch: ""
             max_minos: ""
-          - os: windows-latest
+          - os: windows-2022
             label: Windows
             rust_target: ""
-            tauri_args: ""
+            tauri_args: --config src-tauri/tauri.windows-signing.conf.json
             expected_arch: ""
             asset_arch: ""
             max_minos: ""
 
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.rust_target }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: gui/src-tauri -> target
 
       - name: Install Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: gui/package-lock.json
 
@@ -152,13 +222,43 @@ jobs:
         shell: bash
         run: echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.max_minos }}" >> "$GITHUB_ENV"
 
+      - name: Configure immutable Ubuntu archive snapshot
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt_version="$(apt-get --version | awk 'NR == 1 { print $2 }')"
+          if ! dpkg --compare-versions "${apt_version}" ge 2.4.11; then
+            echo "Ubuntu snapshots require apt >= 2.4.11; runner has ${apt_version}" >&2
+            exit 1
+          fi
+          snapshot="$(jq -r '.linux.aptSnapshot' scripts/release/poppler-lock.json)"
+          if ! [[ "$snapshot" =~ ^20[0-9]{6}T[0-9]{6}Z$ ]]; then
+            echo "poppler-lock.json contains an invalid Ubuntu snapshot ID: $snapshot" >&2
+            exit 1
+          fi
+          sources="${RUNNER_TEMP}/pipeline-ubuntu-snapshot.list"
+          {
+            echo "deb [snapshot=${snapshot} signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy main restricted universe"
+            echo "deb [snapshot=${snapshot} signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy-updates main restricted universe"
+            echo "deb [snapshot=${snapshot} signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu jammy-security main restricted universe"
+          } > "$sources"
+          echo "PIPELINE_APT_SOURCES=$sources" >> "$GITHUB_ENV"
+
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          set -euo pipefail
+          apt_options=(
+            -o "Dir::Etc::sourcelist=${PIPELINE_APT_SOURCES}"
+            -o "Dir::Etc::sourceparts=-"
+          )
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
+            libfuse2 \
             librsvg2-dev \
             patchelf \
             xvfb
@@ -169,7 +269,7 @@ jobs:
 
       - name: Platform Rust tests
         working-directory: gui/src-tauri
-        run: cargo test --all-targets
+        run: cargo test --locked --all-targets
 
       - name: Platform frontend tests
         working-directory: gui
@@ -185,7 +285,7 @@ jobs:
       # keychain for the main build; the two coexist fine.
       - name: Import Apple code-signing cert (macOS)
         if: startsWith(matrix.label, 'macOS')
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -196,13 +296,16 @@ jobs:
       # dropped into gui/src-tauri/resources/poppler/, which is bundled
       # by Tauri via tauri.conf.json `resources`.
       #
-      # The output directory is cached per-platform so subsequent runs
+      # The output directory is cached for macOS/Linux so subsequent runs
       # skip the download/install (brew install on macOS is ~2 min by
-      # itself). Cache invalidates when the workflow file changes.
+      # itself). Windows is reconstructed from exact conda archives on every
+      # release to re-prove package-to-PE attribution. Cache invalidates when
+      # the workflow file changes.
 
       - name: Cache poppler bundle
         id: cache_poppler
-        uses: actions/cache@v4
+        if: matrix.label != 'Windows'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: gui/src-tauri/resources/poppler
           key: poppler-v3-${{ matrix.label }}-${{ hashFiles('scripts/release/poppler-lock.json', 'scripts/release/poppler-provenance.mjs', 'scripts/release/smoke-poppler.mjs', 'scripts/release/validate-macos-machos.sh', 'gui/src-tauri/resources/poppler/README.md', '.github/workflows/release.yml') }}
@@ -320,23 +423,6 @@ jobs:
               -size -2M -print0)
           done
 
-          # Sign every Mach-O with Developer ID + hardened runtime +
-          # secure timestamp. The cert was imported in a prior step.
-          # Without this, notarization rejects the app because the
-          # Homebrew originals are unsigned and dylibbundler's rewrites
-          # invalidate any existing signatures.
-          find "$dest" -type f | while IFS= read -r f; do
-            if file "$f" | grep -q 'Mach-O'; then
-              codesign --remove-signature "$f" 2>/dev/null || true
-              codesign --force --options runtime --timestamp \
-                --sign "${APPLE_SIGNING_IDENTITY}" "$f"
-            fi
-          done
-          node scripts/release/poppler-provenance.mjs --create \
-            --platform macos --resource-dir "$dest"
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-
       - name: Bundle poppler (Linux)
         if: matrix.label == 'Linux' && steps.cache_poppler.outputs.cache-hit != 'true'
         shell: bash
@@ -344,7 +430,11 @@ jobs:
           set -euo pipefail
           lock="$GITHUB_WORKSPACE/scripts/release/poppler-lock.json"
           package_version="$(jq -r '.linux.packageVersion' "$lock")"
-          sudo apt-get install -y --allow-downgrades \
+          apt_options=(
+            -o "Dir::Etc::sourcelist=${PIPELINE_APT_SOURCES}"
+            -o "Dir::Etc::sourceparts=-"
+          )
+          sudo apt-get "${apt_options[@]}" install -y --allow-downgrades \
             "poppler-utils=${package_version}" "libpoppler118=${package_version}" patchelf
           dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
           mkdir -p "$dest/lib" "$dest/share" "$dest/licenses/debian"
@@ -439,13 +529,77 @@ jobs:
           cp -R "$root/share/poppler" "$dest/share/poppler"
           cp "$root/share/poppler/COPYING"* "$dest/licenses/poppler/"
           cp "$root/share/poppler/README" "$dest/licenses/poppler/README"
-          jq --arg version "$version" --arg license "$(jq -r '.windows.license' "$lock")" '{
-            manager: "oschwartz10612/poppler-windows prebuilt archive",
-            packages: ([{name:"poppler",version:$version,license:$license}] +
-              [.windows.components[] | {name:.}])
+          jq '{
+            manager: "conda",
+            channel: .windows.packageAttribution.channel,
+            subdir: .windows.packageAttribution.subdir,
+            attribution: .windows.packageAttribution,
+            packages: .windows.packages
           }' "$lock" > "$dest/package-inventory.json"
+
+          # The provider ZIP omitted conda-meta and was assembled from a
+          # floating solve. Reconstruct the reviewed package set on every
+          # release: verify each exact source-package archive, extract its
+          # payload, and let provenance validation prove that every shipped PE
+          # hash occurs in the attributed package.
+          conda_root="$RUNNER_TEMP/pipeline-windows-conda"
+          mkdir -p "$conda_root"
+          while IFS=$'\t' read -r package_name package_version package_build \
+            package_url package_sha; do
+            if ! [[ "$package_name" =~ ^[0-9A-Za-z._-]+$ ]] || \
+               ! [[ "$package_version" =~ ^[0-9A-Za-z._+-]+$ ]] || \
+               ! [[ "$package_build" =~ ^[0-9A-Za-z._+-]+$ ]] || \
+               ! [[ "$package_sha" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "Unsafe or incomplete Windows conda lock entry: $package_name" >&2
+              exit 1
+            fi
+            package_key="${package_name}-${package_version}-${package_build}"
+            package_archive="$conda_root/${package_key}.conda"
+            package_outer="$conda_root/${package_key}-outer"
+            package_payload="$conda_root/${package_key}"
+            curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+              --output "$package_archive" "$package_url"
+            echo "$package_sha  $package_archive" | sha256sum --check --strict
+            mkdir -p "$package_outer" "$package_payload"
+            7z x -y "$package_archive" "-o$package_outer" >/dev/null
+            mapfile -t payload_archives < <(
+              find "$package_outer" -maxdepth 1 -type f -name 'pkg-*.tar.zst' | sort
+            )
+            if [ "${#payload_archives[@]}" -ne 1 ]; then
+              echo "Expected one payload archive in $package_archive" >&2
+              exit 1
+            fi
+            7z x -y "${payload_archives[0]}" -so |
+              7z x -si -ttar -y "-o$package_payload" >/dev/null
+          done < <(
+            jq -r '.windows.packages[] |
+              [.name,.version,.build,.sourceUrl,.archiveSha256] | @tsv' "$lock"
+          )
           node scripts/release/poppler-provenance.mjs --create \
-            --platform windows --resource-dir "$dest"
+            --platform windows --resource-dir "$dest" \
+            --conda-package-root "$conda_root"
+
+      - name: Sign bundled poppler with the current certificate (macOS)
+        if: startsWith(matrix.label, 'macOS')
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
+          # Cache entries may have been produced by an older certificate.
+          # Re-sign every Mach-O on every release and then regenerate the
+          # file-hash provenance so the current protected-environment identity
+          # is authoritative.
+          find "$dest" -type f | while IFS= read -r f; do
+            if file "$f" | grep -q 'Mach-O'; then
+              codesign --remove-signature "$f" 2>/dev/null || true
+              codesign --force --options runtime --timestamp \
+                --sign "${APPLE_SIGNING_IDENTITY}" "$f"
+            fi
+          done
+          node scripts/release/poppler-provenance.mjs --create \
+            --platform macos --resource-dir "$dest"
 
       # Cache hits receive the same full validation as newly-created bundles:
       # executable smoke tests, exact version and file hashes, offline licenses,
@@ -459,6 +613,7 @@ jobs:
         run: |
           set -euo pipefail
           dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
+          provenance_extra=()
           case "$LABEL" in
             macOS-*)
               platform=macos
@@ -477,25 +632,119 @@ jobs:
                 fi
               done < <(find "$dest" -type f | sort)
               ;;
-            Windows) platform=windows ;;
+            Windows)
+              platform=windows
+              provenance_extra=(
+                --conda-package-root "$RUNNER_TEMP/pipeline-windows-conda"
+              )
+              ;;
             *) echo "Unknown release label: $LABEL" >&2; exit 1 ;;
           esac
           node scripts/release/poppler-provenance.mjs --verify \
-            --platform "$platform" --resource-dir "$dest"
+            --platform "$platform" --resource-dir "$dest" \
+            "${provenance_extra[@]}"
           node scripts/release/smoke-poppler.mjs "$dest"
 
+      - name: Require and import Windows code-signing certificate
+        id: windows_signing
+        if: matrix.label == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($required in @(
+            "WINDOWS_CERTIFICATE",
+            "WINDOWS_CERTIFICATE_PASSWORD",
+            "WINDOWS_TIMESTAMP_URL"
+          )) {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$required").Value)) {
+              throw "$required is required for a public Windows release. Configure it in the protected release environment."
+            }
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP "pipeline-windows-signing.pfx"
+          try {
+            try {
+              $pfxBytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+            } catch {
+              throw "WINDOWS_CERTIFICATE is not valid base64: $($_.Exception.Message)"
+            }
+            [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+            $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $importedCertificates = @(Import-PfxCertificate `
+              -FilePath $pfxPath `
+              -CertStoreLocation Cert:\CurrentUser\My `
+              -Password $password)
+          } finally {
+            Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
+          $certificate = $importedCertificates |
+            Where-Object { $_.HasPrivateKey } |
+            Select-Object -First 1
+          if (-not $certificate) {
+            throw "The imported Windows certificate does not expose a private key."
+          }
+          $codeSigningOid = "1.3.6.1.5.5.7.3.3"
+          if ($certificate.EnhancedKeyUsageList.ObjectId.Value -notcontains $codeSigningOid) {
+            throw "The imported Windows certificate is not valid for code signing."
+          }
+          if ($certificate.NotAfter -le (Get-Date).AddDays(7)) {
+            throw "The Windows code-signing certificate expires within seven days."
+          }
+          [Uri]$timestampUri = $null
+          if (
+            -not [Uri]::TryCreate(
+              $env:WINDOWS_TIMESTAMP_URL,
+              [UriKind]::Absolute,
+              [ref]$timestampUri
+            )
+            -or $timestampUri.Scheme -notin @("http", "https")
+          ) {
+            throw "WINDOWS_TIMESTAMP_URL must be an absolute http(s) URL approved by the certificate issuer."
+          }
+
+          $signingConfig = [ordered]@{
+            bundle = [ordered]@{
+              windows = [ordered]@{
+                certificateThumbprint = $certificate.Thumbprint
+                digestAlgorithm = "sha256"
+                timestampUrl = $env:WINDOWS_TIMESTAMP_URL
+                allowDowngrades = $false
+                webviewInstallMode = [ordered]@{
+                  type = "offlineInstaller"
+                  silent = $true
+                }
+              }
+            }
+          }
+          $signingConfig |
+            ConvertTo-Json -Depth 5 |
+            Set-Content "gui/src-tauri/tauri.windows-signing.conf.json" -Encoding utf8NoBOM
+          "thumbprint=$($certificate.Thumbprint)" | Add-Content $env:GITHUB_OUTPUT
+
+      - name: Revalidate signed tag binding before build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release/validate-signed-tag-binding.sh
+
       - name: Build and release
-        uses: tauri-apps/tauri-action@v0.6.2
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PIPELINE_RELEASE_BUILD: "1"
-          # macOS code signing
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Keep Apple credentials out of the Linux and Windows process
+          # environments even though this is a shared matrix step.
+          APPLE_CERTIFICATE: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_TEAM_ID || '' }}
         with:
           projectPath: gui
           tagName: ${{ github.ref_name }}
@@ -520,17 +769,24 @@ jobs:
             ### Windows
             Download `Pipeline-${{ steps.version.outputs.num }}-Windows.exe` and double-click to install.
 
-            The Windows installer is currently unsigned. Windows or an
-            organization-managed device may decline to run it. Do not weaken
-            system security policy to install Pipeline; use it only where the
-            device's policy permits unsigned applications.
+            The Windows application and installer are Authenticode-signed and
+            timestamped. Release CI rejects either artifact unless Windows
+            reports a valid signature.
 
             ### Linux
-            Download `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage`, make it executable (`chmod +x <file>`), then run it. The release baseline is x86-64 Ubuntu 22.04 or a compatible newer distribution.
+            Download `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage`,
+            make it executable (`chmod +x <file>`), then run it. The release
+            baseline is x86-64 Ubuntu 22.04 or a compatible newer distribution
+            with FUSE 2 (`sudo apt-get install libfuse2` on a minimal Ubuntu
+            installation).
 
-            Platform-specific CycloneDX SBOM and Poppler provenance files are
-            published beside each installer and are also available offline in
-            the installed application resources.
+            Separate platform-specific CycloneDX artifact and build-input SBOMs
+            plus Poppler provenance are published beside each installer. The
+            artifact SBOM binds the installer, build-input SBOM, and provenance
+            hashes. Build-input notices are also available offline in the
+            installed application resources. Every evidence file has a GitHub
+            build-provenance attestation, and each installer has a same-named
+            `.sha256` checksum.
 
             ---
 
@@ -539,7 +795,20 @@ jobs:
             Gemini, or an API/local endpoint) before starting a run.
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.tauri_args }}
+          args: ${{ matrix.tauri_args }} -- --locked
+
+      - name: Remove Windows private signing certificate
+        if: always() && matrix.label == 'Windows' && steps.windows_signing.outputs.thumbprint != ''
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ steps.windows_signing.outputs.thumbprint }}
+        run: |
+          $certificatePath = "Cert:\CurrentUser\My\$env:WINDOWS_CERTIFICATE_THUMBPRINT"
+          if (Test-Path $certificatePath) {
+            Remove-Item $certificatePath -Force
+          }
+          Remove-Item "gui/src-tauri/tauri.windows-signing.conf.json" `
+            -Force -ErrorAction SilentlyContinue
 
       - name: Verify macOS artifact architecture
         if: startsWith(matrix.label, 'macOS')
@@ -584,6 +853,8 @@ jobs:
           test -s "${app_notices}/PIPELINE_LICENSE.txt"
           test -s "${app_notices}/THIRD_PARTY_LICENSES.md"
           test -s "${app_notices}/THIRD_PARTY_SBOM.cdx.json"
+          test -s "${app_notices}/LICENSE_INVENTORY.json"
+          test -s "${app_notices}/NOTICE.txt"
           test -s "${app_notices}/POPPLER_INPUT_LOCK.json"
           test -s "${app_notices}/POPPLER_PROVENANCE.json"
 
@@ -674,6 +945,8 @@ jobs:
           test -s "${dmg_notices}/PIPELINE_LICENSE.txt"
           test -s "${dmg_notices}/THIRD_PARTY_LICENSES.md"
           test -s "${dmg_notices}/THIRD_PARTY_SBOM.cdx.json"
+          test -s "${dmg_notices}/LICENSE_INVENTORY.json"
+          test -s "${dmg_notices}/NOTICE.txt"
           test -s "${dmg_notices}/POPPLER_INPUT_LOCK.json"
           test -s "${dmg_notices}/POPPLER_PROVENANCE.json"
 
@@ -772,10 +1045,15 @@ jobs:
           test -s "$notices/PIPELINE_LICENSE.txt"
           test -s "$notices/THIRD_PARTY_LICENSES.md"
           test -s "$notices/THIRD_PARTY_SBOM.cdx.json"
+          test -s "$notices/LICENSE_INVENTORY.json"
+          test -s "$notices/NOTICE.txt"
           test -s "$notices/POPPLER_INPUT_LOCK.json"
           test -s "$notices/POPPLER_PROVENANCE.json"
-          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a \
-            node scripts/release/smoke-packaged-app.mjs "$GITHUB_WORKSPACE/$appimage"
+          # Exercise the public AppImage entry point and its FUSE mount path.
+          # Extraction above validates contents but is not a substitute for
+          # launching the file users download.
+          xvfb-run -a node scripts/release/smoke-packaged-app.mjs \
+            "$GITHUB_WORKSPACE/$appimage"
 
       - name: Verify Windows NSIS installer contents
         if: matrix.label == 'Windows'
@@ -811,6 +1089,8 @@ jobs:
           test -s "$notices/PIPELINE_LICENSE.txt"
           test -s "$notices/THIRD_PARTY_LICENSES.md"
           test -s "$notices/THIRD_PARTY_SBOM.cdx.json"
+          test -s "$notices/LICENSE_INVENTORY.json"
+          test -s "$notices/NOTICE.txt"
           test -s "$notices/POPPLER_INPUT_LOCK.json"
           test -s "$notices/POPPLER_PROVENANCE.json"
 
@@ -819,8 +1099,23 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          function Assert-AuthenticodeSignature([string]$Path) {
+            $signature = Get-AuthenticodeSignature -FilePath $Path
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+              throw "Authenticode verification failed for ${Path}: $($signature.Status) $($signature.StatusMessage)"
+            }
+            if (-not $signature.SignerCertificate) {
+              throw "Authenticode verification found no signer certificate for $Path"
+            }
+            if (-not $signature.TimeStamperCertificate) {
+              throw "Authenticode verification found no trusted timestamp for $Path"
+            }
+            return $signature
+          }
+
           $installer = Get-ChildItem "gui/src-tauri/target/release/bundle/nsis/Pipeline_*_x64-setup.exe" | Select-Object -First 1
           if (-not $installer) { throw "Windows NSIS installer was not produced" }
+          $installerSignature = Assert-AuthenticodeSignature $installer.FullName
 
           $installDir = Join-Path $env:RUNNER_TEMP "pipeline-smoke-install"
           $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -PassThru
@@ -830,6 +1125,10 @@ jobs:
             Where-Object { $_.Name -ne "uninstall.exe" } |
             Select-Object -First 1
           if (-not $application) { throw "Installed Pipeline executable was not found under $installDir" }
+          $applicationSignature = Assert-AuthenticodeSignature $application.FullName
+          if ($applicationSignature.SignerCertificate.Thumbprint -ne $installerSignature.SignerCertificate.Thumbprint) {
+            throw "The installed application and NSIS installer were signed by different certificates."
+          }
           node scripts/release/smoke-packaged-app.mjs $application.FullName
 
           $uninstaller = Get-ChildItem $installDir -Recurse -File -Filter "uninstall.exe" | Select-Object -First 1
@@ -837,29 +1136,55 @@ jobs:
           $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstall failed with exit code $($uninstall.ExitCode)" }
 
+      - name: Revalidate signed tag binding before publishing assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release/validate-signed-tag-binding.sh
+
       - name: Rename release assets
+        id: release_assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.num }}
           TAG: ${{ github.ref_name }}
           LABEL: ${{ matrix.label }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+          ASSET_ARCH: ${{ matrix.asset_arch }}
         shell: bash
         run: |
           set -euo pipefail
 
-          # Note: /releases/tags/{tag} does NOT return draft releases,
-          # so we list all releases and filter by tag in jq. Also retry
-          # up to ~60s because freshly-uploaded assets sometimes take
-          # tens of seconds to appear in the release listing on the
-          # Windows runner (the GitHub Releases API appears to be
-          # eventually consistent).
+          # /releases/tags/{tag} does not return draft releases. Resolve the
+          # unique draft through the paginated collection once, then query its
+          # paginated asset endpoint. A repository with more than 30 releases
+          # must not make current release assets invisible to this gate.
+          release_id=""
+          for attempt in $(seq 1 20); do
+            release_id="$(gh api --paginate \
+              "/repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq -rs --arg tag "${TAG}" \
+                'add | map(select(.tag_name == $tag and .draft == true)) |
+                 if length == 1 then .[0].id else empty end' || true)"
+            if [[ "${release_id}" =~ ^[0-9]+$ ]]; then
+              break
+            fi
+            if [ "${attempt}" -eq 20 ]; then
+              echo "Unique draft release ${TAG} was not available after retries" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+
           lookup_asset_id() {
             local name="$1"
             local asset_id=""
             for attempt in $(seq 1 20); do
-              asset_id=$(gh api "/repos/${GITHUB_REPOSITORY}/releases" \
-                --jq ".[] | select(.tag_name == \"${TAG}\") | .assets[] | select(.name == \"${name}\") | .id" \
-                2>/dev/null || true)
+              asset_id="$(gh api --paginate \
+                "/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" |
+                jq -rs --arg name "${name}" \
+                  'add | map(select(.name == $name)) |
+                   if length == 1 then .[0].id else empty end' || true)"
               if [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
                 echo "${asset_id}"
                 return 0
@@ -907,6 +1232,8 @@ jobs:
             "macOS-arm64")
               platform_name="macOS-AppleSilicon"
               friendly_asset="Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
+              artifact_path="$(find "gui/src-tauri/target/${RUST_TARGET}/release/bundle/dmg" \
+                -maxdepth 1 -type f -name "Pipeline_*_${ASSET_ARCH}.dmg" -print -quit)"
               rename_asset "Pipeline_${VERSION}_aarch64.dmg" \
                            "${friendly_asset}"
               delete_asset "Pipeline_aarch64.app.tar.gz"
@@ -915,6 +1242,8 @@ jobs:
             "macOS-x64")
               platform_name="macOS-Intel"
               friendly_asset="Pipeline-${VERSION}-macOS-Intel.dmg"
+              artifact_path="$(find "gui/src-tauri/target/${RUST_TARGET}/release/bundle/dmg" \
+                -maxdepth 1 -type f -name "Pipeline_*_${ASSET_ARCH}.dmg" -print -quit)"
               rename_asset "Pipeline_${VERSION}_x64.dmg" \
                            "${friendly_asset}"
               delete_asset "Pipeline_x64.app.tar.gz"
@@ -923,12 +1252,16 @@ jobs:
             "Windows")
               platform_name="Windows"
               friendly_asset="Pipeline-${VERSION}-Windows.exe"
+              artifact_path="$(find gui/src-tauri/target/release/bundle/nsis \
+                -maxdepth 1 -type f -name 'Pipeline_*_x64-setup.exe' -print -quit)"
               rename_asset "Pipeline_${VERSION}_x64-setup.exe" \
                            "${friendly_asset}"
               ;;
             "Linux")
               platform_name="Linux"
               friendly_asset="Pipeline-${VERSION}-Linux.AppImage"
+              artifact_path="$(find gui/src-tauri/target/release/bundle/appimage \
+                -maxdepth 1 -type f -name 'Pipeline_*_amd64.AppImage' -print -quit)"
               rename_asset "Pipeline_${VERSION}_amd64.AppImage" \
                            "${friendly_asset}"
               ;;
@@ -937,15 +1270,277 @@ jobs:
               exit 1
               ;;
           esac
+          if [ -z "${artifact_path}" ] || [ ! -s "${artifact_path}" ]; then
+            echo "Local installer for ${friendly_asset} was not found or is empty" >&2
+            exit 1
+          fi
 
           # Publish the same machine-readable records that are bundled
           # offline. These are required release assets, not best-effort logs.
-          sbom_name="Pipeline-${VERSION}-${platform_name}-SBOM.cdx.json"
+          artifact_sbom_name="Pipeline-${VERSION}-${platform_name}-Artifact-SBOM.cdx.json"
+          build_input_sbom_name="Pipeline-${VERSION}-${platform_name}-Build-input-SBOM.cdx.json"
           provenance_name="Pipeline-${VERSION}-${platform_name}-Poppler-provenance.json"
+          checksum_name="${friendly_asset}.sha256"
+          checksum_path="${RUNNER_TEMP}/${checksum_name}"
+          artifact_sbom_path="${RUNNER_TEMP}/${artifact_sbom_name}"
+          node scripts/release/artifact-integrity.mjs \
+            --artifact "${artifact_path}" \
+            --asset-name "${friendly_asset}" \
+            --output "${checksum_path}" \
+            --version "${VERSION}" \
+            --build-input-sbom "gui/src-tauri/resources/notices/THIRD_PARTY_SBOM.cdx.json" \
+            --build-input-sbom-asset-name "${build_input_sbom_name}" \
+            --provenance "gui/src-tauri/resources/poppler/PROVENANCE.json" \
+            --provenance-asset-name "${provenance_name}" \
+            --artifact-sbom-output "${artifact_sbom_path}" \
+            --github-output "${GITHUB_OUTPUT}"
           gh release upload "${TAG}" \
-            "gui/src-tauri/resources/notices/THIRD_PARTY_SBOM.cdx.json#${sbom_name}" \
+            "${artifact_sbom_path}#${artifact_sbom_name}" \
+            "gui/src-tauri/resources/notices/THIRD_PARTY_SBOM.cdx.json#${build_input_sbom_name}" \
             "gui/src-tauri/resources/poppler/PROVENANCE.json#${provenance_name}" \
+            "${checksum_path}#${checksum_name}" \
             --clobber
           lookup_asset_id "${friendly_asset}" >/dev/null
-          lookup_asset_id "${sbom_name}" >/dev/null
+          lookup_asset_id "${artifact_sbom_name}" >/dev/null
+          lookup_asset_id "${build_input_sbom_name}" >/dev/null
           lookup_asset_id "${provenance_name}" >/dev/null
+          lookup_asset_id "${checksum_name}" >/dev/null
+
+  release-complete:
+    name: Verify complete draft release
+    needs: release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Revalidate signed tag binding before final release validation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release/validate-signed-tag-binding.sh
+
+      - name: Validate required draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./gui/package.json").version')"
+          release_metadata="${RUNNER_TEMP}/pipeline-draft-release-metadata.json"
+          release_assets="${RUNNER_TEMP}/pipeline-draft-release-assets.json"
+          release_json="${RUNNER_TEMP}/pipeline-draft-release.json"
+          for attempt in $(seq 1 20); do
+            gh api --paginate "/repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq -s --arg tag "${TAG}" \
+                'add | map(select(.tag_name == $tag)) |
+                 if length == 1 then .[0] else null end' > "${release_metadata}"
+            if jq -e '.draft == true and (.id | type == "number")' \
+              "${release_metadata}" >/dev/null 2>&1; then
+              break
+            fi
+            if [ "${attempt}" -eq 20 ]; then
+              echo "Draft release ${TAG} was not available after retries" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+          release_id="$(jq -r '.id' "${release_metadata}")"
+          gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" |
+            jq -s 'add' > "${release_assets}"
+          jq --slurpfile assets "${release_assets}" \
+            '.assets = $assets[0]' "${release_metadata}" > "${release_json}"
+          node scripts/release/validate-release-assets.mjs \
+            --version "${version}" \
+            --release-json "${release_json}"
+
+          evidence_dir="${RUNNER_TEMP}/pipeline-release-evidence"
+          mkdir -p "${evidence_dir}"
+          release_targets=(
+            "macOS-AppleSilicon|macos|Pipeline-${version}-macOS-AppleSilicon.dmg"
+            "macOS-Intel|macos|Pipeline-${version}-macOS-Intel.dmg"
+            "Windows|windows|Pipeline-${version}-Windows.exe"
+            "Linux|linux|Pipeline-${version}-Linux.AppImage"
+          )
+
+          download_asset() {
+            local asset_name="$1"
+            local destination="$2"
+            local asset_id
+            asset_id="$(jq -r --arg name "${asset_name}" \
+              'map(select(.name == $name)) |
+               if length == 1 then .[0].id else empty end' "${release_assets}")"
+            if ! [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
+              echo "Release asset ${asset_name} did not resolve to one numeric ID" >&2
+              return 1
+            fi
+            gh api -H "Accept: application/octet-stream" \
+              "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "${destination}"
+            test -s "${destination}"
+          }
+
+          for target in "${release_targets[@]}"; do
+            IFS='|' read -r platform native_platform asset_name <<<"${target}"
+            checksum_name="${asset_name}.sha256"
+            artifact_sbom_name="Pipeline-${version}-${platform}-Artifact-SBOM.cdx.json"
+            build_input_sbom_name="Pipeline-${version}-${platform}-Build-input-SBOM.cdx.json"
+            provenance_name="Pipeline-${version}-${platform}-Poppler-provenance.json"
+            for evidence_name in \
+              "${asset_name}" \
+              "${checksum_name}" \
+              "${artifact_sbom_name}" \
+              "${build_input_sbom_name}" \
+              "${provenance_name}"; do
+              download_asset "${evidence_name}" "${evidence_dir}/${evidence_name}"
+            done
+
+            checksum_record="$(tr -d '\r\n' < "${evidence_dir}/${checksum_name}")"
+            expected_sha="${checksum_record%%  *}"
+            recorded_name="${checksum_record#*  }"
+            if [[ ! "${expected_sha}" =~ ^[0-9a-f]{64}$ ]] || [ "${recorded_name}" != "${asset_name}" ]; then
+              echo "Malformed checksum record for ${asset_name}: ${checksum_record}" >&2
+              exit 1
+            fi
+            actual_sha="$(sha256sum "${evidence_dir}/${asset_name}" | awk '{print $1}')"
+            if [ "${actual_sha}" != "${expected_sha}" ]; then
+              echo "Checksum mismatch for downloaded release asset ${asset_name}" >&2
+              exit 1
+            fi
+            jq -e --arg platform "${native_platform}" '.platform == $platform' \
+              "${evidence_dir}/${provenance_name}" >/dev/null
+            jq -e --arg platform "${native_platform}" \
+              'any(.metadata.properties[]?;
+                .name == "pipeline:platform" and .value == $platform)' \
+              "${evidence_dir}/${build_input_sbom_name}" >/dev/null
+            node scripts/release/artifact-integrity.mjs \
+              --verify \
+              --artifact "${evidence_dir}/${asset_name}" \
+              --asset-name "${asset_name}" \
+              --version "${version}" \
+              --build-input-sbom "${evidence_dir}/${build_input_sbom_name}" \
+              --build-input-sbom-asset-name "${build_input_sbom_name}" \
+              --provenance "${evidence_dir}/${provenance_name}" \
+              --provenance-asset-name "${provenance_name}" \
+              --artifact-sbom "${evidence_dir}/${artifact_sbom_name}"
+            cp "${evidence_dir}/${build_input_sbom_name}" \
+              "${RUNNER_TEMP}/pipeline-${platform}-build-input.cdx.json"
+          done
+
+      - name: Validate build-input SBOM decoding with pinned Grype libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          syft_archive="${RUNNER_TEMP}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          syft_dir="${RUNNER_TEMP}/pipeline-syft-${SYFT_VERSION}"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "${syft_archive}" \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_LINUX_AMD64_SHA256}  ${syft_archive}" |
+            sha256sum --check --strict
+          mkdir -p "${syft_dir}"
+          tar -xzf "${syft_archive}" -C "${syft_dir}" syft
+
+          for platform in macOS-AppleSilicon macOS-Intel Windows Linux; do
+            cdx="${RUNNER_TEMP}/pipeline-${platform}-build-input.cdx.json"
+            decoded="${RUNNER_TEMP}/pipeline-${platform}-build-input.syft.json"
+            "${syft_dir}/syft" convert \
+              "${cdx}" \
+              --quiet \
+              --output "syft-json=${decoded}"
+
+            case "${platform}" in
+              macOS-*) package_type=homebrew ;;
+              Windows) package_type=conda ;;
+              Linux) package_type=deb ;;
+              *) echo "Unknown SBOM platform: ${platform}" >&2; exit 1 ;;
+            esac
+
+            # Fail closed if the decoder loses, renames, or invents any native
+            # package. This protects every platform rather than merely proving
+            # that the input file is syntactically valid CycloneDX.
+            jq -e --arg type "${package_type}" --slurpfile cdx "${cdx}" '
+              ([.artifacts[] | select(.type == $type) | {name,version}] |
+                sort_by(.name, .version))
+              ==
+              ([$cdx[0].components[] |
+                select(any(.properties[]?;
+                  .name == "pipeline:system-package" and .value == "true")) |
+                {name,version}] |
+                sort_by(.name, .version))
+            ' "${decoded}" >/dev/null
+          done
+
+          # Grype v0.110.0 embeds Syft v1.42.3. Prove that its real CycloneDX
+          # decoder retains all Windows package names/versions as CondaPkg
+          # rather than silently converting them to UnknownPackage or the
+          # literal package name "conda".
+          jq -e --slurpfile lock scripts/release/poppler-lock.json '
+            ([.artifacts[] | select(.type == "conda") | {name,version}] |
+              sort_by(.name))
+            ==
+            ([$lock[0].windows.packages[] | {name,version}] |
+              sort_by(.name))
+          ' "${RUNNER_TEMP}/pipeline-Windows-build-input.syft.json" >/dev/null
+
+      - name: Scan macOS Apple Silicon release inputs for vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          sbom: ${{ runner.temp }}/pipeline-macOS-AppleSilicon-build-input.cdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: table
+          add-cpes-if-none: true
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Scan macOS Intel release inputs for vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          sbom: ${{ runner.temp }}/pipeline-macOS-Intel-build-input.cdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: table
+          add-cpes-if-none: true
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Scan Windows release inputs for vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          sbom: ${{ runner.temp }}/pipeline-Windows-build-input.cdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: table
+          add-cpes-if-none: true
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Scan Linux release inputs for vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          sbom: ${{ runner.temp }}/pipeline-Linux-build-input.cdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: table
+          add-cpes-if-none: true
+          grype-version: ${{ env.GRYPE_VERSION }}
+          cache-db: true
+
+      - name: Attest complete release evidence set
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: ${{ runner.temp }}/pipeline-release-evidence/*

@@ -62,11 +62,12 @@ compatibility bundle from their cached extraction.
 
 ### PDF
 
-- Text comes from the configured verified LLM, PaddleOCR-VL, marker, or
-  pdftotext extractor.
+- Text comes from the configured verified LLM, PaddleOCR-VL, or pdftotext
+  extractor. Marker is retired in 1.0.1; passive decoding remains only for
+  historical run artifacts.
 - Page markers are retained when available.
 - Every page is rendered independently of the text extraction method.
-- Marker images are retained as figure assets when marker emits them.
+- Historical Marker images already stored in runs remain figure assets.
 - Figure/table nodes that lack a dedicated crop fall back to their rendered
   page asset. This is explicit in the asset link rather than silently
   pretending that a crop exists.
@@ -113,21 +114,40 @@ Primary document access is selected per step. A profile may expose any subset
 of four independently useful representations:
 
 - `primary.text`: a private staged copy of readable `document.md`;
-- `primary.structure`: a private staged copy of the canonical bundle through
-  `{document_bundle}`;
+- `primary.structure`: a private staged semantic index through
+  `{document_bundle}`. The index retains equations, results, captions, tables,
+  figures, assets, provenance, and their useful representations, but omits
+  page-text, paragraph-block, and footer nodes already duplicated in
+  `document.md`;
 - `primary.visuals`: the run's page, figure, and document-media roots plus the
   artifact-root hint needed to resolve bundle `rel_path` values;
 - `primary.source`: the original file or exact source folder selected by the
   user.
 
-The resolver constructs a private artifact view for every call. Unselected
+The canonical `context/document_bundle.json` remains unchanged for persistence,
+the Artifact Explorer, and re-runs. The resolver constructs the smaller index
+only for model access, and prompts tell agents to consult it selectively rather
+than return the whole JSON through a text tool. The resolver constructs a
+private artifact view for every call. Unselected
 representations are absent from its prompt placeholders, generated artifact
 manifest, filesystem read roots, and shared-context cache. `Read` is derived
 from the resulting view, while `ReadDocumentAsset` is derived specifically from
-`primary.visuals`; neither is a profile-level tool permission.
+`primary.visuals`; neither is a profile-level tool permission. On direct API
+transports those logical capabilities expose both the compatible single-item
+tools and bounded batch variants:
 
-For direct APIs, `ReadDocumentAsset` validates the requested path against the
-run's allowed roots and returns a real multimodal image block:
+- `Read` and `ReadTextBatch` for UTF-8 text, with batch requests selecting
+  1-based line ranges or byte offsets;
+- `ReadDocumentAsset` and `ReadDocumentAssetsBatch` for real multimodal image
+  content.
+
+Exact duplicates are returned once, aggregate responses stay under independent
+text/image budgets, and a truncated or failed item can be retried with the
+single-item tool. Batch names are an API implementation detail, not profile
+permissions.
+
+For direct APIs, the asset readers validate every requested path against the
+run's allowed roots and return provider-native multimodal image blocks:
 
 - Anthropic: base64 image source;
 - OpenAI: `image_url` data URL in a user content part after the tool result;
@@ -135,8 +155,11 @@ run's allowed roots and returns a real multimodal image block:
 
 Claude Code maps the capability to its native multimodal `Read` tool. Codex
 and Gemini CLI receive the same selected roots through their native workspace
-controls. Text, image, PDF, call-count, and cumulative byte limits remain
-enforced.
+controls. Prompts tell CLI agents to group independent bounded reads and image
+inspections into one tool turn when supported. All transports must fall back
+to sequential reads for missing, truncated, or failed items; batching never
+relaxes an evidence requirement. Text, image, PDF, call-count, and cumulative
+byte limits remain enforced.
 
 ## Visual QA
 
@@ -159,7 +182,9 @@ text-to-visual links.
 
 - `ExtractionResult` is retained as the adapter boundary and old-profile
   compatibility view.
-- Existing prompt tokens keep their meaning. `{document_bundle}` is additive.
+- Existing prompt tokens keep their meaning. `{document_bundle}` points to the
+  compact structural index for model calls; the canonical bundle remains a run
+  artifact.
 - Existing runs without a bundle still open and resume.
 - New optional fields can be added within schema 1.x using Serde defaults.
 - A breaking semantic change requires a new major schema and an explicit

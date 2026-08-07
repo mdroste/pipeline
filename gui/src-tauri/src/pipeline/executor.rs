@@ -234,6 +234,27 @@ fn stage_artifact_file(
     Ok(normalized_path(&destination))
 }
 
+fn stage_document_index(
+    root: &std::path::Path,
+    source: &str,
+    relative: &std::path::Path,
+) -> Result<String, String> {
+    let raw = std::fs::read_to_string(source)
+        .map_err(|error| format!("Failed to read DocumentBundle for model index: {error}"))?;
+    let bundle: crate::document_bundle::DocumentBundle = serde_json::from_str(&raw)
+        .map_err(|error| format!("Failed to parse DocumentBundle for model index: {error}"))?;
+    bundle.validate()?;
+    let index = bundle.to_model_index_pretty()?;
+    let destination = root.join(relative);
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create document-index directory: {error}"))?;
+    }
+    std::fs::write(&destination, index)
+        .map_err(|error| format!("Failed to stage document index: {error}"))?;
+    Ok(normalized_path(&destination))
+}
+
 fn add_read_root(read_dirs: &mut Vec<String>, path: &std::path::Path) {
     if path.exists() {
         read_dirs.push(normalized_path(path));
@@ -292,12 +313,14 @@ fn resolve_artifact_context(
     let document_bundle_path = if primary_parts.contains(&PrimaryArtifactPart::Structure)
         && !runtime.document_bundle_path.is_empty()
     {
-        let path = stage_artifact_file(
+        let path = stage_document_index(
             view.path(),
             runtime.document_bundle_path,
-            std::path::Path::new("input/main/document_bundle.json"),
+            std::path::Path::new("input/main/document_index.json"),
         )?;
-        manifest_lines.push(format!("- Primary document structure: {path}"));
+        manifest_lines.push(format!(
+            "- Compact primary document structure index: {path}"
+        ));
         path
     } else {
         String::new()
@@ -540,6 +563,7 @@ fn prepare_selected_shared_context(
     enabled: bool,
     resolved: &ResolvedArtifactContext,
     orientation: &serde_json::Value,
+    pool: &super::context_cache::PreparedContextPool,
 ) -> Result<Option<Arc<super::context_cache::PreparedContext>>, String> {
     if !enabled || (!resolved.includes_primary_text && !resolved.includes_survey) {
         return Ok(None);
@@ -556,9 +580,120 @@ fn prepare_selected_shared_context(
     } else {
         &empty_survey
     };
-    Ok(Some(Arc::new(super::context_cache::PreparedContext::new(
-        &text, survey,
-    )?)))
+    Ok(Some(pool.prepare(&text, survey)?))
+}
+
+/// One authoritative row in the profile's planned execution timeline.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionPlanStage {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub step_ids: Vec<String>,
+}
+
+/// Simulate the exact readiness scheduler used by [`execute_steps`] without
+/// running dynamic `run_if` predicates. The resulting waves are the canonical
+/// preflight timeline exposed to the UI.
+pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>, String> {
+    let mut plan = vec![ExecutionPlanStage {
+        id: "extracting".to_string(),
+        kind: "extracting".to_string(),
+        label: if config.extraction.input_mode == "none" {
+            "Prepare run".to_string()
+        } else {
+            "Extract input".to_string()
+        },
+        step_ids: Vec::new(),
+    }];
+    if config.use_orientation {
+        plan.push(ExecutionPlanStage {
+            id: "orienting".to_string(),
+            kind: "orienting".to_string(),
+            label: "Build orientation map".to_string(),
+            step_ids: Vec::new(),
+        });
+    }
+
+    let enabled: Vec<&StepConfig> = config.steps.iter().filter(|step| step.enabled).collect();
+    let dependencies = resolve_dependencies(&enabled);
+    let mut done = std::collections::HashSet::new();
+    let mut remaining: Vec<usize> = (0..enabled.len()).collect();
+    let mut schedule_index = 0usize;
+    let mut parallel_number = 0usize;
+    let mut sequential_number = 0usize;
+    while !remaining.is_empty() {
+        let ready = ready_indices(&remaining, &dependencies, &done);
+        if ready.is_empty() {
+            let stuck = remaining
+                .iter()
+                .map(|index| enabled[*index].label.as_str())
+                .collect::<Vec<_>>();
+            return Err(format!(
+                "Pipeline plan has unsatisfiable dependencies: {}",
+                stuck.join(", ")
+            ));
+        }
+        schedule_index += 1;
+        let ready_parallel = ready
+            .iter()
+            .copied()
+            .filter(|index| enabled[*index].phase == Phase::Parallel)
+            .collect::<Vec<_>>();
+        if !ready_parallel.is_empty() {
+            parallel_number += 1;
+            let wave_steps = ready_parallel
+                .iter()
+                .map(|index| enabled[*index])
+                .collect::<Vec<_>>();
+            plan.push(ExecutionPlanStage {
+                id: format!("wave-{schedule_index}-parallel"),
+                kind: "dispatching".to_string(),
+                label: format!("Parallel wave {parallel_number}"),
+                step_ids: wave_steps.iter().map(|step| step.id.clone()).collect(),
+            });
+            let merged_step_ids = wave_steps
+                .iter()
+                .filter(|step| step.agents.len() > 1)
+                .map(|step| step.id.clone())
+                .collect::<Vec<_>>();
+            if config.merge.enabled && !merged_step_ids.is_empty() {
+                plan.push(ExecutionPlanStage {
+                    id: format!("wave-{schedule_index}-merge"),
+                    kind: "merging".to_string(),
+                    label: format!("Merge parallel wave {parallel_number}"),
+                    step_ids: merged_step_ids,
+                });
+            }
+            mark_steps_done(&mut done, &wave_steps);
+            remaining.retain(|index| !ready_parallel.contains(index));
+            continue;
+        }
+
+        let index = *ready.iter().min().expect("ready list is non-empty");
+        let step = enabled[index];
+        sequential_number += 1;
+        plan.push(ExecutionPlanStage {
+            id: format!("wave-{schedule_index}-sequential"),
+            kind: "synthesizing".to_string(),
+            label: if step.label.is_empty() {
+                format!("Sequential step {sequential_number}")
+            } else {
+                step.label.clone()
+            },
+            step_ids: vec![step.id.clone()],
+        });
+        done.insert(step.id.clone());
+        remaining.retain(|candidate| *candidate != index);
+    }
+    plan.push(ExecutionPlanStage {
+        id: "done".to_string(),
+        kind: "done".to_string(),
+        label: "Complete".to_string(),
+        step_ids: Vec::new(),
+    });
+    Ok(plan)
 }
 
 /// Execute all enabled steps in the pipeline.
@@ -588,6 +723,7 @@ pub async fn execute_steps(
 ) -> Result<ExecutionResult, String> {
     let semaphore = Arc::new(Semaphore::new(settings.max_workers.max(1) as usize));
     let output_budget = Arc::new(OutputBudget::default());
+    let shared_context_pool = super::context_cache::PreparedContextPool::default();
     let mut all_outputs: Vec<StepOutput> = Vec::new();
     let mut failed_steps: Vec<StepFailure> = Vec::new();
 
@@ -597,6 +733,9 @@ pub async fn execute_steps(
     // Ids that have completed (including skipped) so dependents can start.
     let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut remaining: Vec<usize> = (0..enabled.len()).collect();
+    let mut schedule_index = 0usize;
+    let mut parallel_number = 0usize;
+    let mut sequential_number = 0usize;
 
     while !remaining.is_empty() {
         let ready = ready_indices(&remaining, &deps, &done);
@@ -610,6 +749,7 @@ pub async fn execute_steps(
                 stuck.join(", ")
             ));
         }
+        schedule_index += 1;
 
         let ready_parallel: Vec<usize> = ready
             .iter()
@@ -618,6 +758,30 @@ pub async fn execute_steps(
             .collect();
 
         if !ready_parallel.is_empty() {
+            parallel_number += 1;
+            let wave_id = format!("wave-{schedule_index}-parallel");
+            let wave_label = format!("Parallel wave {parallel_number}");
+            let wave_step_ids = ready_parallel
+                .iter()
+                .map(|index| enabled[*index].id.clone())
+                .collect::<Vec<_>>();
+            let merged_step_ids = ready_parallel
+                .iter()
+                .filter(|index| enabled[**index].agents.len() > 1)
+                .map(|index| enabled[*index].id.clone())
+                .collect::<Vec<_>>();
+            let planned_merge = config.merge.enabled && !merged_step_ids.is_empty();
+            app.emit_event(
+                "pipeline:stage",
+                serde_json::json!({
+                    "stage": "dispatching",
+                    "id": wave_id,
+                    "label": wave_label,
+                    "stepIds": wave_step_ids,
+                }),
+            )
+            .ok();
+
             // Partition into steps whose run_if guard passes (dispatch) and
             // those it skips (record a placeholder so dependents proceed).
             let mut to_run: Vec<&StepConfig> = Vec::new();
@@ -666,11 +830,6 @@ pub async fn execute_steps(
             remaining.retain(|i| !ready_parallel.contains(i));
 
             if !to_run.is_empty() {
-                app.emit_event(
-                    "pipeline:stage",
-                    serde_json::json!({"stage": "dispatching"}),
-                )
-                .ok();
                 let (mut wave_outputs, wave_failures) = run_parallel_wave(
                     app,
                     &to_run,
@@ -691,6 +850,7 @@ pub async fn execute_steps(
                     write_dir,
                     &output_budget,
                     config.context_cache.enabled,
+                    &shared_context_pool,
                 )
                 .await?;
                 // Every dispatched step is terminal once its wave returns. A
@@ -702,9 +862,20 @@ pub async fn execute_steps(
                 failed_steps.extend(wave_failures);
 
                 let has_multi_agent = wave_outputs.iter().any(|o| !o.merge_group.is_empty());
+                if planned_merge {
+                    app.emit_event(
+                        "pipeline:stage",
+                        serde_json::json!({
+                            "stage": "merging",
+                            "id": format!("wave-{schedule_index}-merge"),
+                            "label": format!("Merge parallel wave {parallel_number}"),
+                            "stepIds": merged_step_ids,
+                            "skipped": !has_multi_agent,
+                        }),
+                    )
+                    .ok();
+                }
                 if has_multi_agent && config.merge.enabled {
-                    app.emit_event("pipeline:stage", serde_json::json!({"stage": "merging"}))
-                        .ok();
                     match merge::merge_step_outputs(
                         app,
                         wave_outputs.clone(),
@@ -731,6 +902,18 @@ pub async fn execute_steps(
                 }
                 checkpoint_outputs(app, write_dir, all_outputs.len(), &wave_outputs).await;
                 all_outputs.extend(wave_outputs);
+            } else if planned_merge {
+                app.emit_event(
+                    "pipeline:stage",
+                    serde_json::json!({
+                        "stage": "merging",
+                        "id": format!("wave-{schedule_index}-merge"),
+                        "label": format!("Merge parallel wave {parallel_number}"),
+                        "stepIds": merged_step_ids,
+                        "skipped": true,
+                    }),
+                )
+                .ok();
             }
             continue;
         }
@@ -739,6 +922,21 @@ pub async fn execute_steps(
         let i = *ready.iter().min().unwrap();
         let step = enabled[i];
         remaining.retain(|&j| j != i);
+        sequential_number += 1;
+        app.emit_event(
+            "pipeline:stage",
+            serde_json::json!({
+                "stage": "synthesizing",
+                "id": format!("wave-{schedule_index}-sequential"),
+                "label": if step.label.is_empty() {
+                    format!("Sequential step {sequential_number}")
+                } else {
+                    step.label.clone()
+                },
+                "stepIds": [step.id.clone()],
+            }),
+        )
+        .ok();
 
         // Resume: a preloaded step reuses the parent run's output.
         if let Some(cached) = preloaded.get(&step.id) {
@@ -776,11 +974,6 @@ pub async fn execute_steps(
             }
         }
 
-        app.emit_event(
-            "pipeline:stage",
-            serde_json::json!({"stage": "synthesizing"}),
-        )
-        .ok();
         let resolved = resolve_artifact_context(
             step,
             ArtifactRuntime {
@@ -798,6 +991,7 @@ pub async fn execute_steps(
             config.context_cache.enabled,
             &resolved,
             orientation_value,
+            &shared_context_pool,
         )?;
         match run_sequential_step(
             app,
@@ -1047,6 +1241,73 @@ fn append_shared_context_note(
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Shared-context prompt",
     )?;
+    Ok(prompt)
+}
+
+fn append_evidence_retrieval_guidance(
+    mut prompt: String,
+    tools: &[String],
+) -> Result<String, String> {
+    let can_read_text = tools.iter().any(|tool| tool == "Read");
+    let can_read_visuals = tools.iter().any(|tool| tool == "ReadDocumentAsset");
+    let can_search_web = tools.iter().any(|tool| tool == "WebSearch");
+    if !can_read_text && !can_read_visuals && !can_search_web {
+        return Ok(prompt);
+    }
+
+    crate::safety::push_str_limited(
+        &mut prompt,
+        "\n\nEVIDENCE RETRIEVAL:\n\
+         For evidence not already present in shared context, identify the independent items you \
+         need before calling tools.",
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Evidence-retrieval prompt",
+    )?;
+    if can_read_text {
+        crate::safety::push_str_limited(
+            &mut prompt,
+            "\nWhen multiple bounded text ranges are needed, prefer ReadTextBatch when it is \
+             offered; otherwise issue independent bounded reads together in one tool turn when \
+             supported.",
+            crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+            "Evidence-retrieval prompt",
+        )?;
+    }
+    if can_read_visuals {
+        crate::safety::push_str_limited(
+            &mut prompt,
+            "\nWhen multiple visual assets are needed, prefer ReadDocumentAssetsBatch when it is \
+             offered; otherwise inspect independent images together in one tool turn when \
+             supported.",
+            crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+            "Evidence-retrieval prompt",
+        )?;
+    }
+    if can_search_web {
+        crate::safety::push_str_limited(
+            &mut prompt,
+            "\nForm the complete set of independent web queries first and issue them together in \
+             one tool turn when supported.",
+            crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+            "Evidence-retrieval prompt",
+        )?;
+    }
+    crate::safety::push_str_limited(
+        &mut prompt,
+        "\nIf batching or parallel calls are unavailable, or any item is missing, truncated, or \
+         fails, continue sequentially until every item required by the review instructions has \
+         been checked. Batching is only an efficiency optimization: never omit evidence.",
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Evidence-retrieval prompt",
+    )?;
+    if can_read_visuals {
+        crate::safety::push_str_limited(
+            &mut prompt,
+            " Never substitute extracted text for a required visual inspection.",
+            crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+            "Evidence-retrieval prompt",
+        )?;
+    }
     Ok(prompt)
 }
 
@@ -1331,13 +1592,18 @@ fn build_parallel_prompt(
              When the orientation map lists a figure or table with a page number, you can read that page of the PDF to inspect the visual content."
         )
     } else {
-        let source_dir = std::path::Path::new(&normalized_source)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| normalized_source.clone());
+        let source = std::path::Path::new(&normalized_source);
+        let source_root = if source.is_dir() {
+            normalized_source.clone()
+        } else {
+            source
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| normalized_source.clone())
+        };
         format!(
-            "The LaTeX source directory is: {source_dir}\n\
-             Figure files (PNG, PDF, etc.) referenced by \\includegraphics are in this directory or its subdirectories. You can read them to inspect visual content."
+            "The selected source context is at: {source_root}\n\
+             For LaTeX inputs, this private view contains the main source and the bounded local dependencies discovered from it (such as included sections, bibliography files, and referenced figures)."
         )
     };
     let normalized_bundle = document_bundle_path.replace('\\', "/");
@@ -1346,8 +1612,8 @@ fn build_parallel_prompt(
         source_hint
     } else {
         format!(
-            "The canonical DocumentBundle (JSON) is at: {normalized_bundle}\n\
-             Its nodes identify equations, tables, figures, page references, provenance, and asset IDs.\n\
+            "A compact DocumentBundle index (JSON) is at: {normalized_bundle}\n\
+             Use the readable document for prose. Use this index selectively to locate equations, tables, figures, page references, provenance, and asset IDs; do not read it wholesale.\n\
              Asset rel_path values are relative to the run directory: {}\n\
              Inspect images with ReadDocumentAsset on direct APIs or the provider's native Read tool on CLI transports.\n{source_hint}",
             artifact_root
@@ -1436,6 +1702,8 @@ fn step_output(
         output_tokens: call.usage.output_tokens,
         cached_input_tokens: call.usage.cached_input_tokens,
         cache_write_input_tokens: call.usage.cache_write_input_tokens,
+        model_round_trips: call.usage.model_round_trips,
+        tool_calls: call.usage.tool_calls,
         attempt_count: call.attempt_count,
     };
     StepOutput {
@@ -1450,6 +1718,8 @@ fn step_output(
         output_tokens: call.usage.output_tokens,
         cached_input_tokens: call.usage.cached_input_tokens,
         cache_write_input_tokens: call.usage.cache_write_input_tokens,
+        model_round_trips: call.usage.model_round_trips,
+        tool_calls: call.usage.tool_calls,
         attempt_count: call.attempt_count,
         model: resolution.resolved_model.clone(),
         model_transport: resolution.transport.clone(),
@@ -1588,6 +1858,7 @@ async fn run_parallel_wave(
     write_dir: Option<&str>,
     output_budget: &Arc<OutputBudget>,
     context_cache_enabled: bool,
+    shared_context_pool: &super::context_cache::PreparedContextPool,
 ) -> Result<(Vec<StepOutput>, Vec<StepFailure>), String> {
     let mut tasks: JoinSet<ParallelTaskResult> = JoinSet::new();
     let mut immediate_results: Vec<((usize, String), StepOutput)> = Vec::new();
@@ -1672,6 +1943,7 @@ async fn run_parallel_wave(
                 context_cache_enabled,
                 &resolved,
                 orientation_value,
+                shared_context_pool,
             )?;
             let task_write_dir = step_write_dir(write_dir, &step_key)?;
             let tools = tools_with_write(
@@ -1727,6 +1999,7 @@ async fn run_parallel_wave(
             } else {
                 prompt
             };
+            let prompt = append_evidence_retrieval_guidance(prompt, &tools)?;
             let task_read_dirs = resolved.read_dirs.clone();
 
             let app_handle = app.clone();
@@ -2166,6 +2439,12 @@ async fn run_sequential_step(
 
     let base_prompt = substitute_run_context(&base_prompt, variables, &artifacts.extra_inputs)?;
     let task_write_dir = step_write_dir(write_dir, &step.id)?;
+    let tools = tools_with_write(
+        &step.tools,
+        !artifacts.read_dirs.is_empty(),
+        artifacts.has_visuals,
+        task_write_dir.as_deref(),
+    );
     let report_rel = "report.md";
     let report_nonce = new_report_nonce()?;
     let mut prompt = base_prompt;
@@ -2177,9 +2456,9 @@ async fn run_sequential_step(
         crate::safety::push_str_limited(
             &mut prompt,
             &format!(
-                "\n\nDOCUMENT ACCESS:\nThe canonical DocumentBundle is at: {}\n\
+                "\n\nDOCUMENT ACCESS:\nA compact DocumentBundle index is at: {}\n\
                  Its asset rel_path values are relative to: {artifact_root}\n\
-                 Use it to locate equations, tables, figures, page renders, and provenance. \
+                 Use the readable document for prose. Consult the index selectively to locate equations, tables, figures, page renders, and provenance; do not read it wholesale. \
                  Inspect images with ReadDocumentAsset on direct APIs or the provider's native Read tool on CLI transports.",
                 artifacts.document_bundle_path.replace('\\', "/")
             ),
@@ -2206,6 +2485,7 @@ async fn run_sequential_step(
             artifacts.includes_survey,
         )?;
     }
+    prompt = append_evidence_retrieval_guidance(prompt, &tools)?;
     crate::safety::push_str_limited(
         &mut prompt,
         &output_format_block(task_write_dir.as_deref(), &report_nonce),
@@ -2213,12 +2493,6 @@ async fn run_sequential_step(
         "Sequential prompt",
     )?;
 
-    let tools = tools_with_write(
-        &step.tools,
-        !artifacts.read_dirs.is_empty(),
-        artifacts.has_visuals,
-        task_write_dir.as_deref(),
-    );
     let agent = step.agents.first().map(|s| s.as_str());
     let log_label = format!("Step: {}", step.label);
 
@@ -2279,6 +2553,21 @@ async fn run_sequential_step(
 mod tests {
     use super::*;
     use crate::pipeline_config::Phase;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct RecordingEvents(Mutex<Vec<(String, serde_json::Value)>>);
+
+    impl crate::emit::Events for RecordingEvents {
+        fn emit_event(
+            &self,
+            event: &str,
+            payload: serde_json::Value,
+        ) -> Result<(), crate::emit::EmitError> {
+            self.0.lock().unwrap().push((event.to_string(), payload));
+            Ok(())
+        }
+    }
 
     fn make_step(id: &str, phase: Phase) -> StepConfig {
         StepConfig {
@@ -2287,6 +2576,138 @@ mod tests {
             phase,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn execution_plan_uses_the_runtime_readiness_scheduler() {
+        let mut first = make_step("first", Phase::Parallel);
+        first.agents = vec!["claude".into(), "codex".into()];
+        let second = make_step("second", Phase::Parallel);
+        let mut synthesis = make_step("synthesis", Phase::Sequential);
+        synthesis.label = "Synthesize evidence".into();
+        synthesis.after = vec!["first".into(), "second".into()];
+        let mut follow_up = make_step("follow-up", Phase::Parallel);
+        follow_up.after = vec!["synthesis".into()];
+        follow_up.run_if = Some(crate::pipeline_config::RunCondition::SurveyPath {
+            pointer: "/paper/type".into(),
+            equals: Some(serde_json::json!("theory")),
+            exists: None,
+        });
+        let mut disabled = make_step("disabled", Phase::Sequential);
+        disabled.enabled = false;
+        let config = PipelineConfig {
+            steps: vec![first, second, synthesis, follow_up, disabled],
+            merge: Default::default(),
+            context_cache: Default::default(),
+            use_orientation: true,
+            orientation_prompt: String::new(),
+            extraction: Default::default(),
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        };
+
+        let plan = execution_plan(&config).unwrap();
+        assert_eq!(
+            plan.iter()
+                .map(|stage| stage.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "extracting",
+                "orienting",
+                "dispatching",
+                "merging",
+                "synthesizing",
+                "dispatching",
+                "done"
+            ]
+        );
+        assert_eq!(plan[2].step_ids, vec!["first", "second"]);
+        assert_eq!(plan[3].step_ids, vec!["first"]);
+        assert_eq!(plan[4].label, "Synthesize evidence");
+        assert_eq!(plan[5].step_ids, vec!["follow-up"]);
+        assert!(plan
+            .iter()
+            .all(|stage| !stage.step_ids.contains(&"disabled".to_string())));
+    }
+
+    #[test]
+    fn resumed_runtime_emits_every_planned_scheduler_stage_id() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(assert_resumed_runtime_emits_every_planned_scheduler_stage_id());
+    }
+
+    async fn assert_resumed_runtime_emits_every_planned_scheduler_stage_id() {
+        let mut first = make_step("first", Phase::Parallel);
+        first.agents = vec!["claude".into(), "codex".into()];
+        let second = make_step("second", Phase::Parallel);
+        let mut synthesis = make_step("synthesis", Phase::Sequential);
+        synthesis.after = vec!["first".into(), "second".into()];
+        let config = PipelineConfig {
+            steps: vec![first, second, synthesis],
+            merge: Default::default(),
+            context_cache: Default::default(),
+            use_orientation: false,
+            orientation_prompt: String::new(),
+            extraction: Default::default(),
+            parallel_context_template: String::new(),
+            variables: Vec::new(),
+        };
+        let preloaded = ["first", "second", "synthesis"]
+            .into_iter()
+            .map(|id| {
+                (
+                    id.to_string(),
+                    vec![StepOutput {
+                        step_id: id.to_string(),
+                        step_label: id.to_string(),
+                        raw_text: "cached".to_string(),
+                        ..Default::default()
+                    }],
+                )
+            })
+            .collect();
+        let recorder = Arc::new(RecordingEvents::default());
+        let bus: crate::emit::EventBus = recorder.clone();
+        let empty = std::collections::HashMap::new();
+
+        execute_steps(
+            &bus,
+            &config,
+            "",
+            &serde_json::Value::Null,
+            "",
+            "",
+            "",
+            "",
+            "",
+            &empty,
+            &empty,
+            &empty,
+            &preloaded,
+            None,
+            &crate::settings::Settings::default(),
+        )
+        .await
+        .unwrap();
+
+        let events = recorder.0.lock().unwrap();
+        let stages = events
+            .iter()
+            .filter(|(event, _)| event == "pipeline:stage")
+            .map(|(_, payload)| payload)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            stages
+                .iter()
+                .filter_map(|payload| payload["id"].as_str())
+                .collect::<Vec<_>>(),
+            vec!["wave-1-parallel", "wave-1-merge", "wave-2-sequential"]
+        );
+        assert_eq!(stages[1]["skipped"], true);
+        assert!(stages.iter().all(|payload| payload["stepIds"].is_array()));
     }
 
     #[test]
@@ -2633,6 +3054,7 @@ mod tests {
         let settings = crate::settings::Settings::default();
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
         let output_budget = std::sync::Arc::new(OutputBudget::default());
+        let shared_context_pool = crate::pipeline::context_cache::PreparedContextPool::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
         let steps = [&fan];
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2660,6 +3082,7 @@ mod tests {
                 None,
                 &output_budget,
                 false,
+                &shared_context_pool,
             ))
             .unwrap();
         assert!(failures.is_empty());
@@ -2854,7 +3277,8 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(result.contains("LaTeX source directory"));
+        assert!(result.contains("selected source context"));
+        assert!(result.contains("bounded local dependencies"));
     }
 
     #[test]
@@ -2949,6 +3373,36 @@ mod tests {
         assert!(prompt.contains("selected extracted input text"));
         assert!(!prompt.contains("survey"));
         assert!(prompt.contains("other artifacts listed"));
+    }
+
+    #[test]
+    fn evidence_retrieval_guidance_is_capability_aware_and_quality_preserving() {
+        let text_only =
+            append_evidence_retrieval_guidance("Task".into(), &["Read".to_string()]).unwrap();
+        assert!(text_only.contains("ReadTextBatch"));
+        assert!(!text_only.contains("ReadDocumentAssetsBatch"));
+        assert!(!text_only.contains("web queries"));
+        assert!(text_only.contains("continue sequentially"));
+        assert!(text_only.contains("never omit evidence"));
+
+        let all = append_evidence_retrieval_guidance(
+            "Task".into(),
+            &[
+                "Read".to_string(),
+                "ReadDocumentAsset".to_string(),
+                "WebSearch".to_string(),
+            ],
+        )
+        .unwrap();
+        assert!(all.contains("ReadTextBatch"));
+        assert!(all.contains("ReadDocumentAssetsBatch"));
+        assert!(all.contains("complete set of independent web queries"));
+        assert!(all.contains("Never substitute extracted text"));
+
+        assert_eq!(
+            append_evidence_retrieval_guidance("Task".into(), &[]).unwrap(),
+            "Task"
+        );
     }
 
     #[test]

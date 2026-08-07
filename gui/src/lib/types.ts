@@ -112,7 +112,7 @@ export interface InputSlot {
 
 /** Per-profile extraction configuration. Parser tuning lives in global Settings. */
 export interface ExtractionConfig {
-  /** "" | "auto" | "llm" | "paddleocr-vl" | "marker" | "pdftotext". Empty = inherit. */
+  /** "" | "auto" | "llm" | "paddleocr-vl" | "pdftotext". "marker" is legacy/unavailable. */
   method: string;
   /** "" or "document" | "folder" | "none". Empty = document. */
   input_mode?: string;
@@ -149,6 +149,15 @@ export interface PipelineConfig {
   variables?: VarSpec[];
 }
 
+/** Provider-neutral breakdown of model-issued tool calls. */
+export interface ToolCallCounts {
+  text_file: number;
+  image: number;
+  web: number;
+  shell_or_other: number;
+  unknown: number;
+}
+
 export interface StepOutput {
   step_id: string;
   step_label: string;
@@ -165,6 +174,10 @@ export interface StepOutput {
   output_tokens?: number;
   cached_input_tokens?: number;
   cache_write_input_tokens?: number;
+  /** Provider-reported model generations inside this step. */
+  model_round_trips?: number;
+  /** Provider-reported tool calls inside this step. */
+  tool_calls?: ToolCallCounts;
   attempt_count?: number;
   /** Effective model id/alias used for this step. */
   model?: string;
@@ -191,6 +204,10 @@ export interface StepCallRecord {
   duration_secs?: number;
   input_tokens?: number;
   output_tokens?: number;
+  cached_input_tokens?: number;
+  cache_write_input_tokens?: number;
+  model_round_trips?: number;
+  tool_calls?: ToolCallCounts;
   attempt_count?: number;
 }
 
@@ -322,6 +339,8 @@ export interface RunSummary {
   output_tokens: number;
   cached_input_tokens: number;
   cache_write_input_tokens: number;
+  model_round_trips?: number;
+  tool_calls?: ToolCallCounts;
   step_count: number;
   artifact_count: number;
   failed_steps: string[];
@@ -351,7 +370,11 @@ export interface BatchJob {
 /** Mirrors commands::WatchStatus. */
 export interface WatchStatus {
   active: boolean;
+  paused?: boolean;
+  error?: string | null;
   folder: string;
+  profile_id?: string;
+  profile_snapshot_id?: string;
   processed: BatchJob[];
   processed_total: number;
   failed_total: number;
@@ -380,19 +403,16 @@ export interface Settings {
   gemini_model: string;
   gemini_cli_model_selection?: ModelSelection;
   gemini_api_model_selection?: ModelSelection;
+  /** "llm" | "auto" | "paddleocr-vl" | "pdftotext"; "marker" is legacy/unavailable. */
   pdf_extractor: string;
+  /** Retired Marker fields remain in the wire format for old settings files. */
   marker_disable_ocr: boolean;
   marker_force_ocr: boolean;
   marker_disable_images: boolean;
-  /** DPI used by Marker's layout model. */
   marker_lowres_dpi: number;
-  /** DPI used by Marker's OCR and equation models. */
   marker_highres_dpi: number;
-  /** Embedded PDF text workers; 0 = machine-aware automatic selection. */
   marker_pdftext_workers: number;
-  /** Layout-model batch size; 0 = Marker's device-aware default. */
   marker_layout_batch_size: number;
-  /** OCR recognition batch size; 0 = Marker's device-aware default. */
   marker_recognition_batch_size: number;
   /** PaddleOCR-VL page slots; 0 = platform-aware automatic selection. */
   paddle_page_concurrency: number;
@@ -498,4 +518,9 @@ export interface EngineStatus {
   est_disk_mb: number;
   managed_stack_mb: number;
   installing: boolean;
+}
+
+export interface RetiredMarkerStatus {
+  present: boolean;
+  bytes: number;
 }

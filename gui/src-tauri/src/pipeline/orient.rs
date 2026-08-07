@@ -102,9 +102,11 @@ pub async fn build_orientation_map(
             prompt.clone(),
             timeout,
         );
-        request.tools = vec!["Read".to_string()];
-        request.cwd = source_read_root.map(str::to_string);
-        request.read_dirs = source_read_root.into_iter().map(str::to_string).collect();
+        if let Some(root) = source_read_root {
+            request.tools = vec!["Read".to_string()];
+            request.cwd = Some(root.to_string());
+            request.read_dirs = vec![root.to_string()];
+        }
         let raw = execute_text(request).await?;
         let cleaned = strip_json_fences(&raw);
 

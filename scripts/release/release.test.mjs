@@ -4,3 +4,7 @@ import "./poppler-provenance.test.mjs";
 import "./prepare-notices.test.mjs";
 import "./validate-release-identity.test.mjs";
 import "./smoke-packaged-app.test.mjs";
+import "./artifact-integrity.test.mjs";
+import "./validate-release-assets.test.mjs";
+import "./workflow-hardening.test.mjs";
+import "./npm-overrides.test.mjs";

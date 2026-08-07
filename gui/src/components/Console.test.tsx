@@ -1,14 +1,31 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Console from "./Console";
 import type { LlmRequestDetails, LogEntry, UsageState } from "../hooks/usePipeline";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
+const invoke = vi.hoisted(() => vi.fn());
+const save = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save }));
+
+const NO_TOOL_CALLS = {
+  text_file: 0,
+  image: 0,
+  web: 0,
+  shell_or_other: 0,
+  unknown: 0,
+};
 
 const EMPTY_USAGE: UsageState = {
-  total: { input: 0, output: 0, cached: 0, cacheWrite: 0 },
+  total: {
+    input: 0,
+    output: 0,
+    cached: 0,
+    cacheWrite: 0,
+    modelRoundTrips: 0,
+    toolCalls: NO_TOOL_CALLS,
+  },
   bySession: {},
 };
 
@@ -41,6 +58,11 @@ const REQUEST: LlmRequestDetails = {
 };
 
 describe("Console", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    save.mockReset();
+  });
+
   it("renders all lines by default", () => {
     render(
       <Console
@@ -77,6 +99,19 @@ describe("Console", () => {
     expect(screen.getByText("ERROR: e")).toBeInTheDocument();
   });
 
+  it("surfaces save-dialog failures instead of presenting them as cancellation", async () => {
+    save.mockRejectedValueOnce(new Error("dialog plugin unavailable"));
+    const user = userEvent.setup();
+    render(<Console logs={[log("hello")]} usage={EMPTY_USAGE} />);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not save the console log: dialog plugin unavailable",
+    );
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("shows an error count that reflects the whole log, not the filter", () => {
     render(
       <Console
@@ -88,18 +123,36 @@ describe("Console", () => {
     expect(screen.getByTitle("Scroll to the first error")).toHaveTextContent("2 errors");
   });
 
-  it("surfaces cache reads and warm-up tokens", () => {
+  it("decomposes logical input into fresh, cache-read, and cache-write tokens", () => {
     render(
       <Console
         logs={[]}
         usage={{
-          total: { input: 50_000, output: 2_000, cached: 40_000, cacheWrite: 8_000 },
+          total: {
+            input: 50_000,
+            output: 2_000,
+            cached: 40_000,
+            cacheWrite: 8_000,
+            modelRoundTrips: 0,
+            toolCalls: NO_TOOL_CALLS,
+          },
           bySession: {},
         }}
       />
     );
-    expect(screen.getByText(/40k cached/)).toBeInTheDocument();
-    expect(screen.getByText(/8k warmed/)).toBeInTheDocument();
+    const summary = screen.getByLabelText(
+      /50,000 logical input tokens equals 2,000 fresh input tokens plus 40,000 cache-read tokens plus 8,000 cache-write tokens/,
+    );
+    expect(summary).toHaveTextContent(
+      "50k logical input = 2k fresh + 40k cache read + 8k cache write · 2k output",
+    );
+    expect(summary.getAttribute("title")).toContain(
+      "Cache reads and cache writes are subsets of logical input, not additional tokens.",
+    );
+    expect(summary.getAttribute("title")).toContain(
+      "Fresh input equals logical input minus cache reads minus cache writes.",
+    );
+    expect(summary).toHaveAttribute("tabindex", "0");
   });
 
   it("resizes vertically by dragging its upper border", () => {
@@ -170,12 +223,96 @@ describe("Console", () => {
             request: cliRequest,
           },
         ]}
-        usage={EMPTY_USAGE}
+        usage={{
+          total: {
+            input: 50_000,
+            output: 2_000,
+            cached: 40_000,
+            cacheWrite: 8_000,
+            modelRoundTrips: 7,
+            toolCalls: {
+              text_file: 3,
+              image: 1,
+              web: 2,
+              shell_or_other: 0,
+              unknown: 1,
+            },
+          },
+          bySession: {
+            8: {
+              input: 50_000,
+              output: 2_000,
+              cached: 40_000,
+              cacheWrite: 8_000,
+              modelRoundTrips: 7,
+              toolCalls: {
+                text_file: 3,
+                image: 1,
+                web: 2,
+                shell_or_other: 0,
+                unknown: 1,
+              },
+            },
+          },
+        }}
       />
     );
 
     const selector = screen.getByRole("combobox");
     expect(selector).toHaveTextContent("Technical · Codex CLI · gpt-5.6");
     expect(selector).not.toHaveTextContent("CLI CLI");
+    expect(selector).toHaveTextContent(
+      "50k logical input = 2k fresh + 40k cache read + 8k cache write → 2k output",
+    );
+    expect(selector).toHaveTextContent(
+      "7 reported model round trips and 7 reported tool calls",
+    );
+    const summary = screen.getByLabelText(/Model activity: 7 reported model round trips/);
+    expect(summary.getAttribute("title")).toContain(
+      "7 reported tool calls (3 text/file, 1 image, 2 web, 1 unknown)",
+    );
+    expect(summary.getAttribute("title")).toContain(
+      "unknown tool kinds remain in the unknown bucket",
+    );
+  });
+
+  it("labels bounded request fields when their previews are truncated", async () => {
+    const user = userEvent.setup();
+    const truncatedRequest: LlmRequestDetails = {
+      ...REQUEST,
+      prompt: "Task preview…",
+      prompt_chars: 48_000,
+      prompt_truncated: true,
+      system_prompt: "System preview…",
+      system_prompt_chars: 24_000,
+      system_prompt_truncated: true,
+      shared_context: "Context preview…",
+      shared_context_chars: 72_000,
+      shared_context_truncated: true,
+    };
+    render(
+      <Console
+        logs={[
+          {
+            ...log("LLM request", "info", 9),
+            label: "Bounded request",
+            request: truncatedRequest,
+          },
+        ]}
+        usage={EMPTY_USAGE}
+      />,
+    );
+
+    await user.selectOptions(screen.getByRole("combobox"), "9");
+    expect(screen.getByText("Preview truncated")).toBeVisible();
+    await user.click(screen.getByText(/View prompt/));
+
+    expect(screen.getAllByText("Preview truncated")).toHaveLength(3);
+    expect(screen.getByText("System prompt (24,000 characters)")).toBeVisible();
+    expect(screen.getByText("Shared context (72,000 characters)")).toBeVisible();
+    expect(screen.getByText("Task prompt (48,000 characters)")).toBeVisible();
+    expect(
+      screen.getByText(/Copy prompt copies only the visible preview/),
+    ).toBeVisible();
   });
 });

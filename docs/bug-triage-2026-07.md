@@ -1,8 +1,17 @@
-# Bug triage — July 2026 dust-off
+# Archived bug triage — July 2026 dust-off
+
+> **Closed historical triage.** This file preserves the hypotheses,
+> verification notes, and fixes recorded during the 2026-07-02 review. It is
+> not a current backlog, vulnerability report, dependency-audit result, or
+> release recommendation. Paths, line numbers, model names, test counts, and
+> advisory counts are snapshots from that date. See
+> [../CHANGELOG.md](../CHANGELOG.md), [../SUPPORT.md](../SUPPORT.md), current
+> CI, and GitHub issues for current status.
 
 Candidate issues from a full source review (Rust backend + React frontend + CI) on 2026-07-02.
-These are **unverified hypotheses** from code reading, not confirmed bugs. Each needs
-verification before fixing. Delete entries as they are confirmed-fixed or refuted.
+These began as **unverified hypotheses** from code reading. The dispositions
+below record what that review subsequently confirmed, fixed, or refuted; the
+entries are retained as an audit trail.
 
 ## P1 — verified 2026-07-02, confirmed items FIXED same day
 

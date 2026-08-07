@@ -184,6 +184,8 @@ pub struct RunSummary {
     pub output_tokens: u64,
     pub cached_input_tokens: u64,
     pub cache_write_input_tokens: u64,
+    pub model_round_trips: u64,
+    pub tool_calls: crate::models::ToolCallCounts,
     pub step_count: u32,
     pub artifact_count: u32,
     pub failed_steps: Vec<String>,
@@ -199,6 +201,19 @@ pub struct RunSummary {
 pub struct RunsDiskUsage {
     pub count: u32,
     pub bytes: u64,
+}
+
+/// Exact retention effect shown before the user confirms a manual purge.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RunPurgePreview {
+    pub delete_count: u32,
+    pub delete_bytes: u64,
+    pub remaining_count: u32,
+    pub remaining_bytes: u64,
+    /// Opaque digest of the exact deletion set and totals shown to the user.
+    /// Manual purge must present this token again so a stale confirmation can
+    /// never authorize a newly calculated set of runs.
+    pub preview_token: String,
 }
 
 fn input_basename(input_path: &str) -> String {
@@ -232,6 +247,8 @@ impl RunManifest {
             output_tokens: self.usage.output_tokens,
             cached_input_tokens: self.usage.cached_input_tokens,
             cache_write_input_tokens: self.usage.cache_write_input_tokens,
+            model_round_trips: self.usage.model_round_trips,
+            tool_calls: self.usage.tool_calls,
             step_count: self.step_count,
             artifact_count: self.artifacts.len() as u32
                 + self
@@ -1458,6 +1475,130 @@ fn dir_size(path: &Path, walk: &mut crate::safety::WalkBudget) -> Result<u64, St
     Ok(total)
 }
 
+fn sized_runs_for_retention() -> Result<Vec<(RunSummary, u64)>, String> {
+    let summaries = list_runs()?; // already newest-first
+    let root = runs_dir()?;
+    let mut walk = crate::safety::WalkBudget::new("Run retention scan");
+    let mut sized = Vec::with_capacity(summaries.len());
+    for summary in summaries {
+        walk.directory()?;
+        let bytes = dir_size(&root.join(&summary.run_id), &mut walk)?;
+        sized.push((summary, bytes));
+    }
+    Ok(sized)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RetentionPlan {
+    preview: RunPurgePreview,
+    candidates: Vec<String>,
+}
+
+fn retention_preview_token(
+    keep: usize,
+    max_bytes: u64,
+    candidates: &[(String, u64)],
+    remaining_count: u32,
+    remaining_bytes: u64,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"pipeline-run-purge-preview-v1\0");
+    digest.update(u64::try_from(keep).unwrap_or(u64::MAX).to_le_bytes());
+    digest.update(max_bytes.to_le_bytes());
+    digest.update(
+        u64::try_from(candidates.len())
+            .unwrap_or(u64::MAX)
+            .to_le_bytes(),
+    );
+    for (run_id, bytes) in candidates {
+        digest.update(
+            u64::try_from(run_id.len())
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        digest.update(run_id.as_bytes());
+        digest.update(bytes.to_le_bytes());
+    }
+    digest.update(remaining_count.to_le_bytes());
+    digest.update(remaining_bytes.to_le_bytes());
+    format!("{:x}", digest.finalize())
+}
+
+fn retention_plan_from_state(
+    sized: &[(String, bool, u64)],
+    keep: usize,
+    max_bytes: u64,
+) -> RetentionPlan {
+    let mut remaining = sized.len();
+    let mut remaining_bytes = sized
+        .iter()
+        .fold(0u64, |total, (_, _, bytes)| total.saturating_add(*bytes));
+    let mut delete_bytes = 0u64;
+    let mut candidates = Vec::new();
+
+    for (run_id, protected, bytes) in sized.iter().rev() {
+        let count_exceeded = keep > 0 && remaining > keep;
+        let bytes_exceeded = max_bytes > 0 && remaining_bytes > max_bytes;
+        if !count_exceeded && !bytes_exceeded {
+            break;
+        }
+        if *protected {
+            continue;
+        }
+        candidates.push((run_id.clone(), *bytes));
+        delete_bytes = delete_bytes.saturating_add(*bytes);
+        remaining = remaining.saturating_sub(1);
+        remaining_bytes = remaining_bytes.saturating_sub(*bytes);
+    }
+
+    let remaining_count = remaining.min(u32::MAX as usize) as u32;
+    let preview_token = retention_preview_token(
+        keep,
+        max_bytes,
+        &candidates,
+        remaining_count,
+        remaining_bytes,
+    );
+    RetentionPlan {
+        preview: RunPurgePreview {
+            delete_count: candidates.len().min(u32::MAX as usize) as u32,
+            delete_bytes,
+            remaining_count,
+            remaining_bytes,
+            preview_token,
+        },
+        candidates: candidates.into_iter().map(|(run_id, _)| run_id).collect(),
+    }
+}
+
+fn retention_plan_from_sized_runs(
+    sized: &[(RunSummary, u64)],
+    keep: usize,
+    max_bytes: u64,
+) -> RetentionPlan {
+    let state = sized
+        .iter()
+        .map(|(summary, bytes)| {
+            (
+                summary.run_id.clone(),
+                summary.status.is_empty() || summary.status == "running",
+                *bytes,
+            )
+        })
+        .collect::<Vec<_>>();
+    retention_plan_from_state(&state, keep, max_bytes)
+}
+
+/// Calculate the exact completed-run set selected by the current retention
+/// limits without deleting anything. Pending/running runs are protected.
+pub fn preview_purge_runs_with_limits(
+    keep: usize,
+    max_bytes: u64,
+) -> Result<RunPurgePreview, String> {
+    let sized = sized_runs_for_retention()?;
+    Ok(retention_plan_from_sized_runs(&sized, keep, max_bytes).preview)
+}
+
 /// Read a run's annotations (per-issue accept/reject/note), or "{}" if none.
 /// Annotations live beside the run in `annotations.json` and never touch the
 /// report artifact.
@@ -1526,35 +1667,41 @@ pub fn purge_runs_with_limits(keep: usize, max_bytes: u64) -> Result<usize, Stri
     if keep == 0 && max_bytes == 0 {
         return Ok(0);
     }
-    let summaries = list_runs()?; // already newest-first
-    let root = runs_dir()?;
-    let mut walk = crate::safety::WalkBudget::new("Run retention scan");
-    let mut sized: Vec<(RunSummary, u64)> = Vec::with_capacity(summaries.len());
-    for summary in summaries {
-        walk.directory()?;
-        let bytes = dir_size(&root.join(&summary.run_id), &mut walk)?;
-        sized.push((summary, bytes));
-    }
-    let mut remaining = sized.len();
-    let mut total_bytes = sized
-        .iter()
-        .fold(0u64, |total, (_, bytes)| total.saturating_add(*bytes));
+    let sized = sized_runs_for_retention()?;
+    let plan = retention_plan_from_sized_runs(&sized, keep, max_bytes);
     let mut removed = 0usize;
-    // Oldest first, deleting only while at least one configured limit is
-    // exceeded. Status is empty for an in-progress pending manifest.
-    for (summary, bytes) in sized.drain(..).rev() {
-        let count_exceeded = keep > 0 && remaining > keep;
-        let bytes_exceeded = max_bytes > 0 && total_bytes > max_bytes;
-        if !count_exceeded && !bytes_exceeded {
-            break;
-        }
-        if summary.status.is_empty() || summary.status == "running" {
-            continue;
-        }
-        if delete_run(&summary.run_id).is_ok() {
+    for run_id in plan.candidates {
+        if delete_run(&run_id).is_ok() {
             removed += 1;
-            remaining = remaining.saturating_sub(1);
-            total_bytes = total_bytes.saturating_sub(bytes);
+        }
+    }
+    Ok(removed)
+}
+
+/// Apply a manually confirmed purge only when the current deletion plan still
+/// matches the preview the user saw. The caller must hold the pipeline guard
+/// across this rescan and deletion.
+pub fn purge_runs_with_expected_preview(
+    keep: usize,
+    max_bytes: u64,
+    expected_preview_token: &str,
+) -> Result<usize, String> {
+    if expected_preview_token.is_empty() {
+        return Err("A purge preview is required before deleting run history".to_string());
+    }
+    let sized = sized_runs_for_retention()?;
+    let plan = retention_plan_from_sized_runs(&sized, keep, max_bytes);
+    if plan.preview.preview_token != expected_preview_token {
+        return Err(
+            "Run history changed after the preview. Review the updated deletion summary before purging."
+                .to_string(),
+        );
+    }
+
+    let mut removed = 0usize;
+    for run_id in plan.candidates {
+        if delete_run(&run_id).is_ok() {
+            removed += 1;
         }
     }
     Ok(removed)
@@ -1767,6 +1914,87 @@ mod tests {
     }
 
     #[test]
+    fn retention_preview_matches_count_and_byte_limits() {
+        // Newest first. The running oldest entry is protected, so the next
+        // oldest completed run is selected when the count limit is exceeded.
+        let plan = retention_plan_from_state(
+            &[
+                ("newest".to_string(), false, 10),
+                ("middle".to_string(), false, 20),
+                ("oldest".to_string(), true, 30),
+            ],
+            2,
+            0,
+        );
+        let preview = plan.preview;
+        assert_eq!(preview.delete_count, 1);
+        assert_eq!(preview.delete_bytes, 20);
+        assert_eq!(preview.remaining_count, 2);
+        assert_eq!(preview.remaining_bytes, 40);
+        assert!(!preview.preview_token.is_empty());
+        assert_eq!(plan.candidates, vec!["middle".to_string()]);
+
+        let preview = retention_plan_from_state(
+            &[
+                ("newest".to_string(), false, 10),
+                ("middle".to_string(), false, 20),
+                ("oldest".to_string(), false, 30),
+            ],
+            0,
+            25,
+        )
+        .preview;
+        assert_eq!(preview.delete_count, 2);
+        assert_eq!(preview.delete_bytes, 50);
+        assert_eq!(preview.remaining_count, 1);
+        assert_eq!(preview.remaining_bytes, 10);
+    }
+
+    #[test]
+    fn retention_preview_token_binds_the_confirmed_deletion_plan() {
+        let initial = retention_plan_from_state(
+            &[
+                ("newest".to_string(), false, 10),
+                ("oldest".to_string(), false, 20),
+            ],
+            1,
+            0,
+        )
+        .preview;
+        let unchanged = retention_plan_from_state(
+            &[
+                ("newest".to_string(), false, 10),
+                ("oldest".to_string(), false, 20),
+            ],
+            1,
+            0,
+        )
+        .preview;
+        let changed_candidate = retention_plan_from_state(
+            &[
+                ("newest".to_string(), false, 10),
+                ("different-oldest".to_string(), false, 20),
+            ],
+            1,
+            0,
+        )
+        .preview;
+        let changed_size = retention_plan_from_state(
+            &[
+                ("newest".to_string(), false, 10),
+                ("oldest".to_string(), false, 21),
+            ],
+            1,
+            0,
+        )
+        .preview;
+
+        assert_eq!(initial.preview_token, unchanged.preview_token);
+        assert_ne!(initial.preview_token, changed_candidate.preview_token);
+        assert_ne!(initial.preview_token, changed_size.preview_token);
+    }
+
+    #[test]
     fn old_manifest_without_metadata_loads() {
         // A pre-1.1 manifest has none of the run-level metadata fields.
         let json = r#"{
@@ -1783,6 +2011,8 @@ mod tests {
         assert_eq!(m.status, "");
         assert_eq!(m.duration_secs, 0);
         assert_eq!(m.usage.input_tokens, 0);
+        assert_eq!(m.usage.model_round_trips, 0);
+        assert!(m.usage.tool_calls.is_empty());
         assert!(m.tags.is_empty());
         assert!(m.page_artifacts.is_none());
         // Summary fills a sensible default status and derives the input name.
@@ -1810,6 +2040,13 @@ mod tests {
                 output_tokens: 200,
                 cached_input_tokens: 700,
                 cache_write_input_tokens: 100,
+                model_round_trips: 12,
+                tool_calls: crate::models::ToolCallCounts {
+                    text_file: 5,
+                    web: 2,
+                    unknown: 1,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             step_count: 6,
@@ -1828,6 +2065,9 @@ mod tests {
         assert_eq!(s.output_tokens, 200);
         assert_eq!(s.cached_input_tokens, 700);
         assert_eq!(s.cache_write_input_tokens, 100);
+        assert_eq!(s.model_round_trips, 12);
+        assert_eq!(s.tool_calls.total(), 8);
+        assert_eq!(s.tool_calls.unknown, 1);
         assert_eq!(s.step_count, 6);
         assert_eq!(s.failed_steps, vec!["Empirical".to_string()]);
         assert_eq!(s.title, "My run");

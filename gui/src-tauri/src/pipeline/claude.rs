@@ -17,9 +17,36 @@ type BoxedProviderFuture<'a> = Pin<Box<dyn Future<Output = Result<String, String
 /// Maximum characters to pass as a direct CLI argument.
 /// Beyond this we write to a temp file and tell Claude to read it.
 pub(crate) const MAX_DIRECT_PROMPT_LENGTH: usize = 4000;
+const MAX_EVENT_TEXT_PREVIEW_BYTES: usize = 16 * 1024;
 const MAX_LIVE_ARTIFACT_FILES: usize = 1_000;
 const MAX_LIVE_ARTIFACT_BYTES: u64 = 300 * 1024 * 1024;
 const MAX_LIVE_ARTIFACT_FILE_BYTES: u64 = 50 * 1024 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+struct EventTextPreview {
+    text: String,
+    truncated: bool,
+}
+
+/// Provider requests can contain entire papers and captured user inputs.
+/// Events cross into the long-lived WebView, so emit only a small UTF-8-safe
+/// diagnostic preview and retain the full character count separately.
+fn event_text_preview(value: &str) -> EventTextPreview {
+    if value.len() <= MAX_EVENT_TEXT_PREVIEW_BYTES {
+        return EventTextPreview {
+            text: value.to_string(),
+            truncated: false,
+        };
+    }
+    let mut boundary = MAX_EVENT_TEXT_PREVIEW_BYTES;
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    EventTextPreview {
+        text: value[..boundary].to_string(),
+        truncated: true,
+    }
+}
 
 fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
     let mut stack = vec![root.to_path_buf()];
@@ -392,6 +419,8 @@ fn is_cli_session_capability_error(error: &str) -> bool {
     .any(|needle| error.contains(needle))
 }
 
+const SESSION_UNAVAILABLE_PREFIX: &str = "unavailable:";
+
 /// Use one warmed Claude session per compatible model/configuration, then fork
 /// it for every task. If the installed CLI cannot create the base session, the
 /// call falls back to an ordinary self-contained prompt.
@@ -431,25 +460,18 @@ pub async fn call_claude(
         .unwrap_or_else(crate::settings::load);
     let model = overrides.model.unwrap_or(settings.claude_model.as_str());
     let effort = overrides.effort.unwrap_or(settings.claude_effort.as_str());
-    let tools_key = allowed_tools.join(",");
-    let write_key = overrides.write_dir.unwrap_or("");
-    let session_key = context.compatibility_key(
-        "claude-cli",
-        [
-            model,
-            effort,
-            system_prompt.unwrap_or(""),
-            tools_key.as_str(),
-            cwd.unwrap_or(""),
-            write_key,
-        ],
-    );
+    let session_key =
+        context.compatibility_key("claude-cli", [model, effort, system_prompt.unwrap_or("")]);
     let slot = context.slot(session_key).await;
 
     let base_result = {
         let mut base = slot.lock().await;
         if let Some(id) = base.as_ref() {
-            Ok(id.clone())
+            if let Some(reason) = id.strip_prefix(SESSION_UNAVAILABLE_PREFIX) {
+                Err(reason.to_string())
+            } else {
+                Ok(id.clone())
+            }
         } else {
             match super::context_cache::new_session_id() {
                 Err(error) => Err(error),
@@ -460,8 +482,9 @@ pub async fn call_claude(
                     );
                     let mut primer_overrides = overrides.clone();
                     primer_overrides.shared_context = None;
+                    primer_overrides.write_dir = None;
                     let primer_label = format!("{label} · cache warm-up");
-                    call_claude_inner(
+                    match call_claude_inner(
                         app,
                         &primer,
                         &[],
@@ -469,16 +492,22 @@ pub async fn call_claude(
                         "text",
                         timeout_secs,
                         &primer_label,
-                        cwd,
-                        extra_read_dirs,
+                        Some(context.workspace_dir()),
+                        &[],
                         &primer_overrides,
                         Some(ClaudeSessionMode::Start(&id)),
                     )
                     .await
-                    .map(|_| {
-                        *base = Some(id.clone());
-                        id
-                    })
+                    {
+                        Ok(_) => {
+                            *base = Some(id.clone());
+                            Ok(id)
+                        }
+                        Err(error) => {
+                            *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                            Err(error)
+                        }
+                    }
                 }
             }
         }
@@ -506,6 +535,9 @@ pub async fn call_claude(
             .await;
             if let Err(error) = &result {
                 if is_cli_session_capability_error(error) {
+                    let mut state = slot.lock().await;
+                    *state = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                    drop(state);
                     log(
                         app,
                         format!(
@@ -579,9 +611,14 @@ async fn call_claude_inner(
     let mut tools: Vec<String> = allowed_tools
         .iter()
         // Direct APIs expose this as a first-class multimodal tool. Claude
-        // Code's native Read tool already handles images, so do not pass an
-        // unknown permission name to the CLI.
-        .filter(|tool| **tool != "ReadDocumentAsset")
+        // Code's native Read tool already handles images and parallel reads,
+        // so do not pass direct-API-only names to the CLI permission parser.
+        .filter(|tool| {
+            !matches!(
+                **tool,
+                "ReadDocumentAsset" | "ReadTextBatch" | "ReadDocumentAssetsBatch"
+            )
+        })
         .map(|tool| tool.to_string())
         .collect();
     // Read is always available — steps need it for paper/orientation files
@@ -663,12 +700,22 @@ async fn call_claude_inner(
     // auto-approves file edits in the cwd and --add-dir directories, so
     // when writing is enabled, explicitly deny edits there. Deny rules
     // outrank both allow rules and the permission mode.
+    let mut denies = Vec::new();
+    if !allowed_tools.contains(&"WebSearch") {
+        // --allowedTools controls auto-approval rather than availability.
+        // Explicitly deny search so a non-search review cannot inherit it
+        // from the user's Claude Code configuration.
+        denies.push("WebSearch".to_string());
+    }
     if overrides.write_dir.is_some() && !workspace.read_dirs.is_empty() {
-        let denies: Vec<String> = workspace
-            .read_dirs
-            .iter()
-            .map(|d| format!("Edit({}/**)", absolute_rule_path(d)))
-            .collect();
+        denies.extend(
+            workspace
+                .read_dirs
+                .iter()
+                .map(|d| format!("Edit({}/**)", absolute_rule_path(d))),
+        );
+    }
+    if !denies.is_empty() {
         cmd_args.push("--disallowedTools".to_string());
         cmd_args.push(denies.join(","));
     }
@@ -873,6 +920,21 @@ fn parse_claude_result(
         .ok_or("missing string `result`")?
         .trim()
         .to_string();
+    let model_round_trips = v
+        .get("num_turns")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let mut tool_calls = crate::models::ToolCallCounts::default();
+    if let Some(server_tools) = v
+        .get("usage")
+        .and_then(|usage| usage.get("server_tool_use"))
+        .and_then(|value| value.as_object())
+    {
+        for (name, value) in server_tools {
+            let count = value.as_u64().unwrap_or(0);
+            tool_calls.add_kind(super::logging::classify_tool_name(name), count);
+        }
+    }
     let usage = v.get("usage").map(|u| {
         let field = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
         let cached = field("cache_read_input_tokens");
@@ -884,8 +946,19 @@ fn parse_claude_result(
             output_tokens: field("output_tokens"),
             cached_input_tokens: cached,
             cache_write_input_tokens: cache_write,
+            model_round_trips,
+            tool_calls,
             ..Default::default()
         }
+    });
+    let usage = usage.or_else(|| {
+        (model_round_trips > 0 || !tool_calls.is_empty()).then_some(
+            crate::pipeline::logging::CallUsage {
+                model_round_trips,
+                tool_calls,
+                ..Default::default()
+            },
+        )
     });
     Ok((text, usage))
 }
@@ -1061,6 +1134,19 @@ pub async fn call_llm(
         let effort = request_effort(provider, transport, &model, &settings, overrides);
         let provider_label = request_provider_label(provider, transport);
         let prompt_chars = prompt.chars().count();
+        let prompt_preview = event_text_preview(prompt);
+        let system_prompt_chars = system_prompt
+            .map(|value| value.chars().count())
+            .unwrap_or(0);
+        let system_prompt_preview = system_prompt.map(event_text_preview);
+        let shared_context = overrides
+            .shared_context
+            .as_ref()
+            .map(|context| context.content());
+        let shared_context_chars = shared_context
+            .map(|value| value.chars().count())
+            .unwrap_or(0);
+        let shared_context_preview = shared_context.map(event_text_preview);
         let max_output_tokens = if transport != "api" {
             None
         } else {
@@ -1089,11 +1175,15 @@ pub async fn call_llm(
                 "timeout_secs": timeout_secs,
                 "max_output_tokens": max_output_tokens,
                 "output_format": output_format,
-                "prompt": prompt,
+                "prompt": prompt_preview.text,
+                "prompt_truncated": prompt_preview.truncated,
                 "prompt_chars": prompt_chars,
-                "system_prompt": system_prompt,
-                "shared_context": overrides.shared_context.as_ref().map(|context| context.content()),
-                "shared_context_chars": overrides.shared_context.as_ref().map(|context| context.content().chars().count()).unwrap_or(0),
+                "system_prompt": system_prompt_preview.as_ref().map(|preview| preview.text.as_str()),
+                "system_prompt_truncated": system_prompt_preview.as_ref().is_some_and(|preview| preview.truncated),
+                "system_prompt_chars": system_prompt_chars,
+                "shared_context": shared_context_preview.as_ref().map(|preview| preview.text.as_str()),
+                "shared_context_truncated": shared_context_preview.as_ref().is_some_and(|preview| preview.truncated),
+                "shared_context_chars": shared_context_chars,
                 "pdf_attached": overrides.pdf_attachment.is_some() && transport == "api",
                 "write_enabled": overrides.write_dir.is_some(),
                 "working_directory": cwd,
@@ -1322,6 +1412,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn webview_request_previews_are_utf8_safe_and_bounded() {
+        let short = event_text_preview("short request");
+        assert_eq!(short.text, "short request");
+        assert!(!short.truncated);
+
+        let large = "é".repeat(MAX_EVENT_TEXT_PREVIEW_BYTES);
+        let preview = event_text_preview(&large);
+        assert!(preview.truncated);
+        assert!(preview.text.len() <= MAX_EVENT_TEXT_PREVIEW_BYTES);
+        assert!(preview.text.is_char_boundary(preview.text.len()));
+        assert!(large.starts_with(&preview.text));
+    }
+
+    #[test]
     fn request_provider_labels_do_not_repeat_the_transport() {
         assert_eq!(request_provider_label("claude", "cli"), "Claude Code");
         assert_eq!(request_provider_label("codex", "cli"), "Codex");
@@ -1373,8 +1477,10 @@ mod tests {
 
     #[test]
     fn unwraps_result_envelope_and_sums_input_tokens() {
-        let raw = r#"{"type":"result","subtype":"success","result":"hello world",
-            "usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}}"#;
+        let raw = r#"{"type":"result","subtype":"success","result":"hello world","num_turns":4,
+            "usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5,
+            "cache_creation_input_tokens":3,"server_tool_use":{"web_search_requests":2,
+            "code_execution_requests":1,"future_tool_requests":3}}}"#;
         let (text, usage) = parse_claude_result(raw).unwrap();
         assert_eq!(text, "hello world");
         assert_eq!(
@@ -1384,6 +1490,13 @@ mod tests {
                 output_tokens: 20,
                 cached_input_tokens: 5,
                 cache_write_input_tokens: 3,
+                model_round_trips: 4,
+                tool_calls: crate::models::ToolCallCounts {
+                    web: 2,
+                    shell_or_other: 1,
+                    unknown: 3,
+                    ..Default::default()
+                },
                 ..Default::default()
             })
         );
@@ -1407,6 +1520,19 @@ mod tests {
         let (text, usage) = parse_claude_result(r#"{"type":"result","result":"ok"}"#).unwrap();
         assert_eq!(text, "ok");
         assert_eq!(usage, None);
+    }
+
+    #[test]
+    fn envelope_preserves_reported_turns_without_token_usage() {
+        let (_, usage) =
+            parse_claude_result(r#"{"type":"result","result":"ok","num_turns":3}"#).unwrap();
+        assert_eq!(
+            usage,
+            Some(crate::pipeline::logging::CallUsage {
+                model_round_trips: 3,
+                ..Default::default()
+            })
+        );
     }
 
     #[test]

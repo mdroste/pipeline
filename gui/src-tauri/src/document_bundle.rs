@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 pub const DOCUMENT_BUNDLE_SCHEMA_VERSION: &str = "1.0";
@@ -19,7 +19,14 @@ const MAX_DOCX_XML_BYTES: u64 = 25_000_000;
 const MAX_DOCX_MEDIA_BYTES: u64 = 20_000_000;
 const MAX_DOCX_TOTAL_MEDIA_BYTES: u64 = 150_000_000;
 const MAX_DOCX_MEDIA_FILES: usize = 500;
+const MAX_DOCX_ARCHIVE_ENTRIES: usize = 10_000;
 const MAX_REPRESENTATION_BYTES: usize = 1_000_000;
+/// The artifact viewer accepts a canonical bundle up to 16 MiB.
+pub const MAX_DOCUMENT_BUNDLE_BYTES: usize = 16 * 1024 * 1024;
+/// Direct-provider Read is capped at 5 MiB, so the derived model index must fit
+/// the strictest provider consumer even when the durable canonical bundle is
+/// larger.
+const MAX_MODEL_DOCUMENT_INDEX_BYTES: usize = 5 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentBundle {
@@ -128,6 +135,42 @@ pub struct DocumentQualityNote {
     pub severity: String,
     pub scope: String,
     pub message: String,
+}
+
+#[derive(Serialize)]
+struct ModelDocumentIndex<'a> {
+    format: &'static str,
+    schema_version: &'a str,
+    bundle_id: &'a str,
+    source_kind: &'a str,
+    origins: &'a [DocumentOrigin],
+    pages: &'a [DocumentPage],
+    nodes: Vec<ModelDocumentNode<'a>>,
+    assets: &'a [DocumentAsset],
+    links: Vec<&'a DocumentLink>,
+    extraction: &'a DocumentExtraction,
+    quality: &'a [DocumentQualityNote],
+}
+
+#[derive(Serialize)]
+struct ModelDocumentNode<'a> {
+    id: &'a str,
+    kind: &'a str,
+    order: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    number: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    representations: Option<&'a [DocumentRepresentation]>,
+    asset_ids: &'a [String],
+    provenance: &'a DocumentProvenance,
 }
 
 #[derive(Debug, Clone)]
@@ -552,6 +595,217 @@ fn add_markdown_nodes(bundle: &mut DocumentBundle, text: &str, method: &str) {
     }
 }
 
+fn marker_node_kind(marker_type: &str, role: &str) -> &'static str {
+    match role {
+        "footnote" => "footnote",
+        "possible_footnote" => "possible_footnote",
+        "page_header" => "page_header",
+        "page_footer" => "page_footer",
+        _ => match marker_type {
+            "SectionHeader" => "section",
+            "Equation" => "equation",
+            "Table" | "TableGroup" => "table",
+            "Figure" | "FigureGroup" | "Picture" | "PictureGroup" => "figure",
+            "Caption" => "caption",
+            "Code" => "code",
+            "ListGroup" | "ListItem" => "list",
+            _ => "text_block",
+        },
+    }
+}
+
+fn marker_node_label(marker_type: &str, role: &str, page: u32) -> String {
+    match role {
+        "footnote" => format!("Footnote on page {page}"),
+        "possible_footnote" => format!("Possible footnote on page {page}"),
+        "page_header" => format!("Page {page} header"),
+        "page_footer" => format!("Page {page} footer"),
+        _ => format!("Marker {marker_type} block"),
+    }
+}
+
+fn marker_note_number(text: &str, role: &str) -> Option<String> {
+    if !matches!(role, "footnote" | "possible_footnote") {
+        return None;
+    }
+    Regex::new(r"^\s*(\d{1,3}|[*†‡])(?:[.)])?\s+")
+        .unwrap()
+        .captures(text)
+        .and_then(|capture| capture.get(1))
+        .map(|value| value.as_str().to_string())
+}
+
+fn marker_block_assets(
+    bundle: &DocumentBundle,
+    block: &crate::pipeline::extract::MarkerStructuredBlock,
+    page: u32,
+    kind: &str,
+) -> Vec<String> {
+    let image_names: HashSet<&str> = block.image_files.iter().map(String::as_str).collect();
+    let mut asset_ids: Vec<String> = bundle
+        .assets
+        .iter()
+        .filter(|asset| {
+            image_names.contains(asset.label.as_str())
+                || image_names
+                    .iter()
+                    .any(|name| asset.rel_path.ends_with(name))
+        })
+        .map(|asset| asset.id.clone())
+        .collect();
+    if asset_ids.is_empty() && matches!(kind, "figure" | "table") {
+        if let Some(asset) = bundle
+            .assets
+            .iter()
+            .find(|asset| asset.kind == "page" && asset.page == Some(page))
+        {
+            asset_ids.push(asset.id.clone());
+        }
+    }
+    asset_ids.sort();
+    asset_ids.dedup();
+    asset_ids
+}
+
+fn add_marker_structured_nodes(
+    bundle: &mut DocumentBundle,
+    structure: &crate::pipeline::extract::MarkerStructure,
+) {
+    for page in &structure.pages {
+        for block in &page.blocks {
+            let kind = marker_node_kind(&block.marker_type, &block.role);
+            let representation = DocumentRepresentation {
+                format: "marker_block".to_string(),
+                content: serde_json::json!({
+                    "marker_id": block.marker_id,
+                    "marker_type": block.marker_type,
+                    "role": block.role,
+                    "html": block.html,
+                    "polygon": block.polygon,
+                    "bbox": block.bbox,
+                }),
+            };
+            let asset_ids = marker_block_assets(bundle, block, page.number, kind);
+            let mut created = node(
+                bundle,
+                kind,
+                Some(page.number),
+                Some(marker_node_label(
+                    &block.marker_type,
+                    &block.role,
+                    page.number,
+                )),
+                marker_note_number(&block.text, &block.role),
+                block.text.clone(),
+                asset_ids,
+                vec![representation],
+                "marker",
+            );
+            if block.role == "possible_footnote" {
+                created.provenance.confidence = Some(0.6);
+            }
+            bundle.nodes.push(created);
+        }
+    }
+}
+
+fn paddle_node_kind(block: &crate::pipeline::extract::PaddleStructuredBlock) -> &'static str {
+    match block.role.as_str() {
+        "footnote" => "footnote",
+        "possible_footnote" => "possible_footnote",
+        "page_header" => "page_header",
+        "page_footer" => "page_footer",
+        _ => {
+            let markdown = block.markdown.trim();
+            let lines: Vec<&str> = markdown.lines().collect();
+            if Regex::new(r"^#{1,6}\s+").unwrap().is_match(markdown) {
+                "section"
+            } else if markdown.starts_with("```") || markdown.starts_with("~~~") {
+                "code"
+            } else if markdown.starts_with("$$")
+                || markdown.starts_with(r"\[")
+                || (markdown.starts_with('$') && markdown.ends_with('$'))
+            {
+                "equation"
+            } else if lines.len() >= 2 && lines[0].contains('|') && is_markdown_separator(lines[1])
+            {
+                "table"
+            } else if Regex::new(r"(?i)^(figure|fig\.?|table)\s+[A-Z]?\d")
+                .unwrap()
+                .is_match(markdown)
+            {
+                "caption"
+            } else if Regex::new(r"(?m)^\s*(?:[-+*]|\d+[.)])\s+")
+                .unwrap()
+                .is_match(markdown)
+            {
+                "list"
+            } else {
+                "text_block"
+            }
+        }
+    }
+}
+
+fn paddle_node_label(kind: &str, page: u32) -> String {
+    match kind {
+        "footnote" => format!("Footnote on page {page}"),
+        "possible_footnote" => format!("Possible footnote on page {page}"),
+        "page_header" => format!("Page {page} header"),
+        "page_footer" => format!("Page {page} footer"),
+        "section" => format!("Section block on page {page}"),
+        "equation" => format!("Equation block on page {page}"),
+        "table" => format!("Table block on page {page}"),
+        "figure" => format!("Figure block on page {page}"),
+        "caption" => format!("Caption block on page {page}"),
+        _ => format!("PaddleOCR-VL block on page {page}"),
+    }
+}
+
+fn add_paddle_structured_nodes(
+    bundle: &mut DocumentBundle,
+    structure: &crate::pipeline::extract::PaddleStructure,
+) {
+    for page in &structure.pages {
+        for block in &page.blocks {
+            let kind = paddle_node_kind(block);
+            let asset_ids = bundle
+                .assets
+                .iter()
+                .find(|asset| asset.kind == "page" && asset.page == Some(page.number))
+                .map(|asset| vec![asset.id.clone()])
+                .unwrap_or_default();
+            let representation = DocumentRepresentation {
+                format: "paddle_block".to_string(),
+                content: serde_json::json!({
+                    "block_id": block.block_id,
+                    "role": block.role,
+                    "markdown": block.markdown,
+                    "boundary": block.boundary,
+                    "note_marker": block.note_marker,
+                }),
+            };
+            let mut created = node(
+                bundle,
+                kind,
+                Some(page.number),
+                Some(paddle_node_label(kind, page.number)),
+                block.note_marker.clone(),
+                block.text.clone(),
+                asset_ids,
+                vec![representation],
+                "paddleocr-vl",
+            );
+            created.provenance.confidence = match block.role.as_str() {
+                "possible_footnote" => Some(0.6),
+                "page_header" | "page_footer" => Some(0.8),
+                _ => created.provenance.confidence,
+            };
+            bundle.nodes.push(created);
+        }
+    }
+}
+
 fn is_markdown_separator(line: &str) -> bool {
     let trimmed = line.trim().trim_matches('|');
     !trimmed.is_empty()
@@ -804,6 +1058,25 @@ fn xml_text(fragment: &str) -> String {
         .join("")
 }
 
+fn read_docx_entry_limited(
+    reader: &mut impl std::io::Read,
+    limit: u64,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::with_capacity((limit.min(64 * 1024)) as usize);
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to read {label}: {error}"))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!(
+            "{label} exceeds the {} MB decompressed safety limit",
+            limit / 1_000_000
+        ));
+    }
+    Ok(bytes)
+}
+
 #[derive(Default)]
 struct ParsedDocx {
     markdown: String,
@@ -824,11 +1097,9 @@ fn read_docx_xml(path: &Path) -> Result<String, String> {
             MAX_DOCX_XML_BYTES / 1_000_000
         ));
     }
-    let mut xml = String::with_capacity(document.size() as usize);
-    document
-        .read_to_string(&mut xml)
-        .map_err(|error| format!("DOCX document XML is not valid UTF-8: {error}"))?;
-    Ok(xml)
+    let bytes = read_docx_entry_limited(&mut document, MAX_DOCX_XML_BYTES, "DOCX document XML")?;
+    String::from_utf8(bytes)
+        .map_err(|error| format!("DOCX document XML is not valid UTF-8: {error}"))
 }
 
 fn parse_docx(path: &Path) -> Result<ParsedDocx, String> {
@@ -934,28 +1205,44 @@ pub fn extract_docx_text(path: &Path) -> Result<String, String> {
     }
 }
 
-fn copy_docx_media(path: &Path, run_dir: &Path) -> Result<Vec<(String, String, String)>, String> {
+fn copy_docx_media_with_limits(
+    path: &Path,
+    run_dir: &Path,
+    max_entry_bytes: u64,
+    max_total_bytes: u64,
+    max_files: usize,
+    max_archive_entries: usize,
+) -> Result<Vec<(String, String, String)>, String> {
     let file = crate::safety::open_regular_file(path)?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|error| format!("Invalid DOCX archive: {error}"))?;
+    if archive.len() > max_archive_entries {
+        return Err(format!(
+            "DOCX archive contains {} entries; the safety limit is {max_archive_entries}",
+            archive.len()
+        ));
+    }
     let destination = run_dir.join("artifacts/document/figures");
+    let staging = tempfile::Builder::new()
+        .prefix(".pipeline-docx-media-")
+        .tempdir_in(run_dir)
+        .map_err(|error| format!("Failed to create DOCX media staging directory: {error}"))?;
+    let staged_destination = staging.path().join("figures");
     let mut added = Vec::new();
     let mut total_bytes = 0u64;
     for index in 0..archive.len() {
-        if added.len() >= MAX_DOCX_MEDIA_FILES {
-            break;
-        }
         let mut entry = archive
             .by_index(index)
             .map_err(|error| format!("Failed to inspect DOCX media: {error}"))?;
         let name = entry.name().to_string();
-        if !name.starts_with("word/media/") || entry.is_dir() || entry.size() > MAX_DOCX_MEDIA_BYTES
-        {
+        if !name.starts_with("word/media/") || entry.is_dir() {
             continue;
         }
-        total_bytes = total_bytes.saturating_add(entry.size());
-        if total_bytes > MAX_DOCX_TOTAL_MEDIA_BYTES {
-            break;
+        if entry.size() > max_entry_bytes {
+            return Err(format!(
+                "DOCX media entry '{}' exceeds the {max_entry_bytes} byte decompressed safety limit",
+                entry.name()
+            ));
         }
         let Some(file_name) = Path::new(&name)
             .file_name()
@@ -974,17 +1261,64 @@ fn copy_docx_media(path: &Path, run_dir: &Path) -> Result<Vec<(String, String, S
         ) {
             continue;
         }
-        fs::create_dir_all(&destination)
+        if added.len() >= max_files {
+            return Err(format!(
+                "DOCX contains more than {max_files} supported media files"
+            ));
+        }
+        let remaining = max_total_bytes.saturating_sub(total_bytes);
+        if remaining == 0 || entry.size() > remaining {
+            return Err(format!(
+                "DOCX media exceeds the {max_total_bytes} byte cumulative decompressed safety limit"
+            ));
+        }
+        fs::create_dir_all(&staged_destination)
             .map_err(|error| format!("Failed to create DOCX media directory: {error}"))?;
         let safe_name = format!("{:03}_{}", added.len() + 1, file_name);
         let rel_path = format!("artifacts/document/figures/{safe_name}");
-        let mut output = fs::File::create(run_dir.join(&rel_path))
-            .map_err(|error| format!("Failed to create DOCX media artifact: {error}"))?;
-        std::io::copy(&mut entry, &mut output)
+        let limit = max_entry_bytes.min(remaining);
+        let mut output = fs::File::create(staged_destination.join(&safe_name))
+            .map_err(|error| format!("Failed to stage DOCX media artifact: {error}"))?;
+        let copied = std::io::copy(&mut (&mut entry).take(limit.saturating_add(1)), &mut output)
             .map_err(|error| format!("Failed to extract DOCX media: {error}"))?;
+        if copied > limit {
+            return Err(format!(
+                "DOCX media entry '{file_name}' exceeds the {limit} byte decompressed safety limit"
+            ));
+        }
+        output
+            .flush()
+            .map_err(|error| format!("Failed to flush DOCX media artifact: {error}"))?;
+        total_bytes = total_bytes.saturating_add(copied);
         added.push((rel_path, file_name.to_string(), "figures".to_string()));
     }
+    if !added.is_empty() {
+        let parent = destination
+            .parent()
+            .ok_or("DOCX media destination has no parent")?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create DOCX artifact directory: {error}"))?;
+        if destination.exists() {
+            return Err(format!(
+                "DOCX media destination already exists: {}",
+                destination.display()
+            ));
+        }
+        fs::rename(&staged_destination, &destination)
+            .map_err(|error| format!("Failed to publish DOCX media artifacts: {error}"))?;
+    }
     Ok(added)
+}
+
+fn copy_docx_media(path: &Path, run_dir: &Path) -> Result<Vec<(String, String, String)>, String> {
+    copy_docx_media_with_limits(
+        path,
+        run_dir,
+        MAX_DOCX_MEDIA_BYTES,
+        MAX_DOCX_TOTAL_MEDIA_BYTES,
+        MAX_DOCX_MEDIA_FILES,
+        MAX_DOCX_ARCHIVE_ENTRIES,
+    )
 }
 
 pub fn companion_pdf(source_path: &str) -> Option<PathBuf> {
@@ -1102,7 +1436,29 @@ pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuil
             })
             .collect(),
     };
-    add_markdown_nodes(&mut bundle, &extraction.text, &extraction.method);
+    let mut has_native_structure = false;
+    if extraction.method == "marker" {
+        if let Some(structure) =
+            crate::pipeline::extract::read_marker_structure(&extraction.paper_hash)?
+        {
+            add_marker_structured_nodes(&mut bundle, &structure);
+            has_native_structure = true;
+        }
+    } else if extraction.method == "paddleocr-vl" {
+        if let Some(structure) =
+            crate::pipeline::extract::read_paddle_structure(&extraction.paper_hash)?
+        {
+            add_paddle_structured_nodes(&mut bundle, &structure);
+            has_native_structure = true;
+        }
+    }
+    // Marker and Paddle already provide block-level semantics. Re-inferring
+    // the same headings, equations, captions, and tables from their Markdown
+    // doubles both meaning and payload size. Keep Markdown inference only as a
+    // compatibility fallback when no native structure sidecar is available.
+    if !has_native_structure {
+        add_markdown_nodes(&mut bundle, &extraction.text, &extraction.method);
+    }
     if kind == "latex" {
         add_tex_nodes(&mut bundle, &extraction.text, &extraction.method);
     } else if kind == "docx" {
@@ -1275,23 +1631,111 @@ impl DocumentBundle {
     }
 
     pub fn to_json_pretty(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(self)
-            .map_err(|error| format!("Failed to serialize document bundle: {error}"))
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|error| format!("Failed to serialize document bundle: {error}"))?;
+        if json.len() > MAX_DOCUMENT_BUNDLE_BYTES {
+            return Err(format!(
+                "Document bundle is {} MB; the durable artifact limit is {} MB",
+                json.len().div_ceil(1024 * 1024),
+                MAX_DOCUMENT_BUNDLE_BYTES / (1024 * 1024)
+            ));
+        }
+        Ok(json)
+    }
+
+    /// Compact, model-facing structural index. The readable `document.md`
+    /// already contains page and paragraph prose, so repeating those large
+    /// node bodies in every reviewer's tool loop only inflates context. Keep
+    /// semantic content (equations, results, captions, tables, figures) while
+    /// omitting duplicate page/paragraph/footer nodes entirely.
+    pub fn to_model_index_pretty(&self) -> Result<String, String> {
+        let keep_node = |node: &DocumentNode| {
+            !matches!(
+                node.kind.as_str(),
+                "page_text" | "text_block" | "page_footer"
+            )
+        };
+        let mut retained_ids: HashSet<&str> = self
+            .nodes
+            .iter()
+            .filter(|node| keep_node(node))
+            .map(|node| node.id.as_str())
+            .collect();
+        retained_ids.extend(self.assets.iter().map(|asset| asset.id.as_str()));
+        retained_ids.extend(self.origins.iter().map(|origin| origin.id.as_str()));
+        let nodes = self
+            .nodes
+            .iter()
+            .filter(|node| keep_node(node))
+            .map(|node| ModelDocumentNode {
+                id: &node.id,
+                kind: &node.kind,
+                order: node.order,
+                page: node.page,
+                parent_id: node
+                    .parent_id
+                    .as_deref()
+                    .filter(|parent| retained_ids.contains(*parent)),
+                label: node.label.as_deref(),
+                number: node.number.as_deref(),
+                text: (!node.text.is_empty()).then_some(node.text.as_str()),
+                representations: (!node.representations.is_empty())
+                    .then_some(node.representations.as_slice()),
+                asset_ids: &node.asset_ids,
+                provenance: &node.provenance,
+            })
+            .collect();
+        let index = ModelDocumentIndex {
+            format: "pipeline.document-index.v1",
+            schema_version: &self.schema_version,
+            bundle_id: &self.bundle_id,
+            source_kind: &self.source_kind,
+            origins: &self.origins,
+            pages: &self.pages,
+            nodes,
+            assets: &self.assets,
+            links: self
+                .links
+                .iter()
+                .filter(|link| {
+                    retained_ids.contains(link.from_id.as_str())
+                        && retained_ids.contains(link.to_id.as_str())
+                })
+                .collect(),
+            extraction: &self.extraction,
+            quality: &self.quality,
+        };
+        let json = serde_json::to_string_pretty(&index)
+            .map_err(|error| format!("Failed to serialize document index: {error}"))?;
+        if json.len() > MAX_MODEL_DOCUMENT_INDEX_BYTES {
+            return Err(format!(
+                "Document index is {} MB; the model-readable limit is {} MB",
+                json.len().div_ceil(1024 * 1024),
+                MAX_MODEL_DOCUMENT_INDEX_BYTES / (1024 * 1024)
+            ));
+        }
+        Ok(json)
     }
 
     pub fn to_jsonl(&self) -> Result<String, String> {
         let mut output = String::new();
         for document_node in &self.nodes {
-            output.push_str(
-                &serde_json::to_string(document_node)
-                    .map_err(|error| format!("Failed to serialize document node: {error}"))?,
-            );
+            let line = serde_json::to_string(document_node)
+                .map_err(|error| format!("Failed to serialize document node: {error}"))?;
+            if line.len().saturating_add(1).saturating_add(output.len()) > MAX_DOCUMENT_BUNDLE_BYTES
+            {
+                return Err(format!(
+                    "Document block stream exceeds the {} MB durable artifact limit",
+                    MAX_DOCUMENT_BUNDLE_BYTES / (1024 * 1024)
+                ));
+            }
+            output.push_str(&line);
             output.push('\n');
         }
         Ok(output)
     }
 
-    pub fn to_markdown(&self) -> String {
+    fn markdown_preamble(&self) -> String {
         let counts = self.kind_counts();
         let mut output = format!(
             "# Document bundle\n\n\
@@ -1339,6 +1783,11 @@ impl DocumentBundle {
             }
             output.push('\n');
         }
+        output
+    }
+
+    pub fn to_markdown(&self) -> String {
+        let mut output = self.markdown_preamble();
         output.push_str(
             "## Extracted document\n\n\
              Stable block markers below can be cross-referenced with `document_bundle.json`.\n\n",
@@ -1352,6 +1801,23 @@ impl DocumentBundle {
                 "<!-- DOCUMENT_NODE {}{} -->\n\n{}\n\n",
                 document_node.id, page, document_node.text
             ));
+        }
+        output
+    }
+
+    /// Readable projection backed by the exact verified extraction text.
+    /// Native Marker/Paddle bundles intentionally do not duplicate that text
+    /// into page nodes, so callers that have the compatibility view should use
+    /// this projection for `document.md` and model-facing primary text.
+    pub fn to_markdown_with_text(&self, extracted_text: &str) -> String {
+        let mut output = self.markdown_preamble();
+        output.push_str(
+            "## Extracted document\n\n\
+             The exact verified extraction view follows. Structural references are in `document_bundle.json`.\n\n",
+        );
+        output.push_str(extracted_text);
+        if !output.ends_with('\n') {
+            output.push('\n');
         }
         output
     }
@@ -1375,6 +1841,72 @@ impl DocumentBundle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn docx_entry_limit_uses_bytes_actually_read() {
+        let mut exact = std::io::Cursor::new(b"12345678");
+        assert_eq!(
+            read_docx_entry_limited(&mut exact, 8, "test entry").unwrap(),
+            b"12345678"
+        );
+
+        let mut oversized = std::io::Cursor::new(b"123456789");
+        let error = read_docx_entry_limited(&mut oversized, 8, "test entry").unwrap_err();
+        assert!(error.contains("decompressed safety limit"), "{error}");
+    }
+
+    #[test]
+    fn docx_media_failure_publishes_no_partial_files() {
+        use std::io::Write as _;
+        let source = tempfile::tempdir().unwrap();
+        let path = source.path().join("oversized.docx");
+        let file = fs::File::create(&path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        archive.start_file("word/media/first.png", options).unwrap();
+        archive.write_all(b"12345678").unwrap();
+        archive
+            .start_file("word/media/second.png", options)
+            .unwrap();
+        archive.write_all(b"abcdefgh").unwrap();
+        archive.finish().unwrap();
+
+        let run = tempfile::tempdir().unwrap();
+        let error = copy_docx_media_with_limits(&path, run.path(), 16, 12, 10, 100).unwrap_err();
+        assert!(error.contains("cumulative"), "{error}");
+        assert!(!run.path().join("artifacts/document/figures").exists());
+        assert!(fs::read_dir(run.path()).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".pipeline-docx-media-")));
+    }
+
+    #[test]
+    fn docx_archive_entry_count_is_bounded_before_media_scan() {
+        use std::io::Write as _;
+        let source = tempfile::tempdir().unwrap();
+        let path = source.path().join("many-entries.docx");
+        let file = fs::File::create(&path).unwrap();
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for index in 0..3 {
+            archive
+                .start_file(format!("metadata/{index}.xml"), options)
+                .unwrap();
+            archive.write_all(b"x").unwrap();
+        }
+        archive.finish().unwrap();
+
+        let run = tempfile::tempdir().unwrap();
+        let error = copy_docx_media_with_limits(&path, run.path(), 16, 64, 10, 2).unwrap_err();
+        assert!(error.contains("contains 3 entries"), "{error}");
+        assert!(!run.path().read_dir().unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".pipeline-docx-media-")));
+    }
 
     #[test]
     fn jpeg_dimension_parser_reads_start_of_frame() {
@@ -1459,6 +1991,205 @@ mod tests {
         let markdown = bundle.to_markdown();
         assert!(markdown.contains("DOCUMENT_NODE page_text-00001"));
         assert!(markdown.contains("A complete paragraph."));
+    }
+
+    #[test]
+    fn readable_projection_can_use_exact_text_without_page_node_duplication() {
+        let mut bundle = build(
+            &extraction("Compatibility text"),
+            tempfile::tempdir().unwrap().path(),
+        )
+        .unwrap()
+        .bundle;
+        bundle.nodes.retain(|node| node.kind != "page_text");
+
+        let markdown = bundle.to_markdown_with_text("<!-- PAGE 1 -->\nExact native text");
+        assert!(markdown.contains("Exact native text"));
+        assert!(!markdown.contains("DOCUMENT_NODE page_text"));
+    }
+
+    #[test]
+    fn canonical_bundle_serialization_enforces_artifact_limit() {
+        let mut bundle = build(
+            &extraction("Compatibility text"),
+            tempfile::tempdir().unwrap().path(),
+        )
+        .unwrap()
+        .bundle;
+        bundle.nodes[0].text = "x".repeat(MAX_DOCUMENT_BUNDLE_BYTES);
+
+        assert!(bundle
+            .to_json_pretty()
+            .unwrap_err()
+            .contains("durable artifact limit"));
+        assert!(bundle
+            .to_jsonl()
+            .unwrap_err()
+            .contains("durable artifact limit"));
+    }
+
+    #[test]
+    fn model_index_enforces_direct_provider_limit() {
+        let mut bundle = build(
+            &extraction("Compatibility text"),
+            tempfile::tempdir().unwrap().path(),
+        )
+        .unwrap()
+        .bundle;
+        bundle.nodes[0].kind = "equation".to_string();
+        bundle.nodes[0].text = "x".repeat(MAX_MODEL_DOCUMENT_INDEX_BYTES);
+
+        assert!(bundle
+            .to_model_index_pretty()
+            .unwrap_err()
+            .contains("model-readable limit"));
+    }
+
+    #[test]
+    fn model_index_omits_duplicate_prose_but_keeps_semantic_content() {
+        let bundle = build(
+            &extraction("<!-- PAGE 1 -->\nA paragraph.\n\n$$y=x$$"),
+            tempfile::tempdir().unwrap().path(),
+        )
+        .unwrap()
+        .bundle;
+        let index: serde_json::Value =
+            serde_json::from_str(&bundle.to_model_index_pretty().unwrap()).unwrap();
+        let nodes = index["nodes"].as_array().unwrap();
+        let equation = nodes
+            .iter()
+            .find(|node| node["kind"] == "equation")
+            .unwrap();
+
+        assert!(!nodes.iter().any(|node| node["kind"] == "page_text"));
+        assert_eq!(equation["text"], "$$y=x$$");
+        assert_eq!(index["format"], "pipeline.document-index.v1");
+    }
+
+    #[test]
+    fn marker_structure_preserves_semantic_and_uncertain_blocks() {
+        let mut bundle = build(
+            &extraction("<!-- PAGE 1 -->\nA complete paragraph."),
+            tempfile::tempdir().unwrap().path(),
+        )
+        .unwrap()
+        .bundle;
+        let structure = crate::pipeline::extract::MarkerStructure {
+            schema_version: 1,
+            quality_notes: Vec::new(),
+            pages: vec![crate::pipeline::extract::MarkerStructuredPage {
+                number: 1,
+                marker_id: "/page/0/Page/0".to_string(),
+                polygon: vec![
+                    vec![0.0, 0.0],
+                    vec![612.0, 0.0],
+                    vec![612.0, 792.0],
+                    vec![0.0, 792.0],
+                ],
+                bbox: vec![0.0, 0.0, 612.0, 792.0],
+                blocks: vec![
+                    crate::pipeline::extract::MarkerStructuredBlock {
+                        marker_id: "/page/0/PageHeader/0".to_string(),
+                        marker_type: "PageHeader".to_string(),
+                        role: "page_header".to_string(),
+                        html: "<p>Running title</p>".to_string(),
+                        text: "Running title".to_string(),
+                        polygon: Vec::new(),
+                        bbox: vec![72.0, 20.0, 540.0, 40.0],
+                        image_files: Vec::new(),
+                    },
+                    crate::pipeline::extract::MarkerStructuredBlock {
+                        marker_id: "/page/0/Text/1".to_string(),
+                        marker_type: "Text".to_string(),
+                        role: "possible_footnote".to_string(),
+                        html: "<p>1 Qualification</p>".to_string(),
+                        text: "1 Qualification".to_string(),
+                        polygon: Vec::new(),
+                        bbox: vec![72.0, 680.0, 540.0, 720.0],
+                        image_files: Vec::new(),
+                    },
+                ],
+            }],
+        };
+        add_marker_structured_nodes(&mut bundle, &structure);
+
+        let header = bundle
+            .nodes
+            .iter()
+            .find(|node| node.kind == "page_header")
+            .unwrap();
+        assert_eq!(header.text, "Running title");
+        let possible = bundle
+            .nodes
+            .iter()
+            .find(|node| node.kind == "possible_footnote")
+            .unwrap();
+        assert_eq!(possible.number.as_deref(), Some("1"));
+        assert_eq!(possible.provenance.confidence, Some(0.6));
+        assert!(possible
+            .representations
+            .iter()
+            .any(|representation| representation.format == "marker_block"));
+    }
+
+    #[test]
+    fn paddle_structure_preserves_roles_exact_markdown_and_page_evidence() {
+        let mut bundle = build(
+            &extraction("<!-- PAGE 2 -->\nA complete paragraph."),
+            tempfile::tempdir().unwrap().path(),
+        )
+        .unwrap()
+        .bundle;
+        let structure = crate::pipeline::extract::PaddleStructure {
+            schema_version: 1,
+            quality_notes: Vec::new(),
+            pages: vec![crate::pipeline::extract::PaddleStructuredPage {
+                number: 2,
+                blocks: vec![
+                    crate::pipeline::extract::PaddleStructuredBlock {
+                        block_id: "paddle-page-0002-block-0001".to_string(),
+                        role: "page_header".to_string(),
+                        markdown: "Running title".to_string(),
+                        text: "Running title".to_string(),
+                        boundary: Some("top".to_string()),
+                        note_marker: None,
+                    },
+                    crate::pipeline::extract::PaddleStructuredBlock {
+                        block_id: "paddle-page-0002-block-0003".to_string(),
+                        role: "possible_footnote".to_string(),
+                        markdown: "2 A qualification with *source emphasis*.".to_string(),
+                        text: "2 A qualification with source emphasis.".to_string(),
+                        boundary: Some("bottom".to_string()),
+                        note_marker: Some("2".to_string()),
+                    },
+                ],
+            }],
+        };
+        add_paddle_structured_nodes(&mut bundle, &structure);
+
+        let header = bundle
+            .nodes
+            .iter()
+            .find(|node| node.kind == "page_header")
+            .unwrap();
+        assert_eq!(header.text, "Running title");
+        assert_eq!(header.provenance.confidence, Some(0.8));
+        let possible = bundle
+            .nodes
+            .iter()
+            .find(|node| node.kind == "possible_footnote")
+            .unwrap();
+        assert_eq!(possible.number.as_deref(), Some("2"));
+        assert_eq!(possible.provenance.confidence, Some(0.6));
+        let representation = possible
+            .representations
+            .iter()
+            .find(|representation| representation.format == "paddle_block")
+            .unwrap();
+        assert_eq!(
+            representation.content["markdown"],
+            "2 A qualification with *source emphasis*."
+        );
     }
 
     #[test]

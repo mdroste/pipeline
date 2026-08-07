@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HistoryPage from "./HistoryPage";
 import type { RunSummary } from "../lib/types";
@@ -33,9 +33,52 @@ function run(overrides: Partial<RunSummary>): RunSummary {
   };
 }
 
-describe("HistoryPage resume actions", () => {
+describe("HistoryPage", () => {
   beforeEach(() => {
     invoke.mockReset();
+  });
+
+  it("decomposes logical input into fresh, cache-read, and cache-write tokens", async () => {
+    const cachedRun = run({
+      input_tokens: 50_000,
+      output_tokens: 2_000,
+      cached_input_tokens: 40_000,
+      cache_write_input_tokens: 8_000,
+      model_round_trips: 7,
+      tool_calls: {
+        text_file: 3,
+        image: 1,
+        web: 2,
+        shell_or_other: 0,
+        unknown: 1,
+      },
+    });
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs") return Promise.resolve([cachedRun]);
+      if (command === "runs_disk_usage") return Promise.resolve({ count: 1, bytes: 1024 });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    render(<HistoryPage onClose={vi.fn()} />);
+
+    const summary = await screen.findByLabelText(
+      /50,000 logical input tokens equals 2,000 fresh input tokens plus 40,000 cache-read tokens plus 8,000 cache-write tokens/,
+    );
+    expect(summary).toHaveTextContent(
+      "50k logical input = 2k fresh + 40k cache read + 8k cache write · 2k output",
+    );
+    expect(summary.getAttribute("title")).toContain(
+      "Cache reads and cache writes are subsets of logical input, not additional tokens.",
+    );
+    expect(summary).toHaveTextContent(
+      "7 reported model round trips and 7 reported tool calls",
+    );
+    expect(summary.getAttribute("title")).toContain(
+      "7 reported tool calls (3 text/file, 1 image, 2 web, 1 unknown)",
+    );
+    expect(summary.getAttribute("title")).toContain(
+      "unknown tool kinds remain in the unknown bucket",
+    );
+    expect(summary).toHaveAttribute("tabindex", "0");
   });
 
   it("offers Resume only for runs with a durable restart point", async () => {
@@ -65,5 +108,70 @@ describe("HistoryPage resume actions", () => {
 
     await userEvent.setup().click(resume);
     expect(onRerun).toHaveBeenCalledWith("cancelled_run", true);
+  });
+
+  it("orders selected comparisons chronologically, regardless of click order", async () => {
+    const newer = run({
+      run_id: "newer",
+      title: "Newer run",
+      created: "2026-07-24T12:00:00Z",
+    });
+    const older = run({
+      run_id: "older",
+      title: "Older run",
+      created: "2026-07-20T12:00:00Z",
+    });
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs") return Promise.resolve([newer, older]);
+      if (command === "runs_disk_usage") return Promise.resolve({ count: 2, bytes: 1024 });
+      if (command === "get_run_report") return Promise.resolve({ step_outputs: [] });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Compare" }));
+    // Select the newer run first to reproduce the historical inversion.
+    await user.click(screen.getByRole("checkbox", { name: "Select Newer run for comparison" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Older run for comparison" }));
+    await user.click(screen.getByRole("button", { name: "Compare selected" }));
+
+    await waitFor(() => {
+      const reportCalls = invoke.mock.calls.filter(([command]) => command === "get_run_report");
+      expect(reportCalls).toEqual([
+        ["get_run_report", { runId: "older" }],
+        ["get_run_report", { runId: "newer" }],
+      ]);
+    });
+  });
+
+  it("ignores an older refresh that resolves after a newer one", async () => {
+    const listResolvers: Array<(runs: RunSummary[]) => void> = [];
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs") {
+        return new Promise<RunSummary[]>((resolve) => listResolvers.push(resolve));
+      }
+      if (command === "runs_disk_usage") {
+        return Promise.resolve({ count: 1, bytes: 1024 });
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} />);
+
+    await waitFor(() => expect(listResolvers).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(listResolvers).toHaveLength(2));
+
+    await act(async () => {
+      listResolvers[1]([run({ run_id: "fresh", title: "Fresh result" })]);
+    });
+    expect(await screen.findByText("Fresh result")).toBeInTheDocument();
+
+    await act(async () => {
+      listResolvers[0]([run({ run_id: "stale", title: "Stale result" })]);
+    });
+    expect(screen.getByText("Fresh result")).toBeInTheDocument();
+    expect(screen.queryByText("Stale result")).not.toBeInTheDocument();
   });
 });

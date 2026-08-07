@@ -33,6 +33,15 @@ struct CodexInvocation {
     thread_id: Option<String>,
 }
 
+#[derive(Debug)]
+struct CodexForkSpec<'a> {
+    cwd: &'a str,
+    sandbox: &'static str,
+    model: Option<&'a str>,
+}
+
+const SESSION_UNAVAILABLE_PREFIX: &str = "unavailable:";
+
 fn read_last_message_file(path: &std::path::Path) -> Result<Option<String>, String> {
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("Could not inspect Codex final-message file: {error}"))?;
@@ -72,6 +81,39 @@ fn update_last_agent_message(
     Ok(true)
 }
 
+fn codex_completed_tool_kind(event: &serde_json::Value) -> Option<crate::models::ToolCallKind> {
+    use crate::models::ToolCallKind;
+
+    if event.get("type").and_then(|kind| kind.as_str()) != Some("item.completed") {
+        return None;
+    }
+    let item = event.get("item")?;
+    let item_type = item.get("type").and_then(|kind| kind.as_str())?;
+    match item_type {
+        "file_change" | "file_read" | "file_write" => Some(ToolCallKind::TextFile),
+        "command_execution" | "computer_call" | "computer_action" => {
+            Some(ToolCallKind::ShellOrOther)
+        }
+        "web_search" | "web_fetch" => Some(ToolCallKind::Web),
+        "image_generation" | "image_view" | "view_image" => Some(ToolCallKind::Image),
+        "mcp_tool_call" | "function_call" | "tool_call" => {
+            let name = item
+                .get("tool")
+                .or_else(|| item.get("name"))
+                .or_else(|| {
+                    item.get("function")
+                        .and_then(|function| function.get("name"))
+                })
+                .and_then(|name| name.as_str())
+                .unwrap_or("");
+            Some(super::logging::classify_tool_name(name))
+        }
+        // Preserve future tool-like item kinds in an explicit unknown bucket.
+        other if other.contains("tool") || other.ends_with("_call") => Some(ToolCallKind::Unknown),
+        _ => None,
+    }
+}
+
 fn is_session_resume_error(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     [
@@ -84,6 +126,15 @@ fn is_session_resume_error(error: &str) -> bool {
     ]
     .iter()
     .any(|needle| error.contains(needle))
+}
+
+fn codex_web_search_override(allowed_tools: &[&str]) -> String {
+    let mode = if allowed_tools.contains(&"WebSearch") {
+        "live"
+    } else {
+        "disabled"
+    };
+    format!("web_search=\"{mode}\"")
 }
 
 /// Call `codex exec` and return the text output.
@@ -120,26 +171,24 @@ pub async fn call_codex(
         .settings
         .cloned()
         .unwrap_or_else(crate::settings::load);
-    let model = overrides.model.unwrap_or(settings.codex_model.as_str());
+    let model = if overrides.model_resolved {
+        overrides.model.unwrap_or("")
+    } else {
+        overrides.model.unwrap_or(settings.codex_model.as_str())
+    };
     let effort = overrides.effort.unwrap_or(settings.codex_effort.as_str());
-    let tools_key = allowed_tools.join(",");
-    let session_key = context.compatibility_key(
-        "codex-cli",
-        [
-            model,
-            effort,
-            system_prompt.unwrap_or(""),
-            tools_key.as_str(),
-            cwd.unwrap_or(""),
-            overrides.write_dir.unwrap_or(""),
-        ],
-    );
+    let session_key =
+        context.compatibility_key("codex-cli", [model, effort, system_prompt.unwrap_or("")]);
     let slot = context.slot(session_key).await;
 
     let base_result = {
         let mut base = slot.lock().await;
         if let Some(id) = base.as_ref() {
-            Ok(id.clone())
+            if let Some(reason) = id.strip_prefix(SESSION_UNAVAILABLE_PREFIX) {
+                Err(reason.to_string())
+            } else {
+                Ok(id.clone())
+            }
         } else {
             let primer = format!(
                 "{}\n\nReply with exactly: Context prepared.",
@@ -147,31 +196,64 @@ pub async fn call_codex(
             );
             let mut primer_overrides = overrides.clone();
             primer_overrides.shared_context = None;
+            primer_overrides.write_dir = None;
             let primer_label = format!("{label} · cache warm-up");
-            call_codex_inner(
+            match call_codex_inner(
                 app,
                 &primer,
-                allowed_tools,
+                &[],
                 system_prompt,
                 timeout_secs,
                 &primer_label,
-                cwd,
+                Some(context.workspace_dir()),
                 &primer_overrides,
                 CodexSessionMode::New,
             )
             .await
-            .and_then(|result| {
-                let id = result
-                    .thread_id
-                    .ok_or_else(|| "Codex did not report a reusable thread id".to_string())?;
-                *base = Some(id.clone());
-                Ok(id)
-            })
+            {
+                Ok(result) => match result.thread_id {
+                    Some(id) => {
+                        *base = Some(id.clone());
+                        Ok(id)
+                    }
+                    None => {
+                        let error = "Codex did not report a reusable thread id".to_string();
+                        *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                        Err(error)
+                    }
+                },
+                Err(error) => {
+                    *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                    Err(error)
+                }
+            }
         }
     };
 
+    let needs_write = allowed_tools
+        .iter()
+        .any(|tool| *tool == "Write" || *tool == "Edit")
+        && overrides.write_dir.is_some();
+    let branch_cwd = codex_effective_cwd(
+        needs_write,
+        cwd,
+        overrides.write_dir,
+        Some(context.workspace_dir()),
+    )?
+    .ok_or_else(|| "Codex shared-context fork has no working directory".to_string())?;
+    let fork_spec = CodexForkSpec {
+        cwd: &branch_cwd,
+        sandbox: if needs_write {
+            "workspace-write"
+        } else {
+            "read-only"
+        },
+        model: (!model.is_empty()).then_some(model),
+    };
     let branch_result = match base_result {
-        Ok(base_id) => fork_codex_thread(&base_id).await.map(|id| (base_id, id)),
+        Ok(base_id) => fork_codex_thread(&base_id, &fork_spec)
+            .await
+            .map(|id| (base_id, id)),
         Err(error) => Err(error),
     };
 
@@ -196,6 +278,9 @@ pub async fn call_codex(
             match result {
                 Ok(result) => Ok(result.text),
                 Err(error) if is_session_resume_error(&error) => {
+                    let mut base = slot.lock().await;
+                    *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                    drop(base);
                     log(
                         app,
                         format!(
@@ -223,6 +308,9 @@ pub async fn call_codex(
             }
         }
         Err(error) => {
+            let mut base = slot.lock().await;
+            *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+            drop(base);
             log(
                 app,
                 format!(
@@ -249,7 +337,110 @@ pub async fn call_codex(
     }
 }
 
-async fn fork_codex_thread(thread_id: &str) -> Result<String, String> {
+fn validate_codex_fork(
+    result: &serde_json::Value,
+    spec: &CodexForkSpec<'_>,
+) -> Result<String, String> {
+    let returned_cwd = result
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .and_then(normalize_cli_root)
+        .ok_or_else(|| "Codex thread/fork returned no valid working directory".to_string())?;
+    if returned_cwd != spec.cwd {
+        return Err(format!(
+            "Codex thread/fork did not preserve the requested working directory (requested {}, received {returned_cwd})",
+            spec.cwd
+        ));
+    }
+
+    let expected_policy = if spec.sandbox == "workspace-write" {
+        "workspaceWrite"
+    } else {
+        "readOnly"
+    };
+    let sandbox = result
+        .get("sandbox")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "Codex thread/fork returned no sandbox policy".to_string())?;
+    let returned_policy = sandbox
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    if returned_policy != expected_policy {
+        return Err(format!(
+            "Codex thread/fork returned sandbox '{returned_policy}', expected '{expected_policy}'"
+        ));
+    }
+    if sandbox.get("networkAccess").and_then(|v| v.as_bool()) == Some(true) {
+        return Err("Codex thread/fork unexpectedly granted network access".to_string());
+    }
+    if spec.sandbox == "workspace-write" {
+        if sandbox.get("excludeSlashTmp").and_then(|v| v.as_bool()) != Some(true)
+            || sandbox.get("excludeTmpdirEnvVar").and_then(|v| v.as_bool()) != Some(true)
+        {
+            return Err(
+                "Codex thread/fork did not preserve the requested workspace-write restrictions"
+                    .to_string(),
+            );
+        }
+        let writable_roots = sandbox
+            .get("writableRoots")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "Codex thread/fork returned no writable-root policy".to_string())?;
+        if !writable_roots.is_empty() {
+            return Err(
+                "Codex thread/fork unexpectedly granted additional writable roots".to_string(),
+            );
+        }
+    }
+
+    let roots = result
+        .get("runtimeWorkspaceRoots")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "Codex thread/fork returned no runtime workspace roots".to_string())?;
+    let returned_roots = roots
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(normalize_cli_root)
+        .collect::<Vec<_>>();
+    if returned_roots != [spec.cwd.to_string()] {
+        return Err(format!(
+            "Codex thread/fork returned unexpected runtime workspace roots: {returned_roots:?}"
+        ));
+    }
+    if let Some(model) = spec.model {
+        if result.get("model").and_then(serde_json::Value::as_str) != Some(model) {
+            return Err("Codex thread/fork did not preserve the requested model".to_string());
+        }
+    }
+
+    result
+        .get("thread")
+        .and_then(|thread| thread.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "Codex thread/fork returned no child thread id".to_string())
+}
+
+async fn fork_codex_thread(thread_id: &str, spec: &CodexForkSpec<'_>) -> Result<String, String> {
+    let mut fork_params = serde_json::json!({
+        "threadId": thread_id,
+        "cwd": spec.cwd,
+        "sandbox": spec.sandbox,
+        "runtimeWorkspaceRoots": [spec.cwd],
+    });
+    if spec.sandbox == "workspace-write" {
+        fork_params["config"] = serde_json::json!({
+            "sandbox_workspace_write": {
+                "exclude_slash_tmp": true,
+                "exclude_tmpdir_env_var": true,
+                "network_access": false
+            }
+        });
+    }
+    if let Some(model) = spec.model {
+        fork_params["model"] = serde_json::Value::String(model.to_string());
+    }
     let requests = [
         serde_json::json!({
             "jsonrpc": "2.0",
@@ -260,14 +451,15 @@ async fn fork_codex_thread(thread_id: &str) -> Result<String, String> {
                     "name": "pipeline",
                     "title": "Pipeline",
                     "version": env!("CARGO_PKG_VERSION")
-                }
+                },
+                "capabilities": { "experimentalApi": true }
             }
         }),
         serde_json::json!({
             "jsonrpc": "2.0",
             "id": 2,
             "method": "thread/fork",
-            "params": { "threadId": thread_id }
+            "params": fork_params
         }),
     ];
     let replies = crate::model_catalog::rpc_exchange(
@@ -276,14 +468,11 @@ async fn fork_codex_thread(thread_id: &str) -> Result<String, String> {
         &requests,
     )
     .await?;
-    replies
+    let result = replies
         .get(1)
         .and_then(|reply| reply.get("result"))
-        .and_then(|result| result.get("thread"))
-        .and_then(|thread| thread.get("id"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| "Codex thread/fork returned no child thread id".to_string())
+        .ok_or_else(|| "Codex thread/fork returned no result".to_string())?;
+    validate_codex_fork(result, spec)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -304,6 +493,11 @@ async fn call_codex_inner(
     }
     // Use JSON mode for clean machine-readable output
     cmd_args.push("--json".to_string());
+    // Do not inherit ambient search settings from the user's Codex config.
+    // Contribution gets current/live search; every other review branch and
+    // the shared-context primer keep search disabled.
+    cmd_args.push("-c".to_string());
+    cmd_args.push(codex_web_search_override(allowed_tools));
 
     // codex exec refuses to run outside a "trusted" git repo unless this is
     // set ("Not inside a trusted directory and --skip-git-repo-check was not
@@ -458,6 +652,8 @@ async fn call_codex_inner(
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let mut total_cached_input_tokens: u64 = 0;
+        let mut model_round_trips: u64 = 0;
+        let mut tool_calls = crate::models::ToolCallCounts::default();
         let mut thread_id: Option<String> = None;
         let mut overflowed = false;
         let mut stdout_bytes = 0usize;
@@ -506,6 +702,9 @@ async fn call_codex_inner(
                                 .map(str::to_string);
                         }
                         Some("item.completed") => {
+                            if let Some(kind) = codex_completed_tool_kind(&event) {
+                                tool_calls.add_kind(kind, 1);
+                            }
                             if let Err(error) =
                                 update_last_agent_message(&event, &mut last_agent_text)
                             {
@@ -514,6 +713,7 @@ async fn call_codex_inner(
                             }
                         }
                         Some("turn.completed") => {
+                            model_round_trips = model_round_trips.saturating_add(1);
                             if let Some(usage) = event.get("usage") {
                                 total_input_tokens += usage
                                     .get("input_tokens")
@@ -566,6 +766,8 @@ async fn call_codex_inner(
             total_input_tokens,
             total_output_tokens,
             total_cached_input_tokens,
+            model_round_trips,
+            tool_calls,
             thread_id,
             overflowed,
         )
@@ -587,6 +789,8 @@ async fn call_codex_inner(
             input_tokens,
             output_tokens,
             cached_input_tokens,
+            model_round_trips,
+            tool_calls,
             thread_id,
             stdout_overflowed,
         ),
@@ -632,6 +836,8 @@ async fn call_codex_inner(
             output_tokens,
             cached_input_tokens,
             cache_write_input_tokens: 0,
+            model_round_trips,
+            tool_calls,
             ..Default::default()
         },
     );
@@ -741,5 +947,103 @@ mod tests {
         }
         assert_eq!(fallback, "## Final report\n\nClean.");
         assert!(!fallback.contains("instructions"));
+    }
+
+    #[test]
+    fn completed_codex_items_keep_stable_tool_categories_and_unknowns() {
+        use crate::models::ToolCallKind;
+
+        let cases = [
+            ("file_change", None, ToolCallKind::TextFile),
+            ("command_execution", None, ToolCallKind::ShellOrOther),
+            ("web_search", None, ToolCallKind::Web),
+            ("image_generation", None, ToolCallKind::Image),
+            (
+                "mcp_tool_call",
+                Some("ReadDocumentAsset"),
+                ToolCallKind::Image,
+            ),
+            ("future_tool_call", None, ToolCallKind::Unknown),
+        ];
+        for (item_type, name, expected) in cases {
+            let mut item = serde_json::json!({ "type": item_type });
+            if let Some(name) = name {
+                item["tool"] = serde_json::Value::String(name.to_string());
+            }
+            let event = serde_json::json!({
+                "type": "item.completed",
+                "item": item
+            });
+            assert_eq!(codex_completed_tool_kind(&event), Some(expected));
+        }
+
+        let message = serde_json::json!({
+            "type": "item.completed",
+            "item": { "type": "agent_message", "text": "done" }
+        });
+        assert_eq!(codex_completed_tool_kind(&message), None);
+    }
+
+    #[test]
+    fn codex_web_search_is_explicitly_scoped_per_turn() {
+        assert_eq!(
+            codex_web_search_override(&["Read", "WebSearch"]),
+            "web_search=\"live\""
+        );
+        assert_eq!(
+            codex_web_search_override(&["Read"]),
+            "web_search=\"disabled\""
+        );
+        assert_eq!(codex_web_search_override(&[]), "web_search=\"disabled\"");
+    }
+
+    #[test]
+    fn validates_a_scoped_workspace_write_fork() {
+        let result = serde_json::json!({
+            "cwd": "/tmp/pipeline/run/steps/referee",
+            "model": "gpt-5.6-sol",
+            "runtimeWorkspaceRoots": ["/tmp/pipeline/run/steps/referee"],
+            "sandbox": {
+                "type": "workspaceWrite",
+                "excludeSlashTmp": true,
+                "excludeTmpdirEnvVar": true,
+                "networkAccess": false,
+                "writableRoots": []
+            },
+            "thread": { "id": "child-thread" }
+        });
+        let spec = CodexForkSpec {
+            cwd: "/tmp/pipeline/run/steps/referee",
+            sandbox: "workspace-write",
+            model: Some("gpt-5.6-sol"),
+        };
+
+        assert_eq!(validate_codex_fork(&result, &spec).unwrap(), "child-thread");
+    }
+
+    #[test]
+    fn rejects_a_fork_that_inherits_a_broader_workspace() {
+        let result = serde_json::json!({
+            "cwd": "/tmp/pipeline/run/steps/referee",
+            "model": "gpt-5.6-sol",
+            "runtimeWorkspaceRoots": ["/tmp/pipeline/run"],
+            "sandbox": {
+                "type": "workspaceWrite",
+                "excludeSlashTmp": true,
+                "excludeTmpdirEnvVar": true,
+                "networkAccess": false,
+                "writableRoots": []
+            },
+            "thread": { "id": "child-thread" }
+        });
+        let spec = CodexForkSpec {
+            cwd: "/tmp/pipeline/run/steps/referee",
+            sandbox: "workspace-write",
+            model: Some("gpt-5.6-sol"),
+        };
+
+        assert!(validate_codex_fork(&result, &spec)
+            .unwrap_err()
+            .contains("unexpected runtime workspace roots"));
     }
 }

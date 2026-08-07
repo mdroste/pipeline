@@ -56,20 +56,22 @@ export default function WaveDiagram({ steps, merge, useOrientation, selectedId, 
   return (
     <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-900/30">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 font-medium">
+        <span className="text-[10px] uppercase tracking-wider text-gray-600 dark:text-gray-400 font-medium">
           Execution shape
         </span>
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
-          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Show execution shape" : "Hide execution shape"}
+          className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
           title={collapsed ? "Show diagram" : "Hide diagram"}
         >
           {collapsed ? "▸" : "▾"}
         </button>
       </div>
       {!collapsed && noEnabledSteps && (
-        <div className="px-1 pb-2 text-[10px] text-gray-400 dark:text-gray-500 italic">
+        <div className="px-1 pb-2 text-[10px] text-gray-600 dark:text-gray-400 italic">
           No enabled review steps — toggle one on below.
         </div>
       )}
@@ -231,7 +233,7 @@ function Node({
     ? "px-2.5 py-1 max-w-[260px] min-w-[120px] text-center"
     : "px-2 py-1 max-w-[140px]";
   const palette = (() => {
-    if (selected) return "bg-blue-500 text-white border-blue-500";
+    if (selected) return "bg-blue-700 text-white border-blue-700";
     switch (variant) {
       case "parallel":
         return "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-950";

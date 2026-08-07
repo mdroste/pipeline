@@ -3,6 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { useFindBar } from "../hooks/useFindBar";
 import {
   normalizeMathDelimiters,
@@ -15,9 +17,28 @@ import {
 } from "../lib/mathRepair";
 import ResizeHandle from "./ResizeHandle";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
+import SafeMarkdownLink from "./SafeMarkdownLink";
 
 interface Props {
   markdown: string;
+}
+
+interface MarkdownAstNode {
+  type: string;
+  value?: string;
+  alt?: string;
+  depth?: number;
+  children?: MarkdownAstNode[];
+  data?: {
+    hProperties?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+interface ReportHeading {
+  level: number;
+  text: string;
+  id: string;
 }
 
 /**
@@ -47,17 +68,6 @@ class MathErrorBoundary extends React.Component<
   }
 }
 
-/** Recursively extract plain text from React children. */
-function extractText(node: React.ReactNode): string {
-  if (typeof node === "string") return node;
-  if (typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(extractText).join("");
-  if (node && typeof node === "object" && "props" in node) {
-    return extractText((node as React.ReactElement).props.children);
-  }
-  return "";
-}
-
 /**
  * If `children` starts with a `#N.` prefix in its leading text node, strip it
  * and return `{ num, rest }` — where `rest` preserves the original React nodes
@@ -77,11 +87,77 @@ function splitCommentPrefix(
   return { num: match[1], rest };
 }
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
+function slugBase(text: string): string {
+  return (
+    text
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{Letter}\p{Number}\p{Mark}]+/gu, "-")
+      .replace(/(^-+|-+$)/g, "") || "section"
+  );
+}
+
+function astText(node: MarkdownAstNode): string {
+  if (node.type === "image") return node.alt ?? "";
+  if (typeof node.value === "string") return node.value;
+  if (node.type === "break") return " ";
+  return node.children?.map(astText).join("") ?? "";
+}
+
+function visitAst(
+  node: MarkdownAstNode,
+  visitor: (node: MarkdownAstNode) => void,
+) {
+  visitor(node);
+  node.children?.forEach((child) => visitAst(child, visitor));
+}
+
+/**
+ * Parse the document once to establish heading labels and IDs. A global used-ID
+ * set avoids collisions such as "Intro", a duplicate "Intro", and "Intro-2".
+ */
+function buildHeadingIndex(markdown: string): ReportHeading[] {
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown);
+  const headings: ReportHeading[] = [];
+  const usedIds = new Set<string>();
+
+  visitAst(tree as MarkdownAstNode, (node) => {
+    if (node.type !== "heading" || typeof node.depth !== "number") return;
+
+    const text = astText(node).replace(/\s+/g, " ").trim();
+    const base = slugBase(text);
+    let id = base;
+    let suffix = 2;
+    while (usedIds.has(id)) {
+      id = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    usedIds.add(id);
+    headings.push({ level: node.depth, text, id });
+  });
+
+  return headings;
+}
+
+/**
+ * Apply IDs from the same parsed heading index to the tree ReactMarkdown will
+ * render. Sequence is stable because remark plugins do not add/remove headings.
+ */
+function headingIdPlugin(headings: readonly ReportHeading[]) {
+  return () => (tree: unknown) => {
+    let index = 0;
+    visitAst(tree as MarkdownAstNode, (node) => {
+      if (node.type !== "heading") return;
+      const heading = headings[index];
+      index += 1;
+      if (!heading) return;
+      node.data ??= {};
+      node.data.hProperties = {
+        ...node.data.hProperties,
+        id: heading.id,
+      };
+    });
+  };
 }
 
 /**
@@ -161,18 +237,16 @@ function ReportViewer({ markdown }: Props) {
   );
   const find = useFindBar(contentRef, normalizedMarkdown);
 
-  // Extract headings for table of contents
+  const headingIndex = useMemo(
+    () => buildHeadingIndex(normalizedMarkdown),
+    [normalizedMarkdown],
+  );
   const headings = useMemo(() => {
-    const matches = normalizedMarkdown.matchAll(/^(#{1,3})\s+(.+)$/gm);
-    return Array.from(matches).map((m) => {
-      const text = plainHeadingText(m[2]);
-      return {
-        level: m[1].length,
-        text,
-        id: slugify(text),
-      };
-    });
-  }, [normalizedMarkdown]);
+    return headingIndex.filter((heading) => heading.level <= 3);
+  }, [headingIndex]);
+  const remarkHeadingIds = useMemo(() => {
+    return headingIdPlugin(headingIndex);
+  }, [headingIndex]);
 
   return (
     <div className="flex h-full relative">
@@ -180,6 +254,7 @@ function ReportViewer({ markdown }: Props) {
         <div className="absolute top-2 right-3 z-20 flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg px-2 py-1">
           <input
             autoFocus
+            aria-label="Find in report"
             value={find.query}
             onChange={(e) => find.setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -189,28 +264,28 @@ function ReportViewer({ markdown }: Props) {
             placeholder="Find in report…"
             className="w-44 py-0.5 px-1.5 text-sm bg-transparent text-gray-900 dark:text-gray-100 focus:outline-none"
           />
-          <span className="text-xs text-gray-400 tabular-nums min-w-[3rem] text-right">
+          <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums min-w-[3rem] text-right">
             {find.count > 0 ? `${find.current + 1}/${find.count}` : "0/0"}
           </span>
-          <button onClick={find.prev} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Previous (Shift+Enter)">↑</button>
-          <button onClick={find.next} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Next (Enter)">↓</button>
-          <button onClick={find.close} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100" title="Close (Esc)">✕</button>
+          <button aria-label="Previous match" onClick={find.prev} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Previous (Shift+Enter)">↑</button>
+          <button aria-label="Next match" onClick={find.next} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Next (Enter)">↓</button>
+          <button aria-label="Close find" onClick={find.close} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100" title="Close (Esc)">✕</button>
         </div>
       )}
       {/* Table of contents */}
       {headings.length > 3 && contentsOpen && (
         <nav className="toc-nav relative" style={{ width: contentsWidth }}>
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
               Contents
             </h4>
             <button
               type="button"
               onClick={() => setContentsOpen(false)}
               aria-label="Hide table of contents"
-              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700
+              className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
-                         dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                         dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
             >
               <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="m9 6 6 6-6 6" />
@@ -220,8 +295,8 @@ function ReportViewer({ markdown }: Props) {
           <ul className="space-y-0.5">
             {headings
               .filter((h) => h.level <= 2)
-              .map((h, i) => (
-                <li key={i}>
+              .map((h) => (
+                <li key={h.id}>
                   <a
                     href={`#${h.id}`}
                     className={`toc-link ${
@@ -248,10 +323,10 @@ function ReportViewer({ markdown }: Props) {
           type="button"
           onClick={() => setContentsOpen(true)}
           aria-label="Show table of contents"
-          className="hidden w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-5 text-gray-400
-                     hover:bg-gray-50 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2
+          className="hidden w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-5 text-gray-500
+                     hover:bg-gray-50 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2
                      focus-visible:ring-inset focus-visible:ring-gray-400 dark:border-gray-800 dark:hover:bg-gray-900
-                     dark:hover:text-gray-200 lg:flex"
+                     dark:text-gray-400 dark:hover:text-gray-100 lg:flex"
         >
           <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h11M8 12h11M8 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
@@ -272,56 +347,52 @@ function ReportViewer({ markdown }: Props) {
                   </div>
                 )}
                 <ReactMarkdown
-                remarkPlugins={
-                  fallback
-                    ? [remarkGfm]
-                    : [remarkGfm, remarkMath, remarkRepairMath]
-                }
-                rehypePlugins={
-                  fallback
-                    ? []
-                    : [
-                        rehypeValidateMath,
-                        [rehypeKatex, REPORT_KATEX_OPTIONS],
-                      ]
-                }
-                components={{
-                  h1: ({ children, node: _node, ...props }) => (
-                    <h1 id={slugify(plainHeadingText(extractText(children)))} {...props}>
-                      {children}
-                    </h1>
-                  ),
-                  h2: ({ children, node: _node, ...props }) => (
-                    <h2 id={slugify(plainHeadingText(extractText(children)))} {...props}>
-                      {children}
-                    </h2>
-                  ),
-                  h3: ({ children, node: _node, ...props }) => (
-                    <h3 id={slugify(plainHeadingText(extractText(children)))} {...props}>
-                      {children}
-                    </h3>
-                  ),
-                  // Detect comment headers: a paragraph whose only child is
-                  // <strong>#N. Title</strong>  →  render as a styled card.
-                  p: ({ children, node, ...props }) => {
-                    const childArray = React.Children.toArray(children);
-                    if (childArray.length === 1 && React.isValidElement(childArray[0])) {
-                      const child = childArray[0] as React.ReactElement;
-                      const split = splitCommentPrefix(child.props?.children);
-                      if (split) {
-                        return (
-                          <div className="comment-header">
-                            <span className="comment-num">{split.num}</span>
-                            <span className="comment-title">{split.rest}</span>
-                          </div>
-                        );
+                  remarkPlugins={
+                    fallback
+                      ? [remarkGfm, remarkHeadingIds]
+                      : [
+                          remarkGfm,
+                          remarkMath,
+                          remarkRepairMath,
+                          remarkHeadingIds,
+                        ]
+                  }
+                  rehypePlugins={
+                    fallback
+                      ? []
+                      : [
+                          rehypeValidateMath,
+                          [rehypeKatex, REPORT_KATEX_OPTIONS],
+                        ]
+                  }
+                  components={{
+                    a: SafeMarkdownLink,
+                    table: ({ node: _node, ...props }) => (
+                      <div className="max-w-full overflow-x-auto">
+                        <table {...props} />
+                      </div>
+                    ),
+                    // Detect comment headers: a paragraph whose only child is
+                    // <strong>#N. Title</strong>  →  render as a styled card.
+                    p: ({ children, node, ...props }) => {
+                      const childArray = React.Children.toArray(children);
+                      if (childArray.length === 1 && React.isValidElement(childArray[0])) {
+                        const child = childArray[0] as React.ReactElement;
+                        const split = splitCommentPrefix(child.props?.children);
+                        if (split) {
+                          return (
+                            <div className="comment-header">
+                              <span className="comment-num">{split.num}</span>
+                              <span className="comment-title">{split.rest}</span>
+                            </div>
+                          );
+                        }
                       }
-                    }
-                    return <p {...props}>{children}</p>;
-                  },
-                }}
-              >
-                {normalizedMarkdown}
+                      return <p {...props}>{children}</p>;
+                    },
+                  }}
+                >
+                  {normalizedMarkdown}
                 </ReactMarkdown>
               </>
             )}

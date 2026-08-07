@@ -189,6 +189,23 @@ export function computeWaves(steps: StepConfig[], includeDisabled = false): Wave
   return waves;
 }
 
+// ── Canonical execution plan ───────────────────────────────────────
+
+export type ExecutionStageKind =
+  | "extracting"
+  | "orienting"
+  | "dispatching"
+  | "merging"
+  | "synthesizing"
+  | "done";
+
+export interface ExecutionPlanStage {
+  id: string;
+  kind: ExecutionStageKind;
+  label: string;
+  stepIds: string[];
+}
+
 // ── Drag-drop helpers ───────────────────────────────────────────────
 
 /**

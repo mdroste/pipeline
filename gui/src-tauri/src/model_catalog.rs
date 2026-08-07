@@ -1,8 +1,8 @@
 //! Dynamic provider model discovery and durable selection resolution.
 //!
-//! Availability comes from the installed CLI or authenticated API. The small
-//! remote policy file only adds role mappings and price/deprecation metadata;
-//! it is never allowed to invent availability when a live catalog succeeded.
+//! Availability comes from the installed CLI or authenticated API. Role,
+//! pricing, and deprecation policy is bundled with the signed application so
+//! mutable remote content cannot change model selection behavior.
 
 use crate::pipeline::claude::build_provider_command;
 use crate::settings::{ModelSelection, Settings};
@@ -15,12 +15,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
-const MAX_POLICY_BYTES: usize = 1024 * 1024;
+const CACHE_SCHEMA_VERSION: u32 = 3;
 const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DISCOVERY_VERSION_BYTES: usize = 64 * 1024;
 const MAX_DISCOVERY_LINE_BYTES: usize = 1024 * 1024;
-const POLICY_URL: &str =
-    "https://raw.githubusercontent.com/mdroste/pipeline/main/model-policy.json";
 const BUNDLED_POLICY: &str = include_str!("../../../model-policy.json");
 
 static DISCOVERY_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -91,6 +89,12 @@ pub struct ResolvedModel {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct CacheEnvelope {
+    #[serde(default)]
+    schema_version: u32,
+    #[serde(default)]
+    policy_fingerprint: String,
+    #[serde(default)]
+    credential_fingerprint: String,
     saved_at: u64,
     catalog: ModelCatalog,
 }
@@ -166,10 +170,50 @@ fn read_file_limited(path: &Path, limit: usize) -> Option<Vec<u8>> {
     (bytes.len() <= limit).then_some(bytes)
 }
 
-fn read_cache(provider: &str, transport: &str) -> Option<CacheEnvelope> {
+fn read_cache(provider: &str, transport: &str, settings: &Settings) -> Option<CacheEnvelope> {
     let path = cache_path(provider, transport).ok()?;
     let bytes = read_file_limited(&path, MAX_CATALOG_BYTES)?;
-    serde_json::from_slice(&bytes).ok()
+    let envelope = serde_json::from_slice::<CacheEnvelope>(&bytes).ok()?;
+    cache_matches_context(&envelope, provider, transport, settings).then_some(envelope)
+}
+
+fn catalog_credential_fingerprint(provider: &str, transport: &str, settings: &Settings) -> String {
+    use sha2::{Digest as _, Sha256};
+    let credential = if transport == "api" {
+        match provider {
+            "claude" => settings.anthropic_api_key.as_str(),
+            "codex" => settings.openai_api_key.as_str(),
+            "gemini" => settings.google_api_key.as_str(),
+            "local" => settings.local_api_key.as_str(),
+            _ => "",
+        }
+    } else {
+        "installed-cli-account"
+    };
+    let mut digest = Sha256::new();
+    digest.update(b"pipeline model catalog credential v1\0");
+    digest.update(provider.as_bytes());
+    digest.update(b"\0");
+    digest.update(transport.as_bytes());
+    digest.update(b"\0");
+    digest.update(credential.as_bytes());
+    if provider == "local" {
+        digest.update(b"\0");
+        digest.update(settings.local_base_url.as_bytes());
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn cache_matches_context(
+    envelope: &CacheEnvelope,
+    provider: &str,
+    transport: &str,
+    settings: &Settings,
+) -> bool {
+    envelope.schema_version == CACHE_SCHEMA_VERSION
+        && envelope.policy_fingerprint == bundled_policy_fingerprint()
+        && envelope.credential_fingerprint
+            == catalog_credential_fingerprint(provider, transport, settings)
 }
 
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> {
@@ -191,7 +235,17 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> 
 }
 
 fn bundled_policy() -> Policy {
-    serde_json::from_str(BUNDLED_POLICY).unwrap_or_default()
+    let policy = serde_json::from_str::<Policy>(BUNDLED_POLICY).unwrap_or_default();
+    if policy.schema_version == 1 {
+        policy
+    } else {
+        Policy::default()
+    }
+}
+
+fn bundled_policy_fingerprint() -> String {
+    use sha2::{Digest as _, Sha256};
+    format!("{:x}", Sha256::digest(BUNDLED_POLICY.as_bytes()))
 }
 
 async fn response_bytes_limited(
@@ -227,50 +281,6 @@ async fn response_json_limited(
         .await
         .map_err(|e| format!("{label} model discovery failed: {e}"))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("Invalid {label} model list: {e}"))
-}
-
-async fn current_policy(refresh: bool) -> Policy {
-    let path = cache_dir().ok().map(|dir| dir.join("policy.json"));
-    if !refresh {
-        if let Some(path) = &path {
-            if let Ok(metadata) = std::fs::metadata(path) {
-                if metadata.modified().ok().and_then(|m| m.elapsed().ok()) < Some(CACHE_TTL) {
-                    if let Some(bytes) = read_file_limited(path, MAX_POLICY_BYTES) {
-                        if let Ok(policy) = serde_json::from_slice::<Policy>(&bytes) {
-                            if policy.schema_version == 1 {
-                                return policy;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let fetched = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-        .ok();
-    if let Some(client) = fetched {
-        if let Ok(response) = client.get(POLICY_URL).send().await {
-            if let Ok(response) = response.error_for_status() {
-                if let Ok(body) = response_bytes_limited(response, MAX_POLICY_BYTES).await {
-                    if let Ok(policy) = serde_json::from_slice::<Policy>(&body) {
-                        if policy.schema_version == 1 {
-                            if let Some(path) = path {
-                                let _ = std::fs::create_dir_all(
-                                    path.parent().unwrap_or(Path::new(".")),
-                                );
-                                let _ = std::fs::write(path, &body);
-                            }
-                            return policy;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    bundled_policy()
 }
 
 fn policy_for<'a>(
@@ -496,6 +506,7 @@ fn is_openai_chat_model(id: &str) -> bool {
 async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| format!("Failed to create model catalog client: {e}"))?;
     let mut catalog = base_catalog(provider, "api", "provider_api");
@@ -568,17 +579,25 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
             }
         }
         "local" => {
+            crate::settings::validate_local_base_url(&settings.local_base_url)?;
             let url = format!("{}/models", settings.local_base_url.trim_end_matches('/'));
-            let mut request = client.get(url);
+            let mut request =
+                crate::pipeline::api_common::custom_endpoint_client(&settings.local_base_url)
+                    .get(url)
+                    .timeout(Duration::from_secs(15));
             if !settings.local_api_key.trim().is_empty() {
                 request = request.bearer_auth(&settings.local_api_key);
             }
             let response = request
                 .send()
                 .await
-                .map_err(|e| format!("Local model discovery failed: {e}"))?
-                .error_for_status()
                 .map_err(|e| format!("Local model discovery failed: {e}"))?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "Local model discovery failed: HTTP {}",
+                    response.status()
+                ));
+            }
             let value = response_json_limited(response, "Local").await?;
             for item in value["data"].as_array().into_iter().flatten() {
                 if let Some(id) = item["id"].as_str() {
@@ -1036,8 +1055,12 @@ pub async fn discover(
         provider
     };
     let transport = settings.model_transport(provider);
-    if !refresh && provider != "local" {
-        if let Some(cache) = read_cache(provider, transport) {
+    // API credentials have a stable, non-secret fingerprint. CLI account
+    // identity does not, so never reuse an installed-CLI catalog across calls:
+    // the user may have switched accounts since it was written.
+    let cacheable = provider != "local" && transport == "api";
+    if !refresh && cacheable {
+        if let Some(cache) = read_cache(provider, transport, settings) {
             // Builds before Claude Agent SDK discovery cached only the three
             // policy roles and an empty model list. Refresh those legacy
             // envelopes immediately after upgrading instead of preserving
@@ -1053,7 +1076,7 @@ pub async fn discover(
             }
         }
     }
-    let policy = current_policy(refresh).await;
+    let policy = bundled_policy();
     let live = if transport == "cli" {
         cli_catalog(provider).await
     } else {
@@ -1063,17 +1086,22 @@ pub async fn discover(
         Ok(mut catalog) => {
             apply_policy(&mut catalog, &policy);
             let envelope = CacheEnvelope {
+                schema_version: CACHE_SCHEMA_VERSION,
+                policy_fingerprint: bundled_policy_fingerprint(),
+                credential_fingerprint: catalog_credential_fingerprint(
+                    provider, transport, settings,
+                ),
                 saved_at: now_epoch(),
                 catalog: catalog.clone(),
             };
-            if provider != "local" {
+            if cacheable {
                 let _ = write_json_atomic(&cache_path(provider, transport)?, &envelope);
             }
             Ok(catalog)
         }
         Err(error) => {
-            if provider != "local" {
-                if let Some(mut cache) = read_cache(provider, transport) {
+            if cacheable {
+                if let Some(mut cache) = read_cache(provider, transport, settings) {
                     cache.catalog.stale = true;
                     cache.catalog.warning = Some(format!(
                         "Live discovery failed; using the last known catalog. {error}"
@@ -1124,25 +1152,13 @@ pub async fn resolve(
     // CLI Automatic is deliberately zero-probe at run time: omitting the flag
     // lets the installed CLI choose whatever that installation supports.
     if transport == "cli" && selection == ModelSelection::Automatic {
-        let cached = read_cache(provider, &transport).map(|c| c.catalog);
-        let resolved_model = cached
-            .as_ref()
-            .and_then(|c| {
-                c.default_model
-                    .clone()
-                    .or_else(|| c.recommended_model.clone())
-            })
-            .unwrap_or_else(|| "Provider default".to_string());
         return Ok(ResolvedModel {
             selection,
             command_model: None,
-            resolved_model,
+            resolved_model: "Provider default".to_string(),
             transport,
-            source: cached
-                .as_ref()
-                .map(|c| c.source.clone())
-                .unwrap_or_else(|| "provider_default".into()),
-            catalog_updated_at: cached.map(|c| c.fetched_at).unwrap_or_default(),
+            source: "provider_default".to_string(),
+            catalog_updated_at: String::new(),
             supported_efforts: Vec::new(),
         });
     }
@@ -1204,17 +1220,11 @@ pub async fn resolve(
     })
 }
 
-/// Pricing remains available synchronously to report rendering. The bundled
-/// policy is intentionally conservative; live remote metadata can extend this
-/// in future without coupling run completion to the network.
+/// Pricing remains available synchronously to report rendering and is tied to
+/// the policy embedded in the signed application build.
 pub fn price_for_model(model: &str) -> Option<(f64, f64)> {
     let model = model.to_ascii_lowercase();
-    let policy = cache_dir()
-        .ok()
-        .and_then(|dir| read_file_limited(&dir.join("policy.json"), MAX_POLICY_BYTES))
-        .and_then(|bytes| serde_json::from_slice::<Policy>(&bytes).ok())
-        .filter(|policy| policy.schema_version == 1)
-        .unwrap_or_else(bundled_policy);
+    let policy = bundled_policy();
     policy
         .transports
         .values()
@@ -1278,6 +1288,42 @@ mod tests {
         std::fs::write(temp.path(), b"123456789").unwrap();
         assert_eq!(read_file_limited(temp.path(), 9).unwrap(), b"123456789");
         assert!(read_file_limited(temp.path(), 8).is_none());
+    }
+
+    #[test]
+    fn legacy_or_different_policy_caches_are_rejected() {
+        let settings = Settings {
+            openai_api_key: "account-one-secret".to_string(),
+            ..Default::default()
+        };
+        let legacy = CacheEnvelope {
+            saved_at: now_epoch(),
+            ..Default::default()
+        };
+        assert!(!cache_matches_context(&legacy, "codex", "api", &settings));
+
+        let current = CacheEnvelope {
+            schema_version: CACHE_SCHEMA_VERSION,
+            policy_fingerprint: bundled_policy_fingerprint(),
+            credential_fingerprint: catalog_credential_fingerprint("codex", "api", &settings),
+            saved_at: now_epoch(),
+            ..Default::default()
+        };
+        assert!(cache_matches_context(&current, "codex", "api", &settings));
+
+        let other_account = Settings {
+            openai_api_key: "account-two-secret".to_string(),
+            ..Default::default()
+        };
+        assert!(!cache_matches_context(
+            &current,
+            "codex",
+            "api",
+            &other_account
+        ));
+        assert!(!serde_json::to_string(&current)
+            .unwrap()
+            .contains("account-one-secret"));
     }
 
     #[test]

@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ComparePage from "./ComparePage";
 import ReportWorkspace from "./ReportWorkspace";
-import type { RunSummary, RunsDiskUsage } from "../lib/types";
+import type { RunSummary, RunsDiskUsage, ToolCallCounts } from "../lib/types";
 
 interface Props {
   onClose: () => void;
@@ -24,6 +24,89 @@ function fmtTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
   return String(n);
+}
+
+function freshInputTokens(run: RunSummary): number {
+  return Math.max(
+    0,
+    run.input_tokens -
+      (run.cached_input_tokens ?? 0) -
+      (run.cache_write_input_tokens ?? 0),
+  );
+}
+
+function runToolCalls(run: RunSummary): ToolCallCounts {
+  return run.tool_calls ?? {
+    text_file: 0,
+    image: 0,
+    web: 0,
+    shell_or_other: 0,
+    unknown: 0,
+  };
+}
+
+function toolCallTotal(counts: ToolCallCounts): number {
+  return (
+    counts.text_file +
+    counts.image +
+    counts.web +
+    counts.shell_or_other +
+    counts.unknown
+  );
+}
+
+function toolCallBreakdown(counts: ToolCallCounts): string {
+  return [
+    counts.text_file > 0 ? `${counts.text_file.toLocaleString()} text/file` : "",
+    counts.image > 0 ? `${counts.image.toLocaleString()} image` : "",
+    counts.web > 0 ? `${counts.web.toLocaleString()} web` : "",
+    counts.shell_or_other > 0
+      ? `${counts.shell_or_other.toLocaleString()} shell/other`
+      : "",
+    counts.unknown > 0 ? `${counts.unknown.toLocaleString()} unknown` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function reportedActivity(run: RunSummary): string {
+  const counts = runToolCalls(run);
+  const tools = toolCallTotal(counts);
+  return [
+    (run.model_round_trips ?? 0) > 0
+      ? `${(run.model_round_trips ?? 0).toLocaleString()} reported model round trips`
+      : "",
+    tools > 0
+      ? `${tools.toLocaleString()} reported tool calls (${toolCallBreakdown(counts)})`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" and ");
+}
+
+function hasReportedUsage(run: RunSummary): boolean {
+  return (
+    run.input_tokens + run.output_tokens > 0 ||
+    (run.model_round_trips ?? 0) > 0 ||
+    toolCallTotal(runToolCalls(run)) > 0
+  );
+}
+
+function usageDescription(run: RunSummary): string {
+  const cacheRead = run.cached_input_tokens ?? 0;
+  const cacheWrite = run.cache_write_input_tokens ?? 0;
+  const activity = reportedActivity(run);
+  return [
+    `Token usage: ${run.input_tokens.toLocaleString()} logical input tokens equals ${freshInputTokens(run).toLocaleString()} fresh input tokens plus ${cacheRead.toLocaleString()} cache-read tokens plus ${cacheWrite.toLocaleString()} cache-write tokens; ${run.output_tokens.toLocaleString()} output tokens.`,
+    activity ? `Model activity: ${activity}.` : "",
+    "Cache reads and cache writes are subsets of logical input, not additional tokens.",
+    "Fresh input equals logical input minus cache reads minus cache writes.",
+    "Model round trips and tool calls are shown only when the provider or CLI reports them; unknown tool kinds remain in the unknown bucket.",
+    "The completed report's Run summary prices these categories separately for a labelled API-equivalent estimate when the model is recognized.",
+    "Only providers that report usage are included.",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function fmtDuration(secs: number): string {
@@ -72,27 +155,53 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [comparing, setComparing] = useState<[string, string] | null>(null);
+  const refreshRequestRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      refreshRequestRef.current += 1;
+    },
+    [],
+  );
 
   const toggleCompareId = (id: string) =>
     setCompareIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(-2)));
 
-  const refresh = useCallback(() => {
+  const compareSelected = () => {
+    if (compareIds.length !== 2) return;
+    const [first, second] = compareIds;
+    const firstCreated = Date.parse(runs.find((run) => run.run_id === first)?.created ?? "");
+    const secondCreated = Date.parse(runs.find((run) => run.run_id === second)?.created ?? "");
+    if (Number.isFinite(firstCreated) && Number.isFinite(secondCreated) && firstCreated > secondCreated) {
+      setComparing([second, first]);
+    } else {
+      setComparing([first, second]);
+    }
+  };
+
+  const refresh = useCallback(async () => {
+    const request = ++refreshRequestRef.current;
     setLoading(true);
-    Promise.all([
-      invoke<RunSummary[]>("list_runs"),
-      invoke<RunsDiskUsage>("runs_disk_usage").catch(() => null),
-    ])
-      .then(([r, u]) => {
-        setRuns(r);
-        setUsage(u);
-        setError(null);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false));
+    try {
+      const [nextRuns, nextUsage] = await Promise.all([
+        invoke<RunSummary[]>("list_runs"),
+        invoke<RunsDiskUsage>("runs_disk_usage").catch(() => null),
+      ]);
+      if (request !== refreshRequestRef.current) return;
+      setRuns(nextRuns);
+      setUsage(nextUsage);
+      setError(null);
+    } catch (e) {
+      if (request === refreshRequestRef.current) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      if (request === refreshRequestRef.current) setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    refresh();
+    void refresh();
   }, [refresh]);
 
   const needle = filter.trim().toLowerCase();
@@ -120,7 +229,7 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
     try {
       await invoke("update_run_meta", { runId, title: editTitle, tags });
       setEditing(null);
-      refresh();
+      void refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -132,7 +241,7 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
     try {
       await invoke("delete_run", { runId: r.run_id });
       if (openRunId === r.run_id) setOpenRunId(null);
-      refresh();
+      void refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -161,11 +270,12 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Run history</h2>
         {usage && (
-          <span className="text-xs text-gray-400 dark:text-gray-500">
+          <span className="text-xs text-gray-500 dark:text-gray-400">
             {usage.count} run{usage.count === 1 ? "" : "s"} · {fmtBytes(usage.bytes)} on disk
           </span>
         )}
         <input
+          aria-label="Filter run history"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter by name, profile, tag…"
@@ -188,7 +298,8 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
         {showClose && (
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            aria-label="Close run history"
+            className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
             title="Close"
           >
             ✕
@@ -202,7 +313,7 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
             {compareIds.length === 0 ? "Select two runs to compare." : `${compareIds.length} of 2 selected`}
           </span>
           <button
-            onClick={() => compareIds.length === 2 && setComparing([compareIds[0], compareIds[1]])}
+            onClick={compareSelected}
             disabled={compareIds.length !== 2}
             className="ml-auto px-3 py-1 text-xs rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -218,9 +329,9 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
           </div>
         )}
         {loading ? (
-          <p className="text-gray-400 text-sm px-2">Loading…</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm px-2">Loading…</p>
         ) : visible.length === 0 ? (
-          <p className="text-gray-400 text-sm px-2">
+          <p className="text-gray-500 dark:text-gray-400 text-sm px-2">
             {runs.length === 0 ? "No runs yet. Generate a report to see it here." : "No runs match the filter."}
           </p>
         ) : (
@@ -233,6 +344,7 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
                 {editing === r.run_id ? (
                   <div className="space-y-2">
                     <input
+                      aria-label={`Title for ${r.input_name}`}
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
                       placeholder={r.input_name}
@@ -240,6 +352,7 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
                       autoFocus
                     />
                     <input
+                      aria-label={`Tags for ${r.title || r.input_name}`}
                       value={editTags}
                       onChange={(e) => setEditTags(e.target.value)}
                       placeholder="tags, comma separated"
@@ -272,7 +385,7 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
                         checked={compareIds.includes(r.run_id)}
                         onChange={() => toggleCompareId(r.run_id)}
                         className="mt-1 shrink-0"
-                        title="Select for comparison"
+                        aria-label={`Select ${r.title || r.input_name} for comparison`}
                       />
                     )}
                     <div className="flex-1 min-w-0">
@@ -300,30 +413,38 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
                         <span className="capitalize">{r.provider}</span>
                         <span>{r.step_count} step{r.step_count === 1 ? "" : "s"}</span>
                         <span>{fmtDuration(r.duration_secs)}</span>
-                        {r.input_tokens + r.output_tokens > 0 && (
+                        {hasReportedUsage(r) && (
                           <span
-                            title={[
-                              `${r.input_tokens.toLocaleString()} input`,
-                              `${r.output_tokens.toLocaleString()} output`,
-                              `${(r.cached_input_tokens ?? 0).toLocaleString()} cached`,
-                              `${(r.cache_write_input_tokens ?? 0).toLocaleString()} warmed`,
-                            ].join(" · ")}
+                            aria-label={usageDescription(r)}
+                            title={usageDescription(r)}
+                            tabIndex={0}
                           >
-                            {fmtTokens(r.input_tokens)} / {fmtTokens(r.output_tokens)} tok
+                            {fmtTokens(r.input_tokens)} logical input ={" "}
+                            <span className="text-gray-600 dark:text-gray-300">
+                              {fmtTokens(freshInputTokens(r))} fresh
+                            </span>
                             {(r.cached_input_tokens ?? 0) > 0 && (
-                              <span className="text-green-600 dark:text-green-400">
-                                {" "}· {fmtTokens(r.cached_input_tokens)} cached
+                              <span className="text-green-700 dark:text-green-400">
+                                {" "}+ {fmtTokens(r.cached_input_tokens)} cache read
                               </span>
                             )}
                             {(r.cache_write_input_tokens ?? 0) > 0 && (
                               <span className="text-blue-600 dark:text-blue-400">
-                                {" "}· {fmtTokens(r.cache_write_input_tokens)} warmed
+                                {" "}+ {fmtTokens(r.cache_write_input_tokens)} cache write
+                              </span>
+                            )}
+                            {" · "}
+                            {fmtTokens(r.output_tokens)} output
+                            {reportedActivity(r) && (
+                              <span className="text-violet-600 dark:text-violet-400">
+                                {" · "}
+                                {reportedActivity(r)}
                               </span>
                             )}
                           </span>
                         )}
                         {r.failed_steps.length > 0 && (
-                          <span className="text-amber-600 dark:text-amber-400">
+                          <span className="text-amber-700 dark:text-amber-300">
                             {r.failed_steps.length} failed
                           </span>
                         )}
@@ -341,7 +462,7 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
                           {r.resumable && (
                             <button
                               onClick={() => onRerun(r.run_id, true)}
-                              className="px-2 py-1 text-xs rounded text-amber-600 hover:text-amber-800 dark:text-amber-400"
+                              className="px-2 py-1 text-xs rounded text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
                               title="Continue from the last completed step, reusing successful outputs and rerunning failed or missing work"
                             >
                               Resume
@@ -365,7 +486,7 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
                       </button>
                       <button
                         onClick={() => deleteRun(r)}
-                        className="px-2 py-1 text-xs rounded text-red-500 hover:text-red-700 dark:hover:text-red-400"
+                        className="px-2 py-1 text-xs rounded text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
                         title="Delete run"
                       >
                         Delete

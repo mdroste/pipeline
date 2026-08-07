@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import type { PipelineReport, PipelineResult } from "../lib/types";
+import type {
+  PipelineReport,
+  PipelineResult,
+  ToolCallCounts,
+} from "../lib/types";
 
 export type PassStatus = "pending" | "running" | "done" | "error" | "skipped";
 
@@ -21,9 +25,13 @@ export interface LlmRequestDetails {
   output_format: string;
   prompt: string;
   prompt_chars: number;
+  prompt_truncated?: boolean;
   system_prompt: string | null;
+  system_prompt_chars?: number;
+  system_prompt_truncated?: boolean;
   shared_context: string | null;
   shared_context_chars: number;
+  shared_context_truncated?: boolean;
   pdf_attached: boolean;
   write_enabled: boolean;
   working_directory: string | null;
@@ -52,11 +60,31 @@ export interface PassTiming {
   end?: number;
 }
 
+export type RuntimeStageKind =
+  | "extracting"
+  | "orienting"
+  | "dispatching"
+  | "merging"
+  | "synthesizing"
+  | "done";
+
+export interface RuntimeStage {
+  /** Stable ID emitted by the backend and shared with get_execution_plan. */
+  id: string;
+  kind: RuntimeStageKind;
+  label: string;
+  stepIds: string[];
+  passes: Record<string, PassStatus>;
+  status: "active" | "done" | "failed" | "skipped";
+}
+
 export interface TokenTotals {
   input: number;
   output: number;
   cached: number;
   cacheWrite: number;
+  modelRoundTrips: number;
+  toolCalls: ToolCallCounts;
 }
 
 /** Token usage aggregated over a run: a grand total plus per-session counts.
@@ -68,7 +96,20 @@ export interface UsageState {
 }
 
 const EMPTY_USAGE: UsageState = {
-  total: { input: 0, output: 0, cached: 0, cacheWrite: 0 },
+  total: {
+    input: 0,
+    output: 0,
+    cached: 0,
+    cacheWrite: 0,
+    modelRoundTrips: 0,
+    toolCalls: {
+      text_file: 0,
+      image: 0,
+      web: 0,
+      shell_or_other: 0,
+      unknown: 0,
+    },
+  },
   bySession: {},
 };
 
@@ -97,6 +138,8 @@ export function usePipeline() {
   // Run-elapsed clock and per-pass timings, for the progress view.
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [passTimes, setPassTimes] = useState<Record<string, PassTiming>>({});
+  const [stageHistory, setStageHistory] = useState<RuntimeStage[]>([]);
+  const stageSequence = useRef(0);
 
   // Buffer incoming log lines in a ref to avoid O(n) array copies per event.
   // A periodic timer flushes the buffer into state in a single update.
@@ -110,10 +153,40 @@ export function usePipeline() {
     async function setup(): Promise<UnlistenFn[]> {
       // Register all listeners concurrently so there's no window where
       // some events are captured and others aren't.
-      const [u1, u2, u3, u4] = await Promise.all([
-        listen<{ stage: string }>("pipeline:stage", (event) => {
+      const registrations = await Promise.allSettled([
+        listen<{
+          stage: string;
+          id: string;
+          label: string;
+          stepIds: string[];
+          skipped?: boolean;
+        }>("pipeline:stage", (event) => {
           if (!mounted) return;
-          const { stage } = event.payload;
+          const { stage, id, label, stepIds, skipped = false } = event.payload;
+          if (stage !== "extracting" &&
+              stage !== "orienting" &&
+              stage !== "dispatching" &&
+              stage !== "merging" &&
+              stage !== "synthesizing" &&
+              stage !== "done") return;
+          const kind = stage as RuntimeStageKind;
+          setStageHistory((previous) => {
+            const next = previous.map((entry, index) =>
+              index === previous.length - 1 && entry.status === "active"
+                ? { ...entry, status: "done" as const }
+                : entry,
+            );
+            next.push({
+              id: id || `runtime-${++stageSequence.current}`,
+              kind,
+              label,
+              stepIds,
+              passes: {},
+              status: skipped ? "skipped" : "active",
+            });
+            return next;
+          });
+          if (skipped || stage === "done") return;
           switch (stage) {
             case "extracting":
               setState({ kind: "extracting" });
@@ -159,6 +232,11 @@ export function usePipeline() {
               passes: { ...prev.passes, [name]: status as PassStatus },
             };
           });
+          setStageHistory((previous) => previous.map((entry, index) =>
+            index === previous.length - 1 && entry.status === "active"
+              ? { ...entry, passes: { ...entry.passes, [name]: status as PassStatus } }
+              : entry,
+          ));
         }),
         listen<{
           line: string;
@@ -186,6 +264,8 @@ export function usePipeline() {
           output_tokens: number;
           cached_input_tokens?: number;
           cache_write_input_tokens?: number;
+          model_round_trips?: number;
+          tool_calls?: Partial<ToolCallCounts>;
         }>(
           "pipeline:usage",
           (event) => {
@@ -196,6 +276,8 @@ export function usePipeline() {
               output_tokens,
               cached_input_tokens = 0,
               cache_write_input_tokens = 0,
+              model_round_trips = 0,
+              tool_calls = {},
             } = event.payload;
             // Usage events are infrequent (one per LLM call), so update state
             // directly rather than through the log buffer.
@@ -205,6 +287,15 @@ export function usePipeline() {
                 output: prev.total.output + output_tokens,
                 cached: prev.total.cached + cached_input_tokens,
                 cacheWrite: prev.total.cacheWrite + cache_write_input_tokens,
+                modelRoundTrips: prev.total.modelRoundTrips + model_round_trips,
+                toolCalls: {
+                  text_file: prev.total.toolCalls.text_file + (tool_calls.text_file ?? 0),
+                  image: prev.total.toolCalls.image + (tool_calls.image ?? 0),
+                  web: prev.total.toolCalls.web + (tool_calls.web ?? 0),
+                  shell_or_other:
+                    prev.total.toolCalls.shell_or_other + (tool_calls.shell_or_other ?? 0),
+                  unknown: prev.total.toolCalls.unknown + (tool_calls.unknown ?? 0),
+                },
               };
               const bySession = { ...prev.bySession };
               if (session != null) {
@@ -213,12 +304,29 @@ export function usePipeline() {
                   output: 0,
                   cached: 0,
                   cacheWrite: 0,
+                  modelRoundTrips: 0,
+                  toolCalls: {
+                    text_file: 0,
+                    image: 0,
+                    web: 0,
+                    shell_or_other: 0,
+                    unknown: 0,
+                  },
                 };
                 bySession[session] = {
                   input: cur.input + input_tokens,
                   output: cur.output + output_tokens,
                   cached: cur.cached + cached_input_tokens,
                   cacheWrite: cur.cacheWrite + cache_write_input_tokens,
+                  modelRoundTrips: cur.modelRoundTrips + model_round_trips,
+                  toolCalls: {
+                    text_file: cur.toolCalls.text_file + (tool_calls.text_file ?? 0),
+                    image: cur.toolCalls.image + (tool_calls.image ?? 0),
+                    web: cur.toolCalls.web + (tool_calls.web ?? 0),
+                    shell_or_other:
+                      cur.toolCalls.shell_or_other + (tool_calls.shell_or_other ?? 0),
+                    unknown: cur.toolCalls.unknown + (tool_calls.unknown ?? 0),
+                  },
                 };
               }
               return { total, bySession };
@@ -226,6 +334,19 @@ export function usePipeline() {
           }
         ),
       ]);
+      const unlisteners = registrations.flatMap((registration) =>
+        registration.status === "fulfilled" ? [registration.value] : [],
+      );
+      const failed = registrations.find(
+        (registration): registration is PromiseRejectedResult =>
+          registration.status === "rejected",
+      );
+      if (failed) {
+        // Promise.all would discard successful registrations when one listener
+        // fails. Tear those down before surfacing the fatal setup error.
+        unlisteners.forEach((unlisten) => unlisten());
+        throw failed.reason;
+      }
 
       // Periodically flush buffered log lines into React state. Don't start
       // the timer if the component unmounted while listener registration was
@@ -272,7 +393,7 @@ export function usePipeline() {
       }
 
       if (mounted) setListenersReady(true);
-      return [u1, u2, u3, u4];
+      return unlisteners;
     }
 
     const setupPromise = setup();
@@ -308,19 +429,23 @@ export function usePipeline() {
       paperPath: string,
       diff?: boolean,
       variables?: Record<string, string>,
-      extraInputs?: Record<string, string>
+      extraInputs?: Record<string, string>,
+      expectedProfileSnapshotId?: string,
     ) => {
       setState({ kind: "extracting" });
       setLogs([]);
       setUsage(EMPTY_USAGE);
       setRunStartedAt(Date.now());
       setPassTimes({});
+      stageSequence.current = 0;
+      setStageHistory([]);
       try {
         const result = await invoke<PipelineResult>("run_pipeline", {
           paperPath,
           diff: diff ?? false,
           variables: variables ?? null,
           extraInputs: extraInputs ?? null,
+          expectedProfileSnapshotId: expectedProfileSnapshotId ?? null,
         });
         setState({
           kind: "done",
@@ -329,6 +454,9 @@ export function usePipeline() {
           extractedText: result.extracted_text,
           runId: result.run_id ?? null,
         });
+        setStageHistory((previous) => previous.map((entry) =>
+          entry.status === "active" ? { ...entry, status: "done" as const } : entry,
+        ));
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         setState((prev) => ({
@@ -336,6 +464,9 @@ export function usePipeline() {
           message,
           failedAt: prev.kind === "error" ? undefined : prev.kind,
         }));
+        setStageHistory((previous) => previous.map((entry) =>
+          entry.status === "active" ? { ...entry, status: "failed" as const } : entry,
+        ));
       }
     },
     []
@@ -348,6 +479,8 @@ export function usePipeline() {
       setUsage(EMPTY_USAGE);
       setRunStartedAt(Date.now());
       setPassTimes({});
+      stageSequence.current = 0;
+      setStageHistory([]);
       try {
         const result = await invoke<PipelineResult>("rerun_run", {
           runId,
@@ -361,6 +494,9 @@ export function usePipeline() {
           extractedText: result.extracted_text,
           runId: result.run_id ?? null,
         });
+        setStageHistory((previous) => previous.map((entry) =>
+          entry.status === "active" ? { ...entry, status: "done" as const } : entry,
+        ));
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         setState((prev) => ({
@@ -368,6 +504,9 @@ export function usePipeline() {
           message,
           failedAt: prev.kind === "error" ? undefined : prev.kind,
         }));
+        setStageHistory((previous) => previous.map((entry) =>
+          entry.status === "active" ? { ...entry, status: "failed" as const } : entry,
+        ));
       }
     },
     []
@@ -383,7 +522,21 @@ export function usePipeline() {
 
   const reset = useCallback(() => {
     setState({ kind: "idle" });
+    stageSequence.current = 0;
+    setStageHistory([]);
   }, []);
 
-  return { state, logs, usage, startPipeline, rerunPipeline, cancel, reset, listenersReady, runStartedAt, passTimes };
+  return {
+    state,
+    logs,
+    usage,
+    startPipeline,
+    rerunPipeline,
+    cancel,
+    reset,
+    listenersReady,
+    runStartedAt,
+    passTimes,
+    stageHistory,
+  };
 }

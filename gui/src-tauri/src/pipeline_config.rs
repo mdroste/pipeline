@@ -355,7 +355,9 @@ fn default_slot_mode() -> String {
 /// parser-specific tuning is centralized in global Settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtractionConfig {
-    /// "auto" | "llm" | "marker" | "paddleocr-vl" | "pdftotext" | "" (= inherit global).
+    /// "auto" | "llm" | "paddleocr-vl" | "pdftotext" | "" (= inherit global).
+    /// The retired "marker" value remains deserializable so users can repair
+    /// profiles created before Pipeline 1.0.1; extraction rejects it.
     #[serde(default)]
     pub method: String,
     /// Input mode for the workflow: "" or "document" (single file, default),
@@ -878,17 +880,24 @@ fn default_steps() -> Vec<StepConfig> {
     )
 }
 
-fn defaults() -> PipelineConfig {
-    PipelineConfig {
-        steps: default_steps(),
-        merge: MergeConfig::default(),
-        context_cache: ContextCacheConfig::default(),
-        use_orientation: true,
-        orientation_prompt: String::new(),
-        extraction: ExtractionConfig::default(),
-        parallel_context_template: default_parallel_template(),
-        variables: Vec::new(),
+/// Stock Paper Review (Full) profile.
+///
+/// Shared context reuse is part of the built-in workflow rather than the
+/// provider-neutral `ProfileData::new` default: custom and legacy profiles
+/// remain opt-in unless a catalog migration can identify an untouched stock
+/// Full profile.
+fn full_review_profile(validate_enabled: bool) -> ProfileData {
+    let mut steps = default_steps();
+    if let Some(step) = steps.iter_mut().find(|step| step.id == "validate_feedback") {
+        step.enabled = validate_enabled;
     }
+    let mut profile = ProfileData::new("Paper Review (Full)", steps, MergeConfig::default());
+    profile.context_cache.enabled = true;
+    profile
+}
+
+fn defaults() -> PipelineConfig {
+    full_review_profile(false).into()
 }
 
 /// Profile IDs that cannot be deleted.
@@ -1282,6 +1291,41 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         })?;
     }
 
+    // Artifact access is part of the workflow definition, not an ambient
+    // executor default. Refresh every shipped profile into the explicit
+    // producer/role format. This must run before migrations that load and
+    // validate profiles: older profiles declared Read/Write directly, while
+    // the current validator permits only optional external capabilities.
+    let artifact_marker = profiles.join(".builtin-catalog-v6");
+    if !artifact_marker.exists() {
+        for id in BUILTIN_PROFILES {
+            let path = profiles.join(format!("{id}.json"));
+            if !path.exists() {
+                continue;
+            }
+            let content = read_profile_file(&path)
+                .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+            let mut profile: ProfileData = serde_json::from_str(&content)
+                .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+            profile.steps = configure_artifact_flow(
+                profile.steps,
+                &profile.extraction.input_mode,
+                builtin_primary_readers(id),
+            );
+            validate_profile_data(&profile)?;
+            let json = serde_json::to_string_pretty(&profile)
+                .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+            restore_profile_bytes(&path, json.as_bytes())
+                .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+        }
+        fs::write(&artifact_marker, b"explicit-step-artifact-context\n").map_err(|error| {
+            format!(
+                "Failed to record the artifact-context migration '{}': {error}",
+                artifact_marker.display()
+            )
+        })?;
+    }
+
     // Built-in workflows are customizable, so rename the profile while
     // preserving any edits users made to its steps and settings.
     for (id, previous_name, current_name) in [
@@ -1289,10 +1333,21 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         ("quick-review", "Quick Review", "Paper Review (Quick)"),
         ("deep-code-review", "Deep Code Review", "Codebase Review"),
     ] {
-        let mut profile = load_profile(id)?;
+        let path = profiles.join(format!("{id}.json"));
+        if !path.exists() {
+            continue;
+        }
+        let content = read_profile_file(&path)
+            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+        let mut profile: ProfileData = serde_json::from_str(&content)
+            .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+        validate_profile_data(&profile)?;
         if profile.name == previous_name {
             profile.name = current_name.to_string();
-            save_profile_unlocked(id, &profile)?;
+            let json = serde_json::to_string_pretty(&profile)
+                .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+            restore_profile_bytes(&path, json.as_bytes())
+                .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
         }
     }
 
@@ -1328,11 +1383,12 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         })?;
     }
 
-    // Artifact access is part of the workflow definition, not an ambient
-    // executor default. Refresh every shipped profile into the explicit
-    // producer/role format.
-    let artifact_marker = profiles.join(".builtin-catalog-v6");
-    if !artifact_marker.exists() {
+    // Reuse warmed primary context and encourage batched evidence retrieval.
+    // Update only exact prior stock prompts so user customizations remain
+    // byte-for-byte intact. This must run before the v7 whole-profile
+    // fingerprint: `full_review_profile` already contains the new defaults.
+    let retrieval_prompt_marker = profiles.join(".builtin-catalog-v8");
+    if !retrieval_prompt_marker.exists() {
         for id in BUILTIN_PROFILES {
             let path = profiles.join(format!("{id}.json"));
             if !path.exists() {
@@ -1342,26 +1398,82 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
                 .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
             let mut profile: ProfileData = serde_json::from_str(&content)
                 .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
-            profile.steps = configure_artifact_flow(
-                profile.steps,
-                &profile.extraction.input_mode,
-                builtin_primary_readers(id),
-            );
-            validate_profile_data(&profile)?;
-            let json = serde_json::to_string_pretty(&profile)
-                .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
-            restore_profile_bytes(&path, json.as_bytes())
-                .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+            if migrate_efficient_retrieval_defaults(&mut profile) {
+                validate_profile_data(&profile)?;
+                let json = serde_json::to_string_pretty(&profile).map_err(|error| {
+                    format!("Failed to serialize '{}': {error}", path.display())
+                })?;
+                restore_profile_bytes(&path, json.as_bytes())
+                    .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+            }
         }
-        fs::write(&artifact_marker, b"explicit-step-artifact-context\n").map_err(|error| {
+        fs::write(
+            &retrieval_prompt_marker,
+            b"shared-context-aware-batched-retrieval-prompts\n",
+        )
+        .map_err(|error| {
             format!(
-                "Failed to record the artifact-context migration '{}': {error}",
-                artifact_marker.display()
+                "Failed to record the retrieval-prompt migration '{}': {error}",
+                retrieval_prompt_marker.display()
+            )
+        })?;
+    }
+
+    // Shared context reuse is now part of Paper Review (Full). Built-ins are
+    // customizable, so only upgrade an exact semantic match for either prior
+    // stock variant (validation enabled on first-run creation, disabled after
+    // a reset). A stock profile whose user explicitly left caching disabled is
+    // indistinguishable from the old default; any other customization or
+    // already-enabled profile is preserved.
+    let context_cache_marker = profiles.join(".builtin-catalog-v7");
+    if !context_cache_marker.exists() {
+        let path = profiles.join("deep-review.json");
+        if path.exists() {
+            let content = read_profile_file(&path)
+                .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+            let mut profile: ProfileData = serde_json::from_str(&content)
+                .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+            validate_profile_data(&profile)?;
+            if matches_prior_stock_full_review(&profile)? {
+                profile.context_cache.enabled = true;
+                let json = serde_json::to_string_pretty(&profile).map_err(|error| {
+                    format!("Failed to serialize '{}': {error}", path.display())
+                })?;
+                restore_profile_bytes(&path, json.as_bytes())
+                    .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+            }
+        }
+        fs::write(
+            &context_cache_marker,
+            b"full-review-shared-context-default\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the shared-context migration '{}': {error}",
+                context_cache_marker.display()
             )
         })?;
     }
 
     Ok(())
+}
+
+fn matches_prior_stock_full_review(profile: &ProfileData) -> Result<bool, String> {
+    if profile.context_cache.enabled {
+        return Ok(false);
+    }
+    let actual = serde_json::to_value(profile)
+        .map_err(|error| format!("Failed to fingerprint Paper Review (Full): {error}"))?;
+    for validate_enabled in [false, true] {
+        let mut prior_stock = full_review_profile(validate_enabled);
+        prior_stock.context_cache.enabled = false;
+        let expected = serde_json::to_value(prior_stock)
+            .map_err(|error| format!("Failed to fingerprint stock Full profile: {error}"))?;
+        if actual == expected {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn prompt_digest(prompt: &str) -> String {
@@ -1390,6 +1502,36 @@ fn migrate_shipped_prompt_defaults(profile: &mut ProfileData) -> bool {
         if let Some(replacement) = prompts::compiled_default("merge") {
             profile.merge.prompt = replacement.to_string();
             changed = true;
+        }
+    }
+    changed
+}
+
+fn migrate_efficient_retrieval_defaults(profile: &mut ProfileData) -> bool {
+    const OLD_PARALLEL_CONTEXT: &str =
+        "2d3f253aba5a39e76a560cda448296647b42cd3b4d487bbb761af9e7172fbe65";
+    const OLD_GENERIC_PARALLEL_CONTEXT: &str =
+        "d2bc29faeb032cc35cb60f2aff561f17a737c18348a76140205777f8b3c33197";
+    const OLD_VALIDATE_FEEDBACK: &str =
+        "ad7af438fed68f08e4f2e85de9155314f9579d6d96a4c960fb4b53b5ff0e7555";
+
+    let mut changed = false;
+    let parallel_replacement = match prompt_digest(&profile.parallel_context_template).as_str() {
+        OLD_PARALLEL_CONTEXT => prompts::compiled_default("parallel_context"),
+        OLD_GENERIC_PARALLEL_CONTEXT => prompts::compiled_default("parallel_context_generic"),
+        _ => None,
+    };
+    if let Some(replacement) = parallel_replacement {
+        profile.parallel_context_template = replacement.to_string();
+        changed = true;
+    }
+
+    for step in &mut profile.steps {
+        if prompt_digest(&step.prompt) == OLD_VALIDATE_FEEDBACK {
+            if let Some(replacement) = prompts::compiled_default("validate_feedback") {
+                step.prompt = replacement.to_string();
+                changed = true;
+            }
         }
     }
     changed
@@ -1488,17 +1630,7 @@ fn ensure_migrated() -> Result<(), String> {
         }
 
         // Create the full paper review as the primary profile.
-        let profile = ProfileData::new(
-            "Paper Review (Full)",
-            {
-                let mut s = default_steps();
-                if let Some(step) = s.iter_mut().find(|s| s.id == "validate_feedback") {
-                    step.enabled = true;
-                }
-                s
-            },
-            MergeConfig::default(),
-        );
+        let profile = full_review_profile(true);
         let json =
             serde_json::to_string_pretty(&profile).map_err(|e| format!("Serialize error: {e}"))?;
         restore_profile_bytes(&deep_review_path, json.as_bytes())
@@ -2771,6 +2903,25 @@ mod tests {
         }
     }
 
+    fn mark_builtin_catalog_through_v6(dir: &Path) {
+        for (marker, content) in [
+            (
+                ".builtin-catalog-v3",
+                b"paper-and-code-profile-catalog\n".as_slice(),
+            ),
+            (
+                ".builtin-catalog-v4",
+                b"clean-terminal-report-prompts\n".as_slice(),
+            ),
+            (
+                ".builtin-catalog-v6",
+                b"explicit-step-artifact-context\n".as_slice(),
+            ),
+        ] {
+            fs::write(dir.join(marker), content).unwrap();
+        }
+    }
+
     #[test]
     fn legacy_profile_marker_overrides_are_ignored_and_not_reserialized() {
         let extraction: ExtractionConfig = serde_json::from_value(serde_json::json!({
@@ -3171,6 +3322,18 @@ mod tests {
     }
 
     #[test]
+    fn stock_full_review_enables_shared_context_reuse() {
+        assert!(defaults().context_cache.enabled);
+        assert!(full_review_profile(false).context_cache.enabled);
+        assert!(full_review_profile(true).context_cache.enabled);
+        assert!(
+            !ProfileData::new("Custom", Vec::new(), MergeConfig::default())
+                .context_cache
+                .enabled
+        );
+    }
+
+    #[test]
     fn slugify_special_chars() {
         assert_eq!(slugify("My Profile!@#$%"), "my-profile");
     }
@@ -3373,6 +3536,127 @@ mod tests {
                 "grant-review",
             ]
         );
+    }
+
+    #[test]
+    fn artifact_migration_precedes_validation_of_legacy_builtin_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join(".builtin-catalog-v3"),
+            b"paper-and-code-profile-catalog\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".builtin-catalog-v4"),
+            b"clean-terminal-report-prompts\n",
+        )
+        .unwrap();
+
+        let mut step = step_with_id("code_correctness");
+        step.tools = vec!["Read".into()];
+        let mut profile = ProfileData::new("Deep Code Review", vec![step], MergeConfig::default());
+        profile.extraction = folder_extraction();
+        assert!(validate_profile_data(&profile)
+            .unwrap_err()
+            .contains("unsupported tool 'Read'"));
+
+        let path = dir.path().join("deep-code-review.json");
+        fs::write(&path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+
+        migrate_builtin_catalog(dir.path()).unwrap();
+
+        let migrated: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        validate_profile_data(&migrated).unwrap();
+        assert_eq!(migrated.name, "Codebase Review");
+        assert!(migrated.steps[0].tools.is_empty());
+        assert!(migrated.steps[0].context.include.iter().any(|selector| {
+            matches!(
+                selector,
+                ArtifactSelector::Primary {
+                    parts
+                } if parts.contains(&PrimaryArtifactPart::Source)
+            )
+        }));
+        assert!(dir.path().join(".builtin-catalog-v6").exists());
+    }
+
+    #[test]
+    fn context_cache_migration_upgrades_only_prior_stock_full_profiles() {
+        for validate_enabled in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            mark_builtin_catalog_through_v6(dir.path());
+            let path = dir.path().join("deep-review.json");
+            let mut prior_stock = full_review_profile(validate_enabled);
+            prior_stock.context_cache.enabled = false;
+            prior_stock.parallel_context_template = prior_stock
+                .parallel_context_template
+                .replace(
+                    "Use the paper text already present in shared context when available; otherwise read it from the path above. Then produce your report following the instructions above.",
+                    "Read the paper text, then produce your report following the instructions above.",
+                );
+            let validate = prior_stock
+                .steps
+                .iter_mut()
+                .find(|step| step.id == "validate_feedback")
+                .unwrap();
+            validate.prompt = validate.prompt.replace(
+                "STEP 1 — PREPARE THE PAPER EVIDENCE (do this before verification):\nIf the complete paper text and orientation map are already present in shared context, use them directly and do not read their staged files again. Otherwise read the orientation map and the complete paper text. Retrieve independent bounded ranges in batches or one tool turn when supported, and continue sequentially until the entire paper has been covered if batching is unavailable or incomplete.\n\nSTEP 2 — VERIFY ALL COMMENTS:\nCheck every comment in the consolidated report below against the complete paper evidence.",
+                "STEP 1 — READ THE PAPER (do this first, before any verification):\nRead the full paper text at {paper_path} in a single Read call. Also read the orientation map: {orientation}\n\nSTEP 2 — VERIFY ALL COMMENTS:\nUsing the paper text now in your context, check every comment in the consolidated report below.",
+            );
+            assert_eq!(
+                prompt_digest(&prior_stock.parallel_context_template),
+                "2d3f253aba5a39e76a560cda448296647b42cd3b4d487bbb761af9e7172fbe65"
+            );
+            assert_eq!(
+                prompt_digest(&validate.prompt),
+                "ad7af438fed68f08e4f2e85de9155314f9579d6d96a4c960fb4b53b5ff0e7555"
+            );
+            fs::write(&path, serde_json::to_vec_pretty(&prior_stock).unwrap()).unwrap();
+
+            migrate_builtin_catalog(dir.path()).unwrap();
+
+            let migrated: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert!(migrated.context_cache.enabled);
+            assert_eq!(
+                migrated.parallel_context_template,
+                prompts::compiled_default("parallel_context").unwrap()
+            );
+            assert_eq!(
+                migrated
+                    .steps
+                    .iter()
+                    .find(|step| step.id == "validate_feedback")
+                    .unwrap()
+                    .enabled,
+                validate_enabled
+            );
+            assert!(!migrated
+                .steps
+                .iter()
+                .find(|step| step.id == "validate_feedback")
+                .unwrap()
+                .prompt
+                .contains("single Read call"));
+            assert!(dir.path().join(".builtin-catalog-v8").exists());
+            assert!(dir.path().join(".builtin-catalog-v7").exists());
+        }
+    }
+
+    #[test]
+    fn context_cache_migration_preserves_distinguishable_customizations() {
+        let dir = tempfile::tempdir().unwrap();
+        mark_builtin_catalog_through_v6(dir.path());
+        let path = dir.path().join("deep-review.json");
+        let mut customized = full_review_profile(false);
+        customized.context_cache.enabled = false;
+        customized.steps[0].prompt.push_str("\nCustom instruction.");
+        let original = serde_json::to_vec_pretty(&customized).unwrap();
+        fs::write(&path, &original).unwrap();
+
+        migrate_builtin_catalog(dir.path()).unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert!(dir.path().join(".builtin-catalog-v7").exists());
     }
 
     #[test]

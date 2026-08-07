@@ -1,8 +1,18 @@
-# Pipeline pre-release issue list
+# Archived Pipeline pre-release issue list
 
 **Audit date:** 2026-07-22  
-**Audited tree:** the current working tree, including its uncommitted release and model-catalog changes  
-**Release recommendation:** all findings below were confirmed and remediated in the current working tree. Publish only after the new tagged-SHA quality gate and all four platform jobs pass; the workflow now leaves artifacts in a draft release for that final decision.
+**Audited tree:** the working tree as it existed on 2026-07-22, including its
+then-uncommitted release and model-catalog changes
+
+**Historical release recommendation:** all findings below were reported remediated in that working tree, subject to the tagged-SHA quality gate and four-platform release checks.
+
+> **Archived audit snapshot.** This is not the current issue tracker or a
+> release checklist. It preserves original evidence, proposed fixes, and the
+> remediation record; line numbers, dependency versions, test counts, and
+> “current working tree” references are historical. See
+> [CHANGELOG.md](CHANGELOG.md), [SUPPORT.md](SUPPORT.md),
+> [RELEASING.md](RELEASING.md), current CI, and GitHub issues for present
+> status.
 
 ## How to use this list
 
@@ -26,9 +36,13 @@ The audit covered the Rust/Tauri backend, React/TypeScript frontend, workflow/pr
 
 At audit time, the local `npm audit` could not reach the registry in the sandbox and `cargo-audit` was not installed locally. CI defined both audits, but the release workflow was not gated on them; that gap was P1-10. Windows and Linux findings below came from code-path and packaging review, not live execution on those hosts.
 
-## Remediation status (2026-07-22)
+## Recorded remediation status (2026-07-22)
 
-Every item was re-read against the implementation and confirmed. All 30 are fixed in this working tree. The original evidence and required-fix text remains below as the audit record; line numbers refer to the pre-fix revision.
+Every item was re-read against the implementation during the 2026-07-22 pass,
+and all 30 were recorded as fixed in that remediation tree. The original
+evidence and required-fix text remains below as the audit record; line numbers
+refer to the pre-fix revision. This statement has not been reissued as a
+current-tree audit.
 
 | ID | Disposition | Implemented verification/fix |
 |---|---|---|

@@ -30,10 +30,23 @@ interface Props {
 type WorkspaceTab = "report" | "issues" | "sources";
 type OutputView = "clean" | "raw";
 
+const TAB_IDS: Record<WorkspaceTab, string> = {
+  report: "report-workspace-tab-report",
+  issues: "report-workspace-tab-issues",
+  sources: "report-workspace-tab-sources",
+};
+
+const TAB_PANEL_IDS: Record<WorkspaceTab, string> = {
+  report: "report-workspace-panel-report",
+  issues: "report-workspace-panel-issues",
+  sources: "report-workspace-panel-sources",
+};
+
 function formatDuration(seconds?: number | null) {
-  if (!seconds || seconds <= 0) return "—";
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.round(seconds % 60);
+  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return "—";
+  const roundedSeconds = Math.round(seconds);
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainder = roundedSeconds % 60;
   return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
 
@@ -142,20 +155,30 @@ export function splitUnexpectedPreamble(markdown: string) {
 function TabButton({
   active,
   count,
+  id,
   label,
   onClick,
+  onKeyDown,
+  panelId,
 }: {
   active: boolean;
   count?: number;
+  id: string;
   label: string;
   onClick: () => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+  panelId: string;
 }) {
   return (
     <button
+      id={id}
       type="button"
       role="tab"
+      aria-controls={panelId}
       aria-selected={active}
+      tabIndex={active ? 0 : -1}
       onClick={onClick}
+      onKeyDown={onKeyDown}
       className={`relative h-11 px-1 text-sm font-medium transition-colors focus-visible:outline-none
                   focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-400 ${
                     active
@@ -165,7 +188,7 @@ function TabButton({
     >
       {label}
       {count !== undefined && (
-        <span className="ml-1.5 text-xs tabular-nums text-gray-400 dark:text-gray-500">
+        <span className="ml-1.5 text-xs tabular-nums text-gray-500 dark:text-gray-400">
           {count}
         </span>
       )}
@@ -217,7 +240,7 @@ function ProvenanceCard({
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
         {fields.map(([label, value]) => (
           <div key={label} className="min-w-0">
-            <dt className="text-[11px] text-gray-400 dark:text-gray-500">{label}</dt>
+            <dt className="text-[11px] text-gray-500 dark:text-gray-400">{label}</dt>
             <dd className="truncate text-xs font-medium text-gray-700 dark:text-gray-300" title={value}>
               {value}
             </dd>
@@ -250,7 +273,7 @@ function LocalSources({
   return (
     <div className="flex h-full min-h-0">
       <nav className="w-56 shrink-0 border-r border-gray-200 p-3 dark:border-gray-800">
-        <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+        <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
           Sources
         </p>
         {options.map((option) => (
@@ -279,7 +302,7 @@ export default function ReportWorkspace({
   runId,
   markdown: initialMarkdown = "",
   report: initialReport = null,
-  extractedText = "",
+  extractedText,
   summary,
   durationSecs,
   onBack,
@@ -333,10 +356,34 @@ export default function ReportWorkspace({
   const visibleMarkdown = outputView === "clean" ? presentation.clean : markdown;
   const title = reportTitle(report, summary);
   const status = summary?.status || (report?.failed_steps?.length ? "partial" : "done");
+  const availableTabs: WorkspaceTab[] = issues && issues.length > 0
+    ? ["report", "issues", "sources"]
+    : ["report", "sources"];
+  const handleTabKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    currentTab: WorkspaceTab,
+  ) => {
+    const currentIndex = availableTabs.indexOf(currentTab);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % availableTabs.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + availableTabs.length) % availableTabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = availableTabs.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = availableTabs[nextIndex];
+    setTab(nextTab);
+    document.getElementById(TAB_IDS[nextTab])?.focus();
+  };
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-gray-400">
+      <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         Loading report…
       </div>
     );
@@ -380,7 +427,7 @@ export default function ReportWorkspace({
               <span className={`h-1.5 w-1.5 rounded-full ${
                 status === "done" ? "bg-emerald-500" : status === "partial" ? "bg-amber-500" : "bg-red-500"
               }`} />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400 dark:text-gray-500">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
                 {status === "done" ? "Completed report" : `${status} report`}
               </span>
             </div>
@@ -398,6 +445,7 @@ export default function ReportWorkspace({
             </p>
           </div>
           <ExportControls
+            runId={runId}
             markdown={markdown}
             report={report}
             extractedText={extractedText}
@@ -417,27 +465,59 @@ export default function ReportWorkspace({
         aria-label="Report workspace"
         className="flex h-11 shrink-0 items-center gap-6 border-b border-gray-200 bg-white px-6 dark:border-gray-800 dark:bg-gray-950"
       >
-        <TabButton active={tab === "report"} label="Report" onClick={() => setTab("report")} />
+        <TabButton
+          active={tab === "report"}
+          id={TAB_IDS.report}
+          label="Report"
+          panelId={TAB_PANEL_IDS.report}
+          onClick={() => setTab("report")}
+          onKeyDown={(event) => handleTabKeyDown(event, "report")}
+        />
         {issues && issues.length > 0 && (
-          <TabButton active={tab === "issues"} count={issues.length} label="Issues" onClick={() => setTab("issues")} />
+          <TabButton
+            active={tab === "issues"}
+            count={issues.length}
+            id={TAB_IDS.issues}
+            label="Issues"
+            panelId={TAB_PANEL_IDS.issues}
+            onClick={() => setTab("issues")}
+            onKeyDown={(event) => handleTabKeyDown(event, "issues")}
+          />
         )}
-        <TabButton active={tab === "sources"} label="Sources" onClick={() => setTab("sources")} />
+        <TabButton
+          active={tab === "sources"}
+          id={TAB_IDS.sources}
+          label="Sources"
+          panelId={TAB_PANEL_IDS.sources}
+          onClick={() => setTab("sources")}
+          onKeyDown={(event) => handleTabKeyDown(event, "sources")}
+        />
       </div>
 
       <div className="min-h-0 flex-1">
         <Suspense
           fallback={(
-            <div className="flex h-full items-center justify-center text-sm text-gray-400">
+            <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
               Loading workspace…
             </div>
           )}
         >
           {tab === "issues" && issues ? (
-            <div role="tabpanel" aria-label="Issues" className="h-full overflow-auto">
+            <div
+              id={TAB_PANEL_IDS.issues}
+              role="tabpanel"
+              aria-labelledby={TAB_IDS.issues}
+              className="h-full overflow-auto"
+            >
               <IssuesTable issues={issues} runId={runId ?? null} />
             </div>
           ) : tab === "sources" ? (
-            <div role="tabpanel" aria-label="Sources" className="h-full">
+            <div
+              id={TAB_PANEL_IDS.sources}
+              role="tabpanel"
+              aria-labelledby={TAB_IDS.sources}
+              className="h-full"
+            >
               {runId ? (
                 <ArtifactExplorer
                   runId={runId}
@@ -445,11 +525,16 @@ export default function ReportWorkspace({
                   deferInitialArtifact
                 />
               ) : (
-                <LocalSources extractedText={extractedText} report={report} />
+                <LocalSources extractedText={extractedText ?? ""} report={report} />
               )}
             </div>
           ) : (
-            <div role="tabpanel" aria-label="Report" className="h-full overflow-hidden">
+            <div
+              id={TAB_PANEL_IDS.report}
+              role="tabpanel"
+              aria-labelledby={TAB_IDS.report}
+              className="h-full overflow-hidden"
+            >
               <div className="flex h-full min-h-0 flex-col">
                 {presentation.preamble && (
                   <div

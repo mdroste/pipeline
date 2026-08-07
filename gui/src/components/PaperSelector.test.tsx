@@ -61,16 +61,16 @@ describe("PaperSelector", () => {
     expect(onPathChange).toHaveBeenCalledWith("/papers/latex-project");
   });
 
-  it("swallows file picker errors without throwing", async () => {
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    openDialog.mockRejectedValueOnce(new Error("user cancelled"));
+  it("surfaces file picker failures while treating a resolved null as cancellation", async () => {
+    openDialog.mockRejectedValueOnce(new Error("dialog plugin unavailable"));
     const onPathChange = vi.fn();
 
     render(<PaperSelector onPathChange={onPathChange} disabled={false} />);
     await userEvent.setup().click(screen.getByRole("button", { name: /select file/i }));
 
     expect(onPathChange).not.toHaveBeenCalled();
-    expect(errSpy).toHaveBeenCalled();
-    errSpy.mockRestore();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not open the file picker: dialog plugin unavailable",
+    );
   });
 });

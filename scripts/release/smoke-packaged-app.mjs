@@ -19,6 +19,7 @@ function delay(milliseconds) {
 
 export async function smokePackagedApp(executable, args = [], options = {}) {
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const stabilityMs = options.stabilityMs ?? 500;
   const marker = path.join(
     os.tmpdir(),
     `pipeline-smoke-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.ready`,
@@ -48,16 +49,22 @@ export async function smokePackagedApp(executable, args = [], options = {}) {
   });
 
   const deadline = Date.now() + timeoutMs;
+  let readyAt = null;
   try {
-    while (!fs.existsSync(marker)) {
+    while (true) {
       if (spawnError) throw new Error(`failed to launch application: ${spawnError.message}`);
       if (exited) {
         throw new Error(
-          `application exited before becoming ready (code=${exitCode}, signal=${exitSignal})\n${stdout}${stderr}`,
+          `application exited ${readyAt === null ? "before becoming ready" : "during readiness stabilization"} (code=${exitCode}, signal=${exitSignal})\n${stdout}${stderr}`,
         );
       }
+      if (fs.existsSync(marker)) {
+        readyAt ??= Date.now();
+        if (Date.now() - readyAt >= stabilityMs) break;
+      }
       if (Date.now() >= deadline) {
-        throw new Error(`application did not become ready within ${timeoutMs}ms\n${stdout}${stderr}`);
+        const phase = readyAt === null ? "become ready" : "remain stable after readiness";
+        throw new Error(`application did not ${phase} within ${timeoutMs}ms\n${stdout}${stderr}`);
       }
       await delay(100);
     }

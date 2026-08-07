@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { ModelCatalog, ModelSelection, Settings } from "../lib/types";
@@ -18,15 +18,34 @@ import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 
 interface Props {
   onClose: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
   showBack?: boolean;
   dark: boolean;
   onDarkChange: (v: boolean) => void;
+  onSystemChange?: () => void;
 }
 
 type Section = "llm" | "extraction" | "general";
 
-export default function SettingsPage({ onClose, showBack = true, dark, onDarkChange }: Props) {
+function catalogDiscoveryInputs(settings: Settings): Record<string, string> {
+  return {
+    claude: settings.anthropic_api_key,
+    codex: settings.openai_api_key,
+    gemini: settings.google_api_key,
+    local: `${settings.local_base_url}\u0000${settings.local_api_key}`,
+  };
+}
+
+export default function SettingsPage({
+  onClose,
+  onDirtyChange,
+  showBack = true,
+  dark,
+  onDarkChange,
+  onSystemChange,
+}: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -35,12 +54,28 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
   const [warnings, setWarnings] = useState<string[]>([]);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
   const [catalogLoading, setCatalogLoading] = useState<Record<string, boolean>>({});
+  const [catalogInputKeys, setCatalogInputKeys] = useState<Record<string, string>>({});
+  const [savedCatalogInputs, setSavedCatalogInputs] = useState<Record<string, string> | null>(null);
   const [navWidth, setNavWidth] = usePersistentPanelWidth(
     "pipeline.ui.settingsNavWidth",
     192,
     160,
     320,
   );
+  const settingsRef = useRef<Settings | null>(settings);
+  const catalogRequestsRef = useRef<Record<string, number>>({});
+  const previousDraftDiscoveryInputsRef = useRef<Record<string, string> | null>(null);
+  const initialCatalogDiscoveryStartedRef = useRef(false);
+  settingsRef.current = settings;
+  const dirty = settings !== null &&
+    savedSettingsSnapshot !== null &&
+    JSON.stringify(settings) !== savedSettingsSnapshot;
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   // Clear the "saved" indicator after 2 seconds, with proper cleanup
   useEffect(() => {
@@ -52,7 +87,11 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
   useEffect(() => {
     invoke<{ settings: Settings; warnings: string[] }>("get_settings")
       .then((resp) => {
+        const discoveryInputs = catalogDiscoveryInputs(resp.settings);
+        previousDraftDiscoveryInputsRef.current = discoveryInputs;
+        setSavedCatalogInputs(discoveryInputs);
         setSettings(resp.settings);
+        setSavedSettingsSnapshot(JSON.stringify(resp.settings));
         setWarnings(resp.warnings);
         setLoading(false);
       })
@@ -64,6 +103,9 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
   }, []);
 
   const loadCatalog = async (provider: string, current: Settings, refresh = false) => {
+    const request = (catalogRequestsRef.current[provider] ?? 0) + 1;
+    const inputKey = catalogDiscoveryInputs(current)[provider];
+    catalogRequestsRef.current[provider] = request;
     setCatalogLoading((old) => ({ ...old, [provider]: true }));
     try {
       const catalog = await invoke<ModelCatalog>("get_model_catalog", {
@@ -71,54 +113,126 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
         settings: current,
         refresh,
       });
-      setCatalogs((old) => ({ ...old, [provider]: catalog }));
+      if (catalogRequestsRef.current[provider] === request) {
+        setCatalogs((old) => ({ ...old, [provider]: catalog }));
+        setCatalogInputKeys((old) => ({ ...old, [provider]: inputKey }));
+      }
     } catch (error) {
-      setCatalogs((old) => ({
-        ...old,
-        [provider]: {
-          provider,
-          transport: provider === "local" || providerTransport(current, provider) === "api" ? "api" : "cli",
-          source: "unavailable",
-          source_version: "",
-          fetched_at: "",
-          stale: true,
-          warning: String(error),
-          models: [],
-          roles: [],
-        },
-      }));
+      if (catalogRequestsRef.current[provider] === request) {
+        setCatalogs((old) => ({
+          ...old,
+          [provider]: {
+            provider,
+            transport: provider === "local" || providerTransport(current, provider) === "api" ? "api" : "cli",
+            source: "unavailable",
+            source_version: "",
+            fetched_at: "",
+            stale: true,
+            warning: String(error),
+            models: [],
+            roles: [],
+          },
+        }));
+        setCatalogInputKeys((old) => ({ ...old, [provider]: inputKey }));
+      }
     } finally {
-      setCatalogLoading((old) => ({ ...old, [provider]: false }));
+      if (catalogRequestsRef.current[provider] === request) {
+        setCatalogLoading((old) => ({ ...old, [provider]: false }));
+      }
     }
   };
 
-  // Refetch only when the transport changes, not on every API-key keystroke.
+  // Load catalogs once from settings that are already persisted. Draft
+  // credentials never trigger automatic authenticated discovery.
   useEffect(() => {
-    if (!settings) return;
+    if (!settings || !savedCatalogInputs || initialCatalogDiscoveryStartedRef.current) return;
+    initialCatalogDiscoveryStartedRef.current = true;
     for (const provider of PROVIDERS) {
       void loadCatalog(provider, settings);
     }
+  }, [savedCatalogInputs, settings]);
+
+  // Invalidate both visible data and in-flight requests as soon as a discovery
+  // input changes. The user must Save or explicitly Refresh before models for
+  // the draft credential/server become available.
+  useEffect(() => {
+    if (!settings) return;
+    const current = catalogDiscoveryInputs(settings);
+    const previous = previousDraftDiscoveryInputsRef.current;
+    previousDraftDiscoveryInputsRef.current = current;
+    if (!previous) return;
+    const changed = PROVIDERS.filter(
+      (provider) => previous[provider] !== current[provider],
+    );
+    if (changed.length === 0) return;
+    for (const provider of changed) {
+      catalogRequestsRef.current[provider] =
+        (catalogRequestsRef.current[provider] ?? 0) + 1;
+    }
+    setCatalogs((old) => {
+      const next = { ...old };
+      changed.forEach((provider) => delete next[provider]);
+      return next;
+    });
+    setCatalogInputKeys((old) => {
+      const next = { ...old };
+      changed.forEach((provider) => delete next[provider]);
+      return next;
+    });
+    setCatalogLoading((old) => ({
+      ...old,
+      ...Object.fromEntries(changed.map((provider) => [provider, false])),
+    }));
   }, [
-    settings?.anthropic_api_key ? "api" : "cli",
-    settings?.openai_api_key ? "api" : "cli",
-    settings?.google_api_key ? "api" : "cli",
+    settings?.anthropic_api_key,
+    settings?.openai_api_key,
+    settings?.google_api_key,
     settings?.local_base_url,
+    settings?.local_api_key,
   ]);
 
   const handleSave = async () => {
     if (!settings) return;
+    const settingsToSave = settings;
+    const savedSnapshot = JSON.stringify(settingsToSave);
     setSaving(true);
     setSaved(false);
     try {
-      await invoke("save_settings", { settings });
+      await invoke("save_settings", { settings: settingsToSave });
+      const nextCatalogInputs = catalogDiscoveryInputs(settingsToSave);
+      const previousCatalogInputs =
+        savedCatalogInputs ?? nextCatalogInputs;
+      const changedProviders = PROVIDERS.filter(
+        (provider) =>
+          previousCatalogInputs[provider] !== nextCatalogInputs[provider],
+      );
+      setSavedSettingsSnapshot(savedSnapshot);
+      setSavedCatalogInputs(nextCatalogInputs);
       setWarnings([]); // Clear warnings after successful save
-      setSaved(true);
+      setSaved(JSON.stringify(settingsRef.current) === savedSnapshot);
+      for (const provider of changedProviders) {
+        // Cloud catalog caches do not include account identity, so a changed
+        // saved credential must bypass them. Local discovery is uncached.
+        void loadCatalog(
+          provider,
+          settingsToSave,
+          provider !== "local",
+        );
+      }
+      onSystemChange?.();
     } catch (e) {
       console.error("Failed to save settings:", e);
       alert(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleClose = () => {
+    if (dirty && !window.confirm("You have unsaved settings changes. Leave and discard them?")) {
+      return;
+    }
+    onClose();
   };
 
   if (loading) {
@@ -134,7 +248,7 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
       <div className="p-8 flex flex-col items-center justify-center h-full gap-4 text-gray-500 dark:text-gray-400">
         <p className="text-sm">Failed to load settings{loadError ? `: ${loadError}` : "."}</p>
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="text-sm text-gray-600 dark:text-gray-300 hover:underline"
         >
           Go back
@@ -142,6 +256,20 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
       </div>
     );
   }
+
+  const draftCatalogInputs = catalogDiscoveryInputs(settings);
+  const catalogBlocked = Object.fromEntries(
+    PROVIDERS.map((provider) => [
+      provider,
+      catalogInputKeys[provider] !== draftCatalogInputs[provider],
+    ]),
+  ) as Record<string, boolean>;
+  const discoveryInputChanged = Object.fromEntries(
+    PROVIDERS.map((provider) => [
+      provider,
+      savedCatalogInputs?.[provider] !== draftCatalogInputs[provider],
+    ]),
+  ) as Record<string, boolean>;
 
   const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
     {
@@ -181,7 +309,7 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
         style={{ width: navWidth }}
         className="relative flex shrink-0 flex-col border-r border-gray-200 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-gray-900/50"
       >
-        <h2 className="text-sm font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4 px-2">
+        <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-2">
           Settings
         </h2>
         <nav className="space-y-1 flex-1">
@@ -202,7 +330,7 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
         </nav>
         {showBack && (
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="flex items-center gap-2 px-2.5 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -228,7 +356,7 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
             {warnings.map((w, i) => (
               <p key={i}>{w}</p>
             ))}
-            <p className="mt-1 text-amber-600 dark:text-amber-400 text-xs">
+            <p className="mt-1 text-amber-700 dark:text-amber-300 text-xs">
               Saving will overwrite the current file with these values.
             </p>
           </div>
@@ -239,12 +367,18 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
               settings={settings}
               setSettings={setSettings}
               catalogs={catalogs}
+              catalogBlocked={catalogBlocked}
               catalogLoading={catalogLoading}
+              discoveryInputChanged={discoveryInputChanged}
               loadCatalog={loadCatalog}
             />
           )}
           {section === "extraction" && (
-            <ExtractionSection settings={settings} setSettings={setSettings} />
+            <ExtractionSection
+              settings={settings}
+              setSettings={setSettings}
+              onSystemChange={onSystemChange}
+            />
           )}
           {section === "general" && (
             <GeneralSection settings={settings} setSettings={setSettings} dark={dark} onDarkChange={onDarkChange} />
@@ -261,7 +395,7 @@ export default function SettingsPage({ onClose, showBack = true, dark, onDarkCha
               {saving ? "Saving..." : "Save"}
             </button>
             {saved && (
-              <span className="text-sm text-green-600 dark:text-green-400">Settings saved.</span>
+              <span className="text-sm text-green-700 dark:text-green-400">Settings saved.</span>
             )}
           </div>
         </div>
@@ -311,15 +445,31 @@ function LLMSection({
   settings,
   setSettings,
   catalogs,
+  catalogBlocked,
   catalogLoading,
+  discoveryInputChanged,
   loadCatalog,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
   catalogs: Record<string, ModelCatalog>;
+  catalogBlocked: Record<string, boolean>;
   catalogLoading: Record<string, boolean>;
+  discoveryInputChanged: Record<string, boolean>;
   loadCatalog: (provider: string, settings: Settings, refresh?: boolean) => Promise<void>;
 }) {
+  const localCatalog = catalogBlocked.local ? undefined : catalogs.local;
+  const [externalLinkError, setExternalLinkError] = useState<string | null>(null);
+
+  const openOllamaSite = async () => {
+    setExternalLinkError(null);
+    try {
+      await openUrl("https://ollama.com");
+    } catch (error) {
+      setExternalLinkError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
     <>
       <SectionHeader
@@ -330,6 +480,7 @@ function LLMSection({
       <div className="space-y-5">
         <Field label="Preferred Provider">
           <select
+            aria-label="Preferred Provider"
             value={settings.preferred_provider}
             onChange={(e) =>
               setSettings({ ...settings, preferred_provider: e.target.value })
@@ -341,7 +492,7 @@ function LLMSection({
             <option value="gemini">Gemini (Google)</option>
             <option value="local">Local (Ollama / OpenAI-compatible)</option>
           </select>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
             Used when a pipeline step doesn't specify an explicit agent.
           </p>
         </Field>
@@ -350,6 +501,7 @@ function LLMSection({
         <ProviderGroup title="Claude (Anthropic)" active={settings.preferred_provider === "claude"} hasApiKey={!!settings.anthropic_api_key}>
           <Field label="API Key">
             <input
+              aria-label="Claude API Key"
               type="password"
               value={settings.anthropic_api_key}
               onChange={(e) =>
@@ -359,7 +511,7 @@ function LLMSection({
               className={`${inputClass} font-mono`}
               autoComplete="off"
             />
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
               Bypasses Claude CLI for faster calls. Leave empty to use CLI (subscription).
             </p>
           </Field>
@@ -367,7 +519,9 @@ function LLMSection({
             <ModelPicker
               provider="claude"
               settings={settings}
-              catalog={catalogs.claude}
+              catalog={catalogBlocked.claude ? undefined : catalogs.claude}
+              blocked={catalogBlocked.claude}
+              allowSavedUnknown={!discoveryInputChanged.claude}
               loading={catalogLoading.claude}
               onChange={(selection) => setSettings(withProviderSelection(settings, "claude", selection))}
               onRefresh={() => loadCatalog("claude", settings, true)}
@@ -375,6 +529,7 @@ function LLMSection({
           </Field>
           <Field label="Thinking Effort">
             <select
+              aria-label="Claude Thinking Effort"
               value={settings.claude_effort}
               onChange={(e) =>
                 setSettings({ ...settings, claude_effort: e.target.value })
@@ -382,7 +537,11 @@ function LLMSection({
               className={selectClass}
             >
               <option value="">Default</option>
-              {effortOptions(catalogs.claude, providerSelection(settings, "claude"), ["low", "medium", "high", "max"]).map((effort) => (
+              {effortOptions(
+                catalogBlocked.claude ? undefined : catalogs.claude,
+                providerSelection(settings, "claude"),
+                ["low", "medium", "high", "max"],
+              ).map((effort) => (
                 <option key={effort} value={effort}>{effortLabel(effort)}</option>
               ))}
             </select>
@@ -393,6 +552,7 @@ function LLMSection({
         <ProviderGroup title="ChatGPT (OpenAI)" active={settings.preferred_provider === "codex"} hasApiKey={!!settings.openai_api_key}>
           <Field label="API Key">
             <input
+              aria-label="OpenAI API Key"
               type="password"
               value={settings.openai_api_key}
               onChange={(e) =>
@@ -402,7 +562,7 @@ function LLMSection({
               className={`${inputClass} font-mono`}
               autoComplete="off"
             />
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
               Bypasses Codex CLI for faster calls. Leave empty to use CLI.
             </p>
           </Field>
@@ -410,7 +570,9 @@ function LLMSection({
             <ModelPicker
               provider="codex"
               settings={settings}
-              catalog={catalogs.codex}
+              catalog={catalogBlocked.codex ? undefined : catalogs.codex}
+              blocked={catalogBlocked.codex}
+              allowSavedUnknown={!discoveryInputChanged.codex}
               loading={catalogLoading.codex}
               onChange={(selection) => setSettings(withProviderSelection(settings, "codex", selection))}
               onRefresh={() => loadCatalog("codex", settings, true)}
@@ -418,6 +580,7 @@ function LLMSection({
           </Field>
           <Field label="Reasoning Effort">
             <select
+              aria-label="OpenAI Reasoning Effort"
               value={settings.codex_effort}
               onChange={(e) =>
                 setSettings({ ...settings, codex_effort: e.target.value })
@@ -425,7 +588,11 @@ function LLMSection({
               className={selectClass}
             >
               <option value="">Default</option>
-              {effortOptions(catalogs.codex, providerSelection(settings, "codex"), ["low", "medium", "high"]).map((effort) => (
+              {effortOptions(
+                catalogBlocked.codex ? undefined : catalogs.codex,
+                providerSelection(settings, "codex"),
+                ["low", "medium", "high"],
+              ).map((effort) => (
                 <option key={effort} value={effort}>{effortLabel(effort)}</option>
               ))}
             </select>
@@ -436,6 +603,7 @@ function LLMSection({
         <ProviderGroup title="Gemini (Google)" active={settings.preferred_provider === "gemini"} hasApiKey={!!settings.google_api_key}>
           <Field label="API Key">
             <input
+              aria-label="Gemini API Key"
               type="password"
               value={settings.google_api_key}
               onChange={(e) =>
@@ -445,7 +613,7 @@ function LLMSection({
               className={`${inputClass} font-mono`}
               autoComplete="off"
             />
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
               Bypasses Gemini CLI for faster calls. Leave empty to use CLI.
             </p>
           </Field>
@@ -453,7 +621,9 @@ function LLMSection({
             <ModelPicker
               provider="gemini"
               settings={settings}
-              catalog={catalogs.gemini}
+              catalog={catalogBlocked.gemini ? undefined : catalogs.gemini}
+              blocked={catalogBlocked.gemini}
+              allowSavedUnknown={!discoveryInputChanged.gemini}
               loading={catalogLoading.gemini}
               onChange={(selection) => setSettings(withProviderSelection(settings, "gemini", selection))}
               onRefresh={() => loadCatalog("gemini", settings, true)}
@@ -469,7 +639,7 @@ function LLMSection({
               href="https://ollama.com"
               onClick={(e) => {
                 e.preventDefault();
-                openUrl("https://ollama.com");
+                void openOllamaSite();
               }}
               className="underline cursor-pointer hover:text-gray-700 dark:hover:text-gray-300"
             >
@@ -479,8 +649,14 @@ function LLMSection({
             model name below. LM Studio, llama.cpp, and vLLM work by changing the URL.
             Local models are weaker than cloud models and may lack file-reading (tool) support.
           </p>
+          {externalLinkError && (
+            <p role="alert" className="text-xs text-red-700 dark:text-red-300">
+              Could not open ollama.com: {externalLinkError}
+            </p>
+          )}
           <Field label="Server URL">
             <input
+              aria-label="Local Server URL"
               type="text"
               value={settings.local_base_url}
               onChange={(e) =>
@@ -494,22 +670,32 @@ function LLMSection({
           </Field>
           <Field label="Model">
             <select
+              aria-label="Local Model"
               value={settings.local_model}
+              disabled={catalogBlocked.local}
               onChange={(e) => setSettings({ ...settings, local_model: e.target.value })}
-              className={`${selectClass} font-mono`}
+              className={`${selectClass} font-mono disabled:cursor-not-allowed disabled:opacity-50`}
             >
               <option value="">Select a model…</option>
-              {catalogs.local?.models.map((model) => (
+              {localCatalog?.models.map((model) => (
                 <option key={model.id} value={model.id}>{model.display_name || model.id}</option>
               ))}
-              {settings.local_model && !catalogs.local?.models.some((model) => model.id === settings.local_model) && (
+              {settings.local_model &&
+                !discoveryInputChanged.local &&
+                !localCatalog?.models.some((model) => model.id === settings.local_model) && (
                 <option value={settings.local_model}>{settings.local_model} (saved; not currently listed)</option>
               )}
             </select>
-            <CatalogStatus catalog={catalogs.local} loading={catalogLoading.local} onRefresh={() => loadCatalog("local", settings, true)} />
+            <CatalogStatus
+              blocked={catalogBlocked.local}
+              catalog={localCatalog}
+              loading={catalogLoading.local}
+              onRefresh={() => loadCatalog("local", settings, true)}
+            />
           </Field>
           <Field label="API Key">
             <input
+              aria-label="Local API Key"
               type="password"
               value={settings.local_api_key}
               onChange={(e) =>
@@ -525,6 +711,7 @@ function LLMSection({
         <Field label="Max Concurrent Referee Passes">
           <div className="flex items-center gap-3">
             <input
+              aria-label="Max Concurrent Referee Passes"
               type="range"
               min={1}
               max={10}
@@ -546,6 +733,7 @@ function LLMSection({
         <Field label="Step Timeout">
           <div className="flex items-center gap-3">
             <select
+              aria-label="Step Timeout"
               value={settings.step_timeout_secs}
               onChange={(e) =>
                 setSettings({
@@ -562,7 +750,7 @@ function LLMSection({
               <option value={3600}>60 minutes</option>
             </select>
           </div>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
             Max time each LLM call can run before being killed. Orientation and extraction steps use half this value.
           </p>
         </Field>
@@ -570,6 +758,7 @@ function LLMSection({
         <Field label="Step Retries">
           <div className="flex items-center gap-3">
             <input
+              aria-label="Step Retries"
               type="range"
               min={0}
               max={5}
@@ -586,7 +775,7 @@ function LLMSection({
               {settings.max_retries}
             </span>
           </div>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
             Number of times to retry a failed step before giving up. Set to 0 for no retries.
           </p>
         </Field>
@@ -598,16 +787,12 @@ function LLMSection({
 function ExtractionSection({
   settings,
   setSettings,
+  onSystemChange,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
+  onSystemChange?: () => void;
 }) {
-  const markerOcrMode = settings.marker_disable_ocr
-    ? "disabled"
-    : settings.marker_force_ocr
-      ? "forced"
-      : "auto";
-
   return (
     <>
       <SectionHeader
@@ -618,11 +803,23 @@ function ExtractionSection({
       <div className="space-y-5">
         <Field label="PDF Extraction Method">
           <div className="space-y-2">
+            {settings.pdf_extractor === "marker" && (
+              <div
+                role="alert"
+                className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                <div className="font-medium">Marker is unavailable in Pipeline 1.0.1</div>
+                <p className="mt-1 text-xs leading-relaxed">
+                  Its compatible Python dependency closure contains known security vulnerabilities.
+                  Choose PaddleOCR-VL, LLM extraction, or pdftotext below, then save Settings.
+                  Pipeline will not run a previously installed Marker executable.
+                </p>
+              </div>
+            )}
             {(
               [
                 ["llm", "LLM", "Your configured provider reads the PDF and extracts it to Markdown in bounded page ranges. Most faithful, but slower and potentially costly."],
                 ["paddleocr-vl", "Local engine: PaddleOCR-VL 1.6 Q8", "Optimized local extraction for text, equations, tables, and scans, with page retries and resumable checkpoints. About 1.9 GB."],
-                ["marker", "Local engine: marker-pdf", "Fast local extraction with automatic OCR detection and reusable output caching. No LLM cost."],
                 ["pdftotext", "pdftotext (basic)", "Fast, but equations are lost."],
               ] as const
             ).map(([value, label, desc]) => (
@@ -658,143 +855,7 @@ function ExtractionSection({
         </Field>
 
         <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
-            <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 pl-4">
-              marker-pdf
-            </p>
-            <div className="space-y-4 pl-4">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Used whenever a workflow selects Marker, regardless of the global extraction method above.
-              </p>
-              <Field label="OCR mode">
-                <select
-                  aria-label="Marker OCR mode"
-                  value={markerOcrMode}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      marker_disable_ocr: e.target.value === "disabled",
-                      marker_force_ocr: e.target.value === "forced",
-                    })
-                  }
-                  className={selectClass}
-                >
-                  <option value="auto">Automatic — OCR only when needed</option>
-                  <option value="disabled">Embedded text only — fastest</option>
-                  <option value="forced">Force OCR — best for scans or broken text</option>
-                </select>
-              </Field>
-              <Toggle
-                label="Skip figure extraction"
-                description="Faster and smaller, but the run retains page renders instead of separate figure assets."
-                checked={settings.marker_disable_images}
-                onChange={(v) =>
-                  setSettings({ ...settings, marker_disable_images: v })
-                }
-              />
-
-              <Field label="Layout resolution">
-                <select
-                  aria-label="Marker layout resolution"
-                  value={settings.marker_lowres_dpi}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      marker_lowres_dpi: parseInt(e.target.value, 10),
-                    })
-                  }
-                  className={selectClass}
-                >
-                  <option value={72}>72 DPI — fastest</option>
-                  <option value={96}>96 DPI — recommended</option>
-                  <option value={120}>120 DPI — small-layout detail</option>
-                </select>
-              </Field>
-
-              <Field label="OCR resolution">
-                <select
-                  aria-label="Marker OCR resolution"
-                  value={settings.marker_highres_dpi}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      marker_highres_dpi: parseInt(e.target.value, 10),
-                    })
-                  }
-                  className={selectClass}
-                >
-                  <option value={144}>144 DPI — faster OCR</option>
-                  <option value={192}>192 DPI — recommended</option>
-                  <option value={240}>240 DPI — fine print</option>
-                  <option value={300}>300 DPI — highest detail</option>
-                </select>
-              </Field>
-
-              <Field label="Embedded-text workers">
-                <select
-                  aria-label="Marker PDF text workers"
-                  value={settings.marker_pdftext_workers}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      marker_pdftext_workers: parseInt(e.target.value, 10),
-                    })
-                  }
-                  className={selectClass}
-                >
-                  <option value={0}>Automatic (recommended)</option>
-                  <option value={1}>1 worker — lowest CPU use</option>
-                  <option value={2}>2 workers</option>
-                  <option value={4}>4 workers</option>
-                  <option value={8}>8 workers — high throughput</option>
-                  <option value={16}>16 workers — large workstation</option>
-                </select>
-              </Field>
-
-              <Field label="Layout batch">
-                <select
-                  aria-label="Marker layout batch"
-                  value={settings.marker_layout_batch_size}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      marker_layout_batch_size: parseInt(e.target.value, 10),
-                    })
-                  }
-                  className={selectClass}
-                >
-                  <option value={0}>Automatic (recommended)</option>
-                  {[2, 4, 6, 8, 12, 16, 24, 32].map((value) => (
-                    <option key={value} value={value}>{value} pages</option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="OCR recognition batch">
-                <select
-                  aria-label="Marker OCR recognition batch"
-                  value={settings.marker_recognition_batch_size}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      marker_recognition_batch_size: parseInt(e.target.value, 10),
-                    })
-                  }
-                  className={selectClass}
-                >
-                  <option value={0}>Automatic (recommended)</option>
-                  {[4, 8, 16, 24, 32, 48, 64, 96, 128].map((value) => (
-                    <option key={value} value={value}>{value} regions</option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
-                  Larger batches improve throughput when memory permits. Reduce either batch after an out-of-memory error.
-                </p>
-              </Field>
-            </div>
-        </div>
-
-        <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
-            <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 pl-4">
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 pl-4">
               PaddleOCR-VL
             </p>
             <div className="space-y-4 pl-4">
@@ -819,7 +880,7 @@ function ExtractionSection({
                   <option value={3}>3 pages — high-memory workstation</option>
                   <option value={4}>4 pages — maximum throughput</option>
                 </select>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
                   Automatic uses two slots on Apple Silicon and one elsewhere. Every slot receives a full 16K context; concurrency no longer halves a page&apos;s context.
                 </p>
               </Field>
@@ -841,7 +902,7 @@ function ExtractionSection({
                   <option value={180}>180 DPI — fine print</option>
                   <option value={200}>200 DPI — highest detail</option>
                 </select>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
                   Lower resolution reduces image tokens and vision-prefill time; higher resolution helps small equations and dense tables.
                 </p>
               </Field>
@@ -864,7 +925,7 @@ function ExtractionSection({
                   <option value={2048}>2,048 tokens — faster prefill</option>
                   <option value={4096}>4,096 tokens — highest peak memory</option>
                 </select>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
                   Larger batches can make image encoding faster when sufficient GPU memory is available. They do not reduce OCR resolution.
                 </p>
               </Field>
@@ -904,7 +965,7 @@ function ExtractionSection({
                   <option value={2}>2 retries</option>
                   <option value={3}>3 retries</option>
                 </select>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
                   Length failures use adaptive page regions instead of repeating the same request.
                 </p>
               </Field>
@@ -925,7 +986,7 @@ function ExtractionSection({
                   <option value="on">On</option>
                   <option value="off">Off</option>
                 </select>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
                   Automatic is safest across platforms. Force it on when benchmarking a supported GPU; turn it off only for compatibility troubleshooting.
                 </p>
               </Field>
@@ -938,7 +999,7 @@ function ExtractionSection({
 
         <Toggle
           label="Reuse verified extraction cache"
-          description="Reuse exact source-and-settings matches. Paddle resumes page checkpoints; Marker retains its Markdown and figures; verified LLM transcriptions can be reused without another provider call."
+          description="Reuse exact source-and-settings matches. Paddle resumes raw page checkpoints and rebuilds structured footnote and margin roles; verified LLM transcriptions can be reused without another provider call."
           checked={settings.reuse_pdf_extraction_cache}
           onChange={(v) =>
             setSettings({ ...settings, reuse_pdf_extraction_cache: v })
@@ -959,16 +1020,16 @@ function ExtractionSection({
           >
             <option value={300}>5 minutes</option>
             <option value={600}>10 minutes</option>
-            <option value={900}>15 minutes — recommended</option>
-            <option value={1800}>30 minutes</option>
+            <option value={900}>15 minutes</option>
+            <option value={1800}>30 minutes — recommended</option>
             <option value={3600}>60 minutes</option>
           </select>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
             Applies to the complete extraction stage, including retries. An incomplete document fails before orientation instead of silently continuing.
           </p>
         </Field>
 
-        <EnginesPanel />
+        <EnginesPanel onSystemChange={onSystemChange} />
       </div>
     </>
   );
@@ -1030,13 +1091,19 @@ function RunRetention({
 }) {
   const [usage, setUsage] = useState<{ count: number; bytes: number } | null>(null);
   const [purging, setPurging] = useState(false);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
+  const [purgeResult, setPurgeResult] = useState<string | null>(null);
 
-  const loadUsage = () => {
-    invoke<{ count: number; bytes: number }>("runs_disk_usage")
-      .then(setUsage)
-      .catch(() => setUsage(null));
+  const loadUsage = async () => {
+    try {
+      setUsage(await invoke<{ count: number; bytes: number }>("runs_disk_usage"));
+    } catch {
+      setUsage(null);
+    }
   };
-  useEffect(loadUsage, []);
+  useEffect(() => {
+    void loadUsage();
+  }, []);
 
   const fmtBytes = (n: number) =>
     n >= 1_000_000_000
@@ -1047,14 +1114,56 @@ function RunRetention({
 
   const purgeNow = async () => {
     setPurging(true);
+    setPurgeError(null);
+    setPurgeResult(null);
+    let purgeStarted = false;
     try {
-      // Passing the configured cap (0 keeps everything, so purge to a large
-      // default only when unlimited) — here we honour the user's setting.
-      await invoke("purge_runs", {
+      const preview = await invoke<{
+        delete_count: number;
+        delete_bytes: number;
+        remaining_count: number;
+        remaining_bytes: number;
+        preview_token: string;
+      }>("preview_purge_runs", {
         keep: settings.max_saved_runs,
         maxBytes: settings.max_saved_run_bytes,
       });
-      loadUsage();
+      if (preview.delete_count === 0) {
+        setPurgeResult("No completed runs were beyond the configured limits.");
+        await loadUsage();
+        return;
+      }
+      const confirmed = window.confirm(
+        "Purge run history?\n\n" +
+        `This will permanently delete ${preview.delete_count} completed run${
+          preview.delete_count === 1 ? "" : "s"
+        } (${fmtBytes(preview.delete_bytes)}). ` +
+        `${preview.remaining_count} run${preview.remaining_count === 1 ? "" : "s"} ` +
+        `(${fmtBytes(preview.remaining_bytes)}) will remain.\n\n` +
+        "Deleted run artifacts cannot be recovered.",
+      );
+      if (!confirmed) return;
+
+      purgeStarted = true;
+      const removed = await invoke<number>("purge_runs", {
+        keep: settings.max_saved_runs,
+        maxBytes: settings.max_saved_run_bytes,
+        previewToken: preview.preview_token,
+      });
+      setPurgeResult(
+        removed === 0
+          ? "No completed runs were beyond the configured limits."
+          : `Removed ${removed} completed run${removed === 1 ? "" : "s"}.`,
+      );
+      await loadUsage();
+    } catch (error) {
+      setPurgeError(
+        `${purgeStarted
+          ? "Run history could not be purged"
+          : "The purge preview could not be loaded; no runs were deleted"}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     } finally {
       setPurging(false);
     }
@@ -1077,6 +1186,7 @@ function RunRetention({
       </p>
       <div className="flex items-center gap-2">
         <input
+          aria-label="Maximum saved runs"
           type="number"
           min={0}
           value={settings.max_saved_runs}
@@ -1119,6 +1229,16 @@ function RunRetention({
           {purging ? "Purging…" : "Purge now"}
         </button>
       </div>
+      {purgeError && (
+        <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+          {purgeError}
+        </p>
+      )}
+      {purgeResult && (
+        <p role="status" className="mt-2 text-sm text-green-700 dark:text-green-400">
+          {purgeResult}
+        </p>
+      )}
     </div>
   );
 }
@@ -1133,6 +1253,8 @@ function ModelPicker({
   provider,
   settings,
   catalog,
+  blocked,
+  allowSavedUnknown,
   loading,
   onChange,
   onRefresh,
@@ -1140,6 +1262,8 @@ function ModelPicker({
   provider: CloudProvider;
   settings: Settings;
   catalog?: ModelCatalog;
+  blocked: boolean;
+  allowSavedUnknown: boolean;
   loading?: boolean;
   onChange: (selection: ModelSelection) => void;
   onRefresh: () => void;
@@ -1149,9 +1273,16 @@ function ModelPicker({
   const known = value === "automatic"
     || catalog?.roles.some((role) => value === `role:${role.id}`)
     || catalog?.models.some((model) => value === `pinned:${model.id}`);
+  const selectValue = known || allowSavedUnknown ? value : "automatic";
   return (
     <>
-      <select value={value} onChange={(event) => onChange(decodeModelSelection(event.target.value)!)} className={selectClass}>
+      <select
+        aria-label={`${provider} model`}
+        value={selectValue}
+        disabled={blocked}
+        onChange={(event) => onChange(decodeModelSelection(event.target.value)!)}
+        className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
+      >
         <option value="automatic">
           Automatic — {catalog?.transport === "api" ? "recommended available model" : "installed CLI default"}
         </option>
@@ -1171,21 +1302,42 @@ function ModelPicker({
             ))}
           </optgroup>
         )}
-        {!known && <option value={value}>{selection.mode === "pinned" ? selection.model : value} (saved; not currently listed)</option>}
+        {!known && allowSavedUnknown && (
+          <option value={value}>
+            {selection.mode === "pinned" ? selection.model : value} (saved; not currently listed)
+          </option>
+        )}
       </select>
-      <CatalogStatus catalog={catalog} loading={loading} onRefresh={onRefresh} />
+      <CatalogStatus
+        blocked={blocked}
+        catalog={catalog}
+        loading={loading}
+        onRefresh={onRefresh}
+      />
     </>
   );
 }
 
-function CatalogStatus({ catalog, loading, onRefresh }: { catalog?: ModelCatalog; loading?: boolean; onRefresh: () => void }) {
+function CatalogStatus({
+  blocked = false,
+  catalog,
+  loading,
+  onRefresh,
+}: {
+  blocked?: boolean;
+  catalog?: ModelCatalog;
+  loading?: boolean;
+  onRefresh: () => void;
+}) {
   return (
-    <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-gray-400 dark:text-gray-500">
+    <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
       <span>
-        {loading ? "Discovering models…" : catalog
+        {loading ? "Discovering models…" : blocked
+          ? "Save settings or Refresh to discover models for these values"
+          : catalog
           ? `${catalog.transport.toUpperCase()} · ${catalog.source_version || catalog.source}${catalog.stale ? " · stale" : ""}`
           : "Catalog not loaded"}
-        {catalog?.warning && <span className="block text-amber-600 dark:text-amber-400">{catalog.warning}</span>}
+        {catalog?.warning && <span className="block text-amber-700 dark:text-amber-300">{catalog.warning}</span>}
       </span>
       <button type="button" onClick={onRefresh} disabled={loading} className="shrink-0 underline disabled:opacity-40">
         Refresh
@@ -1228,9 +1380,9 @@ function Field({
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+      <div className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
         {label}
-      </label>
+      </div>
       {children}
     </div>
   );

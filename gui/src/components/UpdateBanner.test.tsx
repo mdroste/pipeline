@@ -27,6 +27,7 @@ describe("UpdateBanner", () => {
   beforeEach(() => {
     invoke.mockReset();
     openUrl.mockReset();
+    openUrl.mockResolvedValue(undefined);
     localStorage.clear();
   });
 
@@ -62,6 +63,19 @@ describe("UpdateBanner", () => {
     const btn = await screen.findByRole("button", { name: /view release/i });
     await userEvent.setup().click(btn);
     expect(openUrl).toHaveBeenCalledWith("https://github.com/mdroste/pipeline/releases/tag/v1.1.0");
+  });
+
+  it("shows a shell-plugin error when the release page cannot be opened", async () => {
+    invoke.mockResolvedValueOnce(info());
+    openUrl.mockRejectedValueOnce(new Error("no system browser"));
+    render(<UpdateBanner />);
+
+    const btn = await screen.findByRole("button", { name: /view release/i });
+    await userEvent.setup().click(btn);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not open the release page: no system browser",
+    );
   });
 
   it("remembers dismissal for the same version and removes the banner", async () => {

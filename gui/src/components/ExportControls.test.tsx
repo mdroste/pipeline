@@ -41,16 +41,34 @@ describe("ExportControls", () => {
     invoke.mockReset();
   });
 
-  it("hides the 'Save All' button when report or extractedText is missing", () => {
+  it("hides the core-files export when report or extracted text is missing", () => {
     render(<ExportControls markdown="# hi" />);
     expect(screen.getByRole("button", { name: "Save MD" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save PDF" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save All" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export core files" })).not.toBeInTheDocument();
   });
 
-  it("shows 'Save All' when report and extractedText are both provided", () => {
+  it("shows the core-files export even when extraction produced empty text", () => {
+    render(<ExportControls markdown="# hi" report={fakeReport} extractedText="" />);
+    expect(screen.getByRole("button", { name: "Export core files" })).toBeInTheDocument();
+  });
+
+  it("shows the core-files export when report and extracted text are provided", () => {
     render(<ExportControls markdown="# hi" report={fakeReport} extractedText="text" />);
-    expect(screen.getByRole("button", { name: "Save All" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export core files" })).toBeInTheDocument();
+  });
+
+  it("offers a complete export instead of the core package for a saved run", () => {
+    render(
+      <ExportControls
+        runId="saved-run"
+        markdown="# hi"
+        report={fakeReport}
+        extractedText="text"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Export complete run" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export core files" })).not.toBeInTheDocument();
   });
 
   it("invokes save_report_md with the chosen path and markdown", async () => {
@@ -97,26 +115,112 @@ describe("ExportControls", () => {
     alertSpy.mockRestore();
   });
 
-  it("invokes save_all_artifacts with the chosen directory", async () => {
+  it("surfaces save-dialog plugin failures", async () => {
+    save.mockRejectedValueOnce(new Error("dialog plugin unavailable"));
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    render(<ExportControls markdown="# report" />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save MD" }));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      "Failed to save: dialog plugin unavailable",
+    );
+    expect(invoke).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it("confirms overwrite scope before exporting core files", async () => {
     openDialog.mockResolvedValueOnce("/tmp/artifacts");
     invoke.mockResolvedValueOnce(undefined);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
 
     render(<ExportControls markdown="# r" report={fakeReport} extractedText="text" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save All" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Export core files" }));
 
     expect(openDialog).toHaveBeenCalledWith({
       directory: true,
       multiple: false,
-      title: "Choose folder for artifacts",
+      title: "Choose folder for core report files",
     });
+    expect(confirmSpy.mock.calls[0][0]).toContain(
+      "Existing files and earlier exports will not be replaced.",
+    );
     expect(invoke).toHaveBeenCalledWith("save_all_artifacts", {
       dir: "/tmp/artifacts",
       markdown: "# r",
       extractedText: "text",
       report: fakeReport,
     });
-    expect(alertSpy).toHaveBeenCalledWith("All artifacts saved.");
+    expect(alertSpy).toHaveBeenCalledWith(
+      "Core report files exported to a new pipeline-core-export folder. Existing files were not replaced.",
+    );
+    confirmSpy.mockRestore();
     alertSpy.mockRestore();
+  });
+
+  it("does not export core files when overwrite confirmation is declined", async () => {
+    openDialog.mockResolvedValueOnce("/tmp/artifacts");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(<ExportControls markdown="# r" report={fakeReport} extractedText="text" />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Export core files" }));
+
+    expect(invoke).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("surfaces core-export folder-picker failures", async () => {
+    openDialog.mockRejectedValueOnce(new Error("folder dialog unavailable"));
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    render(<ExportControls markdown="# r" report={fakeReport} extractedText="text" />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Export core files" }));
+
+    expect(alertSpy).toHaveBeenCalledWith(
+      "Failed to export core report files: folder dialog unavailable",
+    );
+    expect(invoke).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it("exports a complete saved run into the chosen parent directory", async () => {
+    openDialog.mockResolvedValueOnce("/tmp/exports");
+    invoke.mockResolvedValueOnce({
+      exportedPath: "/tmp/exports/pipeline-run-saved-run",
+      fileCount: 24,
+      bytes: 1_500_000,
+    });
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    render(<ExportControls runId="saved-run" markdown="# r" />);
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Export complete run" }),
+    );
+
+    expect(openDialog).toHaveBeenCalledWith({
+      directory: true,
+      multiple: false,
+      title: "Choose parent folder for complete run export",
+    });
+    expect(invoke).toHaveBeenCalledWith("export_run_artifacts", {
+      runId: "saved-run",
+      destination: "/tmp/exports",
+    });
+    expect(alertSpy).toHaveBeenCalledWith(
+      "Complete run exported to /tmp/exports/pipeline-run-saved-run (24 files, 1.5 MB).",
+    );
+    alertSpy.mockRestore();
+  });
+
+  it("does not invoke complete-run export when folder selection is cancelled", async () => {
+    openDialog.mockResolvedValueOnce(null);
+
+    render(<ExportControls runId="saved-run" markdown="# r" />);
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Export complete run" }),
+    );
+
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

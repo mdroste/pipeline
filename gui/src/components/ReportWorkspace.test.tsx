@@ -60,12 +60,41 @@ describe("ReportWorkspace", () => {
       "aria-selected",
       "true",
     );
+    expect(screen.getByRole("tab", { name: "Report" })).toHaveAttribute(
+      "aria-controls",
+      "report-workspace-panel-report",
+    );
+    expect(screen.getByRole("tab", { name: "Report" })).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
+    expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute(
+      "tabindex",
+      "-1",
+    );
+    expect(await screen.findByRole("tabpanel", { name: "Report" })).toHaveAttribute(
+      "aria-labelledby",
+      "report-workspace-tab-report",
+    );
     expect(screen.getByText("Monetary Policy and Networks")).toBeVisible();
     expect(
       await screen.findByRole("region", { name: "Run provenance" }),
     ).toBeVisible();
     expect(screen.getByText("gpt-5.6-sol")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Referee Report" })).toBeVisible();
+  });
+
+  it("carries rounded seconds into minutes instead of displaying 60 seconds", async () => {
+    render(
+      <ReportWorkspace
+        markdown={"# Referee Report\n\nBody."}
+        report={makeReport()}
+        durationSecs={119.6}
+      />,
+    );
+
+    expect(await screen.findAllByText("2m 0s")).not.toHaveLength(0);
+    expect(screen.queryByText("1m 60s")).not.toBeInTheDocument();
   });
 
   it("hides unexpected preamble by default and offers the raw output", async () => {
@@ -102,6 +131,77 @@ describe("ReportWorkspace", () => {
     expect(screen.getByRole("button", { name: "Technical" })).toBeVisible();
   });
 
+  it("activates and focuses available tabs with Arrow, Home, and End keys", async () => {
+    const user = userEvent.setup();
+    render(
+      <ReportWorkspace
+        markdown={"# Referee Report\n\nBody."}
+        report={makeReport()}
+        extractedText="Extracted paper."
+      />,
+    );
+
+    const reportTab = screen.getByRole("tab", { name: "Report" });
+    const sourcesTab = screen.getByRole("tab", { name: "Sources" });
+    reportTab.focus();
+
+    await user.keyboard("{ArrowRight}");
+    expect(sourcesTab).toHaveFocus();
+    expect(sourcesTab).toHaveAttribute("aria-selected", "true");
+    expect(sourcesTab).toHaveAttribute("tabindex", "0");
+    expect(reportTab).toHaveAttribute("tabindex", "-1");
+    expect(await screen.findByRole("tabpanel", { name: "Sources" })).toHaveAttribute(
+      "id",
+      "report-workspace-panel-sources",
+    );
+
+    await user.keyboard("{ArrowLeft}");
+    expect(reportTab).toHaveFocus();
+    expect(reportTab).toHaveAttribute("aria-selected", "true");
+
+    await user.keyboard("{End}");
+    expect(sourcesTab).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(reportTab).toHaveFocus();
+  });
+
+  it("includes a conditional Issues tab in keyboard navigation order", async () => {
+    const user = userEvent.setup();
+    const report = makeReport();
+    report.step_outputs[0].raw_text = JSON.stringify({
+      issues: [{ id: "one", title: "First issue", severity: "high" }],
+    });
+    render(
+      <ReportWorkspace
+        markdown={"# Referee Report\n\nBody."}
+        report={report}
+      />,
+    );
+
+    const reportTab = screen.getByRole("tab", { name: "Report" });
+    const issuesTab = screen.getByRole("tab", { name: /Issues/ });
+    const sourcesTab = screen.getByRole("tab", { name: "Sources" });
+    expect(issuesTab).toHaveAttribute("id", "report-workspace-tab-issues");
+    expect(issuesTab).toHaveAttribute(
+      "aria-controls",
+      "report-workspace-panel-issues",
+    );
+
+    reportTab.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(issuesTab).toHaveFocus();
+    expect(issuesTab).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tabpanel", { name: /Issues/ })).toHaveAttribute(
+      "aria-labelledby",
+      "report-workspace-tab-issues",
+    );
+
+    await user.keyboard("{ArrowRight}");
+    expect(sourcesTab).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(issuesTab).toHaveFocus();
+  });
+
   it("loads a historical report into the same workspace", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_run_report") return Promise.resolve(makeReport());
@@ -121,6 +221,9 @@ describe("ReportWorkspace", () => {
       runId: "saved_run",
       relPath: "report.md",
     });
+    expect(
+      screen.getByRole("button", { name: "Export complete run" }),
+    ).toBeVisible();
   });
 });
 

@@ -6,8 +6,14 @@ import PromptEditor from "./PromptEditor";
 describe("PromptEditor", () => {
   it("shows placeholder chips for contexts that have them", () => {
     render(
-      <PromptEditor value="" onChange={() => {}} context={{ kind: "merge" }} />,
+      <PromptEditor
+        value=""
+        onChange={() => {}}
+        context={{ kind: "merge" }}
+        ariaLabel="Merge prompt"
+      />,
     );
+    expect(screen.getByRole("textbox", { name: "Merge prompt" })).toBeInTheDocument();
     expect(screen.getByText("Insert:")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "{topic}" })).toBeInTheDocument();
     expect(
@@ -17,7 +23,12 @@ describe("PromptEditor", () => {
 
   it("hides the chip row for parallel step prompts (no placeholders)", () => {
     render(
-      <PromptEditor value="" onChange={() => {}} context={{ kind: "parallel" }} />,
+      <PromptEditor
+        value=""
+        onChange={() => {}}
+        context={{ kind: "parallel" }}
+        ariaLabel="Parallel prompt"
+      />,
     );
     expect(screen.queryByText("Insert:")).not.toBeInTheDocument();
   });
@@ -30,6 +41,7 @@ describe("PromptEditor", () => {
         value="Merge these."
         onChange={onChange}
         context={{ kind: "merge" }}
+        ariaLabel="Merge prompt"
       />,
     );
     // Without focusing the textarea, selectionStart is 0 — token is prepended.
@@ -43,6 +55,7 @@ describe("PromptEditor", () => {
         value={"fine\n{unknown_thing}"}
         onChange={() => {}}
         context={{ kind: "merge" }}
+        ariaLabel="Merge prompt"
       />,
     );
     expect(screen.getByText("1 unknown placeholder:")).toBeInTheDocument();
@@ -55,6 +68,7 @@ describe("PromptEditor", () => {
         value="{topic} and {agent_reports}"
         onChange={() => {}}
         context={{ kind: "merge" }}
+        ariaLabel="Merge prompt"
       />,
     );
     expect(screen.queryByText(/unknown placeholder/)).not.toBeInTheDocument();

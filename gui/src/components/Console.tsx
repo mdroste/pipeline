@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { LlmRequestDetails, LogEntry, UsageState } from "../hooks/usePipeline";
+import type { ToolCallCounts } from "../lib/types";
 
 interface Props {
   logs: LogEntry[];
@@ -59,12 +60,101 @@ function fmtCount(n: number): string {
   return n.toLocaleString();
 }
 
+function freshInputTokens(usage: UsageState["total"]): number {
+  return Math.max(0, usage.input - usage.cached - usage.cacheWrite);
+}
+
+function toolCallTotal(counts: ToolCallCounts): number {
+  return (
+    counts.text_file +
+    counts.image +
+    counts.web +
+    counts.shell_or_other +
+    counts.unknown
+  );
+}
+
+function toolCallBreakdown(counts: ToolCallCounts): string {
+  return [
+    counts.text_file > 0 ? `${fmtCount(counts.text_file)} text/file` : "",
+    counts.image > 0 ? `${fmtCount(counts.image)} image` : "",
+    counts.web > 0 ? `${fmtCount(counts.web)} web` : "",
+    counts.shell_or_other > 0
+      ? `${fmtCount(counts.shell_or_other)} shell/other`
+      : "",
+    counts.unknown > 0 ? `${fmtCount(counts.unknown)} unknown` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function reportedActivity(usage: UsageState["total"]): string {
+  const tools = toolCallTotal(usage.toolCalls);
+  return [
+    usage.modelRoundTrips > 0
+      ? `${fmtCount(usage.modelRoundTrips)} reported model round trips`
+      : "",
+    tools > 0
+      ? `${fmtCount(tools)} reported tool calls (${toolCallBreakdown(usage.toolCalls)})`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" and ");
+}
+
+function hasReportedUsage(usage: UsageState["total"]): boolean {
+  return (
+    usage.input + usage.output > 0 ||
+    usage.modelRoundTrips > 0 ||
+    toolCallTotal(usage.toolCalls) > 0
+  );
+}
+
+function usageDescription(usage: UsageState["total"]): string {
+  const fresh = freshInputTokens(usage);
+  const activity = reportedActivity(usage);
+  return [
+    `Token usage: ${fmtCount(usage.input)} logical input tokens equals ${fmtCount(fresh)} fresh input tokens plus ${fmtCount(usage.cached)} cache-read tokens plus ${fmtCount(usage.cacheWrite)} cache-write tokens; ${fmtCount(usage.output)} output tokens.`,
+    activity ? `Model activity: ${activity}.` : "",
+    "Cache reads and cache writes are subsets of logical input, not additional tokens.",
+    "Fresh input equals logical input minus cache reads minus cache writes.",
+    "Model round trips and tool calls are shown only when the provider or CLI reports them; unknown tool kinds remain in the unknown bucket.",
+    "For an API-equivalent dollar estimate, price fresh input, cache reads, cache writes, and output at their separate list rates; cache reads are discounted, not free.",
+    "The completed report's Run summary calculates this estimate for recognized models.",
+    "Only providers that report usage are included.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function requestText(request: LlmRequestDetails): string {
   const parts: string[] = [];
-  if (request.system_prompt) parts.push(`SYSTEM PROMPT\n\n${request.system_prompt}`);
-  if (request.shared_context) parts.push(`SHARED CONTEXT\n\n${request.shared_context}`);
-  parts.push(`TASK PROMPT\n\n${request.prompt}`);
+  if (request.system_prompt) {
+    parts.push(
+      `SYSTEM PROMPT${request.system_prompt_truncated ? " (PREVIEW TRUNCATED)" : ""}` +
+      `\n\n${request.system_prompt}`,
+    );
+  }
+  if (request.shared_context) {
+    parts.push(
+      `SHARED CONTEXT${request.shared_context_truncated ? " (PREVIEW TRUNCATED)" : ""}` +
+      `\n\n${request.shared_context}`,
+    );
+  }
+  parts.push(
+    `TASK PROMPT${request.prompt_truncated ? " (PREVIEW TRUNCATED)" : ""}` +
+    `\n\n${request.prompt}`,
+  );
   return parts.join("\n\n" + "=".repeat(72) + "\n\n");
+}
+
+function TruncatedPreviewBadge({ truncated }: { truncated?: boolean }) {
+  if (!truncated) return null;
+  return (
+    <span className="rounded bg-amber-900/50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+      Preview truncated
+    </span>
+  );
 }
 
 function RequestDetails({
@@ -88,6 +178,10 @@ function RequestDetails({
   ]
     .filter(Boolean)
     .join(" · ");
+  const hasTruncatedPreview =
+    request.prompt_truncated ||
+    request.system_prompt_truncated ||
+    request.shared_context_truncated;
 
   return (
     <div className="mb-2 rounded border border-gray-700 bg-gray-800/80 text-gray-300">
@@ -113,15 +207,21 @@ function RequestDetails({
       <div className="border-t border-gray-700">
         <button
           onClick={() => setShowPrompt((value) => !value)}
-          className="w-full cursor-pointer select-none px-3 py-1.5 text-left text-gray-400 hover:text-gray-200"
+          className="flex w-full cursor-pointer select-none items-center gap-2 px-3 py-1.5 text-left
+                     text-gray-400 hover:text-gray-200"
         >
-          {showPrompt ? "Hide" : "View"} prompt ({fmtCount(request.prompt_chars)} task characters)
+          <span>
+            {showPrompt ? "Hide" : "View"} prompt ({fmtCount(request.prompt_chars)} task characters)
+          </span>
+          {!showPrompt && <TruncatedPreviewBadge truncated={Boolean(hasTruncatedPreview)} />}
         </button>
         {showPrompt && (
           <div className="border-t border-gray-700 px-3 py-2">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-gray-500">
                 System, shared context, and task prompt are shown separately in dispatch order.
+                {hasTruncatedPreview &&
+                  " Long fields show bounded previews; Copy prompt copies only the visible preview."}
               </span>
               <button
                 onClick={() => void copyText(requestText(request))}
@@ -132,20 +232,34 @@ function RequestDetails({
             </div>
             {request.system_prompt && (
               <section className="mb-3">
-                <div className="mb-1 text-gray-500">System prompt</div>
+                <div className="mb-1 flex items-center gap-2 text-gray-500">
+                  <span>
+                    System prompt
+                    {request.system_prompt_chars !== undefined
+                      ? ` (${fmtCount(request.system_prompt_chars)} characters)`
+                      : ""}
+                  </span>
+                  <TruncatedPreviewBadge truncated={request.system_prompt_truncated} />
+                </div>
                 <pre className="whitespace-pre-wrap text-gray-300">{request.system_prompt}</pre>
               </section>
             )}
             {request.shared_context && (
               <section className="mb-3">
-                <div className="mb-1 text-gray-500">
-                  Shared context ({fmtCount(request.shared_context_chars)} characters)
+                <div className="mb-1 flex items-center gap-2 text-gray-500">
+                  <span>
+                    Shared context ({fmtCount(request.shared_context_chars)} characters)
+                  </span>
+                  <TruncatedPreviewBadge truncated={request.shared_context_truncated} />
                 </div>
                 <pre className="whitespace-pre-wrap text-gray-300">{request.shared_context}</pre>
               </section>
             )}
             <section>
-              <div className="mb-1 text-gray-500">Task prompt</div>
+              <div className="mb-1 flex items-center gap-2 text-gray-500">
+                <span>Task prompt ({fmtCount(request.prompt_chars)} characters)</span>
+                <TruncatedPreviewBadge truncated={request.prompt_truncated} />
+              </div>
               <pre className="whitespace-pre-wrap text-gray-300">{request.prompt}</pre>
             </section>
           </div>
@@ -197,6 +311,7 @@ export default function Console({ logs, usage }: Props) {
   const [showTimestamps, setShowTimestamps] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Auto-follow the tail unless the user scrolls up.
   const [follow, setFollow] = useState(true);
 
@@ -363,6 +478,7 @@ export default function Console({ logs, usage }: Props) {
   }, [copyText, visibleText]);
 
   const saveToFile = useCallback(async () => {
+    setSaveError(null);
     try {
       const path = await save({
         defaultPath: "pipeline-console.log",
@@ -372,8 +488,9 @@ export default function Console({ logs, usage }: Props) {
       await invoke("save_text_file", { path, content: visibleText() });
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
-    } catch {
-      /* dialog cancelled or write failed; ignore */
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setSaveError(`Could not save the console log: ${message}`);
     }
   }, [visibleText]);
 
@@ -426,14 +543,27 @@ export default function Console({ logs, usage }: Props) {
               <option value="master">All sessions</option>
               {sessions.map((s) => {
                 const u = usage.bySession[s.id];
-                const cache = u?.cached ? ` · ${fmtTokens(u.cached)} cached` : "";
-                const tok = u ? ` · ${fmtTokens(u.input)}→${fmtTokens(u.output)}${cache}` : "";
+                const cacheRead = u?.cached ? ` + ${fmtTokens(u.cached)} cache read` : "";
+                const cacheWrite = u?.cacheWrite
+                  ? ` + ${fmtTokens(u.cacheWrite)} cache write`
+                  : "";
+                const tok = u
+                  ? ` · ${fmtTokens(u.input)} logical input = ${fmtTokens(freshInputTokens(u))} fresh${cacheRead}${cacheWrite} → ${fmtTokens(u.output)} output`
+                  : "";
+                const activity = u && reportedActivity(u)
+                  ? ` · ${reportedActivity(u)}`
+                  : "";
                 const request = s.request
                   ? ` · ${s.request.provider_label} ${s.request.transport.toUpperCase()} · ${s.request.model}`
                   : "";
                 return (
                   <option key={s.id} value={String(s.id)}>
-                    {(s.hasError ? "✕ " : "") + s.label + request + ` (${s.count})` + tok}
+                    {(s.hasError ? "✕ " : "") +
+                      s.label +
+                      request +
+                      ` (${s.count})` +
+                      tok +
+                      activity}
                   </option>
                 );
               })}
@@ -471,23 +601,45 @@ export default function Console({ logs, usage }: Props) {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {usage.total.input + usage.total.output > 0 && (
+          {saveError && (
+            <span
+              role="alert"
+              title={saveError}
+              className="max-w-64 truncate text-red-400"
+            >
+              {saveError}
+            </span>
+          )}
+          {hasReportedUsage(usage.total) && (
             <span
               className="text-gray-500"
-              title={[
-                `${usage.total.input.toLocaleString()} logical input`,
-                `${usage.total.output.toLocaleString()} output`,
-                `${usage.total.cached.toLocaleString()} cache-read`,
-                `${usage.total.cacheWrite.toLocaleString()} cache-write tokens`,
-                "(providers that report usage)",
-              ].join(" · ")}
+              aria-label={usageDescription(usage.total)}
+              title={usageDescription(usage.total)}
+              tabIndex={0}
             >
-              {fmtTokens(usage.total.input)} in / {fmtTokens(usage.total.output)} out
+              {fmtTokens(usage.total.input)} logical input ={" "}
+              <span className="text-gray-400">
+                {fmtTokens(freshInputTokens(usage.total))} fresh
+              </span>
               {usage.total.cached > 0 && (
-                <span className="text-green-500"> · {fmtTokens(usage.total.cached)} cached</span>
+                <span className="text-green-500">
+                  {" "}
+                  + {fmtTokens(usage.total.cached)} cache read
+                </span>
               )}
               {usage.total.cacheWrite > 0 && (
-                <span className="text-blue-400"> · {fmtTokens(usage.total.cacheWrite)} warmed</span>
+                <span className="text-blue-400">
+                  {" "}
+                  + {fmtTokens(usage.total.cacheWrite)} cache write
+                </span>
+              )}
+              {" · "}
+              {fmtTokens(usage.total.output)} output
+              {reportedActivity(usage.total) && (
+                <span className="text-violet-400">
+                  {" · "}
+                  {reportedActivity(usage.total)}
+                </span>
               )}
             </span>
           )}

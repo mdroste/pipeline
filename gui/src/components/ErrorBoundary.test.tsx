@@ -4,7 +4,11 @@ import userEvent from "@testing-library/user-event";
 import ErrorBoundary from "./ErrorBoundary";
 
 function Boom({ fail }: { fail: boolean }): JSX.Element {
-  if (fail) throw new Error("kaboom");
+  if (fail) {
+    const error = new Error("kaboom\n/private/project/secret.ts");
+    error.stack = "Error: kaboom\n    at /private/project/secret.ts:42:7";
+    throw error;
+  }
   return <div>child-ok</div>;
 }
 
@@ -34,8 +38,31 @@ describe("ErrorBoundary", () => {
       </ErrorBoundary>
     );
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
-    expect(screen.getByText(/kaboom/)).toBeInTheDocument();
+    expect(screen.getByText("kaboom")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+  });
+
+  it("hides raw stack details in release-mode fallback UI", () => {
+    render(
+      <ErrorBoundary showTechnicalDetails={false}>
+        <Boom fail={true} />
+      </ErrorBoundary>
+    );
+
+    expect(screen.getByText("kaboom")).toBeVisible();
+    expect(screen.queryByText(/private\/project\/secret/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
+  });
+
+  it("keeps stack details available in explicitly enabled development diagnostics", () => {
+    render(
+      <ErrorBoundary showTechnicalDetails>
+        <Boom fail={true} />
+      </ErrorBoundary>
+    );
+
+    expect(screen.getByText("Technical details")).toBeInTheDocument();
+    expect(screen.getByText(/private\/project\/secret/)).toBeInTheDocument();
   });
 
   it("clears the error and remounts children when Try Again is clicked", async () => {

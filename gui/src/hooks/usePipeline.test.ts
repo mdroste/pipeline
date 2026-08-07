@@ -5,12 +5,10 @@ import { usePipeline } from "./usePipeline";
 // Capture registered event handlers so tests can emit synthetic events.
 const handlers: Record<string, (event: { payload: unknown }) => void> = {};
 const unlisten = vi.fn();
+const listenMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn((name: string, cb: (event: { payload: unknown }) => void) => {
-    handlers[name] = cb;
-    return Promise.resolve(unlisten);
-  }),
+  listen: listenMock,
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -35,6 +33,8 @@ function emitUsage(
   output: number,
   cached = 0,
   cacheWrite = 0,
+  modelRoundTrips = 0,
+  toolCalls: Record<string, number> = {},
 ) {
   handlers["pipeline:usage"]({
     payload: {
@@ -43,13 +43,37 @@ function emitUsage(
       output_tokens: output,
       cached_input_tokens: cached,
       cache_write_input_tokens: cacheWrite,
+      model_round_trips: modelRoundTrips,
+      tool_calls: toolCalls,
     },
   });
+}
+
+function emitStage(stage: string, id = stage, skipped = false) {
+  handlers["pipeline:stage"]({
+    payload: {
+      stage,
+      id,
+      label: id,
+      stepIds: [],
+      skipped,
+    },
+  });
+}
+
+function emitPass(name: string, status: string) {
+  handlers["pipeline:pass"]({ payload: { name, status } });
 }
 
 describe("usePipeline log buffering", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listenMock.mockImplementation(
+      (name: string, cb: (event: { payload: unknown }) => void) => {
+        handlers[name] = cb;
+        return Promise.resolve(unlisten);
+      },
+    );
   });
 
   it("flushes buffered log lines into state", async () => {
@@ -111,9 +135,9 @@ describe("usePipeline log buffering", () => {
     await waitFor(() => expect(result.current.listenersReady).toBe(true));
 
     act(() => {
-      emitUsage(1, 100, 20, 70, 20);
-      emitUsage(1, 50, 10, 30);
-      emitUsage(2, 200, 40);
+      emitUsage(1, 100, 20, 70, 20, 3, { text_file: 2, web: 1 });
+      emitUsage(1, 50, 10, 30, 0, 4, { image: 1, unknown: 2 });
+      emitUsage(2, 200, 40, 0, 0, 2, { shell_or_other: 3 });
       emitUsage(null, 5, 5); // orchestration-level: counts toward the total only
     });
 
@@ -121,17 +145,41 @@ describe("usePipeline log buffering", () => {
     expect(result.current.usage.total.output).toBe(75);
     expect(result.current.usage.total.cached).toBe(100);
     expect(result.current.usage.total.cacheWrite).toBe(20);
+    expect(result.current.usage.total.modelRoundTrips).toBe(9);
+    expect(result.current.usage.total.toolCalls).toEqual({
+      text_file: 2,
+      image: 1,
+      web: 1,
+      shell_or_other: 3,
+      unknown: 2,
+    });
     expect(result.current.usage.bySession[1]).toEqual({
       input: 150,
       output: 30,
       cached: 100,
       cacheWrite: 20,
+      modelRoundTrips: 7,
+      toolCalls: {
+        text_file: 2,
+        image: 1,
+        web: 1,
+        shell_or_other: 0,
+        unknown: 2,
+      },
     });
     expect(result.current.usage.bySession[2]).toEqual({
       input: 200,
       output: 40,
       cached: 0,
       cacheWrite: 0,
+      modelRoundTrips: 2,
+      toolCalls: {
+        text_file: 0,
+        image: 0,
+        web: 0,
+        shell_or_other: 3,
+        unknown: 0,
+      },
     });
     expect(result.current.usage.bySession[3]).toBeUndefined();
     unmount();
@@ -143,5 +191,70 @@ describe("usePipeline log buffering", () => {
 
     unmount();
     await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(4));
+  });
+
+  it("cleans partial registrations and fails closed when one listener rejects", async () => {
+    const cleanups = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+    let registration = 0;
+    listenMock.mockImplementation(
+      (name: string, cb: (event: { payload: unknown }) => void) => {
+        handlers[name] = cb;
+        const index = registration++;
+        return index === 1
+          ? Promise.reject(new Error("event permission denied"))
+          : Promise.resolve(cleanups[index]);
+      },
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result, unmount } = renderHook(() => usePipeline());
+
+    await waitFor(() => expect(result.current.state).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("event permission denied"),
+    }));
+    expect(result.current.listenersReady).toBe(false);
+    expect(cleanups[0]).toHaveBeenCalledTimes(1);
+    expect(cleanups[2]).toHaveBeenCalledTimes(1);
+    expect(cleanups[3]).toHaveBeenCalledTimes(1);
+
+    unmount();
+    consoleError.mockRestore();
+  });
+
+  it("preserves repeated runtime stages and their pass results", async () => {
+    const { result, unmount } = renderHook(() => usePipeline());
+    await waitFor(() => expect(result.current.listenersReady).toBe(true));
+
+    act(() => {
+      emitStage("dispatching", "wave-0-parallel");
+      emitPass("first", "running");
+      emitPass("first", "done");
+      emitStage("synthesizing", "wave-1-sequential");
+      emitPass("middle", "done");
+      emitStage("dispatching", "wave-2-parallel");
+      emitPass("last", "running");
+    });
+
+    expect(result.current.stageHistory.map((stage) => stage.kind)).toEqual([
+      "dispatching",
+      "synthesizing",
+      "dispatching",
+    ]);
+    expect(result.current.stageHistory[0]).toMatchObject({
+      id: "wave-0-parallel",
+      status: "done",
+      passes: { first: "done" },
+    });
+    expect(result.current.stageHistory[1]).toMatchObject({
+      id: "wave-1-sequential",
+      status: "done",
+      passes: { middle: "done" },
+    });
+    expect(result.current.stageHistory[2]).toMatchObject({
+      id: "wave-2-parallel",
+      status: "active",
+      passes: { last: "running" },
+    });
+    unmount();
   });
 });

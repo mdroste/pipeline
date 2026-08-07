@@ -1,11 +1,20 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { PipelineState, PassStatus, PassTiming } from "../hooks/usePipeline";
+import type {
+  PipelineState,
+  PassStatus,
+  PassTiming,
+  RuntimeStage,
+  RuntimeStageKind,
+} from "../hooks/usePipeline";
+import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 
 interface Props {
   state: PipelineState;
   runStartedAt?: number | null;
   passTimes?: Record<string, PassTiming>;
+  plan?: ExecutionPlanStage[];
+  stageHistory?: RuntimeStage[];
 }
 
 /** Human elapsed time from a millisecond span: 5 → "5s", 125 → "2m 5s". */
@@ -48,10 +57,49 @@ function stageIndex(kind: string, stages: typeof BASE_STAGES): number {
   return idx === -1 ? -1 : idx;
 }
 
-function StatusDot({ status }: { status: "done" | "active" | "pending" | "failed" }) {
+type DisplayStatus = "done" | "active" | "pending" | "failed" | "skipped";
+
+interface DisplayStage {
+  id: string;
+  kind: string;
+  label: string;
+  status: DisplayStatus;
+  passes: Record<string, PassStatus>;
+}
+
+function historyPlan(history: RuntimeStage[]): ExecutionPlanStage[] {
+  const counts: Partial<Record<RuntimeStageKind, number>> = {};
+  const stages: ExecutionPlanStage[] = history.map((entry) => {
+    const occurrence = (counts[entry.kind] ?? 0) + 1;
+    counts[entry.kind] = occurrence;
+    const fallbackLabel = entry.kind === "extracting"
+      ? "Extract input"
+      : entry.kind === "orienting"
+        ? "Build orientation map"
+        : entry.kind === "dispatching"
+          ? `Parallel wave ${occurrence}`
+          : entry.kind === "merging"
+            ? `Merge parallel wave ${occurrence}`
+            : entry.kind === "synthesizing"
+              ? `Sequential step ${occurrence}`
+              : "Complete";
+    return {
+      id: entry.id,
+      kind: entry.kind,
+      label: entry.label || fallbackLabel,
+      stepIds: entry.stepIds,
+    };
+  });
+  if (!stages.some((stage) => stage.kind === "done")) {
+    stages.push({ id: "done", kind: "done", label: "Complete", stepIds: [] });
+  }
+  return stages;
+}
+
+function StatusDot({ status }: { status: DisplayStatus }) {
   if (status === "done") {
     return (
-      <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+      <div className="w-5 h-5 rounded-full bg-green-600 flex items-center justify-center">
         <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
         </svg>
@@ -60,7 +108,7 @@ function StatusDot({ status }: { status: "done" | "active" | "pending" | "failed
   }
   if (status === "failed") {
     return (
-      <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center">
+      <div className="w-5 h-5 rounded-full bg-red-600 flex items-center justify-center">
         <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
         </svg>
@@ -74,25 +122,38 @@ function StatusDot({ status }: { status: "done" | "active" | "pending" | "failed
       </div>
     );
   }
-  return <div className="w-5 h-5 rounded-full border-2 border-gray-300" />;
+  if (status === "skipped") {
+    return (
+      <div className="w-5 h-5 rounded-full border-2 border-gray-400 dark:border-gray-500 flex items-center justify-center">
+        <span className="h-0.5 w-2 bg-gray-500 dark:bg-gray-400" />
+      </div>
+    );
+  }
+  return <div className="w-5 h-5 rounded-full border-2 border-gray-400 dark:border-gray-500" />;
 }
 
 function PassStatusIcon({ status }: { status: PassStatus }) {
   switch (status) {
     case "done":
-      return <span className="text-green-500 text-xs">done</span>;
+      return <span className="text-green-700 dark:text-green-400 text-xs">done</span>;
     case "running":
       return <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse">running</span>;
     case "error":
-      return <span className="text-red-500 text-xs">failed</span>;
+      return <span className="text-red-600 dark:text-red-400 text-xs">failed</span>;
     case "skipped":
-      return <span className="text-gray-400 dark:text-gray-500 text-xs italic">skipped</span>;
+      return <span className="text-gray-500 dark:text-gray-400 text-xs italic">skipped</span>;
     default:
-      return <span className="text-gray-300 dark:text-gray-600 text-xs">pending</span>;
+      return <span className="text-gray-500 dark:text-gray-400 text-xs">pending</span>;
   }
 }
 
-export default function PipelineProgress({ state, runStartedAt, passTimes }: Props) {
+export default function PipelineProgress({
+  state,
+  plan,
+  stageHistory = [],
+  runStartedAt,
+  passTimes,
+}: Props) {
   const isError = state.kind === "error";
   const isCancelled = isError && state.message?.toLowerCase().includes("cancelled");
   const failedAtKey = isError ? (state.failedAt ?? "done") : state.kind;
@@ -118,40 +179,99 @@ export default function PipelineProgress({ state, runStartedAt, passTimes }: Pro
 
   const mergeStageOrder = stageIndex("merging", BASE_STAGES);
   const currentBaseIdx = stageIndex(isError ? failedAtKey : state.kind, BASE_STAGES);
-  const STAGES = BASE_STAGES.filter((s) => {
-    if (s.key !== "merging") return true;
-    // Show merge stage if we're currently merging or have passed it
-    return state.kind === "merging" || currentBaseIdx > mergeStageOrder;
-  });
+  const legacyPlan: ExecutionPlanStage[] = BASE_STAGES
+    .filter((stage) =>
+      stage.key !== "merging" ||
+      state.kind === "merging" ||
+      currentBaseIdx > mergeStageOrder
+    )
+    .map((stage) => ({
+      id: stage.key,
+      kind: stage.key as ExecutionPlanStage["kind"],
+      label: stage.label,
+      stepIds: [],
+    }));
+  const effectivePlan = plan?.length
+    ? plan
+    : stageHistory.length
+      ? historyPlan(stageHistory)
+      : legacyPlan;
 
-  const currentIdx = stageIndex(isError ? failedAtKey : state.kind, STAGES);
-  const failedIdx = isError ? stageIndex(failedAtKey, STAGES) : -1;
+  // Runtime stage IDs are emitted by the backend from the same scheduler that
+  // produced the plan. Match on those IDs first so a guarded/skipped stage
+  // cannot shift a later same-kind wave onto the wrong row.
+  const runtimeByPlanIndex = new Map<number, RuntimeStage>();
+  let legacySearchFrom = 0;
+  let usedLegacyMatching = false;
+  for (const runtime of stageHistory) {
+    let index = effectivePlan.findIndex((candidate) => candidate.id === runtime.id);
+    if (index === -1) {
+      usedLegacyMatching = true;
+      index = effectivePlan.findIndex(
+        (candidate, candidateIndex) =>
+          candidateIndex >= legacySearchFrom && candidate.kind === runtime.kind,
+      );
+    }
+    if (index === -1) continue;
+    runtimeByPlanIndex.set(index, runtime);
+    legacySearchFrom = index + 1;
+  }
+  const furthestRuntimeIndex = runtimeByPlanIndex.size
+    ? Math.max(...runtimeByPlanIndex.keys())
+    : -1;
+
+  let fallbackIndex = -1;
+  if (stageHistory.length === 0 && state.kind !== "idle" && state.kind !== "done") {
+    fallbackIndex = effectivePlan.findIndex((stage) => stage.kind === failedAtKey);
+  }
+
+  const stages: DisplayStage[] = effectivePlan.map((stage, index) => {
+    const runtime = runtimeByPlanIndex.get(index);
+    let status: DisplayStatus = "pending";
+    if (runtime?.status === "skipped") {
+      status = "skipped";
+    } else if (state.kind === "done") {
+      status = "done";
+    } else if (runtime) {
+      status = runtime.status === "active"
+        ? "active"
+        : runtime.status === "failed"
+          ? "failed"
+          : "done";
+    } else if (usedLegacyMatching && index < furthestRuntimeIndex) {
+      // No event means a planned stage was skipped (for example a guarded
+      // step); a later event proves the executor advanced beyond it.
+      status = "done";
+    } else if (index === fallbackIndex) {
+      status = isError ? "failed" : "active";
+    } else if (fallbackIndex >= 0 && index < fallbackIndex) {
+      status = "done";
+    }
+    const currentPasses =
+      runtime?.passes ??
+      (index === fallbackIndex && "passes" in state ? state.passes : {});
+    return {
+      id: stage.id,
+      kind: stage.kind,
+      label: stage.label,
+      status,
+      passes: currentPasses,
+    };
+  });
 
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between mb-2">
         <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Progress</h3>
         {runElapsed && (
-          <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums">{runElapsed}</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{runElapsed}</span>
         )}
       </div>
       <div className="space-y-3">
-        {STAGES.map((stage, i) => {
-          let status: "done" | "active" | "pending" | "failed";
-          if (isError && i === failedIdx) {
-            status = "failed";
-          } else if (state.kind === "done" && stage.key === "done") {
-            status = "done";
-          } else if (i < currentIdx) {
-            status = "done";
-          } else if (i === currentIdx && !isError) {
-            status = "active";
-          } else {
-            status = "pending";
-          }
-
+        {stages.map((stage) => {
+          const status = stage.status;
           return (
-            <div key={stage.key}>
+            <div key={stage.id} data-status={status}>
               <div className="flex items-center gap-2.5">
                 <StatusDot status={status} />
                 <span
@@ -162,28 +282,29 @@ export default function PipelineProgress({ state, runStartedAt, passTimes }: Pro
                         ? "text-gray-900 dark:text-gray-100 font-medium"
                         : status === "done"
                           ? "text-gray-500 dark:text-gray-400"
-                          : "text-gray-400 dark:text-gray-600"
+                          : status === "skipped"
+                            ? "text-gray-500 dark:text-gray-400"
+                          : "text-gray-500 dark:text-gray-400"
                   }`}
                 >
                   {stage.label}
                 </span>
                 {status === "failed" && (
-                  <span className="text-red-500 dark:text-red-400 text-xs ml-auto">
+                  <span className="text-red-600 dark:text-red-400 text-xs ml-auto">
                     {isCancelled ? "cancelled" : "failed"}
                   </span>
                 )}
-                {status === "active" && (stage.key === "extracting" || stage.key === "orienting" || stage.key === "merging") && (
-                  <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse ml-auto">running...</span>
+                {status === "active" && Object.keys(stage.passes).length === 0 && (
+                  <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse ml-auto">running…</span>
+                )}
+                {status === "skipped" && (
+                  <span className="text-gray-500 dark:text-gray-400 text-xs ml-auto">skipped</span>
                 )}
               </div>
 
-              {/* Show individual pass statuses during dispatch, merge, or synthesize */}
-              {((stage.key === "dispatching" && state.kind === "dispatching") ||
-                (stage.key === "merging" && state.kind === "merging") ||
-                (stage.key === "synthesizing" && state.kind === "synthesizing")) &&
-                "passes" in state && Object.keys(state.passes).length > 0 && (
+              {Object.keys(stage.passes).length > 0 && (
                   <div className="ml-7 mt-1.5 space-y-1">
-                    {Object.entries(state.passes).map(([name, passStatus]) => {
+                    {Object.entries(stage.passes).map(([name, passStatus]) => {
                       const el = passElapsed(name);
                       return (
                         <div
@@ -192,13 +313,14 @@ export default function PipelineProgress({ state, runStartedAt, passTimes }: Pro
                         >
                           <span>{formatPassName(name)}</span>
                           <span className="flex items-center gap-2">
-                            {el && <span className="text-gray-400 dark:text-gray-600 tabular-nums">{el}</span>}
+                            {el && <span className="text-gray-500 dark:text-gray-400 tabular-nums">{el}</span>}
                             <PassStatusIcon status={passStatus} />
                             {passStatus === "running" && (
                               <button
+                                type="button"
                                 onClick={() => invoke("cancel_pass", { passKey: name }).catch(() => {})}
-                                className="text-gray-400 hover:text-red-500 transition-colors"
-                                title="Cancel this step"
+                                aria-label={`Cancel ${formatPassName(name)}`}
+                                className="text-gray-600 hover:text-red-700 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
                               >
                                 ✕
                               </button>

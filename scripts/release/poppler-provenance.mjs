@@ -54,6 +54,7 @@ function parseArgs(argv) {
     else if (arg === "--platform") options.platform = argv[++i];
     else if (arg === "--resource-dir") options.resourceDir = path.resolve(argv[++i]);
     else if (arg === "--package-inventory") options.packageInventory = path.resolve(argv[++i]);
+    else if (arg === "--conda-package-root") options.condaPackageRoot = path.resolve(argv[++i]);
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (!options.platform || !["macos", "linux", "windows"].includes(options.platform)) {
@@ -78,7 +79,7 @@ function bundledVersion(resourceDir, platform) {
   return version;
 }
 
-function validateRequiredOfflineFiles(resourceDir, packageInventory) {
+export function validateNativePackagePolicy(resourceDir, platform, packageInventory) {
   const licenseDir = path.join(resourceDir, "licenses");
   const licenseFiles = fs.existsSync(licenseDir)
     ? collectFiles(licenseDir).filter((file) => file.size > 0)
@@ -89,6 +90,155 @@ function validateRequiredOfflineFiles(resourceDir, packageInventory) {
   }
   if (!packageInventory || !Array.isArray(packageInventory.packages) || packageInventory.packages.length === 0) {
     throw new Error("package-inventory.json must contain a non-empty packages array");
+  }
+  if (typeof packageInventory.manager !== "string" || !packageInventory.manager.trim()) {
+    throw new Error("package-inventory.json must identify its package manager or binary provider");
+  }
+  const names = packageInventory.packages.map((item) => item?.name);
+  if (names.some((name) => typeof name !== "string" || !name.trim())) {
+    throw new Error("native package inventory contains an unnamed component");
+  }
+  if (new Set(names).size !== names.length) {
+    throw new Error("native package inventory contains duplicate component names");
+  }
+
+  if (platform === "linux") {
+    for (const item of packageInventory.packages) {
+      if (!item.version) throw new Error(`Linux native package ${item.name} has no version`);
+      const packageName = item.name.split(":", 1)[0];
+      if (!fs.existsSync(path.join(licenseDir, "debian", `${packageName}.copyright`))) {
+        throw new Error(`Linux native package ${item.name} has no bundled Debian copyright file`);
+      }
+    }
+  } else if (platform === "macos") {
+    for (const item of packageInventory.packages) {
+      if (!item.version) throw new Error(`Homebrew native package ${item.name} has no version`);
+      const packageLicenseDir = path.join(licenseDir, "homebrew", item.name);
+      const hasOfflineFile = fs.existsSync(packageLicenseDir)
+        && collectFiles(packageLicenseDir).some((file) => file.size > 0);
+      if (!item.license && !hasOfflineFile) {
+        throw new Error(`Homebrew native package ${item.name} has no declared or offline license evidence`);
+      }
+    }
+  } else if (platform === "windows") {
+    if (
+      packageInventory.manager !== "conda"
+      || packageInventory.channel !== "conda-forge"
+      || packageInventory.subdir !== "win-64"
+    ) {
+      throw new Error("Windows native inventory must identify the conda-forge win-64 package closure");
+    }
+    const attributedFiles = new Map();
+    for (const item of packageInventory.packages) {
+      for (const field of ["version", "build", "license", "sourceUrl", "archiveSha256"]) {
+        if (typeof item[field] !== "string" || !item[field].trim()) {
+          throw new Error(`Windows native package ${item.name} has no ${field}`);
+        }
+      }
+      if (!/^[a-f0-9]{64}$/.test(item.archiveSha256)) {
+        throw new Error(`Windows native package ${item.name} has an invalid archive SHA-256`);
+      }
+      const expectedFilename = `${item.name}-${item.version}-${item.build}.conda`;
+      let source;
+      try {
+        source = new URL(item.sourceUrl);
+      } catch {
+        throw new Error(`Windows native package ${item.name} has an invalid source URL`);
+      }
+      if (
+        source.protocol !== "https:"
+        || source.hostname !== "conda.anaconda.org"
+        || source.pathname !== `/conda-forge/win-64/${expectedFilename}`
+        || source.search
+        || source.hash
+      ) {
+        throw new Error(
+          `Windows native package ${item.name} source must be its exact conda-forge win-64 archive`,
+        );
+      }
+      if (!Array.isArray(item.files) || item.files.length === 0) {
+        throw new Error(`Windows native package ${item.name} attributes no bundled PE files`);
+      }
+      for (const file of item.files) {
+        if (
+          typeof file?.path !== "string"
+          || path.basename(file.path) !== file.path
+          || !/\.(?:dll|exe)$/i.test(file.path)
+        ) {
+          throw new Error(`Windows native package ${item.name} has an invalid bundled file path`);
+        }
+        if (!/^[a-f0-9]{64}$/.test(file.sha256 ?? "")) {
+          throw new Error(
+            `Windows native package ${item.name} file ${file.path} has an invalid SHA-256`,
+          );
+        }
+        if (attributedFiles.has(file.path)) {
+          throw new Error(`Windows bundled file ${file.path} has multiple package owners`);
+        }
+        attributedFiles.set(file.path, item.name);
+        const bundledFile = path.join(resourceDir, file.path);
+        if (!fs.existsSync(bundledFile) || sha256File(bundledFile) !== file.sha256) {
+          throw new Error(
+            `Windows bundled file ${file.path} does not match attributed package ${item.name}`,
+          );
+        }
+      }
+    }
+    const shippedFiles = fs.readdirSync(resourceDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /\.(?:dll|exe)$/i.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    const inventoriedFiles = [...attributedFiles.keys()].sort();
+    if (JSON.stringify(shippedFiles) !== JSON.stringify(inventoriedFiles)) {
+      const missing = shippedFiles.filter((file) => !attributedFiles.has(file));
+      const unexpected = inventoriedFiles.filter((file) => !shippedFiles.includes(file));
+      throw new Error(
+        `Windows native package attribution is incomplete (unattributed: ${
+          missing.join(", ") || "none"
+        }; absent: ${unexpected.join(", ") || "none"})`,
+      );
+    }
+    const poppler = packageInventory.packages.find((item) => item.name === "poppler");
+    if (!poppler?.version || !poppler?.license) {
+      throw new Error("Windows conda inventory must identify Poppler's version and license");
+    }
+  }
+}
+
+export function verifyWindowsCondaPayloads(resourceDir, packageRoot, packageInventory) {
+  if (!packageRoot) {
+    throw new Error("Windows provenance requires --conda-package-root");
+  }
+  for (const item of packageInventory.packages) {
+    const packageKey = `${item.name}-${item.version}-${item.build}`;
+    const archive = path.join(packageRoot, `${packageKey}.conda`);
+    if (!fs.existsSync(archive) || sha256File(archive) !== item.archiveSha256) {
+      throw new Error(`Windows conda archive ${packageKey} does not match its pinned SHA-256`);
+    }
+    const payloadRoot = path.join(packageRoot, packageKey, "Library", "bin");
+    for (const file of item.files) {
+      const sourcePath = file.sourcePath ?? file.path;
+      if (
+        typeof sourcePath !== "string"
+        || path.basename(sourcePath) !== sourcePath
+        || !/\.(?:dll|exe)$/i.test(sourcePath)
+      ) {
+        throw new Error(
+          `Windows native package ${item.name} has an invalid source payload path`,
+        );
+      }
+      const sourceFile = path.join(payloadRoot, sourcePath);
+      const bundledFile = path.join(resourceDir, file.path);
+      if (
+        !fs.existsSync(sourceFile)
+        || sha256File(sourceFile) !== file.sha256
+        || sha256File(bundledFile) !== file.sha256
+      ) {
+        throw new Error(
+          `Windows bundled file ${file.path} is not present in pinned conda payload ${packageKey}`,
+        );
+      }
+    }
   }
 }
 
@@ -102,7 +252,14 @@ function createManifest(options) {
     throw new Error(`bundled Poppler is ${version}; lock requires ${platformLock.version}`);
   }
   const packageInventory = JSON.parse(fs.readFileSync(options.packageInventory, "utf8"));
-  validateRequiredOfflineFiles(options.resourceDir, packageInventory);
+  validateNativePackagePolicy(options.resourceDir, options.platform, packageInventory);
+  if (options.platform === "windows") {
+    verifyWindowsCondaPayloads(
+      options.resourceDir,
+      options.condaPackageRoot,
+      packageInventory,
+    );
+  }
   return {
     schemaVersion: 1,
     component: "poppler command-line utilities",

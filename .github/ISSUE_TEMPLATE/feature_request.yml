@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a focused improvement to Pipeline
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the workflow problem before prescribing an implementation. Do not include confidential papers, prompts, credentials, or run artifacts.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What task is difficult today, and who encounters it?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the observable result and a representative synthetic example.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note current workarounds or narrower solutions.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Workflow engine
+        - Providers and models
+        - Document extraction
+        - Reports and history
+        - Accessibility and UX
+        - CLI and automation
+        - Packaging and release
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope checks
+      options:
+        - label: This request does not require sending confidential user data to a new service without explicit consent.
+          required: true
+        - label: I checked the roadmap and existing issues for a similar request.
+          required: true

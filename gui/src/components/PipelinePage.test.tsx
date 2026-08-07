@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PipelinePage from "./PipelinePage";
 import type { PipelineConfig, ProfileSummary } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
+const dialogMocks = vi.hoisted(() => ({
+  save: vi.fn(),
+  open: vi.fn(),
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  save: vi.fn(() => Promise.resolve(null)),
-  open: vi.fn(() => Promise.resolve(null)),
+  save: dialogMocks.save,
+  open: dialogMocks.open,
 }));
 
 function makeConfig(): PipelineConfig {
@@ -67,6 +71,10 @@ function mockLoad(config: PipelineConfig) {
 describe("PipelinePage", () => {
   beforeEach(() => {
     invoke.mockReset();
+    dialogMocks.save.mockReset();
+    dialogMocks.open.mockReset();
+    dialogMocks.save.mockResolvedValue(null);
+    dialogMocks.open.mockResolvedValue(null);
   });
 
   it("loads the active profile and renders its steps", async () => {
@@ -78,6 +86,167 @@ describe("PipelinePage", () => {
     expect(screen.getAllByText("Consolidate Issues").length).toBeGreaterThan(0);
     expect(invoke).toHaveBeenCalledWith("get_pipeline_config");
     expect(invoke).toHaveBeenCalledWith("list_profiles");
+  });
+
+  it("surfaces import and export dialog plugin failures", async () => {
+    const user = userEvent.setup();
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findByRole("combobox", { name: "Active workflow profile" });
+
+    dialogMocks.open.mockRejectedValueOnce(new Error("picker unavailable"));
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("Import failed: picker unavailable");
+    });
+
+    dialogMocks.save.mockRejectedValueOnce(new Error("save picker unavailable"));
+    await user.click(screen.getByRole("button", { name: /^Export/ }));
+    await user.click(screen.getByRole("button", { name: /Export profile/ }));
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        "Export failed: save picker unavailable",
+      );
+    });
+
+    alertSpy.mockRestore();
+  });
+
+  it("serializes profile mutations while a switch is pending", async () => {
+    const user = userEvent.setup();
+    let finishSwitch!: (config: PipelineConfig) => void;
+    const switchResult = new Promise<PipelineConfig>((resolve) => {
+      finishSwitch = resolve;
+    });
+    const availableProfiles: ProfileSummary[] = [
+      ...profiles,
+      { id: "quick", name: "Quick Review", step_count: 1, builtin: true },
+    ];
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(makeConfig());
+      if (cmd === "list_profiles") return Promise.resolve(availableProfiles);
+      if (cmd === "get_active_profile") return Promise.resolve("deep-review");
+      if (cmd === "switch_profile") return switchResult;
+      if (cmd === "get_settings") return Promise.reject(new Error("not needed"));
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    render(<PipelinePage onClose={() => {}} />);
+
+    const selector = await screen.findByRole("combobox", {
+      name: "Active workflow profile",
+    });
+    await user.selectOptions(selector, "quick");
+
+    expect(selector).toBeDisabled();
+    expect(selector).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
+    expect(invoke.mock.calls.filter((call) => call[0] === "switch_profile")).toHaveLength(1);
+
+    const quickConfig = makeConfig();
+    quickConfig.steps[0].label = "Quick Technical";
+    await act(async () => finishSwitch(quickConfig));
+
+    await waitFor(() => {
+      expect(selector).toBeEnabled();
+      expect(selector).toHaveValue("quick");
+      expect(screen.getAllByText("Quick Technical").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("invalidates a pending reset when the editor unmounts", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let finishReset!: (config: PipelineConfig) => void;
+    const resetResult = new Promise<PipelineConfig>((resolve) => {
+      finishReset = resolve;
+    });
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(makeConfig());
+      if (cmd === "list_profiles") return Promise.resolve(profiles);
+      if (cmd === "get_active_profile") return Promise.resolve("deep-review");
+      if (cmd === "reset_pipeline_config") return resetResult;
+      if (cmd === "get_settings") return Promise.reject(new Error("not needed"));
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    const onProfileChange = vi.fn();
+    const { unmount } = render(
+      <PipelinePage onClose={() => {}} onProfileChange={onProfileChange} />,
+    );
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    unmount();
+    await act(async () => finishReset(makeConfig()));
+
+    expect(onProfileChange).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("keeps profile controls locked through deletion and fallback activation", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    let finishDelete!: () => void;
+    const deleteResult = new Promise<void>((resolve) => {
+      finishDelete = resolve;
+    });
+    const customProfiles: ProfileSummary[] = [
+      ...profiles,
+      { id: "custom", name: "Custom Review", step_count: 2, builtin: false },
+    ];
+    let profileLists = 0;
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(makeConfig());
+      if (cmd === "list_profiles") {
+        profileLists += 1;
+        return Promise.resolve(profileLists === 1 ? customProfiles : profiles);
+      }
+      if (cmd === "get_active_profile") return Promise.resolve("custom");
+      if (cmd === "delete_profile") return deleteResult;
+      if (cmd === "switch_profile") return Promise.resolve(makeConfig());
+      if (cmd === "get_settings") return Promise.reject(new Error("not needed"));
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    render(<PipelinePage onClose={() => {}} />);
+
+    const selector = await screen.findByRole("combobox", {
+      name: "Active workflow profile",
+    });
+    expect(selector).toHaveValue("custom");
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(selector).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New profile" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Duplicate" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
+    expect(invoke.mock.calls.some(([command]) => command === "switch_profile")).toBe(false);
+
+    await act(async () => finishDelete());
+    await waitFor(() => {
+      expect(selector).toBeEnabled();
+      expect(selector).toHaveValue("deep-review");
+    });
+    expect(invoke).toHaveBeenCalledWith("delete_profile", { id: "custom" });
+    expect(invoke).toHaveBeenCalledWith("switch_profile", { id: "deep-review" });
+    confirmSpy.mockRestore();
+  });
+
+  it("keeps a legacy Marker workflow repairable but marks the method unavailable", async () => {
+    const config = makeConfig();
+    config.extraction.method = "marker";
+    mockLoad(config);
+    render(<PipelinePage onClose={() => {}} />);
+    await userEvent.click(await screen.findByText("Extract"));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Marker is unavailable in Pipeline 1.0.1",
+    );
+    expect(
+      screen.getByRole("option", {
+        name: "Marker (unavailable — choose a replacement)",
+      }),
+    ).toBeDisabled();
   });
 
   it("disables Save until the config is dirty", async () => {
@@ -127,6 +296,40 @@ describe("PipelinePage", () => {
     });
   });
 
+  it("does not mark edits made during a save as persisted", async () => {
+    const user = userEvent.setup();
+    let finishSave!: () => void;
+    const pendingSave = new Promise<void>((resolve) => {
+      finishSave = resolve;
+    });
+    const config = makeConfig();
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(config);
+      if (cmd === "list_profiles") return Promise.resolve(profiles);
+      if (cmd === "get_active_profile") return Promise.resolve("deep-review");
+      if (cmd === "save_pipeline_config") return pendingSave;
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    const onDirtyChange = vi.fn();
+    render(
+      <PipelinePage onClose={() => {}} onDirtyChange={onDirtyChange} />,
+    );
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getByRole("button", { name: "+ Parallel" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "+ Parallel" }));
+    await act(async () => finishSave());
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+      expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    });
+    expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+  });
+
   it("edits the exact artifact allowlist for a step", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
@@ -154,7 +357,7 @@ describe("PipelinePage", () => {
     });
   });
 
-  it("removes step-output access when a step becomes parallel", async () => {
+  it("preserves step-output access when a step changes phase", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
@@ -171,9 +374,161 @@ describe("PipelinePage", () => {
       );
       expect(consolidate).toMatchObject({
         phase: "parallel",
-        context: { include: [] },
+        context: {
+          include: [{ kind: "step", step: "technical", parts: ["report"] }],
+        },
       });
     });
+  });
+
+  it("offers keyboard-operable step reordering", async () => {
+    const config = makeConfig();
+    config.steps.splice(1, 0, {
+      id: "empirical",
+      label: "Empirical",
+      prompt: "",
+      enabled: true,
+      phase: "parallel",
+      tools: [],
+      agents: [],
+      context: { include: [] },
+    });
+    mockLoad(config);
+    const user = userEvent.setup();
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getByRole("button", { name: "Move Technical down" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      expect(saveCall?.[1].config.steps.map((step: { id: string }) => step.id)).toEqual([
+        "empirical",
+        "technical",
+        "consolidate",
+      ]);
+    });
+  });
+
+  it("names workflow fields and gives reorder controls 24px targets", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    expect(
+      screen.getByRole("combobox", { name: "Active workflow profile" }),
+    ).toBeInTheDocument();
+    const moveDown = screen.getByRole("button", { name: "Move Technical down" });
+    expect(moveDown).toHaveClass("h-6", "w-6");
+
+    await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
+    expect(screen.getByRole("textbox", { name: "Step label" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Prompt for Technical" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Extract" }));
+    expect(
+      screen.getByRole("combobox", { name: "Workflow input mode" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "PDF extraction method" }),
+    ).toBeInTheDocument();
+  });
+
+  it("makes dependency rewrites explicit and reversible", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockLoad(makeConfig());
+    const user = userEvent.setup();
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    const enabled = screen.getByRole("switch", { name: "Enable Technical" });
+    await user.click(enabled);
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Disabling this step removes dependencies or artifact access from 1 downstream step. Continue?",
+    );
+    expect(screen.getByRole("button", { name: "Undo" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(enabled).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not let an async prompt reset overwrite edits made while it loads", async () => {
+    let resolveTemplate!: (value: string) => void;
+    const config = makeConfig();
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(config);
+      if (cmd === "list_profiles") return Promise.resolve(profiles);
+      if (cmd === "get_active_profile") return Promise.resolve("deep-review");
+      if (cmd === "get_settings") return Promise.reject(new Error("not needed"));
+      if (cmd === "get_default_prompt") {
+        return new Promise<string>((resolve) => {
+          resolveTemplate = resolve;
+        });
+      }
+      if (cmd === "save_pipeline_config") return Promise.resolve();
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    const user = userEvent.setup();
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Reset to generic" }));
+    await user.click(screen.getByRole("switch", { name: "Reuse shared input context" }));
+    await act(async () => resolveTemplate("new default template"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      expect(saveCall?.[1].config).toMatchObject({
+        context_cache: { enabled: true },
+        parallel_context_template: "new default template",
+      });
+    });
+  });
+
+  it("surfaces failures while loading bundled prompt defaults", async () => {
+    const config = makeConfig();
+    invoke.mockImplementation((cmd: string, args?: { name?: string }) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(config);
+      if (cmd === "list_profiles") return Promise.resolve(profiles);
+      if (cmd === "get_active_profile") return Promise.resolve("deep-review");
+      if (cmd === "get_default_prompt") {
+        const message = args?.name === "orientation_generic"
+          ? "orientation prompt unavailable"
+          : "parallel template unavailable";
+        return Promise.reject(new Error(message));
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const user = userEvent.setup();
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Reset to generic" }));
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        "Failed to reset the parallel context template: parallel template unavailable",
+      );
+    });
+
+    alertSpy.mockClear();
+    await user.click(screen.getByRole("button", { name: "Orient" }));
+    await user.click(screen.getByRole("button", { name: "Insert generic survey" }));
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        "Failed to load the default orientation prompt: orientation prompt unavailable",
+      );
+    });
+
+    alertSpy.mockRestore();
   });
 
   it("reports dirty state to the shell and can hide its local back control", async () => {
@@ -199,17 +554,22 @@ describe("PipelinePage", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("offers an opt-in shared context cache in pipeline settings", async () => {
+  it("shows shared context reuse as the Paper Review (Full) default", async () => {
     const user = userEvent.setup();
-    mockLoad(makeConfig());
+    mockLoad({
+      ...makeConfig(),
+      context_cache: { enabled: true },
+    });
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
     await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
     const toggle = screen.getByRole("switch", { name: "Reuse shared input context" });
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("Full Review default")).toBeInTheDocument();
+    expect(screen.getByText(/Paper Review \(Full\) enables this by default/)).toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
@@ -217,7 +577,7 @@ describe("PipelinePage", () => {
         "save_pipeline_config",
         expect.objectContaining({
           config: expect.objectContaining({
-            context_cache: { enabled: true },
+            context_cache: { enabled: false },
           }),
         }),
       );

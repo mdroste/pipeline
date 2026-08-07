@@ -116,31 +116,64 @@ fn strip_v(tag: &str) -> &str {
     tag.strip_prefix('v').unwrap_or(tag)
 }
 
-/// Compares two dot-separated numeric version strings. Returns true iff
-/// `candidate` is strictly newer than `current`. Non-numeric suffixes on
-/// components (e.g. "1.2.3-rc1") are tolerated: the leading digits are used.
+/// Compare the stable release candidate returned by GitHub with the running
+/// build. Pipeline has one stable update channel: prerelease candidates are
+/// never offered, while a stable release with the same core version replaces
+/// a locally installed prerelease build.
 fn is_newer(candidate: &str, current: &str) -> bool {
-    let a = parse_parts(candidate);
-    let b = parse_parts(current);
-    let len = a.len().max(b.len());
-    for i in 0..len {
-        let ai = a.get(i).copied().unwrap_or(0);
-        let bi = b.get(i).copied().unwrap_or(0);
-        if ai != bi {
-            return ai > bi;
-        }
+    let Some(candidate) = parse_version(candidate) else {
+        return false;
+    };
+    let Some(current) = parse_version(current) else {
+        return false;
+    };
+    if candidate.prerelease {
+        return false;
     }
-    false
+    match candidate.core.cmp(&current.core) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => current.prerelease,
+    }
 }
 
-fn parse_parts(v: &str) -> Vec<u32> {
-    strip_v(v)
-        .split('.')
-        .map(|p| {
-            let digits: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
-            digits.parse::<u32>().unwrap_or(0)
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedVersion {
+    core: [u64; 3],
+    prerelease: bool,
+}
+
+fn parse_version(value: &str) -> Option<ParsedVersion> {
+    let value = strip_v(value.trim());
+    let without_build = match value.split_once('+') {
+        Some((_, "")) => return None,
+        Some((core, _)) => core,
+        None => value,
+    };
+    let (core, prerelease) = match without_build.split_once('-') {
+        Some((_, "")) => return None,
+        Some((core, _)) => (core, true),
+        None => (without_build, false),
+    };
+    let components = core.split('.').collect::<Vec<_>>();
+    if components.len() != 3
+        || components.iter().any(|component| {
+            component.is_empty()
+                || !component
+                    .chars()
+                    .all(|character| character.is_ascii_digit())
+                || component.len() > 1 && component.starts_with('0')
         })
-        .collect()
+    {
+        return None;
+    }
+    let parts = components
+        .into_iter()
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    let core: [u64; 3] = parts.try_into().ok()?;
+    Some(ParsedVersion { core, prerelease })
 }
 
 #[cfg(test)]
@@ -175,17 +208,22 @@ mod tests {
     }
 
     #[test]
-    fn is_newer_pads_missing_components_with_zero() {
+    fn is_newer_rejects_incomplete_or_malformed_versions() {
         assert!(!is_newer("1.0", "1.0.0"));
-        assert!(is_newer("1.0.1", "1.0"));
-        assert!(is_newer("2", "1.99.99"));
+        assert!(!is_newer("1.0.1", "1.0"));
+        assert!(!is_newer("2", "1.99.99"));
+        assert!(!is_newer("latest", "1.0.0"));
     }
 
     #[test]
-    fn is_newer_tolerates_nonnumeric_suffix() {
-        // "1.2.3-rc1" compared to "1.2.3" — same numeric parts, not newer.
+    fn is_newer_never_offers_prereleases() {
         assert!(!is_newer("1.2.3-rc1", "1.2.3"));
-        // "1.2.4-rc1" vs "1.2.3" — newer by patch.
-        assert!(is_newer("1.2.4-rc1", "1.2.3"));
+        assert!(!is_newer("1.2.4-rc1", "1.2.3"));
+    }
+
+    #[test]
+    fn stable_release_replaces_the_same_core_prerelease() {
+        assert!(is_newer("1.2.3", "1.2.3-rc.1"));
+        assert!(!is_newer("1.2.2", "1.2.3-rc.1"));
     }
 }

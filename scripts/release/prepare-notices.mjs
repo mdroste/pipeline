@@ -62,7 +62,18 @@ export function npmComponents(lock) {
     const name = npmName(lockPath, entry);
     if (!name) continue;
     const purl = npmPurl(name, entry.version);
-    if (byReference.has(purl)) continue;
+    const installScope = entry.dev || entry.devOptional ? "development" : "production";
+    const existing = byReference.get(purl);
+    if (existing) {
+      // A single package/version can occur under both a development-only path
+      // and a production path. The SBOM is deduplicated by purl, so retain the
+      // stronger production classification when either occurrence ships.
+      const scope = existing.properties.find(
+        (property) => property.name === "pipeline:npm-install-scope",
+      );
+      if (installScope === "production") scope.value = "production";
+      continue;
+    }
     let hashes;
     const integrity = entry.integrity?.match(/^sha512-(.+)$/);
     if (integrity) hashes = componentHash("SHA-512", Buffer.from(integrity[1], "base64").toString("hex"));
@@ -74,6 +85,10 @@ export function npmComponents(lock) {
       version: entry.version,
       purl,
       hashes,
+      properties: [{
+        name: "pipeline:npm-install-scope",
+        value: installScope,
+      }],
     };
     if (typeof entry.license === "string" && entry.license.trim()) {
       component.licenses = [{ license: { name: entry.license.trim() } }];
@@ -83,13 +98,44 @@ export function npmComponents(lock) {
   return [...byReference.values()];
 }
 
-function popplerComponents(provenance) {
+function nativePackagePurl(provenance, item) {
+  if (!item.version) return undefined;
+  const manager = provenance.packageInventory?.manager;
+  if (manager === "homebrew") {
+    return `pkg:homebrew/${encodeURIComponent(item.name)}@${encodeURIComponent(item.version)}`;
+  }
+  if (manager === "dpkg") {
+    const [name, architecture] = item.name.split(":", 2);
+    const qualifiers = new URLSearchParams({
+      distro: "ubuntu-22.04",
+      ...(architecture ? { arch: architecture } : {}),
+    });
+    return `pkg:deb/ubuntu/${encodeURIComponent(name)}@${encodeURIComponent(item.version)}?${qualifiers}`;
+  }
+  if (manager === "conda") {
+    const qualifiers = new URLSearchParams({
+      build: item.build,
+      channel: provenance.packageInventory.channel,
+      name: item.name,
+      subdir: provenance.packageInventory.subdir,
+    });
+    // Anchore represents CondaPkg as pkg:generic/conda; keeping the real
+    // package name in both the CycloneDX component and a qualifier lets Grype
+    // decode the component as a conda package without losing its identity.
+    return `pkg:generic/conda@${encodeURIComponent(item.version)}?${qualifiers}`;
+  }
+  return undefined;
+}
+
+export function popplerComponents(provenance) {
   if (!provenance) return [];
+  const popplerPurl = `pkg:generic/poppler@${encodeURIComponent(provenance.version)}?platform=${provenance.platform}`;
   const components = [{
     type: "application",
-    "bom-ref": `pkg:generic/poppler@${encodeURIComponent(provenance.version)}?platform=${provenance.platform}`,
+    "bom-ref": popplerPurl,
     name: "poppler command-line utilities",
     version: provenance.version,
+    purl: popplerPurl,
     licenses: [{ expression: provenance.license }],
     externalReferences: [{ type: "distribution", url: provenance.source.url }],
     properties: [
@@ -100,18 +146,51 @@ function popplerComponents(provenance) {
 
   for (const item of provenance.packageInventory?.packages ?? []) {
     if (!item.name) continue;
-    const reference = `pipeline:system-package:${provenance.platform}:${item.name}@${item.version ?? "unknown"}`;
+    const purl = nativePackagePurl(provenance, item);
+    const reference = purl
+      ?? `pipeline:system-package:${provenance.platform}:${item.name}@${item.version ?? "unknown"}`;
     const component = {
       type: "library",
       "bom-ref": reference,
-      group: provenance.packageInventory.manager ?? "system",
       name: item.name,
-      properties: [{ name: "pipeline:system-package", value: "true" }],
+      properties: [
+        { name: "pipeline:system-package", value: "true" },
+        { name: "pipeline:platform", value: provenance.platform },
+        {
+          name: "pipeline:native-package-manager",
+          value: provenance.packageInventory.manager ?? "system",
+        },
+        {
+          name: "pipeline:license-policy",
+          value: "declared metadata or bundled package/archive notice; human review required",
+        },
+      ],
     };
+    // Do not set CycloneDX `group`: Syft prefixes it onto Homebrew/Conda
+    // package names, which would make Grype query `homebrew/pkg` or
+    // `conda/pkg` instead of the real native package name.
     if (item.version) component.version = item.version;
+    if (purl) component.purl = purl;
+    if (item.archiveSha256) {
+      component.hashes = componentHash("SHA-256", item.archiveSha256);
+      component.properties.push({
+        name: "pipeline:hash-subject",
+        value: "source package archive",
+      });
+    }
+    if (provenance.packageInventory.manager === "conda") {
+      component.properties.push(
+        { name: "syft:package:type", value: "conda" },
+        { name: "pipeline:conda-build", value: item.build },
+      );
+    }
     if (typeof item.license === "string" && item.license) {
       component.licenses = [{ license: { name: item.license } }];
     }
+    if (item.sourceUrl) {
+      component.externalReferences = [{ type: "distribution", url: item.sourceUrl }];
+    }
+    if (item.cpe) component.cpe = item.cpe;
     components.push(component);
   }
 
@@ -140,12 +219,17 @@ export function buildSbom({ version, cargoLock, packageLock, provenance, cargoMe
     ...npmComponents(packageLock),
     ...popplerComponents(provenance),
   ].sort((a, b) => a["bom-ref"].localeCompare(b["bom-ref"]));
+  const componentReferences = components.map((component) => component["bom-ref"]);
+  if (new Set(componentReferences).size !== componentReferences.length) {
+    throw new Error("build-input SBOM contains duplicate component bom-refs");
+  }
 
   const identity = crypto
     .createHash("sha256")
     .update(JSON.stringify({ version, refs: components.map((item) => item["bom-ref"]) }))
     .digest("hex");
   const uuid = `${identity.slice(0, 8)}-${identity.slice(8, 12)}-5${identity.slice(13, 16)}-a${identity.slice(17, 20)}-${identity.slice(20, 32)}`;
+  const rootReference = `pkg:github/mdroste/pipeline@${encodeURIComponent(version)}`;
   return {
     bomFormat: "CycloneDX",
     specVersion: "1.5",
@@ -154,7 +238,7 @@ export function buildSbom({ version, cargoLock, packageLock, provenance, cargoMe
     metadata: {
       component: {
         type: "application",
-        "bom-ref": `pkg:github/mdroste/pipeline@${encodeURIComponent(version)}`,
+        "bom-ref": rootReference,
         name: "Pipeline",
         version,
         licenses: [{ license: { id: "MIT" } }],
@@ -162,9 +246,14 @@ export function buildSbom({ version, cargoLock, packageLock, provenance, cargoMe
       properties: [
         { name: "pipeline:scope", value: "locked Rust, npm, and platform Poppler release inputs" },
         { name: "pipeline:generator", value: "scripts/release/prepare-notices.mjs" },
+        { name: "pipeline:platform", value: provenance?.platform ?? "development" },
       ],
     },
     components,
+    dependencies: [
+      { ref: rootReference, dependsOn: componentReferences },
+      ...componentReferences.map((ref) => ({ ref, dependsOn: [] })),
+    ],
   };
 }
 
@@ -177,17 +266,67 @@ function copyLicenseFiles(sourceDir, destination, explicitFile) {
   if (explicitFile && fs.existsSync(explicitFile)) candidates.push(explicitFile);
   if (fs.existsSync(sourceDir)) {
     for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-      if (entry.isFile() && /^(copying|copyright|licen[cs]e|notice)(?:[._-].*)?$/i.test(entry.name)) {
-        candidates.push(path.join(sourceDir, entry.name));
+      if (!entry.isFile()) continue;
+      const candidate = path.join(sourceDir, entry.name);
+      if (/^(copying|copyright|licen[cs]e|notice)(?:[._-].*)?$/i.test(entry.name)) {
+        candidates.push(candidate);
+      } else if (/^readme(?:[._-].*)?$/i.test(entry.name) && fs.statSync(candidate).size <= 2 * 1024 * 1024) {
+        // Some older npm packages put the complete license only in README.
+        // Treat it as evidence only when it has a license heading and
+        // recognizable grant text, rather than copying arbitrary readmes.
+        const readme = fs.readFileSync(candidate, "utf8");
+        if (
+          /^#{1,4}\s+licen[cs]e\b/im.test(readme)
+          && /(permission is hereby granted|redistribution and use|apache license|gnu (?:general|lesser) public license)/i.test(readme)
+        ) {
+          candidates.push(candidate);
+        }
       }
     }
   }
   const unique = [...new Set(candidates.map((file) => path.resolve(file)))];
+  const copied = [];
   for (const file of unique) {
     if (fs.statSync(file).size > 2 * 1024 * 1024) continue;
     fs.mkdirSync(destination, { recursive: true });
-    fs.copyFileSync(file, path.join(destination, path.basename(file)));
+    const target = path.join(destination, path.basename(file));
+    fs.copyFileSync(file, target);
+    copied.push(target);
   }
+  return copied;
+}
+
+export function validateLicenseInventory(entries, required = false) {
+  const normalized = [...entries]
+    .map((entry) => ({
+      ecosystem: entry.ecosystem,
+      name: entry.name,
+      version: entry.version,
+      declaredLicense: entry.declaredLicense || null,
+      licenseFiles: [...new Set(entry.licenseFiles ?? [])].sort(),
+    }))
+    .sort((left, right) => (
+      `${left.ecosystem}:${left.name}@${left.version}`
+        .localeCompare(`${right.ecosystem}:${right.name}@${right.version}`)
+    ));
+  const incomplete = normalized.filter(
+    (entry) => !entry.declaredLicense && entry.licenseFiles.length === 0,
+  );
+  if (required && incomplete.length) {
+    throw new Error(
+      `third-party packages have neither a declared license nor an offline license file: ${
+        incomplete.map((entry) => `${entry.ecosystem}:${entry.name}@${entry.version}`).join(", ")
+      }`,
+    );
+  }
+  return {
+    schemaVersion: 1,
+    complete: incomplete.length === 0,
+    packages: normalized,
+    incomplete: incomplete.map(
+      (entry) => `${entry.ecosystem}:${entry.name}@${entry.version}`,
+    ),
+  };
 }
 
 function cargoMetadata(tauriDir, required) {
@@ -226,6 +365,7 @@ function prepare() {
     "POPPLER_PROVENANCE.json",
     "THIRD_PARTY_LICENSES.md",
     "THIRD_PARTY_SBOM.cdx.json",
+    "LICENSE_INVENTORY.json",
     "licenses",
   ]) {
     fs.rmSync(path.join(output, generated), { recursive: true, force: true });
@@ -242,29 +382,55 @@ function prepare() {
   }
 
   const metadata = cargoMetadata(tauriDir, releaseBuild);
+  const licenseEntries = [];
   for (const item of metadata?.packages ?? []) {
     if (!item.source) continue;
     const sourceDir = path.dirname(item.manifest_path);
     const explicit = item.license_file
       ? path.resolve(sourceDir, item.license_file)
       : undefined;
-    copyLicenseFiles(
+    const copied = copyLicenseFiles(
       sourceDir,
       path.join(output, "licenses", "cargo", safeName(`${item.name}-${item.version}`)),
       explicit,
     );
+    licenseEntries.push({
+      ecosystem: "cargo",
+      name: item.name,
+      version: item.version,
+      declaredLicense: item.license,
+      licenseFiles: copied.map((file) => path.relative(output, file)),
+    });
   }
 
   const packageLock = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "gui", "package-lock.json"), "utf8"));
+  const npmLicenseEntries = new Map();
   for (const [lockPath, item] of Object.entries(packageLock.packages ?? {})) {
     if (!lockPath || !item?.version) continue;
     const name = npmName(lockPath, item);
     if (!name) continue;
-    copyLicenseFiles(
+    const copied = copyLicenseFiles(
       path.join(REPO_ROOT, "gui", lockPath),
       path.join(output, "licenses", "npm", safeName(`${name}-${item.version}`)),
     );
+    const key = `${name}@${item.version}`;
+    const existing = npmLicenseEntries.get(key) ?? {
+      ecosystem: "npm",
+      name,
+      version: item.version,
+      declaredLicense: item.license,
+      licenseFiles: [],
+    };
+    existing.declaredLicense ||= item.license;
+    existing.licenseFiles.push(...copied.map((file) => path.relative(output, file)));
+    npmLicenseEntries.set(key, existing);
   }
+  licenseEntries.push(...npmLicenseEntries.values());
+  const licenseInventory = validateLicenseInventory(licenseEntries, releaseBuild);
+  fs.writeFileSync(
+    path.join(output, "LICENSE_INVENTORY.json"),
+    `${JSON.stringify(licenseInventory, null, 2)}\n`,
+  );
 
   const sbom = buildSbom({
     version,
@@ -281,7 +447,8 @@ function prepare() {
       "",
       "Pipeline's MIT license is in PIPELINE_LICENSE.txt.",
       "Third-party terms and source locations are in THIRD_PARTY_LICENSES.md.",
-      "The machine-readable dependency inventory is in THIRD_PARTY_SBOM.cdx.json.",
+      "The machine-readable build-input dependency inventory is in THIRD_PARTY_SBOM.cdx.json.",
+      "Declared licenses and copied offline license files are audited in LICENSE_INVENTORY.json.",
       provenance
         ? "This platform's exact Poppler inputs and file hashes are in POPPLER_PROVENANCE.json."
         : "This development build does not contain a release Poppler provenance manifest.",

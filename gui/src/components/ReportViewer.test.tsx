@@ -27,6 +27,75 @@ describe("ReportViewer", () => {
     expect(link).toHaveAttribute("href", "#four");
   });
 
+  it("derives the table of contents from Markdown headings, not fenced code", () => {
+    const markdown = [
+      "Real one",
+      "========",
+      "",
+      "## Real two",
+      "",
+      "```markdown",
+      "# Not a heading",
+      "## Also not a heading",
+      "```",
+      "",
+      "## Real three",
+      "",
+      "## Real four",
+    ].join("\n");
+
+    render(<ReportViewer markdown={markdown} />);
+    const toc = screen.getByText("Contents").closest("nav");
+    expect(toc).not.toBeNull();
+    const tocQueries = within(toc!);
+
+    expect(tocQueries.getByRole("link", { name: "Real one" })).toHaveAttribute(
+      "href",
+      "#real-one",
+    );
+    expect(
+      tocQueries.queryByRole("link", { name: "Not a heading" }),
+    ).not.toBeInTheDocument();
+    expect(
+      tocQueries.queryByRole("link", { name: "Also not a heading" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses unique Unicode heading IDs shared by the TOC and rendered headings", () => {
+    const markdown = [
+      "# Résumé",
+      "## Résumé",
+      "## Résumé-2",
+      "## 研究 結果",
+      "## 研究 結果",
+    ].join("\n\n");
+
+    render(<ReportViewer markdown={markdown} />);
+    const toc = screen.getByText("Contents").closest("nav");
+    expect(toc).not.toBeNull();
+    const links = within(toc!).getAllByRole("link");
+    const expectedIds = [
+      "résumé",
+      "résumé-2",
+      "résumé-2-2",
+      "研究-結果",
+      "研究-結果-2",
+    ];
+
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(
+      expectedIds.map((id) => `#${id}`),
+    );
+    expect(
+      screen
+        .getAllByRole("heading")
+        .filter((heading) => heading.tagName !== "H4")
+        .map((heading) => heading.id),
+    ).toEqual(expectedIds);
+    for (const link of links) {
+      expect(document.querySelector(link.getAttribute("href")!)).not.toBeNull();
+    }
+  });
+
   it("presents formatted headings as clean plain-text TOC labels", () => {
     const markdown = [
       "# **Overview**",
@@ -97,6 +166,21 @@ describe("ReportViewer", () => {
     expect(
       container.querySelector(".comment-title")?.textContent,
     ).toBe("Identification strategy is unclear");
+  });
+
+  it("wraps wide Markdown tables in a horizontal scroll container", () => {
+    render(
+      <ReportViewer
+        markdown={[
+          "| First column | Second column |",
+          "| --- | --- |",
+          "| A very long value | Another very long value |",
+        ].join("\n")}
+      />,
+    );
+
+    const table = screen.getByRole("table");
+    expect(table.parentElement).toHaveClass("max-w-full", "overflow-x-auto");
   });
 
   it("renders math via KaTeX without showing the fallback notice", () => {

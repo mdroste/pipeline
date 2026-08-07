@@ -25,6 +25,7 @@ interface Props {
   isMac: boolean;
   dependenciesReady: boolean | null;
   dependenciesLoading: boolean;
+  dependenciesError?: string | null;
   width: number;
   onResize: (width: number) => void;
   onNewRun: () => void;
@@ -150,7 +151,7 @@ function RailButton({
                       : "text-gray-600 hover:bg-white/70 hover:text-gray-950 dark:text-gray-400 dark:hover:bg-gray-800/70 dark:hover:text-gray-100"
                   }`}
     >
-      <span className={active ? "text-gray-900 dark:text-gray-100" : "text-gray-400 group-hover:text-gray-700 dark:text-gray-500 dark:group-hover:text-gray-200"}>
+      <span className={active ? "text-gray-900 dark:text-gray-100" : "text-gray-500 group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-200"}>
         <Icon name={icon} />
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -166,6 +167,7 @@ export default function NavRail({
   isMac,
   dependenciesReady,
   dependenciesLoading,
+  dependenciesError,
   width,
   onResize,
   onNewRun,
@@ -253,7 +255,7 @@ export default function NavRail({
           onClick={onDependencies}
           className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs text-gray-500
                      transition-colors hover:bg-white/70 hover:text-gray-800 focus-visible:outline-none
-                     focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-500 dark:hover:bg-gray-800/70
+                     focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-400 dark:hover:bg-gray-800/70
                      dark:hover:text-gray-200"
         >
           <span
@@ -261,6 +263,8 @@ export default function NavRail({
             className={`h-1.5 w-1.5 rounded-full ${
               dependenciesLoading
                 ? "bg-gray-400"
+                : dependenciesError
+                  ? "bg-red-500"
                 : dependenciesReady
                   ? "bg-emerald-500"
                   : "bg-amber-500"
@@ -269,6 +273,8 @@ export default function NavRail({
           <span className="truncate">
             {dependenciesLoading
               ? "Checking system"
+              : dependenciesError
+                ? "Check failed"
               : dependenciesReady
                 ? "System ready"
                 : "Setup needed"}

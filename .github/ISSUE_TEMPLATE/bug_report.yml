@@ -1,0 +1,87 @@
+name: Bug report
+description: Report a reproducible Pipeline defect
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Remove papers, prompts, API keys, tokens, usernames, and local paths from everything you attach. Report security vulnerabilities privately through the Security tab, not here.
+  - type: input
+    id: version
+    attributes:
+      label: Pipeline version
+      description: Find this at the bottom of Help.
+      placeholder: "1.0.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - macOS 15 or later — Apple Silicon
+        - macOS 15 or later — Intel
+        - Windows 11 — x86-64
+        - Windows 10 22H2 — x86-64
+        - Ubuntu 22.04 or compatible Linux — x86-64
+        - Unsupported or source-built platform
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation type
+      options:
+        - Official release installer
+        - AppImage
+        - Built from source
+        - Development build
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and transport
+      description: For example, Claude CLI, OpenAI API, or local OpenAI-compatible server. Do not include credentials.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use a synthetic or fully redacted input.
+      placeholder: |
+        1. Open …
+        2. Select …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include only the shortest relevant console excerpt or synthetic reproducer. Do not upload an unredacted run directory.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I reproduced this on the latest stable release.
+          required: true
+        - label: I removed confidential documents, credentials, tokens, usernames, and private paths.
+          required: true
+        - label: This is not an undisclosed security vulnerability.
+          required: true

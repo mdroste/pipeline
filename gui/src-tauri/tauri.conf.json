@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
+  "$schema": "https://schema.tauri.app/config/2",
   "productName": "Pipeline",
   "version": "../package.json",
   "identifier": "com.pipeline.report",
@@ -15,6 +15,8 @@
         "title": "Pipeline",
         "width": 1400,
         "height": 800,
+        "minWidth": 1024,
+        "minHeight": 700,
         "resizable": true,
         "fullscreen": false,
         "titleBarStyle": "Overlay",
@@ -44,6 +46,13 @@
     "licenseFile": "../../LICENSE",
     "macOS": {
       "minimumSystemVersion": "15.0"
+    },
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      }
     }
   }
 }

@@ -1,13 +1,20 @@
 use crate::env;
 use crate::models::ExtractionResult;
+#[cfg(test)]
+use base64::Engine as _;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
 /// Maximum total output size for extracted LaTeX (10 MB).
 const MAX_LATEX_SIZE: usize = 10_000_000;
+const MAX_SCOPED_SOURCE_FILES: usize = 512;
+const MAX_SCOPED_SOURCE_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_SCOPED_SOURCE_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Folder inventories are context, not an archival crawler. Bound every
 /// dimension independently so a directory-only tree cannot evade the file
 /// cap and a small number of huge files cannot monopolize a run indefinitely.
@@ -20,6 +27,40 @@ pub const MAX_RENDERED_PDF_PAGES: u32 = 300;
 const PADDLE_REGION_WARNING_PREFIX: &str =
     "PaddleOCR-VL warning: this visual region remained degenerate";
 const PADDLE_REGION_WARNING: &str = "PaddleOCR-VL warning: this visual region remained degenerate after adaptive subdivision and was not transcribed. Consult the rendered source page.";
+#[cfg(test)]
+const MAX_MARKER_IMAGE_BYTES: usize = 25 * 1024 * 1024;
+#[cfg(test)]
+const MAX_MARKER_IMAGE_TOTAL_BYTES: usize = 150 * 1024 * 1024;
+#[cfg(test)]
+const MAX_MARKER_IMAGES: usize = 500;
+const MARKER_STRUCTURE_SCHEMA: u32 = 1;
+const MARKER_STRUCTURE_FILE: &str = "pipeline-marker-structure.json";
+#[cfg(test)]
+const MARKER_DOCUMENT_FILE: &str = "pipeline-document.md";
+const PADDLE_STRUCTURE_SCHEMA: u32 = 1;
+const PADDLE_STRUCTURE_FILE: &str = "pipeline-paddle-structure.json";
+
+pub(crate) const MARKER_DISABLED_MESSAGE: &str =
+    "Marker PDF extraction is unavailable in Pipeline 1.0.1 because its compatible \
+     Python dependency closure contains known security vulnerabilities. Choose \
+     PaddleOCR-VL, LLM extraction, or pdftotext in the workflow or Settings.";
+
+fn reject_retired_pdf_extractor(method: &str) -> Result<(), String> {
+    if method == "marker" {
+        Err(MARKER_DISABLED_MESSAGE.to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
 
 fn extraction_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     crate::pipeline::logging::emit(app, line.into());
@@ -291,6 +332,20 @@ fn content_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))[..16].to_string()
 }
 
+/// Put one selected document in a private, single-purpose directory before a
+/// provider CLI receives filesystem access. Granting the original parent would
+/// also expose every unrelated sibling in locations such as Downloads.
+fn stage_provider_input(source: &Path, root: &Path) -> Result<PathBuf, String> {
+    let name = source
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| std::ffi::OsStr::new("document.pdf"));
+    let destination = root.join(name);
+    let mut total_bytes = 0;
+    copy_scoped_source_file(source, &destination, &mut total_bytes)?;
+    Ok(destination)
+}
+
 /// Find the main .tex file in a directory by looking for \documentclass.
 fn find_main_tex(dir: &Path) -> Option<PathBuf> {
     let tex_files: Vec<PathBuf> = fs::read_dir(dir)
@@ -332,6 +387,427 @@ fn find_main_tex(dir: &Path) -> Option<PathBuf> {
             .unwrap_or(usize::MAX)
     });
     candidates.into_iter().next()
+}
+
+/// The only source paths exposed to orientation and review calls. A selected
+/// folder is already an explicit user-granted scope. A selected file is copied
+/// into a private directory, and LaTeX projects receive a bounded closure of
+/// local dependencies rather than the whole containing directory.
+#[derive(Debug, Default)]
+pub(crate) struct ScopedSourceContext {
+    pub(crate) source_path: Option<PathBuf>,
+    pub(crate) read_root: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+struct LatexReference {
+    target: String,
+    default_extensions: &'static [&'static str],
+    recursive: bool,
+}
+
+fn latex_without_comments(content: &str) -> String {
+    let mut visible = String::with_capacity(content.len());
+    for line in content.split_inclusive('\n') {
+        let mut slash_count = 0usize;
+        let mut comment_at = None;
+        for (index, character) in line.char_indices() {
+            if character == '%' && slash_count & 1 == 0 {
+                comment_at = Some(index);
+                break;
+            }
+            if character == '\\' {
+                slash_count += 1;
+            } else {
+                slash_count = 0;
+            }
+        }
+        if let Some(index) = comment_at {
+            visible.push_str(&line[..index]);
+            if line.ends_with('\n') {
+                visible.push('\n');
+            }
+        } else {
+            visible.push_str(line);
+        }
+    }
+    visible
+}
+
+fn latex_references(content: &str) -> Vec<LatexReference> {
+    fn collect(
+        output: &mut Vec<LatexReference>,
+        content: &str,
+        pattern: &str,
+        capture: usize,
+        extensions: &'static [&'static str],
+        recursive: bool,
+        comma_separated: bool,
+    ) {
+        let regex = Regex::new(pattern).expect("LaTeX dependency regex is invalid");
+        for captures in regex.captures_iter(content) {
+            let Some(value) = captures.get(capture) else {
+                continue;
+            };
+            let values: Vec<&str> = if comma_separated {
+                value.as_str().split(',').collect()
+            } else {
+                vec![value.as_str()]
+            };
+            output.extend(values.into_iter().filter_map(|value| {
+                let target = value.trim().trim_matches('"');
+                if target.is_empty()
+                    || target.contains('#')
+                    || target.contains('\\')
+                    || target.contains("://")
+                {
+                    return None;
+                }
+                Some(LatexReference {
+                    target: target.to_string(),
+                    default_extensions: extensions,
+                    recursive,
+                })
+            }));
+        }
+    }
+
+    let visible = latex_without_comments(content);
+    let mut references = Vec::new();
+    collect(
+        &mut references,
+        &visible,
+        r"\\(?:input|include|subfile)\s*\{([^}]+)\}",
+        1,
+        &["tex"],
+        true,
+        false,
+    );
+    collect(
+        &mut references,
+        &visible,
+        r"\\includegraphics\*?(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
+        1,
+        &["pdf", "png", "jpg", "jpeg", "webp", "eps", "svg"],
+        false,
+        false,
+    );
+    let graphics_paths = Regex::new(r"\\graphicspath\s*\{((?:\s*\{[^{}]*\})+)\s*\}")
+        .expect("LaTeX graphicspath regex is invalid")
+        .captures_iter(&visible)
+        .flat_map(|capture| {
+            Regex::new(r"\{([^{}]+)\}")
+                .expect("LaTeX graphicspath entry regex is invalid")
+                .captures_iter(capture.get(1).map(|value| value.as_str()).unwrap_or(""))
+                .filter_map(|entry| entry.get(1).map(|value| value.as_str().trim().to_string()))
+                .collect::<Vec<_>>()
+        })
+        .filter(|path| !path.is_empty() && !path.contains('#') && !path.contains('\\'))
+        .collect::<Vec<_>>();
+    let graphics = Regex::new(r"\\includegraphics\*?(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}")
+        .expect("LaTeX graphics regex is invalid");
+    for capture in graphics.captures_iter(&visible) {
+        let Some(target) = capture.get(1).map(|value| value.as_str().trim()) else {
+            continue;
+        };
+        for directory in &graphics_paths {
+            references.push(LatexReference {
+                target: format!(
+                    "{}/{}",
+                    directory.trim_end_matches('/'),
+                    target.trim_start_matches('/')
+                ),
+                default_extensions: &["pdf", "png", "jpg", "jpeg", "webp", "eps", "svg"],
+                recursive: false,
+            });
+        }
+    }
+    let import =
+        Regex::new(r"\\(?:import|subimport|inputfrom|includefrom)\s*\{([^}]+)\}\s*\{([^}]+)\}")
+            .expect("LaTeX import regex is invalid");
+    for capture in import.captures_iter(&visible) {
+        let Some(directory) = capture.get(1).map(|value| value.as_str().trim()) else {
+            continue;
+        };
+        let Some(file) = capture.get(2).map(|value| value.as_str().trim()) else {
+            continue;
+        };
+        if directory.contains('#')
+            || directory.contains('\\')
+            || file.contains('#')
+            || file.contains('\\')
+        {
+            continue;
+        }
+        references.push(LatexReference {
+            target: format!(
+                "{}/{}",
+                directory.trim_end_matches('/'),
+                file.trim_start_matches('/')
+            ),
+            default_extensions: &["tex"],
+            recursive: true,
+        });
+    }
+    collect(
+        &mut references,
+        &visible,
+        r"\\bibliography\s*\{([^}]+)\}",
+        1,
+        &["bib"],
+        false,
+        true,
+    );
+    collect(
+        &mut references,
+        &visible,
+        r"\\addbibresource(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
+        1,
+        &["bib"],
+        false,
+        false,
+    );
+    collect(
+        &mut references,
+        &visible,
+        r"\\usepackage(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
+        1,
+        &["sty"],
+        true,
+        true,
+    );
+    collect(
+        &mut references,
+        &visible,
+        r"\\documentclass(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
+        1,
+        &["cls"],
+        true,
+        false,
+    );
+    collect(
+        &mut references,
+        &visible,
+        r"\\(?:lstinputlisting|verbatiminput)(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
+        1,
+        &[],
+        false,
+        false,
+    );
+    collect(
+        &mut references,
+        &visible,
+        r"\\inputminted(?:\s*\[[^\]]*\])?\s*\{[^}]+\}\s*\{([^}]+)\}",
+        1,
+        &[],
+        false,
+        false,
+    );
+    references
+}
+
+fn resolve_latex_reference(
+    reference: &LatexReference,
+    current_dir: &Path,
+    project_root: &Path,
+) -> Option<PathBuf> {
+    let raw = Path::new(&reference.target);
+    if raw.is_absolute() {
+        return None;
+    }
+    let mut relative_candidates = vec![raw.to_path_buf()];
+    if raw.extension().is_none() {
+        relative_candidates.extend(reference.default_extensions.iter().map(|extension| {
+            let mut candidate = raw.to_path_buf();
+            candidate.set_extension(extension);
+            candidate
+        }));
+    }
+    for base in [current_dir, project_root] {
+        for relative in &relative_candidates {
+            let candidate = base.join(relative);
+            let Ok(canonical) = candidate.canonicalize() else {
+                continue;
+            };
+            if canonical.starts_with(project_root) && canonical.is_file() {
+                return Some(canonical);
+            }
+        }
+    }
+    None
+}
+
+fn copy_scoped_source_file(
+    source: &Path,
+    destination: &Path,
+    total_bytes: &mut u64,
+) -> Result<(), String> {
+    let mut input = open_regular_file(source)?;
+    let size = input
+        .metadata()
+        .map_err(|error| format!("Failed to inspect {}: {error}", source.display()))?
+        .len();
+    if size > MAX_SCOPED_SOURCE_FILE_BYTES {
+        return Err(format!(
+            "Referenced source file '{}' exceeds the {} MB per-file limit",
+            source.display(),
+            MAX_SCOPED_SOURCE_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    if total_bytes.saturating_add(size) > MAX_SCOPED_SOURCE_TOTAL_BYTES {
+        return Err(format!(
+            "Referenced source files exceed the {} MB total limit",
+            MAX_SCOPED_SOURCE_TOTAL_BYTES / (1024 * 1024)
+        ));
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create private source directory '{}': {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut output = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .map_err(|error| {
+            format!(
+                "Failed to create private source file '{}': {error}",
+                destination.display()
+            )
+        })?;
+    let mut limited = std::io::Read::take(&mut input, MAX_SCOPED_SOURCE_FILE_BYTES + 1);
+    let copied = std::io::copy(&mut limited, &mut output)
+        .map_err(|error| format!("Failed to stage '{}': {error}", source.display()))?;
+    if copied > MAX_SCOPED_SOURCE_FILE_BYTES {
+        return Err(format!(
+            "Referenced source file '{}' exceeds the {} MB per-file limit",
+            source.display(),
+            MAX_SCOPED_SOURCE_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    if copied != size {
+        return Err(format!(
+            "Source file '{}' changed while it was being staged",
+            source.display()
+        ));
+    }
+    *total_bytes = total_bytes.saturating_add(copied);
+    Ok(())
+}
+
+fn stage_latex_project(
+    main_file: &Path,
+    project_root: &Path,
+    destination_root: &Path,
+) -> Result<(), String> {
+    let main_file = main_file
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve {}: {error}", main_file.display()))?;
+    let project_root = project_root
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve {}: {error}", project_root.display()))?;
+    if !main_file.starts_with(&project_root) {
+        return Err("The selected LaTeX file is outside its project root".to_string());
+    }
+
+    let mut pending = VecDeque::from([(main_file, true)]);
+    let mut visited = HashSet::new();
+    let mut total_bytes = 0u64;
+    while let Some((source, recurse)) = pending.pop_front() {
+        if !visited.insert(source.clone()) {
+            continue;
+        }
+        if visited.len() > MAX_SCOPED_SOURCE_FILES {
+            return Err(format!(
+                "LaTeX source closure exceeds the {MAX_SCOPED_SOURCE_FILES}-file limit"
+            ));
+        }
+        let relative = source
+            .strip_prefix(&project_root)
+            .map_err(|_| "A referenced LaTeX source escaped the project root".to_string())?;
+        copy_scoped_source_file(&source, &destination_root.join(relative), &mut total_bytes)?;
+        if !recurse {
+            continue;
+        }
+        let content = match read_utf8_capped(&source, MAX_LATEX_SIZE) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let current_dir = source.parent().unwrap_or(&project_root);
+        for reference in latex_references(&content) {
+            if let Some(path) = resolve_latex_reference(&reference, current_dir, &project_root) {
+                pending.push_back((path, reference.recursive));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn stage_selected_source(
+    selected: &Path,
+    input_mode: &str,
+    private_root: &Path,
+) -> Result<ScopedSourceContext, String> {
+    if input_mode == "none" || selected.as_os_str().is_empty() {
+        return Ok(ScopedSourceContext::default());
+    }
+    if input_mode == "folder" {
+        let selected = selected
+            .canonicalize()
+            .map_err(|error| format!("Failed to resolve selected folder: {error}"))?;
+        if !selected.is_dir() {
+            return Err(format!(
+                "Selected folder '{}' is not a directory",
+                selected.display()
+            ));
+        }
+        return Ok(ScopedSourceContext {
+            source_path: Some(selected.clone()),
+            read_root: Some(selected),
+        });
+    }
+
+    let latex_main = if selected.is_dir() {
+        find_main_tex(selected)
+    } else if ext_eq(selected, "tex") {
+        Some(selected.to_path_buf())
+    } else {
+        None
+    };
+    let destination_root = private_root.join("source");
+    fs::create_dir_all(&destination_root).map_err(|error| {
+        format!(
+            "Failed to create private source root '{}': {error}",
+            destination_root.display()
+        )
+    })?;
+    if let Some(main_file) = latex_main {
+        let project_root = if selected.is_dir() {
+            selected
+        } else {
+            selected.parent().unwrap_or_else(|| Path::new("."))
+        };
+        stage_latex_project(&main_file, project_root, &destination_root)?;
+        return Ok(ScopedSourceContext {
+            source_path: Some(destination_root.clone()),
+            read_root: Some(destination_root),
+        });
+    }
+
+    let name = selected
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| std::ffi::OsStr::new("source"));
+    let destination = destination_root.join(name);
+    let mut total_bytes = 0u64;
+    copy_scoped_source_file(selected, &destination, &mut total_bytes)?;
+    Ok(ScopedSourceContext {
+        source_path: Some(destination),
+        read_root: Some(destination_root),
+    })
 }
 
 /// Extract text from a .tex file, resolving \input{} and \include{} recursively.
@@ -423,49 +899,634 @@ pub fn marker_output_dir(paper_hash: &str) -> Option<PathBuf> {
     )
 }
 
-fn prune_marker_cache(current_hash: &str) {
-    const KEEP_OTHER_ENTRIES: usize = 20;
-    const MAX_CACHE_BYTES: u64 = 1_000_000_000;
-    let Some(current) = marker_output_dir(current_hash) else {
-        return;
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+struct MarkerJsonDocument {
+    #[serde(default)]
+    block_type: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    children: Vec<MarkerJsonBlock>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Deserialize)]
+struct MarkerJsonBlock {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    block_type: String,
+    #[serde(default)]
+    html: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    polygon: Vec<Vec<f64>>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    bbox: Vec<f64>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    children: Vec<MarkerJsonBlock>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    images: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct MarkerStructure {
+    pub(crate) schema_version: u32,
+    #[serde(default)]
+    pub(crate) quality_notes: Vec<String>,
+    #[serde(default)]
+    pub(crate) pages: Vec<MarkerStructuredPage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct MarkerStructuredPage {
+    pub(crate) number: u32,
+    pub(crate) marker_id: String,
+    #[serde(default)]
+    pub(crate) polygon: Vec<Vec<f64>>,
+    #[serde(default)]
+    pub(crate) bbox: Vec<f64>,
+    #[serde(default)]
+    pub(crate) blocks: Vec<MarkerStructuredBlock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct MarkerStructuredBlock {
+    pub(crate) marker_id: String,
+    pub(crate) marker_type: String,
+    pub(crate) role: String,
+    #[serde(default)]
+    pub(crate) html: String,
+    #[serde(default)]
+    pub(crate) text: String,
+    #[serde(default)]
+    pub(crate) polygon: Vec<Vec<f64>>,
+    #[serde(default)]
+    pub(crate) bbox: Vec<f64>,
+    #[serde(default)]
+    pub(crate) image_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PaddleStructure {
+    pub(crate) schema_version: u32,
+    #[serde(default)]
+    pub(crate) quality_notes: Vec<String>,
+    #[serde(default)]
+    pub(crate) pages: Vec<PaddleStructuredPage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PaddleStructuredPage {
+    pub(crate) number: u32,
+    #[serde(default)]
+    pub(crate) blocks: Vec<PaddleStructuredBlock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PaddleStructuredBlock {
+    pub(crate) block_id: String,
+    pub(crate) role: String,
+    #[serde(default)]
+    pub(crate) markdown: String,
+    #[serde(default)]
+    pub(crate) text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) boundary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) note_marker: Option<String>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct MarkerExtraction {
+    text: String,
+    quality_notes: Vec<String>,
+}
+
+#[derive(Debug)]
+struct PaddleExtraction {
+    text: String,
+    quality_notes: Vec<String>,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct MarkerImageBudget {
+    files: usize,
+    bytes: usize,
+    materialized: HashMap<String, String>,
+    warned: HashSet<String>,
+}
+
+fn marker_structure_path(paper_hash: &str) -> Option<PathBuf> {
+    Some(marker_output_dir(paper_hash)?.join(MARKER_STRUCTURE_FILE))
+}
+
+pub(crate) fn read_marker_structure(paper_hash: &str) -> Result<Option<MarkerStructure>, String> {
+    let Some(path) = marker_structure_path(paper_hash) else {
+        return Ok(None);
     };
-    let Some(root) = current.parent() else { return };
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = read_utf8_capped(&path, super::claude::MAX_STDOUT_BYTES)?;
+    let structure: MarkerStructure = serde_json::from_str(&text)
+        .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?;
+    if structure.schema_version != MARKER_STRUCTURE_SCHEMA {
+        return Ok(None);
+    }
+    Ok(Some(structure))
+}
+
+pub(crate) fn read_marker_structure_json(paper_hash: &str) -> Result<Option<String>, String> {
+    let Some(path) = marker_structure_path(paper_hash) else {
+        return Ok(None);
     };
-    let mut walk = crate::safety::WalkBudget::new("Marker cache pruning");
-    let mut dirs: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
-        .flatten()
-        .filter_map(|entry| {
-            walk.entry().ok()?;
-            let path = entry.path();
-            let file_type = entry.file_type().ok()?;
-            if path == current || file_type.is_symlink() || !file_type.is_dir() {
-                return None;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    read_utf8_capped(&path, super::claude::MAX_STDOUT_BYTES).map(Some)
+}
+
+fn paddle_structure_path(paper_hash: &str) -> Option<PathBuf> {
+    if paper_hash.len() != 16 || !paper_hash.chars().all(|value| value.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(
+        dirs::home_dir()?
+            .join(".pipeline")
+            .join("cache")
+            .join("paddleocr-vl")
+            .join(paper_hash)
+            .join(PADDLE_STRUCTURE_FILE),
+    )
+}
+
+pub(crate) fn read_paddle_structure(paper_hash: &str) -> Result<Option<PaddleStructure>, String> {
+    let Some(path) = paddle_structure_path(paper_hash) else {
+        return Ok(None);
+    };
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = read_utf8_capped(&path, super::claude::MAX_STDOUT_BYTES)?;
+    let structure: PaddleStructure = serde_json::from_str(&text)
+        .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?;
+    if structure.schema_version != PADDLE_STRUCTURE_SCHEMA {
+        return Ok(None);
+    }
+    Ok(Some(structure))
+}
+
+pub(crate) fn read_paddle_structure_json(paper_hash: &str) -> Result<Option<String>, String> {
+    let Some(path) = paddle_structure_path(paper_hash) else {
+        return Ok(None);
+    };
+    if !path.is_file() {
+        return Ok(None);
+    }
+    read_utf8_capped(&path, super::claude::MAX_STDOUT_BYTES).map(Some)
+}
+
+#[cfg(test)]
+fn marker_type_name(value: &str) -> &str {
+    value.rsplit('.').next().unwrap_or(value)
+}
+
+#[cfg(test)]
+fn marker_block_html(block: &MarkerJsonBlock) -> String {
+    if block.children.is_empty() {
+        return block.html.clone();
+    }
+    let mut html = block.html.clone();
+    let mut matched_child = false;
+    for child in &block.children {
+        let child_html = marker_block_html(child);
+        let pattern = format!(
+            r#"(?is)<content-ref\b[^>]*\bsrc\s*=\s*["']{}["'][^>]*>(?:\s*</content-ref\s*>)?"#,
+            regex::escape(&child.id)
+        );
+        if let Ok(reference) = Regex::new(&pattern) {
+            if reference.is_match(&html) {
+                matched_child = true;
+                html = reference
+                    .replace_all(&html, child_html.as_str())
+                    .into_owned();
             }
-            walk.directory().ok()?;
-            let modified = entry
-                .metadata()
-                .ok()
-                .and_then(|meta| meta.modified().ok())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            let bytes = directory_bytes_bounded(&path, &mut walk).ok()?;
-            Some((modified, bytes, path))
-        })
-        .collect();
-    dirs.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-    let mut retained_bytes = 0u64;
-    for (index, (_, bytes, path)) in dirs.into_iter().enumerate() {
-        if index >= KEEP_OTHER_ENTRIES || retained_bytes.saturating_add(bytes) > MAX_CACHE_BYTES {
-            let _ = fs::remove_dir_all(path);
-        } else {
-            retained_bytes = retained_bytes.saturating_add(bytes);
         }
+    }
+    if html.trim().is_empty() || (!matched_child && html.contains("content-ref")) {
+        html = block
+            .children
+            .iter()
+            .map(marker_block_html)
+            .collect::<Vec<_>>()
+            .join("\n");
+    } else if html.contains("content-ref") {
+        let unresolved = Regex::new(r"(?is)</?content-ref\b[^>]*>").unwrap();
+        html = unresolved.replace_all(&html, "").into_owned();
+    }
+    html
+}
+
+#[cfg(test)]
+fn marker_review_html(html: &str) -> String {
+    let display_math =
+        Regex::new(r#"(?is)<math\b[^>]*display\s*=\s*["']block["'][^>]*>(.*?)</math>"#).unwrap();
+    let inline_math = Regex::new(r"(?is)<math\b[^>]*>(.*?)</math>").unwrap();
+    let with_display = display_math.replace_all(html, |capture: &regex::Captures<'_>| {
+        format!("\n$$\n{}\n$$\n", marker_plain_text(&capture[1]))
+    });
+    let with_math = inline_math.replace_all(&with_display, |capture: &regex::Captures<'_>| {
+        format!("${}$", marker_plain_text(&capture[1]))
+    });
+    ammonia::clean(&with_math).trim().to_string()
+}
+
+#[cfg(test)]
+fn marker_plain_text(html: &str) -> String {
+    let cleaned = ammonia::clean(html);
+    let tags = Regex::new(r"(?is)<[^>]+>").unwrap();
+    let without_tags = tags.replace_all(&cleaned, " ");
+    let entities = Regex::new(r"&(#x[0-9A-Fa-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);").unwrap();
+    let decoded = entities.replace_all(&without_tags, |capture: &regex::Captures<'_>| {
+        let entity = &capture[1];
+        match entity {
+            "amp" => "&".to_string(),
+            "lt" => "<".to_string(),
+            "gt" => ">".to_string(),
+            "quot" => "\"".to_string(),
+            "apos" => "'".to_string(),
+            "nbsp" => " ".to_string(),
+            _ => {
+                let value = entity
+                    .strip_prefix("#x")
+                    .and_then(|value| u32::from_str_radix(value, 16).ok())
+                    .or_else(|| {
+                        entity
+                            .strip_prefix('#')
+                            .and_then(|value| value.parse::<u32>().ok())
+                    });
+                value
+                    .and_then(char::from_u32)
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| capture[0].to_string())
+            }
+        }
+    });
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+fn collect_marker_images<'a>(block: &'a MarkerJsonBlock, output: &mut Vec<(&'a str, &'a str)>) {
+    output.extend(
+        block
+            .images
+            .iter()
+            .map(|(id, content)| (id.as_str(), content.as_str())),
+    );
+    for child in &block.children {
+        collect_marker_images(child, output);
     }
 }
 
+#[cfg(test)]
+fn marker_image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+fn materialize_marker_images(
+    block: &MarkerJsonBlock,
+    page: u32,
+    out_dir: &Path,
+    budget: &mut MarkerImageBudget,
+    quality_notes: &mut Vec<String>,
+) -> Vec<String> {
+    let mut encoded = Vec::new();
+    collect_marker_images(block, &mut encoded);
+    let mut files = Vec::new();
+    for (marker_id, content) in encoded {
+        if let Some(existing) = budget.materialized.get(marker_id) {
+            files.push(existing.clone());
+            continue;
+        }
+        if budget.files >= MAX_MARKER_IMAGES {
+            if budget.warned.insert("count".to_string()) {
+                quality_notes.push(format!(
+                    "Marker emitted more than {MAX_MARKER_IMAGES} extracted images; additional images were omitted. Consult the rendered PDF pages."
+                ));
+            }
+            continue;
+        }
+        let max_encoded_bytes = MAX_MARKER_IMAGE_BYTES.div_ceil(3).saturating_mul(4);
+        if content.len() > max_encoded_bytes {
+            if budget.warned.insert("individual".to_string()) {
+                quality_notes.push(format!(
+                    "A Marker image exceeded the {} MB safety limit and was omitted. Consult the rendered PDF page.",
+                    MAX_MARKER_IMAGE_BYTES / 1024 / 1024
+                ));
+            }
+            continue;
+        }
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(content.as_bytes()) else {
+            if budget.warned.insert("decode".to_string()) {
+                quality_notes.push(
+                    "Marker emitted an invalid encoded image; it was omitted. Consult the rendered PDF page."
+                        .to_string(),
+                );
+            }
+            continue;
+        };
+        if bytes.len() > MAX_MARKER_IMAGE_BYTES
+            || budget.bytes.saturating_add(bytes.len()) > MAX_MARKER_IMAGE_TOTAL_BYTES
+        {
+            if budget.warned.insert("bytes".to_string()) {
+                quality_notes.push(format!(
+                    "Marker extracted-image materialization reached its {} MB safety budget; additional images were omitted. Consult the rendered PDF pages.",
+                    MAX_MARKER_IMAGE_TOTAL_BYTES / 1024 / 1024
+                ));
+            }
+            continue;
+        }
+        let Some(extension) = marker_image_extension(&bytes) else {
+            if budget.warned.insert("format".to_string()) {
+                quality_notes.push(
+                    "Marker emitted an extracted image in an unrecognized format; it was omitted. Consult the rendered PDF page."
+                        .to_string(),
+                );
+            }
+            continue;
+        };
+        let suffix = format!("{:x}", Sha256::digest(marker_id.as_bytes()));
+        let filename = format!("marker-page-{page:04}-{}.{}", &suffix[..12], extension);
+        if atomic_write_cache(&out_dir.join(&filename), &bytes).is_err() {
+            if budget.warned.insert("write".to_string()) {
+                quality_notes.push(
+                    "Pipeline could not retain one or more Marker images. Consult the rendered PDF pages."
+                        .to_string(),
+                );
+            }
+            continue;
+        }
+        budget.files += 1;
+        budget.bytes = budget.bytes.saturating_add(bytes.len());
+        budget
+            .materialized
+            .insert(marker_id.to_string(), filename.clone());
+        files.push(filename);
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
+#[cfg(test)]
+fn leading_footnote_marker(text: &str) -> Option<String> {
+    let marker = Regex::new(r"^\s*(\d{1,3}|[*†‡])(?:[.)])?\s+").unwrap();
+    marker
+        .captures(text)
+        .and_then(|capture| capture.get(1))
+        .map(|value| value.as_str().to_string())
+}
+
+#[cfg(test)]
+fn preceding_superscript_anchor(blocks: &[MarkerStructuredBlock], marker: &str) -> bool {
+    let pattern = format!(r"(?is)<sup\b[^>]*>\s*{}\s*</sup>", regex::escape(marker));
+    let Ok(anchor) = Regex::new(&pattern) else {
+        return false;
+    };
+    blocks
+        .iter()
+        .filter(|block| block.role == "body")
+        .any(|block| anchor.is_match(&block.html))
+}
+
+#[cfg(test)]
+fn bbox_vertical_extent(bbox: &[f64]) -> Option<(f64, f64)> {
+    if bbox.len() < 4 || !bbox[1].is_finite() || !bbox[3].is_finite() {
+        return None;
+    }
+    Some((bbox[1].min(bbox[3]), bbox[1].max(bbox[3])))
+}
+
+#[cfg(test)]
+fn page_vertical_extent(page: &MarkerJsonBlock) -> Option<(f64, f64)> {
+    bbox_vertical_extent(&page.bbox).or_else(|| {
+        let mut values = page
+            .polygon
+            .iter()
+            .filter_map(|point| point.get(1).copied())
+            .filter(|value| value.is_finite());
+        let first = values.next()?;
+        let (min, max) = values.fold((first, first), |(min, max), value| {
+            (min.min(value), max.max(value))
+        });
+        Some((min, max))
+    })
+}
+
+#[cfg(test)]
+fn possible_footnote(
+    blocks: &[MarkerStructuredBlock],
+    index: usize,
+    page_extent: Option<(f64, f64)>,
+) -> bool {
+    let block = &blocks[index];
+    if block.marker_type != "Text" || block.text.len() > 2_000 {
+        return false;
+    }
+    let Some(marker) = leading_footnote_marker(&block.text) else {
+        return false;
+    };
+    if !preceding_superscript_anchor(&blocks[..index], &marker) {
+        return false;
+    }
+    let Some((page_top, page_bottom)) = page_extent else {
+        return false;
+    };
+    let page_height = page_bottom - page_top;
+    let Some((block_top, _)) = bbox_vertical_extent(&block.bbox) else {
+        return false;
+    };
+    if page_height <= 0.0 || (block_top - page_top) / page_height < 0.75 {
+        return false;
+    }
+    let previous_bottom = blocks[..index]
+        .iter()
+        .rev()
+        .filter(|candidate| candidate.role == "body")
+        .find_map(|candidate| bbox_vertical_extent(&candidate.bbox).map(|(_, bottom)| bottom));
+    previous_bottom.is_some_and(|bottom| block_top - bottom >= page_height * 0.012)
+}
+
+#[cfg(test)]
+fn marker_role(marker_type: &str) -> &'static str {
+    match marker_type {
+        "Footnote" => "footnote",
+        "PageHeader" => "page_header",
+        "PageFooter" => "page_footer",
+        _ => "body",
+    }
+}
+
+#[cfg(test)]
+fn marker_block_placeholder(marker_type: &str, page: u32) -> String {
+    match marker_type {
+        "Figure" | "FigureGroup" | "Picture" | "PictureGroup" => format!(
+            "<p><em>[Visual block on page {page}; inspect the corresponding page or extracted figure asset.]</em></p>"
+        ),
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+fn render_marker_page(page: &MarkerStructuredPage) -> String {
+    let mut output = format!("<!-- PAGE {} -->\n\n", page.number);
+    let mut footnotes = Vec::new();
+    for block in &page.blocks {
+        match block.role.as_str() {
+            "page_header" | "page_footer" => {}
+            "footnote" => footnotes.push(block),
+            "possible_footnote" => {
+                output.push_str(&format!(
+                    "<!-- BEGIN POSSIBLE_FOOTNOTE page={} marker_id={} -->\n\
+                     <aside data-document-role=\"possible-footnote\">\n{}\n</aside>\n\
+                     <!-- END POSSIBLE_FOOTNOTE page={} -->\n\n",
+                    page.number,
+                    &format!("{:x}", Sha256::digest(block.marker_id.as_bytes()))[..12],
+                    block.html,
+                    page.number
+                ));
+            }
+            _ => {
+                output.push_str(&block.html);
+                output.push_str("\n\n");
+            }
+        }
+    }
+    if !footnotes.is_empty() {
+        output.push_str(&format!("<!-- BEGIN FOOTNOTES page={} -->\n", page.number));
+        for block in footnotes {
+            output.push_str("<aside data-document-role=\"footnote\">\n");
+            output.push_str(&block.html);
+            output.push_str("\n</aside>\n");
+        }
+        output.push_str(&format!("<!-- END FOOTNOTES page={} -->\n", page.number));
+    }
+    output.trim().to_string()
+}
+
+#[cfg(test)]
+fn normalize_marker_json(raw: &str, out_dir: &Path) -> Result<MarkerExtraction, String> {
+    let parsed: MarkerJsonDocument = serde_json::from_str(raw)
+        .map_err(|error| format!("Failed to parse Marker JSON output: {error}"))?;
+    if !parsed.block_type.is_empty() && marker_type_name(&parsed.block_type) != "Document" {
+        return Err(format!(
+            "Marker JSON returned {} instead of a Document",
+            parsed.block_type
+        ));
+    }
+    let mut quality_notes = Vec::new();
+    let mut pages = Vec::new();
+    let mut image_budget = MarkerImageBudget::default();
+    for (page_index, page) in parsed.children.iter().enumerate() {
+        if marker_type_name(&page.block_type) != "Page" {
+            continue;
+        }
+        let number = page_index as u32 + 1;
+        let mut blocks = Vec::new();
+        for source in &page.children {
+            let marker_type = marker_type_name(&source.block_type).to_string();
+            let resolved_html = marker_block_html(source);
+            let mut html = marker_review_html(&resolved_html);
+            if html.trim().is_empty() {
+                html = marker_block_placeholder(&marker_type, number);
+            }
+            let text = marker_plain_text(&resolved_html);
+            let image_files = materialize_marker_images(
+                source,
+                number,
+                out_dir,
+                &mut image_budget,
+                &mut quality_notes,
+            );
+            blocks.push(MarkerStructuredBlock {
+                marker_id: source.id.clone(),
+                marker_type: marker_type.clone(),
+                role: marker_role(&marker_type).to_string(),
+                html,
+                text,
+                polygon: source.polygon.clone(),
+                bbox: source.bbox.clone(),
+                image_files,
+            });
+        }
+        let page_extent = page_vertical_extent(page);
+        let mut candidates = 0usize;
+        for index in 0..blocks.len() {
+            if possible_footnote(&blocks, index, page_extent) {
+                blocks[index].role = "possible_footnote".to_string();
+                candidates += 1;
+            }
+        }
+        if candidates > 0 {
+            quality_notes.push(format!(
+                "Marker classified {candidates} bottom-of-page text block(s) on page {number} as possible footnotes using layout and matching superscript evidence. Verify the page image if a finding depends on whether this text is a footnote."
+            ));
+        }
+        pages.push(MarkerStructuredPage {
+            number,
+            marker_id: page.id.clone(),
+            polygon: page.polygon.clone(),
+            bbox: page.bbox.clone(),
+            blocks,
+        });
+    }
+    if pages.is_empty() {
+        return Err("Marker JSON output contained no page blocks".to_string());
+    }
+    let text = pages
+        .iter()
+        .map(render_marker_page)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if text.trim().is_empty() {
+        return Err("Marker structured normalization returned empty output".to_string());
+    }
+    if text.len() > super::claude::MAX_STDOUT_BYTES {
+        return Err("Normalized Marker document exceeded the 50 MB safety limit".to_string());
+    }
+    let structure = MarkerStructure {
+        schema_version: MARKER_STRUCTURE_SCHEMA,
+        quality_notes: quality_notes.clone(),
+        pages,
+    };
+    let structure_json = serde_json::to_string_pretty(&structure)
+        .map_err(|error| format!("Failed to serialize normalized Marker structure: {error}"))?;
+    if structure_json.len() > super::claude::MAX_STDOUT_BYTES {
+        return Err("Normalized Marker structure exceeded the 50 MB safety limit".to_string());
+    }
+    atomic_write_cache(
+        &out_dir.join(MARKER_STRUCTURE_FILE),
+        structure_json.as_bytes(),
+    )?;
+    atomic_write_cache(&out_dir.join(MARKER_DOCUMENT_FILE), text.as_bytes())?;
+    Ok(MarkerExtraction {
+        text,
+        quality_notes,
+    })
+}
+
 /// Image files marker emitted for a paper (figures/tables extracted from the
-/// PDF), for registration as run artifacts.
+/// PDF), retained only for reading historical extraction caches.
 pub fn marker_image_files(paper_hash: &str) -> Result<Vec<PathBuf>, String> {
     let Some(root) = marker_output_dir(paper_hash) else {
         return Ok(Vec::new());
@@ -502,36 +1563,7 @@ pub fn marker_image_files(paper_hash: &str) -> Result<Vec<PathBuf>, String> {
     Ok(images)
 }
 
-/// Find the markdown file marker wrote under its output dir (layout is
-/// {output_dir}/{pdf_stem}/{pdf_stem}.md, but search defensively).
-fn find_marker_markdown(root: &Path) -> Result<Option<PathBuf>, String> {
-    let mut stack = vec![root.to_path_buf()];
-    let mut walk = crate::safety::WalkBudget::new_cancellable("Marker markdown discovery");
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            walk.entry()?;
-            let p = entry.path();
-            let file_type = entry
-                .file_type()
-                .map_err(|error| format!("Failed to inspect marker output: {error}"))?;
-            if file_type.is_symlink() {
-                continue;
-            }
-            if file_type.is_dir() {
-                walk.directory()?;
-                stack.push(p);
-            } else if file_type.is_file() && ext_eq(&p, "md") {
-                return Ok(Some(p));
-            }
-        }
-    }
-    Ok(None)
-}
-
-const EXTRACTION_CACHE_SCHEMA: u32 = 2;
+const EXTRACTION_CACHE_SCHEMA: u32 = 3;
 
 fn executable_identity(path: &Path) -> String {
     let metadata = fs::metadata(path).ok();
@@ -571,188 +1603,6 @@ fn atomic_write_cache(path: &Path, content: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn marker_cache_manifest(
-    marker_bin: &crate::deps::ResolvedCommand,
-    settings: &crate::settings::Settings,
-) -> serde_json::Value {
-    serde_json::json!({
-        "schema": EXTRACTION_CACHE_SCHEMA,
-        "engine": "marker",
-        "executable": executable_identity(marker_bin.discovered_path()),
-        "disable_ocr": settings.marker_disable_ocr,
-        "force_ocr": settings.marker_force_ocr,
-        "disable_images": settings.marker_disable_images,
-        "lowres_dpi": settings.marker_lowres_dpi,
-        "highres_dpi": settings.marker_highres_dpi,
-        "pdftext_workers": crate::settings::resolved_marker_pdftext_workers(settings),
-        "layout_batch_size": settings.marker_layout_batch_size,
-        "recognition_batch_size": settings.marker_recognition_batch_size,
-    })
-}
-
-fn marker_tuning_args(settings: &crate::settings::Settings) -> Vec<String> {
-    let mut args = vec![
-        "--disable_tqdm".to_string(),
-        "--lowres_image_dpi".to_string(),
-        settings.marker_lowres_dpi.to_string(),
-        "--highres_image_dpi".to_string(),
-        settings.marker_highres_dpi.to_string(),
-        "--pdftext_workers".to_string(),
-        crate::settings::resolved_marker_pdftext_workers(settings).to_string(),
-    ];
-    if settings.marker_disable_images {
-        args.push("--disable_image_extraction".to_string());
-    }
-    if settings.marker_disable_ocr {
-        args.push("--disable_ocr".to_string());
-    }
-    if settings.marker_force_ocr {
-        args.push("--force_ocr".to_string());
-    }
-    if settings.marker_layout_batch_size > 0 {
-        args.push("--layout_batch_size".to_string());
-        args.push(settings.marker_layout_batch_size.to_string());
-    }
-    if settings.marker_recognition_batch_size > 0 {
-        args.push("--recognition_batch_size".to_string());
-        args.push(settings.marker_recognition_batch_size.to_string());
-    }
-    args
-}
-
-/// Extract text from PDF using marker_single.
-/// Successful output is retained by content hash and exact engine/settings
-/// identity. This makes repeated runs nearly free while preserving marker's
-/// extracted figure assets.
-fn extract_marker(
-    app: &crate::emit::EventBus,
-    path: &Path,
-    paper_hash: &str,
-) -> Result<String, String> {
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
-    let settings = crate::settings::load();
-    let marker_bin = find_command("marker_single").ok_or("marker_single not found on PATH")?;
-    let manifest = marker_cache_manifest(&marker_bin, &settings);
-    let mut marker_args = vec![
-        path_str.to_string(),
-        "--output_format".to_string(),
-        "markdown".to_string(),
-    ];
-    marker_args.extend(marker_tuning_args(&settings));
-    // Write into the per-paper cache dir so the emitted markdown and figure
-    // images land somewhere the run can collect them.
-    let out_dir = marker_output_dir(paper_hash);
-    prune_marker_cache(paper_hash);
-    if let Some(dir) = &out_dir {
-        let manifest_path = dir.join(".pipeline-cache.json");
-        let cached_manifest = read_utf8_capped(&manifest_path, 64 * 1024)
-            .ok()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
-        if settings.reuse_pdf_extraction_cache && cached_manifest.as_ref() == Some(&manifest) {
-            if let Some(markdown) = find_marker_markdown(dir)? {
-                let content = read_utf8_capped(&markdown, super::claude::MAX_STDOUT_BYTES)?;
-                if !content.trim().is_empty() {
-                    extraction_log(app, "Marker: reused cached extraction and figure assets");
-                    return Ok(content.trim().to_string());
-                }
-            }
-        }
-        let _ = fs::remove_dir_all(dir);
-        if fs::create_dir_all(dir).is_ok() {
-            marker_args.push("--output_dir".to_string());
-            marker_args.push(dir.to_string_lossy().to_string());
-        }
-    }
-    let mut cmd = marker_bin.command(&marker_args);
-    cmd.env("PATH", env::full_path());
-    // Managed installs keep their model weights under ~/.pipeline/hf.
-    // System installs keep their own cache — don't redirect it.
-    let is_managed = crate::engines::managed_bin_dir()
-        .map(|d| marker_bin.discovered_path().starts_with(&d))
-        .unwrap_or(false);
-    if is_managed {
-        for (k, v) in crate::engines::tool_env() {
-            cmd.env(k, v);
-        }
-    }
-    let timeout_secs = settings.pdf_extraction_timeout_secs.max(120);
-    extraction_log(
-        app,
-        format!(
-            "Marker tuning: OCR {}, {}→{} DPI, {} PDF text worker(s), layout batch {}, OCR batch {}",
-            if settings.marker_disable_ocr {
-                "disabled"
-            } else if settings.marker_force_ocr {
-                "forced"
-            } else {
-                "automatic"
-            },
-            settings.marker_lowres_dpi,
-            settings.marker_highres_dpi,
-            crate::settings::resolved_marker_pdftext_workers(&settings),
-            if settings.marker_layout_batch_size == 0 {
-                "automatic".to_string()
-            } else {
-                settings.marker_layout_batch_size.to_string()
-            },
-            if settings.marker_recognition_batch_size == 0 {
-                "automatic".to_string()
-            } else {
-                settings.marker_recognition_batch_size.to_string()
-            },
-        ),
-    );
-    extraction_log(app, "Marker: invoking marker_single for PDF extraction");
-    let output = run_bounded_output(
-        cmd,
-        "marker_single",
-        std::time::Duration::from_secs(timeout_secs),
-        super::claude::MAX_STDOUT_BYTES,
-        out_dir.as_deref(),
-    )?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("marker_single failed: {}", stderr.trim()));
-    }
-
-    // Prefer the markdown file marker wrote to the output dir — stdout mixes
-    // in log lines. Fall back to stdout for marker versions that don't write
-    // the file where expected.
-    if let Some(dir) = &out_dir {
-        if let Some(md) = find_marker_markdown(dir)? {
-            let content = read_utf8_capped(&md, super::claude::MAX_STDOUT_BYTES)?;
-            let content = content.trim().to_string();
-            if !content.is_empty() {
-                let _ = atomic_write_cache(
-                    &dir.join(".pipeline-cache.json"),
-                    serde_json::to_string_pretty(&manifest)
-                        .unwrap_or_default()
-                        .as_bytes(),
-                );
-                return Ok(content);
-            }
-        }
-    }
-    if output.stdout_truncated {
-        return Err("marker_single output exceeded the 50 MB safety limit".to_string());
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() {
-        return Err("marker_single returned empty output".to_string());
-    }
-    if let Some(dir) = &out_dir {
-        let _ = atomic_write_cache(
-            &dir.join(".pipeline-cache.json"),
-            serde_json::to_string_pretty(&manifest)
-                .unwrap_or_default()
-                .as_bytes(),
-        );
-    }
-    Ok(text)
-}
-
 /// Extract text from PDF using pdftotext.
 fn extract_pdftotext(path: &Path) -> Result<String, String> {
     let path_str = path
@@ -789,10 +1639,39 @@ fn extract_pdftotext(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
+const PADDLE_MODEL_ALIAS: &str = "paddleocr-vl-1.6";
+const MAX_PADDLE_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PADDLE_MODEL_LIST_BYTES: usize = 1024 * 1024;
+const PADDLE_READINESS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+fn paddle_server_token() -> Result<String, String> {
+    use std::fmt::Write as _;
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|error| format!("Failed to generate managed server credentials: {error}"))?;
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut token, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Ok(token)
+}
+
+fn paddle_model_list_has_alias(value: &serde_json::Value) -> bool {
+    value
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|models| {
+            models.iter().any(|model| {
+                model.get("id").and_then(serde_json::Value::as_str) == Some(PADDLE_MODEL_ALIAS)
+            })
+        })
+}
+
 struct PaddleServer {
     child: std::process::Child,
     pid: u32,
     base_url: String,
+    api_key: String,
 }
 
 impl Drop for PaddleServer {
@@ -837,6 +1716,7 @@ async fn start_paddle_server(
     let total_context = (16_384u32 * resolved_concurrency).to_string();
     let mtmd_batch_tokens =
         crate::settings::resolved_paddle_mtmd_batch_tokens(settings).to_string();
+    let api_key = paddle_server_token()?;
     let mut command = StdCommand::new(&paths.server);
     command.args([
         "-m",
@@ -860,7 +1740,9 @@ async fn start_paddle_server(
         "--flash-attn",
         &settings.paddle_flash_attention,
         "--alias",
-        "paddleocr-vl-1.6",
+        PADDLE_MODEL_ALIAS,
+        "--api-key",
+        &api_key,
         "--no-ui",
     ]);
     crate::pipeline::claude::configure_silent_command(&mut command);
@@ -876,7 +1758,7 @@ async fn start_paddle_server(
         crate::commands::register_child_pid(pid);
     }
     let base_url = format!("http://127.0.0.1:{port}");
-    let client = &*crate::pipeline::api_common::HTTP_CLIENT;
+    let client = &*crate::pipeline::api_common::LOCAL_HTTP_CLIENT;
     let started = std::time::Instant::now();
     loop {
         if crate::commands::is_cancelled() {
@@ -907,11 +1789,36 @@ async fn start_paddle_server(
             .await
         {
             if response.status().is_success() {
-                return Ok(PaddleServer {
-                    child,
-                    pid,
-                    base_url,
-                });
+                let identity = client
+                    .get(format!("{base_url}/v1/models"))
+                    .bearer_auth(&api_key)
+                    .timeout(std::time::Duration::from_secs(2))
+                    .send()
+                    .await;
+                if let Ok(identity) = identity {
+                    if identity.status().is_success() {
+                        if let Ok(bytes) = crate::pipeline::api_common::response_bytes_limited(
+                            identity,
+                            MAX_PADDLE_MODEL_LIST_BYTES,
+                            None,
+                        )
+                        .await
+                        {
+                            if serde_json::from_slice::<serde_json::Value>(&bytes)
+                                .ok()
+                                .as_ref()
+                                .is_some_and(paddle_model_list_has_alias)
+                            {
+                                return Ok(PaddleServer {
+                                    child,
+                                    pid,
+                                    base_url,
+                                    api_key,
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
         if started.elapsed() >= std::time::Duration::from_secs(180) {
@@ -923,7 +1830,11 @@ async fn start_paddle_server(
             let _ = child.wait();
             return Err("PaddleOCR-VL model loading timed out after 180 seconds".to_string());
         }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let _ = crate::commands::await_or_cancel(
+            tokio::time::sleep(PADDLE_READINESS_POLL_INTERVAL),
+            None,
+        )
+        .await;
     }
 }
 
@@ -992,13 +1903,14 @@ fn paddle_response_text(value: &serde_json::Value) -> Result<String, String> {
 
 async fn paddle_extract_page(
     base_url: &str,
+    api_key: &str,
     image_path: &Path,
     timeout: std::time::Duration,
     max_output_tokens: u32,
 ) -> Result<String, String> {
     let image_url = read_image_data_url(image_path)?;
     let body = serde_json::json!({
-        "model": "paddleocr-vl-1.6",
+        "model": PADDLE_MODEL_ALIAS,
         "temperature": 0,
         "max_tokens": max_output_tokens,
         "messages": [{
@@ -1009,17 +1921,23 @@ async fn paddle_extract_page(
             ]
         }]
     });
-    let response = crate::pipeline::api_common::HTTP_CLIENT
+    let response = crate::pipeline::api_common::LOCAL_HTTP_CLIENT
         .post(format!("{base_url}/v1/chat/completions"))
+        .bearer_auth(api_key)
         .timeout(timeout)
         .json(&body)
         .send()
         .await
         .map_err(|error| format!("PaddleOCR-VL request failed: {error}"))?;
     let status = response.status();
-    let value: serde_json::Value = response
-        .json()
-        .await
+    let bytes = crate::pipeline::api_common::response_bytes_limited(
+        response,
+        MAX_PADDLE_RESPONSE_BYTES,
+        None,
+    )
+    .await
+    .map_err(|error| format!("Failed to read PaddleOCR-VL response: {error}"))?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Failed to decode PaddleOCR-VL response: {error}"))?;
     if !status.is_success() {
         let message = value
@@ -1203,6 +2121,7 @@ fn paddle_failure_suggests_decomposition(error: &str) -> bool {
 #[allow(clippy::too_many_arguments)]
 async fn paddle_extract_page_tiled(
     base_url: &str,
+    api_key: &str,
     pdf_path: &Path,
     image_path: &Path,
     output_dir: &Path,
@@ -1239,7 +2158,7 @@ async fn paddle_extract_page_tiled(
         })
         .await
         .map_err(|error| format!("PaddleOCR-VL recovery render task failed: {error}"))??;
-        match paddle_extract_page(base_url, &tile_path, timeout, max_output_tokens).await {
+        match paddle_extract_page(base_url, api_key, &tile_path, timeout, max_output_tokens).await {
             Ok(text) => completed.push((tile.order, text)),
             Err(error)
                 if paddle_failure_suggests_decomposition(&error) && tile.depth < max_depth =>
@@ -1288,6 +2207,428 @@ fn paddle_page_is_suspicious(text: &str, baseline_len: Option<usize>) -> bool {
             .filter(|value| !value.is_whitespace())
             .count();
         baseline_len >= SUSPECT_BASELINE_MIN_CHARS && extracted_chars < baseline_len / 10
+    })
+}
+
+fn paddle_markdown_blocks(markdown: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = Vec::new();
+    let mut fence: Option<char> = None;
+    let mut display_math: Option<&str> = None;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        let fence_marker = if trimmed.starts_with("```") {
+            Some('`')
+        } else if trimmed.starts_with("~~~") {
+            Some('~')
+        } else {
+            None
+        };
+        if let Some(marker) = fence_marker {
+            if fence == Some(marker) {
+                fence = None;
+            } else if fence.is_none() {
+                fence = Some(marker);
+            }
+        }
+        if fence.is_none() {
+            match trimmed {
+                "$$" => {
+                    display_math = if display_math == Some("$$") {
+                        None
+                    } else if display_math.is_none() {
+                        Some("$$")
+                    } else {
+                        display_math
+                    };
+                }
+                r"\[" => {
+                    if display_math.is_none() {
+                        display_math = Some(r"\[");
+                    }
+                }
+                r"\]" if display_math == Some(r"\[") => display_math = None,
+                _ => {}
+            }
+        }
+
+        if trimmed.is_empty() && fence.is_none() && display_math.is_none() {
+            if !current.is_empty() {
+                blocks.push(current.join("\n").trim().to_string());
+                current.clear();
+            }
+        } else {
+            current.push(line);
+        }
+    }
+    if !current.is_empty() {
+        blocks.push(current.join("\n").trim().to_string());
+    }
+    blocks.retain(|block| !block.is_empty());
+    blocks
+}
+
+fn paddle_plain_text(markdown: &str) -> String {
+    let without_comments = Regex::new(r"(?s)<!--.*?-->")
+        .unwrap()
+        .replace_all(markdown, " ");
+    let without_html = Regex::new(r"(?s)<[^>]+>")
+        .unwrap()
+        .replace_all(&without_comments, " ");
+    let without_links = Regex::new(r"!?\[([^\]]*)\]\([^)]+\)")
+        .unwrap()
+        .replace_all(&without_html, "$1");
+    let without_markers = Regex::new(r"(?m)^\s{0,3}(?:#{1,6}\s+|>\s*|[-+]\s+)")
+        .unwrap()
+        .replace_all(&without_links, "");
+    without_markers
+        .replace(['*', '_', '`'], "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn paddle_boundary_signature(block: &PaddleStructuredBlock) -> Option<String> {
+    let text = block.text.trim();
+    if text.is_empty()
+        || text.len() > 240
+        || text.contains(PADDLE_REGION_WARNING_PREFIX)
+        || Regex::new(r"^\s*\[\^[^\]\r\n]{1,32}\]:")
+            .unwrap()
+            .is_match(block.markdown.trim_start())
+    {
+        return None;
+    }
+    let normalized = Regex::new(r"\d+")
+        .unwrap()
+        .replace_all(&text.to_ascii_lowercase(), "#")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn paddle_is_standalone_page_number(text: &str) -> bool {
+    Regex::new(r"(?i)^\s*(?:page\s+)?(?:\d+|[ivxlcdm]{2,})(?:\s+(?:of|/)\s*\d+)?\s*$")
+        .unwrap()
+        .is_match(text)
+}
+
+fn classify_paddle_margins(pages: &mut [PaddleStructuredPage]) -> usize {
+    if pages.is_empty() {
+        return 0;
+    }
+    let mut header_pages = HashMap::<String, HashSet<u32>>::new();
+    let mut footer_pages = HashMap::<String, HashSet<u32>>::new();
+    for page in pages.iter() {
+        let Some(first) = page.blocks.first() else {
+            continue;
+        };
+        if let Some(signature) = paddle_boundary_signature(first) {
+            header_pages
+                .entry(signature)
+                .or_default()
+                .insert(page.number);
+        }
+        if let Some(last) = page.blocks.last() {
+            if let Some(signature) = paddle_boundary_signature(last) {
+                footer_pages
+                    .entry(signature)
+                    .or_default()
+                    .insert(page.number);
+            }
+        }
+    }
+    let page_count = pages.len();
+    let repeated = |matches: Option<&HashSet<u32>>| {
+        matches.is_some_and(|pages| pages.len() >= 3 && pages.len() * 2 >= page_count)
+    };
+    let mut classified = 0usize;
+    for page in pages {
+        if page.blocks.is_empty() {
+            continue;
+        }
+        let last_index = page.blocks.len() - 1;
+        let first_is_page_number = paddle_is_standalone_page_number(&page.blocks[0].text);
+        let last_is_page_number = paddle_is_standalone_page_number(&page.blocks[last_index].text);
+
+        if last_is_page_number {
+            page.blocks[last_index].role = "page_footer".to_string();
+            classified += 1;
+        }
+        if first_is_page_number && last_index != 0 {
+            page.blocks[0].role = "page_header".to_string();
+            classified += 1;
+        }
+
+        let protected_first_page_heading =
+            page.number == 1 && page.blocks[0].markdown.trim_start().starts_with('#');
+        if !protected_first_page_heading && page.blocks[0].role == "body" {
+            if let Some(signature) = paddle_boundary_signature(&page.blocks[0]) {
+                if repeated(header_pages.get(&signature)) {
+                    page.blocks[0].role = "page_header".to_string();
+                    classified += 1;
+                }
+            }
+        }
+        if page.blocks[last_index].role == "body" {
+            if let Some(signature) = paddle_boundary_signature(&page.blocks[last_index]) {
+                if repeated(footer_pages.get(&signature)) {
+                    page.blocks[last_index].role = "page_footer".to_string();
+                    classified += 1;
+                }
+            }
+        }
+    }
+    classified
+}
+
+#[derive(Debug)]
+struct PaddleNoteMarker {
+    value: String,
+    explicit_definition: bool,
+}
+
+fn unicode_superscript_value(value: &str) -> Option<String> {
+    let mut output = String::new();
+    for character in value.chars() {
+        output.push(match character {
+            '⁰' => '0',
+            '¹' => '1',
+            '²' => '2',
+            '³' => '3',
+            '⁴' => '4',
+            '⁵' => '5',
+            '⁶' => '6',
+            '⁷' => '7',
+            '⁸' => '8',
+            '⁹' => '9',
+            _ => return None,
+        });
+    }
+    (!output.is_empty()).then_some(output)
+}
+
+fn unicode_superscript_marker(value: &str) -> String {
+    value
+        .chars()
+        .filter_map(|character| match character {
+            '0' => Some('⁰'),
+            '1' => Some('¹'),
+            '2' => Some('²'),
+            '3' => Some('³'),
+            '4' => Some('⁴'),
+            '5' => Some('⁵'),
+            '6' => Some('⁶'),
+            '7' => Some('⁷'),
+            '8' => Some('⁸'),
+            '9' => Some('⁹'),
+            _ => None,
+        })
+        .collect()
+}
+
+fn paddle_leading_note_marker(block: &PaddleStructuredBlock) -> Option<PaddleNoteMarker> {
+    let markdown = block.markdown.trim_start();
+    if let Some(capture) = Regex::new(r"^\[\^([^\]\r\n]{1,32})\]:\s*")
+        .unwrap()
+        .captures(markdown)
+    {
+        return Some(PaddleNoteMarker {
+            value: capture[1].to_string(),
+            explicit_definition: true,
+        });
+    }
+    if let Some(capture) = Regex::new(r"(?is)^<sup\b[^>]*>\s*(\d{1,3}|[*†‡])\s*</sup>\s*")
+        .unwrap()
+        .captures(markdown)
+    {
+        return Some(PaddleNoteMarker {
+            value: capture[1].to_string(),
+            explicit_definition: false,
+        });
+    }
+    if let Some(capture) = Regex::new(r"^([⁰¹²³⁴⁵⁶⁷⁸⁹]{1,3})\s+")
+        .unwrap()
+        .captures(markdown)
+    {
+        return unicode_superscript_value(&capture[1]).map(|value| PaddleNoteMarker {
+            value,
+            explicit_definition: false,
+        });
+    }
+    Regex::new(r"^(?:>\s*)?(\d{1,3}|[*†‡])(?:[.)])?\s+")
+        .unwrap()
+        .captures(markdown)
+        .map(|capture| PaddleNoteMarker {
+            value: capture[1].to_string(),
+            explicit_definition: false,
+        })
+}
+
+fn paddle_preceding_note_anchor(blocks: &[PaddleStructuredBlock], marker: &str) -> bool {
+    let markdown_reference = format!("[^{marker}]");
+    let latex_reference = format!(r"\textsuperscript{{{marker}}}");
+    let unicode_reference = unicode_superscript_marker(marker);
+    let html_pattern = format!(r"(?is)<sup\b[^>]*>\s*{}\s*</sup>", regex::escape(marker));
+    let html_anchor = Regex::new(&html_pattern).ok();
+    blocks
+        .iter()
+        .filter(|block| block.role == "body")
+        .any(|block| {
+            block.markdown.contains(&markdown_reference)
+                || block.markdown.contains(&latex_reference)
+                || (!unicode_reference.is_empty() && block.markdown.contains(&unicode_reference))
+                || html_anchor
+                    .as_ref()
+                    .is_some_and(|pattern| pattern.is_match(&block.markdown))
+        })
+}
+
+fn classify_paddle_footnotes(pages: &mut [PaddleStructuredPage]) -> usize {
+    let mut possible = 0usize;
+    for page in pages {
+        let block_count = page.blocks.len();
+        for index in 0..block_count {
+            if page.blocks[index].role != "body" {
+                continue;
+            }
+            let Some(marker) = paddle_leading_note_marker(&page.blocks[index]) else {
+                continue;
+            };
+            page.blocks[index].note_marker = Some(marker.value.clone());
+            if marker.explicit_definition {
+                page.blocks[index].role = "footnote".to_string();
+                continue;
+            }
+            let trailing = index.saturating_mul(4) >= block_count.saturating_mul(3)
+                || index.saturating_add(3) >= block_count;
+            if trailing
+                && page.blocks[index].text.len() <= 2_000
+                && paddle_preceding_note_anchor(&page.blocks[..index], &marker.value)
+            {
+                page.blocks[index].role = "possible_footnote".to_string();
+                possible += 1;
+            }
+        }
+    }
+    possible
+}
+
+fn render_paddle_page(page: &PaddleStructuredPage) -> String {
+    let mut output = format!("<!-- PAGE {} -->\n\n", page.number);
+    let mut footnotes = Vec::new();
+    for block in &page.blocks {
+        match block.role.as_str() {
+            "page_header" | "page_footer" => {}
+            "footnote" => footnotes.push(block),
+            "possible_footnote" => {
+                output.push_str(&format!(
+                    "<!-- BEGIN POSSIBLE_FOOTNOTE page={} block_id={} -->\n\
+                     <aside data-document-role=\"possible-footnote\">\n{}\n</aside>\n\
+                     <!-- END POSSIBLE_FOOTNOTE page={} -->\n\n",
+                    page.number, block.block_id, block.markdown, page.number
+                ));
+            }
+            _ => {
+                output.push_str(&block.markdown);
+                output.push_str("\n\n");
+            }
+        }
+    }
+    if !footnotes.is_empty() {
+        output.push_str(&format!("<!-- BEGIN FOOTNOTES page={} -->\n", page.number));
+        for block in footnotes {
+            output.push_str("<aside data-document-role=\"footnote\">\n");
+            output.push_str(&block.markdown);
+            output.push_str("\n</aside>\n");
+        }
+        output.push_str(&format!("<!-- END FOOTNOTES page={} -->\n", page.number));
+    }
+    output.trim().to_string()
+}
+
+fn normalize_paddle_pages(
+    raw_pages: &[String],
+    structure_path: &Path,
+) -> Result<PaddleExtraction, String> {
+    let mut pages = Vec::with_capacity(raw_pages.len());
+    for (page_index, raw_page) in raw_pages.iter().enumerate() {
+        let markdown_blocks = paddle_markdown_blocks(raw_page);
+        if markdown_blocks.is_empty() {
+            return Err(format!(
+                "PaddleOCR-VL normalization found no content blocks on page {}",
+                page_index + 1
+            ));
+        }
+        let last_index = markdown_blocks.len() - 1;
+        let blocks = markdown_blocks
+            .into_iter()
+            .enumerate()
+            .map(|(block_index, markdown)| {
+                let boundary = if block_index == 0 && block_index == last_index {
+                    Some("top_and_bottom".to_string())
+                } else if block_index == 0 {
+                    Some("top".to_string())
+                } else if block_index == last_index {
+                    Some("bottom".to_string())
+                } else {
+                    None
+                };
+                PaddleStructuredBlock {
+                    block_id: format!(
+                        "paddle-page-{:04}-block-{:04}",
+                        page_index + 1,
+                        block_index + 1
+                    ),
+                    role: "body".to_string(),
+                    text: paddle_plain_text(&markdown),
+                    markdown,
+                    boundary,
+                    note_marker: None,
+                }
+            })
+            .collect();
+        pages.push(PaddleStructuredPage {
+            number: page_index as u32 + 1,
+            blocks,
+        });
+    }
+
+    classify_paddle_margins(&mut pages);
+    let possible_footnotes = classify_paddle_footnotes(&mut pages);
+    let mut quality_notes = Vec::new();
+    if possible_footnotes > 0 {
+        quality_notes.push(format!(
+            "PaddleOCR-VL classified {possible_footnotes} trailing text block(s) as possible footnotes using matching in-page reference markers. Verify the rendered page if a finding depends on whether this text is a footnote."
+        ));
+    }
+    let text = pages
+        .iter()
+        .map(render_paddle_page)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if text.trim().is_empty() {
+        return Err("PaddleOCR-VL structured normalization returned empty output".to_string());
+    }
+    if text.len() > super::claude::MAX_STDOUT_BYTES {
+        return Err("Normalized PaddleOCR-VL document exceeded the 50 MB safety limit".to_string());
+    }
+    let structure = PaddleStructure {
+        schema_version: PADDLE_STRUCTURE_SCHEMA,
+        quality_notes: quality_notes.clone(),
+        pages,
+    };
+    let structure_json = serde_json::to_string_pretty(&structure)
+        .map_err(|error| format!("Failed to serialize PaddleOCR-VL structure: {error}"))?;
+    if structure_json.len() > super::claude::MAX_STDOUT_BYTES {
+        return Err("PaddleOCR-VL structure exceeded the 50 MB safety limit".to_string());
+    }
+    atomic_write_cache(structure_path, structure_json.as_bytes())?;
+    Ok(PaddleExtraction {
+        text: text.trim().to_string(),
+        quality_notes,
     })
 }
 
@@ -1494,6 +2835,11 @@ async fn extract_paddle(
                 .expect("pending pages require server")
                 .base_url
                 .clone(),
+            server
+                .as_ref()
+                .expect("pending pages require server")
+                .api_key
+                .clone(),
             render_dir.path().join(&rendered.names[index]),
             path.to_path_buf(),
             render_dir.path().to_path_buf(),
@@ -1531,6 +2877,11 @@ async fn extract_paddle(
                     .expect("pending pages require server")
                     .base_url
                     .clone(),
+                server
+                    .as_ref()
+                    .expect("pending pages require server")
+                    .api_key
+                    .clone(),
                 render_dir.path().join(&rendered.names[index]),
                 path.to_path_buf(),
                 render_dir.path().to_path_buf(),
@@ -1550,8 +2901,7 @@ async fn extract_paddle(
         }
     }
 
-    let mut text = String::new();
-    let mut quality_notes = Vec::new();
+    let mut raw_pages = Vec::with_capacity(page_count);
     for (index, page_text) in page_texts.into_iter().enumerate() {
         let page = index + 1;
         let page_text = page_text
@@ -1567,14 +2917,13 @@ async fn extract_paddle(
                 "PaddleOCR-VL returned incomplete output for page {page} after retries"
             ));
         }
-        text.push_str(&format!("<!-- PAGE {page} -->\n"));
-        text.push_str(page_text.trim());
-        text.push_str("\n\n");
+        raw_pages.push(page_text.trim().to_string());
     }
-    let text = text.trim().to_string();
-    if text.is_empty() {
-        return Err("PaddleOCR-VL returned empty output".to_string());
-    }
+    let structure_path = paddle_structure_path(hash)
+        .ok_or_else(|| "Could not create PaddleOCR-VL structure path".to_string())?;
+    let normalized = normalize_paddle_pages(&raw_pages, &structure_path)?;
+    let text = normalized.text;
+    let mut quality_notes = normalized.quality_notes;
     quality_notes.extend(scan_math_quality(&text));
     if text.contains(PADDLE_REGION_WARNING_PREFIX) {
         quality_notes.push(
@@ -1598,6 +2947,7 @@ fn spawn_paddle_page_task(
     index: usize,
     page_count: usize,
     base_url: String,
+    api_key: String,
     image_path: PathBuf,
     pdf_path: PathBuf,
     recovery_dir: PathBuf,
@@ -1631,6 +2981,7 @@ fn spawn_paddle_page_task(
                 );
                 paddle_extract_page_tiled(
                     &base_url,
+                    &api_key,
                     &pdf_path,
                     &image_path,
                     &recovery_dir,
@@ -1642,7 +2993,14 @@ fn spawn_paddle_page_task(
                 )
                 .await
             } else {
-                paddle_extract_page(&base_url, &image_path, timeout, max_output_tokens).await
+                paddle_extract_page(
+                    &base_url,
+                    &api_key,
+                    &image_path,
+                    timeout,
+                    max_output_tokens,
+                )
+                .await
             };
             match result {
                 Ok(text) if !paddle_page_is_suspicious(&text, baseline_len) => {
@@ -1692,13 +3050,9 @@ fn spawn_paddle_page_task(
     });
 }
 
-/// Find a command by scanning the managed tool directory (~/.pipeline/bin),
-/// then PATH, directly (no subprocess). Managed installs win over PATH so
-/// the one-click install is the copy that actually runs.
+/// Resolve a bundled or PATH command without invoking a shell.
 fn find_command(name: &str) -> Option<crate::deps::ResolvedCommand> {
-    crate::engines::find_managed(name)
-        .and_then(crate::deps::resolve_discovered_command)
-        .or_else(|| crate::deps::resolve_command(name))
+    crate::deps::resolve_command(name)
 }
 
 // ── LLM extraction: transport, verification, repair ─────────────────
@@ -1725,9 +3079,13 @@ const SUSPECT_BASELINE_MIN_CHARS: usize = 200;
 /// the Read tool.
 fn provider_uses_direct_api(settings: &crate::settings::Settings) -> bool {
     match settings.preferred_provider.as_str() {
+        "claude" => !settings.anthropic_api_key.is_empty(),
         "codex" => !settings.openai_api_key.is_empty(),
         "gemini" => !settings.google_api_key.is_empty(),
-        _ => !settings.anthropic_api_key.is_empty(),
+        // Local OpenAI-compatible servers intentionally reject the file-part
+        // attachment used by the verified LLM extraction path.
+        "local" => false,
+        _ => false,
     }
 }
 
@@ -1988,8 +3346,10 @@ async fn request_llm_pages(
         prompt,
         timeout_secs,
     );
-    request.tools = vec!["Read".to_string()];
-    request.read_dirs = read_dirs;
+    if !attach {
+        request.tools = vec!["Read".to_string()];
+        request.read_dirs = read_dirs;
+    }
     request.pdf_attachment = attach.then_some(path);
     request.max_output_tokens = Some(EXTRACTION_MAX_OUTPUT_TOKENS);
     request.settings = settings;
@@ -2087,24 +3447,17 @@ async fn extract_llm(
     let path_str = path
         .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
-    // Normalize backslashes so the path Claude sees in the prompt matches
-    // its internal POSIX-form normalization on Windows.
-    let prompt_path = path_str.replace('\\', "/");
-    // Grant Read access to the PDF's parent directory.  The cwd defaults
-    // to the system temp dir, so without this Claude can't reach files
-    // sitting under the user's Documents/Downloads/etc.
-    let parent_dir = path
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let read_dirs: Vec<String> = if parent_dir.is_empty() {
-        vec![]
-    } else {
-        vec![parent_dir]
-    };
+    let original_source_path = path_str.to_string();
 
     let settings = crate::settings::load();
     let attach = provider_uses_direct_api(&settings);
+    if settings.preferred_provider == "local" {
+        return Err(
+            "LLM PDF extraction is not supported by local OpenAI-compatible servers. \
+             Use PaddleOCR-VL or pdftotext extraction instead."
+                .to_string(),
+        );
+    }
     let timeout = (settings.step_timeout_secs / 2).clamp(60, 600);
     let settings = std::sync::Arc::new(settings);
 
@@ -2144,7 +3497,7 @@ async fn extract_llm(
                     return Ok(ExtractionResult {
                         text: cached,
                         method: "llm".to_string(),
-                        source_path: path_str.to_string(),
+                        source_path: original_source_path,
                         paper_hash: hash.to_string(),
                         quality_notes,
                     });
@@ -2152,6 +3505,24 @@ async fn extract_llm(
             }
         }
     }
+
+    let provider_input = tempfile::Builder::new()
+        .prefix("pipeline_pdf_provider_input_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create private PDF input directory: {error}"))?;
+    let source = path.to_path_buf();
+    let input_root = provider_input.path().to_path_buf();
+    let staged_path =
+        tokio::task::spawn_blocking(move || stage_provider_input(&source, &input_root))
+            .await
+            .map_err(|error| format!("PDF staging task failed: {error}"))??;
+    let prompt_path = staged_path.to_string_lossy().replace('\\', "/");
+    // Direct APIs receive the selected PDF as an attachment and need no file
+    // tool. CLI transports receive exactly one private read root.
+    let read_dirs = (!attach)
+        .then(|| provider_input.path().to_string_lossy().replace('\\', "/"))
+        .into_iter()
+        .collect::<Vec<_>>();
 
     let ranges = llm_initial_ranges(&baseline);
     extraction_log(
@@ -2165,7 +3536,7 @@ async fn extract_llm(
     );
     let mut sections = run_llm_ranges(
         app,
-        path,
+        &staged_path,
         &prompt_path,
         &ranges,
         attach,
@@ -2189,7 +3560,7 @@ async fn extract_llm(
         sections.extend(
             run_llm_ranges(
                 app,
-                path,
+                &staged_path,
                 &prompt_path,
                 &retry_ranges,
                 attach,
@@ -2227,7 +3598,7 @@ async fn extract_llm(
     Ok(ExtractionResult {
         text: final_text,
         method: "llm".to_string(),
-        source_path: path.to_string_lossy().to_string(),
+        source_path: original_source_path,
         paper_hash: hash.to_string(),
         quality_notes,
     })
@@ -2362,38 +3733,22 @@ fn render_pdf_pages_with_profile(
     Ok(RenderedPdfPages { names, truncated })
 }
 
-/// Extract from a PDF file using marker or pdftotext.
+/// Extract from a PDF file using a supported native extractor.
 /// The "llm" setting is handled separately in `extract()` since it's async.
-/// `method` should be the resolved effective extractor ("marker" or "pdftotext");
-/// callers are expected to translate "auto" / "llm" upstream.
+/// `method` should be the resolved effective extractor; callers are expected
+/// to translate "auto" / "llm" upstream.
 fn extract_pdf_native(
-    app: &crate::emit::EventBus,
+    _app: &crate::emit::EventBus,
     path: &Path,
     method: &str,
 ) -> Result<ExtractionResult, String> {
+    // This guard intentionally precedes hashing and command resolution. A
+    // legacy Marker setting must never inspect or invoke a Marker executable,
+    // whether it remains in ~/.pipeline or appears on PATH.
+    reject_retired_pdf_extractor(method)?;
     let hash = compute_hash(path)?;
 
-    let try_marker = method == "marker";
     let try_pdftotext = method == "pdftotext";
-
-    if try_marker {
-        if find_command("marker_single").is_none() {
-            return Err(
-                "PDF extractor is set to 'marker' but marker_single is not installed. \
-                        Install it from Settings → PDF Extraction, or change the setting."
-                    .to_string(),
-            );
-        }
-        let text = extract_marker(app, path, &hash)?;
-        let quality_notes = scan_math_quality(&text);
-        return Ok(ExtractionResult {
-            text,
-            method: "marker".to_string(),
-            source_path: path.to_string_lossy().to_string(),
-            paper_hash: hash,
-            quality_notes,
-        });
-    }
 
     if try_pdftotext {
         if find_command("pdftotext").is_none() {
@@ -2756,31 +4111,293 @@ mod tests {
     use super::*;
 
     #[test]
-    fn marker_tuning_args_cover_global_parser_settings() {
-        let settings = crate::settings::Settings {
-            marker_force_ocr: true,
-            marker_disable_images: true,
-            marker_lowres_dpi: 72,
-            marker_highres_dpi: 144,
-            marker_pdftext_workers: 8,
-            marker_layout_batch_size: 12,
-            marker_recognition_batch_size: 32,
+    fn direct_pdf_attachment_requires_the_matching_cloud_api_key() {
+        let mut settings = crate::settings::Settings {
+            preferred_provider: "claude".to_string(),
             ..Default::default()
         };
-        let args = marker_tuning_args(&settings);
-        assert!(args.contains(&"--force_ocr".to_string()));
-        assert!(args.contains(&"--disable_image_extraction".to_string()));
-        assert!(!args.contains(&"--disable_ocr".to_string()));
-        for expected in ["72", "144", "8", "12", "32"] {
-            assert!(args.contains(&expected.to_string()));
-        }
+        assert!(!provider_uses_direct_api(&settings));
+        settings.anthropic_api_key = "configured".to_string();
+        assert!(provider_uses_direct_api(&settings));
+
+        settings.preferred_provider = "codex".to_string();
+        assert!(!provider_uses_direct_api(&settings));
+        settings.openai_api_key = "configured".to_string();
+        assert!(provider_uses_direct_api(&settings));
+
+        settings.preferred_provider = "gemini".to_string();
+        assert!(!provider_uses_direct_api(&settings));
+        settings.google_api_key = "configured".to_string();
+        assert!(provider_uses_direct_api(&settings));
+
+        settings.preferred_provider = "local".to_string();
+        settings.local_api_key = "configured".to_string();
+        assert!(!provider_uses_direct_api(&settings));
     }
 
     #[test]
-    fn marker_automatic_batches_do_not_override_upstream_device_defaults() {
-        let args = marker_tuning_args(&crate::settings::Settings::default());
-        assert!(!args.contains(&"--layout_batch_size".to_string()));
-        assert!(!args.contains(&"--recognition_batch_size".to_string()));
+    fn selected_file_is_staged_without_its_siblings() {
+        let selected_dir = tempfile::tempdir().unwrap();
+        let selected = selected_dir.path().join("paper.pdf");
+        fs::write(&selected, b"selected").unwrap();
+        fs::write(selected_dir.path().join("private-notes.txt"), b"secret").unwrap();
+        let private = tempfile::tempdir().unwrap();
+
+        let scoped = stage_selected_source(&selected, "document", private.path()).unwrap();
+        let staged = scoped.source_path.unwrap();
+        assert_eq!(fs::read(&staged).unwrap(), b"selected");
+        assert_eq!(scoped.read_root.as_deref(), staged.parent());
+        assert!(!private.path().join("source/private-notes.txt").exists());
+    }
+
+    #[test]
+    fn latex_source_staging_copies_only_the_bounded_dependency_closure() {
+        let parent = tempfile::tempdir().unwrap();
+        let project = parent.path().join("paper");
+        fs::create_dir_all(project.join("sections")).unwrap();
+        fs::create_dir_all(project.join("figures")).unwrap();
+        fs::write(
+            project.join("main.tex"),
+            "\\documentclass{localclass}\n\\input{sections/model}\n\
+             \\graphicspath{{figures/}}\n\\includegraphics{irf}\n\\bibliography{refs}\n\
+             % \\input{unused}\n\\input{../secret}\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("sections/model.tex"),
+            "\\input{details}\nModel.",
+        )
+        .unwrap();
+        fs::write(project.join("sections/details.tex"), "Details.").unwrap();
+        fs::write(project.join("figures/irf.png"), b"image").unwrap();
+        fs::write(project.join("refs.bib"), "@article{x}").unwrap();
+        fs::write(project.join("localclass.cls"), "\\ProvidesClass{x}").unwrap();
+        fs::write(project.join("unused.tex"), "not selected").unwrap();
+        fs::write(parent.path().join("secret.tex"), "outside").unwrap();
+        let private = tempfile::tempdir().unwrap();
+
+        let scoped = stage_selected_source(&project, "document", private.path()).unwrap();
+        let staged_root = scoped.source_path.unwrap();
+        assert!(staged_root.is_dir());
+        for relative in [
+            "main.tex",
+            "sections/model.tex",
+            "sections/details.tex",
+            "figures/irf.png",
+            "refs.bib",
+            "localclass.cls",
+        ] {
+            assert!(
+                staged_root.join(relative).is_file(),
+                "{relative} was omitted"
+            );
+        }
+        assert!(!staged_root.join("unused.tex").exists());
+        assert!(!private.path().join("secret.tex").exists());
+        assert_eq!(scoped.read_root.as_deref(), Some(staged_root.as_path()));
+    }
+
+    #[test]
+    fn retired_marker_fails_before_file_or_command_resolution() {
+        let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        let missing = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .join("does-not-exist.pdf");
+        let error = extract_pdf_native(&app, &missing, "marker").unwrap_err();
+        assert_eq!(error, MARKER_DISABLED_MESSAGE);
+    }
+
+    fn marker_page(id: &str, children: Vec<serde_json::Value>) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "block_type": "Page",
+            "html": children.iter().filter_map(|child| {
+                child.get("id").and_then(|value| value.as_str())
+            }).map(|child_id| {
+                format!("<content-ref src='{child_id}'></content-ref>")
+            }).collect::<String>(),
+            "polygon": [[0.0, 0.0], [612.0, 0.0], [612.0, 792.0], [0.0, 792.0]],
+            "bbox": [0.0, 0.0, 612.0, 792.0],
+            "children": children,
+            "images": {}
+        })
+    }
+
+    fn marker_block(id: &str, block_type: &str, html: &str, bbox: [f64; 4]) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "block_type": block_type,
+            "html": html,
+            "polygon": [
+                [bbox[0], bbox[1]],
+                [bbox[2], bbox[1]],
+                [bbox[2], bbox[3]],
+                [bbox[0], bbox[3]]
+            ],
+            "bbox": bbox,
+            "children": null,
+            "images": null
+        })
+    }
+
+    #[test]
+    fn marker_normalization_separates_footnotes_pages_and_repeated_margins() {
+        let first_page = marker_page(
+            "/page/0/Page/0",
+            vec![
+                marker_block(
+                    "/page/0/PageHeader/0",
+                    "PageHeader",
+                    "<p>Running title</p>",
+                    [72.0, 20.0, 540.0, 40.0],
+                ),
+                marker_block(
+                    "/page/0/Text/1",
+                    "Text",
+                    "<p>The main argument continues.<sup>1</sup></p>",
+                    [72.0, 120.0, 540.0, 220.0],
+                ),
+                marker_block(
+                    "/page/0/Text/2",
+                    "Text",
+                    "<p>1 This qualification belongs in a footnote.</p>",
+                    [72.0, 680.0, 540.0, 720.0],
+                ),
+                marker_block(
+                    "/page/0/Footnote/3",
+                    "Footnote",
+                    "<p><sup>2</sup> Marker recognized this note.</p>",
+                    [72.0, 725.0, 540.0, 750.0],
+                ),
+                marker_block(
+                    "/page/0/PageFooter/4",
+                    "PageFooter",
+                    "<p>7</p>",
+                    [300.0, 770.0, 312.0, 785.0],
+                ),
+            ],
+        );
+        let second_page = marker_page(
+            "/page/1/Page/0",
+            vec![marker_block(
+                "/page/1/Text/0",
+                "Text",
+                "<p>The main argument resumes on the next page.</p>",
+                [72.0, 80.0, 540.0, 140.0],
+            )],
+        );
+        let raw = serde_json::json!({
+            "block_type": "Document",
+            "children": [first_page, second_page]
+        })
+        .to_string();
+        let output_dir = tempfile::tempdir().unwrap();
+        let normalized = normalize_marker_json(&raw, output_dir.path()).unwrap();
+
+        assert!(normalized.text.contains("<!-- PAGE 1 -->"));
+        assert!(normalized.text.contains("<!-- PAGE 2 -->"));
+        assert!(!normalized.text.contains("Running title"));
+        assert!(!normalized.text.contains("<p>7</p>"));
+        assert!(normalized.text.contains("BEGIN POSSIBLE_FOOTNOTE page=1"));
+        assert!(normalized.text.contains("BEGIN FOOTNOTES page=1"));
+        assert!(
+            normalized.text.find("BEGIN FOOTNOTES page=1").unwrap()
+                < normalized.text.find("<!-- PAGE 2 -->").unwrap()
+        );
+        assert!(normalized
+            .quality_notes
+            .iter()
+            .any(|note| note.contains("possible footnotes")));
+
+        let structure = read_utf8_capped(
+            &output_dir.path().join(MARKER_STRUCTURE_FILE),
+            super::super::claude::MAX_STDOUT_BYTES,
+        )
+        .unwrap();
+        let structure: MarkerStructure = serde_json::from_str(&structure).unwrap();
+        assert_eq!(structure.pages.len(), 2);
+        assert!(structure.pages[0]
+            .blocks
+            .iter()
+            .any(|block| block.role == "possible_footnote"));
+        assert!(structure.pages[0]
+            .blocks
+            .iter()
+            .any(|block| block.role == "footnote"));
+        assert!(structure.pages[0]
+            .blocks
+            .iter()
+            .any(|block| block.role == "page_header"));
+    }
+
+    #[test]
+    fn marker_bottom_text_without_matching_superscript_remains_body_text() {
+        let page = marker_page(
+            "/page/0/Page/0",
+            vec![
+                marker_block(
+                    "/page/0/Text/0",
+                    "Text",
+                    "<p>Ordinary body text.</p>",
+                    [72.0, 120.0, 540.0, 220.0],
+                ),
+                marker_block(
+                    "/page/0/Text/1",
+                    "Text",
+                    "<p>1 A numbered body paragraph near the page bottom.</p>",
+                    [72.0, 680.0, 540.0, 720.0],
+                ),
+            ],
+        );
+        let raw = serde_json::json!({
+            "block_type": "Document",
+            "children": [page]
+        })
+        .to_string();
+        let output_dir = tempfile::tempdir().unwrap();
+        normalize_marker_json(&raw, output_dir.path()).unwrap();
+        let structure = serde_json::from_str::<MarkerStructure>(
+            &read_utf8_capped(
+                &output_dir.path().join(MARKER_STRUCTURE_FILE),
+                super::super::claude::MAX_STDOUT_BYTES,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(structure.pages[0].blocks[1].role, "body");
+    }
+
+    #[test]
+    fn marker_json_images_are_externalized_and_linked() {
+        let mut figure = marker_block(
+            "/page/0/Figure/0",
+            "Figure",
+            "<figure></figure>",
+            [72.0, 120.0, 540.0, 420.0],
+        );
+        figure["images"] = serde_json::json!({
+            "/page/0/Figure/0": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        });
+        let raw = serde_json::json!({
+            "block_type": "Document",
+            "children": [marker_page("/page/0/Page/0", vec![figure])]
+        })
+        .to_string();
+        let output_dir = tempfile::tempdir().unwrap();
+        normalize_marker_json(&raw, output_dir.path()).unwrap();
+        let structure = serde_json::from_str::<MarkerStructure>(
+            &read_utf8_capped(
+                &output_dir.path().join(MARKER_STRUCTURE_FILE),
+                super::super::claude::MAX_STDOUT_BYTES,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let image_files = &structure.pages[0].blocks[0].image_files;
+        assert_eq!(image_files.len(), 1);
+        assert!(image_files[0].ends_with(".png"));
+        assert!(output_dir.path().join(&image_files[0]).is_file());
     }
 
     #[test]
@@ -2796,6 +4413,32 @@ mod tests {
             paddle_response_text(&response).unwrap(),
             "# Heading\n\n$x=1$"
         );
+    }
+
+    #[test]
+    fn paddle_readiness_requires_the_managed_model_alias() {
+        let expected = serde_json::json!({
+            "data": [{"id": PADDLE_MODEL_ALIAS, "object": "model"}]
+        });
+        let wrong = serde_json::json!({
+            "data": [{"id": "unrelated-server", "object": "model"}]
+        });
+        assert!(paddle_model_list_has_alias(&expected));
+        assert!(!paddle_model_list_has_alias(&wrong));
+        assert!(!paddle_model_list_has_alias(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn paddle_readiness_polling_has_a_bounded_backoff() {
+        assert!(PADDLE_READINESS_POLL_INTERVAL >= std::time::Duration::from_millis(100));
+        assert!(PADDLE_READINESS_POLL_INTERVAL <= std::time::Duration::from_millis(250));
+    }
+
+    #[test]
+    fn paddle_server_credentials_are_high_entropy_hex() {
+        let token = paddle_server_token().unwrap();
+        assert_eq!(token.len(), 64);
+        assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -2831,6 +4474,87 @@ mod tests {
              > [{PADDLE_REGION_WARNING}]"
         );
         assert!(paddle_page_is_suspicious(&warnings, Some(1_000)));
+    }
+
+    #[test]
+    fn paddle_normalization_separates_notes_and_repeated_margins() {
+        let raw_pages = vec![
+            "# Paper Title\n\nThe argument starts here.[^1]\n\n[^1]: An explicit note.\n\n1"
+                .to_string(),
+            "Journal of Macro 2026\n\nThe argument continues.<sup>2</sup>\n\n2 A possible note.\n\n2"
+                .to_string(),
+            "Journal of Macro 2026\n\nMore body text.\n\n3".to_string(),
+            "Journal of Macro 2026\n\nThe conclusion.\n\n4".to_string(),
+        ];
+        let output_dir = tempfile::tempdir().unwrap();
+        let structure_path = output_dir.path().join(PADDLE_STRUCTURE_FILE);
+        let normalized = normalize_paddle_pages(&raw_pages, &structure_path).unwrap();
+
+        assert!(!normalized.text.contains("Journal of Macro 2026"));
+        assert!(normalized.text.contains("# Paper Title"));
+        assert!(normalized.text.contains("<!-- PAGE 4 -->"));
+        assert!(normalized.text.contains("BEGIN FOOTNOTES page=1"));
+        assert!(normalized.text.contains("BEGIN POSSIBLE_FOOTNOTE page=2"));
+        assert!(!normalized.text.lines().any(|line| line.trim() == "4"));
+        assert!(normalized
+            .quality_notes
+            .iter()
+            .any(|note| note.contains("possible footnotes")));
+
+        let structure: PaddleStructure = serde_json::from_str(
+            &read_utf8_capped(&structure_path, super::super::claude::MAX_STDOUT_BYTES).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(structure.pages.len(), 4);
+        assert_eq!(structure.pages[0].blocks[0].role, "body");
+        assert!(structure.pages[1]
+            .blocks
+            .iter()
+            .any(|block| block.role == "page_header"));
+        assert!(structure.pages[0]
+            .blocks
+            .iter()
+            .any(|block| block.role == "footnote"));
+        assert!(structure.pages[1]
+            .blocks
+            .iter()
+            .any(|block| block.role == "possible_footnote"));
+        assert!(structure
+            .pages
+            .iter()
+            .all(|page| page.blocks.last().unwrap().role == "page_footer"));
+    }
+
+    #[test]
+    fn paddle_numbered_trailing_paragraph_without_anchor_stays_body() {
+        let raw_pages = vec![concat!(
+            "# Results\n\n",
+            "The estimates are stable.\n\n",
+            "The robustness checks reach the same conclusion.\n\n",
+            "1 A numbered body paragraph near the end of the page."
+        )
+        .to_string()];
+        let output_dir = tempfile::tempdir().unwrap();
+        let structure_path = output_dir.path().join(PADDLE_STRUCTURE_FILE);
+        let normalized = normalize_paddle_pages(&raw_pages, &structure_path).unwrap();
+        let structure: PaddleStructure = serde_json::from_str(
+            &read_utf8_capped(&structure_path, super::super::claude::MAX_STDOUT_BYTES).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(structure.pages[0].blocks[3].role, "body");
+        assert!(normalized
+            .text
+            .contains("1 A numbered body paragraph near the end of the page."));
+        assert!(!normalized.text.contains("POSSIBLE_FOOTNOTE"));
+    }
+
+    #[test]
+    fn paddle_block_splitter_preserves_blank_lines_inside_fences_and_math() {
+        let markdown = "# Appendix\n\n```text\nline one\n\nline two\n```\n\n$$\nx = 1\n\ny = 2\n$$";
+        let blocks = paddle_markdown_blocks(markdown);
+        assert_eq!(blocks.len(), 3);
+        assert!(blocks[1].contains("line one\n\nline two"));
+        assert!(blocks[2].contains("x = 1\n\ny = 2"));
     }
 
     #[test]

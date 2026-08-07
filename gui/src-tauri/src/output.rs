@@ -219,10 +219,7 @@ fn normalize_display_environment(line: &str) -> Option<String> {
 /// Remove UI-only run telemetry from a report before public export.
 pub fn clean_export_markdown(markdown: &str) -> String {
     let mut clean = markdown.to_string();
-    loop {
-        let Some(start) = clean.find(RUN_DETAILS_START) else {
-            break;
-        };
+    while let Some(start) = clean.find(RUN_DETAILS_START) {
         let Some(relative_end) = clean[start + RUN_DETAILS_START.len()..].find(RUN_DETAILS_END)
         else {
             break;
@@ -313,9 +310,9 @@ pub fn model_price(model: &str) -> Option<(f64, f64)> {
         .map(|(_, i, o)| (*i, *o))
 }
 
-/// Whether a provider ran through a direct API (metered, priceable) rather than
-/// a subscription CLI. Cost estimates are only meaningful in API mode; on a
-/// subscription plan the run is billed by the plan, not per token.
+/// Whether a provider ran through a direct API (metered) rather than a
+/// subscription CLI. Both transports receive a labelled API-list-price
+/// estimate, but only the direct API amount approximates token-metered spend.
 fn provider_in_api_mode(settings: &Settings, provider: &str) -> bool {
     match provider {
         "codex" => !settings.openai_api_key.trim().is_empty(),
@@ -326,10 +323,54 @@ fn provider_in_api_mode(settings: &Settings, provider: &str) -> bool {
     }
 }
 
-/// Estimated cost of a call at list prices, or None when the model is unknown.
-fn estimate_cost(model: &str, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+/// Cache-token list prices when Pipeline can identify the provider family.
+/// Unknown cache schedules deliberately fall back to ordinary input price so
+/// the estimate never treats reported cache reads as free.
+fn model_cache_prices(model: &str, input_price: f64) -> (f64, f64) {
+    let model = model.to_ascii_lowercase();
+    if model.contains("gpt-5.6") {
+        // OpenAI: cached reads are 10% of input; GPT-5.6 cache writes are
+        // currently charged at 1.25x ordinary input.
+        (input_price * 0.10, input_price * 1.25)
+    } else if model.contains("claude")
+        || model.contains("opus")
+        || model.contains("sonnet")
+        || model.contains("haiku")
+    {
+        // Anthropic's default five-minute prompt cache.
+        (input_price * 0.10, input_price * 1.25)
+    } else if model.contains("gemini") {
+        // Gemini implicit caching discounts cache hits; cache creation has no
+        // separately reported token rate in Pipeline.
+        (input_price * 0.10, input_price)
+    } else {
+        (input_price, input_price)
+    }
+}
+
+/// Estimated cache-adjusted API list price of a call, or None when the model
+/// is unknown. Cached/cache-write counts partition logical input; they are not
+/// added on top of it.
+fn estimate_cost(
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_input_tokens: u64,
+    cache_write_input_tokens: u64,
+) -> Option<f64> {
     let (pin, pout) = model_price(model)?;
-    Some((input_tokens as f64 / 1_000_000.0) * pin + (output_tokens as f64 / 1_000_000.0) * pout)
+    let cached = cached_input_tokens.min(input_tokens);
+    let cache_write = cache_write_input_tokens.min(input_tokens.saturating_sub(cached));
+    let fresh = input_tokens
+        .saturating_sub(cached)
+        .saturating_sub(cache_write);
+    let (pcached, pwrite) = model_cache_prices(model, pin);
+    Some(
+        (fresh as f64 / 1_000_000.0) * pin
+            + (cached as f64 / 1_000_000.0) * pcached
+            + (cache_write as f64 / 1_000_000.0) * pwrite
+            + (output_tokens as f64 / 1_000_000.0) * pout,
+    )
 }
 
 fn format_cost(cost: f64) -> String {
@@ -355,18 +396,53 @@ fn fmt_token_usage(input: u64, output: u64, cached: u64, cache_write: u64) -> St
     if input == 0 && output == 0 && cached == 0 && cache_write == 0 {
         return "—".to_string();
     }
-    let mut value = format!("{} / {}", fmt_tokens(input), fmt_tokens(output));
-    let mut cache_parts = Vec::new();
+    let cached = cached.min(input);
+    let cache_write = cache_write.min(input.saturating_sub(cached));
+    let fresh = input.saturating_sub(cached).saturating_sub(cache_write);
+    let mut input_parts = vec![format!("{} fresh", fmt_tokens(fresh))];
     if cached > 0 {
-        cache_parts.push(format!("{} cached", fmt_tokens(cached)));
+        input_parts.push(format!("{} cache read", fmt_tokens(cached)));
     }
     if cache_write > 0 {
-        cache_parts.push(format!("{} warmed", fmt_tokens(cache_write)));
+        input_parts.push(format!("{} cache write", fmt_tokens(cache_write)));
     }
-    if !cache_parts.is_empty() {
-        value.push_str(&format!(" ({})", cache_parts.join(", ")));
+    format!(
+        "{} logical in = {} · {} out",
+        fmt_tokens(input),
+        input_parts.join(" + "),
+        fmt_tokens(output)
+    )
+}
+
+fn fmt_reported_activity(
+    model_round_trips: u64,
+    tool_calls: crate::models::ToolCallCounts,
+) -> String {
+    let mut parts = Vec::new();
+    if model_round_trips > 0 {
+        parts.push(format!("{model_round_trips} model rounds"));
     }
-    value
+    let total_tools = tool_calls.total();
+    if total_tools > 0 {
+        let mut categories = Vec::new();
+        for (count, label) in [
+            (tool_calls.text_file, "text/file"),
+            (tool_calls.image, "image"),
+            (tool_calls.web, "web"),
+            (tool_calls.shell_or_other, "shell/other"),
+            (tool_calls.unknown, "unknown"),
+        ] {
+            if count > 0 {
+                categories.push(format!("{count} {label}"));
+            }
+        }
+        parts.push(format!("{total_tools} tools ({})", categories.join(", ")));
+    }
+    if parts.is_empty() {
+        "—".to_string()
+    } else {
+        parts.join(" · ")
+    }
 }
 
 /// A per-step run summary table (time, model, tokens, estimated cost), or None
@@ -379,6 +455,8 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
             || o.output_tokens > 0
             || o.cached_input_tokens > 0
             || o.cache_write_input_tokens > 0
+            || o.model_round_trips > 0
+            || !o.tool_calls.is_empty()
     });
     if !has_metrics {
         return None;
@@ -388,8 +466,12 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
     let mut total_out = 0u64;
     let mut total_cached = 0u64;
     let mut total_cache_write = 0u64;
+    let mut total_model_round_trips = 0u64;
+    let mut total_tool_calls = crate::models::ToolCallCounts::default();
     let mut total_cost = 0f64;
     let mut any_cost = false;
+    let mut any_cli_equivalent = false;
+    let mut any_api_estimate = false;
 
     let mut rows = String::new();
     for o in &outputs {
@@ -397,6 +479,8 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
         total_out += o.output_tokens;
         total_cached += o.cached_input_tokens;
         total_cache_write += o.cache_write_input_tokens;
+        total_model_round_trips = total_model_round_trips.saturating_add(o.model_round_trips);
+        total_tool_calls.add_counts(o.tool_calls);
 
         let mut provider_models = Vec::new();
         if o.calls.is_empty() {
@@ -439,6 +523,7 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
             o.cached_input_tokens,
             o.cache_write_input_tokens,
         );
+        let activity = fmt_reported_activity(o.model_round_trips, o.tool_calls);
         let mut row_cost = 0f64;
         let mut row_has_cost = false;
         if o.calls.is_empty() {
@@ -447,11 +532,17 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
             } else {
                 o.model_transport == "api"
             };
-            if api_transport {
-                if let Some(cost) = estimate_cost(&o.model, o.input_tokens, o.output_tokens) {
-                    row_cost += cost;
-                    row_has_cost = true;
-                }
+            if let Some(cost) = estimate_cost(
+                &o.model,
+                o.input_tokens,
+                o.output_tokens,
+                o.cached_input_tokens,
+                o.cache_write_input_tokens,
+            ) {
+                row_cost += cost;
+                row_has_cost = true;
+                any_api_estimate |= api_transport;
+                any_cli_equivalent |= !api_transport;
             }
         } else {
             for call in &o.calls {
@@ -460,13 +551,17 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
                 } else {
                     call.model_transport == "api"
                 };
-                if api_transport {
-                    if let Some(cost) =
-                        estimate_cost(&call.model, call.input_tokens, call.output_tokens)
-                    {
-                        row_cost += cost;
-                        row_has_cost = true;
-                    }
+                if let Some(cost) = estimate_cost(
+                    &call.model,
+                    call.input_tokens,
+                    call.output_tokens,
+                    call.cached_input_tokens,
+                    call.cache_write_input_tokens,
+                ) {
+                    row_cost += cost;
+                    row_has_cost = true;
+                    any_api_estimate |= api_transport;
+                    any_cli_equivalent |= !api_transport;
                 }
             }
         }
@@ -478,16 +573,18 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
             "—".to_string()
         };
         rows.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} |\n",
             o.step_label,
             provider_models.join("<br>"),
             format_secs(o.duration_secs),
             tokens,
+            activity,
             cost_cell,
         ));
     }
 
     let total_tokens = fmt_token_usage(total_in, total_out, total_cached, total_cache_write);
+    let total_activity = fmt_reported_activity(total_model_round_trips, total_tool_calls);
     let total_cost_cell = if any_cost {
         format_cost(total_cost)
     } else {
@@ -496,19 +593,52 @@ fn render_run_summary(report: &PipelineReport, settings: &Settings) -> Option<St
 
     let mut md = String::new();
     md.push_str("## Run summary\n\n");
-    md.push_str("| Step | Provider · Model | Time | Tokens (in / out) | Est. cost |\n");
-    md.push_str("|------|------------------|------|-------------------|-----------|\n");
+    md.push_str(
+        "| Step | Provider · Model | Time | Token accounting | Reported activity | API list-price equivalent |\n",
+    );
+    md.push_str(
+        "|------|------------------|------|------------------|-------------------|---------------------------|\n",
+    );
     md.push_str(&rows);
     md.push_str(&format!(
-        "| **Total** | | | **{total_tokens}** | **{total_cost_cell}** |\n\n"
+        "| **Total** | | | **{total_tokens}** | **{total_activity}** | **{total_cost_cell}** |\n\n"
     ));
-    if total_cached > 0 || total_cache_write > 0 {
+    if total_model_round_trips > 0 || !total_tool_calls.is_empty() {
         md.push_str(
-            "_Cached tokens are included in logical input totals. Estimated cost uses full \
-             input list price as a conservative upper bound; provider cache discounts may \
-             reduce the billed amount._\n\n",
+            "_Model rounds and tool calls appear only when the provider or CLI reports them; \
+             unknown tool kinds remain visible in the unknown category._\n\n",
         );
     }
+    if total_cached > 0 || total_cache_write > 0 {
+        md.push_str(
+            "_Logical input already includes cache reads and cache writes: fresh input = logical \
+             input − cache reads − cache writes. Cache reads are discounted, not free. The \
+             estimate applies known cache-token list rates._\n\n",
+        );
+    }
+    if any_cli_equivalent {
+        md.push_str(
+            "_For CLI/subscription calls, this is an API-equivalent list-price estimate, not an \
+             amount charged to the subscription._\n\n",
+        );
+    }
+    if any_api_estimate {
+        md.push_str(
+            "_For direct API calls, this estimates token usage at list price; it is not a provider \
+             invoice._\n\n",
+        );
+    }
+    if any_cost {
+        md.push_str(
+            "_Estimates can exclude unreported cache writes, failed calls, long-context pricing \
+             tiers, cache storage, and separately priced tools or search._\n\n",
+        );
+    }
+    md.push_str(
+        "_This table prices saved report-producing calls that retain per-model metadata. \
+         Run-wide Console and History totals can additionally include preprocessing or \
+         terminally failed work that has no saved per-model row._\n\n",
+    );
     let mut provenance = Vec::new();
     for output in &outputs {
         if output.calls.is_empty() {
@@ -877,9 +1007,18 @@ mod tests {
     #[test]
     fn estimate_cost_computes_from_tokens() {
         // 1M input + 1M output on opus = 15 + 75 = 90.
-        let c = estimate_cost("opus", 1_000_000, 1_000_000).unwrap();
+        let c = estimate_cost("opus", 1_000_000, 1_000_000, 0, 0).unwrap();
         assert!((c - 90.0).abs() < 1e-9);
-        assert!(estimate_cost("unknown", 100, 100).is_none());
+        assert!(estimate_cost("unknown", 100, 100, 0, 0).is_none());
+    }
+
+    #[test]
+    fn estimate_cost_partitions_logical_input_at_cache_rates() {
+        // Observed Full Review usage: 8.265M logical input already contains
+        // 7.574M cache reads. At GPT-5.6-sol base-tier rates this is ~$10.04,
+        // rather than charging the full logical total at the $5 fresh rate.
+        let cost = estimate_cost("gpt-5.6-sol", 8_265_469, 93_252, 7_573_504, 0).unwrap();
+        assert!((cost - 10.044_137).abs() < 1e-9);
     }
 
     #[test]
@@ -941,7 +1080,7 @@ mod tests {
     }
 
     #[test]
-    fn run_summary_shows_tokens_and_gates_cost_on_api_mode() {
+    fn run_summary_labels_api_and_cli_cost_estimates() {
         let report = report_with(vec![metric_output(
             "Technical",
             "opus",
@@ -951,13 +1090,15 @@ mod tests {
             100_000,
         )]);
 
-        // Subscription mode (no key): tokens shown, cost withheld.
+        // Subscription mode: tokens are shown with an API-equivalent cost,
+        // explicitly distinguished from an amount charged to the plan.
         let sub = render_run_summary(&report, &Settings::default()).unwrap();
         assert!(sub.contains("Run summary"));
         assert!(sub.contains("Technical"));
-        assert!(sub.contains("500.0k / 100.0k"));
+        assert!(sub.contains("500.0k logical in = 500.0k fresh · 100.0k out"));
         assert!(sub.contains("1m 30s"));
-        assert!(!sub.contains("$"));
+        assert!(sub.contains("$15.00"));
+        assert!(sub.contains("API-equivalent list-price estimate"));
 
         // API mode: cost estimated (0.5*15 + 0.1*75 = 7.5 + 7.5 = 15.00).
         let s = Settings {
@@ -966,7 +1107,7 @@ mod tests {
         };
         let api = render_run_summary(&report, &s).unwrap();
         assert!(api.contains("$15.00"));
-        assert!(api.contains("list prices"));
+        assert!(api.contains("direct API calls"));
     }
 
     #[test]
@@ -981,8 +1122,20 @@ mod tests {
         );
         output.cached_input_tokens = 40_000;
         output.cache_write_input_tokens = 8_000;
+        output.model_round_trips = 6;
+        output.tool_calls = crate::models::ToolCallCounts {
+            text_file: 2,
+            image: 1,
+            web: 3,
+            ..Default::default()
+        };
         let summary = render_run_summary(&report_with(vec![output]), &Settings::default()).unwrap();
-        assert!(summary.contains("50.0k / 2.0k (40.0k cached, 8.0k warmed)"));
-        assert!(summary.contains("conservative upper bound"));
+        assert!(summary.contains(
+            "50.0k logical in = 2.0k fresh + 40.0k cache read + 8.0k cache write · 2.0k out"
+        ));
+        assert!(summary.contains("6 model rounds · 6 tools (2 text/file, 1 image, 3 web)"));
+        assert!(summary.contains("only when the provider or CLI reports them"));
+        assert!(summary.contains("Cache reads are discounted, not free"));
+        assert!(summary.contains("$0.0780"));
     }
 }

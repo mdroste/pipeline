@@ -15,12 +15,42 @@ const MAX_TOOL_ITERATIONS: usize = 15;
 const MIN_REMAINING_SECS: u64 = 10;
 const MAX_API_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_API_ERROR_BYTES: usize = 1024 * 1024;
+const MAX_TOOL_CALLS: usize = 64;
+const MAX_TOOL_ARGUMENT_BYTES: usize = 1024 * 1024;
+const MAX_TOOL_ARGUMENT_BYTES_TOTAL: usize = 4 * 1024 * 1024;
+const MAX_TOOL_HISTORY_MESSAGES: usize = 128;
+const MAX_TOOL_HISTORY_BYTES: usize = 64 * 1024 * 1024;
 
 /// Shared HTTP client for all direct API calls.
 /// `reqwest::Client` wraps an `Arc` internally, so cloning is cheap.
 /// Reusing a single client enables TCP/TLS connection pooling across
 /// pipeline steps that hit the same API host.
 pub static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+/// Custom/local endpoints must never redirect requests carrying prompts or
+/// bearer tokens to a different origin.
+pub static LOCAL_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("building the loopback-only HTTP client cannot fail")
+});
+/// HTTPS custom endpoints may use an enterprise proxy, but still cannot
+/// redirect a request containing prompts or credentials to another origin.
+pub static CUSTOM_HTTPS_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("building the custom HTTPS client cannot fail")
+});
+
+pub fn custom_endpoint_client(base_url: &str) -> &'static reqwest::Client {
+    if base_url.trim_start().starts_with("https://") {
+        &CUSTOM_HTTPS_HTTP_CLIENT
+    } else {
+        &LOCAL_HTTP_CLIENT
+    }
+}
 
 /// Maximum text file size for Read tool calls (5 MB).
 const MAX_READ_SIZE: usize = 5 * 1024 * 1024;
@@ -33,6 +63,15 @@ const MAX_IMAGE_SIZE: usize = 20 * 1024 * 1024;
 /// reads of the same large PDF across tool iterations.
 const MAX_TOOL_READ_BYTES: usize = 40 * 1024 * 1024;
 const MAX_TOOL_READ_CALLS: usize = 32;
+const MAX_BATCH_TEXT_REQUESTS: usize = 16;
+const MAX_BATCH_TEXT_ITEM_BYTES: usize = 256 * 1024;
+const DEFAULT_BATCH_TEXT_ITEM_BYTES: usize = 64 * 1024;
+const MAX_BATCH_TEXT_BYTES: usize = 1024 * 1024;
+const MAX_BATCH_ASSET_REQUESTS: usize = 8;
+/// Cross-provider multimodal requests have lower practical limits after
+/// base64/JSON expansion. Keep a batch comfortably below those request caps.
+const MAX_BATCH_ASSET_RAW_BYTES: usize = 12 * 1024 * 1024;
+pub const MAX_HOSTED_WEB_SEARCH_USES: usize = 5;
 
 /// Maximum size of a single Write tool call (5 MB — reports are ~100 KB;
 /// this leaves room for data artifacts without letting a runaway model
@@ -87,7 +126,61 @@ fn append_api_chunk(buffer: &mut Vec<u8>, chunk: &[u8], limit: usize) -> Result<
     Ok(())
 }
 
-async fn response_bytes_limited(
+struct LimitedJsonCounter {
+    bytes: usize,
+    limit: usize,
+    overflowed: bool,
+}
+
+impl std::io::Write for LimitedJsonCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > self.limit.saturating_sub(self.bytes) {
+            self.overflowed = true;
+            return Err(std::io::Error::other("serialized value exceeded limit"));
+        }
+        self.bytes += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_size_limited<T: Serialize + ?Sized>(
+    value: &T,
+    limit: usize,
+    label: &str,
+) -> Result<usize, String> {
+    let mut counter = LimitedJsonCounter {
+        bytes: 0,
+        limit,
+        overflowed: false,
+    };
+    if let Err(error) = serde_json::to_writer(&mut counter, value) {
+        if counter.overflowed {
+            return Err(format!("{label} exceeded the {limit} byte safety limit"));
+        }
+        return Err(format!("Failed to serialize {label}: {error}"));
+    }
+    Ok(counter.bytes)
+}
+
+fn validate_tool_history<T: Serialize>(messages: &[T], provider: &str) -> Result<(), String> {
+    if messages.len() > MAX_TOOL_HISTORY_MESSAGES {
+        return Err(format!(
+            "{provider} tool history exceeded the {MAX_TOOL_HISTORY_MESSAGES}-message safety limit"
+        ));
+    }
+    serialized_size_limited(
+        messages,
+        MAX_TOOL_HISTORY_BYTES,
+        &format!("{provider} tool history"),
+    )?;
+    Ok(())
+}
+
+pub(crate) async fn response_bytes_limited(
     mut response: reqwest::Response,
     limit: usize,
     pass_key: Option<&str>,
@@ -142,6 +235,74 @@ impl Default for ReadToolDef {
     }
 }
 
+/// Batch text reader for collecting several bounded evidence ranges in one
+/// model round trip. `Read` remains available for compatibility and unusual
+/// single-file cases.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadTextBatchToolDef {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl Default for ReadTextBatchToolDef {
+    fn default() -> Self {
+        Self {
+            name: "ReadTextBatch".to_string(),
+            description: format!(
+                "Read up to {MAX_BATCH_TEXT_REQUESTS} bounded UTF-8 text ranges in one call. \
+                 Prefer this over several sequential Read calls. Exact duplicate requests are \
+                 returned once. Select ranges with 1-based start_line/end_line, or with offset \
+                 (never both); use next_offset from a truncated result to continue."
+            ),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "requests": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": MAX_BATCH_TEXT_REQUESTS,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Absolute path to a UTF-8 text file"
+                                },
+                                "offset": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Optional UTF-8 byte offset. Mutually exclusive with start_line/end_line. Use a prior result's next_offset."
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": "Optional 1-based first line. Defaults to line 1 when only end_line is given."
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": "Optional inclusive 1-based last line. Requires line-range mode and must not precede start_line."
+                                },
+                                "max_bytes": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": MAX_BATCH_TEXT_ITEM_BYTES,
+                                    "description": "Maximum bytes to return for this range"
+                                }
+                            },
+                            "required": ["file_path"]
+                        }
+                    }
+                },
+                "required": ["requests"]
+            }),
+        }
+    }
+}
+
 /// Multimodal asset reader. Kept separate from `Read` so providers receive
 /// image bytes as image content rather than accidentally decoding them as
 /// UTF-8 text.
@@ -166,6 +327,46 @@ impl Default for DocumentAssetToolDef {
                     }
                 },
                 "required": ["file_path"]
+            }),
+        }
+    }
+}
+
+/// Batch multimodal reader. Providers receive every unique image in one tool
+/// result so the model can compare pages without one round trip per asset.
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentAssetsBatchToolDef {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl Default for DocumentAssetsBatchToolDef {
+    fn default() -> Self {
+        Self {
+            name: "ReadDocumentAssetsBatch".to_string(),
+            description: format!(
+                "Read up to {MAX_BATCH_ASSET_REQUESTS} document images in one call. Prefer this \
+                 for comparing tables, figures, or rendered pages. Exact duplicate files are \
+                 attached once. Only PNG, JPEG, GIF, and WebP are accepted; aggregate raw image \
+                 data is capped at {} MiB.",
+                MAX_BATCH_ASSET_RAW_BYTES / 1024 / 1024
+            ),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "file_paths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": MAX_BATCH_ASSET_REQUESTS,
+                        "items": {
+                            "type": "string",
+                            "description": "Absolute path to a document image"
+                        }
+                    }
+                },
+                "required": ["file_paths"]
             }),
         }
     }
@@ -514,6 +715,95 @@ fn read_file_for_tool_limited(
         .map_err(|e| format!("Failed to read {path} as UTF-8: {e}"))
 }
 
+#[derive(Debug)]
+struct TextRange {
+    content: String,
+    start_offset: usize,
+    end_offset: usize,
+    next_offset: Option<usize>,
+}
+
+fn slice_text_range(
+    text: &str,
+    start_offset: usize,
+    requested_end_offset: usize,
+    max_bytes: usize,
+) -> Result<TextRange, String> {
+    if start_offset > text.len() {
+        return Err(format!(
+            "Offset {start_offset} is past the end of the {}-byte file",
+            text.len()
+        ));
+    }
+    if requested_end_offset < start_offset || requested_end_offset > text.len() {
+        return Err("Requested text range is outside the file".to_string());
+    }
+    if !text.is_char_boundary(start_offset) {
+        return Err(format!(
+            "Offset {start_offset} is not a UTF-8 character boundary; use next_offset from a prior result"
+        ));
+    }
+    let mut end = start_offset
+        .saturating_add(max_bytes)
+        .min(requested_end_offset);
+    while end > start_offset && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == start_offset && start_offset < requested_end_offset {
+        return Err(
+            "max_bytes is too small to contain the next UTF-8 character at this offset".to_string(),
+        );
+    }
+    Ok(TextRange {
+        content: text[start_offset..end].to_string(),
+        start_offset,
+        end_offset: end,
+        next_offset: (end < requested_end_offset).then_some(end),
+    })
+}
+
+fn text_line_bounds(
+    text: &str,
+    requested_start_line: Option<usize>,
+    requested_end_line: Option<usize>,
+) -> Result<(usize, usize), String> {
+    let start_line = requested_start_line.unwrap_or(1);
+    let mut starts = Vec::with_capacity(text.len() / 64 + 1);
+    if !text.is_empty() {
+        starts.push(0);
+        for (index, byte) in text.bytes().enumerate() {
+            if byte == b'\n' && index + 1 < text.len() {
+                starts.push(index + 1);
+            }
+        }
+    }
+    if start_line == 0 || start_line > starts.len() {
+        return Err(format!(
+            "start_line {start_line} is outside the file's 1..={} line range",
+            starts.len()
+        ));
+    }
+    if let Some(end_line) = requested_end_line {
+        if end_line < start_line {
+            return Err(format!(
+                "end_line {end_line} must be greater than or equal to start_line {start_line}"
+            ));
+        }
+        if end_line > starts.len() {
+            return Err(format!(
+                "end_line {end_line} is outside the file's 1..={} line range",
+                starts.len()
+            ));
+        }
+    }
+    let start_offset = starts[start_line - 1];
+    let end_offset = requested_end_line
+        .filter(|end_line| *end_line < starts.len())
+        .map(|end_line| starts[end_line])
+        .unwrap_or(text.len());
+    Ok((start_offset, end_offset))
+}
+
 /// Read a PDF file and return its contents as base64-encoded bytes.
 fn read_pdf_for_tool(access: &ToolAccess, path: &str, limit: usize) -> Result<String, String> {
     let limit = MAX_PDF_SIZE.min(limit);
@@ -526,7 +816,7 @@ fn read_image_for_tool(
     access: &ToolAccess,
     path: &str,
     limit: usize,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, usize), String> {
     let extension = PathBuf::from(path)
         .extension()
         .and_then(|value| value.to_str())
@@ -544,7 +834,8 @@ fn read_image_for_tool(
     let limit = MAX_IMAGE_SIZE.min(limit);
     let canonical = validate_tool_path(access, path, limit)?;
     let bytes = read_bytes_limited(&canonical, limit)?;
-    Ok((STANDARD.encode(bytes), media_type.to_string()))
+    let raw_bytes = bytes.len();
+    Ok((STANDARD.encode(bytes), media_type.to_string(), raw_bytes))
 }
 
 /// Read a PDF the app itself is attaching to a request (as opposed to one the
@@ -578,8 +869,19 @@ pub enum ToolResult {
     PdfBase64(String),
     /// Image content with the media type required by multimodal APIs.
     ImageBase64 { data: String, media_type: String },
+    /// Several images plus compact JSON metadata describing their request
+    /// indices, errors, and duplicate references.
+    ImageBatch {
+        metadata: String,
+        images: Vec<ToolImage>,
+    },
     /// Error message.
     Error(String),
+}
+
+pub struct ToolImage {
+    pub data: String,
+    pub media_type: String,
 }
 
 // ── Anthropic-specific types ───────────────────────────────────────
@@ -606,7 +908,9 @@ pub struct AnthropicMessage {
 
 #[derive(Debug, Deserialize)]
 pub struct AnthropicResponse {
-    pub content: Vec<AnthropicContentBlock>,
+    /// Keep content blocks losslessly. Hosted tools add encrypted result and
+    /// citation fields that must be echoed byte-for-byte on a continuation.
+    pub content: Vec<serde_json::Value>,
     pub stop_reason: Option<String>,
     pub usage: Option<AnthropicUsage>,
 }
@@ -617,33 +921,12 @@ pub struct AnthropicUsage {
     pub output_tokens: Option<u64>,
     pub cache_read_input_tokens: Option<u64>,
     pub cache_creation_input_tokens: Option<u64>,
+    pub server_tool_use: Option<AnthropicServerToolUsage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum AnthropicContentBlock {
-    #[serde(rename = "text")]
-    Text { text: String },
-    #[serde(rename = "tool_use")]
-    ToolUse {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
-    #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        /// String for text results, array of content blocks for PDFs/documents.
-        content: serde_json::Value,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        is_error: Option<bool>,
-    },
-    #[serde(rename = "thinking")]
-    Thinking {
-        thinking: String,
-        #[serde(default)]
-        signature: String,
-    },
+#[derive(Debug, Deserialize)]
+pub struct AnthropicServerToolUsage {
+    pub web_search_requests: Option<u64>,
 }
 
 // ── OpenAI-specific types ──────────────────────────────────────────
@@ -713,6 +996,7 @@ pub struct OpenAIUsage {
 #[derive(Debug, Deserialize)]
 pub struct OpenAIPromptTokenDetails {
     pub cached_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
 }
 
 // ── Google-specific types ──────────────────────────────────────────
@@ -724,6 +1008,8 @@ pub struct GoogleRequest {
     pub system_instruction: Option<GoogleContent>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "toolConfig")]
+    pub tool_config: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "generationConfig")]
     pub generation_config: Option<serde_json::Value>,
 }
@@ -731,46 +1017,25 @@ pub struct GoogleRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleContent {
     pub role: String,
-    pub parts: Vec<GooglePart>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum GooglePart {
-    Text {
-        text: String,
-    },
-    FunctionCall {
-        #[serde(rename = "functionCall")]
-        function_call: GoogleFunctionCall,
-    },
-    FunctionResponse {
-        #[serde(rename = "functionResponse")]
-        function_response: GoogleFunctionResponse,
-    },
-    InlineData {
-        #[serde(rename = "inlineData")]
-        inline_data: GoogleInlineData,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GoogleInlineData {
-    #[serde(rename = "mimeType")]
-    pub mime_type: String,
-    pub data: String,
+    /// Keep every part losslessly. Combined Google Search + custom-function
+    /// responses carry server tool context and thought signatures that must be
+    /// echoed unchanged on the next turn.
+    pub parts: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleFunctionCall {
     pub name: String,
     pub args: serde_json::Value,
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleFunctionResponse {
     pub name: String,
     pub response: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -786,6 +1051,8 @@ pub struct GoogleCandidate {
     pub content: GoogleContent,
     #[serde(rename = "finishReason")]
     pub finish_reason: Option<String>,
+    #[serde(rename = "groundingMetadata")]
+    pub grounding_metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -804,6 +1071,7 @@ pub struct Usage {
     pub cached_input_tokens: u64,
     pub cache_write_input_tokens: u64,
     pub requests: u32,
+    pub tool_calls: crate::models::ToolCallCounts,
 }
 
 impl Usage {
@@ -821,6 +1089,8 @@ impl Usage {
             output_tokens: self.output_tokens,
             cached_input_tokens: self.cached_input_tokens,
             cache_write_input_tokens: self.cache_write_input_tokens,
+            model_round_trips: u64::from(self.requests),
+            tool_calls: self.tool_calls,
             ..Default::default()
         }
     }
@@ -835,6 +1105,7 @@ impl Usage {
             .cache_write_input_tokens
             .saturating_add(other.cache_write_input_tokens);
         self.requests = self.requests.saturating_add(other.requests);
+        self.tool_calls.add_counts(other.tool_calls);
     }
 
     /// Format as a compact string for log lines.
@@ -861,22 +1132,23 @@ impl Usage {
 // ── Tool-use loop (generic) ────────────────────────────────────────
 
 /// Extract text from an Anthropic response's content blocks.
-pub fn anthropic_extract_text(blocks: &[AnthropicContentBlock]) -> String {
+pub fn anthropic_extract_text(blocks: &[serde_json::Value]) -> String {
     blocks
         .iter()
-        .filter_map(|b| match b {
-            AnthropicContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
+        .filter_map(|block| {
+            (block.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+                .then(|| block.get("text").and_then(serde_json::Value::as_str))
+                .flatten()
         })
         .collect::<Vec<_>>()
         .join("")
 }
 
 /// Check if Anthropic response wants tool calls.
-pub fn anthropic_has_tool_use(blocks: &[AnthropicContentBlock]) -> bool {
+pub fn anthropic_has_tool_use(blocks: &[serde_json::Value]) -> bool {
     blocks
         .iter()
-        .any(|b| matches!(b, AnthropicContentBlock::ToolUse { .. }))
+        .any(|block| block.get("type").and_then(serde_json::Value::as_str) == Some("tool_use"))
 }
 
 fn anthropic_output_incomplete(reason: Option<&str>) -> bool {
@@ -889,6 +1161,62 @@ fn openai_output_incomplete(reason: Option<&str>) -> bool {
 
 fn google_output_incomplete(reason: Option<&str>) -> bool {
     reason.is_some_and(|reason| reason != "STOP")
+}
+
+fn direct_tool_kind(name: &str) -> crate::models::ToolCallKind {
+    match name {
+        "Read" | "ReadTextBatch" | "Write" => crate::models::ToolCallKind::TextFile,
+        "ReadDocumentAsset" | "ReadDocumentAssetsBatch" => crate::models::ToolCallKind::Image,
+        other => super::logging::classify_tool_name(other),
+    }
+}
+
+fn anthropic_hosted_search_count(usage: &AnthropicUsage) -> u64 {
+    usage
+        .server_tool_use
+        .as_ref()
+        .and_then(|server| server.web_search_requests)
+        .unwrap_or(0)
+}
+
+fn google_hosted_search_count(candidate: &GoogleCandidate) -> u64 {
+    let mut queries = std::collections::HashSet::new();
+    let mut record_queries = |values: Option<&Vec<serde_json::Value>>| {
+        for query in values.into_iter().flatten() {
+            if let Some(query) = query
+                .as_str()
+                .map(str::trim)
+                .filter(|query| !query.is_empty())
+            {
+                queries.insert(query.to_string());
+            }
+        }
+    };
+    record_queries(
+        candidate
+            .grounding_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("webSearchQueries"))
+            .and_then(serde_json::Value::as_array),
+    );
+    for part in &candidate.content.parts {
+        let Some(tool_call) = part.get("toolCall") else {
+            continue;
+        };
+        let is_google_search = tool_call
+            .get("toolType")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| kind.starts_with("GOOGLE_SEARCH"));
+        if is_google_search {
+            record_queries(
+                tool_call
+                    .get("args")
+                    .and_then(|args| args.get("queries"))
+                    .and_then(serde_json::Value::as_array),
+            );
+        }
+    }
+    queries.len() as u64
 }
 
 /// Run the tool-use loop for Anthropic. Returns (text, usage).
@@ -909,6 +1237,7 @@ pub async fn anthropic_tool_loop(
         if crate::commands::is_cancelled() {
             return Err("Pipeline cancelled".into());
         }
+        validate_tool_history(&request.messages, "Anthropic")?;
 
         let elapsed = start.elapsed().as_secs();
         if elapsed + MIN_REMAINING_SECS > timeout_secs {
@@ -952,13 +1281,27 @@ pub async fn anthropic_tool_loop(
             let cache_write = u.cache_creation_input_tokens.unwrap_or(0);
             let inp = uncached.saturating_add(cached).saturating_add(cache_write);
             let out = u.output_tokens.unwrap_or(0);
+            let web_searches = anthropic_hosted_search_count(u);
             usage.add(inp, out, cached, cache_write);
+            usage
+                .tool_calls
+                .add_kind(crate::models::ToolCallKind::Web, web_searches);
             verbose_log(
                 app,
                 format!(
-                    "[api] {label}: tokens in={inp} out={out} cached={cached} cache-write={cache_write}"
+                    "[api] {label}: tokens in={inp} out={out} cached={cached} cache-write={cache_write} hosted-web-searches={web_searches}"
                 ),
             );
+        } else {
+            usage.requests = usage.requests.saturating_add(1);
+        }
+
+        if body.stop_reason.as_deref() == Some("pause_turn") {
+            request.messages.push(AnthropicMessage {
+                role: "assistant".to_string(),
+                content: serde_json::Value::Array(body.content),
+            });
+            continue;
         }
 
         if !anthropic_has_tool_use(&body.content) || body.stop_reason.as_deref() != Some("tool_use")
@@ -971,66 +1314,58 @@ pub async fn anthropic_tool_loop(
             return Ok((anthropic_extract_text(&body.content), usage));
         }
 
-        // Build tool results
-        let mut tool_results: Vec<AnthropicContentBlock> = Vec::new();
         for block in &body.content {
-            if let AnthropicContentBlock::ToolUse { id, name, input } = block {
-                let result =
-                    execute_tool(app, name, input, label, iteration, &mut tool_budget, access)
-                        .await;
-                let (content, is_error) = match result {
-                    ToolResult::Text(text) => (serde_json::Value::String(text), None),
-                    ToolResult::PdfBase64(data) => (
-                        serde_json::json!([{
-                            "type": "document",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "application/pdf",
-                                "data": data
-                            }
-                        }]),
-                        None,
-                    ),
-                    ToolResult::ImageBase64 { data, media_type } => (
-                        serde_json::json!([{
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": data
-                            }
-                        }]),
-                        None,
-                    ),
-                    ToolResult::Error(msg) => (serde_json::Value::String(msg), Some(true)),
-                };
-                tool_results.push(AnthropicContentBlock::ToolResult {
-                    tool_use_id: id.clone(),
-                    content,
-                    is_error,
-                });
+            if block.get("type").and_then(serde_json::Value::as_str) == Some("tool_use") {
+                let input = block.get("input").unwrap_or(&serde_json::Value::Null);
+                let argument_bytes = serialized_size_limited(
+                    input,
+                    MAX_TOOL_ARGUMENT_BYTES,
+                    "Anthropic tool-call arguments",
+                )?;
+                tool_budget.reserve_tool_call(argument_bytes)?;
+                if let Some(name) = block.get("name").and_then(serde_json::Value::as_str) {
+                    usage.tool_calls.add_kind(direct_tool_kind(name), 1);
+                }
             }
         }
 
+        // Build tool results
+        let mut tool_results: Vec<serde_json::Value> = Vec::new();
+        for block in &body.content {
+            if block.get("type").and_then(serde_json::Value::as_str) != Some("tool_use") {
+                continue;
+            }
+            let id = block
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let name = block
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let input = block.get("input").unwrap_or(&serde_json::Value::Null);
+            let result =
+                execute_tool(app, name, input, label, iteration, &mut tool_budget, access).await;
+            let (content, is_error) = anthropic_tool_result_content(result);
+            let mut tool_result = serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": id,
+                "content": content,
+            });
+            if is_error {
+                tool_result["is_error"] = serde_json::Value::Bool(true);
+            }
+            tool_results.push(tool_result);
+        }
+
         // Append assistant response + tool results to messages
-        let assistant_content: Vec<serde_json::Value> = body
-            .content
-            .iter()
-            .map(serde_json::to_value)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Failed to serialize content block: {e}"))?;
         request.messages.push(AnthropicMessage {
             role: "assistant".to_string(),
-            content: serde_json::Value::Array(assistant_content),
+            content: serde_json::Value::Array(body.content),
         });
-        let results_content: Vec<serde_json::Value> = tool_results
-            .iter()
-            .map(serde_json::to_value)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Failed to serialize tool result: {e}"))?;
         request.messages.push(AnthropicMessage {
             role: "user".to_string(),
-            content: serde_json::Value::Array(results_content),
+            content: serde_json::Value::Array(tool_results),
         });
     }
 
@@ -1071,6 +1406,7 @@ pub async fn openai_tool_loop(
         if crate::commands::is_cancelled() {
             return Err("Pipeline cancelled".into());
         }
+        validate_tool_history(&request.messages, provider)?;
 
         let elapsed = start.elapsed().as_secs();
         if elapsed + MIN_REMAINING_SECS > timeout_secs {
@@ -1126,11 +1462,20 @@ pub async fn openai_tool_loop(
                 .as_ref()
                 .and_then(|details| details.cached_tokens)
                 .unwrap_or(0);
-            usage.add(inp, out, cached, 0);
+            let cache_write = u
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|details| details.cache_write_tokens)
+                .unwrap_or(0);
+            usage.add(inp, out, cached, cache_write);
             verbose_log(
                 app,
-                format!("[api] {label}: tokens in={inp} out={out} cached={cached}"),
+                format!(
+                    "[api] {label}: tokens in={inp} out={out} cached={cached} cache-write={cache_write}"
+                ),
             );
+        } else {
+            usage.requests = usage.requests.saturating_add(1);
         }
 
         let choice = body
@@ -1140,70 +1485,46 @@ pub async fn openai_tool_loop(
 
         if let Some(tool_calls) = &choice.message.tool_calls {
             if !tool_calls.is_empty() {
+                for tool_call in tool_calls {
+                    tool_budget.reserve_tool_call(tool_call.function.arguments.len())?;
+                    usage
+                        .tool_calls
+                        .add_kind(direct_tool_kind(&tool_call.function.name), 1);
+                }
                 // Append assistant message with tool calls
                 request.messages.push(choice.message.clone());
 
                 // Execute each tool and append results
+                let mut pending_images = Vec::new();
                 for tc in tool_calls {
-                    let input: serde_json::Value =
-                        serde_json::from_str(&tc.function.arguments).unwrap_or_default();
-                    let result = execute_tool(
-                        app,
-                        &tc.function.name,
-                        &input,
-                        label,
-                        iteration,
-                        &mut tool_budget,
-                        access,
-                    )
-                    .await;
-                    match result {
-                        ToolResult::ImageBase64 { data, media_type } => {
-                            request.messages.push(OpenAIMessage {
-                                role: "tool".to_string(),
-                                content: Some(serde_json::Value::String(
-                                    "The requested document image is attached in the next message."
-                                        .to_string(),
-                                )),
-                                tool_calls: None,
-                                tool_call_id: Some(tc.id.clone()),
-                            });
-                            request.messages.push(OpenAIMessage {
-                                role: "user".to_string(),
-                                content: Some(serde_json::json!([
-                                    {
-                                        "type": "text",
-                                        "text": "Visual document asset requested by the preceding tool call."
-                                    },
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {
-                                            "url": format!("data:{media_type};base64,{data}")
-                                        }
-                                    }
-                                ])),
-                                tool_calls: None,
-                                tool_call_id: None,
-                            });
-                        }
-                        other => {
-                            let content = match other {
-                                ToolResult::Text(text) => text,
-                                ToolResult::PdfBase64(_) => {
-                                    "Cannot read PDF visually via this API. Use the extracted paper text or rendered page assets instead.".to_string()
-                                }
-                                ToolResult::Error(msg) => msg,
-                                ToolResult::ImageBase64 { .. } => unreachable!(),
-                            };
-                            request.messages.push(OpenAIMessage {
-                                role: "tool".to_string(),
-                                content: Some(serde_json::Value::String(content)),
-                                tool_calls: None,
-                                tool_call_id: Some(tc.id.clone()),
-                            });
-                        }
-                    }
+                    let result =
+                        match serde_json::from_str::<serde_json::Value>(&tc.function.arguments) {
+                            Ok(input) => {
+                                execute_tool(
+                                    app,
+                                    &tc.function.name,
+                                    &input,
+                                    label,
+                                    iteration,
+                                    &mut tool_budget,
+                                    access,
+                                )
+                                .await
+                            }
+                            Err(error) => ToolResult::Error(format!(
+                                "Tool arguments were not valid JSON: {error}"
+                            )),
+                        };
+                    append_openai_tool_result(
+                        &mut request.messages,
+                        &tc.id,
+                        result,
+                        &mut pending_images,
+                    );
                 }
+                // OpenAI requires the complete set of tool messages to follow
+                // the assistant tool-call message before any new user content.
+                append_openai_image_message(&mut request.messages, pending_images);
                 continue;
             }
         }
@@ -1229,17 +1550,30 @@ pub async fn openai_tool_loop(
     ))
 }
 
+pub struct GoogleToolLoopContext<'a> {
+    pub app: &'a crate::emit::EventBus,
+    pub client: &'a reqwest::Client,
+    pub api_key: &'a str,
+    pub model: &'a str,
+    pub timeout_secs: u64,
+    pub label: &'a str,
+    pub access: &'a ToolAccess,
+}
+
 /// Run the tool-use loop for Google. Returns (text, usage).
 pub async fn google_tool_loop(
-    app: &crate::emit::EventBus,
-    client: &reqwest::Client,
-    api_key: &str,
-    model: &str,
+    context: GoogleToolLoopContext<'_>,
     mut request: GoogleRequest,
-    timeout_secs: u64,
-    label: &str,
-    access: &ToolAccess,
 ) -> Result<(String, Usage), String> {
+    let GoogleToolLoopContext {
+        app,
+        client,
+        api_key,
+        model,
+        timeout_secs,
+        label,
+        access,
+    } = context;
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
         model
@@ -1252,6 +1586,7 @@ pub async fn google_tool_loop(
         if crate::commands::is_cancelled() {
             return Err("Pipeline cancelled".into());
         }
+        validate_tool_history(&request.contents, "Google")?;
 
         let elapsed = start.elapsed().as_secs();
         if elapsed + MIN_REMAINING_SECS > timeout_secs {
@@ -1294,14 +1629,24 @@ pub async fn google_tool_loop(
 
         // Google returns usageMetadata at the top level
         if let Some(um) = body.usage_metadata.as_ref() {
-            let inp = um
+            let prompt = um
                 .get("promptTokenCount")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            let out = um
+            let tool_prompt = um
+                .get("toolUsePromptTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let candidates = um
                 .get("candidatesTokenCount")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
+            let thoughts = um
+                .get("thoughtsTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let inp = prompt.saturating_add(tool_prompt);
+            let out = candidates.saturating_add(thoughts);
             let cached = um
                 .get("cachedContentTokenCount")
                 .and_then(|v| v.as_u64())
@@ -1309,7 +1654,9 @@ pub async fn google_tool_loop(
             usage.add(inp, out, cached, 0);
             verbose_log(
                 app,
-                format!("[api] {label}: tokens in={inp} out={out} cached={cached}"),
+                format!(
+                    "[api] {label}: tokens in={inp} out={out} cached={cached} thoughts={thoughts} tool-prompt={tool_prompt}"
+                ),
             );
         } else {
             usage.requests += 1;
@@ -1320,25 +1667,49 @@ pub async fn google_tool_loop(
             .as_ref()
             .and_then(|c| c.first())
             .ok_or("Google returned no candidates")?;
+        let hosted_web_searches = google_hosted_search_count(candidate);
+        if hosted_web_searches > 0 {
+            usage
+                .tool_calls
+                .add_kind(crate::models::ToolCallKind::Web, hosted_web_searches);
+            verbose_log(
+                app,
+                format!("[api] {label}: hosted-web-searches={hosted_web_searches}"),
+            );
+        }
 
         // Check for function calls
-        let function_calls: Vec<&GoogleFunctionCall> = candidate
+        let function_calls: Vec<GoogleFunctionCall> = candidate
             .content
             .parts
             .iter()
-            .filter_map(|p| match p {
-                GooglePart::FunctionCall { function_call } => Some(function_call),
-                _ => None,
+            .filter_map(|part| part.get("functionCall"))
+            .map(|call| {
+                serde_json::from_value(call.clone())
+                    .map_err(|error| format!("Failed to parse Google function call: {error}"))
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         if !function_calls.is_empty() {
+            for function_call in &function_calls {
+                let argument_bytes = serialized_size_limited(
+                    &function_call.args,
+                    MAX_TOOL_ARGUMENT_BYTES,
+                    "Google tool-call arguments",
+                )?;
+                tool_budget.reserve_tool_call(argument_bytes)?;
+                usage
+                    .tool_calls
+                    .add_kind(direct_tool_kind(&function_call.name), 1);
+            }
             // Append model response to contents
             request.contents.push(candidate.content.clone());
 
             // Build function response parts
-            let mut response_parts: Vec<GooglePart> = Vec::with_capacity(function_calls.len());
-            for fc in function_calls {
+            let mut response_parts: Vec<serde_json::Value> =
+                Vec::with_capacity(function_calls.len());
+            let mut image_parts = Vec::new();
+            for fc in &function_calls {
                 let result = execute_tool(
                     app,
                     &fc.name,
@@ -1349,29 +1720,11 @@ pub async fn google_tool_loop(
                     access,
                 )
                 .await;
-                let (content, image) = match result {
-                    ToolResult::Text(text) => (text, None),
-                    ToolResult::PdfBase64(_) => (
-                        "Cannot read PDF visually via this tool. Use the extracted paper text or rendered page assets instead.".to_string(),
-                        None,
-                    ),
-                    ToolResult::ImageBase64 { data, media_type } => (
-                        "The requested document image is included as inline visual data."
-                            .to_string(),
-                        Some(GoogleInlineData { data, mime_type: media_type }),
-                    ),
-                    ToolResult::Error(msg) => (msg, None),
-                };
-                response_parts.push(GooglePart::FunctionResponse {
-                    function_response: GoogleFunctionResponse {
-                        name: fc.name.clone(),
-                        response: serde_json::json!({ "content": content }),
-                    },
-                });
-                if let Some(inline_data) = image {
-                    response_parts.push(GooglePart::InlineData { inline_data });
-                }
+                let (function_response, images) = google_tool_result_parts(fc, result);
+                response_parts.push(function_response);
+                image_parts.extend(images);
             }
+            response_parts.extend(image_parts);
 
             request.contents.push(GoogleContent {
                 role: "user".to_string(),
@@ -1385,10 +1738,7 @@ pub async fn google_tool_loop(
             .content
             .parts
             .iter()
-            .filter_map(|p| match p {
-                GooglePart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
+            .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
             .collect::<Vec<_>>()
             .join("");
 
@@ -1413,9 +1763,69 @@ pub async fn google_tool_loop(
 struct ToolBudget {
     read_calls: usize,
     read_bytes: usize,
+    tool_calls: usize,
+    argument_bytes: usize,
+}
+
+impl ToolBudget {
+    fn reserve_tool_call(&mut self, argument_bytes: usize) -> Result<(), String> {
+        if argument_bytes > MAX_TOOL_ARGUMENT_BYTES {
+            return Err(format!(
+                "Tool-call arguments exceeded the {} MB per-call safety limit",
+                MAX_TOOL_ARGUMENT_BYTES / 1024 / 1024
+            ));
+        }
+        let next_calls = self
+            .tool_calls
+            .checked_add(1)
+            .ok_or("Tool-call count overflowed")?;
+        if next_calls > MAX_TOOL_CALLS {
+            return Err(format!(
+                "Tool-call count exceeded the {MAX_TOOL_CALLS}-call safety limit"
+            ));
+        }
+        let next_bytes = self
+            .argument_bytes
+            .checked_add(argument_bytes)
+            .ok_or("Tool-call argument byte count overflowed")?;
+        if next_bytes > MAX_TOOL_ARGUMENT_BYTES_TOTAL {
+            return Err(format!(
+                "Tool-call arguments exceeded the {} MB cumulative safety limit",
+                MAX_TOOL_ARGUMENT_BYTES_TOTAL / 1024 / 1024
+            ));
+        }
+        self.tool_calls = next_calls;
+        self.argument_bytes = next_bytes;
+        Ok(())
+    }
+
+    fn reserve_read(&mut self) -> Result<usize, String> {
+        if self.read_calls >= MAX_TOOL_READ_CALLS {
+            return Err(format!(
+                "Read limit reached ({MAX_TOOL_READ_CALLS} calls per model invocation)"
+            ));
+        }
+        let remaining = MAX_TOOL_READ_BYTES.saturating_sub(self.read_bytes);
+        if remaining == 0 {
+            return Err(format!(
+                "Read byte budget reached ({} MB per model invocation)",
+                MAX_TOOL_READ_BYTES / 1024 / 1024
+            ));
+        }
+        self.read_calls += 1;
+        Ok(remaining)
+    }
+
+    fn record_read_bytes(&mut self, bytes: usize) {
+        self.read_bytes = self
+            .read_bytes
+            .saturating_add(bytes)
+            .min(MAX_TOOL_READ_BYTES);
+    }
 }
 
 const TOOL_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+type TextBatchRequestKey = (String, Option<usize>, Option<usize>, Option<usize>, usize);
 
 async fn run_blocking_tool<T, F>(operation: F) -> Result<T, String>
 where
@@ -1432,6 +1842,423 @@ where
             TOOL_IO_TIMEOUT.as_secs()
         )),
     }
+}
+
+async fn execute_read_text_batch(
+    input: &serde_json::Value,
+    budget: &mut ToolBudget,
+    access: &ToolAccess,
+) -> ToolResult {
+    let Some(requests) = input.get("requests").and_then(serde_json::Value::as_array) else {
+        return ToolResult::Error("ReadTextBatch requires a requests array".to_string());
+    };
+    if requests.is_empty() || requests.len() > MAX_BATCH_TEXT_REQUESTS {
+        return ToolResult::Error(format!(
+            "ReadTextBatch accepts 1 to {MAX_BATCH_TEXT_REQUESTS} requests"
+        ));
+    }
+
+    let mut items = Vec::with_capacity(requests.len());
+    let mut seen: std::collections::HashMap<TextBatchRequestKey, usize> =
+        std::collections::HashMap::new();
+    // Cache both successful loads and validation/read errors. Distinct ranges
+    // from one paper file therefore perform one filesystem read, while every
+    // non-duplicate evidence range still consumes the existing read-call and
+    // returned-byte budgets.
+    let mut loaded_files: std::collections::HashMap<String, Result<String, String>> =
+        std::collections::HashMap::new();
+    let mut returned_bytes = 0usize;
+
+    for (index, request) in requests.iter().enumerate() {
+        let path = request
+            .get("file_path")
+            .or_else(|| request.get("path"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let offset = match request.get("offset") {
+            Some(value) => match value.as_u64().and_then(|value| usize::try_from(value).ok()) {
+                Some(value) => Some(value),
+                None => {
+                    items.push(serde_json::json!({
+                        "index": index,
+                        "error": "offset must be a non-negative integer"
+                    }));
+                    continue;
+                }
+            },
+            None => None,
+        };
+        let start_line = match request.get("start_line") {
+            Some(value) => match value.as_u64().and_then(|value| usize::try_from(value).ok()) {
+                Some(value) if value > 0 => Some(value),
+                _ => {
+                    items.push(serde_json::json!({
+                        "index": index,
+                        "error": "start_line must be a positive 1-based integer"
+                    }));
+                    continue;
+                }
+            },
+            None => None,
+        };
+        let end_line = match request.get("end_line") {
+            Some(value) => match value.as_u64().and_then(|value| usize::try_from(value).ok()) {
+                Some(value) if value > 0 => Some(value),
+                _ => {
+                    items.push(serde_json::json!({
+                        "index": index,
+                        "error": "end_line must be a positive 1-based integer"
+                    }));
+                    continue;
+                }
+            },
+            None => None,
+        };
+        let max_bytes = match request.get("max_bytes") {
+            Some(value) => match value.as_u64().and_then(|value| usize::try_from(value).ok()) {
+                Some(value) if (1..=MAX_BATCH_TEXT_ITEM_BYTES).contains(&value) => value,
+                _ => {
+                    items.push(serde_json::json!({
+                        "index": index,
+                        "error": format!(
+                            "max_bytes must be between 1 and {MAX_BATCH_TEXT_ITEM_BYTES}"
+                        )
+                    }));
+                    continue;
+                }
+            },
+            None => DEFAULT_BATCH_TEXT_ITEM_BYTES,
+        };
+        if path.is_empty() {
+            items.push(serde_json::json!({
+                "index": index,
+                "error": "file_path is required"
+            }));
+            continue;
+        }
+        if offset.is_some() && (start_line.is_some() || end_line.is_some()) {
+            items.push(serde_json::json!({
+                "index": index,
+                "error": "offset is mutually exclusive with start_line/end_line"
+            }));
+            continue;
+        }
+        if start_line
+            .zip(end_line)
+            .is_some_and(|(start, end)| end < start)
+        {
+            items.push(serde_json::json!({
+                "index": index,
+                "error": "end_line must be greater than or equal to start_line"
+            }));
+            continue;
+        }
+
+        let key = (path.to_string(), offset, start_line, end_line, max_bytes);
+        if let Some(original) = seen.get(&key) {
+            items.push(serde_json::json!({
+                "index": index,
+                "duplicate_of": original
+            }));
+            continue;
+        }
+        seen.insert(key, index);
+
+        let batch_remaining = MAX_BATCH_TEXT_BYTES.saturating_sub(returned_bytes);
+        if batch_remaining == 0 {
+            items.push(serde_json::json!({
+                "index": index,
+                "error": format!(
+                    "ReadTextBatch reached its {MAX_BATCH_TEXT_BYTES}-byte response budget"
+                )
+            }));
+            continue;
+        }
+        let global_remaining = match budget.reserve_read() {
+            Ok(remaining) => remaining,
+            Err(error) => {
+                items.push(serde_json::json!({ "index": index, "error": error }));
+                continue;
+            }
+        };
+        let limit = max_bytes.min(batch_remaining).min(global_remaining);
+        if !loaded_files.contains_key(path) {
+            let owned_path = path.to_string();
+            let access = access.clone();
+            let loaded = run_blocking_tool(move || {
+                if owned_path.to_ascii_lowercase().ends_with(".pdf") {
+                    return Err(
+                        "Cannot read PDF as text. Use rendered page assets instead.".to_string()
+                    );
+                }
+                read_file_for_tool_limited(&access, &owned_path, MAX_READ_SIZE)
+            })
+            .await;
+            loaded_files.insert(path.to_string(), loaded);
+        }
+        let range = match loaded_files.get(path).expect("batch file cache populated") {
+            Ok(text) => {
+                let bounds = if start_line.is_some() || end_line.is_some() {
+                    text_line_bounds(text, start_line, end_line)
+                } else {
+                    Ok((offset.unwrap_or(0), text.len()))
+                };
+                bounds.and_then(|(start, end)| slice_text_range(text, start, end, limit))
+            }
+            Err(error) => Err(error.clone()),
+        };
+        match range {
+            Ok(range) => {
+                let bytes = range.content.len();
+                returned_bytes = returned_bytes.saturating_add(bytes);
+                budget.record_read_bytes(bytes);
+                items.push(serde_json::json!({
+                    "index": index,
+                    "start_offset": range.start_offset,
+                    "end_offset": range.end_offset,
+                    "requested_start_line": start_line,
+                    "requested_end_line": end_line,
+                    "next_offset": range.next_offset,
+                    "truncated": range.next_offset.is_some(),
+                    "content": range.content
+                }));
+            }
+            Err(error) => items.push(serde_json::json!({ "index": index, "error": error })),
+        }
+    }
+
+    match serde_json::to_string(&serde_json::json!({ "items": items })) {
+        Ok(content) => ToolResult::Text(content),
+        Err(error) => ToolResult::Error(format!("Failed to encode ReadTextBatch result: {error}")),
+    }
+}
+
+async fn execute_read_assets_batch(
+    input: &serde_json::Value,
+    budget: &mut ToolBudget,
+    access: &ToolAccess,
+) -> ToolResult {
+    let Some(paths) = input
+        .get("file_paths")
+        .or_else(|| input.get("paths"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return ToolResult::Error(
+            "ReadDocumentAssetsBatch requires a file_paths array".to_string(),
+        );
+    };
+    if paths.is_empty() || paths.len() > MAX_BATCH_ASSET_REQUESTS {
+        return ToolResult::Error(format!(
+            "ReadDocumentAssetsBatch accepts 1 to {MAX_BATCH_ASSET_REQUESTS} paths"
+        ));
+    }
+
+    let mut items = Vec::with_capacity(paths.len());
+    let mut images = Vec::new();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut returned_raw_bytes = 0usize;
+
+    for (index, value) in paths.iter().enumerate() {
+        let Some(path) = value.as_str().filter(|path| !path.is_empty()) else {
+            items.push(serde_json::json!({
+                "index": index,
+                "error": "Every file_paths item must be a non-empty string"
+            }));
+            continue;
+        };
+        if let Some(original) = seen.get(path) {
+            items.push(serde_json::json!({
+                "index": index,
+                "duplicate_of": original
+            }));
+            continue;
+        }
+        seen.insert(path.to_string(), index);
+
+        let global_remaining = match budget.reserve_read() {
+            Ok(remaining) => remaining,
+            Err(error) => {
+                items.push(serde_json::json!({ "index": index, "error": error }));
+                continue;
+            }
+        };
+        let batch_remaining = MAX_BATCH_ASSET_RAW_BYTES.saturating_sub(returned_raw_bytes);
+        if batch_remaining == 0 {
+            items.push(serde_json::json!({
+                "index": index,
+                "error": format!(
+                    "ReadDocumentAssetsBatch reached its {} MiB raw-image budget",
+                    MAX_BATCH_ASSET_RAW_BYTES / 1024 / 1024
+                )
+            }));
+            continue;
+        }
+        let remaining = global_remaining.min(batch_remaining);
+        let owned_path = path.to_string();
+        let access = access.clone();
+        match run_blocking_tool(move || read_image_for_tool(&access, &owned_path, remaining)).await
+        {
+            Ok((data, media_type, raw_bytes)) => {
+                returned_raw_bytes = returned_raw_bytes.saturating_add(raw_bytes);
+                budget.record_read_bytes(raw_bytes);
+                let media_index = images.len();
+                items.push(serde_json::json!({
+                    "index": index,
+                    "media_index": media_index,
+                    "media_type": media_type
+                }));
+                images.push(ToolImage { data, media_type });
+            }
+            Err(error) => items.push(serde_json::json!({ "index": index, "error": error })),
+        }
+    }
+
+    let metadata = match serde_json::to_string(&serde_json::json!({ "items": items })) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return ToolResult::Error(format!(
+                "Failed to encode ReadDocumentAssetsBatch result: {error}"
+            ))
+        }
+    };
+    if images.is_empty() {
+        ToolResult::Text(metadata)
+    } else {
+        ToolResult::ImageBatch { metadata, images }
+    }
+}
+
+fn anthropic_tool_result_content(result: ToolResult) -> (serde_json::Value, bool) {
+    match result {
+        ToolResult::Text(text) => (serde_json::Value::String(text), false),
+        ToolResult::PdfBase64(data) => (
+            serde_json::json!([{
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": data
+                }
+            }]),
+            false,
+        ),
+        ToolResult::ImageBase64 { data, media_type } => (
+            serde_json::json!([{
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data
+                }
+            }]),
+            false,
+        ),
+        ToolResult::ImageBatch { metadata, images } => {
+            let mut blocks = vec![serde_json::json!({ "type": "text", "text": metadata })];
+            blocks.extend(images.into_iter().map(|image| {
+                serde_json::json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image.media_type,
+                        "data": image.data
+                    }
+                })
+            }));
+            (serde_json::Value::Array(blocks), false)
+        }
+        ToolResult::Error(message) => (serde_json::Value::String(message), true),
+    }
+}
+
+fn append_openai_tool_result(
+    messages: &mut Vec<OpenAIMessage>,
+    tool_call_id: &str,
+    result: ToolResult,
+    pending_images: &mut Vec<ToolImage>,
+) {
+    let (tool_text, images) = match result {
+        ToolResult::Text(text) => (text, Vec::new()),
+        ToolResult::PdfBase64(_) => (
+            "Cannot read PDF visually via this API. Use the extracted paper text or rendered page assets instead.".to_string(),
+            Vec::new(),
+        ),
+        ToolResult::ImageBase64 { data, media_type } => (
+            "The requested document image is attached in the next message.".to_string(),
+            vec![ToolImage { data, media_type }],
+        ),
+        ToolResult::ImageBatch { metadata, images } => (metadata, images),
+        ToolResult::Error(message) => (message, Vec::new()),
+    };
+    messages.push(OpenAIMessage {
+        role: "tool".to_string(),
+        content: Some(serde_json::Value::String(tool_text)),
+        tool_calls: None,
+        tool_call_id: Some(tool_call_id.to_string()),
+    });
+    pending_images.extend(images);
+}
+
+fn append_openai_image_message(messages: &mut Vec<OpenAIMessage>, images: Vec<ToolImage>) {
+    if images.is_empty() {
+        return;
+    }
+    let mut parts = vec![serde_json::json!({
+        "type": "text",
+        "text": "Visual document assets returned by the preceding tool call, in media_index order."
+    })];
+    parts.extend(images.into_iter().map(|image| {
+        serde_json::json!({
+            "type": "image_url",
+            "image_url": {
+                "url": format!("data:{};base64,{}", image.media_type, image.data)
+            }
+        })
+    }));
+    messages.push(OpenAIMessage {
+        role: "user".to_string(),
+        content: Some(serde_json::Value::Array(parts)),
+        tool_calls: None,
+        tool_call_id: None,
+    });
+}
+
+fn google_tool_result_parts(
+    call: &GoogleFunctionCall,
+    result: ToolResult,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let (content, images) = match result {
+        ToolResult::Text(text) => (text, Vec::new()),
+        ToolResult::PdfBase64(_) => (
+            "Cannot read PDF visually via this tool. Use the extracted paper text or rendered page assets instead.".to_string(),
+            Vec::new(),
+        ),
+        ToolResult::ImageBase64 { data, media_type } => (
+            "The requested document image is included as inline visual data.".to_string(),
+            vec![ToolImage { data, media_type }],
+        ),
+        ToolResult::ImageBatch { metadata, images } => (metadata, images),
+        ToolResult::Error(message) => (message, Vec::new()),
+    };
+    let function_response = serde_json::json!({
+        "functionResponse": GoogleFunctionResponse {
+            name: call.name.clone(),
+            response: serde_json::json!({ "content": content }),
+            id: call.id.clone(),
+        },
+    });
+    let image_parts = images
+        .into_iter()
+        .map(|image| {
+            serde_json::json!({
+                "inlineData": {
+                    "data": image.data,
+                    "mimeType": image.media_type,
+                }
+            })
+        })
+        .collect();
+    (function_response, image_parts)
 }
 
 /// Execute a tool call. Filesystem work runs on the blocking pool so a slow
@@ -1456,19 +2283,10 @@ async fn execute_tool(
                 app,
                 format!("[api] {label}: Read tool call #{} -> {path}", iteration + 1),
             );
-            if budget.read_calls >= MAX_TOOL_READ_CALLS {
-                return ToolResult::Error(format!(
-                    "Read limit reached ({MAX_TOOL_READ_CALLS} calls per model invocation)"
-                ));
-            }
-            let remaining = MAX_TOOL_READ_BYTES.saturating_sub(budget.read_bytes);
-            if remaining == 0 {
-                return ToolResult::Error(format!(
-                    "Read byte budget reached ({} MB per model invocation)",
-                    MAX_TOOL_READ_BYTES / 1024 / 1024
-                ));
-            }
-            budget.read_calls += 1;
+            let remaining = match budget.reserve_read() {
+                Ok(remaining) => remaining,
+                Err(error) => return ToolResult::Error(error),
+            };
             if path.to_lowercase().ends_with(".pdf") {
                 let owned_path = path.to_string();
                 let access = access.clone();
@@ -1476,7 +2294,7 @@ async fn execute_tool(
                     .await
                 {
                     Ok(data) => {
-                        budget.read_bytes += data.len().saturating_mul(3) / 4;
+                        budget.record_read_bytes(data.len().saturating_mul(3) / 4);
                         ToolResult::PdfBase64(data)
                     }
                     Err(e) => ToolResult::Error(e),
@@ -1490,12 +2308,19 @@ async fn execute_tool(
                 .await
                 {
                     Ok(content) => {
-                        budget.read_bytes += content.len();
+                        budget.record_read_bytes(content.len());
                         ToolResult::Text(content)
                     }
                     Err(e) => ToolResult::Error(e),
                 }
             }
+        }
+        "ReadTextBatch" => {
+            verbose_log(
+                app,
+                format!("[api] {label}: ReadTextBatch tool call #{}", iteration + 1),
+            );
+            execute_read_text_batch(input, budget, access).await
         }
         "ReadDocumentAsset" => {
             let path = input
@@ -1510,30 +2335,31 @@ async fn execute_tool(
                     iteration + 1
                 ),
             );
-            if budget.read_calls >= MAX_TOOL_READ_CALLS {
-                return ToolResult::Error(format!(
-                    "Read limit reached ({MAX_TOOL_READ_CALLS} calls per model invocation)"
-                ));
-            }
-            let remaining = MAX_TOOL_READ_BYTES.saturating_sub(budget.read_bytes);
-            if remaining == 0 {
-                return ToolResult::Error(format!(
-                    "Read byte budget reached ({} MB per model invocation)",
-                    MAX_TOOL_READ_BYTES / 1024 / 1024
-                ));
-            }
-            budget.read_calls += 1;
+            let remaining = match budget.reserve_read() {
+                Ok(remaining) => remaining,
+                Err(error) => return ToolResult::Error(error),
+            };
             let owned_path = path.to_string();
             let access = access.clone();
             match run_blocking_tool(move || read_image_for_tool(&access, &owned_path, remaining))
                 .await
             {
-                Ok((data, media_type)) => {
-                    budget.read_bytes += data.len().saturating_mul(3) / 4;
+                Ok((data, media_type, raw_bytes)) => {
+                    budget.record_read_bytes(raw_bytes);
                     ToolResult::ImageBase64 { data, media_type }
                 }
                 Err(error) => ToolResult::Error(error),
             }
+        }
+        "ReadDocumentAssetsBatch" => {
+            verbose_log(
+                app,
+                format!(
+                    "[api] {label}: ReadDocumentAssetsBatch tool call #{}",
+                    iteration + 1
+                ),
+            );
+            execute_read_assets_batch(input, budget, access).await
         }
         "Write" => {
             let path = input
@@ -1609,6 +2435,18 @@ mod tests {
     static READ_DIR_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
+    fn custom_endpoint_clients_separate_loopback_http_from_https() {
+        assert!(std::ptr::eq(
+            custom_endpoint_client("http://127.0.0.1:11434/v1"),
+            &*LOCAL_HTTP_CLIENT
+        ));
+        assert!(std::ptr::eq(
+            custom_endpoint_client("https://models.example.test/v1"),
+            &*CUSTOM_HTTPS_HTTP_CLIENT
+        ));
+    }
+
+    #[test]
     fn incomplete_provider_responses_are_identified() {
         assert!(anthropic_output_incomplete(Some("max_tokens")));
         assert!(!anthropic_output_incomplete(Some("end_turn")));
@@ -1617,6 +2455,351 @@ mod tests {
         assert!(!openai_output_incomplete(Some("stop")));
         assert!(google_output_incomplete(Some("MAX_TOKENS")));
         assert!(!google_output_incomplete(Some("STOP")));
+    }
+
+    #[test]
+    fn tool_budget_caps_calls_and_argument_bytes() {
+        let mut calls = ToolBudget::default();
+        for _ in 0..MAX_TOOL_CALLS {
+            calls.reserve_tool_call(0).unwrap();
+        }
+        assert!(calls.reserve_tool_call(0).unwrap_err().contains("count"));
+
+        let mut single = ToolBudget::default();
+        assert!(single
+            .reserve_tool_call(MAX_TOOL_ARGUMENT_BYTES + 1)
+            .unwrap_err()
+            .contains("per-call"));
+
+        let mut cumulative = ToolBudget::default();
+        for _ in 0..4 {
+            cumulative
+                .reserve_tool_call(MAX_TOOL_ARGUMENT_BYTES)
+                .unwrap();
+        }
+        assert!(cumulative
+            .reserve_tool_call(1)
+            .unwrap_err()
+            .contains("cumulative"));
+    }
+
+    #[test]
+    fn tool_history_and_json_measurement_are_bounded() {
+        let messages = (0..=MAX_TOOL_HISTORY_MESSAGES)
+            .map(|_| OpenAIMessage {
+                role: "tool".to_string(),
+                content: Some(serde_json::json!("ok")),
+                tool_calls: None,
+                tool_call_id: Some("call".to_string()),
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_tool_history(&messages, "OpenAI")
+            .unwrap_err()
+            .contains("message"));
+
+        let oversized = "x".repeat(1025);
+        assert!(serialized_size_limited(&oversized, 1024, "test history")
+            .unwrap_err()
+            .contains("safety limit"));
+    }
+
+    #[test]
+    fn openai_usage_parses_cache_read_and_write_partitions() {
+        let usage: OpenAIUsage = serde_json::from_value(serde_json::json!({
+            "prompt_tokens": 1200,
+            "completion_tokens": 80,
+            "prompt_tokens_details": {
+                "cached_tokens": 900,
+                "cache_write_tokens": 200
+            }
+        }))
+        .unwrap();
+        let details = usage.prompt_tokens_details.unwrap();
+        assert_eq!(details.cached_tokens, Some(900));
+        assert_eq!(details.cache_write_tokens, Some(200));
+    }
+
+    #[test]
+    fn direct_usage_exposes_round_trips_and_tool_counts() {
+        let mut usage = Usage {
+            requests: 3,
+            ..Default::default()
+        };
+        usage
+            .tool_calls
+            .add_kind(crate::models::ToolCallKind::TextFile, 2);
+        usage
+            .tool_calls
+            .add_kind(crate::models::ToolCallKind::Web, 4);
+        let emitted = usage.call_usage();
+        assert_eq!(emitted.model_round_trips, 3);
+        assert_eq!(emitted.tool_calls.text_file, 2);
+        assert_eq!(emitted.tool_calls.web, 4);
+        assert_eq!(
+            direct_tool_kind("ReadDocumentAssetsBatch"),
+            crate::models::ToolCallKind::Image
+        );
+    }
+
+    #[test]
+    fn provider_hosted_search_counts_are_parsed() {
+        let anthropic: AnthropicResponse = serde_json::from_value(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": "answer",
+                "citations": [{"type": "web_search_result_location", "encrypted_index": "secret"}]
+            }],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "server_tool_use": {"web_search_requests": 3}
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            anthropic_hosted_search_count(anthropic.usage.as_ref().unwrap()),
+            3
+        );
+        assert_eq!(anthropic_extract_text(&anthropic.content), "answer");
+        let echoed = serde_json::to_value(AnthropicMessage {
+            role: "assistant".to_string(),
+            content: serde_json::Value::Array(anthropic.content),
+        })
+        .unwrap();
+        assert_eq!(
+            echoed["content"][0]["citations"][0]["encrypted_index"],
+            "secret"
+        );
+
+        let google: GoogleResponse = serde_json::from_value(serde_json::json!({
+            "candidates": [{
+                "content": {"role": "model", "parts": [
+                    {
+                        "toolCall": {
+                            "toolType": "GOOGLE_SEARCH_WEB",
+                            "args": {"queries": ["one", "two"]},
+                            "id": "search-id"
+                        },
+                        "thoughtSignature": "encrypted"
+                    },
+                    {"text": "answer"}
+                ]},
+                "finishReason": "STOP",
+                "groundingMetadata": {
+                    "webSearchQueries": ["one", "two", "one", ""]
+                }
+            }]
+        }))
+        .unwrap();
+        let mut candidates = google.candidates.unwrap();
+        let candidate = &candidates[0];
+        assert_eq!(google_hosted_search_count(candidate), 2);
+        let echoed = serde_json::to_value(&candidate.content).unwrap();
+        assert_eq!(echoed["parts"][0]["thoughtSignature"], "encrypted");
+        assert_eq!(echoed["parts"][0]["toolCall"]["id"], "search-id");
+        candidates[0].grounding_metadata = None;
+        assert_eq!(google_hosted_search_count(&candidates[0]), 2);
+    }
+
+    #[test]
+    fn batch_tool_schemas_keep_single_tools_and_bounded_ranges() {
+        let text = ReadTextBatchToolDef::default();
+        assert_eq!(text.name, "ReadTextBatch");
+        let requests = &text.input_schema["properties"]["requests"];
+        assert_eq!(requests["maxItems"], MAX_BATCH_TEXT_REQUESTS);
+        let properties = &requests["items"]["properties"];
+        assert_eq!(properties["start_line"]["minimum"], 1);
+        assert_eq!(
+            properties["max_bytes"]["maximum"],
+            MAX_BATCH_TEXT_ITEM_BYTES
+        );
+
+        let images = DocumentAssetsBatchToolDef::default();
+        assert_eq!(images.name, "ReadDocumentAssetsBatch");
+        assert_eq!(
+            images.input_schema["properties"]["file_paths"]["maxItems"],
+            MAX_BATCH_ASSET_REQUESTS
+        );
+    }
+
+    #[test]
+    fn utf8_and_line_range_bounds_are_deterministic() {
+        let text = "one\nβeta\nthree\n";
+        let beta_start = text.find('β').unwrap();
+        let range = slice_text_range(text, beta_start, text.len(), 2).unwrap();
+        assert_eq!(range.content, "β");
+        assert_eq!(range.next_offset, Some(beta_start + 2));
+        assert!(slice_text_range(text, beta_start + 1, text.len(), 8)
+            .unwrap_err()
+            .contains("UTF-8"));
+        assert!(slice_text_range(text, beta_start, text.len(), 1)
+            .unwrap_err()
+            .contains("too small"));
+
+        let (start, end) = text_line_bounds(text, Some(2), Some(2)).unwrap();
+        assert_eq!(&text[start..end], "βeta\n");
+        assert!(text_line_bounds(text, Some(4), Some(4)).is_err());
+        assert!(text_line_bounds(text, Some(3), Some(2)).is_err());
+    }
+
+    #[test]
+    fn text_batch_handles_lines_duplicates_and_existing_budgets() {
+        let _guard = READ_DIR_TEST_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let paper = dir.path().join("document.md");
+        std::fs::write(&paper, "one\nβeta\nthree\nfour\n").unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let path = paper.to_string_lossy().to_string();
+        let access = ToolAccess::new(&[root.as_str()], None);
+        let input = serde_json::json!({
+            "requests": [
+                {"file_path": path, "start_line": 2, "end_line": 2},
+                {"file_path": path, "start_line": 4, "end_line": 4},
+                {"file_path": path, "start_line": 2, "end_line": 2},
+                {"file_path": path, "offset": 0, "start_line": 1}
+            ]
+        });
+        let mut budget = ToolBudget::default();
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(execute_read_text_batch(&input, &mut budget, &access));
+        let ToolResult::Text(result) = result else {
+            panic!("expected text batch result")
+        };
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let items = result["items"].as_array().unwrap();
+        assert_eq!(items[0]["content"], "βeta\n");
+        assert_eq!(items[1]["content"], "four\n");
+        assert_eq!(items[2]["duplicate_of"], 0);
+        assert!(items[3]["error"]
+            .as_str()
+            .unwrap()
+            .contains("mutually exclusive"));
+        assert_eq!(budget.read_calls, 2);
+        assert_eq!(budget.read_bytes, "βeta\nfour\n".len());
+    }
+
+    #[test]
+    fn image_batch_deduplicates_and_serializes_for_each_provider() {
+        let _guard = READ_DIR_TEST_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.png");
+        let second = dir.path().join("second.jpg");
+        std::fs::write(&first, b"png").unwrap();
+        std::fs::write(&second, b"jpeg").unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let first_path = first.to_string_lossy().to_string();
+        let second_path = second.to_string_lossy().to_string();
+        let access = ToolAccess::new(&[root.as_str()], None);
+        let input = serde_json::json!({
+            "file_paths": [first_path, first_path, second_path]
+        });
+        let mut budget = ToolBudget::default();
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(execute_read_assets_batch(&input, &mut budget, &access));
+        let ToolResult::ImageBatch { metadata, images } = result else {
+            panic!("expected image batch")
+        };
+        assert_eq!(images.len(), 2);
+        assert_eq!(budget.read_calls, 2);
+        assert_eq!(budget.read_bytes, 7);
+        let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+        assert_eq!(metadata["items"][1]["duplicate_of"], 0);
+
+        let batch = || ToolResult::ImageBatch {
+            metadata: "{\"items\":[]}".to_string(),
+            images: vec![
+                ToolImage {
+                    data: "cG5n".to_string(),
+                    media_type: "image/png".to_string(),
+                },
+                ToolImage {
+                    data: "anBlZw==".to_string(),
+                    media_type: "image/jpeg".to_string(),
+                },
+            ],
+        };
+        let (anthropic, is_error) = anthropic_tool_result_content(batch());
+        assert!(!is_error);
+        assert_eq!(anthropic.as_array().unwrap().len(), 3);
+
+        let mut messages = Vec::new();
+        let mut pending_images = Vec::new();
+        append_openai_tool_result(&mut messages, "call-1", batch(), &mut pending_images);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "tool");
+        append_openai_image_message(&mut messages, pending_images);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[1]
+                .content
+                .as_ref()
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+
+        let google_call = GoogleFunctionCall {
+            name: "assets".to_string(),
+            args: serde_json::json!({}),
+            id: Some("call-id".to_string()),
+        };
+        let (response, image_parts) = google_tool_result_parts(&google_call, batch());
+        assert_eq!(response["functionResponse"]["name"], "assets");
+        assert_eq!(response["functionResponse"]["id"], "call-id");
+        assert_eq!(image_parts.len(), 2);
+        assert!(image_parts
+            .iter()
+            .all(|part| part.get("inlineData").is_some()));
+    }
+
+    #[test]
+    fn image_batch_enforces_cross_provider_raw_byte_cap() {
+        let _guard = READ_DIR_TEST_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.png");
+        let second = dir.path().join("second.png");
+        std::fs::File::create(&first)
+            .unwrap()
+            .set_len(7 * 1024 * 1024)
+            .unwrap();
+        std::fs::File::create(&second)
+            .unwrap()
+            .set_len(6 * 1024 * 1024)
+            .unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let access = ToolAccess::new(&[root.as_str()], None);
+        let input = serde_json::json!({
+            "file_paths": [
+                first.to_string_lossy(),
+                second.to_string_lossy()
+            ]
+        });
+        let mut budget = ToolBudget::default();
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(execute_read_assets_batch(&input, &mut budget, &access));
+        let ToolResult::ImageBatch { metadata, images } = result else {
+            panic!("expected partial image batch")
+        };
+        assert_eq!(images.len(), 1);
+        assert_eq!(budget.read_calls, 2);
+        assert_eq!(budget.read_bytes, 7 * 1024 * 1024);
+        let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+        assert!(metadata["items"][1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("too large"));
     }
 
     #[test]
@@ -1669,9 +2852,10 @@ mod tests {
         std::fs::write(&image, b"\x89PNG\r\n\x1a\nvisual-bytes").unwrap();
         let root = dir.path().to_string_lossy().to_string();
         let access = ToolAccess::new(&[root.as_str()], None);
-        let (data, media_type) =
+        let (data, media_type, raw_bytes) =
             read_image_for_tool(&access, &image.to_string_lossy(), MAX_IMAGE_SIZE).unwrap();
         assert_eq!(media_type, "image/png");
+        assert_eq!(raw_bytes, b"\x89PNG\r\n\x1a\nvisual-bytes".len());
         assert_eq!(
             STANDARD.decode(data).unwrap(),
             b"\x89PNG\r\n\x1a\nvisual-bytes"

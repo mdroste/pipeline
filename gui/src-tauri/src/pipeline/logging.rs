@@ -94,6 +94,13 @@ pub struct CallUsage {
     /// CLI session fallbacks. This is distinct from logical step retries.
     #[serde(default)]
     pub provider_attempts: u64,
+    /// Model generations reported within those provider invocations. Direct
+    /// API tool loops can contain several round trips in one invocation.
+    #[serde(default)]
+    pub model_round_trips: u64,
+    /// Model-issued tool calls, grouped into stable cross-provider categories.
+    #[serde(default)]
+    pub tool_calls: crate::models::ToolCallCounts,
 }
 
 impl CallUsage {
@@ -114,6 +121,10 @@ impl CallUsage {
         self.provider_attempts = self
             .provider_attempts
             .saturating_add(other.provider_attempts);
+        self.model_round_trips = self
+            .model_round_trips
+            .saturating_add(other.model_round_trips);
+        self.tool_calls.add_counts(other.tool_calls);
     }
 }
 
@@ -151,6 +162,8 @@ static RUN_USAGE: Mutex<CallUsage> = Mutex::new(CallUsage {
     cached_input_tokens: 0,
     cache_write_input_tokens: 0,
     provider_attempts: 0,
+    model_round_trips: 0,
+    tool_calls: crate::models::ToolCallCounts::ZERO,
 });
 
 /// A file the console log is mirrored to for the duration of a run. `emit`
@@ -259,6 +272,97 @@ pub fn record_provider_attempt() {
     });
 }
 
+/// Map provider-specific tool names into the stable categories persisted in a
+/// run. Match only high-confidence names; preserving an unknown count is more
+/// useful than silently misclassifying future provider tools.
+pub fn classify_tool_name(name: &str) -> crate::models::ToolCallKind {
+    use crate::models::ToolCallKind;
+
+    let normalized = name.trim().to_ascii_lowercase().replace(['-', '.'], "_");
+    let compact = normalized.replace('_', "");
+    if normalized.is_empty() {
+        return ToolCallKind::Unknown;
+    }
+    if normalized.contains("image")
+        || normalized.contains("screenshot")
+        || normalized.contains("vision")
+        || normalized.contains("document_asset")
+        || compact.contains("documentasset")
+    {
+        ToolCallKind::Image
+    } else if normalized.contains("web_search")
+        || normalized.contains("web_fetch")
+        || normalized.contains("google_search")
+        || normalized.contains("url_context")
+        || normalized.starts_with("browser")
+        || compact.contains("websearch")
+        || compact.contains("webfetch")
+        || compact.contains("googlesearch")
+        || compact.contains("urlcontext")
+    {
+        ToolCallKind::Web
+    } else if normalized.contains("read_file")
+        || normalized.contains("write_file")
+        || normalized.contains("file_change")
+        || normalized.contains("notebook")
+        || normalized.contains("apply_patch")
+        || normalized == "read"
+        || normalized == "write"
+        || normalized == "edit"
+        || normalized == "glob"
+        || normalized == "grep"
+        || normalized == "replace"
+        || compact.contains("readtext")
+        || compact.contains("readfile")
+        || compact.contains("writefile")
+    {
+        ToolCallKind::TextFile
+    } else if normalized.contains("command")
+        || normalized.contains("shell")
+        || normalized.contains("terminal")
+        || normalized.contains("computer")
+        || normalized.contains("code_execution")
+        || normalized == "bash"
+        || normalized == "exec"
+        || normalized == "python"
+    {
+        ToolCallKind::ShellOrOther
+    } else {
+        ToolCallKind::Unknown
+    }
+}
+
+/// Record and emit completed model generations from a provider integration.
+/// Direct API loops call this once per model response; CLI parsers may report
+/// several generations at once.
+pub fn emit_model_round_trips(app: &crate::emit::EventBus, count: u64) {
+    if count == 0 {
+        return;
+    }
+    emit_usage(
+        app,
+        CallUsage {
+            model_round_trips: count,
+            ..Default::default()
+        },
+    );
+}
+
+/// Record and emit provider-reported tool calls. Counts may be partially
+/// classified; the `unknown` bucket is intentionally retained.
+pub fn emit_tool_calls(app: &crate::emit::EventBus, counts: crate::models::ToolCallCounts) {
+    if counts.is_empty() {
+        return;
+    }
+    emit_usage(
+        app,
+        CallUsage {
+            tool_calls: counts,
+            ..Default::default()
+        },
+    );
+}
+
 /// Emit a `pipeline:usage` event with token counts for the current call,
 /// tagged with the active session. Calls with no token data (both zero) are
 /// skipped — CLI text-mode providers can't report usage.
@@ -267,6 +371,8 @@ pub fn emit_usage(app: &crate::emit::EventBus, usage: CallUsage) {
         && usage.output_tokens == 0
         && usage.cached_input_tokens == 0
         && usage.cache_write_input_tokens == 0
+        && usage.model_round_trips == 0
+        && usage.tool_calls.is_empty()
     {
         return;
     }
@@ -287,6 +393,8 @@ pub fn emit_usage(app: &crate::emit::EventBus, usage: CallUsage) {
             "cached_input_tokens": usage.cached_input_tokens,
             "cache_write_input_tokens": usage.cache_write_input_tokens,
             "provider_attempts": usage.provider_attempts,
+            "model_round_trips": usage.model_round_trips,
+            "tool_calls": usage.tool_calls,
         }),
     )
     .ok();
@@ -314,8 +422,8 @@ pub fn emit(app: &crate::emit::EventBus, line: String) {
 }
 
 /// Emit the summary and structured details for one LLM request. The concise
-/// summary is mirrored to the run transcript; the potentially large prompt
-/// remains in the live event only and is revealed explicitly by the console.
+/// summary is mirrored to the run transcript; a bounded diagnostic preview is
+/// carried only in the live event and revealed explicitly by the console.
 pub fn emit_request(app: &crate::emit::EventBus, line: String, request: serde_json::Value) {
     let (session, label) = match current() {
         Some(s) => (Some(s.id), Some(s.label)),
@@ -408,6 +516,12 @@ mod tests {
                 cached_input_tokens: 40,
                 cache_write_input_tokens: 10,
                 provider_attempts: 1,
+                model_round_trips: 3,
+                tool_calls: crate::models::ToolCallCounts {
+                    text_file: 2,
+                    web: 1,
+                    ..Default::default()
+                },
             });
             record_usage(CallUsage {
                 input_tokens: 50,
@@ -415,6 +529,12 @@ mod tests {
                 cached_input_tokens: 5,
                 cache_write_input_tokens: 0,
                 provider_attempts: 2,
+                model_round_trips: 4,
+                tool_calls: crate::models::ToolCallCounts {
+                    image: 1,
+                    unknown: 2,
+                    ..Default::default()
+                },
             });
         }));
         assert_eq!(usage.input_tokens, 150);
@@ -422,6 +542,12 @@ mod tests {
         assert_eq!(usage.cached_input_tokens, 45);
         assert_eq!(usage.cache_write_input_tokens, 10);
         assert_eq!(usage.provider_attempts, 3);
+        assert_eq!(usage.model_round_trips, 7);
+        assert_eq!(usage.tool_calls.text_file, 2);
+        assert_eq!(usage.tool_calls.image, 1);
+        assert_eq!(usage.tool_calls.web, 1);
+        assert_eq!(usage.tool_calls.unknown, 2);
+        assert_eq!(usage.tool_calls.total(), 6);
     }
 
     #[test]
@@ -441,5 +567,27 @@ mod tests {
             output_tokens: 1,
             ..Default::default()
         });
+    }
+
+    #[test]
+    fn provider_tool_names_map_only_to_stable_categories() {
+        use crate::models::ToolCallKind;
+
+        assert_eq!(classify_tool_name("Read"), ToolCallKind::TextFile);
+        assert_eq!(classify_tool_name("ReadTextBatch"), ToolCallKind::TextFile);
+        assert_eq!(classify_tool_name("ReadDocumentAsset"), ToolCallKind::Image);
+        assert_eq!(
+            classify_tool_name("ReadDocumentAssetsBatch"),
+            ToolCallKind::Image
+        );
+        assert_eq!(classify_tool_name("web_search"), ToolCallKind::Web);
+        assert_eq!(
+            classify_tool_name("command_execution"),
+            ToolCallKind::ShellOrOther
+        );
+        assert_eq!(
+            classify_tool_name("future_provider_tool"),
+            ToolCallKind::Unknown
+        );
     }
 }

@@ -30,9 +30,27 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
                 "parameters": def.input_schema,
             }
         }));
+        let def = ReadTextBatchToolDef::default();
+        tools.push(serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": def.name,
+                "description": def.description,
+                "parameters": def.input_schema,
+            }
+        }));
     }
     if allowed_tools.contains(&"ReadDocumentAsset") {
         let def = DocumentAssetToolDef::default();
+        tools.push(serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": def.name,
+                "description": def.description,
+                "parameters": def.input_schema,
+            }
+        }));
+        let def = DocumentAssetsBatchToolDef::default();
         tools.push(serde_json::json!({
             "type": "function",
             "function": {
@@ -273,7 +291,7 @@ pub async fn call_openai_api(
 ///
 /// Differences from the OpenAI path: no reasoning_effort (most local servers
 /// reject or ignore it), no PDF attachments (no local server supports the
-/// file content part — extraction should use pdftotext/marker instead), and
+/// file content part — extraction should use PaddleOCR-VL or pdftotext), and
 /// a retry-without-tools fallback for models without tool-calling support.
 #[allow(clippy::too_many_arguments)]
 pub async fn call_local_api(
@@ -295,6 +313,7 @@ pub async fn call_local_api(
             "Local provider: no server URL configured. Set it in Settings → Models.".into(),
         );
     }
+    crate::settings::validate_local_base_url(base_url)?;
     let model = overrides
         .model
         .filter(|s| !s.trim().is_empty())
@@ -311,7 +330,7 @@ pub async fn call_local_api(
     if overrides.pdf_attachment.is_some() {
         return Err(
             "Local provider: PDF attachments are not supported by local servers. \
-             Use marker or pdftotext extraction with the local provider."
+             Use PaddleOCR-VL or pdftotext extraction with the local provider."
                 .into(),
         );
     }
@@ -321,7 +340,7 @@ pub async fn call_local_api(
         format!("{label} started (API: local, {base_url}, model: {model})"),
     );
 
-    let client = &*super::api_common::HTTP_CLIENT;
+    let client = super::api_common::custom_endpoint_client(&settings.local_base_url);
     let access = ToolAccess::new(read_dirs, overrides.write_dir);
     let request = OpenAIRequest {
         model,
@@ -392,5 +411,26 @@ mod tests {
         let parts = messages[1].content.as_ref().unwrap().as_array().unwrap();
         assert!(parts[0]["text"].as_str().unwrap().contains("paper body"));
         assert_eq!(parts[1]["text"], "task-specific request");
+    }
+
+    #[test]
+    fn direct_and_local_tools_include_batch_fallback_pairs() {
+        let tools = build_tools(&["Read", "ReadDocumentAsset"]);
+        let names = tools
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "Read",
+                "ReadTextBatch",
+                "ReadDocumentAsset",
+                "ReadDocumentAssetsBatch"
+            ]
+        );
+        // Chat Completions/local transports have no safe hosted-search
+        // primitive; WebSearch remains intentionally unavailable here.
+        assert!(build_tools(&["WebSearch"]).is_empty());
     }
 }

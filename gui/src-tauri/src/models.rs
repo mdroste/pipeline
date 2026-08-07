@@ -211,6 +211,75 @@ pub fn survey_hint(survey: &serde_json::Value) -> String {
 
 // --- Step Output ---
 
+/// Stable, provider-neutral categories for model-issued tool calls. Providers
+/// expose different tool names and levels of detail, so unclassifiable calls
+/// remain visible instead of being dropped or guessed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCallKind {
+    TextFile,
+    Image,
+    Web,
+    ShellOrOther,
+    Unknown,
+}
+
+/// Reported tool calls grouped into categories that can be compared across
+/// providers. All fields default to zero so older reports and manifests load.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCallCounts {
+    #[serde(default)]
+    pub text_file: u64,
+    #[serde(default)]
+    pub image: u64,
+    #[serde(default)]
+    pub web: u64,
+    #[serde(default)]
+    pub shell_or_other: u64,
+    #[serde(default)]
+    pub unknown: u64,
+}
+
+impl ToolCallCounts {
+    pub const ZERO: Self = Self {
+        text_file: 0,
+        image: 0,
+        web: 0,
+        shell_or_other: 0,
+        unknown: 0,
+    };
+
+    pub fn add_kind(&mut self, kind: ToolCallKind, count: u64) {
+        let target = match kind {
+            ToolCallKind::TextFile => &mut self.text_file,
+            ToolCallKind::Image => &mut self.image,
+            ToolCallKind::Web => &mut self.web,
+            ToolCallKind::ShellOrOther => &mut self.shell_or_other,
+            ToolCallKind::Unknown => &mut self.unknown,
+        };
+        *target = target.saturating_add(count);
+    }
+
+    pub fn add_counts(&mut self, other: Self) {
+        self.text_file = self.text_file.saturating_add(other.text_file);
+        self.image = self.image.saturating_add(other.image);
+        self.web = self.web.saturating_add(other.web);
+        self.shell_or_other = self.shell_or_other.saturating_add(other.shell_or_other);
+        self.unknown = self.unknown.saturating_add(other.unknown);
+    }
+
+    pub fn total(self) -> u64 {
+        self.text_file
+            .saturating_add(self.image)
+            .saturating_add(self.web)
+            .saturating_add(self.shell_or_other)
+            .saturating_add(self.unknown)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.total() == 0
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StepCallRecord {
     #[serde(default)]
@@ -239,6 +308,13 @@ pub struct StepCallRecord {
     pub cached_input_tokens: u64,
     #[serde(default)]
     pub cache_write_input_tokens: u64,
+    /// Model generations reported inside this provider call. A single logical
+    /// step can contain several generations when tools are used.
+    #[serde(default)]
+    pub model_round_trips: u64,
+    /// Model-issued tool calls reported inside this provider call.
+    #[serde(default, skip_serializing_if = "ToolCallCounts::is_empty")]
+    pub tool_calls: ToolCallCounts,
     #[serde(default)]
     pub attempt_count: u32,
 }
@@ -275,6 +351,12 @@ pub struct StepOutput {
     /// Input tokens written to a provider cache.
     #[serde(default)]
     pub cache_write_input_tokens: u64,
+    /// Model generations represented by this step, summed across its calls.
+    #[serde(default)]
+    pub model_round_trips: u64,
+    /// Model-issued tool calls represented by this step.
+    #[serde(default, skip_serializing_if = "ToolCallCounts::is_empty")]
+    pub tool_calls: ToolCallCounts,
     /// Number of provider attempts represented by the totals above.
     #[serde(default)]
     pub attempt_count: u32,
@@ -470,6 +552,45 @@ mod tests {
             key_references: vec![],
             extraction_quality_notes: vec![],
         }
+    }
+
+    #[test]
+    fn old_step_telemetry_defaults_to_zero() {
+        let output: StepOutput = serde_json::from_value(serde_json::json!({
+            "step_id": "technical",
+            "step_label": "Technical",
+            "raw_text": "report",
+            "calls": [{
+                "role": "step",
+                "input_tokens": 100,
+                "output_tokens": 20
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(output.model_round_trips, 0);
+        assert!(output.tool_calls.is_empty());
+        assert_eq!(output.calls[0].model_round_trips, 0);
+        assert!(output.calls[0].tool_calls.is_empty());
+    }
+
+    #[test]
+    fn tool_call_counts_sum_without_losing_unknowns() {
+        let mut counts = ToolCallCounts {
+            text_file: 2,
+            unknown: 1,
+            ..Default::default()
+        };
+        counts.add_counts(ToolCallCounts {
+            image: 3,
+            unknown: 4,
+            ..Default::default()
+        });
+
+        assert_eq!(counts.total(), 10);
+        assert_eq!(counts.text_file, 2);
+        assert_eq!(counts.image, 3);
+        assert_eq!(counts.unknown, 5);
     }
 
     #[test]

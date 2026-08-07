@@ -7,6 +7,7 @@ const DISMISS_KEY = "pipeline:update-dismissed-version";
 
 export default function UpdateBanner() {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +34,15 @@ export default function UpdateBanner() {
     setInfo(null);
   };
 
+  const viewRelease = async () => {
+    setOpenError(null);
+    try {
+      await openUrl(info.release_url);
+    } catch (error) {
+      setOpenError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
     <div
       role="status"
@@ -49,8 +59,13 @@ export default function UpdateBanner() {
         <span className="font-medium">Update available:</span>{" "}
         v{info.current} &rarr; v{info.latest}
       </span>
+      {openError && (
+        <span role="alert" className="min-w-0 truncate text-xs text-red-700 dark:text-red-300">
+          Could not open the release page: {openError}
+        </span>
+      )}
       <button
-        onClick={() => openUrl(info.release_url)}
+        onClick={() => void viewRelease()}
         className="shrink-0 px-2.5 py-1 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors"
       >
         View release

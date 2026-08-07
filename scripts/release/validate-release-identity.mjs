@@ -3,11 +3,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "../..");
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const STABLE_APP_IDENTIFIER = "com.pipeline.report";
+const MIN_WINDOW_WIDTH = 1024;
+const MIN_WINDOW_HEIGHT = 700;
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -29,7 +33,34 @@ function cargoLockPackageVersion(contents, name) {
   throw new Error(`gui/src-tauri/Cargo.lock has no ${name} package entry`);
 }
 
-export function validateReleaseIdentity({ rootDir = REPO_ROOT, tag } = {}) {
+function stableVersionParts(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  return match?.slice(1).map(Number);
+}
+
+function compareVersionParts(left, right) {
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) return left[i] - right[i];
+  }
+  return 0;
+}
+
+function repositoryReleaseTags(rootDir) {
+  try {
+    return execFileSync("git", ["tag", "--list", "v*"], {
+      cwd: rootDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+      .split(/\r?\n/)
+      .filter(Boolean);
+  } catch (error) {
+    const detail = error.stderr?.toString().trim() || error.message;
+    throw new Error(`could not inspect existing release tags: ${detail}`);
+  }
+}
+
+export function validateReleaseIdentity({ rootDir = REPO_ROOT, tag, existingTags } = {}) {
   const guiDir = path.join(rootDir, "gui");
   const packageJson = readJson(path.join(guiDir, "package.json"));
   const packageLock = readJson(path.join(guiDir, "package-lock.json"));
@@ -62,9 +93,42 @@ export function validateReleaseIdentity({ rootDir = REPO_ROOT, tag } = {}) {
       `gui/src-tauri/tauri.conf.json version must be "../package.json", got ${JSON.stringify(tauriConfig.version)}`,
     );
   }
+  if (tauriConfig.$schema !== "https://schema.tauri.app/config/2") {
+    throw new Error(
+      `Tauri config schema must use the stable v2 endpoint, got ${JSON.stringify(tauriConfig.$schema)}`,
+    );
+  }
+  if (tauriConfig.identifier !== STABLE_APP_IDENTIFIER) {
+    throw new Error(
+      `Tauri identifier must remain ${JSON.stringify(STABLE_APP_IDENTIFIER)} for v1.0.0 upgrade continuity, got ${JSON.stringify(tauriConfig.identifier)}`,
+    );
+  }
+  const mainWindow = tauriConfig.app?.windows?.[0];
+  if (
+    !mainWindow
+    || !Number.isFinite(mainWindow.minWidth)
+    || !Number.isFinite(mainWindow.minHeight)
+    || mainWindow.minWidth < MIN_WINDOW_WIDTH
+    || mainWindow.minHeight < MIN_WINDOW_HEIGHT
+  ) {
+    throw new Error(
+      `Tauri main window must declare minimum dimensions of at least ${MIN_WINDOW_WIDTH}x${MIN_WINDOW_HEIGHT}`,
+    );
+  }
   if (tauriConfig.bundle?.macOS?.minimumSystemVersion !== popplerLock.macos?.deploymentTarget) {
     throw new Error(
       `Tauri macOS minimum ${JSON.stringify(tauriConfig.bundle?.macOS?.minimumSystemVersion)} must equal the Poppler closure target ${JSON.stringify(popplerLock.macos?.deploymentTarget)}`,
+    );
+  }
+  if (tauriConfig.bundle?.windows?.allowDowngrades !== false) {
+    throw new Error("Tauri release config must set bundle.windows.allowDowngrades to false");
+  }
+  if (
+    tauriConfig.bundle?.windows?.webviewInstallMode?.type !== "offlineInstaller"
+    || tauriConfig.bundle?.windows?.webviewInstallMode?.silent !== true
+  ) {
+    throw new Error(
+      "Tauri release config must embed the silent Windows WebView2 offlineInstaller",
     );
   }
   for (const resource of ["resources/poppler/**/*", "resources/notices/**/*"]) {
@@ -76,12 +140,39 @@ export function validateReleaseIdentity({ rootDir = REPO_ROOT, tag } = {}) {
   if (tag !== undefined && tag !== `v${version}`) {
     throw new Error(`release tag ${JSON.stringify(tag)} must exactly equal v${version}`);
   }
+  if (tag !== undefined && !stableVersionParts(version)) {
+    throw new Error(
+      `release tag ${JSON.stringify(tag)} uses prerelease or build metadata; this workflow publishes stable releases only`,
+    );
+  }
+
+  // Tag-history checks belong to the explicit release validation step. The
+  // generic quality suite also runs after checkout of an existing release tag,
+  // where finding the current version in git history is expected.
+  if (tag !== undefined && existingTags !== undefined) {
+    const versionParts = stableVersionParts(version);
+    if (versionParts) {
+      const priorStableTags = existingTags
+        .filter((existingTag) => existingTag !== tag)
+        .map((existingTag) => {
+          const parts = stableVersionParts(existingTag.replace(/^v/, ""));
+          return parts ? { tag: existingTag, parts } : undefined;
+        })
+        .filter(Boolean);
+      const latest = priorStableTags.sort((a, b) => compareVersionParts(b.parts, a.parts))[0];
+      if (latest && compareVersionParts(versionParts, latest.parts) <= 0) {
+        throw new Error(
+          `release version ${version} must be newer than existing stable tag ${latest.tag}`,
+        );
+      }
+    }
+  }
 
   return version;
 }
 
 function parseArgs(argv) {
-  const parsed = { tag: process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : undefined };
+  const parsed = {};
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--tag") parsed.tag = argv[++i];
     else if (argv[i] === "--github-output") parsed.githubOutput = argv[++i];
@@ -93,7 +184,10 @@ function parseArgs(argv) {
 if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT_PATH) {
   try {
     const options = parseArgs(process.argv.slice(2));
-    const version = validateReleaseIdentity({ tag: options.tag });
+    const version = validateReleaseIdentity({
+      tag: options.tag,
+      existingTags: options.tag === undefined ? undefined : repositoryReleaseTags(REPO_ROOT),
+    });
     if (options.githubOutput) fs.appendFileSync(options.githubOutput, `num=${version}\n`);
     console.log(`Release identity validated: Pipeline ${version}`);
   } catch (error) {

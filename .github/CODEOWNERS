@@ -1,0 +1,24 @@
+# Release authority and signing paths require maintainer review. CODEOWNERS is
+# enforced only when the repository's branch-protection rules require it.
+* @mdroste
+/.github/ @mdroste
+/.github/workflows/ @mdroste
+/.github/dependabot.yml @mdroste
+/.github/CODEOWNERS @mdroste
+/scripts/release/ @mdroste
+/rust-toolchain.toml @mdroste
+/gui/.nvmrc @mdroste
+/gui/package.json @mdroste
+/gui/package-lock.json @mdroste
+/gui/src-tauri/Cargo.toml @mdroste
+/gui/src-tauri/Cargo.lock @mdroste
+/gui/src-tauri/tauri.conf.json @mdroste
+/CHANGELOG.md @mdroste
+/CONTRIBUTING.md @mdroste
+/LICENSE @mdroste
+/README.md @mdroste
+/SECURITY.md @mdroste
+/SUPPORT.md @mdroste
+/PRIVACY.md @mdroste
+/RELEASING.md @mdroste
+/THIRD_PARTY_LICENSES.md @mdroste

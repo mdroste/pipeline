@@ -11,7 +11,7 @@ describe("packaged desktop startup", () => {
       await dependencyModal.waitForExist({ reverse: true });
     }
 
-    await $('button[aria-label="Settings"]').click();
+    await $("button=Settings").click();
     await $('[data-testid="settings-page"]').waitForDisplayed({ timeout: 30_000 });
     await expect($("h2=Settings")).toBeDisplayed();
   });

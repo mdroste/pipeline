@@ -211,7 +211,7 @@ function CsvView({ text, relPath }: { text: string; relPath: string }) {
         </tbody>
       </table>
       {lines.length > MAX_CSV_ROWS && (
-        <p className="text-xs text-gray-400 mt-2">
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
           Showing first {MAX_CSV_ROWS} of {lines.length} rows.
         </p>
       )}
@@ -226,21 +226,45 @@ function BinaryCard({
   entry: ArtifactEntry | null;
   content: ArtifactContent;
 }) {
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+
+  const openInSystemViewer = async () => {
+    setOpenError(null);
+    setOpening(true);
+    try {
+      await openExternal(content.abs_path);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setOpenError(`Could not open this artifact in the system viewer: ${message}`);
+    } finally {
+      setOpening(false);
+    }
+  };
+
   return (
     <div className="max-w-sm mx-auto mt-12 p-5 rounded-lg border border-gray-200 dark:border-gray-700 text-center">
       <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
         {entry?.label ?? "Binary file"}
       </p>
-      <p className="text-xs text-gray-400 mb-4">
+      <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
         {formatBytes(content.bytes)} — not previewable in the app.
       </p>
       <button
-        onClick={() => openExternal(content.abs_path).catch(console.error)}
+        type="button"
+        onClick={openInSystemViewer}
+        disabled={opening}
         className="py-1.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
-                   text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                   text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors
+                   disabled:cursor-wait disabled:opacity-50"
       >
-        Open in system viewer
+        {opening ? "Opening…" : "Open in system viewer"}
       </button>
+      {openError && (
+        <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">
+          {openError}
+        </p>
+      )}
     </div>
   );
 }
@@ -410,8 +434,8 @@ function DocumentBundleView({
                     {asset.width && asset.height ? `${asset.width}×${asset.height} · ` : ""}
                     {asset.media_type}
                   </div>
-                  <div className="mt-1 truncate font-mono text-[10px] text-gray-400">{asset.rel_path}</div>
-                  {!canOpen && <div className="mt-1 text-[10px] text-amber-600">Asset missing from this run</div>}
+                  <div className="mt-1 truncate font-mono text-[10px] text-gray-600 dark:text-gray-400">{asset.rel_path}</div>
+                  {!canOpen && <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">Asset missing from this run</div>}
                 </button>
               );
             })}
@@ -761,7 +785,7 @@ const PageBrowser = memo(function PageBrowser({
         })}
       </div>
       {visible.length === 0 && (
-        <p className="px-1 py-2 text-xs text-gray-400">No matching pages.</p>
+        <p className="px-1 py-2 text-xs text-gray-500 dark:text-gray-400">No matching pages.</p>
       )}
     </div>
   );
@@ -802,8 +826,8 @@ const ArtifactList = memo(function ArtifactList({
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="mt-1 w-full rounded px-2 py-1 text-left text-[11px] text-gray-400 hover:bg-gray-100
-                     hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+          className="mt-1 w-full rounded px-2 py-1 text-left text-[11px] text-gray-600 hover:bg-gray-100
+                     hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
         >
           {expanded ? "Show fewer" : `Show ${items.length - 10} more`}
         </button>
@@ -964,16 +988,16 @@ export default function ArtifactExplorer({
         >
           <div className="h-full space-y-4 overflow-y-auto p-3">
             <div className="flex items-center justify-between gap-2 px-1">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400 dark:text-gray-500">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-600 dark:text-gray-400">
                 Artifacts
               </span>
               <button
                 type="button"
                 onClick={() => setNavigationOpen(false)}
                 aria-label="Hide artifact browser"
-                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700
+                className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800
                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
-                           dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                           dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
               >
                 <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="m9 6 6 6-6 6" />
@@ -986,7 +1010,7 @@ export default function ArtifactExplorer({
               if (items.length === 0 && !compactPages?.count) return null;
               return (
                 <div key={g.id}>
-                  <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+                  <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
                     {g.label}
                   </h4>
                   {g.id === "pages" ? (
@@ -1022,10 +1046,10 @@ export default function ArtifactExplorer({
           onClick={() => setNavigationOpen(true)}
           aria-label="Show artifact browser"
           title="Show artifacts"
-          className="flex w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-4 text-gray-400
-                     hover:bg-gray-50 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2
+          className="flex w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-4 text-gray-500
+                     hover:bg-gray-50 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2
                      focus-visible:ring-inset focus-visible:ring-gray-400 dark:border-gray-800 dark:hover:bg-gray-900
-                     dark:hover:text-gray-200"
+                     dark:text-gray-400 dark:hover:text-gray-100"
         >
           <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M7 4.5h10M7 9.5h10M7 14.5h6M4 4.5h.01M4 9.5h.01M4 14.5h.01" />
@@ -1040,7 +1064,7 @@ export default function ArtifactExplorer({
             Could not read this artifact: {loadError}
           </div>
         ) : !selected ? (
-          <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-400">
+          <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
             Select an artifact to preview it.
           </div>
         ) : content ? (

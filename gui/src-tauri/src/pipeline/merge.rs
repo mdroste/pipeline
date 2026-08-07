@@ -50,6 +50,8 @@ fn call_records_for_output(output: &StepOutput) -> Vec<StepCallRecord> {
         output_tokens: output.output_tokens,
         cached_input_tokens: output.cached_input_tokens,
         cache_write_input_tokens: output.cache_write_input_tokens,
+        model_round_trips: output.model_round_trips,
+        tool_calls: output.tool_calls,
         attempt_count: output.attempt_count,
     }]
 }
@@ -177,6 +179,16 @@ pub async fn merge_step_outputs(
         let original_cache_write = original_calls.iter().fold(0u64, |total, call| {
             total.saturating_add(call.cache_write_input_tokens)
         });
+        let original_model_round_trips = original_calls.iter().fold(0u64, |total, call| {
+            total.saturating_add(call.model_round_trips)
+        });
+        let original_tool_calls = original_calls.iter().fold(
+            crate::models::ToolCallCounts::default(),
+            |mut total, call| {
+                total.add_counts(call.tool_calls);
+                total
+            },
+        );
         let original_attempts = original_calls
             .iter()
             .fold(0u32, |total, call| total.saturating_add(call.attempt_count));
@@ -285,6 +297,8 @@ pub async fn merge_step_outputs(
                 output_tokens: call.usage.output_tokens,
                 cached_input_tokens: call.usage.cached_input_tokens,
                 cache_write_input_tokens: call.usage.cache_write_input_tokens,
+                model_round_trips: call.usage.model_round_trips,
+                tool_calls: call.usage.tool_calls,
                 attempt_count: 1,
             };
             if let Some(error) = cancellation_error() {
@@ -345,6 +359,13 @@ pub async fn merge_step_outputs(
                                 .saturating_add(call.usage.cached_input_tokens),
                             cache_write_input_tokens: original_cache_write
                                 .saturating_add(call.usage.cache_write_input_tokens),
+                            model_round_trips: original_model_round_trips
+                                .saturating_add(call.usage.model_round_trips),
+                            tool_calls: {
+                                let mut total = original_tool_calls;
+                                total.add_counts(call.usage.tool_calls);
+                                total
+                            },
                             attempt_count: original_attempts.saturating_add(1),
                             model: resolution.resolved_model,
                             model_transport: resolution.transport,
@@ -457,6 +478,8 @@ pub async fn merge_step_outputs(
                         calls.push(merge_call.clone());
                     } else if merge_usage.input_tokens > 0
                         || merge_usage.output_tokens > 0
+                        || merge_usage.model_round_trips > 0
+                        || !merge_usage.tool_calls.is_empty()
                         || *merge_duration_secs > 0
                     {
                         calls.push(StepCallRecord {
@@ -466,6 +489,8 @@ pub async fn merge_step_outputs(
                             output_tokens: merge_usage.output_tokens,
                             cached_input_tokens: merge_usage.cached_input_tokens,
                             cache_write_input_tokens: merge_usage.cache_write_input_tokens,
+                            model_round_trips: merge_usage.model_round_trips,
+                            tool_calls: merge_usage.tool_calls,
                             attempt_count: 1,
                             ..Default::default()
                         });
@@ -485,6 +510,16 @@ pub async fn merge_step_outputs(
                     let cache_write_input_tokens = calls.iter().fold(0u64, |total, call| {
                         total.saturating_add(call.cache_write_input_tokens)
                     });
+                    let model_round_trips = calls.iter().fold(0u64, |total, call| {
+                        total.saturating_add(call.model_round_trips)
+                    });
+                    let tool_calls = calls.iter().fold(
+                        crate::models::ToolCallCounts::default(),
+                        |mut total, call| {
+                            total.add_counts(call.tool_calls);
+                            total
+                        },
+                    );
                     let attempt_count = calls
                         .iter()
                         .fold(0u32, |total, call| total.saturating_add(call.attempt_count));
@@ -500,6 +535,8 @@ pub async fn merge_step_outputs(
                         output_tokens,
                         cached_input_tokens,
                         cache_write_input_tokens,
+                        model_round_trips,
+                        tool_calls,
                         attempt_count,
                         calls,
                         ..Default::default()

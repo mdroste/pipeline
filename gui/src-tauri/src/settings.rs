@@ -144,43 +144,41 @@ pub struct Settings {
     #[serde(default)]
     pub gemini_api_model_selection: ModelSelection,
 
-    /// PDF extraction method: "llm", "auto", "marker", "paddleocr-vl", or "pdftotext".
+    /// PDF extraction method: "llm", "auto", "paddleocr-vl", or "pdftotext".
+    /// The legacy value "marker" remains deserializable so the UI can explain
+    /// why the user must choose a supported replacement.
     #[serde(default = "default_pdf_extractor")]
     pub pdf_extractor: String,
 
-    /// Disable OCR when using marker-pdf. Faster for native-text PDFs.
+    /// Retired Marker setting retained only for settings-file compatibility.
     #[serde(default)]
     pub marker_disable_ocr: bool,
 
-    /// Force OCR for every page when using marker-pdf. Mutually exclusive
-    /// with `marker_disable_ocr`.
+    /// Retired Marker setting retained only for settings-file compatibility.
     #[serde(default)]
     pub marker_force_ocr: bool,
 
-    /// Disable image extraction when using marker-pdf.
+    /// Retired Marker setting retained only for settings-file compatibility.
     #[serde(default)]
     pub marker_disable_images: bool,
 
-    /// DPI used by Marker's layout model.
+    /// Retired Marker setting retained only for settings-file compatibility.
     #[serde(default = "default_marker_lowres_dpi")]
     pub marker_lowres_dpi: u32,
 
-    /// DPI used by Marker's OCR and equation models.
+    /// Retired Marker setting retained only for settings-file compatibility.
     #[serde(default = "default_marker_highres_dpi")]
     pub marker_highres_dpi: u32,
 
-    /// Number of workers Marker uses for embedded PDF text extraction.
-    /// 0 selects a machine-aware default.
+    /// Retired Marker setting retained only for settings-file compatibility.
     #[serde(default = "default_marker_pdftext_workers")]
     pub marker_pdftext_workers: u32,
 
-    /// Marker layout-model batch size. 0 leaves the upstream device-aware
-    /// default in effect.
+    /// Retired Marker setting retained only for settings-file compatibility.
     #[serde(default = "default_marker_layout_batch_size")]
     pub marker_layout_batch_size: u32,
 
-    /// Marker OCR recognition-model batch size. 0 leaves the upstream
-    /// device-aware default in effect.
+    /// Retired Marker setting retained only for settings-file compatibility.
     #[serde(default = "default_marker_recognition_batch_size")]
     pub marker_recognition_batch_size: u32,
 
@@ -332,7 +330,7 @@ fn default_paddle_render_dpi() -> u32 {
 }
 
 fn default_pdf_extraction_timeout_secs() -> u64 {
-    900
+    1800
 }
 
 fn default_reuse_pdf_extraction_cache() -> bool {
@@ -348,15 +346,6 @@ pub fn resolved_paddle_page_concurrency(settings: &Settings) -> u32 {
     match settings.paddle_page_concurrency {
         0 if cfg!(all(target_os = "macos", target_arch = "aarch64")) => 2,
         0 => 1,
-        value => value,
-    }
-}
-
-pub fn resolved_marker_pdftext_workers(settings: &Settings) -> u32 {
-    match settings.marker_pdftext_workers {
-        0 => std::thread::available_parallelism()
-            .map(|value| (value.get() / 2).clamp(1, 8) as u32)
-            .unwrap_or(4),
         value => value,
     }
 }
@@ -472,35 +461,6 @@ impl Settings {
         ) {
             return Err(format!("Invalid PDF extractor '{}'", self.pdf_extractor));
         }
-        if self.marker_disable_ocr && self.marker_force_ocr {
-            return Err(
-                "Marker OCR mode cannot disable and force OCR at the same time".to_string(),
-            );
-        }
-        if !(72..=200).contains(&self.marker_lowres_dpi) {
-            return Err("Marker layout resolution must be between 72 and 200 DPI".to_string());
-        }
-        if !(96..=300).contains(&self.marker_highres_dpi)
-            || self.marker_highres_dpi < self.marker_lowres_dpi
-        {
-            return Err(
-                "Marker OCR resolution must be between 96 and 300 DPI and at least the layout resolution"
-                    .to_string(),
-            );
-        }
-        if self.marker_pdftext_workers > 16 {
-            return Err(
-                "Marker PDF text workers must be automatic or between 1 and 16".to_string(),
-            );
-        }
-        if self.marker_layout_batch_size > 32 {
-            return Err(
-                "Marker layout batch size must be automatic or between 1 and 32".to_string(),
-            );
-        }
-        if self.marker_recognition_batch_size > 128 {
-            return Err("Marker OCR batch size must be automatic or between 1 and 128".to_string());
-        }
         if self.paddle_page_concurrency > 4 {
             return Err(
                 "PaddleOCR-VL concurrent pages must be automatic or between 1 and 4".to_string(),
@@ -579,19 +539,7 @@ impl Settings {
         if !self.local_model.is_empty() && sanitize_cli_arg(&self.local_model) != self.local_model {
             return Err("Invalid local model name".to_string());
         }
-        let local_url = reqwest::Url::parse(&self.local_base_url)
-            .map_err(|e| format!("Invalid local server URL: {e}"))?;
-        if !matches!(local_url.scheme(), "http" | "https")
-            || !local_url.username().is_empty()
-            || local_url.password().is_some()
-            || local_url.query().is_some()
-            || local_url.fragment().is_some()
-        {
-            return Err(
-                "Local server URL must be an http(s) URL without credentials, query, or fragment"
-                    .to_string(),
-            );
-        }
+        validate_local_base_url(&self.local_base_url)?;
         Ok(())
     }
 
@@ -817,6 +765,53 @@ fn read_settings_file(path: &std::path::Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|e| format!("settings file is not UTF-8: {e}"))
 }
 
+/// Validate the OpenAI-compatible endpoint before any API key or document
+/// content can be sent to it. Plain HTTP is deliberately limited to literal
+/// loopback hosts; remote servers must authenticate with TLS.
+pub(crate) fn validate_local_base_url(value: &str) -> Result<reqwest::Url, String> {
+    let url =
+        reqwest::Url::parse(value).map_err(|error| format!("Invalid local server URL: {error}"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.host_str().is_none()
+    {
+        return Err(
+            "Local server URL must be an http(s) URL without credentials, query, or fragment"
+                .to_string(),
+        );
+    }
+    if url.scheme() == "http" {
+        let host = url.host_str().unwrap_or_default().trim_end_matches('.');
+        // `url::Url::host_str` retains brackets around IPv6 literals.
+        let ip_host = host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host);
+        let is_loopback = host.eq_ignore_ascii_case("localhost")
+            || ip_host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| match address {
+                    std::net::IpAddr::V4(address) => address.is_loopback(),
+                    std::net::IpAddr::V6(address) => {
+                        address.is_loopback()
+                            || address
+                                .to_ipv4_mapped()
+                                .is_some_and(|mapped| mapped.is_loopback())
+                    }
+                });
+        if !is_loopback {
+            return Err(
+                "Plain HTTP local server URLs are allowed only on loopback; use HTTPS for remote servers"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(url)
+}
+
 /// Load settings, discarding any warnings. Used by non-UI callers
 /// (pipeline execution, etc.) where fallback to defaults is fine.
 static RUN_SETTINGS: std::sync::Mutex<Option<(u64, Settings)>> = std::sync::Mutex::new(None);
@@ -877,6 +872,7 @@ pub fn load_persisted_required() -> Result<Settings, String> {
         .map_err(|e| format!("Could not decrypt Google API key: {e}"))?;
     settings.local_api_key = decrypt_string(&settings.local_api_key, &key)
         .map_err(|e| format!("Could not decrypt local-server API key: {e}"))?;
+    settings.validate()?;
     Ok(settings)
 }
 
@@ -1356,26 +1352,18 @@ mod tests {
     }
 
     #[test]
-    fn document_figure_extraction_is_enabled_for_new_settings() {
-        assert!(!Settings::default().marker_disable_images);
-    }
-
-    #[test]
-    fn marker_tuning_defaults_match_upstream_quality_and_use_automatic_throughput() {
-        let defaults = Settings::default();
-        assert!(!defaults.marker_disable_ocr);
-        assert!(!defaults.marker_force_ocr);
-        assert_eq!(defaults.marker_lowres_dpi, 96);
-        assert_eq!(defaults.marker_highres_dpi, 192);
-        assert_eq!(defaults.marker_pdftext_workers, 0);
-        assert_eq!(defaults.marker_layout_batch_size, 0);
-        assert_eq!(defaults.marker_recognition_batch_size, 0);
-        assert!((1..=8).contains(&resolved_marker_pdftext_workers(&defaults)));
-
-        let legacy: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.marker_lowres_dpi, 96);
-        assert_eq!(legacy.marker_highres_dpi, 192);
-        assert_eq!(legacy.marker_pdftext_workers, 0);
+    fn retired_marker_values_remain_loadable_for_explicit_repair() {
+        let legacy: Settings = serde_json::from_str(
+            r#"{
+                "pdf_extractor": "marker",
+                "marker_disable_ocr": true,
+                "marker_force_ocr": true,
+                "marker_lowres_dpi": 999
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.pdf_extractor, "marker");
+        assert!(legacy.validate().is_ok());
     }
 
     #[test]
@@ -1387,7 +1375,7 @@ mod tests {
         assert_eq!(defaults.paddle_max_output_tokens, 4096);
         assert_eq!(defaults.paddle_page_retries, 1);
         assert_eq!(defaults.paddle_render_dpi, 150);
-        assert_eq!(defaults.pdf_extraction_timeout_secs, 900);
+        assert_eq!(defaults.pdf_extraction_timeout_secs, 1800);
         assert!(defaults.reuse_pdf_extraction_cache);
 
         let legacy: Settings = serde_json::from_str("{}").unwrap();
@@ -1397,7 +1385,7 @@ mod tests {
         assert_eq!(legacy.paddle_max_output_tokens, 4096);
         assert_eq!(legacy.paddle_page_retries, 1);
         assert_eq!(legacy.paddle_render_dpi, 150);
-        assert_eq!(legacy.pdf_extraction_timeout_secs, 900);
+        assert_eq!(legacy.pdf_extraction_timeout_secs, 1800);
         assert!(legacy.reuse_pdf_extraction_cache);
     }
 
@@ -1544,43 +1532,20 @@ mod tests {
         };
         assert!(invalid.validate().is_err());
 
-        invalid = Settings {
+        let retired_marker_values = Settings {
             marker_disable_ocr: true,
             marker_force_ocr: true,
+            marker_lowres_dpi: u32::MAX,
+            marker_highres_dpi: 0,
+            marker_pdftext_workers: u32::MAX,
+            marker_layout_batch_size: u32::MAX,
+            marker_recognition_batch_size: u32::MAX,
             ..Default::default()
         };
-        assert!(invalid.validate().is_err());
-
-        invalid = Settings {
-            marker_lowres_dpi: 220,
-            ..Default::default()
-        };
-        assert!(invalid.validate().is_err());
-
-        invalid = Settings {
-            marker_lowres_dpi: 180,
-            marker_highres_dpi: 150,
-            ..Default::default()
-        };
-        assert!(invalid.validate().is_err());
-
-        invalid = Settings {
-            marker_pdftext_workers: 17,
-            ..Default::default()
-        };
-        assert!(invalid.validate().is_err());
-
-        invalid = Settings {
-            marker_layout_batch_size: 33,
-            ..Default::default()
-        };
-        assert!(invalid.validate().is_err());
-
-        invalid = Settings {
-            marker_recognition_batch_size: 129,
-            ..Default::default()
-        };
-        assert!(invalid.validate().is_err());
+        assert!(
+            retired_marker_values.validate().is_ok(),
+            "retired Marker tuning must remain loadable but has no executable effect"
+        );
 
         invalid = Settings {
             paddle_page_concurrency: 5,
@@ -1623,6 +1588,29 @@ mod tests {
             ..Default::default()
         };
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn plaintext_local_api_urls_are_loopback_only() {
+        for url in [
+            "http://localhost:11434/v1",
+            "http://localhost.:11434/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://127.42.0.9:1234/v1",
+            "http://[::1]:1234/v1",
+            "http://[::ffff:127.0.0.1]:1234/v1",
+        ] {
+            assert!(validate_local_base_url(url).is_ok(), "{url}");
+        }
+        for url in [
+            "http://models.example.com/v1",
+            "http://192.168.1.10:1234/v1",
+            "http://10.0.0.2:1234/v1",
+            "http://[fd00::1]:1234/v1",
+        ] {
+            assert!(validate_local_base_url(url).is_err(), "{url}");
+        }
+        assert!(validate_local_base_url("https://models.example.com/v1").is_ok());
     }
 
     #[test]

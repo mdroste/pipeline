@@ -52,3 +52,4 @@ Thumbs.db
 # Agent instruction files (local only)
 CLAUDE.md
 AGENTS.md
+/.claude/settings.local.json

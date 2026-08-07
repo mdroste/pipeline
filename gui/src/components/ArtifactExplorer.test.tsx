@@ -341,6 +341,27 @@ describe("ArtifactExplorer", () => {
     expect(openExternal).toHaveBeenCalledWith("/runs/x/artifacts/04_model.pdf");
   });
 
+  it("surfaces system-viewer plugin failures for binary artifacts", async () => {
+    const user = userEvent.setup();
+    openExternal.mockRejectedValueOnce(new Error("shell plugin unavailable"));
+    mockBackend({
+      "report.md": textContent("markdown", "# R"),
+      "artifacts/04_model.pdf": {
+        kind: "binary", bytes: 5000, text: null, base64: null,
+        truncated: false, abs_path: "/runs/x/artifacts/04_model.pdf",
+      },
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+    await user.click(await screen.findByRole("button", { name: "Model PDF" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Open in system viewer" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not open this artifact in the system viewer: shell plugin unavailable",
+    );
+  });
+
   it("falls back to the plain report when the manifest cannot load", async () => {
     invoke.mockImplementation((cmd: string) =>
       cmd === "get_run_manifest"

@@ -9,6 +9,6 @@ INSTRUCTIONS:
 
 The full paper text is at: {paper_path}
 {figure_hint}
-Read the paper text, then produce your report following the instructions above. Reference page numbers, equation numbers, and table numbers. When a finding involves a figure or table, inspect it visually before commenting.
+Use the paper text already present in shared context when available; otherwise read it from the path above. Then produce your report following the instructions above. Reference page numbers, equation numbers, and table numbers. When a finding involves a figure or table, inspect it visually before commenting.
 
 {output_format}

@@ -47,6 +47,12 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
             "description": def.description,
             "input_schema": def.input_schema,
         }));
+        let def = ReadTextBatchToolDef::default();
+        tools.push(serde_json::json!({
+            "name": def.name,
+            "description": def.description,
+            "input_schema": def.input_schema,
+        }));
     }
     if allowed_tools.contains(&"ReadDocumentAsset") {
         let def = DocumentAssetToolDef::default();
@@ -54,6 +60,22 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
             "name": def.name,
             "description": def.description,
             "input_schema": def.input_schema,
+        }));
+        let def = DocumentAssetsBatchToolDef::default();
+        tools.push(serde_json::json!({
+            "name": def.name,
+            "description": def.description,
+            "input_schema": def.input_schema,
+        }));
+    }
+    if allowed_tools.contains(&"WebSearch") {
+        // Hosted search can execute several queries inside one Messages API
+        // request. Keep a hard per-request cap so a broad literature prompt
+        // cannot generate an unbounded number of billable searches.
+        tools.push(serde_json::json!({
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": MAX_HOSTED_WEB_SEARCH_USES,
         }));
     }
     if allowed_tools.contains(&"Write") {
@@ -65,6 +87,48 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
         }));
     }
     tools
+}
+
+fn has_hosted_search(request: &AnthropicRequest) -> bool {
+    request.tools.iter().any(|tool| {
+        tool.get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| kind.starts_with("web_search_"))
+    })
+}
+
+fn remove_hosted_search(request: &mut AnthropicRequest) {
+    request.tools.retain(|tool| {
+        !tool
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| kind.starts_with("web_search_"))
+    });
+}
+
+fn hosted_search_capability_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    let validation_error = error.contains("http 400");
+    let permission_error = error.contains("http 403")
+        && ["permission", "not enabled", "access"]
+            .iter()
+            .any(|needle| error.contains(needle));
+    if !validation_error && !permission_error {
+        return false;
+    }
+    let identifies_search = error.contains("web_search") || error.contains("web search");
+    let identifies_capability = [
+        "not supported",
+        "unsupported",
+        "not available",
+        "not enabled",
+        "permission",
+        "invalid tool",
+        "unrecognized tool",
+    ]
+    .iter()
+    .any(|needle| error.contains(needle));
+    identifies_search && identifies_capability
 }
 
 fn build_content(
@@ -206,8 +270,10 @@ pub async fn call_anthropic_api(
         }
     }
 
+    let mut fallback_request = request.clone();
+    let hosted_search_enabled = has_hosted_search(&request);
     super::logging::record_provider_attempt();
-    let (text, mut usage) = anthropic_tool_loop(
+    let result = anthropic_tool_loop(
         app,
         client,
         &settings.anthropic_api_key,
@@ -216,7 +282,34 @@ pub async fn call_anthropic_api(
         label,
         &access,
     )
-    .await?;
+    .await;
+    let (text, mut usage) = match result {
+        Err(error) if hosted_search_enabled && hosted_search_capability_error(&error) => {
+            let retry_timeout = timeout_secs.saturating_sub(start.elapsed().as_secs());
+            if retry_timeout == 0 {
+                return Err(error);
+            }
+            log(
+                app,
+                format!(
+                    "WARNING: {label}: Anthropic rejected hosted web search for this model or organization; retrying once without hosted search"
+                ),
+            );
+            remove_hosted_search(&mut fallback_request);
+            super::logging::record_provider_attempt();
+            anthropic_tool_loop(
+                app,
+                client,
+                &settings.anthropic_api_key,
+                fallback_request,
+                retry_timeout,
+                label,
+                &access,
+            )
+            .await?
+        }
+        result => result?,
+    };
     usage.merge(warm_usage);
 
     let elapsed = start.elapsed().as_secs();
@@ -290,5 +383,56 @@ mod tests {
         assert!(blocks[0]["text"].as_str().unwrap().contains("paper body"));
         assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
         assert_eq!(blocks[1]["text"], "task-specific request");
+    }
+
+    #[test]
+    fn tools_include_batch_pairs_and_bounded_hosted_search() {
+        let tools = build_tools(&["Read", "ReadDocumentAsset", "WebSearch"]);
+        let names = tools
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "Read",
+                "ReadTextBatch",
+                "ReadDocumentAsset",
+                "ReadDocumentAssetsBatch",
+                "web_search"
+            ]
+        );
+        let hosted = tools.last().unwrap();
+        assert_eq!(hosted["type"], "web_search_20250305");
+        assert_eq!(hosted["max_uses"], MAX_HOSTED_WEB_SEARCH_USES);
+    }
+
+    #[test]
+    fn hosted_search_fallback_is_narrow_and_removes_only_server_tool() {
+        assert!(hosted_search_capability_error(
+            "Anthropic API error (HTTP 400): web_search_20250305 is not enabled for this organization"
+        ));
+        assert!(!hosted_search_capability_error(
+            "Anthropic API error (HTTP 400): max_tokens must be positive"
+        ));
+        assert!(!hosted_search_capability_error(
+            "Anthropic API error (HTTP 500): web_search is not available"
+        ));
+        assert!(hosted_search_capability_error(
+            "Anthropic API error (HTTP 403): permission denied for web_search"
+        ));
+
+        let mut request = AnthropicRequest {
+            model: "model".to_string(),
+            max_tokens: 10,
+            system: None,
+            messages: Vec::new(),
+            tools: build_tools(&["Read", "WebSearch"]),
+            output_config: None,
+        };
+        assert!(has_hosted_search(&request));
+        remove_hosted_search(&mut request);
+        assert!(!has_hosted_search(&request));
+        assert!(request.tools.iter().any(|tool| tool["name"] == "Read"));
     }
 }

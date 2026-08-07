@@ -58,7 +58,7 @@ function HelpContent() {
           <StageCard
             number="3"
             title="Run the steps"
-            description="Steps run from top to bottom. Steps marked parallel run at the same time, each with a fresh context. Steps marked sequential wait for all steps above them and can use their outputs."
+            description="The scheduler starts steps when their declared dependencies are ready. Independent parallel steps can run concurrently with separate contexts; sequential steps run alone and can receive only the upstream artifacts selected in their access settings."
           />
           <StageCard
             number="4"
@@ -111,7 +111,7 @@ function HelpContent() {
         <ul className="space-y-1.5">
           <CheckItem text="Edit any step's prompt, or add new steps" />
           <CheckItem text="Make a step parallel or sequential, and reorder steps by dragging" />
-          <CheckItem text="Give a step tools (Read, WebSearch) or its own model" />
+          <CheckItem text="Choose the input artifacts a step can read, enable WebSearch where supported, or select its model" />
           <CheckItem text="Run one step on several models and merge the results" />
           <CheckItem text="Set the profile's input type and PDF extraction method" />
           <CheckItem text="Export and import steps, profiles, or a full backup" />
@@ -122,7 +122,7 @@ function HelpContent() {
       <Section title="Document extraction">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
           Pipeline converts document inputs to text before the first step runs.
-          From best to worst:
+          Available methods:
         </p>
         <div className="space-y-2">
           <TierCard
@@ -150,12 +150,6 @@ function HelpContent() {
             description="Page-parallel local OCR with full context per worker, targeted retries, and resumable checkpoints."
           />
           <TierCard
-            tier="Optional local"
-            tierColor="text-blue-700 bg-blue-50"
-            title="marker-pdf"
-            description="Converts PDFs locally, chooses OCR automatically, preserves equations and figures, and reuses exact cached results."
-          />
-          <TierCard
             tier="Explicit only"
             tierColor="text-amber-700 bg-amber-50"
             title="pdftotext"
@@ -177,6 +171,20 @@ function HelpContent() {
         </p>
       </Section>
 
+      <Section title="Data and privacy">
+        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+          A step can receive the source material and other artifacts explicitly granted by
+          its workflow context. Unless the step uses a local model, that material may be sent
+          to the configured model provider through its CLI or API. Steps with WebSearch can
+          also send search queries to an external service. Pipeline stores run records and
+          artifacts locally under{" "}
+          <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+            ~/.pipeline/runs/
+          </code>{" "}
+          until you delete them or apply a retention limit in Settings.
+        </p>
+      </Section>
+
       {/* Requirements */}
       <Section title="Requirements">
         <div className="space-y-2">
@@ -184,19 +192,13 @@ function HelpContent() {
             name="An LLM provider"
             tag="Required"
             tagColor="text-red-700 bg-red-50"
-            description="Sign in to the Claude Code, Codex, or Gemini CLI, or enter an API key in Settings. A subscription plan works through the CLI. No API key needed."
+            description="Sign in to a supported Claude Code, Codex, or Gemini CLI, or enter a matching API key in Settings. CLI access may avoid a separate API key; provider account, plan, and usage terms still apply."
           />
           <ReqCard
             name="poppler (pdftoppm + pdftotext)"
             tag="Bundled"
             tagColor="text-green-700 bg-green-50"
             description="Included with Pipeline for page rendering and deterministic completeness checks. pdftotext extraction itself is used only when explicitly selected."
-          />
-          <ReqCard
-            name="marker-pdf"
-            tag="Optional"
-            tagColor="text-gray-600 bg-gray-100"
-            description="Install it for local PDF equation extraction."
           />
         </div>
       </Section>
@@ -243,7 +245,7 @@ function ProfileCard({ name, description }: { name: string; description: string 
 function CheckItem({ text }: { text: string }) {
   return (
     <li className="flex items-start gap-2 text-sm text-gray-600">
-      <svg className="w-4 h-4 text-green-500 mt-0.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+      <svg className="w-4 h-4 text-green-700 dark:text-green-400 mt-0.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
       </svg>
       {text}
@@ -283,10 +285,22 @@ function ReqCard({ name, tag, tagColor, description }: { name: string; tag: stri
 
 function AboutFooter() {
   const [version, setVersion] = useState<string>("");
+  const [linkError, setLinkError] = useState<string>("");
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion(""));
   }, []);
+
+  const openExternal = (event: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    event.preventDefault();
+    setLinkError("");
+    void openUrl(url).catch((error) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      setLinkError(
+        `Pipeline could not open the link in your browser${detail ? `: ${detail}` : "."} You can copy the address from the link instead.`,
+      );
+    });
+  };
 
   return (
     <div className="mt-10 pt-6 border-t border-gray-200 dark:border-gray-800">
@@ -297,10 +311,7 @@ function AboutFooter() {
         {" · "}Michael Droste{" · "}MIT license{" · "}
         <a
           href="https://github.com/mdroste/pipeline"
-          onClick={(e) => {
-            e.preventDefault();
-            openUrl("https://github.com/mdroste/pipeline");
-          }}
+          onClick={(event) => openExternal(event, "https://github.com/mdroste/pipeline")}
           className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
         >
           github.com/mdroste/pipeline
@@ -308,15 +319,25 @@ function AboutFooter() {
         {" · "}
         <a
           href="https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md"
-          onClick={(e) => {
-            e.preventDefault();
-            openUrl("https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md");
-          }}
+          onClick={(event) =>
+            openExternal(
+              event,
+              "https://github.com/mdroste/pipeline/blob/main/THIRD_PARTY_LICENSES.md",
+            )
+          }
           className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
         >
           third-party licenses
         </a>
       </p>
+      {linkError && (
+        <p
+          role="alert"
+          className="mt-2 text-xs leading-relaxed text-red-700 dark:text-red-300"
+        >
+          {linkError}
+        </p>
+      )}
     </div>
   );
 }

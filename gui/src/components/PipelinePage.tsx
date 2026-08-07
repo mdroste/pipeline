@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import type {
@@ -31,6 +31,7 @@ import WaveDiagram, { type WaveSelection } from "./WaveDiagram";
 import PromptEditor from "./PromptEditor";
 import ResizeHandle from "./ResizeHandle";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
+import useModalDialog from "../hooks/useModalDialog";
 
 interface Props {
   onClose: () => void;
@@ -171,7 +172,22 @@ export default function PipelinePage({
   // Profile state
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [activeProfile, setActiveProfile] = useState<string>("deep-review");
+  const [profileMutationPending, setProfileMutationPending] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [undoRewrite, setUndoRewrite] = useState<{
+    before: PipelineConfig;
+    after: string;
+    dirtyBefore: boolean;
+    editingBefore: EditingMode;
+    message: string;
+  } | null>(null);
+  const configRef = useRef<PipelineConfig | null>(config);
+  const activeProfileRef = useRef(activeProfile);
+  const profileMutationRequestRef = useRef(0);
+  const profileMutationActiveRef = useRef(false);
+  const promptResetRequestRef = useRef(0);
+  configRef.current = config;
+  activeProfileRef.current = activeProfile;
 
   // Prompt dialog state
   const [promptDialog, setPromptDialog] = useState<{
@@ -198,6 +214,14 @@ export default function PipelinePage({
   }, [dirty, onDirtyChange]);
 
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      profileMutationRequestRef.current += 1;
+      profileMutationActiveRef.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     let live = true;
@@ -229,21 +253,28 @@ export default function PipelinePage({
   }, [loadAttempt]);
 
   useEffect(() => {
+    let live = true;
     invoke<{ settings: Settings; warnings: string[] }>("get_settings")
       .then((response) => {
+        if (!live) return;
         setSettings(response.settings);
         for (const provider of PROVIDERS) {
           invoke<ModelCatalog>("get_model_catalog", {
             provider,
             settings: response.settings,
             refresh: false,
-          }).then((catalog) => setCatalogs((old) => ({ ...old, [provider]: catalog }))).catch(() => {});
+          }).then((catalog) => {
+            if (live) setCatalogs((old) => ({ ...old, [provider]: catalog }));
+          }).catch(() => {});
         }
       })
       .catch(() => {
         // Model overrides remain usable with legacy fields against an older
         // backend; catalog loading is an enhancement, not an editor blocker.
       });
+    return () => {
+      live = false;
+    };
   }, []);
 
   // Fill optional collection fields so edits always serialize the current
@@ -265,13 +296,44 @@ export default function PipelinePage({
     };
   }
 
-  const refreshProfiles = async () => {
+  const profileMutationIsCurrent = (request: number) =>
+    request === profileMutationRequestRef.current;
+
+  const beginProfileMutation = (): number | null => {
+    if (profileMutationActiveRef.current) return null;
+    profileMutationActiveRef.current = true;
+    const request = ++profileMutationRequestRef.current;
+    setProfileMutationPending(true);
+    return request;
+  };
+
+  const finishProfileMutation = (request: number) => {
+    if (!profileMutationIsCurrent(request)) return;
+    profileMutationActiveRef.current = false;
+    setProfileMutationPending(false);
+  };
+
+  const refreshProfiles = async (request?: number) => {
     try {
       const p = await invoke<ProfileSummary[]>("list_profiles");
+      if (request !== undefined && !profileMutationIsCurrent(request)) return;
       setProfiles(p);
     } catch (e) {
-      console.error(e);
+      if (request === undefined || profileMutationIsCurrent(request)) {
+        console.error(e);
+      }
     }
+  };
+
+  const switchProfileForMutation = async (id: string, request: number) => {
+    const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
+    if (!profileMutationIsCurrent(request)) return false;
+    setConfig(normalizeConfig(newConfig));
+    setActiveProfile(id);
+    setEditing(null);
+    setDirty(false);
+    onProfileChange?.();
+    return true;
   };
 
   // IDs that aren't tied to a specific step's prompt; everything else is treated
@@ -333,16 +395,18 @@ export default function PipelinePage({
   // --- Profile management ---
 
   const handleSwitchProfile = async (id: string) => {
+    if (id === activeProfileRef.current) return;
     if (dirty && !confirm("You have unsaved changes. Switch profile and discard them?")) return;
+    const request = beginProfileMutation();
+    if (request === null) return;
     try {
-      const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
-      setConfig(normalizeConfig(newConfig));
-      setActiveProfile(id);
-      setEditing(null);
-      setDirty(false);
-      onProfileChange?.();
+      await switchProfileForMutation(id, request);
     } catch (e) {
-      alert(`Failed to switch profile: ${e instanceof Error ? e.message : String(e)}`);
+      if (profileMutationIsCurrent(request)) {
+        alert(`Failed to switch profile: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } finally {
+      finishProfileMutation(request);
     }
   };
 
@@ -351,12 +415,22 @@ export default function PipelinePage({
       title: "New profile name",
       defaultValue: "",
       onSubmit: async (name) => {
+        if (dirty && !confirm("Create this profile and discard the current unsaved changes?")) {
+          return;
+        }
+        const request = beginProfileMutation();
+        if (request === null) return;
         try {
           const summary = await invoke<ProfileSummary>("create_profile", { name });
-          await refreshProfiles();
-          await handleSwitchProfile(summary.id);
+          if (!profileMutationIsCurrent(request)) return;
+          await refreshProfiles(request);
+          await switchProfileForMutation(summary.id, request);
         } catch (e) {
-          alert(`Failed to create profile: ${e instanceof Error ? e.message : String(e)}`);
+          if (profileMutationIsCurrent(request)) {
+            alert(`Failed to create profile: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        } finally {
+          finishProfileMutation(request);
         }
       },
     });
@@ -367,15 +441,26 @@ export default function PipelinePage({
       title: "Name for the duplicate",
       defaultValue: "",
       onSubmit: async (name) => {
+        if (dirty && !confirm("Duplicate this profile and discard the current unsaved changes?")) {
+          return;
+        }
+        const request = beginProfileMutation();
+        if (request === null) return;
+        const sourceId = activeProfileRef.current;
         try {
           const summary = await invoke<ProfileSummary>("duplicate_profile", {
-            sourceId: activeProfile,
+            sourceId,
             newName: name,
           });
-          await refreshProfiles();
-          await handleSwitchProfile(summary.id);
+          if (!profileMutationIsCurrent(request)) return;
+          await refreshProfiles(request);
+          await switchProfileForMutation(summary.id, request);
         } catch (e) {
-          alert(`Failed to duplicate profile: ${e instanceof Error ? e.message : String(e)}`);
+          if (profileMutationIsCurrent(request)) {
+            alert(`Failed to duplicate profile: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        } finally {
+          finishProfileMutation(request);
         }
       },
     });
@@ -383,38 +468,52 @@ export default function PipelinePage({
 
   const handleRenameProfile = () => {
     const current = profiles.find((p) => p.id === activeProfile);
+    const profile = activeProfile;
     setPromptDialog({
       title: "Rename profile",
       defaultValue: current?.name ?? "",
       onSubmit: async (name) => {
+        const request = beginProfileMutation();
+        if (request === null) return;
         try {
-          await invoke<ProfileSummary>("rename_profile", { id: activeProfile, newName: name });
-          await refreshProfiles();
+          await invoke<ProfileSummary>("rename_profile", { id: profile, newName: name });
+          if (
+            !profileMutationIsCurrent(request) ||
+            activeProfileRef.current !== profile
+          ) return;
+          await refreshProfiles(request);
         } catch (e) {
-          alert(`Failed to rename profile: ${e instanceof Error ? e.message : String(e)}`);
+          if (profileMutationIsCurrent(request)) {
+            alert(`Failed to rename profile: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        } finally {
+          finishProfileMutation(request);
         }
       },
     });
   };
 
   const handleDeleteProfile = async () => {
-    if (profiles.find((profile) => profile.id === activeProfile)?.builtin) {
+    const profile = activeProfileRef.current;
+    if (profiles.find((candidate) => candidate.id === profile)?.builtin) {
       alert("Cannot delete a built-in profile.");
       return;
     }
-    const current = profiles.find((p) => p.id === activeProfile);
-    if (!confirm(`Delete profile "${current?.name ?? activeProfile}"? This cannot be undone.`)) return;
+    const current = profiles.find((candidate) => candidate.id === profile);
+    if (!confirm(`Delete profile "${current?.name ?? profile}"? This cannot be undone.`)) return;
+    const request = beginProfileMutation();
+    if (request === null) return;
     try {
-      await invoke("delete_profile", { id: activeProfile });
-      await refreshProfiles();
-      const newConfig = await invoke<PipelineConfig>("switch_profile", { id: "deep-review" });
-      setConfig(normalizeConfig(newConfig));
-      setActiveProfile("deep-review");
-      setEditing(null);
-      setDirty(false);
-      onProfileChange?.();
+      await invoke("delete_profile", { id: profile });
+      if (!profileMutationIsCurrent(request)) return;
+      await refreshProfiles(request);
+      await switchProfileForMutation("deep-review", request);
     } catch (e) {
-      alert(`Failed to delete profile: ${e instanceof Error ? e.message : String(e)}`);
+      if (profileMutationIsCurrent(request)) {
+        alert(`Failed to delete profile: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } finally {
+      finishProfileMutation(request);
     }
   };
 
@@ -428,20 +527,7 @@ export default function PipelinePage({
   const updateStepPhase = (id: string, phase: Phase) => {
     setConfig({
       ...config,
-      steps: config.steps.map((step) => {
-        if (step.id !== id) return step;
-        return {
-          ...step,
-          phase,
-          context: phase === "parallel"
-            ? {
-                include: step.context.include.filter(
-                  (selector) => selector.kind !== "step",
-                ),
-              }
-            : step.context,
-        };
-      }),
+      steps: config.steps.map((step) => step.id === id ? { ...step, phase } : step),
     });
     setDirty(true);
   };
@@ -452,24 +538,77 @@ export default function PipelinePage({
   };
 
   const updateExtraction = (patch: Partial<ExtractionConfig>) => {
-    const extraction = { ...(config.extraction ?? DEFAULT_EXTRACTION), ...patch };
+    const previous = config.extraction ?? DEFAULT_EXTRACTION;
+    const extraction = { ...previous, ...patch };
+    const previousInputs = previous.extra_inputs ?? [];
+    const nextInputs = extraction.extra_inputs ?? [];
+    const renamedInputs = new Map<string, string>();
+    if (previousInputs.length === nextInputs.length) {
+      previousInputs.forEach((slot, index) => {
+        const nextKey = nextInputs[index]?.key;
+        if (nextKey !== undefined && slot.key !== nextKey) {
+          renamedInputs.set(slot.key, nextKey);
+        }
+      });
+    }
     const namedKeys = new Set((extraction.extra_inputs ?? []).map((slot) => slot.key));
-    const steps = config.steps.map((step) => ({
-      ...step,
-      context: {
-        include: step.context.include.filter((selector) => {
-          if (selector.kind === "primary" && extraction.input_mode === "none") return false;
-          if (selector.kind === "named_input" && !namedKeys.has(selector.key)) return false;
-          return true;
-        }),
-      },
-    }));
-    setConfig({ ...config, extraction, steps });
+    let removedSelectors = 0;
+    const steps = config.steps.map((step) => {
+      const include = step.context.include
+        .map((selector): ArtifactSelector => {
+          if (selector.kind === "named_input" && renamedInputs.has(selector.key)) {
+            return { ...selector, key: renamedInputs.get(selector.key)! };
+          }
+          return selector;
+        })
+        .filter((selector) => {
+          const remove =
+            (selector.kind === "primary" && extraction.input_mode === "none") ||
+            (selector.kind === "named_input" && !namedKeys.has(selector.key));
+          if (remove) removedSelectors += 1;
+          return !remove;
+        });
+      return { ...step, context: { include } };
+    });
+    if (
+      removedSelectors > 0 &&
+      !window.confirm(
+        `This change removes ${removedSelectors} artifact access rule${removedSelectors === 1 ? "" : "s"} from workflow steps. Continue?`,
+      )
+    ) {
+      return;
+    }
+    const nextConfig = { ...config, extraction, steps };
+    if (removedSelectors > 0) {
+      setUndoRewrite({
+        before: config,
+        after: JSON.stringify(nextConfig),
+        dirtyBefore: dirty,
+        editingBefore: editing,
+        message: "Artifact access rules were updated.",
+      });
+    }
+    setConfig(nextConfig);
     setDirty(true);
   };
 
   const updateUseOrientation = (enabled: boolean) => {
-    setConfig({
+    const affected = enabled
+      ? 0
+      : config.steps.reduce(
+          (count, step) =>
+            count + step.context.include.filter((selector) => selector.kind === "survey").length,
+          0,
+        );
+    if (
+      affected > 0 &&
+      !window.confirm(
+        `Disabling the orientation map removes survey access from ${affected} workflow step${affected === 1 ? "" : "s"}. Continue?`,
+      )
+    ) {
+      return;
+    }
+    const nextConfig = {
       ...config,
       use_orientation: enabled,
       steps: enabled
@@ -480,12 +619,39 @@ export default function PipelinePage({
               include: step.context.include.filter((selector) => selector.kind !== "survey"),
             },
           })),
-    });
+    };
+    if (affected > 0) {
+      setUndoRewrite({
+        before: config,
+        after: JSON.stringify(nextConfig),
+        dirtyBefore: dirty,
+        editingBefore: editing,
+        message: "Survey access rules were removed.",
+      });
+    }
+    setConfig(nextConfig);
     setDirty(true);
   };
 
   const updateStepEnabled = (id: string, enabled: boolean) => {
-    setConfig({
+    const affected = enabled
+      ? []
+      : config.steps.filter((step) =>
+          (step.after ?? []).includes(id) ||
+          step.context.include.some(
+            (selector) => selector.kind === "step" && selector.step === id,
+          ) ||
+          (step.run_if?.kind === "output_matches" && step.run_if.step === id),
+        );
+    if (
+      affected.length > 0 &&
+      !window.confirm(
+        `Disabling this step removes dependencies or artifact access from ${affected.length} downstream step${affected.length === 1 ? "" : "s"}. Continue?`,
+      )
+    ) {
+      return;
+    }
+    const nextConfig = {
       ...config,
       steps: config.steps.map((step) => {
         if (step.id === id) return { ...step, enabled };
@@ -503,30 +669,120 @@ export default function PipelinePage({
             : step.run_if,
         };
       }),
-    });
+    };
+    if (affected.length > 0) {
+      setUndoRewrite({
+        before: config,
+        after: JSON.stringify(nextConfig),
+        dirtyBefore: dirty,
+        editingBefore: editing,
+        message: "Downstream connections were removed.",
+      });
+    }
+    setConfig(nextConfig);
     setDirty(true);
   };
 
-  const handleSave = async () => {
+  const persistCurrentConfig = async (): Promise<boolean> => {
+    const configToSave = config;
+    const profileToSave = activeProfile;
+    const savedSnapshot = JSON.stringify(configToSave);
     setSaving(true); setSaved(false);
     try {
-      await invoke("save_pipeline_config", { config, profileId: activeProfile });
-      setSaved(true); setDirty(false);
+      await invoke("save_pipeline_config", {
+        config: configToSave,
+        profileId: profileToSave,
+      });
+      const isCurrentVersion =
+        activeProfileRef.current === profileToSave &&
+        JSON.stringify(configRef.current) === savedSnapshot;
+      setSaved(isCurrentVersion);
+      if (isCurrentVersion) setDirty(false);
       await refreshProfiles();
       onProfileChange?.();
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e) { alert(`Failed to save: ${e instanceof Error ? e.message : String(e)}`); }
+      if (isCurrentVersion) setTimeout(() => setSaved(false), 2000);
+      return isCurrentVersion;
+    } catch (e) {
+      alert(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
     finally { setSaving(false); }
+  };
+
+  const handleSave = async () => {
+    await persistCurrentConfig();
+  };
+
+  const saveBeforeExport = async (what: string): Promise<boolean> => {
+    if (!dirty) return true;
+    if (!window.confirm(
+      `Exporting ${what} requires saving this profile's unsaved edits first. Save and continue?`,
+    )) {
+      return false;
+    }
+    const currentSaved = await persistCurrentConfig();
+    if (!currentSaved) {
+      alert("Export cancelled because the workflow changed while it was being saved.");
+    }
+    return currentSaved;
+  };
+
+  const resetParallelTemplate = async (
+    source: "generic" | "paper",
+  ) => {
+    const request = ++promptResetRequestRef.current;
+    const profile = activeProfileRef.current;
+    try {
+      const template = source === "generic"
+        ? await invoke<string>("get_default_prompt", { name: "parallel_context_generic" })
+        : await invoke<string>("get_default_parallel_template");
+      if (
+        request !== promptResetRequestRef.current ||
+        activeProfileRef.current !== profile
+      ) return;
+      setConfig((current) =>
+        current ? { ...current, parallel_context_template: template } : current,
+      );
+      setDirty(true);
+    } catch (error) {
+      if (
+        request === promptResetRequestRef.current &&
+        activeProfileRef.current === profile
+      ) {
+        alert(
+          `Failed to reset the parallel context template: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
   };
 
   const handleReset = async () => {
     if (!confirm("Reset this profile to defaults? All customizations will be lost.")) return;
+    const request = beginProfileMutation();
+    if (request === null) return;
+    const profile = activeProfileRef.current;
     try {
       const d = await invoke<PipelineConfig>("reset_pipeline_config");
+      if (
+        !profileMutationIsCurrent(request) ||
+        activeProfileRef.current !== profile
+      ) return;
       setConfig(normalizeConfig(d)); setEditing(null); setDirty(false);
-      await refreshProfiles();
+      await refreshProfiles(request);
+      if (
+        !profileMutationIsCurrent(request) ||
+        activeProfileRef.current !== profile
+      ) return;
       onProfileChange?.();
-    } catch (e) { alert(`Failed to reset: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e) {
+      if (profileMutationIsCurrent(request)) {
+        alert(`Failed to reset: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } finally {
+      finishProfileMutation(request);
+    }
   };
 
   // --- Export/Import ---
@@ -535,41 +791,44 @@ export default function PipelinePage({
     if (!editingStep) return;
     const envelope: ExportEnvelope = { type: "step", data: editingStep };
     const defaultName = `pipeline-step-${editingStep.id}.json`;
-    const path = await saveDialog({
-      defaultPath: defaultName,
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (path) {
-      try {
-        await invoke("export_item", { path, json: JSON.stringify(envelope, null, 2) });
-      } catch (e) { alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`); }
+    try {
+      const path = await saveDialog({
+        defaultPath: defaultName,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return;
+      await invoke("export_item", { path, json: JSON.stringify(envelope, null, 2) });
+    } catch (e) {
+      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
   const handleExportProfile = async () => {
     const defaultName = `pipeline-profile-${activeProfile}.json`;
-    const path = await saveDialog({
-      defaultPath: defaultName,
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (path) {
-      try {
-        if (dirty) await invoke("save_pipeline_config", { config, profileId: activeProfile });
-        await invoke("export_profile", { id: activeProfile, path });
-      } catch (e) { alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`); }
+    try {
+      const path = await saveDialog({
+        defaultPath: defaultName,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return;
+      if (!(await saveBeforeExport("the profile"))) return;
+      await invoke("export_profile", { id: activeProfile, path });
+    } catch (e) {
+      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
   const handleExportBundle = async () => {
-    const path = await saveDialog({
-      defaultPath: "pipeline-settings-backup.json",
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (path) {
-      try {
-        if (dirty) await invoke("save_pipeline_config", { config, profileId: activeProfile });
-        await invoke("export_bundle", { path });
-      } catch (e) { alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`); }
+    try {
+      const path = await saveDialog({
+        defaultPath: "pipeline-settings-backup.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return;
+      if (!(await saveBeforeExport("the settings bundle"))) return;
+      await invoke("export_bundle", { path });
+    } catch (e) {
+      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -589,12 +848,12 @@ export default function PipelinePage({
   };
 
   const handleImport = async () => {
-    const path = await openDialog({
-      multiple: false,
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (!path) return;
     try {
+      const path = await openDialog({
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return;
       const envelope = await invoke<ExportEnvelope>("import_item", { path });
       switch (envelope.type) {
         case "step": {
@@ -700,7 +959,19 @@ export default function PipelinePage({
   };
 
   const removeStep = (id: string) => {
-    setConfig({
+    const step = config.steps.find((candidate) => candidate.id === id);
+    const affected = config.steps.filter((candidate) =>
+      (candidate.after ?? []).includes(id) ||
+      candidate.context.include.some(
+        (selector) => selector.kind === "step" && selector.step === id,
+      ) ||
+      (candidate.run_if?.kind === "output_matches" && candidate.run_if.step === id),
+    );
+    const consequence = affected.length > 0
+      ? ` It will also remove references from ${affected.length} downstream step${affected.length === 1 ? "" : "s"}.`
+      : "";
+    if (!window.confirm(`Remove “${step?.label ?? id}”?${consequence}`)) return;
+    const nextConfig = {
       ...config,
       steps: config.steps
         .filter((step) => step.id !== id)
@@ -716,8 +987,31 @@ export default function PipelinePage({
             ? null
             : step.run_if,
         })),
+    };
+    setUndoRewrite({
+      before: config,
+      after: JSON.stringify(nextConfig),
+      dirtyBefore: dirty,
+      editingBefore: editing,
+      message: `“${step?.label ?? id}” and its connections were removed.`,
     });
+    setConfig(nextConfig);
     if (editing === id) setEditing(null);
+    setDirty(true);
+  };
+
+  const moveStepWithinPhase = (id: string, direction: -1 | 1) => {
+    const step = config.steps.find((candidate) => candidate.id === id);
+    if (!step) return;
+    const peers = config.steps.filter((candidate) => candidate.phase === step.phase);
+    const position = peers.findIndex((candidate) => candidate.id === id);
+    const target = peers[position + direction];
+    if (!target) return;
+    const fromIndex = config.steps.findIndex((candidate) => candidate.id === id);
+    const toIndex = config.steps.findIndex((candidate) => candidate.id === target.id);
+    const steps = config.steps.slice();
+    [steps[fromIndex], steps[toIndex]] = [steps[toIndex], steps[fromIndex]];
+    setConfig({ ...config, steps });
     setDirty(true);
   };
 
@@ -765,6 +1059,26 @@ export default function PipelinePage({
 
   return (
     <div className="flex h-full relative">
+      {undoRewrite && JSON.stringify(config) === undoRewrite.after && (
+        <div
+          role="status"
+          className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-gray-900 px-4 py-2 text-xs text-white shadow-xl dark:bg-gray-100 dark:text-gray-900"
+        >
+          <span>{undoRewrite.message}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setConfig(undoRewrite.before);
+              setDirty(undoRewrite.dirtyBefore);
+              setEditing(undoRewrite.editingBefore);
+              setUndoRewrite(null);
+            }}
+            className="font-semibold underline underline-offset-2"
+          >
+            Undo
+          </button>
+        </div>
+      )}
       {/* Prompt dialog */}
       {promptDialog && (
         <PromptDialog
@@ -795,10 +1109,14 @@ export default function PipelinePage({
         <div className="px-4 pb-3 space-y-2">
           <div className="flex items-center gap-2">
             <select
+              aria-label="Active workflow profile"
+              aria-busy={profileMutationPending}
               value={activeProfile}
               onChange={(e) => handleSwitchProfile(e.target.value)}
+              disabled={profileMutationPending}
               className="flex-1 py-1.5 px-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
-                         focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
+                         focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors
+                         disabled:cursor-wait disabled:opacity-60"
             >
               {profiles.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
@@ -806,7 +1124,9 @@ export default function PipelinePage({
             </select>
             <button
               onClick={handleNewProfile}
-              className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              aria-label="New profile"
+              disabled={profileMutationPending}
+              className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-40"
               title="New profile"
             >
               <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -816,15 +1136,20 @@ export default function PipelinePage({
           </div>
           <div className="flex gap-1">
             <button onClick={handleDuplicateProfile}
-              className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors">
+              disabled={profileMutationPending}
+              className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors disabled:opacity-40">
               Duplicate
             </button>
             <button onClick={handleRenameProfile}
-              className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors">
+              disabled={profileMutationPending}
+              className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors disabled:opacity-40">
               Rename
             </button>
             <button onClick={handleDeleteProfile}
-              disabled={profiles.find((profile) => profile.id === activeProfile)?.builtin}
+              disabled={
+                profileMutationPending ||
+                profiles.find((profile) => profile.id === activeProfile)?.builtin
+              }
               className="flex-1 py-1 text-[11px] text-gray-500 hover:text-red-600 hover:bg-red-50
                          rounded transition-colors disabled:opacity-30 disabled:hover:text-gray-500
                          disabled:hover:bg-transparent">
@@ -846,7 +1171,7 @@ export default function PipelinePage({
 
           {/* Parallel section — header always visible so users know where to drop */}
           <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-950/30 sticky top-0 z-[1]">
-            <span className="text-[10px] uppercase tracking-wider text-blue-500 dark:text-blue-400 font-medium">
+            <span className="text-[10px] uppercase tracking-wider text-blue-700 dark:text-blue-300 font-medium">
               Parallel
             </span>
           </div>
@@ -869,6 +1194,10 @@ export default function PipelinePage({
                 onToggle={() => updateStepEnabled(step.id, !step.enabled)}
                 onSelect={() => setEditing(editing === step.id ? null : step.id)}
                 onDelete={() => removeStep(step.id)}
+                canMoveUp={posInSection > 0}
+                canMoveDown={posInSection < parallelSteps.length - 1}
+                onMoveUp={() => moveStepWithinPhase(step.id, -1)}
+                onMoveDown={() => moveStepWithinPhase(step.id, 1)}
                 onDragStart={() => setDragId(step.id)}
                 onDragEnd={cancelDrag}
               />
@@ -896,7 +1225,7 @@ export default function PipelinePage({
                   : "bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800"
               }`}
             >
-              <span className="text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400 font-medium">
+              <span className="text-[10px] uppercase tracking-wider text-amber-700 dark:text-amber-300 font-medium">
                 Merge (auto)
               </span>
             </button>
@@ -904,7 +1233,7 @@ export default function PipelinePage({
 
           {/* Sequential section */}
           <div className="px-4 py-1.5 bg-orange-50 dark:bg-orange-950/30 sticky top-0 z-[1]">
-            <span className="text-[10px] uppercase tracking-wider text-orange-500 dark:text-orange-400 font-medium">
+            <span className="text-[10px] uppercase tracking-wider text-orange-700 dark:text-orange-300 font-medium">
               Sequential
             </span>
           </div>
@@ -927,6 +1256,10 @@ export default function PipelinePage({
                 onToggle={() => updateStepEnabled(step.id, !step.enabled)}
                 onSelect={() => setEditing(editing === step.id ? null : step.id)}
                 onDelete={() => removeStep(step.id)}
+                canMoveUp={posInSection > 0}
+                canMoveDown={posInSection < sequentialSteps.length - 1}
+                onMoveUp={() => moveStepWithinPhase(step.id, -1)}
+                onMoveDown={() => moveStepWithinPhase(step.id, 1)}
                 onDragStart={() => setDragId(step.id)}
                 onDragEnd={cancelDrag}
               />
@@ -974,8 +1307,8 @@ export default function PipelinePage({
             </button>
             <button
               onClick={() => addStep("sequential")}
-              className="flex-1 py-2 px-3 border border-dashed border-orange-300 rounded-lg
-                         text-sm text-orange-600 hover:border-orange-400 hover:text-orange-700 transition-colors"
+              className="flex-1 py-2 px-3 border border-dashed border-orange-400 rounded-lg
+                         text-sm text-orange-700 hover:border-orange-500 hover:text-orange-900 transition-colors"
             >
               + Sequential
             </button>
@@ -983,7 +1316,7 @@ export default function PipelinePage({
           <div className="flex gap-2">
             <button
               onClick={handleSave}
-              disabled={saving || !dirty}
+              disabled={saving || profileMutationPending || !dirty}
               className="flex-1 py-2 px-3 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg text-sm font-medium
                          hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-300 dark:disabled:bg-gray-700 transition-colors"
             >
@@ -991,8 +1324,9 @@ export default function PipelinePage({
             </button>
             <button
               onClick={handleReset}
+              disabled={profileMutationPending}
               className="py-2 px-3 border border-gray-300 rounded-lg text-sm text-gray-600
-                         hover:bg-gray-50 transition-colors"
+                         hover:bg-gray-50 transition-colors disabled:cursor-wait disabled:opacity-50"
             >
               Reset
             </button>
@@ -1049,7 +1383,7 @@ export default function PipelinePage({
               From URL…
             </button>
           </div>
-          {saved && <p className="text-xs text-green-600 text-center">Saved.</p>}
+          {saved && <p className="text-xs text-green-700 dark:text-green-400 text-center">Saved.</p>}
         </div>
         <ResizeHandle
           currentWidth={panelWidth}
@@ -1069,9 +1403,13 @@ export default function PipelinePage({
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-3">
               <div className="flex items-center gap-3">
                 <button
+                  type="button"
+                  role="switch"
+                  aria-label="Cross-agent merge"
+                  aria-checked={config.merge.enabled}
                   onClick={() => updateMerge({ enabled: !config.merge.enabled })}
                   className={`w-8 h-5 rounded-full relative transition-colors shrink-0 ${
-                    config.merge.enabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+                    config.merge.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
                   }`}
                 >
                   <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
@@ -1096,6 +1434,7 @@ export default function PipelinePage({
                 value={config.merge.prompt}
                 onChange={(prompt) => updateMerge({ prompt })}
                 context={{ kind: "merge" }}
+                ariaLabel="Cross-agent merge prompt"
               />
             </div>
           </div>
@@ -1111,7 +1450,12 @@ export default function PipelinePage({
             useOrientation={config.use_orientation}
             prompt={config.orientation_prompt}
             onToggleUse={updateUseOrientation}
-            onPromptChange={(p) => { setConfig({ ...config, orientation_prompt: p }); setDirty(true); }}
+            onPromptChange={(orientation_prompt) => {
+              setConfig((current) =>
+                current ? { ...current, orientation_prompt } : current,
+              );
+              setDirty(true);
+            }}
           />
         ) : editing === "pipeline_settings" ? (
           /* Pipeline settings editor */
@@ -1139,7 +1483,7 @@ export default function PipelinePage({
                     setDirty(true);
                   }}
                   className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
-                    config.context_cache?.enabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+                    config.context_cache?.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
                   }`}
                 >
                   <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
@@ -1152,17 +1496,19 @@ export default function PipelinePage({
                       Reuse shared input context
                     </span>
                     <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
-                      Optional
+                      {activeProfile === "deep-review" ? "Full Review default" : "Optional"}
                     </span>
                   </div>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    Prepares the extracted input and orientation map once for all review steps.
+                    Paper Review (Full) enables this by default. It prepares the extracted input
+                    and orientation map once for all review steps.
                     Pipeline automatically uses provider prompt caches for API calls and forked
-                    base sessions for Claude or Codex CLI. Turn this on for large, multi-step
-                    reviews; unsupported providers fall back safely to ordinary calls.
+                    base sessions for Claude or Codex CLI. For other profiles, turn it on for
+                    large, multi-step reviews; unsupported providers fall back safely to ordinary
+                    calls.
                   </p>
                   {config.context_cache?.enabled && (
-                    <p className="text-[11px] text-green-600 dark:text-green-400 mt-1">
+                    <p className="text-[11px] text-green-700 dark:text-green-400 mt-1">
                       Enabled for this profile. Cache reads and writes will appear in token usage.
                     </p>
                   )}
@@ -1172,9 +1518,13 @@ export default function PipelinePage({
               {/* Orientation map toggle */}
               <div className="flex items-start gap-3">
                 <button
+                  type="button"
+                  role="switch"
+                  aria-label="Build orientation map"
+                  aria-checked={config.use_orientation}
                   onClick={() => updateUseOrientation(!config.use_orientation)}
                   className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
-                    config.use_orientation ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+                    config.use_orientation ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
                   }`}
                 >
                   <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
@@ -1219,25 +1569,17 @@ export default function PipelinePage({
                   </label>
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => {
-                        invoke<string>("get_default_prompt", { name: "parallel_context_generic" }).then((t) => {
-                          setConfig({ ...config, parallel_context_template: t });
-                          setDirty(true);
-                        }).catch(console.error);
-                      }}
-                      className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                      type="button"
+                      onClick={() => void resetParallelTemplate("generic")}
+                      className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
                       title="Neutral wrapper for any input: survey + instructions + input path."
                     >
                       Reset to generic
                     </button>
                     <button
-                      onClick={() => {
-                        invoke<string>("get_default_parallel_template").then((t) => {
-                          setConfig({ ...config, parallel_context_template: t });
-                          setDirty(true);
-                        }).catch(console.error);
-                      }}
-                      className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                      type="button"
+                      onClick={() => void resetParallelTemplate("paper")}
+                      className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
                       title="Referee briefing for academic papers: paper type, figure hints, issue-focused framing."
                     >
                       Reset to paper review
@@ -1250,10 +1592,12 @@ export default function PipelinePage({
                 <PromptEditor
                   value={config.parallel_context_template}
                   onChange={(parallel_context_template) => {
+                    promptResetRequestRef.current += 1;
                     setConfig({ ...config, parallel_context_template });
                     setDirty(true);
                   }}
                   context={{ kind: "parallel_template" }}
+                  ariaLabel="Parallel step context template"
                   rows={16}
                   fillHeight={false}
                 />
@@ -1267,6 +1611,7 @@ export default function PipelinePage({
                 <label className="block text-xs font-medium text-gray-500 mb-1">Label</label>
                 <input
                   type="text"
+                  aria-label="Step label"
                   value={editingStep.label}
                   onChange={(e) => updateStep(editingStep.id, { label: e.target.value })}
                   className="w-full py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 transition-colors"
@@ -1278,12 +1623,14 @@ export default function PipelinePage({
                   {(["parallel", "sequential"] as const).map((phase) => (
                     <button
                       key={phase}
+                      type="button"
+                      aria-pressed={editingStep.phase === phase}
                       onClick={() => updateStepPhase(editingStep.id, phase)}
                       className={`px-3 py-1 text-xs rounded-full border transition-colors ${
                         editingStep.phase === phase
                           ? phase === "parallel"
-                            ? "bg-blue-500 text-white border-blue-500"
-                            : "bg-orange-500 text-white border-orange-500"
+                            ? "bg-blue-700 text-white border-blue-700"
+                            : "bg-orange-700 text-white border-orange-700"
                           : "bg-white dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-600 hover:border-gray-400"
                       }`}
                     >
@@ -1348,6 +1695,7 @@ export default function PipelinePage({
               <PromptEditor
                 value={editingStep.prompt}
                 onChange={(prompt) => updateStep(editingStep.id, { prompt })}
+                ariaLabel={`Prompt for ${editingStep.label}`}
                 context={
                   editingStep.phase === "sequential"
                     ? {
@@ -1362,7 +1710,7 @@ export default function PipelinePage({
             </div>
           </>
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-400">
+          <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
             <div className="text-center">
               <p className="text-lg">Select a step to edit</p>
               <p className="text-sm mt-1">
@@ -1387,7 +1735,6 @@ const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   { value: "auto", label: "Auto", hint: "Try the global setting; same as inherit." },
   { value: "llm", label: "LLM", hint: "Bounded, page-verified transcription through the active provider. Slower, but preserves equations and original typos." },
   { value: "paddleocr-vl", label: "Local engine: PaddleOCR-VL 1.6 Q8", hint: "Managed page-parallel extraction with retries and resumable checkpoints. Tune it in Settings → PDF Extraction." },
-  { value: "marker", label: "Local engine: marker-pdf", hint: "Cached local extraction with automatic OCR detection and no LLM cost. Install from Settings → PDF Extraction." },
   { value: "pdftotext", label: "pdftotext (basic)", hint: "Fast, but equations are lost. Uses bundled poppler." },
 ];
 
@@ -1399,7 +1746,10 @@ function ExtractionEditor({
   onChange: (patch: Partial<ExtractionConfig>) => void;
 }) {
   const method = extraction.method ?? "";
-  const hint = EXTRACTION_METHODS.find((m) => m.value === method)?.hint;
+  const markerRetired = method === "marker";
+  const hint = markerRetired
+    ? "Marker is unavailable in Pipeline 1.0.1 because its compatible Python dependencies contain known security vulnerabilities. Choose a supported method before running this workflow."
+    : EXTRACTION_METHODS.find((m) => m.value === method)?.hint;
   const inputMode = extraction.input_mode || "document";
 
   return (
@@ -1418,6 +1768,7 @@ function ExtractionEditor({
             Input mode (per profile)
           </label>
           <select
+            aria-label="Workflow input mode"
             value={inputMode}
             onChange={(e) => onChange({ input_mode: e.target.value })}
             className="w-full py-1.5 px-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
@@ -1441,7 +1792,7 @@ function ExtractionEditor({
         />
 
         {inputMode !== "document" ? (
-          <div className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
+          <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
             Extraction settings below apply only to document inputs.
           </div>
         ) : null}
@@ -1451,22 +1802,37 @@ function ExtractionEditor({
             Method (per profile)
           </label>
           <select
+            aria-label="PDF extraction method"
             value={method}
             onChange={(e) => onChange({ method: e.target.value })}
             className="w-full py-1.5 px-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
                        text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
                        focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
           >
+            {markerRetired && (
+              <option value="marker" disabled>
+                Marker (unavailable — choose a replacement)
+              </option>
+            )}
             {EXTRACTION_METHODS.map((m) => (
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
           {hint && (
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5 leading-relaxed">{hint}</p>
+            <p
+              role={markerRetired ? "alert" : undefined}
+              className={`text-[11px] mt-1.5 leading-relaxed ${
+                markerRetired
+                  ? "text-amber-700 dark:text-amber-300"
+                  : "text-gray-500 dark:text-gray-400"
+              }`}
+            >
+              {hint}
+            </p>
           )}
         </div>
 
-        <div className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
+        <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
           The chosen PDF method is authoritative: incomplete or failed extraction stops before
           orientation instead of silently switching engines. Parser-specific speed, memory, OCR,
           and image settings are configured once in Settings → PDF Extraction. LaTeX inputs bypass
@@ -1488,6 +1854,36 @@ function OrientationEditor({
   onToggleUse: (v: boolean) => void;
   onPromptChange: (p: string) => void;
 }) {
+  const resetRequest = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+    resetRequest.current += 1;
+  }, []);
+
+  const insertDefault = async (name: string) => {
+    const request = ++resetRequest.current;
+    try {
+      const template = await invoke<string>("get_default_prompt", { name });
+      if (mounted.current && request === resetRequest.current) {
+        onPromptChange(template);
+      }
+    } catch (error) {
+      if (mounted.current && request === resetRequest.current) {
+        alert(
+          `Failed to load the default orientation prompt: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  };
+
+  const changePrompt = (next: string) => {
+    resetRequest.current += 1;
+    onPromptChange(next);
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-3">
@@ -1503,9 +1899,13 @@ function OrientationEditor({
 
         <div className="flex items-center gap-3">
           <button
+            type="button"
+            role="switch"
+            aria-label="Build orientation map"
+            aria-checked={useOrientation}
             onClick={() => onToggleUse(!useOrientation)}
             className={`w-8 h-5 rounded-full relative transition-colors shrink-0 ${
-              useOrientation ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+              useOrientation ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
             }`}
           >
             <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
@@ -1524,43 +1924,35 @@ function OrientationEditor({
         </label>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => {
-              invoke<string>("get_default_prompt", { name: "orientation_generic" })
-                .then(onPromptChange)
-                .catch(console.error);
-            }}
-            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            type="button"
+            onClick={() => void insertDefault("orientation_generic")}
+            className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
             title="Insert the generic survey prompt (works for any input)."
           >
             Insert generic survey
           </button>
           <button
-            onClick={() => {
-              invoke<string>("get_default_prompt", { name: "orientation_folder" })
-                .then(onPromptChange)
-                .catch(console.error);
-            }}
-            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            type="button"
+            onClick={() => void insertDefault("orientation_folder")}
+            className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
             title="Insert the folder survey prompt (explores the folder with the Read tool)."
           >
             Insert folder survey
           </button>
           <button
-            onClick={() => {
-              invoke<string>("get_default_prompt", { name: "orientation" })
-                .then(onPromptChange)
-                .catch(console.error);
-            }}
-            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            type="button"
+            onClick={() => void insertDefault("orientation")}
+            className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
             title="Insert the paper-review survey prompt (sections, theorems, tables, notation)."
           >
             Insert paper survey
           </button>
           <button
-            onClick={() => onPromptChange("")}
+            type="button"
+            onClick={() => changePrompt("")}
             disabled={prompt.trim() === ""}
-            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
-                       disabled:opacity-40 disabled:hover:text-gray-400 transition-colors"
+            className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100
+                       disabled:opacity-40 disabled:hover:text-gray-600 dark:disabled:hover:text-gray-400 transition-colors"
             title="Clear the override; the default template will be used."
           >
             Use default
@@ -1571,8 +1963,9 @@ function OrientationEditor({
         <div className="flex-1 min-h-0">
           <PromptEditor
             value={prompt}
-            onChange={onPromptChange}
+            onChange={changePrompt}
             context={{ kind: "orientation" }}
+            ariaLabel="Orientation map prompt"
           />
         </div>
         {prompt.trim() === "" && (
@@ -1597,6 +1990,10 @@ function StepRow({
   onToggle,
   onSelect,
   onDelete,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
   onDragStart,
   onDragEnd,
 }: {
@@ -1606,6 +2003,10 @@ function StepRow({
   onToggle: () => void;
   onSelect: () => void;
   onDelete?: () => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
 }) {
@@ -1642,7 +2043,7 @@ function StepRow({
         {/* Drag handle */}
         <span
           className="px-1 text-gray-300 dark:text-gray-600 cursor-grab active:cursor-grabbing select-none"
-          aria-label="Drag to reorder"
+          aria-hidden="true"
           title="Drag to reorder"
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -1654,20 +2055,51 @@ function StepRow({
             <circle cx="13" cy="15" r="1.3" />
           </svg>
         </span>
+        <span className="flex shrink-0 gap-0.5">
+          <button
+            type="button"
+            onClick={onMoveUp}
+            disabled={!canMoveUp}
+            aria-label={`Move ${step.label} up`}
+            className="flex h-6 w-6 items-center justify-center text-[10px] leading-none text-gray-600
+                       hover:text-gray-900 disabled:opacity-25 dark:text-gray-400 dark:hover:text-gray-100"
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            onClick={onMoveDown}
+            disabled={!canMoveDown}
+            aria-label={`Move ${step.label} down`}
+            className="flex h-6 w-6 items-center justify-center text-[10px] leading-none text-gray-600
+                       hover:text-gray-900 disabled:opacity-25 dark:text-gray-400 dark:hover:text-gray-100"
+          >
+            ▼
+          </button>
+        </span>
         <button
+          type="button"
+          role="switch"
+          aria-label={`Enable ${step.label}`}
+          aria-checked={step.enabled}
           onClick={onToggle}
           className={`w-8 h-5 rounded-full relative transition-colors shrink-0 ${
-            step.enabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+            step.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
           }`}
         >
           <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
             step.enabled ? "translate-x-3.5" : "translate-x-0.5"
           }`} />
         </button>
-        <button onClick={onSelect} className="flex-1 text-left text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+        <button type="button" onClick={onSelect} className="flex-1 text-left text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
           {step.label}
         </button>
-        <button onClick={onDelete} className="p-1 text-gray-400 hover:text-red-500 shrink-0" title="Remove">
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label={`Remove ${step.label}`}
+          className="p-1 text-gray-500 hover:text-red-600 shrink-0"
+        >
           <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" />
           </svg>
@@ -1735,7 +2167,7 @@ function DropZone({
         active
           ? `h-6 my-0.5 mx-2 rounded ${tint} border-2 border-dashed ${tone}`
           : empty
-            ? `h-10 my-1 mx-2 rounded border border-dashed ${tone} text-[10px] flex items-center justify-center text-gray-400 dark:text-gray-500`
+            ? `h-10 my-1 mx-2 rounded border border-dashed ${tone} text-[10px] flex items-center justify-center text-gray-600 dark:text-gray-400`
             : "h-2"
       }`}
     >
@@ -1797,7 +2229,7 @@ function ModelOverrides({
         <span>{open ? "▾" : "▸"}</span>
         <span>Model overrides</span>
         {hasOverride && !open && (
-          <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono ml-1">
+          <span className="text-[10px] text-gray-600 dark:text-gray-400 font-mono ml-1">
             {[
               step.model,
               step.effort,
@@ -1810,7 +2242,7 @@ function ModelOverrides({
       </button>
       {open && (
         <div className="mt-2 space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
-          <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-relaxed">
+          <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
             Each provider can inherit its global policy, follow its own current
             default, use a stable role, or pin an exact discovered model.
           </p>
@@ -1834,6 +2266,7 @@ function ModelOverrides({
                   {provider} · {transportFor(provider)}
                 </div>
                 <select
+                  aria-label={`${provider} ${transportFor(provider)} model override`}
                   value={value}
                   onChange={(event) => updateModel(key, event.target.value)}
                   className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
@@ -1850,6 +2283,7 @@ function ModelOverrides({
                 </select>
                 {!!efforts.length && (
                   <select
+                    aria-label={`${provider} ${transportFor(provider)} effort override`}
                     value={step.effort_overrides?.[key] ?? ""}
                     onChange={(event) => updateEffort(key, event.target.value)}
                     className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
@@ -1881,6 +2315,11 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+  const textareaId = useId();
+  const closeDraft = () => setDraft(null);
+  const dialogRef = useModalDialog<HTMLDivElement>(closeDraft, draft !== null);
 
   const run = async () => {
     setLoading(true);
@@ -1904,23 +2343,36 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
         flagging them, and append it to the synthesis step.
       </p>
       <button
+        type="button"
         onClick={run}
         disabled={loading}
         className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
       >
         {loading ? "Drafting…" : "Draft from my rejected issues"}
       </button>
-      {error && <p className="text-xs text-red-500 mt-1.5">{error}</p>}
+      {error && <p className="text-xs text-red-600 dark:text-red-400 mt-1.5">{error}</p>}
 
       {draft && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setDraft(null)}>
-          <div className="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl p-5" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Calibration draft</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={descriptionId}
+            tabIndex={-1}
+            className="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id={titleId} className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Calibration draft</h3>
+            <p id={descriptionId} className="text-xs text-gray-500 dark:text-gray-400 mb-3">
               From {draft.rejected_count} rejected issue{draft.rejected_count === 1 ? "" : "s"}. Will be appended to
               step <span className="font-medium">{draft.target_label}</span>. Edit before applying.
             </p>
+            <label htmlFor={textareaId} className="sr-only">Calibration instruction</label>
             <textarea
+              id={textareaId}
+              data-autofocus
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={6}
@@ -1928,12 +2380,14 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
             />
             <div className="flex justify-end gap-2 mt-4">
               <button
+                type="button"
                 onClick={() => setDraft(null)}
                 className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={() => { if (text.trim()) onAppend(draft.target_step_id, text.trim()); setDraft(null); }}
                 disabled={!text.trim()}
                 className="px-4 py-2 text-sm rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40"
@@ -1941,7 +2395,7 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
                 Append &amp; keep
               </button>
             </div>
-            <p className="text-[10px] text-gray-400 mt-2">Save the profile to persist the change.</p>
+            <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-2">Save the profile to persist the change.</p>
           </div>
         </div>
       )}
@@ -1986,18 +2440,21 @@ function ExtraInputsEditor({
         {slots.map((s, i) => (
           <div key={i} className="flex flex-wrap items-center gap-1.5 p-2 border border-gray-200 dark:border-gray-700 rounded">
             <input
+              aria-label={`Extra input ${i + 1} key`}
               value={s.key}
               onChange={(e) => update(i, { key: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
               placeholder="key"
               className={`${inputClass} w-24 font-mono`}
             />
             <input
+              aria-label={`Extra input ${i + 1} label`}
               value={s.label ?? ""}
               onChange={(e) => update(i, { label: e.target.value })}
               placeholder="label"
               className={`${inputClass} flex-1 min-w-[6rem]`}
             />
             <select
+              aria-label={`Extra input ${i + 1} mode`}
               value={s.mode ?? "document"}
               onChange={(e) => update(i, { mode: e.target.value })}
               className={inputClass}
@@ -2008,15 +2465,17 @@ function ExtraInputsEditor({
             <label className="flex items-center gap-1 text-[10px] text-gray-500">
               <input
                 type="checkbox"
+                aria-label={`Require extra input ${s.label || s.key || i + 1}`}
                 checked={!!s.required}
                 onChange={(e) => update(i, { required: e.target.checked })}
               />
               required
             </label>
             <button
+              type="button"
               onClick={() => remove(i)}
-              className="text-xs text-red-500 hover:text-red-700 px-1"
-              title="Remove"
+              aria-label={`Remove extra input ${s.label || s.key || i + 1}`}
+              className="text-xs text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 px-1"
             >
               ✕
             </button>
@@ -2024,6 +2483,7 @@ function ExtraInputsEditor({
         ))}
       </div>
       <button
+        type="button"
         onClick={add}
         className="mt-2 text-xs text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-dashed border-gray-300 dark:border-gray-600 rounded px-2 py-1"
       >
@@ -2065,18 +2525,21 @@ function VariablesEditor({
         {variables.map((v, i) => (
           <div key={i} className="flex flex-wrap items-center gap-1.5 p-2 border border-gray-200 dark:border-gray-700 rounded">
             <input
+              aria-label={`Variable ${i + 1} key`}
               value={v.key}
               onChange={(e) => update(i, { key: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
               placeholder="key"
               className={`${inputClass} w-24 font-mono`}
             />
             <input
+              aria-label={`Variable ${i + 1} label`}
               value={v.label ?? ""}
               onChange={(e) => update(i, { label: e.target.value })}
               placeholder="label"
               className={`${inputClass} flex-1 min-w-[6rem]`}
             />
             <select
+              aria-label={`Variable ${i + 1} type`}
               value={v.kind ?? "text"}
               onChange={(e) => update(i, { kind: e.target.value })}
               className={inputClass}
@@ -2086,20 +2549,23 @@ function VariablesEditor({
               <option value="file">file</option>
             </select>
             <input
+              aria-label={`Variable ${i + 1} default`}
               value={v.default ?? ""}
               onChange={(e) => update(i, { default: e.target.value })}
               placeholder="default"
               className={`${inputClass} w-24`}
             />
             <button
+              type="button"
               onClick={() => remove(i)}
-              className="text-xs text-red-500 hover:text-red-700 px-1"
-              title="Remove"
+              aria-label={`Remove variable ${v.label || v.key || i + 1}`}
+              className="text-xs text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 px-1"
             >
               ✕
             </button>
             {v.kind === "choice" && (
               <input
+                aria-label={`Variable ${v.label || v.key || i + 1} choices`}
                 value={(v.choices ?? []).join(", ")}
                 onChange={(e) => update(i, { choices: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
                 placeholder="choices, comma-separated"
@@ -2110,6 +2576,7 @@ function VariablesEditor({
         ))}
       </div>
       <button
+        type="button"
         onClick={add}
         className="mt-2 text-xs text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-dashed border-gray-300 dark:border-gray-600 rounded px-2 py-1"
       >
@@ -2268,11 +2735,11 @@ function ArtifactContextEditor({
           <label className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
             Artifact access
           </label>
-          <span className="text-[10px] text-gray-400 truncate" title={artifactContextSummary(step.context)}>
+          <span className="text-[10px] text-gray-600 dark:text-gray-400 truncate" title={artifactContextSummary(step.context)}>
             {artifactContextSummary(step.context)}
           </span>
         </div>
-        <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">
+        <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5 leading-relaxed">
           {step.phase === "parallel"
             ? "This is an exact allowlist. Parallel steps are independent and cannot read another step's output."
             : "This is an exact allowlist. Selecting a step artifact also makes this step wait for its producer."}
@@ -2329,7 +2796,7 @@ function ArtifactContextEditor({
                 ))}
             </div>
           ) : (
-            <p className="text-[10px] text-gray-400">This profile has no primary input.</p>
+            <p className="text-[10px] text-gray-600 dark:text-gray-400">This profile has no primary input.</p>
           )}
         </div>
 
@@ -2342,7 +2809,7 @@ function ArtifactContextEditor({
             onChange={(event) => setSurvey(event.target.checked)}
           />
           Survey / orientation JSON
-          {!surveyEnabled && <span className="text-gray-400">(disabled for profile)</span>}
+          {!surveyEnabled && <span className="text-gray-600 dark:text-gray-400">(disabled for profile)</span>}
         </label>
 
         {namedInputs.map((slot) => {
@@ -2353,7 +2820,7 @@ function ArtifactContextEditor({
           return (
             <div key={slot.key} className="p-2">
               <p className="text-[10px] font-medium text-gray-600 dark:text-gray-300 mb-1">
-                {slot.label || slot.key} <span className="font-mono text-gray-400">({slot.key})</span>
+                {slot.label || slot.key} <span className="font-mono text-gray-600 dark:text-gray-400">({slot.key})</span>
               </p>
               <div className="flex gap-3">
                 {([
@@ -2376,7 +2843,7 @@ function ArtifactContextEditor({
         })}
 
         {step.phase === "parallel" && otherSteps.length > 0 && (
-          <p className="p-2 text-[10px] text-gray-400">
+          <p className="p-2 text-[10px] text-gray-600 dark:text-gray-400">
             Step reports and supporting files become selectable only in Sequential steps.
           </p>
         )}
@@ -2390,7 +2857,7 @@ function ArtifactContextEditor({
             <div key={producer.id} className="p-2">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[10px] font-medium text-gray-600 dark:text-gray-300 truncate">
-                  {producer.label} <span className="font-mono text-gray-400">({producer.id})</span>
+                  {producer.label} <span className="font-mono text-gray-600 dark:text-gray-400">({producer.id})</span>
                 </p>
                 <div className="flex gap-3 shrink-0">
                   {([
@@ -2412,6 +2879,7 @@ function ArtifactContextEditor({
               {selector?.parts.includes("files") && (
                 <input
                   type="text"
+                  aria-label={`File filter for ${producer.label}`}
                   value={selector.glob ?? ""}
                   onChange={(event) => setStepGlob(producer.id, event.target.value)}
                   placeholder="All files, or filter with a glob such as **/*.csv"
@@ -2512,7 +2980,7 @@ function AdvancedStepOptions({
       >
         <span>{open ? "▾" : "▸"}</span>
         <span>Artifact access &amp; execution rules</span>
-        {hasAny && !open && <span className="text-[10px] text-gray-400 ml-1">set</span>}
+        {hasAny && !open && <span className="text-[10px] text-gray-600 dark:text-gray-400 ml-1">set</span>}
       </button>
       {open && (
         <div className="mt-2 space-y-3 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
@@ -2531,7 +2999,7 @@ function AdvancedStepOptions({
             <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
               Wait for (order only)
             </label>
-            <p className="text-[10px] text-gray-400 mb-1">
+            <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-1">
               Adds timing constraints without exposing the producer's artifacts.
             </p>
             {otherSteps.length ? (
@@ -2563,7 +3031,7 @@ function AdvancedStepOptions({
                 })}
               </div>
             ) : (
-              <p className="text-[10px] text-gray-400">No other steps.</p>
+              <p className="text-[10px] text-gray-600 dark:text-gray-400">No other steps.</p>
             )}
           </div>
 
@@ -2573,6 +3041,7 @@ function AdvancedStepOptions({
               Run only if…
             </label>
             <select
+              aria-label="Run condition"
               value={condKind}
               onChange={(e) => setCondKind(e.target.value)}
               className={inputClass}
@@ -2586,6 +3055,7 @@ function AdvancedStepOptions({
             {cond?.kind === "output_matches" && (
               <div className="mt-1.5 space-y-1.5">
                 <select
+                  aria-label="Condition source step"
                   value={cond.step}
                   onChange={(e) => onChange({ run_if: { ...cond, step: e.target.value } })}
                   className={inputClass}
@@ -2599,6 +3069,7 @@ function AdvancedStepOptions({
                 </select>
                 <input
                   type="text"
+                  aria-label="Condition regular expression"
                   value={cond.pattern}
                   onChange={(e) => onChange({ run_if: { ...cond, pattern: e.target.value } })}
                   placeholder="regular expression, e.g. SEVERITY:\s*high"
@@ -2618,6 +3089,7 @@ function AdvancedStepOptions({
               <div className="mt-1.5 space-y-1.5">
                 <input
                   type="text"
+                  aria-label="Survey JSON pointer"
                   value={cond.pointer}
                   onChange={(e) => onChange({ run_if: { ...cond, pointer: e.target.value } })}
                   placeholder="JSON pointer, e.g. /metadata/paper_type"
@@ -2625,6 +3097,7 @@ function AdvancedStepOptions({
                 />
                 <input
                   type="text"
+                  aria-label="Survey value to equal"
                   value={
                     cond.equals === undefined
                       ? ""
@@ -2650,7 +3123,7 @@ function AdvancedStepOptions({
                   placeholder='equals (optional), e.g. "empirical" or true'
                   className={inputClass}
                 />
-                <p className="text-[10px] text-gray-400">
+                <p className="text-[10px] text-gray-600 dark:text-gray-400">
                   Leave "equals" blank to require only that the pointer exists.
                 </p>
               </div>
@@ -2673,6 +3146,7 @@ function AdvancedStepOptions({
               </button>
             </div>
             <textarea
+              aria-label="Output JSON schema"
               value={schemaText}
               onChange={(e) => applySchema(e.target.value)}
               rows={4}
@@ -2680,9 +3154,9 @@ function AdvancedStepOptions({
               className={`${inputClass} resize-y`}
             />
             {schemaError ? (
-              <p className="text-[10px] text-red-500 mt-0.5">Invalid schema: {schemaError}</p>
+              <p className="text-[10px] text-red-600 dark:text-red-400 mt-0.5">Invalid schema: {schemaError}</p>
             ) : (
-              <p className="text-[10px] text-gray-400 mt-0.5">
+              <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">
                 When set, the step must emit JSON matching this shape (with one retry).
               </p>
             )}
@@ -2704,6 +3178,7 @@ function AdvancedStepOptions({
               <div className="space-y-1.5 pl-4">
                 <input
                   type="text"
+                  aria-label="Fan-out file pattern"
                   value={step.for_each.glob}
                   onChange={(e) => onChange({ for_each: { glob: e.target.value, max: step.for_each!.max } })}
                   placeholder="glob, e.g. chapters/*.tex or **/*.py"
@@ -2721,7 +3196,7 @@ function AdvancedStepOptions({
                     className={`${inputClass} w-20`}
                   />
                 </label>
-                <p className="text-[10px] text-gray-400">
+                <p className="text-[10px] text-gray-600 dark:text-gray-400">
                   Bind <code className="font-mono">{"{item}"}</code> in the prompt to each file. Outputs
                   are merged (enable merge) or read together downstream via{" "}
                   <code className="font-mono">{"{step:" + step.id + "}"}</code>.
@@ -2750,16 +3225,22 @@ function AgentChips({
     <div>
       <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
         LLM Agents
-        <span className="font-normal text-gray-400 dark:text-gray-500 ml-1">
+        <span className="font-normal text-gray-600 dark:text-gray-400 ml-1">
           (empty = global setting{multi ? "; select multiple to run in parallel" : ""})
         </span>
       </label>
-      <div className="flex gap-2">
+      <div
+        role="group"
+        aria-label={multi ? "LLM agents (multiple allowed)" : "LLM agent"}
+        className="flex gap-2"
+      >
         {PROVIDERS.map((provider) => {
           const active = agents.includes(provider);
           return (
             <button
               key={provider}
+              type="button"
+              aria-pressed={active}
               onClick={() => {
                 if (multi) {
                   onChange(active ? agents.filter((a) => a !== provider) : [...agents, provider]);
@@ -2793,12 +3274,25 @@ function PromptDialog({
   onCancel: () => void;
 }) {
   const [value, setValue] = useState(defaultValue);
+  const titleId = useId();
+  const inputId = useId();
+  const dialogRef = useModalDialog<HTMLDivElement>(onCancel);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-80 p-5">
-        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">{title}</p>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-80 p-5"
+      >
+        <p id={titleId} className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">{title}</p>
+        <label htmlFor={inputId} className="sr-only">{title}</label>
         <input
+          id={inputId}
+          data-autofocus
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -2813,12 +3307,14 @@ function PromptDialog({
         />
         <div className="flex justify-end gap-2 mt-4">
           <button
+            type="button"
             onClick={onCancel}
             className="py-1.5 px-3 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={() => { if (value.trim()) onSubmit(value.trim()); }}
             disabled={!value.trim()}
             className="py-1.5 px-3 text-sm font-medium text-white bg-gray-900 dark:bg-gray-100 dark:text-gray-900 rounded-lg

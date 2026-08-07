@@ -15,7 +15,18 @@ type SharedSlot = Arc<Mutex<Option<String>>>;
 pub struct PreparedContext {
     key: String,
     content: Arc<str>,
+    workspace_dir: String,
+    _workspace: tempfile::TempDir,
     slots: Mutex<HashMap<String, SharedSlot>>,
+}
+
+/// Deduplicates identical prepared contexts for the lifetime of one pipeline
+/// run. Provider cache/session state lives on [`PreparedContext`], so merely
+/// recomputing an identical digest for every parallel unit is not sufficient:
+/// those units must share the same `Arc`.
+#[derive(Debug, Default)]
+pub struct PreparedContextPool {
+    contexts: std::sync::Mutex<HashMap<String, Arc<PreparedContext>>>,
 }
 
 impl std::fmt::Debug for PreparedContext {
@@ -60,9 +71,16 @@ impl PreparedContext {
         )?;
 
         let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let workspace = tempfile::Builder::new()
+            .prefix("pipeline_shared_context_")
+            .tempdir()
+            .map_err(|error| format!("Failed to create shared-context workspace: {error}"))?;
+        let workspace_dir = workspace.path().to_string_lossy().replace('\\', "/");
         Ok(Self {
             key: format!("pipeline-{}", &digest[..32]),
             content: Arc::from(content),
+            workspace_dir,
+            _workspace: workspace,
             slots: Mutex::new(HashMap::new()),
         })
     }
@@ -77,6 +95,12 @@ impl PreparedContext {
 
     pub fn bytes(&self) -> usize {
         self.content.len()
+    }
+
+    /// A private, read-only working directory for warming CLI base sessions.
+    /// Task-specific roots are applied only to the forked child session.
+    pub fn workspace_dir(&self) -> &str {
+        &self.workspace_dir
     }
 
     /// A stable compatibility key for a provider cache/session. The context
@@ -132,6 +156,24 @@ impl PreparedContext {
             "Shared-context prompt",
         )?;
         Ok(prompt)
+    }
+}
+
+impl PreparedContextPool {
+    pub fn prepare(
+        &self,
+        paper_text: &str,
+        orientation: &serde_json::Value,
+    ) -> Result<Arc<PreparedContext>, String> {
+        let candidate = Arc::new(PreparedContext::new(paper_text, orientation)?);
+        let mut contexts = self
+            .contexts
+            .lock()
+            .map_err(|_| "Shared-context pool lock was poisoned".to_string())?;
+        Ok(contexts
+            .entry(candidate.key().to_string())
+            .or_insert_with(|| candidate)
+            .clone())
     }
 }
 
@@ -198,5 +240,17 @@ mod tests {
         assert!(!context.content().to_ascii_lowercase().contains("<span"));
         assert!(context.content().contains("Paper body"));
         assert!(context.content().contains("Paper title"));
+    }
+
+    #[test]
+    fn pool_returns_the_same_context_and_slot_registry_for_identical_material() {
+        let pool = PreparedContextPool::default();
+        let orientation = serde_json::json!({"sections": ["intro"]});
+        let first = pool.prepare("paper body", &orientation).unwrap();
+        let second = pool.prepare("paper body", &orientation).unwrap();
+        let different = pool.prepare("different paper body", &orientation).unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &different));
     }
 }

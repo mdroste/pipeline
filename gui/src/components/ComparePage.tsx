@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { lineDiff, type DiffOp } from "../lib/diff";
 import type { PipelineReport, StepOutput } from "../lib/types";
+import SafeMarkdownLink from "./SafeMarkdownLink";
 
 interface Props {
   runA: string;
@@ -142,18 +143,23 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
           </div>
         )}
         {loading ? (
-          <p className="text-sm text-gray-400 px-2">Loading both runs…</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">Loading both runs…</p>
         ) : (
           <>
-            <div className="text-xs text-gray-400 px-1">
-              <span className="text-red-500">− older run</span> vs <span className="text-green-600">+ newer run</span>{" "}
+            <div className="text-xs text-gray-500 dark:text-gray-400 px-1">
+              <span className="text-red-700 dark:text-red-400">− older run</span> vs <span className="text-green-700 dark:text-green-400">+ newer run</span>{" "}
               (per step; deletions from the first run, additions in the second)
             </div>
 
             {reconcile && (
               <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
                 <div className="report-content !max-w-none !p-0">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{reconcile}</ReactMarkdown>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{ a: SafeMarkdownLink }}
+                  >
+                    {reconcile}
+                  </ReactMarkdown>
                 </div>
               </div>
             )}
@@ -173,12 +179,12 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                     className="w-full flex items-center gap-2 px-3 py-2 text-left"
                   >
                     <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{label}</span>
-                    {!a && <span className="text-[10px] text-green-600">only in newer</span>}
-                    {!b && <span className="text-[10px] text-red-500">only in older</span>}
-                    <span className={`ml-auto text-xs ${changed ? "text-amber-600 dark:text-amber-400" : "text-gray-400"}`}>
+                    {!a && <span className="text-[10px] text-green-700 dark:text-green-400">only in newer</span>}
+                    {!b && <span className="text-[10px] text-red-700 dark:text-red-400">only in older</span>}
+                    <span className={`ml-auto text-xs ${changed ? "text-amber-700 dark:text-amber-300" : "text-gray-500 dark:text-gray-400"}`}>
                       {changed ? "changed" : "unchanged"}
                     </span>
-                    <span className="text-gray-400 text-xs">{isOpen ? "▾" : "▸"}</span>
+                    <span className="text-gray-500 dark:text-gray-400 text-xs">{isOpen ? "▾" : "▸"}</span>
                   </button>
                   {isOpen && (
                     <div className="px-3 pb-3 border-t border-gray-100 dark:border-gray-800 pt-2">

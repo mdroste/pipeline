@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import type { EngineStatus } from "../lib/types";
+import type { EngineStatus, RetiredMarkerStatus } from "../lib/types";
 
 type PhaseStatus = "running" | "done" | "failed";
 
@@ -15,56 +15,131 @@ const PHASES: { id: string; label: string }[] = [
 const MAX_LOG_LINES = 200;
 
 /**
- * Installable local extraction engines. Everything lands under ~/.pipeline/
- * and is removed by Uninstall; nothing touches system Python.
+ * Installable native extraction engines. Everything lands under
+ * ~/.pipeline/native/ and is removed by Uninstall.
  */
-export default function EnginesPanel() {
+export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () => void }) {
   const [engines, setEngines] = useState<EngineStatus[]>([]);
+  const [retiredMarker, setRetiredMarker] = useState<RetiredMarkerStatus | null>(null);
+  const [removingRetiredMarker, setRemovingRetiredMarker] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [phases, setPhases] = useState<Record<string, PhaseStatus>>({});
   const [logLines, setLogLines] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [listenersReady, setListenersReady] = useState(false);
+  const [listenerError, setListenerError] = useState<string | null>(null);
+  const [listenerAttempt, setListenerAttempt] = useState(0);
+  const [engineStatusError, setEngineStatusError] = useState<string | null>(null);
+  const [retiredStatusError, setRetiredStatusError] = useState<string | null>(null);
+  const [refreshingStatus, setRefreshingStatus] = useState(true);
+  const [openDirError, setOpenDirError] = useState<string | null>(null);
+  const [openingPipelineDir, setOpeningPipelineDir] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
+  const refreshGeneration = useRef(0);
+  const statusError = [engineStatusError, retiredStatusError].filter(Boolean).join(" ") || null;
 
   const refresh = useCallback(() => {
-    invoke<EngineStatus[]>("list_engines")
-      .then(setEngines)
-      .catch((e) => console.error("Failed to list engines:", e));
+    const generation = ++refreshGeneration.current;
+    setRefreshingStatus(true);
+    setEngineStatusError(null);
+    setRetiredStatusError(null);
+
+    const engineRequest = invoke<EngineStatus[]>("list_engines");
+    const retiredRequest = invoke<RetiredMarkerStatus>("retired_marker_status");
+
+    void engineRequest.then(
+      (next) => {
+        if (refreshGeneration.current !== generation) return;
+        setEngines(next);
+        setEngineStatusError(null);
+      },
+      (reason) => {
+        if (refreshGeneration.current !== generation) return;
+        setEngines([]);
+        const detail = reason instanceof Error ? reason.message : String(reason);
+        setEngineStatusError(`Local engine status could not be loaded: ${detail}`);
+      },
+    );
+    void retiredRequest.then(
+      (next) => {
+        if (refreshGeneration.current !== generation) return;
+        setRetiredMarker(next);
+        setRetiredStatusError(null);
+      },
+      (reason) => {
+        if (refreshGeneration.current !== generation) return;
+        setRetiredMarker(null);
+        const detail = reason instanceof Error ? reason.message : String(reason);
+        setRetiredStatusError(`Retired Marker status could not be checked: ${detail}`);
+      },
+    );
+    void Promise.allSettled([engineRequest, retiredRequest]).then(() => {
+      if (refreshGeneration.current === generation) setRefreshingStatus(false);
+    });
   }, []);
 
   const openPipelineDir = useCallback(async () => {
+    setOpenDirError(null);
+    setOpeningPipelineDir(true);
     try {
       await invoke("open_pipeline_dir");
     } catch (e) {
-      console.error("Failed to open ~/.pipeline:", e);
+      const detail = e instanceof Error ? e.message : String(e);
+      setOpenDirError(`Could not open ~/.pipeline/: ${detail}`);
+    } finally {
+      setOpeningPipelineDir(false);
     }
   }, []);
 
   useEffect(() => {
     refresh();
+    return () => {
+      refreshGeneration.current += 1;
+    };
   }, [refresh]);
 
   useEffect(() => {
-    // Catch immediately so a non-Tauri environment (tests) can't produce
-    // unhandled rejections; cleanup tolerates the null.
-    const unlistens: Promise<UnlistenFn | null>[] = [
-      listen<{ engine: string; phase: string; status: string }>(
-        "engines:phase",
-        (e) => {
-          setPhases((p) => ({
-            ...p,
-            [e.payload.phase]: e.payload.status as PhaseStatus,
-          }));
-        },
-      ).catch(() => null),
+    let live = true;
+    let unlistens: UnlistenFn[] = [];
+    setListenersReady(false);
+    setListenerError(null);
+    void Promise.allSettled([
+      listen<{ engine: string; phase: string; status: string }>("engines:phase", (e) => {
+        setPhases((p) => ({
+          ...p,
+          [e.payload.phase]: e.payload.status as PhaseStatus,
+        }));
+      }),
       listen<{ line: string }>("engines:log", (e) => {
         setLogLines((l) => [...l.slice(-(MAX_LOG_LINES - 1)), e.payload.line]);
-      }).catch(() => null),
-    ];
+      }),
+    ]).then((registrations) => {
+      const registered = registrations.flatMap((registration) =>
+        registration.status === "fulfilled" ? [registration.value] : [],
+      );
+      const failed = registrations.find(
+        (registration): registration is PromiseRejectedResult =>
+          registration.status === "rejected",
+      );
+      if (!live || failed) {
+        registered.forEach((unlisten) => unlisten());
+        if (live && failed) {
+          setListenerError(
+            `Engine progress connection failed: ${
+              failed.reason instanceof Error ? failed.reason.message : String(failed.reason)
+            }. Retry before installing or removing an engine.`,
+          );
+        }
+        return;
+      }
+      unlistens = registered;
+      setListenersReady(true);
+    });
     return () => {
-      unlistens.forEach((u) => u.then((f) => f && f()));
+      live = false;
+      unlistens.forEach((unlisten) => unlisten());
     };
-  }, []);
+  }, [listenerAttempt]);
 
   useEffect(() => {
     if (logRef.current) {
@@ -79,6 +154,7 @@ export default function EnginesPanel() {
     setLogLines([]);
     try {
       await invoke("install_engine", { engineId: id });
+      onSystemChange?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -97,6 +173,7 @@ export default function EnginesPanel() {
     setLogLines([]);
     try {
       await invoke("uninstall_engine", { engineId: id });
+      onSystemChange?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -105,8 +182,35 @@ export default function EnginesPanel() {
     }
   };
 
-  const cancel = () => {
-    invoke("cancel_engine_install").catch(() => {});
+  const cancel = async () => {
+    setError(null);
+    try {
+      await invoke("cancel_engine_install");
+    } catch (caught) {
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setError(`Engine cancellation failed: ${detail}`);
+    }
+  };
+
+  const removeRetiredMarker = async () => {
+    if (!window.confirm(
+      "Remove the retired managed Marker environment?\n\n" +
+      "This removes only Pipeline's old Marker virtual environment and launch shims. " +
+      "Saved runs and extraction artifacts are not affected.",
+    )) {
+      return;
+    }
+    setRemovingRetiredMarker(true);
+    setError(null);
+    try {
+      await invoke("remove_retired_marker");
+      onSystemChange?.();
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRemovingRetiredMarker(false);
+    }
   };
 
   // An install started elsewhere (e.g. before this panel mounted).
@@ -122,12 +226,72 @@ export default function EnginesPanel() {
         <button
           type="button"
           onClick={openPipelineDir}
+          disabled={openingPipelineDir}
+          aria-busy={openingPipelineDir || undefined}
           className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
           title="Open this folder"
         >
           ~/.pipeline/
         </button>
       </p>
+
+      {openDirError && (
+        <p role="alert" className="mb-3 text-xs text-red-700 dark:text-red-400">
+          {openDirError}
+        </p>
+      )}
+
+      {statusError && (
+        <div role="alert" className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          <span className="flex-1">{statusError}</span>
+          <button
+            type="button"
+            onClick={refresh}
+            className="shrink-0 rounded border border-red-300 px-2 py-1 font-medium dark:border-red-800"
+          >
+            Retry status
+          </button>
+        </div>
+      )}
+
+      {listenerError && (
+        <div role="alert" className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          <span className="flex-1">{listenerError}</span>
+          <button
+            type="button"
+            onClick={() => setListenerAttempt((attempt) => attempt + 1)}
+            className="shrink-0 rounded border border-red-300 px-2 py-1 font-medium dark:border-red-800"
+          >
+            Retry connection
+          </button>
+        </div>
+      )}
+
+      {retiredMarker?.present && (
+        <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Retired Marker environment found</p>
+              <p className="mt-1 text-xs leading-relaxed">
+                Pipeline 1.0.1 does not detect or execute Marker. You can remove its old managed
+                virtual environment and launch shims
+                {retiredMarker.bytes > 0
+                  ? ` (${(retiredMarker.bytes / 1_000_000_000).toFixed(1)} GB)`
+                  : ""}.
+                Saved runs and historical Marker artifacts remain readable.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={removeRetiredMarker}
+              disabled={removingRetiredMarker || !listenersReady}
+              className="shrink-0 rounded-lg border border-amber-400 px-3 py-1.5 text-xs font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900/50"
+            >
+              {removingRetiredMarker ? "Removing…" : "Remove old Marker files"}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-3">
         {engines.map((engine) => {
@@ -155,6 +319,7 @@ export default function EnginesPanel() {
                 <div className="flex items-center gap-2 shrink-0">
                   {isBusy ? (
                     <button
+                      type="button"
                       onClick={cancel}
                       className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                     >
@@ -162,14 +327,18 @@ export default function EnginesPanel() {
                     </button>
                   ) : engine.installed ? (
                     <button
+                      type="button"
                       onClick={() => uninstall(engine.id)}
+                      disabled={!listenersReady}
                       className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                     >
                       Uninstall
                     </button>
                   ) : (
                     <button
+                      type="button"
                       onClick={() => install(engine.id)}
+                      disabled={!listenersReady}
                       className="text-xs py-1.5 px-3 rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors"
                     >
                       Install (~{(engine.est_download_mb / 1000).toFixed(1)} GB)
@@ -182,23 +351,8 @@ export default function EnginesPanel() {
                 {engine.description}
               </p>
 
-              {!engine.installed && engine.system_path && (
-                <p className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-lg px-2.5 py-2">
-                  A system copy was found at{" "}
-                  <code className="font-mono break-all">{engine.system_path}</code>.
-                  Extraction uses it until you install a managed copy here.
-                </p>
-              )}
-              {engine.installed && engine.system_path && (
-                <p className="text-xs text-gray-400 dark:text-gray-500">
-                  A system copy at{" "}
-                  <code className="font-mono break-all">{engine.system_path}</code>{" "}
-                  is ignored in favor of this managed install.
-                </p>
-              )}
-
               {engine.installed && engine.managed_stack_mb > 0 && (
-                <p className="text-xs text-gray-400 dark:text-gray-500">
+                <p className="text-xs text-gray-500 dark:text-gray-400">
                   Disk usage: {(engine.managed_stack_mb / 1000).toFixed(1)} GB
                 </p>
               )}
@@ -239,6 +393,17 @@ export default function EnginesPanel() {
           );
         })}
       </div>
+
+      {refreshingStatus && engines.length === 0 && !statusError && (
+        <p role="status" className="text-xs text-gray-500 dark:text-gray-400">
+          Loading local engine status…
+        </p>
+      )}
+      {!refreshingStatus && !statusError && engines.length === 0 && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          No managed local engines are available.
+        </p>
+      )}
 
       {error && (
         <p className="mt-3 text-xs text-red-600 dark:text-red-400" role="alert">
