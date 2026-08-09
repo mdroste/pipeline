@@ -49,8 +49,8 @@ Each new document run records:
 
 Completed runs keep the page files for agent inspection and re-runs but replace
 their individual manifest entries with one compact page index. The artifact
-viewer materializes only the current 25-page navigation window and reads a page
-only after selection. Opening the Sources tab loads the manifest alone; no
+viewer renders one direct page-number navigator and reads a page only after
+selection. Opening the Sources tab loads the manifest alone; no
 artifact body is fetched until the reader chooses one. Interrupted and older
 manifests retain ordinary page entries and remain compatible.
 
@@ -62,11 +62,16 @@ compatibility bundle from their cached extraction.
 
 ### PDF
 
-- Text comes from the configured verified LLM, PaddleOCR-VL, or pdftotext
-  extractor. Marker is retired in 1.0.1; passive decoding remains only for
-  historical run artifacts.
+- Text comes from the configured verified LLM, PaddleOCR-VL Fast, PaddleOCR-VL
+  Full Parser, or pdftotext extractor. Marker is retired in 1.0.1; passive
+  decoding remains only for historical run artifacts.
 - Page markers are retained when available.
 - Every page is rendered independently of the text extraction method.
+- Full Parser preserves official layout labels, reading order, boxes/polygons,
+  layout confidence, parser settings, title-parent relationships, equations,
+  tables/captions, and extracted image associations in `paddle_block`
+  representations. Its cross-page table and title reconstruction runs before
+  bundle normalization.
 - Historical Marker images already stored in runs remain figure assets.
 - Figure/table nodes that lack a dedicated crop fall back to their rendered
   page asset. This is explicit in the asset link rather than silently

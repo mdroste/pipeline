@@ -61,6 +61,41 @@ describe("ReportViewer", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("lists numbered report issues instead of section headings or math fragments", () => {
+    const markdown = [
+      "# Referee Report $ ^{*} $",
+      "",
+      "## Errors & Inconsistencies",
+      "",
+      "**#1. Euler equation omits the continuation value**",
+      "",
+      "The displayed condition is $u'(c_t)=\\beta R_t u'(c_{t+1})$.",
+      "",
+      "## Threats to the Main Results",
+      "",
+      "**#2. Instrument exclusion is not supported**",
+      "",
+      "Evidence.",
+    ].join("\n");
+
+    render(<ReportViewer markdown={markdown} />);
+    const toc = screen.getByText("Contents").closest("nav");
+    expect(toc).not.toBeNull();
+    const links = within(toc!).getAllByRole("link");
+
+    expect(links.map((link) => link.textContent)).toEqual([
+      "#1Euler equation omits the continuation value",
+      "#2Instrument exclusion is not supported",
+    ]);
+    expect(within(toc!).queryByText("Errors & Inconsistencies")).not.toBeInTheDocument();
+    expect(toc).not.toHaveTextContent(/beta|u'|continuation value\}\$/);
+    expect(links[0]).toHaveAttribute(
+      "href",
+      "#issue-1-euler-equation-omits-the-continuation-value",
+    );
+    expect(document.querySelector(links[0].getAttribute("href")!)).not.toBeNull();
+  });
+
   it("uses unique Unicode heading IDs shared by the TOC and rendered headings", () => {
     const markdown = [
       "# Résumé",
@@ -129,6 +164,32 @@ describe("ReportViewer", () => {
     expect(plainHeadingText("Use `**literal**` and \\*")).toBe(
       "Use **literal** and *",
     );
+  });
+
+  it("omits math-formatted author footnote markers from TOC labels", () => {
+    const title = "Strategic Complementarities in Posted Wages $ ^{*} $";
+    expect(plainHeadingText(title)).toBe(
+      "Strategic Complementarities in Posted Wages",
+    );
+
+    render(
+      <ReportViewer
+        markdown={[
+          `# ${title}`,
+          "## Introduction",
+          "## Model",
+          "## Conclusion",
+        ].join("\n\n")}
+      />,
+    );
+    const toc = screen.getByText("Contents").closest("nav");
+    expect(toc).not.toBeNull();
+    expect(
+      within(toc!).getByRole("link", {
+        name: "Strategic Complementarities in Posted Wages",
+      }),
+    ).toHaveAttribute("href", "#strategic-complementarities-in-posted-wages");
+    expect(toc).not.toHaveTextContent(/\^\{|\$\s*\^/);
   });
 
   it("removes raw HTML wrappers from report content while preserving their text", () => {

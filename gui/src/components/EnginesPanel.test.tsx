@@ -52,6 +52,21 @@ describe("EnginesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("explains and disables an engine unavailable on this platform", async () => {
+    invoke.mockResolvedValue([
+      engine({
+        id: "paddleocr-vl-parser",
+        label: "PaddleOCR-VL 1.6 Full Parser",
+        available: false,
+        unavailable_reason: "The official runtime has no Intel macOS wheel.",
+      }),
+    ]);
+    render(<EnginesPanel />);
+    expect(await screen.findByText("unavailable")).toBeInTheDocument();
+    expect(screen.getByText(/no Intel macOS wheel/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Install/ })).toBeDisabled();
+  });
+
   it("shows installed state with version, disk usage, and Uninstall", async () => {
     invoke.mockResolvedValue([
       engine({ installed: true, version: "1.6 Q8", managed_stack_mb: 2300 }),

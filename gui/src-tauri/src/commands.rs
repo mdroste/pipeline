@@ -1647,12 +1647,22 @@ async fn run_pipeline_inner_with_snapshot(
                     );
                 }
             }
-        } else if extraction.method == "paddleocr-vl" {
-            match crate::pipeline::extract::read_paddle_structure_json(&extraction.paper_hash) {
+        } else if matches!(
+            extraction.method.as_str(),
+            "paddleocr-vl" | "paddleocr-vl-full"
+        ) {
+            match crate::pipeline::extract::read_paddle_structure_json_for_method(
+                &extraction.paper_hash,
+                &extraction.method,
+            ) {
                 Ok(Some(structure)) => {
                     if let Err(e) = w.add_text(
                         "context/paddle_structure.json",
-                        "PaddleOCR-VL structure",
+                        if extraction.method == "paddleocr-vl-full" {
+                            "PaddleOCR-VL full-parser structure"
+                        } else {
+                            "PaddleOCR-VL structure"
+                        },
                         "context",
                         &structure,
                     ) {
@@ -1815,6 +1825,76 @@ async fn run_pipeline_inner_with_snapshot(
                         "pipeline:log",
                         serde_json::json!({
                             "line": format!("Collected {copied} figure images from marker output")
+                        }),
+                    );
+                }
+            }
+        }
+    }
+    if extraction.method == "paddleocr-vl-full" {
+        if let Some(w) = run_writer.as_mut() {
+            let inventory =
+                match crate::pipeline::extract::paddle_full_image_inventory(&extraction.paper_hash)
+                {
+                    Ok(inventory) => inventory,
+                    Err(error) => {
+                        let _ = app.emit_event(
+                            "pipeline:log",
+                            serde_json::json!({
+                                "line": format!(
+                                    "WARNING: full-parser image discovery stopped: {error}"
+                                )
+                            }),
+                        );
+                        Default::default()
+                    }
+                };
+            if !inventory.artifacts.is_empty() {
+                let figures_dir = w.dir().join("artifacts").join("figures");
+                if let Err(error) = std::fs::create_dir_all(&figures_dir) {
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!(
+                                "WARNING: could not create full-parser figures directory: {error}"
+                            )
+                        }),
+                    );
+                } else {
+                    let mut copied = 0usize;
+                    for artifact in &inventory.artifacts {
+                        let Some(name) = artifact
+                            .source_path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                        else {
+                            continue;
+                        };
+                        if std::fs::copy(&artifact.source_path, figures_dir.join(name)).is_ok()
+                            && w.register_existing(
+                                &format!("artifacts/figures/{name}"),
+                                &artifact.display_name,
+                                "figures",
+                            )
+                            .is_ok()
+                        {
+                            copied += 1;
+                        }
+                    }
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!(
+                                "Collected {copied} image artifact(s) from PaddleOCR-VL Full Parser{}",
+                                if inventory.disambiguated_labels == 0 {
+                                    String::new()
+                                } else {
+                                    format!(
+                                        " (disambiguated {} repeated figure/table label(s))",
+                                        inventory.disambiguated_labels
+                                    )
+                                }
+                            )
                         }),
                     );
                 }
@@ -4041,10 +4121,195 @@ fn offline_katex_css() -> Result<String, String> {
     Ok(css)
 }
 
-fn build_print_report_html(markdown: &str) -> Result<String, String> {
+#[derive(Debug)]
+struct ProtectedPrintMath {
+    token: String,
+    latex: String,
+    display: bool,
+}
+
+fn escaped_at(bytes: &[u8], index: usize) -> bool {
+    let mut slashes = 0usize;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        slashes += 1;
+        cursor -= 1;
+    }
+    slashes % 2 == 1
+}
+
+fn math_close(source: &str, mut index: usize, delimiter_len: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == b'$' && !escaped_at(bytes, index) {
+            if delimiter_len == 2 {
+                if bytes.get(index + 1) == Some(&b'$') {
+                    return Some(index);
+                }
+            } else if bytes.get(index + 1) != Some(&b'$') {
+                return Some(index);
+            }
+        }
+        let character = source[index..].chars().next()?;
+        index += character.len_utf8();
+    }
+    None
+}
+
+fn protect_math_chunk(
+    source: &str,
+    token_base: &str,
+    protected: &mut Vec<ProtectedPrintMath>,
+) -> String {
+    let bytes = source.as_bytes();
+    let mut output = String::with_capacity(source.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        // Copy code spans byte-for-byte. KaTeX auto-render ignores code tags,
+        // and dollar signs in examples must never become equations.
+        if bytes[index] == b'`' {
+            let ticks = bytes[index..]
+                .iter()
+                .take_while(|byte| **byte == b'`')
+                .count();
+            let marker = "`".repeat(ticks);
+            if let Some(relative_end) = source[index + ticks..].find(&marker) {
+                let end = index + ticks + relative_end + ticks;
+                output.push_str(&source[index..end]);
+                index = end;
+                continue;
+            }
+        }
+
+        if bytes[index] == b'$' && !escaped_at(bytes, index) {
+            let delimiter_len = usize::from(bytes.get(index + 1) == Some(&b'$')) + 1;
+            let content_start = index + delimiter_len;
+            if let Some(close) = math_close(source, content_start, delimiter_len) {
+                let latex = &source[content_start..close];
+                let valid_inline_spacing = delimiter_len == 2
+                    || (!latex.chars().next().is_some_and(char::is_whitespace)
+                        && !latex.chars().next_back().is_some_and(char::is_whitespace));
+                if !latex.trim().is_empty() && valid_inline_spacing {
+                    let token = format!("{token_base}{}END", protected.len());
+                    protected.push(ProtectedPrintMath {
+                        token: token.clone(),
+                        latex: latex.to_string(),
+                        display: delimiter_len == 2,
+                    });
+                    output.push_str(&token);
+                    index = close + delimiter_len;
+                    continue;
+                }
+            }
+        }
+
+        let character = source[index..]
+            .chars()
+            .next()
+            .expect("index remains on a UTF-8 boundary");
+        output.push(character);
+        index += character.len_utf8();
+    }
+    output
+}
+
+/// Replace math with alphanumeric placeholders before pulldown-cmark sees it.
+/// Otherwise `_`, `*`, and backslashes inside LaTeX can be consumed as Markdown
+/// emphasis/escapes before KaTeX's auto-render pass runs.
+fn protect_print_math(markdown: &str) -> (String, Vec<ProtectedPrintMath>) {
+    let mut discriminator = 0usize;
+    let token_base = loop {
+        let candidate = format!("PIPELINEMATHPLACEHOLDER{discriminator}X");
+        if !markdown.contains(&candidate) {
+            break candidate;
+        }
+        discriminator += 1;
+    };
+
+    let mut output = String::with_capacity(markdown.len());
+    let mut prose = String::new();
+    let mut protected = Vec::new();
+    let mut fence: Option<(u8, usize)> = None;
+    let flush_prose =
+        |output: &mut String, prose: &mut String, protected: &mut Vec<ProtectedPrintMath>| {
+            if !prose.is_empty() {
+                output.push_str(&protect_math_chunk(prose, &token_base, protected));
+                prose.clear();
+            }
+        };
+
+    for line in markdown.split_inclusive('\n') {
+        if let Some((marker, count)) = output::fence_marker(line) {
+            flush_prose(&mut output, &mut prose, &mut protected);
+            if let Some((open_marker, open_count)) = fence {
+                if marker == open_marker && count >= open_count {
+                    fence = None;
+                }
+            } else {
+                fence = Some((marker, count));
+            }
+            output.push_str(line);
+        } else if fence.is_some() {
+            output.push_str(line);
+        } else {
+            prose.push_str(line);
+        }
+    }
+    flush_prose(&mut output, &mut prose, &mut protected);
+    (output, protected)
+}
+
+fn escape_html_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn restore_print_math(mut html: String, protected: &[ProtectedPrintMath]) -> String {
+    for item in protected {
+        let delimiter = if item.display { "$$" } else { "$" };
+        let expression = format!("{delimiter}{}{delimiter}", escape_html_text(&item.latex));
+        if item.display {
+            let paragraph = format!("<p>{}</p>", item.token);
+            if html.contains(&paragraph) {
+                html = html.replace(
+                    &paragraph,
+                    &format!("<div class=\"pipeline-display-equation\">{expression}</div>"),
+                );
+                continue;
+            }
+        }
+        html = html.replace(&item.token, &expression);
+    }
+    html
+}
+
+fn build_print_report_html(
+    markdown: &str,
+    provenance_markdown: Option<&str>,
+) -> Result<String, String> {
     use pulldown_cmark::{html, Options, Parser};
 
-    let markdown = output::normalize_math_delimiters(&output::clean_export_markdown(markdown));
+    let report_markdown =
+        output::normalize_math_delimiters(&output::clean_export_markdown(markdown));
+    let markdown = match provenance_markdown
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(provenance) => format!(
+            "{}\n\n---\n\n{}",
+            output::normalize_math_delimiters(&output::clean_export_markdown(provenance)),
+            report_markdown.trim_start(),
+        ),
+        None => report_markdown,
+    };
+    let (markdown, protected_math) = protect_print_math(&markdown);
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -4061,6 +4326,7 @@ fn build_print_report_html(markdown: &str) -> Result<String, String> {
         .rm_tag_attributes("img", &["src"])
         .clean(&html_body)
         .to_string();
+    let html_body = restore_print_math(html_body, &protected_math);
 
     // KaTeX code, CSS, and every WOFF2 face are compiled into this one HTML
     // document. The print path therefore performs no network or file fetches.
@@ -4080,17 +4346,24 @@ fn build_print_report_html(markdown: &str) -> Result<String, String> {
     html_doc.push_str(AUTO_RENDER_JS);
     html_doc.push_str(concat!(
         "\n</script>\n<style>\n",
-        "body { font-family: \"Times New Roman\", Times, serif; max-width: 48em; margin: 2em auto; padding: 0 1em; line-height: 1.5; color: #111; }\n",
-        "h1 { font-size: 1.4em; } h2 { font-size: 1.2em; border-bottom: 1px solid #ccc; padding-bottom: 0.2em; }\n",
-        "h3 { font-size: 1.05em; } hr { border: none; border-top: 1px solid #ddd; margin: 1.5em 0; }\n",
+        "@page { margin: 0.72in 0.75in 0.78in; }\n",
+        "body { font-family: \"Times New Roman\", Times, serif; max-width: 48em; margin: 2em auto; padding: 0 1em; line-height: 1.52; color: #111; }\n",
+        "h1 { font-size: 1.75em; line-height: 1.15; margin: 0 0 0.5em; }\n",
+        "body > h1:first-child + p { color: #333; font-size: 1.05em; margin: 0 0 0.35em; }\n",
+        "h2 { font-size: 1.2em; border-bottom: 1px solid #bbb; padding-bottom: 0.2em; margin-top: 1.7em; }\n",
+        "h3 { font-size: 1.05em; } hr { border: none; border-top: 1px solid #ccc; margin: 1.6em 0; }\n",
         "table { border-collapse: collapse; width: 100%; margin: 1em 0; }\n",
-        "th, td { border: 1px solid #ccc; padding: 0.4em 0.6em; text-align: left; }\n",
-        "th { background: #f5f5f5; }\n",
+        "th, td { border: 1px solid #ccc; padding: 0.42em 0.6em; text-align: left; vertical-align: top; }\n",
+        "th { background: #f3f3f3; font-size: 0.88em; }\n",
         "code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }\n",
         "pre { background: #f4f4f4; padding: 1em; overflow-x: auto; border-radius: 4px; }\n",
         "pre code { background: none; padding: 0; }\n",
         "blockquote { border-left: 3px solid #ccc; margin: 1em 0; padding: 0.5em 1em; color: #555; }\n",
-        "@media print { body { margin: 0; max-width: none; } }\n",
+        ".pipeline-display-equation { break-before: avoid; break-inside: avoid; }\n",
+        ".katex-display { margin: 0.9em 0; overflow: visible; }\n",
+        "h1, h2, h3, table, .katex-display { break-inside: avoid; }\n",
+        "p:has(> strong:first-child) { break-after: avoid; }\n",
+        "@media print { body { margin: 0; max-width: none; padding: 0; } a { color: inherit; text-decoration: none; } }\n",
         "</style>\n</head><body>\n",
     ));
     html_doc.push_str(&html_body);
@@ -4103,7 +4376,12 @@ fn build_print_report_html(markdown: &str) -> Result<String, String> {
         "{left:'$',right:'$',display:false},",
         "{left:'\\\\(',right:'\\\\)',display:false},",
         "{left:'\\\\[',right:'\\\\]',display:true}",
-        "]});",
+        "],throwOnError:false,strict:'ignore',trust:false,macros:{",
+        "'\\\\bm':'\\\\boldsymbol','\\\\mathbbm':'\\\\mathbb','\\\\mathds':'\\\\mathbb',",
+        "'\\\\R':'\\\\mathbb{R}','\\\\N':'\\\\mathbb{N}','\\\\Z':'\\\\mathbb{Z}',",
+        "'\\\\Q':'\\\\mathbb{Q}','\\\\E':'\\\\mathbb{E}',",
+        "'\\\\Var':'\\\\operatorname{Var}','\\\\Cov':'\\\\operatorname{Cov}',",
+        "'\\\\diag':'\\\\operatorname{diag}'}});",
         "var fontsReady=(document.fonts&&document.fonts.ready)?document.fonts.ready:Promise.resolve();",
         "fontsReady.then(function(){requestAnimationFrame(function(){window.print();});});",
         "</script>\n</body></html>",
@@ -4112,8 +4390,11 @@ fn build_print_report_html(markdown: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn print_report_html(markdown: String) -> Result<(), String> {
-    let html_doc = build_print_report_html(&markdown)?;
+pub async fn print_report_html(
+    markdown: String,
+    provenance_markdown: Option<String>,
+) -> Result<(), String> {
+    let html_doc = build_print_report_html(&markdown, provenance_markdown.as_deref())?;
     // Clean up previous export file
     cleanup_print_export();
 
@@ -4872,6 +5153,7 @@ mod tests {
     fn print_html_is_self_contained_and_waits_for_fonts() {
         let html = build_print_report_html(
             "An equation: $y=x$.\n\n![Remote figure](https://example.invalid/pixel.png)",
+            None,
         )
         .unwrap();
         assert!(html.contains("data:font/woff2;base64,"));
@@ -4882,6 +5164,24 @@ mod tests {
         assert!(!html.contains("cdn.jsdelivr"));
         assert!(!html.contains("<script src="));
         assert!(!html.contains("<link rel=\"stylesheet\""));
+    }
+
+    #[test]
+    fn print_html_preserves_latex_until_katex_rendering() {
+        let html = build_print_report_html(
+            "Inline $x_t^* = \\frac{a_b}{c^2}$ and display:\n\n$$\\sum_{i=1}^n \\beta_i x_i$$\n\n`$code_with_underscore$`",
+            Some("# Referee report\n\n## Run provenance\n\n| Provider | Model | Input | Output | Cached input |\n| --- | --- | ---: | ---: | ---: |\n| Codex | gpt-5.6-sol | 100 | 20 | 80 |"),
+        )
+        .unwrap();
+
+        assert!(html.contains("$x_t^* = \\frac{a_b}{c^2}$"));
+        assert!(html.contains("$$\\sum_{i=1}^n \\beta_i x_i$$"));
+        assert!(html.contains("<code>$code_with_underscore$</code>"));
+        assert!(!html.contains("x<em>t"));
+        assert!(!html.contains("PIPELINEMATHPLACEHOLDER"));
+        assert!(html.contains("Run provenance"));
+        assert!(html.contains("gpt-5.6-sol"));
+        assert!(html.contains("'\\\\bm':'\\\\boldsymbol'"));
     }
 
     #[test]

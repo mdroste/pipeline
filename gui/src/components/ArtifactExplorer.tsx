@@ -28,18 +28,28 @@ interface PageArtifactIndex {
   total_bytes: number;
 }
 
-interface RunManifest {
+export interface RunManifest {
   run_id: string;
   created: string;
   input_path: string;
   input_mode: string;
+  profile_id?: string;
   profile_name: string;
   provider: string;
   artifacts: ArtifactEntry[];
   page_artifacts?: PageArtifactIndex | null;
+  status?: string;
+  duration_secs?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cached_input_tokens?: number;
+    cache_write_input_tokens?: number;
+  };
+  title?: string;
 }
 
-interface ArtifactContent {
+export interface ArtifactContent {
   kind: string;
   bytes: number;
   text: string | null;
@@ -112,6 +122,14 @@ interface Props {
   fallbackMarkdown: string;
   /** Load only the manifest until the user explicitly chooses an artifact. */
   deferInitialArtifact?: boolean;
+  /** Background work started by the report workspace before Sources opens. */
+  preload?: ArtifactExplorerPreload | null;
+}
+
+export interface ArtifactExplorerPreload {
+  runId: string;
+  manifest: Promise<RunManifest>;
+  readableDocument: Promise<ArtifactContent>;
 }
 
 /** Skip syntax highlighting beyond this size — highlightAuto gets slow. */
@@ -280,6 +298,78 @@ const STRUCTURAL_KINDS = new Set([
 ]);
 const INITIAL_BUNDLE_NODES = 100;
 
+function equationNumberText(text: string): string | null {
+  let value = text.trim();
+  while (value.length >= 2 && value.startsWith("$") && value.endsWith("$")) {
+    value = value.slice(1, -1).trim();
+  }
+  if (value.startsWith("\\(") && value.endsWith("\\)")) {
+    value = value.slice(2, -2).trim();
+  } else if (value.startsWith("\\[") && value.endsWith("\\]")) {
+    value = value.slice(2, -2).trim();
+  }
+  const tag = /^\\tag\*?\{([^{}]{1,40})\}$/.exec(value);
+  if (tag) value = tag[1].trim();
+  if (
+    ((value.startsWith("(") && value.endsWith(")"))
+      || (value.startsWith("[") && value.endsWith("]")))
+    && value.length >= 2
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return /^[a-z0-9]+(?:[.:-][a-z0-9]+)*$/i.test(value) ? value : null;
+}
+
+function sameEquationContext(left: DocumentNode, right: DocumentNode): boolean {
+  return left.page === right.page
+    && left.parent_id === right.parent_id
+    && left.provenance?.method === right.provenance?.method;
+}
+
+function mergeEquationNumber(
+  equation: DocumentNode,
+  numberNode: DocumentNode,
+  number: string,
+): DocumentNode {
+  return {
+    ...equation,
+    number: equation.number || number,
+    asset_ids: Array.from(new Set([...equation.asset_ids, ...numberNode.asset_ids])),
+    representations: [...equation.representations, ...numberNode.representations],
+  };
+}
+
+function coalesceEquationNumberNodes(nodes: DocumentNode[]): DocumentNode[] {
+  const result: DocumentNode[] = [];
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    const number = node.kind === "equation" ? equationNumberText(node.text) : null;
+    if (number) {
+      const previous = result[result.length - 1];
+      if (
+        previous?.kind === "equation"
+        && !equationNumberText(previous.text)
+        && sameEquationContext(previous, node)
+      ) {
+        result[result.length - 1] = mergeEquationNumber(previous, node, number);
+        continue;
+      }
+      const next = nodes[index + 1];
+      if (
+        next?.kind === "equation"
+        && !equationNumberText(next.text)
+        && sameEquationContext(node, next)
+      ) {
+        result.push(mergeEquationNumber(next, node, number));
+        index += 1;
+        continue;
+      }
+    }
+    result.push(node);
+  }
+  return result;
+}
+
 function DocumentBundleView({
   text,
   artifacts,
@@ -300,29 +390,33 @@ function DocumentBundleView({
       return null;
     }
   }, [text]);
+  const displayNodes = useMemo(
+    () => coalesceEquationNumberNodes(bundle?.nodes ?? []),
+    [bundle],
+  );
   const counts = useMemo(() => {
     const result = new Map<string, number>();
-    for (const node of bundle?.nodes ?? []) {
+    for (const node of displayNodes) {
       result.set(node.kind, (result.get(node.kind) ?? 0) + 1);
     }
     return result;
-  }, [bundle]);
+  }, [displayNodes]);
   const filters = useMemo(
     () => ["structure", "all", ...Array.from(counts.keys()).sort()],
     [counts],
   );
   const matchingNodes = useMemo(
     () =>
-      (bundle?.nodes ?? []).filter((node) =>
+      displayNodes.filter((node) =>
         kindFilter === "structure"
           ? STRUCTURAL_KINDS.has(node.kind)
           : kindFilter === "all" || node.kind === kindFilter,
       ),
-    [bundle, kindFilter],
+    [displayNodes, kindFilter],
   );
   const visibleNodes = matchingNodes.slice(0, nodeLimit);
-  const artifactPaths = useMemo(
-    () => new Set(artifacts.map((artifact) => artifact.rel_path)),
+  const artifactsByPath = useMemo(
+    () => new Map(artifacts.map((artifact) => [artifact.rel_path, artifact])),
     [artifacts],
   );
   const assetById = useMemo(
@@ -340,7 +434,7 @@ function DocumentBundleView({
 
   const summary = [
     ["Pages", bundle.pages?.length ?? 0],
-    ["Blocks", bundle.nodes?.length ?? 0],
+    ["Blocks", displayNodes.length],
     ["Figures", counts.get("figure") ?? 0],
     ["Tables", counts.get("table") ?? 0],
     ["Equations", counts.get("equation") ?? 0],
@@ -411,7 +505,9 @@ function DocumentBundleView({
           <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {visualAssets.map((asset) => {
               const indexedPage = indexedPageForPath(asset.rel_path, pageArtifacts);
-              const canOpen = artifactPaths.has(asset.rel_path) || indexedPage !== null;
+              const manifestArtifact = artifactsByPath.get(asset.rel_path);
+              const displayLabel = manifestArtifact?.label.trim() || asset.label;
+              const canOpen = manifestArtifact !== undefined || indexedPage !== null;
               return (
                 <button
                   key={asset.id}
@@ -426,7 +522,7 @@ function DocumentBundleView({
                              disabled:opacity-60 transition-colors"
                 >
                   <div className="flex justify-between gap-2">
-                    <span className="font-medium truncate">{asset.label}</span>
+                    <span className="font-medium truncate">{displayLabel}</span>
                     <span className="text-[10px] uppercase text-gray-500">{asset.kind}</span>
                   </div>
                   <div className="mt-1 text-[11px] text-gray-500">
@@ -464,7 +560,7 @@ function DocumentBundleView({
                 {kind === "structure"
                   ? "Structural"
                   : kind === "all"
-                    ? `All (${bundle.nodes?.length ?? 0})`
+                    ? `All (${displayNodes.length})`
                     : `${kind} (${counts.get(kind) ?? 0})`}
               </button>
             ))}
@@ -512,7 +608,7 @@ function DocumentBundleView({
                           type="button"
                           disabled={
                             !asset
-                            || (!artifactPaths.has(asset.rel_path) && indexedPage === null)
+                            || (!artifactsByPath.has(asset.rel_path) && indexedPage === null)
                           }
                           onClick={() =>
                             asset
@@ -691,102 +787,144 @@ const PageBrowser = memo(function PageBrowser({
   onSelect: (path: string) => void;
   selected: string;
 }) {
-  const [query, setQuery] = useState("");
-  const [rangeStart, setRangeStart] = useState(0);
   const sorted = useMemo(
     () => [...items].sort((a, b) => pageNumber(a) - pageNumber(b)),
     [items],
   );
-  const rangeSize = 25;
   const indexedCount = index && Number.isSafeInteger(index.count)
     ? Math.min(Math.max(index.count, 0), MAX_INDEXED_PAGES)
     : 0;
-  const pageCount = index ? indexedCount : sorted.length;
-  const ranges = Array.from(
-    { length: Math.ceil(pageCount / rangeSize) },
-    (_, index) => index * rangeSize,
+  const legacyPages = useMemo(
+    () => sorted
+      .map((item) => ({ number: pageNumber(item), item }))
+      .filter(({ number }) => Number.isFinite(number) && number !== Number.MAX_SAFE_INTEGER),
+    [sorted],
   );
-  const needle = query.trim().toLowerCase();
-  const visible = useMemo(() => {
-    if (!index) {
-      return (needle
-        ? sorted.filter((item) =>
-            `${item.label} ${pageNumber(item)}`.toLowerCase().includes(needle),
-          )
-        : sorted.slice(rangeStart, rangeStart + rangeSize)
-      ).map((item) => ({ number: pageNumber(item), item }));
+  const selectedNumber = useMemo(() => {
+    if (index) {
+      const page = selectedPage(selected);
+      return page !== null && page <= indexedCount ? page : null;
     }
-    const start = needle ? 1 : rangeStart + 1;
-    const end = needle
-      ? indexedCount
-      : Math.min(rangeStart + rangeSize, indexedCount);
-    const pages: Array<{ number: number; item: null }> = [];
-    for (let page = start; page <= end; page += 1) {
-      if (!needle || `page ${page} ${page}`.includes(needle)) {
-        pages.push({ number: page, item: null });
+    return legacyPages.find(({ item }) => item.rel_path === selected)?.number ?? null;
+  }, [index, indexedCount, legacyPages, selected]);
+  const [draftPage, setDraftPage] = useState("");
+
+  useEffect(() => {
+    setDraftPage(selectedNumber?.toString() ?? "");
+  }, [selectedNumber]);
+
+  const lastPage = index
+    ? indexedCount
+    : (legacyPages[legacyPages.length - 1]?.number ?? 0);
+  const selectedLegacyIndex = index
+    ? -1
+    : legacyPages.findIndex(({ number }) => number === selectedNumber);
+  const hasPrevious = selectedNumber !== null && (index
+    ? selectedNumber > 1
+    : selectedLegacyIndex > 0);
+  const hasNext = lastPage > 0 && (selectedNumber === null || (index
+    ? selectedNumber < indexedCount
+    : selectedLegacyIndex < legacyPages.length - 1));
+
+  const selectPage = (page: number) => {
+    if (index) {
+      if (Number.isInteger(page) && page >= 1 && page <= indexedCount) {
+        onSelect(pageSelection(page));
+        return true;
       }
+      return false;
     }
-    return pages;
-  }, [index, indexedCount, needle, rangeStart, sorted]);
+    const match = legacyPages.find(({ number }) => number === page);
+    if (!match) return false;
+    onSelect(match.item.rel_path);
+    return true;
+  };
+
+  const commitDraft = () => {
+    const page = Number(draftPage);
+    if (!Number.isInteger(page) || !selectPage(page)) {
+      setDraftPage(selectedNumber?.toString() ?? "");
+    }
+  };
+
+  const move = (direction: -1 | 1) => {
+    if (selectedNumber === null) {
+      if (direction === 1) {
+        selectPage(index ? 1 : (legacyPages[0]?.number ?? 0));
+      }
+      return;
+    }
+    if (index) {
+      selectPage(selectedNumber + direction);
+      return;
+    }
+    const target = legacyPages[selectedLegacyIndex + direction];
+    if (target) selectPage(target.number);
+  };
 
   return (
-    <div>
-      <div className="mb-2 flex gap-1.5">
+    <div
+      className="flex items-center overflow-hidden rounded-md border border-gray-200 bg-white
+                 dark:border-gray-700 dark:bg-gray-900"
+    >
+      <button
+        type="button"
+        onClick={() => move(-1)}
+        disabled={!hasPrevious}
+        aria-label="Previous page"
+        title="Previous page"
+        className="shrink-0 border-r border-gray-200 px-1.5 py-1.5 text-gray-500 transition-colors
+                   enabled:hover:bg-gray-100 enabled:hover:text-gray-800 disabled:opacity-30
+                   dark:border-gray-700 dark:text-gray-400 dark:enabled:hover:bg-gray-800 dark:enabled:hover:text-gray-100"
+      >
+        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="m15 18-6-6 6-6" />
+        </svg>
+      </button>
+      <form
+        className="flex min-w-0 flex-1 items-center"
+        onSubmit={(event) => {
+          event.preventDefault();
+          commitDraft();
+        }}
+      >
         <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          aria-label="Search pages"
-          placeholder="Find page"
-          className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700
-                     outline-none focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={draftPage}
+          onChange={(event) => setDraftPage(event.target.value)}
+          onBlur={commitDraft}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setDraftPage(selectedNumber?.toString() ?? "");
+              event.currentTarget.blur();
+            }
+          }}
+          aria-label="Page number"
+          placeholder="Page"
+          title={lastPage > 0 ? `Enter a page from 1 to ${lastPage}` : "No pages available"}
+          className="min-w-0 flex-1 bg-transparent px-2 py-1 text-right text-xs tabular-nums text-gray-700
+                     outline-none placeholder:text-gray-400 dark:text-gray-200 dark:placeholder:text-gray-600"
         />
-        {ranges.length > 1 && !needle && (
-          <select
-            aria-label="Page range"
-            value={rangeStart}
-            onChange={(event) => setRangeStart(Number(event.target.value))}
-            className="w-[5.5rem] rounded-md border border-gray-200 bg-white px-1 py-1 text-[11px] text-gray-500
-                       outline-none focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400"
-          >
-            {ranges.map((start) => (
-              <option key={start} value={start}>
-                {start + 1}–{Math.min(start + rangeSize, pageCount)}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-      <div className="grid grid-cols-4 gap-1">
-        {visible.map(({ number, item }) => {
-          const selection = index ? pageSelection(number) : item!.rel_path;
-          const approximateBytes = index && index.count > 0
-            ? index.total_bytes / index.count
-            : item?.bytes;
-          return (
-            <button
-              key={selection}
-              type="button"
-              onClick={() => onSelect(selection)}
-              title={`Page ${number}${
-                approximateBytes ? ` · about ${formatBytes(approximateBytes)}` : ""
-              }`}
-              aria-label={`Page ${number}`}
-              className={`rounded-md px-1 py-1.5 text-center text-[11px] tabular-nums transition-colors ${
-                selected === selection
-                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                  : "bg-gray-100/70 text-gray-600 hover:bg-gray-200 dark:bg-gray-800/60 dark:text-gray-300 dark:hover:bg-gray-800"
-              }`}
-            >
-              {Number.isFinite(number) && number !== Number.MAX_SAFE_INTEGER
-                ? number
-                : item?.label}
-            </button>
-          );
-        })}
-      </div>
-      {visible.length === 0 && (
-        <p className="px-1 py-2 text-xs text-gray-500 dark:text-gray-400">No matching pages.</p>
-      )}
+        <span className="shrink-0 pr-2 text-[11px] tabular-nums text-gray-400 dark:text-gray-500">
+          / {lastPage}
+        </span>
+      </form>
+      <button
+        type="button"
+        onClick={() => move(1)}
+        disabled={!hasNext}
+        aria-label="Next page"
+        title="Next page"
+        className="shrink-0 border-l border-gray-200 px-1.5 py-1.5 text-gray-500 transition-colors
+                   enabled:hover:bg-gray-100 enabled:hover:text-gray-800 disabled:opacity-30
+                   dark:border-gray-700 dark:text-gray-400 dark:enabled:hover:bg-gray-800 dark:enabled:hover:text-gray-100"
+      >
+        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="m9 18 6-6-6-6" />
+        </svg>
+      </button>
     </div>
   );
 });
@@ -840,6 +978,7 @@ export default function ArtifactExplorer({
   runId,
   fallbackMarkdown,
   deferInitialArtifact = false,
+  preload = null,
 }: Props) {
   const [manifest, setManifest] = useState<RunManifest | null>(null);
   const [manifestError, setManifestError] = useState<string | null>(null);
@@ -867,7 +1006,12 @@ export default function ArtifactExplorer({
     setSelected(deferInitialArtifact ? "" : "report.md");
     setContent(null);
     setLoadError(null);
-    invoke<RunManifest>("get_run_manifest", { runId })
+    const request = preload?.runId === runId
+      ? preload.manifest.catch(() =>
+          invoke<RunManifest>("get_run_manifest", { runId }),
+        )
+      : invoke<RunManifest>("get_run_manifest", { runId });
+    request
       .then((m) => {
         if (live) {
           const initial = deferInitialArtifact
@@ -886,7 +1030,7 @@ export default function ArtifactExplorer({
     return () => {
       live = false;
     };
-  }, [deferInitialArtifact, runId, manifestAttempt]);
+  }, [deferInitialArtifact, preload, runId, manifestAttempt]);
 
   useEffect(() => {
     if (!manifest || !selected) return;
@@ -894,9 +1038,17 @@ export default function ArtifactExplorer({
     setContent(null);
     setLoadError(null);
     const compactPage = manifest.page_artifacts ? selectedPage(selected) : null;
-    const request = compactPage === null
-      ? invoke<ArtifactContent>("read_artifact", { runId, relPath: selected })
-      : invoke<ArtifactContent>("read_page_artifact", { runId, page: compactPage });
+    const preloadedReadable = preload?.runId === runId
+      && selected === "context/document.md"
+      ? preload.readableDocument
+      : null;
+    const request = preloadedReadable
+      ? preloadedReadable.catch(() =>
+          invoke<ArtifactContent>("read_artifact", { runId, relPath: selected }),
+        )
+      : compactPage === null
+        ? invoke<ArtifactContent>("read_artifact", { runId, relPath: selected })
+        : invoke<ArtifactContent>("read_page_artifact", { runId, page: compactPage });
     request
       .then((c) => {
         if (live) setContent(c);
@@ -911,7 +1063,7 @@ export default function ArtifactExplorer({
     return () => {
       live = false;
     };
-  }, [manifest, runId, selected]);
+  }, [manifest, preload, runId, selected]);
 
   const artifactsByGroup = useMemo(() => {
     const grouped = new Map<string, ArtifactEntry[]>();

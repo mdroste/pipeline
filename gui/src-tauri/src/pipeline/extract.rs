@@ -5,10 +5,11 @@ use base64::Engine as _;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
+use std::sync::LazyLock;
 
 /// Maximum total output size for extracted LaTeX (10 MB).
 const MAX_LATEX_SIZE: usize = 10_000_000;
@@ -37,8 +38,18 @@ const MARKER_STRUCTURE_SCHEMA: u32 = 1;
 const MARKER_STRUCTURE_FILE: &str = "pipeline-marker-structure.json";
 #[cfg(test)]
 const MARKER_DOCUMENT_FILE: &str = "pipeline-document.md";
-const PADDLE_STRUCTURE_SCHEMA: u32 = 1;
+const PADDLE_STRUCTURE_SCHEMA: u32 = 2;
 const PADDLE_STRUCTURE_FILE: &str = "pipeline-paddle-structure.json";
+const PADDLE_FULL_STRUCTURE_FILE: &str = "pipeline-paddle-full-structure.json";
+const PADDLE_FULL_ACTIVE_FILE: &str = "active.json";
+
+static ANSI_ESCAPE_SEQUENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]").expect("ANSI escape regex must compile")
+});
+static PADDLE_NUMBERED_CAPTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(fig(?:ure)?\.?|table)\s+([a-z]?(?:[.-]?\d+)+(?:[a-z])?)\b")
+        .expect("Paddle caption regex must compile")
+});
 
 pub(crate) const MARKER_DISABLED_MESSAGE: &str =
     "Marker PDF extraction is unavailable in Pipeline 1.0.1 because its compatible \
@@ -64,6 +75,36 @@ where
 
 fn extraction_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     crate::pipeline::logging::emit(app, line.into());
+}
+
+fn clean_paddle_diagnostic(line: &str) -> Option<String> {
+    let clean = ANSI_ESCAPE_SEQUENCE.replace_all(line, "");
+    let clean = clean.trim();
+    if clean.is_empty() {
+        return None;
+    }
+    let lower = clean.to_ascii_lowercase();
+    // These are expected implementation warnings from the managed dependency
+    // stack. They do not describe degraded extraction and their following
+    // Python source line otherwise doubles the console noise.
+    if lower.contains("userwarning: no ccache found")
+        || lower.contains("'llama-cpp-server' does not support `min_pixels`")
+        || lower.contains("'llama-cpp-server' does not support `max_pixels`")
+        || matches!(clean, "warnings.warn(warning_message)" | "warnings.warn(")
+    {
+        return None;
+    }
+    Some(clean.to_string())
+}
+
+fn paddle_diagnostic_lines(stderr: &str, limit: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    stderr
+        .lines()
+        .filter_map(clean_paddle_diagnostic)
+        .filter(|line| seen.insert(line.clone()))
+        .take(limit)
+        .collect()
 }
 
 fn open_regular_file(path: &Path) -> Result<fs::File, String> {
@@ -969,6 +1010,12 @@ pub(crate) struct MarkerStructuredBlock {
 pub(crate) struct PaddleStructure {
     pub(crate) schema_version: u32,
     #[serde(default)]
+    pub(crate) parser: String,
+    #[serde(default)]
+    pub(crate) parser_version: String,
+    #[serde(default)]
+    pub(crate) settings: serde_json::Value,
+    #[serde(default)]
     pub(crate) quality_notes: Vec<String>,
     #[serde(default)]
     pub(crate) pages: Vec<PaddleStructuredPage>,
@@ -978,6 +1025,16 @@ pub(crate) struct PaddleStructure {
 pub(crate) struct PaddleStructuredPage {
     pub(crate) number: u32,
     #[serde(default)]
+    pub(crate) markdown: String,
+    /// Substantive recognition characters measured before Paddle's
+    /// cross-page restructuring can move blocks between neighboring pages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_text_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) height: Option<u32>,
+    #[serde(default)]
     pub(crate) blocks: Vec<PaddleStructuredBlock>,
 }
 
@@ -986,6 +1043,8 @@ pub(crate) struct PaddleStructuredBlock {
     pub(crate) block_id: String,
     pub(crate) role: String,
     #[serde(default)]
+    pub(crate) block_label: String,
+    #[serde(default)]
     pub(crate) markdown: String,
     #[serde(default)]
     pub(crate) text: String,
@@ -993,6 +1052,18 @@ pub(crate) struct PaddleStructuredBlock {
     pub(crate) boundary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) note_marker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) order: Option<u32>,
+    #[serde(default)]
+    pub(crate) bbox: Vec<f64>,
+    #[serde(default)]
+    pub(crate) polygon: Vec<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) confidence: Option<f32>,
+    #[serde(default)]
+    pub(crate) asset_files: Vec<String>,
+    #[serde(default)]
+    pub(crate) raw: serde_json::Value,
 }
 
 #[cfg(test)]
@@ -1071,7 +1142,7 @@ pub(crate) fn read_paddle_structure(paper_hash: &str) -> Result<Option<PaddleStr
     let text = read_utf8_capped(&path, super::claude::MAX_STDOUT_BYTES)?;
     let structure: PaddleStructure = serde_json::from_str(&text)
         .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?;
-    if structure.schema_version != PADDLE_STRUCTURE_SCHEMA {
+    if !(1..=PADDLE_STRUCTURE_SCHEMA).contains(&structure.schema_version) {
         return Ok(None);
     }
     Ok(Some(structure))
@@ -1085,6 +1156,399 @@ pub(crate) fn read_paddle_structure_json(paper_hash: &str) -> Result<Option<Stri
         return Ok(None);
     }
     read_utf8_capped(&path, super::claude::MAX_STDOUT_BYTES).map(Some)
+}
+
+fn paddle_full_cache_root(paper_hash: &str) -> Option<PathBuf> {
+    if paper_hash.len() != 16 || !paper_hash.chars().all(|value| value.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(
+        dirs::home_dir()?
+            .join(".pipeline")
+            .join("cache")
+            .join("paddleocr-vl-full")
+            .join(paper_hash),
+    )
+}
+
+fn valid_cache_fingerprint(value: &str) -> bool {
+    value.len() == 16 && value.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+fn paddle_full_active_dir(paper_hash: &str) -> Result<Option<PathBuf>, String> {
+    let Some(root) = paddle_full_cache_root(paper_hash) else {
+        return Ok(None);
+    };
+    let active_path = root.join(PADDLE_FULL_ACTIVE_FILE);
+    if !active_path.is_file() {
+        return Ok(None);
+    }
+    let text = read_utf8_capped(&active_path, 64 * 1024)?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("Failed to parse {}: {error}", active_path.display()))?;
+    if value.get("schema").and_then(serde_json::Value::as_u64)
+        != Some(EXTRACTION_CACHE_SCHEMA as u64)
+    {
+        return Ok(None);
+    }
+    let Some(fingerprint) = value.get("fingerprint").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    if !valid_cache_fingerprint(fingerprint) {
+        return Err("PaddleOCR-VL full-parser cache has an invalid active fingerprint".to_string());
+    }
+    let directory = root.join(fingerprint);
+    Ok(directory.is_dir().then_some(directory))
+}
+
+pub(crate) fn read_paddle_full_structure(
+    paper_hash: &str,
+) -> Result<Option<PaddleStructure>, String> {
+    let Some(directory) = paddle_full_active_dir(paper_hash)? else {
+        return Ok(None);
+    };
+    let path = directory.join(PADDLE_FULL_STRUCTURE_FILE);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = read_utf8_capped(&path, super::claude::MAX_STDOUT_BYTES)?;
+    let structure: PaddleStructure = serde_json::from_str(&text)
+        .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?;
+    if structure.schema_version != PADDLE_STRUCTURE_SCHEMA
+        || structure.parser != "paddleocr-vl-full"
+    {
+        return Ok(None);
+    }
+    Ok(Some(structure))
+}
+
+pub(crate) fn read_paddle_structure_for_method(
+    paper_hash: &str,
+    method: &str,
+) -> Result<Option<PaddleStructure>, String> {
+    if method == "paddleocr-vl-full" {
+        read_paddle_full_structure(paper_hash)
+    } else {
+        read_paddle_structure(paper_hash)
+    }
+}
+
+pub(crate) fn read_paddle_structure_json_for_method(
+    paper_hash: &str,
+    method: &str,
+) -> Result<Option<String>, String> {
+    if method != "paddleocr-vl-full" {
+        return read_paddle_structure_json(paper_hash);
+    }
+    let Some(directory) = paddle_full_active_dir(paper_hash)? else {
+        return Ok(None);
+    };
+    let path = directory.join(PADDLE_FULL_STRUCTURE_FILE);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = read_utf8_capped(&path, super::claude::MAX_STDOUT_BYTES)?;
+    let structure: PaddleStructure = serde_json::from_str(&text)
+        .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?;
+    if structure.schema_version != PADDLE_STRUCTURE_SCHEMA
+        || structure.parser != "paddleocr-vl-full"
+    {
+        return Ok(None);
+    }
+    Ok(Some(text))
+}
+
+fn paddle_full_image_files(paper_hash: &str) -> Result<Vec<PathBuf>, String> {
+    let Some(directory) = paddle_full_active_dir(paper_hash)? else {
+        return Ok(Vec::new());
+    };
+    let assets = directory.join("assets");
+    if !assets.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut images = Vec::new();
+    let mut walk = crate::safety::WalkBudget::new("PaddleOCR-VL full-parser image discovery");
+    for entry in fs::read_dir(&assets)
+        .map_err(|error| format!("Failed to read parser image directory: {error}"))?
+    {
+        walk.entry()?;
+        let entry = entry.map_err(|error| format!("Failed to read parser image: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect parser image: {error}"))?;
+        let path = entry.path();
+        if file_type.is_file()
+            && ["png", "jpg", "jpeg", "gif", "webp"]
+                .iter()
+                .any(|extension| ext_eq(&path, extension))
+        {
+            images.push(path);
+        }
+    }
+    images.sort();
+    Ok(images)
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PaddleFullImageArtifact {
+    pub(crate) source_path: PathBuf,
+    pub(crate) display_name: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PaddleFullImageInventory {
+    pub(crate) artifacts: Vec<PaddleFullImageArtifact>,
+    /// Number of paper-level labels (for example, `figure_1`) that referred
+    /// to more than one distinct caption and therefore needed disambiguation.
+    pub(crate) disambiguated_labels: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct PaddleFigureIdentity {
+    kind: String,
+    number: String,
+    page: u32,
+    caption_id: String,
+}
+
+fn normalized_figure_number(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn paddle_figure_identity(
+    block: &PaddleStructuredBlock,
+    page: u32,
+) -> Option<PaddleFigureIdentity> {
+    let label = if block.block_label.is_empty() {
+        block.role.as_str()
+    } else {
+        block.block_label.as_str()
+    }
+    .to_ascii_lowercase();
+    if !matches!(
+        label.as_str(),
+        "caption"
+            | "figure_title"
+            | "image_caption"
+            | "chart_title"
+            | "table_title"
+            | "table_caption"
+            | "paragraph_title"
+            | "section_title"
+            | "figure"
+            | "chart"
+            | "table"
+    ) {
+        return None;
+    }
+    let caption = if block.text.trim().is_empty() {
+        block.markdown.as_str()
+    } else {
+        block.text.as_str()
+    };
+    let captures = PADDLE_NUMBERED_CAPTION.captures(caption)?;
+    let raw_kind = captures.get(1)?.as_str().to_ascii_lowercase();
+    let kind = if raw_kind.starts_with("fig") {
+        "figure"
+    } else {
+        "table"
+    };
+    let number = normalized_figure_number(captures.get(2)?.as_str());
+    if number.is_empty() {
+        return None;
+    }
+    Some(PaddleFigureIdentity {
+        kind: kind.to_string(),
+        number,
+        page,
+        caption_id: block.block_id.clone(),
+    })
+}
+
+fn paddle_asset_page(path: &Path) -> Option<u32> {
+    let name = path.file_name()?.to_str()?;
+    let digits = name.strip_prefix("page-")?.split('-').next()?;
+    digits.parse().ok()
+}
+
+fn paddle_identity_base(identity: &PaddleFigureIdentity) -> String {
+    if identity.number.is_empty() {
+        format!("figure_page_{:04}", identity.page)
+    } else {
+        format!("{}_{}", identity.kind, identity.number)
+    }
+}
+
+fn paddle_full_image_inventory_from(
+    structure: &PaddleStructure,
+    images: Vec<PathBuf>,
+) -> PaddleFullImageInventory {
+    let mut asset_identities: HashMap<String, PaddleFigureIdentity> = HashMap::new();
+    let mut first_page_identity: HashMap<u32, PaddleFigureIdentity> = HashMap::new();
+    for page in &structure.pages {
+        let mut blocks: Vec<&PaddleStructuredBlock> = page.blocks.iter().collect();
+        blocks.sort_by_key(|block| block.order.unwrap_or(u32::MAX));
+        let captions: Vec<(u32, PaddleFigureIdentity)> = blocks
+            .iter()
+            .filter_map(|block| {
+                paddle_figure_identity(block, page.number)
+                    .map(|identity| (block.order.unwrap_or(u32::MAX), identity))
+            })
+            .collect();
+        if let Some((_, identity)) = captions.first() {
+            first_page_identity.insert(page.number, identity.clone());
+        }
+        for block in blocks {
+            let block_order = block.order.unwrap_or(u32::MAX);
+            let closest = captions.iter().min_by_key(|(caption_order, _)| {
+                (
+                    caption_order.abs_diff(block_order),
+                    u8::from(*caption_order > block_order),
+                )
+            });
+            if let Some((_, identity)) = closest {
+                for asset in &block.asset_files {
+                    if let Some(name) = Path::new(asset).file_name().and_then(|name| name.to_str())
+                    {
+                        asset_identities.insert(name.to_string(), identity.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    let records: Vec<(PathBuf, PaddleFigureIdentity)> = images
+        .into_iter()
+        .map(|path| {
+            let page = paddle_asset_page(&path).unwrap_or(0);
+            let identity = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| asset_identities.get(name))
+                .cloned()
+                .or_else(|| first_page_identity.get(&page).cloned())
+                .unwrap_or_else(|| PaddleFigureIdentity {
+                    kind: "figure".to_string(),
+                    number: String::new(),
+                    page,
+                    caption_id: format!("unlabeled-page-{page:04}"),
+                });
+            (path, identity)
+        })
+        .collect();
+
+    let mut identities_by_base: HashMap<String, BTreeSet<PaddleFigureIdentity>> = HashMap::new();
+    let mut assets_by_identity: HashMap<PaddleFigureIdentity, usize> = HashMap::new();
+    for (_, identity) in &records {
+        identities_by_base
+            .entry(paddle_identity_base(identity))
+            .or_default()
+            .insert(identity.clone());
+        *assets_by_identity.entry(identity.clone()).or_default() += 1;
+    }
+    let disambiguated_labels = identities_by_base
+        .values()
+        .filter(|identities| identities.len() > 1)
+        .count();
+    let identity_ordinals: HashMap<PaddleFigureIdentity, usize> = identities_by_base
+        .values()
+        .flat_map(|identities| {
+            identities
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(index, identity)| (identity, index + 1))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    let mut seen_within_identity: HashMap<PaddleFigureIdentity, usize> = HashMap::new();
+    let mut used_names = HashSet::new();
+    let artifacts = records
+        .into_iter()
+        .map(|(source_path, identity)| {
+            let base = paddle_identity_base(&identity);
+            let identities = identities_by_base
+                .get(&base)
+                .map(BTreeSet::len)
+                .unwrap_or(1);
+            let mut stem = base;
+            if identities > 1 {
+                stem.push_str(&format!("_page_{:04}", identity.page));
+                let same_page = identities_by_base
+                    .values()
+                    .find(|values| values.contains(&identity))
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter(|candidate| candidate.page == identity.page)
+                            .count()
+                    })
+                    .unwrap_or(1);
+                if same_page > 1 {
+                    stem.push_str(&format!(
+                        "_{}",
+                        identity_ordinals.get(&identity).copied().unwrap_or(1)
+                    ));
+                }
+            }
+            let occurrence = seen_within_identity.entry(identity.clone()).or_default();
+            *occurrence += 1;
+            if assets_by_identity.get(&identity).copied().unwrap_or(1) > 1 {
+                stem.push_str(&format!("_{occurrence}"));
+            }
+            let extension = source_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("png")
+                .to_ascii_lowercase();
+            let mut display_name = format!("{stem}.{extension}");
+            let mut collision = 2usize;
+            while !used_names.insert(display_name.clone()) {
+                display_name = format!("{stem}_{collision}.{extension}");
+                collision += 1;
+            }
+            PaddleFullImageArtifact {
+                source_path,
+                display_name,
+            }
+        })
+        .collect();
+    PaddleFullImageInventory {
+        artifacts,
+        disambiguated_labels,
+    }
+}
+
+pub(crate) fn paddle_full_image_inventory(
+    paper_hash: &str,
+) -> Result<PaddleFullImageInventory, String> {
+    let images = paddle_full_image_files(paper_hash)?;
+    let Some(structure) = read_paddle_full_structure(paper_hash)? else {
+        return Ok(paddle_full_image_inventory_from(
+            &PaddleStructure {
+                schema_version: PADDLE_STRUCTURE_SCHEMA,
+                parser: "paddleocr-vl-full".to_string(),
+                parser_version: String::new(),
+                settings: serde_json::Value::Null,
+                quality_notes: Vec::new(),
+                pages: Vec::new(),
+            },
+            images,
+        ));
+    };
+    Ok(paddle_full_image_inventory_from(&structure, images))
 }
 
 #[cfg(test)]
@@ -2198,16 +2662,22 @@ async fn paddle_extract_page_tiled(
     Ok(text)
 }
 
-fn paddle_page_is_suspicious(text: &str, baseline_len: Option<usize>) -> bool {
+fn paddle_substantive_chars(text: &str) -> usize {
+    text.lines()
+        .filter(|line| !line.contains(PADDLE_REGION_WARNING_PREFIX))
+        .flat_map(str::chars)
+        .filter(|value| !value.is_whitespace())
+        .count()
+}
+
+fn paddle_char_count_is_suspicious(extracted_chars: usize, baseline_len: Option<usize>) -> bool {
     baseline_len.is_some_and(|baseline_len| {
-        let extracted_chars = text
-            .lines()
-            .filter(|line| !line.contains(PADDLE_REGION_WARNING_PREFIX))
-            .flat_map(str::chars)
-            .filter(|value| !value.is_whitespace())
-            .count();
         baseline_len >= SUSPECT_BASELINE_MIN_CHARS && extracted_chars < baseline_len / 10
     })
+}
+
+fn paddle_page_is_suspicious(text: &str, baseline_len: Option<usize>) -> bool {
+    paddle_char_count_is_suspicious(paddle_substantive_chars(text), baseline_len)
 }
 
 fn paddle_markdown_blocks(markdown: &str) -> Vec<String> {
@@ -2583,15 +3053,26 @@ fn normalize_paddle_pages(
                         block_index + 1
                     ),
                     role: "body".to_string(),
+                    block_label: String::new(),
                     text: paddle_plain_text(&markdown),
                     markdown,
                     boundary,
                     note_marker: None,
+                    order: Some(block_index as u32 + 1),
+                    bbox: Vec::new(),
+                    polygon: Vec::new(),
+                    confidence: None,
+                    asset_files: Vec::new(),
+                    raw: serde_json::Value::Null,
                 }
             })
             .collect();
         pages.push(PaddleStructuredPage {
             number: page_index as u32 + 1,
+            markdown: raw_page.clone(),
+            source_text_chars: None,
+            width: None,
+            height: None,
             blocks,
         });
     }
@@ -2617,6 +3098,9 @@ fn normalize_paddle_pages(
     }
     let structure = PaddleStructure {
         schema_version: PADDLE_STRUCTURE_SCHEMA,
+        parser: "paddleocr-vl-fast".to_string(),
+        parser_version: "1.6".to_string(),
+        settings: serde_json::Value::Null,
         quality_notes: quality_notes.clone(),
         pages,
     };
@@ -2938,6 +3422,435 @@ async fn extract_paddle(
         paper_hash: hash.to_string(),
         quality_notes,
     })
+}
+
+fn full_parser_cache_fingerprint(
+    paths: &crate::engines::PaddleFullParserPaths,
+    settings: &crate::settings::Settings,
+) -> String {
+    cache_fingerprint(&serde_json::json!({
+        "schema": EXTRACTION_CACHE_SCHEMA,
+        "structure_schema": PADDLE_STRUCTURE_SCHEMA,
+        "engine": "paddleocr-vl-full",
+        "parser_release": paths.release,
+        "python": executable_identity(&paths.python),
+        "sidecar": executable_identity(&paths.script),
+        "server": executable_identity(&paths.paddle.server),
+        "model": executable_identity(&paths.paddle.model),
+        "projector": executable_identity(&paths.paddle.mmproj),
+        "concurrency": crate::settings::resolved_paddle_page_concurrency(settings),
+        "vision_batch": crate::settings::resolved_paddle_mtmd_batch_tokens(settings),
+        "flash_attention": settings.paddle_flash_attention,
+        "max_output_tokens": settings.paddle_max_output_tokens,
+        "page_retries": settings.paddle_page_retries,
+        "layout_detection": settings.paddle_full_layout_detection,
+        "layout_threshold": settings.paddle_full_layout_threshold,
+        "layout_nms": settings.paddle_full_layout_nms,
+        "layout_merge_bboxes_mode": settings.paddle_full_layout_merge_bboxes_mode,
+        "merge_layout_blocks": settings.paddle_full_merge_layout_blocks,
+        "ocr_image_blocks": settings.paddle_full_ocr_image_blocks,
+        "format_block_content": settings.paddle_full_format_block_content,
+        "merge_tables": settings.paddle_full_merge_tables,
+        "relevel_titles": settings.paddle_full_relevel_titles,
+        "show_formula_numbers": settings.paddle_full_show_formula_numbers,
+    }))
+}
+
+fn paddle_full_block_markdown(page: &PaddleStructuredPage) -> String {
+    page.blocks
+        .iter()
+        .filter(|block| {
+            !matches!(
+                block.role.as_str(),
+                "number" | "header" | "header_image" | "footer" | "footer_image"
+            )
+        })
+        .map(|block| block.markdown.trim())
+        .filter(|block| !block.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn paddle_full_best_markdown(page: &PaddleStructuredPage) -> String {
+    let exported = page.markdown.trim();
+    let blocks = paddle_full_block_markdown(page);
+    if exported.is_empty()
+        || (!blocks.is_empty()
+            && paddle_substantive_chars(exported).saturating_mul(2)
+                < paddle_substantive_chars(&blocks))
+    {
+        blocks
+    } else {
+        exported.to_string()
+    }
+}
+
+fn render_paddle_full_page(page: &PaddleStructuredPage) -> String {
+    let markdown = paddle_full_best_markdown(page);
+    let markdown = markdown
+        .replace("](assets/", "](../artifacts/figures/")
+        .replace("src=\"assets/", "src=\"../artifacts/figures/")
+        .replace("src='assets/", "src='../artifacts/figures/");
+    format!("<!-- PAGE {} -->\n\n{}", page.number, markdown)
+        .trim()
+        .to_string()
+}
+
+fn paddle_full_page_has_content(page: &PaddleStructuredPage) -> bool {
+    if !page.markdown.trim().is_empty() {
+        return true;
+    }
+    page.blocks.iter().any(|block| {
+        !matches!(
+            block.role.as_str(),
+            "number" | "header" | "header_image" | "footer" | "footer_image"
+        ) && (!block.markdown.trim().is_empty()
+            || !block.text.trim().is_empty()
+            || !block.asset_files.is_empty())
+    })
+}
+
+fn full_parser_extraction_from_structure(
+    structure: &PaddleStructure,
+    path: &Path,
+    hash: &str,
+    baseline: Option<&[usize]>,
+) -> Result<ExtractionResult, String> {
+    if baseline.is_some_and(|pages| pages.len() > MAX_RENDERED_PDF_PAGES as usize) {
+        return Err(format!(
+            "PaddleOCR-VL Full Parser is limited to {MAX_RENDERED_PDF_PAGES} pages per PDF"
+        ));
+    }
+    if structure.schema_version != PADDLE_STRUCTURE_SCHEMA
+        || structure.parser != "paddleocr-vl-full"
+        || structure.pages.is_empty()
+    {
+        return Err("PaddleOCR-VL full parser returned an incompatible structure".to_string());
+    }
+    if let Some(baseline) = baseline {
+        if structure.pages.len() != baseline.len() {
+            return Err(format!(
+                "PaddleOCR-VL full parser returned {} pages for a {}-page PDF",
+                structure.pages.len(),
+                baseline.len()
+            ));
+        }
+    }
+    let mut restructured_empty_pages = Vec::new();
+    for (index, page) in structure.pages.iter().enumerate() {
+        let expected = index as u32 + 1;
+        if page.number != expected {
+            return Err(format!(
+                "PaddleOCR-VL full parser returned page {} where page {expected} was expected",
+                page.number
+            ));
+        }
+        if !paddle_full_page_has_content(page) && page.source_text_chars.unwrap_or(0) == 0 {
+            return Err(format!(
+                "PaddleOCR-VL full parser returned no content for page {expected}"
+            ));
+        }
+        if !paddle_full_page_has_content(page) {
+            restructured_empty_pages.push(expected);
+        }
+        let rendered = render_paddle_full_page(page);
+        let recognized_chars = page
+            .source_text_chars
+            .unwrap_or_else(|| paddle_substantive_chars(&rendered));
+        let baseline_chars = baseline.and_then(|pages| pages.get(index)).copied();
+        if paddle_char_count_is_suspicious(recognized_chars, baseline_chars) {
+            return Err(format!(
+                "PaddleOCR-VL full parser returned incomplete output for page {expected} (recognized {recognized_chars} substantive characters; text layer has {})",
+                baseline_chars.unwrap_or_default()
+            ));
+        }
+    }
+    let text = structure
+        .pages
+        .iter()
+        .map(render_paddle_full_page)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if text.len() > super::claude::MAX_STDOUT_BYTES {
+        return Err(
+            "PaddleOCR-VL full-parser document exceeded the 50 MB safety limit".to_string(),
+        );
+    }
+    let mut quality_notes = structure.quality_notes.clone();
+    if !restructured_empty_pages.is_empty() {
+        quality_notes.push(format!(
+            "PaddleOCR cross-page restructuring moved all recognized content from page(s) {} into adjacent structured blocks.",
+            restructured_empty_pages
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    quality_notes.extend(scan_math_quality(&text));
+    Ok(ExtractionResult {
+        text,
+        method: "paddleocr-vl-full".to_string(),
+        source_path: path.to_string_lossy().to_string(),
+        paper_hash: hash.to_string(),
+        quality_notes,
+    })
+}
+
+fn activate_paddle_full_cache(root: &Path, fingerprint: &str) -> Result<(), String> {
+    let active = serde_json::json!({
+        "schema": EXTRACTION_CACHE_SCHEMA,
+        "fingerprint": fingerprint,
+    });
+    atomic_write_cache(
+        &root.join(PADDLE_FULL_ACTIVE_FILE),
+        &serde_json::to_vec_pretty(&active)
+            .map_err(|error| format!("Failed to serialize parser cache activation: {error}"))?,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_paddle_full_sidecar(
+    paths: &crate::engines::PaddleFullParserPaths,
+    settings: &crate::settings::Settings,
+    input: &Path,
+    output: &Path,
+    assets: &Path,
+    base_url: &str,
+    api_key: &str,
+    baseline_chars: &[usize],
+    timeout: std::time::Duration,
+) -> Result<BoundedOutput, String> {
+    let boolean = |value: bool| if value { "true" } else { "false" };
+    let baseline_chars = serde_json::to_string(baseline_chars)
+        .map_err(|error| format!("Failed to serialize PDF text-layer baseline: {error}"))?;
+    let mut command = StdCommand::new(&paths.python);
+    let arguments: Vec<std::ffi::OsString> = vec![
+        paths.script.as_os_str().to_owned(),
+        "--input".into(),
+        input.as_os_str().to_owned(),
+        "--output".into(),
+        output.as_os_str().to_owned(),
+        "--assets-dir".into(),
+        assets.as_os_str().to_owned(),
+        "--server-url".into(),
+        base_url.into(),
+        "--server-model".into(),
+        PADDLE_MODEL_ALIAS.into(),
+        "--concurrency".into(),
+        crate::settings::resolved_paddle_page_concurrency(settings)
+            .to_string()
+            .into(),
+        "--max-new-tokens".into(),
+        settings.paddle_max_output_tokens.to_string().into(),
+        "--page-retries".into(),
+        settings.paddle_page_retries.to_string().into(),
+        "--baseline-chars".into(),
+        baseline_chars.into(),
+        "--layout-detection".into(),
+        boolean(settings.paddle_full_layout_detection).into(),
+        "--layout-threshold".into(),
+        settings.paddle_full_layout_threshold.to_string().into(),
+        "--layout-nms".into(),
+        boolean(settings.paddle_full_layout_nms).into(),
+        "--layout-merge-bboxes-mode".into(),
+        settings.paddle_full_layout_merge_bboxes_mode.clone().into(),
+        "--merge-layout-blocks".into(),
+        boolean(settings.paddle_full_merge_layout_blocks).into(),
+        "--ocr-image-blocks".into(),
+        boolean(settings.paddle_full_ocr_image_blocks).into(),
+        "--format-block-content".into(),
+        boolean(settings.paddle_full_format_block_content).into(),
+        "--merge-tables".into(),
+        boolean(settings.paddle_full_merge_tables).into(),
+        "--relevel-titles".into(),
+        boolean(settings.paddle_full_relevel_titles).into(),
+        "--show-formula-numbers".into(),
+        boolean(settings.paddle_full_show_formula_numbers).into(),
+    ];
+    command.args(arguments);
+    command.env("PIPELINE_PADDLE_API_KEY", api_key);
+    for (key, value) in crate::engines::paddle_full_parser_env(paths) {
+        command.env(key, value);
+    }
+    if let Some(parent) = output.parent() {
+        command.current_dir(parent);
+    }
+    run_bounded_output(
+        command,
+        "PaddleOCR-VL full parser",
+        timeout,
+        4 * 1024 * 1024,
+        output.parent(),
+    )
+}
+
+async fn extract_paddle_full(
+    app: &crate::emit::EventBus,
+    path: &Path,
+    hash: &str,
+    settings: &crate::settings::Settings,
+) -> Result<ExtractionResult, String> {
+    let started = std::time::Instant::now();
+    let total_timeout = std::time::Duration::from_secs(settings.pdf_extraction_timeout_secs);
+    let paths = crate::engines::paddle_full_parser_paths()?;
+    let baseline = {
+        let pdf = path.to_path_buf();
+        tokio::task::spawn_blocking(move || pdftotext_page_baseline(&pdf))
+            .await
+            .unwrap_or(None)
+    };
+    if baseline
+        .as_ref()
+        .is_some_and(|pages| pages.len() > MAX_RENDERED_PDF_PAGES as usize)
+    {
+        return Err(format!(
+            "PaddleOCR-VL Full Parser is limited to {MAX_RENDERED_PDF_PAGES} pages per PDF"
+        ));
+    }
+    let root = paddle_full_cache_root(hash)
+        .ok_or_else(|| "Could not create PaddleOCR-VL full-parser cache path".to_string())?;
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("Failed to create full-parser cache: {error}"))?;
+    let fingerprint = full_parser_cache_fingerprint(&paths, settings);
+    let target = root.join(&fingerprint);
+    let structure_path = target.join(PADDLE_FULL_STRUCTURE_FILE);
+    if settings.reuse_pdf_extraction_cache && structure_path.is_file() {
+        let text = read_utf8_capped(&structure_path, super::claude::MAX_STDOUT_BYTES)?;
+        if let Ok(structure) = serde_json::from_str::<PaddleStructure>(&text) {
+            if let Ok(extraction) =
+                full_parser_extraction_from_structure(&structure, path, hash, baseline.as_deref())
+            {
+                activate_paddle_full_cache(&root, &fingerprint)?;
+                extraction_log(
+                    app,
+                    "PaddleOCR-VL Full Parser: reused a verified structured cache",
+                );
+                return Ok(extraction);
+            }
+        }
+    }
+
+    extraction_log(
+        app,
+        format!(
+            "PaddleOCR-VL Full Parser: layout={}, NMS={}, merge blocks={}, image OCR={}, cross-page tables={}, relevel titles={}",
+            settings.paddle_full_layout_detection,
+            settings.paddle_full_layout_nms,
+            settings.paddle_full_merge_layout_blocks,
+            settings.paddle_full_ocr_image_blocks,
+            settings.paddle_full_merge_tables,
+            settings.paddle_full_relevel_titles,
+        ),
+    );
+    extraction_log(
+        app,
+        "PaddleOCR-VL Full Parser: loading the managed Q8 recognition server",
+    );
+    let server = start_paddle_server(&paths.paddle, settings).await?;
+    let staging = tempfile::Builder::new()
+        .prefix(".full-parser-staging-")
+        .tempdir_in(&root)
+        .map_err(|error| format!("Failed to stage full-parser output: {error}"))?;
+    let staged_structure = staging.path().join(PADDLE_FULL_STRUCTURE_FILE);
+    let staged_assets = staging.path().join("assets");
+    let parser_paths = paths.clone();
+    let parser_settings = settings.clone();
+    let input = path.to_path_buf();
+    let output = staged_structure.clone();
+    let assets = staged_assets.clone();
+    let base_url = format!("{}/v1", server.base_url);
+    let api_key = server.api_key.clone();
+    let baseline_chars = baseline.clone().unwrap_or_default();
+    let timeout = total_timeout
+        .checked_sub(started.elapsed())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| {
+            format!(
+                "PaddleOCR-VL Full Parser exceeded the {}s extraction budget while loading",
+                settings.pdf_extraction_timeout_secs
+            )
+        })?;
+    let sidecar = tokio::task::spawn_blocking(move || {
+        run_paddle_full_sidecar(
+            &parser_paths,
+            &parser_settings,
+            &input,
+            &output,
+            &assets,
+            &base_url,
+            &api_key,
+            &baseline_chars,
+            timeout,
+        )
+    })
+    .await
+    .map_err(|error| format!("PaddleOCR-VL full-parser task failed: {error}"))??;
+    if !sidecar.status.success() {
+        let stderr = String::from_utf8_lossy(&sidecar.stderr);
+        let diagnostics = paddle_diagnostic_lines(&stderr, 50).join("\n");
+        let diagnostics = if diagnostics.is_empty() {
+            ANSI_ESCAPE_SEQUENCE
+                .replace_all(stderr.trim(), "")
+                .to_string()
+        } else {
+            diagnostics
+        };
+        let suffix = if sidecar.stderr_truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        return Err(format!(
+            "PaddleOCR-VL full parser failed: {}{suffix}",
+            diagnostics.trim()
+        ));
+    }
+    if sidecar.stdout_truncated || sidecar.stderr_truncated {
+        extraction_log(
+            app,
+            "WARNING: PaddleOCR-VL full-parser diagnostic output was truncated",
+        );
+    }
+    let stderr = String::from_utf8_lossy(&sidecar.stderr);
+    for line in paddle_diagnostic_lines(&stderr, 50) {
+        extraction_log(app, format!("PaddleOCR parser: {line}"));
+    }
+    let structure_text = read_utf8_capped(&staged_structure, super::claude::MAX_STDOUT_BYTES)?;
+    let structure: PaddleStructure = serde_json::from_str(&structure_text)
+        .map_err(|error| format!("Failed to parse managed full-parser output: {error}"))?;
+    let extraction =
+        full_parser_extraction_from_structure(&structure, path, hash, baseline.as_deref())?;
+
+    let backup = root.join(format!(".{fingerprint}-backup"));
+    if backup.exists() {
+        fs::remove_dir_all(&backup)
+            .map_err(|error| format!("Failed to clean old parser cache backup: {error}"))?;
+    }
+    if target.exists() {
+        fs::rename(&target, &backup)
+            .map_err(|error| format!("Failed to stage prior parser cache: {error}"))?;
+    }
+    let staged_path = staging.keep();
+    if let Err(error) = fs::rename(&staged_path, &target) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, &target);
+        }
+        return Err(format!("Failed to activate full-parser cache: {error}"));
+    }
+    activate_paddle_full_cache(&root, &fingerprint)?;
+    if backup.exists() {
+        let _ = fs::remove_dir_all(&backup);
+    }
+    extraction_log(
+        app,
+        format!(
+            "PaddleOCR-VL Full Parser: completed {} structured page(s) in {:.1}s",
+            structure.pages.len(),
+            started.elapsed().as_secs_f64()
+        ),
+    );
+    Ok(extraction)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3950,6 +4863,33 @@ pub async fn extract(
     // to the request, CLIs read it with their multimodal Read tool.
     let use_llm = effective_method == "llm";
     let use_paddle = effective_method == "paddleocr-vl";
+    let use_paddle_full = effective_method == "paddleocr-vl-full";
+
+    if use_paddle_full {
+        let pdf_path = if path.is_dir() {
+            if find_main_tex(&path).is_some() {
+                None
+            } else {
+                find_pdf_in_dir(&path)
+            }
+        } else if ext_eq(&path, "pdf") {
+            Some(path.clone())
+        } else {
+            None
+        };
+        if let Some(pdf) = pdf_path {
+            let hash = {
+                let pdf_for_hash = pdf.clone();
+                tokio::task::spawn_blocking(move || compute_hash(&pdf_for_hash))
+                    .await
+                    .map_err(|error| format!("Hash computation failed: {error}"))??
+            };
+            // The sidecar's bounded subprocess runner owns the wall-clock
+            // timeout. Avoid dropping its blocking task one instant earlier
+            // than its process-tree cleanup.
+            return extract_paddle_full(app, &pdf, &hash, &settings).await;
+        }
+    }
 
     // PaddleOCR-VL owns an async local HTTP server for the duration of one
     // document, so it cannot run inside the blocking native-extractor branch.
@@ -4555,6 +5495,261 @@ mod tests {
         assert_eq!(blocks.len(), 3);
         assert!(blocks[1].contains("line one\n\nline two"));
         assert!(blocks[2].contains("x = 1\n\ny = 2"));
+    }
+
+    #[test]
+    fn full_parser_structure_drives_compatibility_text_and_page_verification() {
+        let structure = PaddleStructure {
+            schema_version: PADDLE_STRUCTURE_SCHEMA,
+            parser: "paddleocr-vl-full".to_string(),
+            parser_version: "3.7.0".to_string(),
+            settings: serde_json::json!({ "merge_tables": true }),
+            quality_notes: vec!["fixture note".to_string()],
+            pages: vec![
+                PaddleStructuredPage {
+                    number: 1,
+                    markdown: "# Introduction\n\n![Plot](assets/page-0001-plot.png)".to_string(),
+                    source_text_chars: None,
+                    width: Some(1200),
+                    height: Some(1600),
+                    blocks: Vec::new(),
+                },
+                PaddleStructuredPage {
+                    number: 2,
+                    markdown: "## Results\n\nThe estimate is positive.".to_string(),
+                    source_text_chars: None,
+                    width: Some(1200),
+                    height: Some(1600),
+                    blocks: Vec::new(),
+                },
+            ],
+        };
+        let path = Path::new("/tmp/paper.pdf");
+        let extraction = full_parser_extraction_from_structure(
+            &structure,
+            path,
+            "0123456789abcdef",
+            Some(&[0, 0]),
+        )
+        .unwrap();
+        assert_eq!(extraction.method, "paddleocr-vl-full");
+        assert!(extraction.text.contains("<!-- PAGE 2 -->"));
+        assert!(extraction
+            .text
+            .contains("../artifacts/figures/page-0001-plot.png"));
+        assert!(extraction
+            .quality_notes
+            .contains(&"fixture note".to_string()));
+
+        let mut moved_page = structure.clone();
+        moved_page.pages[0].markdown.clear();
+        moved_page.pages[0].source_text_chars = Some(1_000);
+        let moved_extraction = full_parser_extraction_from_structure(
+            &moved_page,
+            path,
+            "0123456789abcdef",
+            Some(&[1_000, 0]),
+        )
+        .unwrap();
+        assert!(moved_extraction
+            .quality_notes
+            .iter()
+            .any(|note| note.contains("moved all recognized content from page(s) 1")));
+
+        let mut incomplete_page = structure.clone();
+        incomplete_page.pages[0].source_text_chars = Some(10);
+        let incomplete_error = full_parser_extraction_from_structure(
+            &incomplete_page,
+            path,
+            "0123456789abcdef",
+            Some(&[1_000, 0]),
+        )
+        .unwrap_err();
+        assert!(incomplete_error.contains("recognized 10 substantive characters"));
+
+        let mut missing_page = structure;
+        missing_page.pages[1].number = 3;
+        assert!(full_parser_extraction_from_structure(
+            &missing_page,
+            path,
+            "0123456789abcdef",
+            Some(&[0, 0]),
+        )
+        .unwrap_err()
+        .contains("page 3 where page 2 was expected"));
+    }
+
+    #[test]
+    fn paddle_diagnostics_remove_terminal_codes_and_expected_dependency_warnings() {
+        let stderr = concat!(
+            "\u{1b}[32mCreating model: ('PP-DocLayoutV3', None, None)\u{1b}[0m\n",
+            "/managed/extension_utils.py:718: UserWarning: No ccache found.\n",
+            "warnings.warn(warning_message)\n",
+            "/managed/predictor.py:545: UserWarning: 'llama-cpp-server' does not support `min_pixels`.\n",
+            "warnings.warn(\n",
+            "Page 39: retrying incomplete layout recognition.\n",
+            "Page 39: retrying incomplete layout recognition.\n",
+        );
+        assert_eq!(
+            paddle_diagnostic_lines(stderr, 50),
+            vec![
+                "Creating model: ('PP-DocLayoutV3', None, None)",
+                "Page 39: retrying incomplete layout recognition.",
+            ]
+        );
+    }
+
+    #[test]
+    fn full_parser_image_labels_use_captions_and_disambiguate_repeated_numbers() {
+        let block = |id: &str, text: &str, order: u32, assets: &[&str]| PaddleStructuredBlock {
+            block_id: id.to_string(),
+            role: if assets.is_empty() {
+                "figure_title"
+            } else {
+                "chart"
+            }
+            .to_string(),
+            block_label: if assets.is_empty() {
+                "figure_title"
+            } else {
+                "chart"
+            }
+            .to_string(),
+            markdown: text.to_string(),
+            text: text.to_string(),
+            boundary: None,
+            note_marker: None,
+            order: Some(order),
+            bbox: Vec::new(),
+            polygon: Vec::new(),
+            confidence: None,
+            asset_files: assets.iter().map(|asset| asset.to_string()).collect(),
+            raw: serde_json::Value::Null,
+        };
+        let page = |number: u32, blocks: Vec<PaddleStructuredBlock>| PaddleStructuredPage {
+            number,
+            markdown: String::new(),
+            source_text_chars: None,
+            width: None,
+            height: None,
+            blocks,
+        };
+        let structure = PaddleStructure {
+            schema_version: PADDLE_STRUCTURE_SCHEMA,
+            parser: "paddleocr-vl-full".to_string(),
+            parser_version: "3.7.0".to_string(),
+            settings: serde_json::Value::Null,
+            quality_notes: Vec::new(),
+            pages: vec![
+                page(
+                    2,
+                    vec![
+                        block("caption-1a", "Figure 1: Baseline", 1, &[]),
+                        block("image-1a", "", 2, &["assets/page-0002-plot.jpg"]),
+                    ],
+                ),
+                page(
+                    3,
+                    vec![
+                        block("caption-1b", "Figure 1: Appendix version", 1, &[]),
+                        block("image-1b", "", 2, &["assets/page-0003-plot.jpg"]),
+                    ],
+                ),
+                page(
+                    4,
+                    vec![
+                        block("caption-2", "Figure 2: Responses", 1, &[]),
+                        block(
+                            "image-2",
+                            "",
+                            2,
+                            &[
+                                "assets/page-0004-panel-a.png",
+                                "assets/page-0004-panel-b.png",
+                            ],
+                        ),
+                    ],
+                ),
+                page(
+                    5,
+                    vec![
+                        PaddleStructuredBlock {
+                            role: "text".to_string(),
+                            block_label: "text".to_string(),
+                            ..block(
+                                "prose-reference",
+                                "Figure 9 discusses an earlier result.",
+                                1,
+                                &[],
+                            )
+                        },
+                        block(
+                            "image-before-caption",
+                            "",
+                            2,
+                            &["assets/page-0005-plot.webp"],
+                        ),
+                        block("caption-below", "Figure 3: Caption below image", 3, &[]),
+                    ],
+                ),
+            ],
+        };
+        let images = [
+            "/cache/page-0002-plot.jpg",
+            "/cache/page-0003-plot.jpg",
+            "/cache/page-0004-panel-a.png",
+            "/cache/page-0004-panel-b.png",
+            "/cache/page-0005-plot.webp",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        let inventory = paddle_full_image_inventory_from(&structure, images);
+        assert_eq!(inventory.disambiguated_labels, 1);
+        assert_eq!(
+            inventory
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.display_name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "figure_1_page_0002.jpg",
+                "figure_1_page_0003.jpg",
+                "figure_2_1.png",
+                "figure_2_2.png",
+                "figure_3.webp",
+            ]
+        );
+    }
+
+    #[test]
+    fn full_parser_uses_richer_blocks_when_page_markdown_is_partial() {
+        let page = PaddleStructuredPage {
+            number: 1,
+            markdown: "References".to_string(),
+            source_text_chars: None,
+            width: None,
+            height: None,
+            blocks: vec![PaddleStructuredBlock {
+                block_id: "reference-block".to_string(),
+                role: "reference_content".to_string(),
+                block_label: "reference_content".to_string(),
+                markdown: "A complete bibliography entry with substantially more recognized text."
+                    .repeat(8),
+                text: String::new(),
+                boundary: None,
+                note_marker: None,
+                order: Some(1),
+                bbox: Vec::new(),
+                polygon: Vec::new(),
+                confidence: Some(0.9),
+                asset_files: Vec::new(),
+                raw: serde_json::Value::Null,
+            }],
+        };
+        let rendered = render_paddle_full_page(&page);
+        assert!(rendered.contains("complete bibliography entry"));
+        assert!(rendered.len() > page.markdown.len() * 2);
     }
 
     #[test]

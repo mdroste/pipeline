@@ -6,6 +6,8 @@ import type { PipelineReport } from "../lib/types";
 interface Props {
   runId?: string | null;
   markdown: string;
+  pdfMarkdown?: string;
+  provenanceMarkdown?: string;
   report?: PipelineReport;
   extractedText?: string;
 }
@@ -23,7 +25,14 @@ function formatBytes(bytes: number): string {
   return `${bytes} bytes`;
 }
 
-export default function ExportControls({ runId, markdown, report, extractedText }: Props) {
+export default function ExportControls({
+  runId,
+  markdown,
+  pdfMarkdown,
+  provenanceMarkdown,
+  report,
+  extractedText,
+}: Props) {
   const [exportingRun, setExportingRun] = useState(false);
   const [exportingCoreFiles, setExportingCoreFiles] = useState(false);
 
@@ -44,7 +53,10 @@ export default function ExportControls({ runId, markdown, report, extractedText 
 
   const handlePrint = async () => {
     try {
-      await invoke("print_report_html", { markdown });
+      await invoke("print_report_html", {
+        markdown: pdfMarkdown ?? markdown,
+        provenanceMarkdown: provenanceMarkdown ?? null,
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       alert(`Failed to generate PDF: ${msg}`);

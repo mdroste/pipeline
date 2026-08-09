@@ -10,6 +10,15 @@ html.theme-transitioning *::after {
   transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, fill 0.3s ease, stroke 0.3s ease !important;
 }
 
+/* Keep native console controls and scrollbars in step with the app theme. */
+.console-panel {
+  color-scheme: light;
+}
+
+.dark .console-panel {
+  color-scheme: dark;
+}
+
 /* ── Table of Contents sidebar ──────────────────────────────────── */
 
 .toc-nav {
@@ -67,6 +76,31 @@ html.theme-transitioning *::after {
 }
 
 .dark .toc-h2 {
+  color: theme("colors.gray.500");
+}
+
+.toc-issue {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: start;
+  padding: 0.4rem 0.5rem;
+  color: theme("colors.gray.600");
+}
+
+.toc-issue-number {
+  color: theme("colors.gray.400");
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  line-height: 1.65;
+}
+
+.dark .toc-issue {
+  color: theme("colors.gray.300");
+}
+
+.dark .toc-issue-number {
   color: theme("colors.gray.500");
 }
 

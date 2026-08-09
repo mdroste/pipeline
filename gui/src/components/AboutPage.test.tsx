@@ -16,12 +16,15 @@ describe("AboutPage", () => {
     openUrl.mockReset();
   });
 
-  it("describes dependency scheduling and scoped artifact access", () => {
+  it("explains workflow scheduling, scoped access, and provider data sharing", () => {
     render(<AboutPage onClose={() => undefined} />);
 
-    expect(screen.getByText(/declared dependencies are ready/i)).toBeInTheDocument();
-    expect(screen.getByText(/upstream artifacts selected/i)).toBeInTheDocument();
-    expect(screen.getByText(/provider account, plan, and usage terms/i)).toBeInTheDocument();
+    expect(screen.getByText(/prerequisites finish/i)).toBeInTheDocument();
+    expect(screen.getByText(/only the input and earlier results allowed/i)).toBeInTheDocument();
+    expect(screen.getByText(/provider's account, plan, and data-use terms/i)).toBeInTheDocument();
+    expect(screen.getByText("Workflows")).toBeInTheDocument();
+    expect(screen.getByText("PaddleOCR-VL Full Parser")).toBeInTheDocument();
+    expect(screen.getByText("PaddleOCR-VL Fast")).toBeInTheDocument();
   });
 
   it.each([

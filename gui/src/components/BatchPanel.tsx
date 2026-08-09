@@ -9,9 +9,11 @@ interface Props {
   onClose: () => void;
   onOpenRun: (runId: string) => void;
   showClose?: boolean;
+  /** Execution plan already loaded by the app shell for the active workflow. */
+  preloadedSetup?: BatchSetupEnvelope | null;
 }
 
-interface BatchSetupEnvelope {
+export interface BatchSetupEnvelope {
   profileId: string;
   profileConfigSnapshotId: string;
   profileSnapshotId: string;
@@ -50,21 +52,31 @@ function representativeBatchPath(paths: string[]): string | null {
 
 /** Run one profile over many inputs, one at a time. Each input becomes a normal
  *  run in history; progress arrives via batch:progress events. */
-export default function BatchPanel({ onClose, onOpenRun, showClose = true }: Props) {
+export default function BatchPanel({
+  onClose,
+  onOpenRun,
+  showClose = true,
+  preloadedSetup = null,
+}: Props) {
+  const initialSpecs = preloadedSetup?.variables ?? [];
   // Inputs staged before a batch starts.
   const [staged, setStaged] = useState<string[]>([]);
   // Live job list from the backend once a batch is running.
   const [jobs, setJobs] = useState<BatchJob[]>([]);
   const [watch, setWatch] = useState<WatchStatus | null>(null);
-  const [inputMode, setInputMode] = useState("document");
-  const [variables, setVariables] = useState<VarSpec[]>([]);
-  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
-  const [inputSlots, setInputSlots] = useState<InputSlot[]>([]);
+  const [inputMode, setInputMode] = useState(preloadedSetup?.inputMode || "document");
+  const [variables, setVariables] = useState<VarSpec[]>(initialSpecs);
+  const [variableValues, setVariableValues] = useState<Record<string, string>>(
+    Object.fromEntries(initialSpecs.map((spec) => [spec.key, spec.default ?? ""])),
+  );
+  const [inputSlots, setInputSlots] = useState<InputSlot[]>(preloadedSetup?.inputSlots ?? []);
   const [extraInputs, setExtraInputs] = useState<Record<string, string>>({});
-  const [profileConfigSnapshotId, setProfileConfigSnapshotId] = useState<string | null>(null);
+  const [profileConfigSnapshotId, setProfileConfigSnapshotId] = useState<string | null>(
+    preloadedSetup?.profileConfigSnapshotId ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [errorCanRetrySetup, setErrorCanRetrySetup] = useState(false);
-  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(!preloadedSetup);
   const [listenersReady, setListenersReady] = useState(false);
   const [setupAttempt, setSetupAttempt] = useState(0);
   const [preparingStart, setPreparingStart] = useState(false);
@@ -73,11 +85,31 @@ export default function BatchPanel({ onClose, onOpenRun, showClose = true }: Pro
   const running = jobs.some((j) => j.status === "running" || j.status === "pending");
   const documentMode = inputMode === "document";
 
+  const applySetup = useCallback((setup: BatchSetupEnvelope) => {
+    const specs = setup.variables ?? [];
+    setInputMode(setup.inputMode || "document");
+    setVariables(specs);
+    setVariableValues(Object.fromEntries(specs.map((spec) => [spec.key, spec.default ?? ""])));
+    setInputSlots(setup.inputSlots ?? []);
+    setExtraInputs({});
+    setProfileConfigSnapshotId(setup.profileConfigSnapshotId);
+  }, []);
+
+  // The app shell may finish its startup plan while this lazy page is being
+  // mounted. Apply that plan immediately; status/listener synchronization can
+  // continue without holding the workflow options behind a loading message.
+  useEffect(() => {
+    if (!preloadedSetup || setupAttempt !== 0) return;
+    applySetup(preloadedSetup);
+    setProfileLoading(false);
+  }, [applySetup, preloadedSetup, setupAttempt]);
+
   useEffect(() => {
     let live = true;
     let unlisteners: Array<() => void> = [];
     const request = ++profileRequest.current;
-    setProfileLoading(true);
+    const warmSetup = setupAttempt === 0 ? preloadedSetup : null;
+    setProfileLoading(!warmSetup);
     setListenersReady(false);
     setError(null);
     setErrorCanRetrySetup(false);
@@ -110,27 +142,25 @@ export default function BatchPanel({ onClose, onOpenRun, showClose = true }: Pro
         return Promise.all([
           invoke<BatchJob[]>("get_batch_status"),
           invoke<WatchStatus>("get_watch_status"),
-          invoke<BatchSetupEnvelope>("get_execution_plan", {
-            variables: null,
-            extraInputs: null,
-            expectedProfileConfigSnapshotId: null,
-            diff: false,
-            paperPath: null,
-          }),
+          warmSetup
+            ? Promise.resolve(warmSetup)
+            : invoke<BatchSetupEnvelope>("get_execution_plan", {
+                variables: null,
+                extraInputs: null,
+                expectedProfileConfigSnapshotId: null,
+                diff: false,
+                paperPath: null,
+              }),
         ]);
       })
       .then((result) => {
         if (!live || request !== profileRequest.current || !result) return;
         const [loadedJobs, loadedWatch, setup] = result;
-        const specs = setup.variables ?? [];
         setJobs(loadedJobs);
         setWatch(loadedWatch);
-        setInputMode(setup.inputMode || "document");
-        setVariables(specs);
-        setVariableValues(Object.fromEntries(specs.map((spec) => [spec.key, spec.default ?? ""])));
-        setInputSlots(setup.inputSlots ?? []);
-        setExtraInputs({});
-        setProfileConfigSnapshotId(setup.profileConfigSnapshotId);
+        // The warm setup is already editable. Do not reset a user's variable
+        // or named-input choices when the slower status reads finish.
+        if (!warmSetup) applySetup(setup);
         setError(null);
         setErrorCanRetrySetup(false);
         setProfileLoading(false);
@@ -145,7 +175,7 @@ export default function BatchPanel({ onClose, onOpenRun, showClose = true }: Pro
       live = false;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [setupAttempt]);
+  }, [applySetup, preloadedSetup, setupAttempt]);
 
   const prepareCurrentSetup = useCallback(async (
     paperPath?: string | null,

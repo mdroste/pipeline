@@ -52,6 +52,17 @@ vi.mock("./components/WorkflowPanel", () => ({
 vi.mock("./components/HistoryPage", () => ({
   default: () => <div>History workspace</div>,
 }));
+vi.mock("./components/BatchPanel", () => ({
+  default: ({
+    preloadedSetup,
+  }: {
+    preloadedSetup?: { profileConfigSnapshotId?: string } | null;
+  }) => (
+    <div>
+      Batch workspace · {preloadedSetup?.profileConfigSnapshotId ?? "no setup"}
+    </div>
+  ),
+}));
 vi.mock("./components/PipelinePage", () => ({
   default: ({
     onClose,
@@ -168,6 +179,16 @@ describe("App run options", () => {
       );
       expect(startPipeline).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("warms Batch with the active workflow plan loaded at startup", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("button", { name: "Run" });
+    await user.click(screen.getByRole("button", { name: "Batch" }));
+
+    expect(await screen.findByText("Batch workspace · config-test")).toBeVisible();
   });
 
   it("rechecks readiness for DOCX so a conservative extractor failure does not block the run", async () => {

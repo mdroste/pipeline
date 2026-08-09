@@ -36,10 +36,21 @@ interface MarkdownAstNode {
 }
 
 interface ReportHeading {
+  kind: "heading";
   level: number;
   text: string;
   id: string;
 }
+
+interface ReportIssue {
+  kind: "issue";
+  level: 0;
+  number: string;
+  text: string;
+  id: string;
+}
+
+type ReportNavigationEntry = ReportHeading | ReportIssue;
 
 /**
  * Catches render errors from rehype-katex/remark-math so malformed `$…$`
@@ -112,20 +123,29 @@ function visitAst(
   node.children?.forEach((child) => visitAst(child, visitor));
 }
 
+function issueFromParagraph(node: MarkdownAstNode): { number: string; text: string } | null {
+  if (node.type !== "paragraph" || node.children?.length !== 1) return null;
+  const strong = node.children[0];
+  if (strong.type !== "strong") return null;
+  const match = plainHeadingText(astText(strong)).match(/^#(\d+)\.\s*(.+)$/);
+  return match ? { number: match[1], text: match[2].trim() } : null;
+}
+
 /**
- * Parse the document once to establish heading labels and IDs. A global used-ID
- * set avoids collisions such as "Intro", a duplicate "Intro", and "Intro-2".
+ * Parse the document once to establish navigation labels and IDs. Numbered
+ * issue cards are the report's actual contents; Markdown headings are retained
+ * as a fallback for reports that do not use the standard issue format.
  */
-function buildHeadingIndex(markdown: string): ReportHeading[] {
+function buildNavigationIndex(markdown: string): {
+  headings: ReportHeading[];
+  issues: ReportIssue[];
+} {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown);
   const headings: ReportHeading[] = [];
+  const issues: ReportIssue[] = [];
   const usedIds = new Set<string>();
 
-  visitAst(tree as MarkdownAstNode, (node) => {
-    if (node.type !== "heading" || typeof node.depth !== "number") return;
-
-    const text = astText(node).replace(/\s+/g, " ").trim();
-    const base = slugBase(text);
+  const uniqueId = (base: string) => {
     let id = base;
     let suffix = 2;
     while (usedIds.has(id)) {
@@ -133,28 +153,61 @@ function buildHeadingIndex(markdown: string): ReportHeading[] {
       suffix += 1;
     }
     usedIds.add(id);
-    headings.push({ level: node.depth, text, id });
+    return id;
+  };
+
+  visitAst(tree as MarkdownAstNode, (node) => {
+    if (node.type === "heading" && typeof node.depth === "number") {
+      const text = plainHeadingText(astText(node));
+      headings.push({
+        kind: "heading",
+        level: node.depth,
+        text,
+        id: uniqueId(slugBase(text)),
+      });
+      return;
+    }
+    const issue = issueFromParagraph(node);
+    if (issue) {
+      issues.push({
+        kind: "issue",
+        level: 0,
+        number: issue.number,
+        text: issue.text,
+        id: uniqueId(`issue-${issue.number}-${slugBase(issue.text)}`),
+      });
+    }
   });
 
-  return headings;
+  return { headings, issues };
 }
 
 /**
- * Apply IDs from the same parsed heading index to the tree ReactMarkdown will
- * render. Sequence is stable because remark plugins do not add/remove headings.
+ * Apply IDs from the same parsed navigation index to the tree ReactMarkdown
+ * will render. Math repair can change text children but not the heading/issue
+ * sequence used here.
  */
-function headingIdPlugin(headings: readonly ReportHeading[]) {
+function navigationIdPlugin(
+  headings: readonly ReportHeading[],
+  issues: readonly ReportIssue[],
+) {
   return () => (tree: unknown) => {
-    let index = 0;
+    let headingIndex = 0;
+    let issueIndex = 0;
     visitAst(tree as MarkdownAstNode, (node) => {
-      if (node.type !== "heading") return;
-      const heading = headings[index];
-      index += 1;
-      if (!heading) return;
+      let entry: ReportNavigationEntry | undefined;
+      if (node.type === "heading") {
+        entry = headings[headingIndex];
+        headingIndex += 1;
+      } else if (issueFromParagraph(node)) {
+        entry = issues[issueIndex];
+        issueIndex += 1;
+      }
+      if (!entry) return;
       node.data ??= {};
       node.data.hProperties = {
         ...node.data.hProperties,
-        id: heading.id,
+        id: entry.id,
       };
     });
   };
@@ -197,6 +250,14 @@ export function plainHeadingText(markdown: string): string {
       .replace(/(^|[\s([{"'])([*_])(?=\S)(.+?\S)\2(?=$|[\s)\]}"'.,!?;:])/g, "$1$3");
   }
 
+  // PaddleOCR may render a title's author-footnote marker as inline math
+  // (for example `$ ^{*} $`). It is useful in the document body but is not
+  // part of the title and should not occupy a separate token in navigation.
+  text = text.replace(
+    /\s*\$\s*(?:\^\s*\{\s*(?:\*+|\\(?:ast|star|dagger|ddagger)|[\u2020\u2021])\s*\}|(?:\*+|\\(?:ast|star|dagger|ddagger)|[\u2020\u2021]))\s*\$/giu,
+    "",
+  );
+
   if (typeof document !== "undefined" && text.includes("&")) {
     const decoder = document.createElement("textarea");
     decoder.innerHTML = text;
@@ -237,16 +298,22 @@ function ReportViewer({ markdown }: Props) {
   );
   const find = useFindBar(contentRef, normalizedMarkdown);
 
-  const headingIndex = useMemo(
-    () => buildHeadingIndex(normalizedMarkdown),
+  const navigationIndex = useMemo(
+    () => buildNavigationIndex(normalizedMarkdown),
     [normalizedMarkdown],
   );
   const headings = useMemo(() => {
-    return headingIndex.filter((heading) => heading.level <= 3);
-  }, [headingIndex]);
-  const remarkHeadingIds = useMemo(() => {
-    return headingIdPlugin(headingIndex);
-  }, [headingIndex]);
+    return navigationIndex.headings.filter((heading) => heading.level <= 3);
+  }, [navigationIndex.headings]);
+  const contents = useMemo<ReportNavigationEntry[]>(() => {
+    if (navigationIndex.issues.length) return navigationIndex.issues;
+    return headings.length > 3
+      ? headings.filter((heading) => heading.level <= 2)
+      : [];
+  }, [headings, navigationIndex.issues]);
+  const remarkNavigationIds = useMemo(() => {
+    return navigationIdPlugin(navigationIndex.headings, navigationIndex.issues);
+  }, [navigationIndex.headings, navigationIndex.issues]);
 
   return (
     <div className="flex h-full relative">
@@ -273,7 +340,7 @@ function ReportViewer({ markdown }: Props) {
         </div>
       )}
       {/* Table of contents */}
-      {headings.length > 3 && contentsOpen && (
+      {contents.length > 0 && contentsOpen && (
         <nav className="toc-nav relative" style={{ width: contentsWidth }}>
           <div className="mb-4 flex items-center justify-between gap-2">
             <h4 className="text-[11px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
@@ -293,17 +360,20 @@ function ReportViewer({ markdown }: Props) {
             </button>
           </div>
           <ul className="space-y-0.5">
-            {headings
-              .filter((h) => h.level <= 2)
-              .map((h) => (
-                <li key={h.id}>
+            {contents.map((entry) => (
+                <li key={entry.id}>
                   <a
-                    href={`#${h.id}`}
+                    href={`#${entry.id}`}
                     className={`toc-link ${
-                      h.level === 1 ? "toc-h1" : "toc-h2"
+                      entry.kind === "issue"
+                        ? "toc-issue"
+                        : entry.level === 1 ? "toc-h1" : "toc-h2"
                     }`}
                   >
-                    {h.text}
+                    {entry.kind === "issue" && (
+                      <span className="toc-issue-number">#{entry.number}</span>
+                    )}
+                    <span>{entry.text}</span>
                   </a>
                 </li>
               ))}
@@ -318,7 +388,7 @@ function ReportViewer({ markdown }: Props) {
           />
         </nav>
       )}
-      {headings.length > 3 && !contentsOpen && (
+      {contents.length > 0 && !contentsOpen && (
         <button
           type="button"
           onClick={() => setContentsOpen(true)}
@@ -349,12 +419,12 @@ function ReportViewer({ markdown }: Props) {
                 <ReactMarkdown
                   remarkPlugins={
                     fallback
-                      ? [remarkGfm, remarkHeadingIds]
+                      ? [remarkGfm, remarkNavigationIds]
                       : [
                           remarkGfm,
                           remarkMath,
                           remarkRepairMath,
-                          remarkHeadingIds,
+                          remarkNavigationIds,
                         ]
                   }
                   rehypePlugins={
@@ -381,7 +451,7 @@ function ReportViewer({ markdown }: Props) {
                         const split = splitCommentPrefix(child.props?.children);
                         if (split) {
                           return (
-                            <div className="comment-header">
+                            <div {...props} className="comment-header">
                               <span className="comment-num">{split.num}</span>
                               <span className="comment-title">{split.rest}</span>
                             </div>

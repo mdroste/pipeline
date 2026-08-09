@@ -144,7 +144,8 @@ pub struct Settings {
     #[serde(default)]
     pub gemini_api_model_selection: ModelSelection,
 
-    /// PDF extraction method: "llm", "auto", "paddleocr-vl", or "pdftotext".
+    /// PDF extraction method: "llm", "auto", "paddleocr-vl",
+    /// "paddleocr-vl-full", or "pdftotext".
     /// The legacy value "marker" remains deserializable so the UI can explain
     /// why the user must choose a supported replacement.
     #[serde(default = "default_pdf_extractor")]
@@ -208,6 +209,39 @@ pub struct Settings {
     /// DPI used to render each page before PaddleOCR-VL inference.
     #[serde(default = "default_paddle_render_dpi")]
     pub paddle_render_dpi: u32,
+
+    /// Full-parser client controls. These are intentionally separate from
+    /// llama.cpp throughput tuning because they change semantic structure and
+    /// therefore participate in a different extraction-cache fingerprint.
+    #[serde(default = "default_true")]
+    pub paddle_full_layout_detection: bool,
+
+    #[serde(default = "default_paddle_full_layout_threshold")]
+    pub paddle_full_layout_threshold: f32,
+
+    #[serde(default = "default_true")]
+    pub paddle_full_layout_nms: bool,
+
+    #[serde(default = "default_paddle_full_layout_merge_bboxes_mode")]
+    pub paddle_full_layout_merge_bboxes_mode: String,
+
+    #[serde(default = "default_true")]
+    pub paddle_full_merge_layout_blocks: bool,
+
+    #[serde(default = "default_true")]
+    pub paddle_full_ocr_image_blocks: bool,
+
+    #[serde(default = "default_true")]
+    pub paddle_full_format_block_content: bool,
+
+    #[serde(default = "default_true")]
+    pub paddle_full_merge_tables: bool,
+
+    #[serde(default = "default_true")]
+    pub paddle_full_relevel_titles: bool,
+
+    #[serde(default = "default_true")]
+    pub paddle_full_show_formula_numbers: bool,
 
     /// Wall-clock budget for the complete PDF extraction stage.
     #[serde(default = "default_pdf_extraction_timeout_secs")]
@@ -329,6 +363,18 @@ fn default_paddle_render_dpi() -> u32 {
     150
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_paddle_full_layout_threshold() -> f32 {
+    0.5
+}
+
+fn default_paddle_full_layout_merge_bboxes_mode() -> String {
+    "large".to_string()
+}
+
 fn default_pdf_extraction_timeout_secs() -> u64 {
     1800
 }
@@ -414,6 +460,16 @@ impl Default for Settings {
             paddle_max_output_tokens: default_paddle_max_output_tokens(),
             paddle_page_retries: default_paddle_page_retries(),
             paddle_render_dpi: default_paddle_render_dpi(),
+            paddle_full_layout_detection: true,
+            paddle_full_layout_threshold: default_paddle_full_layout_threshold(),
+            paddle_full_layout_nms: true,
+            paddle_full_layout_merge_bboxes_mode: default_paddle_full_layout_merge_bboxes_mode(),
+            paddle_full_merge_layout_blocks: true,
+            paddle_full_ocr_image_blocks: true,
+            paddle_full_format_block_content: true,
+            paddle_full_merge_tables: true,
+            paddle_full_relevel_titles: true,
+            paddle_full_show_formula_numbers: true,
             pdf_extraction_timeout_secs: default_pdf_extraction_timeout_secs(),
             reuse_pdf_extraction_cache: default_reuse_pdf_extraction_cache(),
             verbose_logging: false,
@@ -457,7 +513,7 @@ impl Settings {
         }
         if !matches!(
             self.pdf_extractor.as_str(),
-            "llm" | "auto" | "marker" | "paddleocr-vl" | "pdftotext"
+            "llm" | "auto" | "marker" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext"
         ) {
             return Err(format!("Invalid PDF extractor '{}'", self.pdf_extractor));
         }
@@ -484,6 +540,22 @@ impl Settings {
         if !matches!(self.paddle_render_dpi, 120 | 150 | 180 | 200) {
             return Err(
                 "PaddleOCR-VL render resolution must be 120, 150, 180, or 200 DPI".to_string(),
+            );
+        }
+        if !self.paddle_full_layout_threshold.is_finite()
+            || !(0.05..=0.95).contains(&self.paddle_full_layout_threshold)
+        {
+            return Err(
+                "PaddleOCR-VL full-parser layout threshold must be between 0.05 and 0.95"
+                    .to_string(),
+            );
+        }
+        if !matches!(
+            self.paddle_full_layout_merge_bboxes_mode.as_str(),
+            "large" | "small" | "union"
+        ) {
+            return Err(
+                "PaddleOCR-VL layout box merge mode must be large, small, or union".to_string(),
             );
         }
         if !(120..=7200).contains(&self.pdf_extraction_timeout_secs) {
@@ -1375,6 +1447,16 @@ mod tests {
         assert_eq!(defaults.paddle_max_output_tokens, 4096);
         assert_eq!(defaults.paddle_page_retries, 1);
         assert_eq!(defaults.paddle_render_dpi, 150);
+        assert!(defaults.paddle_full_layout_detection);
+        assert_eq!(defaults.paddle_full_layout_threshold, 0.5);
+        assert!(defaults.paddle_full_layout_nms);
+        assert_eq!(defaults.paddle_full_layout_merge_bboxes_mode, "large");
+        assert!(defaults.paddle_full_merge_layout_blocks);
+        assert!(defaults.paddle_full_ocr_image_blocks);
+        assert!(defaults.paddle_full_format_block_content);
+        assert!(defaults.paddle_full_merge_tables);
+        assert!(defaults.paddle_full_relevel_titles);
+        assert!(defaults.paddle_full_show_formula_numbers);
         assert_eq!(defaults.pdf_extraction_timeout_secs, 1800);
         assert!(defaults.reuse_pdf_extraction_cache);
 
@@ -1385,6 +1467,16 @@ mod tests {
         assert_eq!(legacy.paddle_max_output_tokens, 4096);
         assert_eq!(legacy.paddle_page_retries, 1);
         assert_eq!(legacy.paddle_render_dpi, 150);
+        assert!(legacy.paddle_full_layout_detection);
+        assert_eq!(legacy.paddle_full_layout_threshold, 0.5);
+        assert!(legacy.paddle_full_layout_nms);
+        assert_eq!(legacy.paddle_full_layout_merge_bboxes_mode, "large");
+        assert!(legacy.paddle_full_merge_layout_blocks);
+        assert!(legacy.paddle_full_ocr_image_blocks);
+        assert!(legacy.paddle_full_format_block_content);
+        assert!(legacy.paddle_full_merge_tables);
+        assert!(legacy.paddle_full_relevel_titles);
+        assert!(legacy.paddle_full_show_formula_numbers);
         assert_eq!(legacy.pdf_extraction_timeout_secs, 1800);
         assert!(legacy.reuse_pdf_extraction_cache);
     }
@@ -1579,6 +1671,18 @@ mod tests {
 
         invalid = Settings {
             paddle_render_dpi: 160,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            paddle_full_layout_threshold: 1.1,
+            ..Default::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        invalid = Settings {
+            paddle_full_layout_merge_bboxes_mode: "overlap".into(),
             ..Default::default()
         };
         assert!(invalid.validate().is_err());

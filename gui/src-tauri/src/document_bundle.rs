@@ -710,11 +710,29 @@ fn add_marker_structured_nodes(
 }
 
 fn paddle_node_kind(block: &crate::pipeline::extract::PaddleStructuredBlock) -> &'static str {
-    match block.role.as_str() {
+    let label = if block.block_label.is_empty() {
+        block.role.as_str()
+    } else {
+        block.block_label.as_str()
+    };
+    match label.to_ascii_lowercase().as_str() {
         "footnote" => "footnote",
         "possible_footnote" => "possible_footnote",
-        "page_header" => "page_header",
-        "page_footer" => "page_footer",
+        "page_header" | "header" | "header_image" => "page_header",
+        "page_footer" | "footer" | "footer_image" | "number" => "page_footer",
+        "doc_title" | "document_title" | "paragraph_title" | "section_title" | "abstract_title"
+        | "reference_title" => "section",
+        "formula" | "display_formula" | "inline_formula" | "equation" => "equation",
+        // A formula number is a separate layout region, not a second equation.
+        // `add_paddle_structured_nodes` attaches adjacent numbers to their
+        // equation node and retains unmatched regions as ordinary text.
+        "formula_number" => "text_block",
+        "table" | "table_body" => "table",
+        "image" | "figure" | "chart" | "seal" => "figure",
+        "caption" | "figure_title" | "image_caption" | "table_title" | "table_caption"
+        | "chart_title" | "vision_footnote" => "caption",
+        "code" | "algorithm" => "code",
+        "list" | "list_item" => "list",
         _ => {
             let markdown = block.markdown.trim();
             let lines: Vec<&str> = markdown.lines().collect();
@@ -747,6 +765,86 @@ fn paddle_node_kind(block: &crate::pipeline::extract::PaddleStructuredBlock) -> 
     }
 }
 
+fn paddle_block_label(block: &crate::pipeline::extract::PaddleStructuredBlock) -> &str {
+    if block.block_label.is_empty() {
+        block.role.as_str()
+    } else {
+        block.block_label.as_str()
+    }
+}
+
+fn is_paddle_formula_number(block: &crate::pipeline::extract::PaddleStructuredBlock) -> bool {
+    paddle_block_label(block).eq_ignore_ascii_case("formula_number")
+}
+
+fn parse_paddle_formula_number(value: &str) -> Option<String> {
+    let mut value = value.trim();
+    while value.len() >= 2 && value.starts_with('$') && value.ends_with('$') {
+        value = value[1..value.len() - 1].trim();
+    }
+    if value.starts_with(r"\(") && value.ends_with(r"\)") && value.len() >= 4 {
+        value = value[2..value.len() - 2].trim();
+    } else if value.starts_with(r"\[") && value.ends_with(r"\]") && value.len() >= 4 {
+        value = value[2..value.len() - 2].trim();
+    }
+    if let Some(capture) = Regex::new(r"^\\tag\*?\{([^{}]{1,40})\}$")
+        .unwrap()
+        .captures(value)
+    {
+        value = capture.get(1)?.as_str().trim();
+    }
+    if ((value.starts_with('(') && value.ends_with(')'))
+        || (value.starts_with('[') && value.ends_with(']')))
+        && value.len() >= 2
+    {
+        value = value[1..value.len() - 1].trim();
+    }
+    if Regex::new(r"(?i)^[a-z0-9]+(?:[.:-][a-z0-9]+)*$")
+        .unwrap()
+        .is_match(value)
+    {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+fn paddle_formula_number(
+    block: &crate::pipeline::extract::PaddleStructuredBlock,
+) -> Option<String> {
+    if !is_paddle_formula_number(block) {
+        return None;
+    }
+    parse_paddle_formula_number(&block.text)
+        .or_else(|| parse_paddle_formula_number(&block.markdown))
+}
+
+fn paddle_block_representation(
+    block: &crate::pipeline::extract::PaddleStructuredBlock,
+    structure: &crate::pipeline::extract::PaddleStructure,
+) -> DocumentRepresentation {
+    DocumentRepresentation {
+        format: "paddle_block".to_string(),
+        content: serde_json::json!({
+            "block_id": block.block_id,
+            "role": block.role,
+            "block_label": block.block_label,
+            "markdown": block.markdown,
+            "boundary": block.boundary,
+            "note_marker": block.note_marker,
+            "order": block.order,
+            "bbox": block.bbox,
+            "polygon": block.polygon,
+            "confidence": block.confidence,
+            "asset_files": block.asset_files,
+            "raw": block.raw,
+            "parser": structure.parser,
+            "parser_version": structure.parser_version,
+            "parser_settings": structure.settings,
+        }),
+    }
+}
+
 fn paddle_node_label(kind: &str, page: u32) -> String {
     match kind {
         "footnote" => format!("Footnote on page {page}"),
@@ -762,44 +860,137 @@ fn paddle_node_label(kind: &str, page: u32) -> String {
     }
 }
 
+fn paddle_heading_level(block: &crate::pipeline::extract::PaddleStructuredBlock) -> Option<usize> {
+    if let Some(capture) = Regex::new(r"^(#{1,6})\s+")
+        .unwrap()
+        .captures(block.markdown.trim_start())
+    {
+        return capture.get(1).map(|marker| marker.as_str().len());
+    }
+    let label = if block.block_label.is_empty() {
+        block.role.as_str()
+    } else {
+        block.block_label.as_str()
+    };
+    match label.to_ascii_lowercase().as_str() {
+        "doc_title" | "document_title" => Some(1),
+        "paragraph_title" | "section_title" | "abstract_title" | "reference_title" => Some(2),
+        _ => None,
+    }
+}
+
+fn paddle_block_assets(
+    bundle: &DocumentBundle,
+    block: &crate::pipeline::extract::PaddleStructuredBlock,
+    page: u32,
+    kind: &str,
+) -> Vec<String> {
+    let names: HashSet<&str> = block
+        .asset_files
+        .iter()
+        .filter_map(|path| Path::new(path).file_name().and_then(|name| name.to_str()))
+        .collect();
+    let mut asset_ids: Vec<String> = bundle
+        .assets
+        .iter()
+        .filter(|asset| {
+            names.contains(asset.label.as_str())
+                || names.iter().any(|name| asset.rel_path.ends_with(name))
+        })
+        .map(|asset| asset.id.clone())
+        .collect();
+    if asset_ids.is_empty() && matches!(kind, "figure" | "table") {
+        if let Some(asset) = bundle
+            .assets
+            .iter()
+            .find(|asset| asset.kind == "page" && asset.page == Some(page))
+        {
+            asset_ids.push(asset.id.clone());
+        }
+    }
+    asset_ids.sort();
+    asset_ids.dedup();
+    asset_ids
+}
+
 fn add_paddle_structured_nodes(
     bundle: &mut DocumentBundle,
     structure: &crate::pipeline::extract::PaddleStructure,
 ) {
+    let mut heading_stack: [Option<String>; 6] = std::array::from_fn(|_| None);
     for page in &structure.pages {
-        for block in &page.blocks {
+        for (block_index, block) in page.blocks.iter().enumerate() {
+            if let Some(number) = paddle_formula_number(block) {
+                let follows_equation = block_index > 0
+                    && !is_paddle_formula_number(&page.blocks[block_index - 1])
+                    && paddle_node_kind(&page.blocks[block_index - 1]) == "equation";
+                if follows_equation {
+                    if let Some(equation) = bundle
+                        .nodes
+                        .last_mut()
+                        .filter(|node| node.kind == "equation" && node.page == Some(page.number))
+                    {
+                        if equation.number.is_none() {
+                            equation.number = Some(number);
+                        }
+                        equation
+                            .representations
+                            .push(paddle_block_representation(block, structure));
+                        continue;
+                    }
+                }
+                let precedes_equation = page.blocks.get(block_index + 1).is_some_and(|next| {
+                    !is_paddle_formula_number(next) && paddle_node_kind(next) == "equation"
+                });
+                if precedes_equation {
+                    // The following equation will absorb this leading number
+                    // and retain this block as an additional representation.
+                    continue;
+                }
+            }
             let kind = paddle_node_kind(block);
-            let asset_ids = bundle
-                .assets
-                .iter()
-                .find(|asset| asset.kind == "page" && asset.page == Some(page.number))
-                .map(|asset| vec![asset.id.clone()])
-                .unwrap_or_default();
-            let representation = DocumentRepresentation {
-                format: "paddle_block".to_string(),
-                content: serde_json::json!({
-                    "block_id": block.block_id,
-                    "role": block.role,
-                    "markdown": block.markdown,
-                    "boundary": block.boundary,
-                    "note_marker": block.note_marker,
-                }),
-            };
+            let asset_ids = paddle_block_assets(bundle, block, page.number, kind);
+            let mut representations = vec![paddle_block_representation(block, structure)];
+            let leading_number = (kind == "equation" && block_index > 0)
+                .then(|| &page.blocks[block_index - 1])
+                .filter(|previous| is_paddle_formula_number(previous));
+            let number = leading_number.and_then(paddle_formula_number);
+            if let Some(number_block) = leading_number {
+                representations.push(paddle_block_representation(number_block, structure));
+            }
             let mut created = node(
                 bundle,
                 kind,
                 Some(page.number),
                 Some(paddle_node_label(kind, page.number)),
-                block.note_marker.clone(),
+                number.or_else(|| block.note_marker.clone()),
                 block.text.clone(),
                 asset_ids,
-                vec![representation],
-                "paddleocr-vl",
+                representations,
+                if structure.parser == "paddleocr-vl-full" {
+                    "paddleocr-vl-full"
+                } else {
+                    "paddleocr-vl"
+                },
             );
-            created.provenance.confidence = match block.role.as_str() {
+            created.provenance.confidence = block.confidence.or(match block.role.as_str() {
                 "possible_footnote" => Some(0.6),
                 "page_header" | "page_footer" => Some(0.8),
-                _ => created.provenance.confidence,
+                _ => None,
+            });
+            if !matches!(kind, "page_header" | "page_footer") {
+                if let Some(level) = paddle_heading_level(block) {
+                    created.parent_id = heading_stack[..level.saturating_sub(1)]
+                        .iter()
+                        .rev()
+                        .find_map(|value| value.clone());
+                    heading_stack[level - 1] = Some(created.id.clone());
+                    for slot in &mut heading_stack[level..] {
+                        *slot = None;
+                    }
+                } else {
+                    created.parent_id = heading_stack.iter().rev().find_map(|value| value.clone());
+                }
             };
             bundle.nodes.push(created);
         }
@@ -1444,10 +1635,14 @@ pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuil
             add_marker_structured_nodes(&mut bundle, &structure);
             has_native_structure = true;
         }
-    } else if extraction.method == "paddleocr-vl" {
-        if let Some(structure) =
-            crate::pipeline::extract::read_paddle_structure(&extraction.paper_hash)?
-        {
+    } else if matches!(
+        extraction.method.as_str(),
+        "paddleocr-vl" | "paddleocr-vl-full"
+    ) {
+        if let Some(structure) = crate::pipeline::extract::read_paddle_structure_for_method(
+            &extraction.paper_hash,
+            &extraction.method,
+        )? {
             add_paddle_structured_nodes(&mut bundle, &structure);
             has_native_structure = true;
         }
@@ -2142,25 +2337,46 @@ mod tests {
         .bundle;
         let structure = crate::pipeline::extract::PaddleStructure {
             schema_version: 1,
+            parser: "paddleocr-vl-fast".to_string(),
+            parser_version: "1.6".to_string(),
+            settings: serde_json::Value::Null,
             quality_notes: Vec::new(),
             pages: vec![crate::pipeline::extract::PaddleStructuredPage {
                 number: 2,
+                markdown: String::new(),
+                source_text_chars: None,
+                width: None,
+                height: None,
                 blocks: vec![
                     crate::pipeline::extract::PaddleStructuredBlock {
                         block_id: "paddle-page-0002-block-0001".to_string(),
                         role: "page_header".to_string(),
+                        block_label: String::new(),
                         markdown: "Running title".to_string(),
                         text: "Running title".to_string(),
                         boundary: Some("top".to_string()),
                         note_marker: None,
+                        order: Some(1),
+                        bbox: Vec::new(),
+                        polygon: Vec::new(),
+                        confidence: None,
+                        asset_files: Vec::new(),
+                        raw: serde_json::Value::Null,
                     },
                     crate::pipeline::extract::PaddleStructuredBlock {
                         block_id: "paddle-page-0002-block-0003".to_string(),
                         role: "possible_footnote".to_string(),
+                        block_label: String::new(),
                         markdown: "2 A qualification with *source emphasis*.".to_string(),
                         text: "2 A qualification with source emphasis.".to_string(),
                         boundary: Some("bottom".to_string()),
                         note_marker: Some("2".to_string()),
+                        order: Some(2),
+                        bbox: Vec::new(),
+                        polygon: Vec::new(),
+                        confidence: None,
+                        asset_files: Vec::new(),
+                        raw: serde_json::Value::Null,
                     },
                 ],
             }],
@@ -2189,6 +2405,112 @@ mod tests {
         assert_eq!(
             representation.content["markdown"],
             "2 A qualification with *source emphasis*."
+        );
+    }
+
+    #[test]
+    fn full_paddle_structure_preserves_layout_semantics_and_merges_formula_numbers() {
+        let mut bundle = build(
+            &extraction("<!-- PAGE 1 -->\n# Results\n\nA table follows."),
+            tempfile::tempdir().unwrap().path(),
+        )
+        .unwrap()
+        .bundle;
+        let block = |id: &str, label: &str, markdown: &str, order: u32, confidence: f32| {
+            crate::pipeline::extract::PaddleStructuredBlock {
+                block_id: id.to_string(),
+                role: label.to_string(),
+                block_label: label.to_string(),
+                markdown: markdown.to_string(),
+                text: markdown.trim_start_matches('#').trim().to_string(),
+                boundary: None,
+                note_marker: None,
+                order: Some(order),
+                bbox: vec![10.0, order as f64 * 20.0, 500.0, order as f64 * 20.0 + 18.0],
+                polygon: Vec::new(),
+                confidence: Some(confidence),
+                asset_files: Vec::new(),
+                raw: serde_json::json!({ "block_order": order }),
+            }
+        };
+        let structure = crate::pipeline::extract::PaddleStructure {
+            schema_version: 2,
+            parser: "paddleocr-vl-full".to_string(),
+            parser_version: "3.7.0".to_string(),
+            settings: serde_json::json!({ "merge_tables": true, "relevel_titles": true }),
+            quality_notes: Vec::new(),
+            pages: vec![crate::pipeline::extract::PaddleStructuredPage {
+                number: 1,
+                markdown: "# Results\n\n## Baseline\n\n| x | y |".to_string(),
+                source_text_chars: None,
+                width: Some(1200),
+                height: Some(1600),
+                blocks: vec![
+                    block("title", "doc_title", "# Results", 1, 0.98),
+                    block("subtitle", "paragraph_title", "## Baseline", 2, 0.94),
+                    block("table", "table", "| x | y |\n|---|---|\n|1|2|", 3, 0.91),
+                    block("formula", "formula", r"$$y=\beta x$$", 4, 0.89),
+                    block("formula-number", "formula_number", "(1)", 5, 0.96),
+                    block("caption", "vision_footnote", "Figure 1. Fit", 6, 0.87),
+                    block("orphan-number", "formula_number", "(99)", 7, 0.82),
+                    block("prose", "text", "Not an equation", 8, 0.90),
+                    block("leading-number", "formula_number", r"$[A.2]$", 9, 0.95),
+                    block("formula-2", "display_formula", r"$$z=\gamma x$$", 10, 0.88),
+                ],
+            }],
+        };
+        add_paddle_structured_nodes(&mut bundle, &structure);
+
+        let title = bundle
+            .nodes
+            .iter()
+            .find(|node| node.text == "Results" && node.provenance.method == "paddleocr-vl-full")
+            .unwrap();
+        let subtitle = bundle
+            .nodes
+            .iter()
+            .find(|node| node.text == "Baseline" && node.provenance.method == "paddleocr-vl-full")
+            .unwrap();
+        let table = bundle
+            .nodes
+            .iter()
+            .find(|node| node.kind == "table")
+            .unwrap();
+        let equations: Vec<&DocumentNode> = bundle
+            .nodes
+            .iter()
+            .filter(|node| node.kind == "equation" && node.provenance.method == "paddleocr-vl-full")
+            .collect();
+        let equation = equations[0];
+        let caption = bundle
+            .nodes
+            .iter()
+            .find(|node| node.text == "Figure 1. Fit")
+            .unwrap();
+        assert_eq!(title.kind, "section");
+        assert_eq!(subtitle.parent_id.as_deref(), Some(title.id.as_str()));
+        assert_eq!(table.parent_id.as_deref(), Some(subtitle.id.as_str()));
+        assert_eq!(equations.len(), 2);
+        assert_eq!(equations[0].number.as_deref(), Some("1"));
+        assert_eq!(equations[1].number.as_deref(), Some("A.2"));
+        assert_eq!(equations[0].representations.len(), 2);
+        assert_eq!(equations[1].representations.len(), 2);
+        assert_eq!(
+            equations[0].representations[1].content["block_label"],
+            "formula_number"
+        );
+        assert!(bundle.nodes.iter().any(|node| {
+            node.kind == "text_block"
+                && node.text == "(99)"
+                && node.provenance.method == "paddleocr-vl-full"
+        }));
+        assert_eq!(equation.provenance.method, "paddleocr-vl-full");
+        assert_eq!(caption.kind, "caption");
+        assert_eq!(table.provenance.confidence, Some(0.91));
+        assert_eq!(table.representations[0].content["bbox"][0], 10.0);
+        assert_eq!(
+            table.representations[0].content["parser_settings"]["merge_tables"],
+            true
         );
     }
 

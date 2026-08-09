@@ -134,6 +134,17 @@ only after the user selects Install in Settings, are stored under
 - The managed Paddle engine downloads a pinned `llama.cpp` b9637 platform
   runtime, licensed under MIT, from the project's official GitHub release and
   verifies the release asset's published SHA-256.
+- The optional PaddleOCR-VL Full Parser downloads checksum-pinned uv 0.11.26
+  (MIT OR Apache-2.0), uses it to provision app-owned CPython 3.12 (Python
+  Software Foundation License), and installs exact top-level
+  `paddleocr==3.7.0` and `paddlepaddle==3.2.1` packages (Apache-2.0), including
+  PaddleOCR's document-parser dependencies and PP-DocLayoutV3 model files.
+  These components are stored in a private version directory and removed with
+  the Full Parser. The installer writes a `packages.txt` inventory and binds
+  its SHA-256 into `install.json` so the resolved wheel closure is auditable.
+  License metadata and notices supplied inside those installed distributions
+  remain with the private environment; they are not part of Pipeline's bundled
+  Cargo/npm/Poppler SBOM.
 
 Operating-system frameworks (for example WebView2, WebKit, and macOS system
 frameworks) are not redistributed in Pipeline's resource bundle and are not

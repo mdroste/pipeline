@@ -41,13 +41,14 @@ function isWarn(entry: LogEntry): boolean {
 // Console line color: trust the backend `level` when meaningful, fall back to
 // prefix-sniffing for orchestration lines that carry no level.
 function logLineClass(entry: LogEntry): string {
-  if (isError(entry)) return "text-red-400";
-  if (isWarn(entry)) return "text-yellow-500";
-  if (entry.level === "stderr" || entry.line.startsWith("[stderr]")) return "text-orange-400";
-  if (entry.line.startsWith("Still waiting")) return "text-yellow-600";
+  if (isError(entry)) return "text-red-600 dark:text-red-400";
+  if (isWarn(entry)) return "text-amber-600 dark:text-yellow-400";
+  if (entry.level === "stderr" || entry.line.startsWith("[stderr]"))
+    return "text-orange-600 dark:text-orange-400";
+  if (entry.line.startsWith("Still waiting")) return "text-amber-700 dark:text-yellow-500";
   if (entry.level === "stdout" || entry.line.startsWith("$") || entry.line.startsWith("Wrote"))
-    return "text-gray-500";
-  return "text-gray-400";
+    return "text-gray-600 dark:text-gray-400";
+  return "text-gray-700 dark:text-gray-300";
 }
 
 function fmtClock(ms: number): string {
@@ -151,7 +152,7 @@ function requestText(request: LlmRequestDetails): string {
 function TruncatedPreviewBadge({ truncated }: { truncated?: boolean }) {
   if (!truncated) return null;
   return (
-    <span className="rounded bg-amber-900/50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
       Preview truncated
     </span>
   );
@@ -184,31 +185,34 @@ function RequestDetails({
     request.shared_context_truncated;
 
   return (
-    <div className="mb-2 rounded border border-gray-700 bg-gray-800/80 text-gray-300">
+    <div className="mb-2 rounded-lg border border-gray-200 bg-gray-50 text-gray-700 shadow-sm dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-300 dark:shadow-none">
       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 px-3 py-2 text-xs">
-        <span className="text-gray-500">Provider</span>
+        <span className="text-gray-500 dark:text-gray-400">Provider</span>
         <span>
           {request.provider_label} ({request.provider}) · {transport}
           {request.local_endpoint ? ` · ${request.local_endpoint}` : ""}
         </span>
-        <span className="text-gray-500">Model</span>
+        <span className="text-gray-500 dark:text-gray-400">Model</span>
         <span>
-          {request.model} <span className="text-gray-500">({request.model_policy})</span>
+          {request.model}{" "}
+          <span className="text-gray-500 dark:text-gray-400">({request.model_policy})</span>
         </span>
-        <span className="text-gray-500">Settings</span>
+        <span className="text-gray-500 dark:text-gray-400">Settings</span>
         <span>
           effort {request.effort} · tools {toolText} · timeout {fmtCount(request.timeout_secs)}s ·{" "}
           {outputLimit}
         </span>
-        <span className="text-gray-500">Context</span>
+        <span className="text-gray-500 dark:text-gray-400">Context</span>
         <span>{access}</span>
       </div>
 
-      <div className="border-t border-gray-700">
+      <div className="border-t border-gray-200 dark:border-gray-800">
         <button
           onClick={() => setShowPrompt((value) => !value)}
           className="flex w-full cursor-pointer select-none items-center gap-2 px-3 py-1.5 text-left
-                     text-gray-400 hover:text-gray-200"
+                     text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-400
+                     dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
         >
           <span>
             {showPrompt ? "Hide" : "View"} prompt ({fmtCount(request.prompt_chars)} task characters)
@@ -216,23 +220,23 @@ function RequestDetails({
           {!showPrompt && <TruncatedPreviewBadge truncated={Boolean(hasTruncatedPreview)} />}
         </button>
         {showPrompt && (
-          <div className="border-t border-gray-700 px-3 py-2">
+          <div className="border-t border-gray-200 px-3 py-2 dark:border-gray-800">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-gray-500">
+              <span className="text-gray-500 dark:text-gray-400">
                 System, shared context, and task prompt are shown separately in dispatch order.
                 {hasTruncatedPreview &&
                   " Long fields show bounded previews; Copy prompt copies only the visible preview."}
               </span>
               <button
                 onClick={() => void copyText(requestText(request))}
-                className="rounded border border-gray-600 px-1.5 py-0.5 text-gray-300 hover:bg-gray-700 hover:text-gray-100"
+                className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
               >
                 Copy prompt
               </button>
             </div>
             {request.system_prompt && (
               <section className="mb-3">
-                <div className="mb-1 flex items-center gap-2 text-gray-500">
+                <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
                   <span>
                     System prompt
                     {request.system_prompt_chars !== undefined
@@ -241,26 +245,26 @@ function RequestDetails({
                   </span>
                   <TruncatedPreviewBadge truncated={request.system_prompt_truncated} />
                 </div>
-                <pre className="whitespace-pre-wrap text-gray-300">{request.system_prompt}</pre>
+                <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">{request.system_prompt}</pre>
               </section>
             )}
             {request.shared_context && (
               <section className="mb-3">
-                <div className="mb-1 flex items-center gap-2 text-gray-500">
+                <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
                   <span>
                     Shared context ({fmtCount(request.shared_context_chars)} characters)
                   </span>
                   <TruncatedPreviewBadge truncated={request.shared_context_truncated} />
                 </div>
-                <pre className="whitespace-pre-wrap text-gray-300">{request.shared_context}</pre>
+                <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">{request.shared_context}</pre>
               </section>
             )}
             <section>
-              <div className="mb-1 flex items-center gap-2 text-gray-500">
+              <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
                 <span>Task prompt ({fmtCount(request.prompt_chars)} characters)</span>
                 <TruncatedPreviewBadge truncated={request.prompt_truncated} />
               </div>
-              <pre className="whitespace-pre-wrap text-gray-300">{request.prompt}</pre>
+              <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">{request.prompt}</pre>
             </section>
           </div>
         )}
@@ -269,26 +273,26 @@ function RequestDetails({
       {(request.working_directory ||
         request.read_directories.length > 0 ||
         request.write_directory) && (
-        <details className="border-t border-gray-700">
-          <summary className="cursor-pointer select-none px-3 py-1.5 text-gray-400 hover:text-gray-200">
+        <details className="border-t border-gray-200 dark:border-gray-800">
+          <summary className="cursor-pointer select-none px-3 py-1.5 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-400 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200">
             View execution paths
           </summary>
-          <div className="border-t border-gray-700 px-3 py-2 text-gray-400">
+          <div className="border-t border-gray-200 px-3 py-2 text-gray-600 dark:border-gray-800 dark:text-gray-400">
             {request.working_directory && (
               <div>
-                <span className="text-gray-500">Working directory: </span>
+                <span className="text-gray-500 dark:text-gray-400">Working directory: </span>
                 {request.working_directory}
               </div>
             )}
             {request.read_directories.map((path) => (
               <div key={path}>
-                <span className="text-gray-500">Read root: </span>
+                <span className="text-gray-500 dark:text-gray-400">Read root: </span>
                 {path}
               </div>
             ))}
             {request.write_directory && (
               <div>
-                <span className="text-gray-500">Write root: </span>
+                <span className="text-gray-500 dark:text-gray-400">Write root: </span>
                 {request.write_directory}
               </div>
             )}
@@ -496,7 +500,8 @@ export default function Console({ logs, usage }: Props) {
 
   return (
     <div
-      className="relative shrink-0 border-t border-gray-300 dark:border-gray-700 bg-gray-900 flex flex-col"
+      data-testid="console-panel"
+      className="console-panel relative flex shrink-0 flex-col border-t border-gray-200 bg-white text-gray-700 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-300"
       style={{ height: open ? `${height}px` : undefined }}
     >
       {open && (
@@ -516,11 +521,11 @@ export default function Console({ logs, usage }: Props) {
           <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-transparent transition-colors group-hover:bg-blue-400 group-focus:bg-blue-400 group-active:bg-blue-500" />
         </div>
       )}
-      <div className="flex items-center justify-between px-4 py-1.5 bg-gray-800 text-gray-400 text-xs font-mono shrink-0 gap-3">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-gray-200 bg-gray-50 px-4 py-1.5 font-mono text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <button
             onClick={() => setOpen(!open)}
-            className="flex items-center gap-1.5 hover:text-gray-200 transition-colors cursor-pointer select-none shrink-0"
+            className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-sm transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-200"
           >
             <span>{open ? "▼" : "▲"}</span>
             <span>Console</span>
@@ -537,7 +542,7 @@ export default function Console({ logs, usage }: Props) {
                   scrollRef.current?.scrollTo?.({ top: 0 });
                 }
               }}
-              className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 max-w-[22rem] cursor-pointer"
+              className="min-w-40 max-w-[22rem] flex-1 cursor-pointer rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300"
               title="Show a single headless session's log, or all of them"
             >
               <option value="master">All sessions</option>
@@ -575,7 +580,7 @@ export default function Console({ logs, usage }: Props) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search…"
-                className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 w-28 focus:w-40 transition-all focus:outline-none focus:ring-1 focus:ring-gray-500"
+                className="w-28 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-700 transition-all placeholder:text-gray-400 focus:w-40 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300 dark:placeholder:text-gray-600 dark:focus:ring-gray-500"
               />
               {/* Level filter chips */}
               <div className="flex items-center gap-0.5 shrink-0">
@@ -585,8 +590,8 @@ export default function Console({ logs, usage }: Props) {
                     onClick={() => setLevel(lv)}
                     className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
                       level === lv
-                        ? "bg-gray-600 text-gray-100"
-                        : "text-gray-400 hover:text-gray-200"
+                        ? "bg-gray-700 text-white dark:bg-gray-600 dark:text-gray-100"
+                        : "text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
                     }`}
                     title={
                       lv === "all" ? "All lines" : lv === "warn" ? "Warnings + errors" : "Errors only"
@@ -600,35 +605,35 @@ export default function Console({ logs, usage }: Props) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
           {saveError && (
             <span
               role="alert"
               title={saveError}
-              className="max-w-64 truncate text-red-400"
+              className="max-w-64 truncate text-red-600 dark:text-red-400"
             >
               {saveError}
             </span>
           )}
           {hasReportedUsage(usage.total) && (
             <span
-              className="text-gray-500"
+              className="text-gray-500 dark:text-gray-400"
               aria-label={usageDescription(usage.total)}
               title={usageDescription(usage.total)}
               tabIndex={0}
             >
               {fmtTokens(usage.total.input)} logical input ={" "}
-              <span className="text-gray-400">
+              <span className="text-gray-600 dark:text-gray-300">
                 {fmtTokens(freshInputTokens(usage.total))} fresh
               </span>
               {usage.total.cached > 0 && (
-                <span className="text-green-500">
+                <span className="text-emerald-600 dark:text-green-500">
                   {" "}
                   + {fmtTokens(usage.total.cached)} cache read
                 </span>
               )}
               {usage.total.cacheWrite > 0 && (
-                <span className="text-blue-400">
+                <span className="text-blue-600 dark:text-blue-400">
                   {" "}
                   + {fmtTokens(usage.total.cacheWrite)} cache write
                 </span>
@@ -636,7 +641,7 @@ export default function Console({ logs, usage }: Props) {
               {" · "}
               {fmtTokens(usage.total.output)} output
               {reportedActivity(usage.total) && (
-                <span className="text-violet-400">
+                <span className="text-violet-600 dark:text-violet-400">
                   {" · "}
                   {reportedActivity(usage.total)}
                 </span>
@@ -646,7 +651,7 @@ export default function Console({ logs, usage }: Props) {
           {errorCount > 0 && (
             <button
               onClick={jumpToFirstError}
-              className="text-red-400 hover:text-red-300 transition-colors cursor-pointer"
+              className="cursor-pointer text-red-600 transition-colors hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 dark:text-red-400 dark:hover:text-red-300"
               title="Scroll to the first error"
             >
               {errorCount} {errorCount === 1 ? "error" : "errors"}
@@ -656,8 +661,10 @@ export default function Console({ logs, usage }: Props) {
           {open && (
             <button
               onClick={() => setShowTimestamps((v) => !v)}
-              className={`border border-gray-700 rounded px-1.5 py-0.5 text-xs transition-colors cursor-pointer ${
-                showTimestamps ? "bg-gray-600 text-gray-100" : "text-gray-300 hover:bg-gray-700"
+              className={`cursor-pointer rounded border border-gray-300 px-1.5 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 dark:border-gray-700 ${
+                showTimestamps
+                  ? "bg-gray-700 text-white dark:bg-gray-600 dark:text-gray-100"
+                  : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
               }`}
               title="Toggle timestamps"
             >
@@ -667,7 +674,7 @@ export default function Console({ logs, usage }: Props) {
           <button
             onClick={copyAll}
             disabled={visibleLogs.length === 0}
-            className="border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default"
+            className="cursor-pointer rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 disabled:cursor-default disabled:opacity-40 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
             title={activeSession === "master" ? "Copy all shown lines" : "Copy this session's lines"}
           >
             {copied ? "Copied ✓" : "Copy"}
@@ -675,7 +682,7 @@ export default function Console({ logs, usage }: Props) {
           <button
             onClick={saveToFile}
             disabled={visibleLogs.length === 0}
-            className="border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 hover:bg-gray-700 hover:text-gray-100 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default"
+            className="cursor-pointer rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 disabled:cursor-default disabled:opacity-40 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
             title="Save shown lines to a file"
           >
             {saved ? "Saved ✓" : "Save"}
@@ -700,12 +707,12 @@ export default function Console({ logs, usage }: Props) {
                 className={`group flex gap-2 ${logLineClass(entry)}`}
               >
                 {showTimestamps && (
-                  <span className="text-gray-600 shrink-0 select-none">{fmtClock(entry.t)}</span>
+                  <span className="shrink-0 select-none text-gray-400 dark:text-gray-600">{fmtClock(entry.t)}</span>
                 )}
                 <span className="flex-1 min-w-0">{entry.line}</span>
                 <button
                   onClick={() => copyText(entry.line)}
-                  className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-gray-200 transition-opacity shrink-0 select-none"
+                  className="shrink-0 select-none text-gray-400 opacity-0 transition-opacity hover:text-gray-900 focus:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 group-hover:opacity-100 dark:text-gray-500 dark:hover:text-gray-200"
                   title="Copy this line"
                 >
                   ⧉
@@ -717,7 +724,7 @@ export default function Console({ logs, usage }: Props) {
           {!follow && (
             <button
               onClick={() => setFollow(true)}
-              className="sticky bottom-2 left-1/2 -translate-x-1/2 float-right mr-2 bg-gray-700 hover:bg-gray-600 text-gray-100 text-xs rounded-full px-3 py-1 shadow-lg transition-colors"
+              className="sticky bottom-2 left-1/2 float-right mr-2 -translate-x-1/2 rounded-full border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700 shadow-lg transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
               title="Resume following the log tail"
             >
               ↓ Follow

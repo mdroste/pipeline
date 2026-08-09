@@ -37,6 +37,16 @@ function makeSettings(): Settings {
     paddle_max_output_tokens: 4096,
     paddle_page_retries: 1,
     paddle_render_dpi: 150,
+    paddle_full_layout_detection: true,
+    paddle_full_layout_threshold: 0.5,
+    paddle_full_layout_nms: true,
+    paddle_full_layout_merge_bboxes_mode: "large",
+    paddle_full_merge_layout_blocks: true,
+    paddle_full_ocr_image_blocks: true,
+    paddle_full_format_block_content: true,
+    paddle_full_merge_tables: true,
+    paddle_full_relevel_titles: true,
+    paddle_full_show_formula_numbers: true,
     pdf_extraction_timeout_secs: 1800,
     reuse_pdf_extraction_cache: true,
     verbose_logging: false,
@@ -123,6 +133,11 @@ describe("SettingsPage", () => {
         name: /Local engine: PaddleOCR-VL 1\.6 Q8/,
       }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", {
+        name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("explains a legacy Marker selection and saves a supported replacement", async () => {
@@ -200,6 +215,42 @@ describe("SettingsPage", () => {
           paddle_flash_attention: "on",
           paddle_max_output_tokens: 8192,
           paddle_page_retries: 2,
+        },
+      }),
+    );
+  });
+
+  it("shows and saves full-parser structure controls", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+    await user.click(
+      screen.getByRole("radio", {
+        name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
+      }),
+    );
+    await user.selectOptions(
+      screen.getByLabelText("PaddleOCR-VL layout confidence threshold"),
+      "0.7",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("PaddleOCR-VL overlapping layout boxes"),
+      "union",
+    );
+    await user.click(screen.getByRole("switch", { name: "Merge tables across pages" }));
+    await user.click(screen.getByRole("switch", { name: "Retain formula numbers" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: {
+          ...makeSettings(),
+          pdf_extractor: "paddleocr-vl-full",
+          paddle_full_layout_threshold: 0.7,
+          paddle_full_layout_merge_bboxes_mode: "union",
+          paddle_full_merge_tables: false,
+          paddle_full_show_formula_numbers: false,
         },
       }),
     );

@@ -88,9 +88,14 @@ Pipeline bundles `pdftoppm` and `pdftotext` (from [poppler](https://poppler.free
 For higher-quality local extraction, Settings → PDF Extraction can optionally
 install [PaddleOCR-VL 1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF)
 Q8 with a native [llama.cpp](https://github.com/ggml-org/llama.cpp) runtime
-(about 1.9 GB). The managed engine runs locally and can be uninstalled from
-the same page. Its speed, memory, retry, and quality controls also live there,
-even when another extractor is selected globally.
+(about 1.9 GB). A second **Full Parser** install adds the official PaddleOCR
+layout client and PP-DocLayoutV3 for structured reading order, title
+hierarchy, formulas, cross-page tables, and figure regions. It reuses
+Pipeline's authenticated llama.cpp server. Users do not need to install
+LlamaCPP, Python, pip, Conda, or Docker: the optional parser provisions a
+private, versioned Python environment beneath `~/.pipeline/`. Both engines
+run locally and can be managed from the same page, along with layout, OCR,
+table/title, speed, memory, retry, and cache controls.
 
 Marker extraction is unavailable in Pipeline 1.0.1 because the Python
 dependency versions compatible with Pipeline's integration contain known

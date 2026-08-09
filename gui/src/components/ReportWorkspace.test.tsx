@@ -32,6 +32,9 @@ function makeReport(): PipelineReport {
         agent: "codex",
         provider: "codex",
         model: "gpt-5.6-sol",
+        input_tokens: 1_200,
+        output_tokens: 180,
+        cached_input_tokens: 900,
         raw_text: "Technical output.",
       },
     ],
@@ -46,7 +49,8 @@ describe("ReportWorkspace", () => {
     invoke.mockReset();
   });
 
-  it("presents the report as the default flagship view with provenance", async () => {
+  it("presents the report by default and keeps provenance in its own tab", async () => {
+    const user = userEvent.setup();
     render(
       <ReportWorkspace
         markdown={"# Referee Report\n\n## Summary\n\nText."}
@@ -77,14 +81,23 @@ describe("ReportWorkspace", () => {
       "report-workspace-tab-report",
     );
     expect(screen.getByText("Monetary Policy and Networks")).toBeVisible();
-    expect(
-      await screen.findByRole("region", { name: "Run provenance" }),
-    ).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Provenance" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+    expect(screen.queryByRole("region", { name: "Run provenance" })).not.toBeInTheDocument();
     expect(screen.getByText("gpt-5.6-sol")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Referee Report" })).toBeVisible();
+
+    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    expect(await screen.findByRole("region", { name: "Run provenance" })).toBeVisible();
+    expect(screen.getAllByText("1,200")[0]).toBeVisible();
+    expect(screen.getAllByText("180")[0]).toBeVisible();
+    expect(screen.getAllByText("900")[0]).toBeVisible();
   });
 
   it("carries rounded seconds into minutes instead of displaying 60 seconds", async () => {
+    const user = userEvent.setup();
     render(
       <ReportWorkspace
         markdown={"# Referee Report\n\nBody."}
@@ -93,7 +106,8 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    expect(await screen.findAllByText("2m 0s")).not.toHaveLength(0);
+    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    expect(screen.getAllByText("2m 0s")[0]).toBeVisible();
     expect(screen.queryByText("1m 60s")).not.toBeInTheDocument();
   });
 
@@ -142,8 +156,13 @@ describe("ReportWorkspace", () => {
     );
 
     const reportTab = screen.getByRole("tab", { name: "Report" });
+    const provenanceTab = screen.getByRole("tab", { name: "Provenance" });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
     reportTab.focus();
+
+    await user.keyboard("{ArrowRight}");
+    expect(provenanceTab).toHaveFocus();
+    expect(provenanceTab).toHaveAttribute("aria-selected", "true");
 
     await user.keyboard("{ArrowRight}");
     expect(sourcesTab).toHaveFocus();
@@ -156,8 +175,11 @@ describe("ReportWorkspace", () => {
     );
 
     await user.keyboard("{ArrowLeft}");
+    expect(provenanceTab).toHaveFocus();
+    expect(provenanceTab).toHaveAttribute("aria-selected", "true");
+
+    await user.keyboard("{ArrowLeft}");
     expect(reportTab).toHaveFocus();
-    expect(reportTab).toHaveAttribute("aria-selected", "true");
 
     await user.keyboard("{End}");
     expect(sourcesTab).toHaveFocus();
@@ -179,6 +201,7 @@ describe("ReportWorkspace", () => {
     );
 
     const reportTab = screen.getByRole("tab", { name: "Report" });
+    const provenanceTab = screen.getByRole("tab", { name: "Provenance" });
     const issuesTab = screen.getByRole("tab", { name: /Issues/ });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
     expect(issuesTab).toHaveAttribute("id", "report-workspace-tab-issues");
@@ -188,6 +211,10 @@ describe("ReportWorkspace", () => {
     );
 
     reportTab.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(provenanceTab).toHaveFocus();
+    expect(provenanceTab).toHaveAttribute("aria-selected", "true");
+
     await user.keyboard("{ArrowRight}");
     expect(issuesTab).toHaveFocus();
     expect(issuesTab).toHaveAttribute("aria-selected", "true");
@@ -225,6 +252,39 @@ describe("ReportWorkspace", () => {
       screen.getByRole("button", { name: "Export complete run" }),
     ).toBeVisible();
   });
+
+  it("preloads Sources metadata and the readable document for an open report", async () => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_run_manifest") {
+        return Promise.resolve({ run_id: "saved_run", artifacts: [] });
+      }
+      if (command === "read_artifact" && args?.relPath === "context/document.md") {
+        return Promise.resolve({
+          kind: "markdown",
+          bytes: 20,
+          text: "# Readable document",
+          base64: null,
+          truncated: false,
+          abs_path: "/runs/saved_run/context/document.md",
+        });
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    render(
+      <ReportWorkspace
+        runId="saved_run"
+        markdown="# Report"
+        report={makeReport()}
+      />,
+    );
+
+    expect(invoke).toHaveBeenCalledWith("get_run_manifest", { runId: "saved_run" });
+    expect(invoke).toHaveBeenCalledWith("read_artifact", {
+      runId: "saved_run",
+      relPath: "context/document.md",
+    });
+  });
 });
 
 describe("splitUnexpectedPreamble", () => {
@@ -250,6 +310,22 @@ describe("splitUnexpectedPreamble", () => {
     ].join("\n");
 
     expect(splitUnexpectedPreamble(markdown).clean).toBe("# Report\n\nBody.");
+  });
+
+  it("replaces the duplicated paper-title masthead with the report type", () => {
+    const markdown = [
+      "# Monetary Policy and Networks",
+      "",
+      "**Authors**: Ada Economist",
+      "",
+      "## Errors & Inconsistencies",
+      "",
+      "Finding.",
+    ].join("\n");
+
+    expect(
+      splitUnexpectedPreamble(markdown, "Monetary Policy and Networks").clean,
+    ).toBe("# Referee Report\n\n## Errors & Inconsistencies\n\nFinding.");
   });
 
   it("cleans legacy metadata and narration before the first report section", () => {

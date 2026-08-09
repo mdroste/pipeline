@@ -819,7 +819,8 @@ function ExtractionSection({
             {(
               [
                 ["llm", "LLM", "Your configured provider reads the PDF and extracts it to Markdown in bounded page ranges. Most faithful, but slower and potentially costly."],
-                ["paddleocr-vl", "Local engine: PaddleOCR-VL 1.6 Q8", "Optimized local extraction for text, equations, tables, and scans, with page retries and resumable checkpoints. About 1.9 GB."],
+                ["paddleocr-vl-full", "Local engine: PaddleOCR-VL 1.6 Full Parser", "Layout-aware extraction with reading order, structured blocks, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses the managed Q8 model."],
+                ["paddleocr-vl", "Local engine: PaddleOCR-VL 1.6 Q8 (fast)", "Direct page transcription with retries and resumable checkpoints. About 1.9 GB; less structure than the full parser."],
                 ["pdftotext", "pdftotext (basic)", "Fast, but equations are lost."],
               ] as const
             ).map(([value, label, desc]) => (
@@ -856,11 +857,11 @@ function ExtractionSection({
 
         <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 pl-4">
-              PaddleOCR-VL
+              PaddleOCR-VL recognition server
             </p>
             <div className="space-y-4 pl-4">
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Used whenever a workflow selects PaddleOCR-VL, regardless of the global extraction method above.
+                Used by both local PaddleOCR-VL modes. The full parser reuses this managed llama.cpp server; users do not install llama.cpp separately.
               </p>
               <Field label="Concurrent pages">
                 <select
@@ -992,14 +993,103 @@ function ExtractionSection({
               </Field>
 
               <p className="text-xs text-gray-500 dark:text-gray-400 rounded-md bg-gray-50 dark:bg-gray-800/50 p-3">
-                These controls change throughput and memory use, not the DocumentBundle format. Restart the extraction by starting a new run after saving.
+                These controls change recognition throughput and memory use. Restart extraction by starting a new run after saving.
               </p>
             </div>
         </div>
 
+        <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 pl-4">
+            Full parser structure
+          </p>
+          <div className="space-y-4 pl-4">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              These settings apply only to PaddleOCR-VL Full Parser and are included in its cache fingerprint.
+            </p>
+            <Toggle
+              label="Layout detection and reading order"
+              description="Run PP-DocLayoutV3 before recognition and retain semantic regions, coordinates, and reading order."
+              checked={settings.paddle_full_layout_detection}
+              onChange={(v) => setSettings({ ...settings, paddle_full_layout_detection: v })}
+            />
+            <Field label="Layout confidence threshold">
+              <select
+                aria-label="PaddleOCR-VL layout confidence threshold"
+                value={settings.paddle_full_layout_threshold}
+                onChange={(e) => setSettings({
+                  ...settings,
+                  paddle_full_layout_threshold: parseFloat(e.target.value),
+                })}
+                className={selectClass}
+              >
+                <option value={0.3}>0.30 — retain more regions</option>
+                <option value={0.5}>0.50 — recommended</option>
+                <option value={0.7}>0.70 — higher precision</option>
+              </select>
+            </Field>
+            <Toggle
+              label="Layout NMS"
+              description="Suppress overlapping layout detections before region recognition."
+              checked={settings.paddle_full_layout_nms}
+              onChange={(v) => setSettings({ ...settings, paddle_full_layout_nms: v })}
+            />
+            <Field label="Overlapping layout boxes">
+              <select
+                aria-label="PaddleOCR-VL overlapping layout boxes"
+                value={settings.paddle_full_layout_merge_bboxes_mode}
+                onChange={(e) => setSettings({
+                  ...settings,
+                  paddle_full_layout_merge_bboxes_mode: e.target.value,
+                })}
+                className={selectClass}
+              >
+                <option value="large">Keep outer region — recommended</option>
+                <option value="small">Keep inner region</option>
+                <option value="union">Keep both</option>
+              </select>
+            </Field>
+            <Toggle
+              label="Merge layout blocks"
+              description="Join cross-column or vertically staggered regions before producing reading-order blocks."
+              checked={settings.paddle_full_merge_layout_blocks}
+              onChange={(v) => setSettings({ ...settings, paddle_full_merge_layout_blocks: v })}
+            />
+            <Toggle
+              label="OCR text inside images"
+              description="Recognize labels and other text within image regions."
+              checked={settings.paddle_full_ocr_image_blocks}
+              onChange={(v) => setSettings({ ...settings, paddle_full_ocr_image_blocks: v })}
+            />
+            <Toggle
+              label="Format block content"
+              description="Retain block-level Markdown for tables, formulas, lists, and other semantic regions."
+              checked={settings.paddle_full_format_block_content}
+              onChange={(v) => setSettings({ ...settings, paddle_full_format_block_content: v })}
+            />
+            <Toggle
+              label="Merge tables across pages"
+              description="Reconstruct a continuing table as one logical table when page boundaries divide it."
+              checked={settings.paddle_full_merge_tables}
+              onChange={(v) => setSettings({ ...settings, paddle_full_merge_tables: v })}
+            />
+            <Toggle
+              label="Relevel titles"
+              description="Reconstruct a consistent multi-level heading hierarchy across the document."
+              checked={settings.paddle_full_relevel_titles}
+              onChange={(v) => setSettings({ ...settings, paddle_full_relevel_titles: v })}
+            />
+            <Toggle
+              label="Retain formula numbers"
+              description="Keep equation numbers in the Markdown and structured formula evidence."
+              checked={settings.paddle_full_show_formula_numbers}
+              onChange={(v) => setSettings({ ...settings, paddle_full_show_formula_numbers: v })}
+            />
+          </div>
+        </div>
+
         <Toggle
           label="Reuse verified extraction cache"
-          description="Reuse exact source-and-settings matches. Paddle resumes raw page checkpoints and rebuilds structured footnote and margin roles; verified LLM transcriptions can be reused without another provider call."
+          description="Reuse exact source-and-settings matches. Fast Paddle resumes verified page checkpoints; Full Parser reuses its validated structure and image cache; verified LLM transcriptions avoid another provider call."
           checked={settings.reuse_pdf_extraction_cache}
           onChange={(v) =>
             setSettings({ ...settings, reuse_pdf_extraction_cache: v })

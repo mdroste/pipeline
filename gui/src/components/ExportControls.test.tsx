@@ -100,7 +100,28 @@ describe("ExportControls", () => {
     render(<ExportControls markdown="# report" />);
     await userEvent.setup().click(screen.getByRole("button", { name: "Save PDF" }));
 
-    expect(invoke).toHaveBeenCalledWith("print_report_html", { markdown: "# report" });
+    expect(invoke).toHaveBeenCalledWith("print_report_html", {
+      markdown: "# report",
+      provenanceMarkdown: null,
+    });
+  });
+
+  it("uses the clean report body and provenance masthead for PDF", async () => {
+    invoke.mockResolvedValueOnce(undefined);
+
+    render(
+      <ExportControls
+        markdown="# raw report"
+        pdfMarkdown="## First issue"
+        provenanceMarkdown={"# Referee report\n\n## Run provenance"}
+      />,
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save PDF" }));
+
+    expect(invoke).toHaveBeenCalledWith("print_report_html", {
+      markdown: "## First issue",
+      provenanceMarkdown: "# Referee report\n\n## Run provenance",
+    });
   });
 
   it("alerts with the backend error message on save failure", async () => {

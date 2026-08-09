@@ -35,11 +35,10 @@ function HelpContent() {
     <div className="space-y-8">
       {/* Overview */}
       <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-        Pipeline chains LLM prompts into multi-step workflows. Each step is a
-        prompt. Steps run in parallel or one after another, and later steps can
-        build on earlier results. The built-in workflows review academic papers
-        in multiple passes, but you can write workflows for any document, a
-        folder of files, or a task with no input at all.
+        Pipeline runs a set of AI-assisted steps as a workflow. A step can
+        examine part of an input, check a specific kind of problem, or combine
+        earlier findings. You can use a built-in workflow or create one for a
+        document, a folder of files, or a task that needs no input.
       </p>
 
       {/* Pipeline stages */}
@@ -47,23 +46,23 @@ function HelpContent() {
         <div className="grid gap-3">
           <StageCard
             number="1"
-            title="Read the input"
-            description="Documents are converted to text. Folders are indexed so steps can open individual files as needed. Some workflows take no input."
+            title="Choose a workflow and input"
+            description="On New run, select a workflow and the document or folder it should examine. A workflow can also run from its instructions alone."
           />
           <StageCard
             number="2"
-            title="Build an orientation map (optional)"
-            description="Before the first step, one LLM call catalogs the input. For a paper, this lists the sections, results, tables, and notation. Steps use the map to stay grounded — for example, to avoid flagging something that is covered in the appendix. You can turn this off in the profile."
+            title="Prepare the material"
+            description="Pipeline extracts document text or inventories a folder. If the workflow uses an orientation map, it also creates a short guide to the material so later steps can find relevant sections, files, tables, and other details."
           />
           <StageCard
             number="3"
-            title="Run the steps"
-            description="The scheduler starts steps when their declared dependencies are ready. Independent parallel steps can run concurrently with separate contexts; sequential steps run alone and can receive only the upstream artifacts selected in their access settings."
+            title="Run the workflow"
+            description="Pipeline starts each step after its prerequisites finish. Steps that do not depend on one another can run at the same time. Each step receives only the input and earlier results allowed by the workflow."
           />
           <StageCard
             number="4"
-            title="Merge and consolidate"
-            description="If a step ran on more than one model, such as Claude and Gemini, Pipeline merges the outputs into one. A final step usually removes duplicate findings and sorts the rest by severity."
+            title="Review the result"
+            description="Later steps can combine overlapping findings into one report. When a workflow produces structured issues, you can accept, reject, or annotate them. The Sources tab contains the material saved with the run."
           />
         </div>
       </Section>
@@ -72,16 +71,17 @@ function HelpContent() {
       <Section title="Profiles">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
           A profile saves a complete workflow: its steps, prompts, and settings.
-          Switch profiles from the sidebar. Built in:
+          Choose a profile on the New run screen. Pipeline includes these
+          profiles:
         </p>
         <div className="grid gap-2">
           <ProfileCard
             name="Paper Review (Full)"
-            description="Five parallel review steps on a paper, then consolidation and validation. The default."
+            description="Five focused reviews of a paper, followed by a consolidated report. It also includes an optional validation step."
           />
           <ProfileCard
             name="Paper Review (Quick)"
-            description="Two review steps and consolidation. Fast."
+            description="Two broad review passes followed by a consolidated report."
           />
           <ProfileCard
             name="Codebase Review"
@@ -93,95 +93,112 @@ function HelpContent() {
           />
           <ProfileCard
             name="Grant Proposal Review"
-            description="Panel-style review of a proposal: aims and novelty (with web search), feasibility, readability, and internal consistency."
+            description="Reviews a proposal's aims and novelty, feasibility, readability, and internal consistency. The aims step can search the web."
           />
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-          You can create your own profiles for any task, and export them to
-          share with others.
+          You can also create, duplicate, import, and export profiles.
         </p>
       </Section>
 
       {/* Customization */}
       <Section title="Customize a workflow">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
-          Click <span className="font-medium text-gray-700">Customize pipeline steps</span> in
-          the sidebar to open the editor. From there you can:
+          Open <span className="font-medium text-gray-700 dark:text-gray-300">Workflows</span> from
+          the left navigation to edit the active profile. You can:
         </p>
         <ul className="space-y-1.5">
-          <CheckItem text="Edit any step's prompt, or add new steps" />
-          <CheckItem text="Make a step parallel or sequential, and reorder steps by dragging" />
-          <CheckItem text="Choose the input artifacts a step can read, enable WebSearch where supported, or select its model" />
-          <CheckItem text="Run one step on several models and merge the results" />
-          <CheckItem text="Set the profile's input type and PDF extraction method" />
-          <CheckItem text="Export and import steps, profiles, or a full backup" />
+          <CheckItem text="Add, remove, reorder, or rewrite steps" />
+          <CheckItem text="Choose which steps must finish first and which earlier results a step may use" />
+          <CheckItem text="Choose a provider and model, or run the same step with several providers" />
+          <CheckItem text="Allow web search on supported providers" />
+          <CheckItem text="Add conditions, repeated file checks, named inputs, and values entered before a run" />
+          <CheckItem text="Set the input type and PDF extraction method" />
+          <CheckItem text="Import or export a step, a profile, or all profiles and settings" />
         </ul>
+      </Section>
+
+      <Section title="Run several documents">
+        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+          Open <span className="font-medium text-gray-700 dark:text-gray-300">Batch</span> to
+          apply the active document workflow to a list of files, one at a time.
+          You can add individual files, add every supported document in a folder,
+          or watch a folder and run new files as they arrive. Batch and folder
+          watching are available for document-input workflows.
+        </p>
       </Section>
 
       {/* Text extraction */}
       <Section title="Document extraction">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
-          Pipeline converts document inputs to text before the first step runs.
-          Available methods:
+          Pipeline prepares a text version of each document before the workflow
+          begins. LaTeX and Word files are read directly. For PDFs, choose a
+          method in the workflow or inherit the choice from Settings.
         </p>
         <div className="space-y-2">
           <TierCard
-            tier="Best"
+            tier="Source"
             tierColor="text-green-700 bg-green-50"
             title="LaTeX source"
-            description="Select a .tex file to get exact equations and tables. Files referenced with \input{} are included automatically."
+            description="Reads a .tex file directly, including safe local files referenced with \input{}. If a matching PDF is available, Pipeline also keeps its page images."
           />
           <TierCard
-            tier="Native"
+            tier="Built in"
             tierColor="text-green-700 bg-green-50"
             title="Word (.docx)"
-            description="Reads OOXML directly, retaining Word equation markup, table grids, and embedded figure images."
+            description="Reads the Word file directly and keeps equations, table structure, and embedded images."
           />
           <TierCard
-            tier="Configured"
+            tier="Provider"
             tierColor="text-blue-700 bg-blue-50"
-            title="LLM extraction"
-            description="The model transcribes bounded page ranges, preserves original typos, and must pass page-completeness checks before review."
+            title="LLM PDF extraction"
+            description="Uses the active provider to transcribe the PDF in page ranges. This adds model calls, but usually preserves equations and layout better than plain-text extraction. Pipeline stops if its page checks fail."
           />
           <TierCard
-            tier="Optional local"
+            tier="Local add-on"
             tierColor="text-blue-700 bg-blue-50"
-            title="PaddleOCR-VL"
-            description="Page-parallel local OCR with full context per worker, targeted retries, and resumable checkpoints."
+            title="PaddleOCR-VL Full Parser"
+            description="Uses the optional local engine to recover reading order, document regions, headings, formulas, and tables. Install and configure it under Settings → PDF Extraction."
           />
           <TierCard
-            tier="Explicit only"
+            tier="Local add-on"
+            tierColor="text-blue-700 bg-blue-50"
+            title="PaddleOCR-VL Fast"
+            description="Uses the same managed local model for faster page transcription, with fewer structural details than the Full Parser."
+          />
+          <TierCard
+            tier="Built in"
             tierColor="text-amber-700 bg-amber-50"
             title="pdftotext"
-            description="Available only when selected directly. Plain text only; equations are not reliable."
+            description="Extracts plain text locally with bundled PDF tools. It is quick and works well for simple text, but equations and complex layouts may not survive."
           />
         </div>
       </Section>
 
       {/* Results */}
-      <Section title="Results and revisions">
+      <Section title="Results, history, and exports">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-          Every run is saved to <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">~/.pipeline/runs/</code>,
-          including a readable document, canonical DocumentBundle, and visual page and figure assets that can be inspected in the run viewer.
-          It also retains the report and any files the steps produced. Browse them
-          in the artifact explorer after the run finishes. To compare revised
-          papers automatically, enable revision reconciliation in Settings:
-          Pipeline finds the earlier report for the same paper and lists which
-          issues were addressed, which remain, and which are new.
+          Finished runs open in a workspace with Report, Issues, and Sources
+          tabs. You can save the report as Markdown or PDF, or export the whole
+          run with its reports, source material, page images, figures, and logs.
+          History lets you rename, tag, delete, resume, rerun, and compare saved
+          runs. Automatic revision reconciliation in Settings can add a model-written
+          comparison when Pipeline finds an earlier run for the same document.
         </p>
       </Section>
 
       <Section title="Data and privacy">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-          A step can receive the source material and other artifacts explicitly granted by
-          its workflow context. Unless the step uses a local model, that material may be sent
-          to the configured model provider through its CLI or API. Steps with WebSearch can
-          also send search queries to an external service. Pipeline stores run records and
-          artifacts locally under{" "}
+          Each step receives only the source material and earlier results allowed
+          by its workflow. When you use a cloud provider, that material is sent
+          through the provider's CLI or API and is subject to the provider's
+          account, plan, and data-use terms. If a workflow enables web search and
+          the provider supports it, search queries are also sent to an external
+          service. Pipeline stores run records and artifacts on this computer under{" "}
           <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">
             ~/.pipeline/runs/
           </code>{" "}
-          until you delete them or apply a retention limit in Settings.
+          until you delete them or set a retention limit in Settings.
         </p>
       </Section>
 
@@ -189,16 +206,16 @@ function HelpContent() {
       <Section title="Requirements">
         <div className="space-y-2">
           <ReqCard
-            name="An LLM provider"
+            name="An AI provider"
             tag="Required"
             tagColor="text-red-700 bg-red-50"
-            description="Sign in to a supported Claude Code, Codex, or Gemini CLI, or enter a matching API key in Settings. CLI access may avoid a separate API key; provider account, plan, and usage terms still apply."
+            description="Sign in with the Claude Code, Codex, or Gemini CLI; add a supported API key; or connect an OpenAI-compatible local server. A CLI subscription can work without a separate API key. Use the status button in the lower-left corner to check setup."
           />
           <ReqCard
-            name="poppler (pdftoppm + pdftotext)"
-            tag="Bundled"
+            name="PDF tools"
+            tag="Included"
             tagColor="text-green-700 bg-green-50"
-            description="Included with Pipeline for page rendering and deterministic completeness checks. pdftotext extraction itself is used only when explicitly selected."
+            description="Pipeline includes the tools it needs to render PDF pages, check extraction completeness, and run pdftotext. There is nothing else to install."
           />
         </div>
       </Section>

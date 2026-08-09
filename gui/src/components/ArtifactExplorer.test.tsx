@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ArtifactExplorer from "./ArtifactExplorer";
 
@@ -19,8 +19,9 @@ const manifest = {
   artifacts: [
     { rel_path: "report.md", label: "Report", kind: "markdown", bytes: 100, sha256: "aa", group: "report" },
     { rel_path: "context/document_bundle.json", label: "Document bundle", kind: "json", bytes: 500, sha256: "ab", group: "document" },
+    { rel_path: "context/document.md", label: "Readable document", kind: "markdown", bytes: 700, sha256: "ac", group: "document" },
     { rel_path: "context/orientation.json", label: "Orientation map", kind: "json", bytes: 50, sha256: "bb", group: "context" },
-    { rel_path: "artifacts/figures/figure-1.png", label: "Figure 1 image", kind: "image", bytes: 500, sha256: "bd", group: "figures" },
+    { rel_path: "artifacts/figures/figure-1.png", label: "figure_1.png", kind: "image", bytes: 500, sha256: "bd", group: "figures" },
     { rel_path: "artifacts/01_technical.md", label: "Technical", kind: "markdown", bytes: 80, sha256: "cc", group: "step" },
     { rel_path: "artifacts/02_analysis.py", label: "Analysis script", kind: "code", bytes: 60, sha256: "dd", group: "step" },
     { rel_path: "artifacts/03_results.csv", label: "Results table", kind: "csv", bytes: 40, sha256: "ee", group: "step" },
@@ -96,7 +97,31 @@ describe("ArtifactExplorer", () => {
     });
   });
 
-  it("uses a searchable compact page browser and lets the artifact rail collapse", async () => {
+  it("uses the readable document preloaded by the report workspace", async () => {
+    const user = userEvent.setup();
+    const readable = textContent("markdown", "# Readable paper\n\nPrepared in the background.");
+    render(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        deferInitialArtifact
+        preload={{
+          runId: manifest.run_id,
+          manifest: Promise.resolve(manifest),
+          readableDocument: Promise.resolve(readable),
+        }}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Readable document" }));
+    expect(await screen.findByRole("heading", { name: "Readable paper" })).toBeVisible();
+    expect(invoke).not.toHaveBeenCalledWith("read_artifact", {
+      runId: manifest.run_id,
+      relPath: "context/document.md",
+    });
+  });
+
+  it("uses a compact direct page navigator and lets the artifact rail collapse", async () => {
     const user = userEvent.setup();
     mockBackend({
       "report.md": textContent("markdown", "# R"),
@@ -111,21 +136,22 @@ describe("ArtifactExplorer", () => {
     });
     render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
 
-    expect(await screen.findByRole("textbox", { name: "Search pages" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Page 1" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Page 1" }));
+    const pageInput = await screen.findByRole("textbox", { name: "Page number" });
+    expect(pageInput).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Search pages" })).not.toBeInTheDocument();
+    await user.type(pageInput, "1{enter}");
     expect(await screen.findByRole("img", { name: "Page 1" })).toBeVisible();
     expect(invoke).toHaveBeenCalledWith("read_page_artifact", {
       runId: manifest.run_id,
       page: 1,
     });
     await user.click(screen.getByRole("button", { name: "Hide artifact browser" }));
-    expect(screen.queryByRole("textbox", { name: "Search pages" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Page number" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show artifact browser" }));
-    expect(screen.getByRole("textbox", { name: "Search pages" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Page number" })).toBeVisible();
   });
 
-  it("materializes only one page-index window for long papers", async () => {
+  it("jumps directly through a long compact page index without materializing page buttons", async () => {
     const user = userEvent.setup();
     const longManifest = {
       ...manifest,
@@ -141,19 +167,25 @@ describe("ArtifactExplorer", () => {
       if (cmd === "read_artifact" && args?.relPath === "report.md") {
         return Promise.resolve(textContent("markdown", "# R"));
       }
+      if (cmd === "read_page_artifact" && args?.page === 26) {
+        return Promise.resolve({
+          kind: "image", bytes: 500, text: null, base64: "aGVsbG8=",
+          truncated: false, abs_path: "/runs/x/page-26.jpg",
+        });
+      }
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
 
-    expect(await screen.findByRole("button", { name: "Page 1" })).toBeVisible();
-    expect(
-      screen.getAllByRole("button", { name: /^Page \d+$/ }),
-    ).toHaveLength(25);
-    expect(screen.queryByRole("button", { name: "Page 26" })).not.toBeInTheDocument();
-
-    await user.selectOptions(screen.getByRole("combobox", { name: "Page range" }), "25");
-    expect(screen.getByRole("button", { name: "Page 26" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Page 1" })).not.toBeInTheDocument();
+    const pageInput = await screen.findByRole("textbox", { name: "Page number" });
+    expect(screen.queryByRole("button", { name: /^Page \d+$/ })).not.toBeInTheDocument();
+    await user.type(pageInput, "26{enter}");
+    expect(await screen.findByRole("img", { name: "Page 26" })).toBeVisible();
+    expect(pageInput).toHaveValue("26");
+    expect(invoke).toHaveBeenCalledWith("read_page_artifact", {
+      runId: manifest.run_id,
+      page: 26,
+    });
   });
 
   it("keeps legacy per-page manifest entries readable", async () => {
@@ -192,7 +224,7 @@ describe("ArtifactExplorer", () => {
     });
     render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
 
-    await user.click(await screen.findByRole("button", { name: "Page 1" }));
+    await user.type(await screen.findByRole("textbox", { name: "Page number" }), "1{enter}");
     expect(await screen.findByRole("img", { name: "Page 1" })).toBeVisible();
     expect(invoke).toHaveBeenCalledWith("read_artifact", {
       runId: manifest.run_id,
@@ -240,6 +272,28 @@ describe("ArtifactExplorer", () => {
           representations: [{ format: "orientation_summary", content: { what_it_shows: "Output falls." } }],
           provenance: { origin_id: "origin-primary", method: "marker", confidence: 0.9 },
         },
+        {
+          id: "equation-00003",
+          kind: "equation",
+          order: 3,
+          page: 1,
+          label: "Equation block on page 1",
+          text: "$$y=\\beta x$$",
+          asset_ids: [],
+          representations: [{ format: "paddle_block", content: { block_label: "formula" } }],
+          provenance: { origin_id: "origin-primary", method: "paddleocr-vl-full", confidence: 0.9 },
+        },
+        {
+          id: "equation-00004",
+          kind: "equation",
+          order: 4,
+          page: 1,
+          label: "Equation block on page 1",
+          text: "(1)",
+          asset_ids: [],
+          representations: [{ format: "paddle_block", content: { block_label: "formula_number" } }],
+          provenance: { origin_id: "origin-primary", method: "paddleocr-vl-full", confidence: 0.95 },
+        },
       ],
       assets: [
         {
@@ -281,7 +335,14 @@ describe("ArtifactExplorer", () => {
     expect(await screen.findByRole("heading", { name: "DocumentBundle inspection" })).toBeInTheDocument();
     expect(screen.getAllByText("Impulse responses after a monetary policy shock.").length).toBeGreaterThan(0);
     expect(screen.getByText("OCR confidence was low.")).toBeInTheDocument();
-    expect(screen.getAllByText("Figure 1 image").length).toBeGreaterThan(0);
+    const visualAssets = screen.getByRole("heading", { name: "Visual assets" }).closest("section");
+    expect(visualAssets).not.toBeNull();
+    expect(within(visualAssets!).getByText("figure_1.png")).toBeInTheDocument();
+    expect(within(visualAssets!).queryByText("Figure 1 image")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "equation (1)" })).toBeInTheDocument();
+    const equationLabel = screen.getByText("Equation block on page 1");
+    expect(screen.getAllByText("Equation block on page 1")).toHaveLength(1);
+    expect(within(equationLabel.closest("details")!).getByText("(1)")).toBeInTheDocument();
     // Page renders already have a paged browser in the artifact rail; the
     // bundle inspector must not duplicate hundreds of page cards.
     expect(screen.queryByText(/1200×1600 · image\/jpeg/)).not.toBeInTheDocument();

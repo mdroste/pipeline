@@ -112,7 +112,7 @@ export interface InputSlot {
 
 /** Per-profile extraction configuration. Parser tuning lives in global Settings. */
 export interface ExtractionConfig {
-  /** "" | "auto" | "llm" | "paddleocr-vl" | "pdftotext". "marker" is legacy/unavailable. */
+  /** "" | "auto" | "llm" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext". "marker" is legacy/unavailable. */
   method: string;
   /** "" or "document" | "folder" | "none". Empty = document. */
   input_mode?: string;
@@ -403,7 +403,7 @@ export interface Settings {
   gemini_model: string;
   gemini_cli_model_selection?: ModelSelection;
   gemini_api_model_selection?: ModelSelection;
-  /** "llm" | "auto" | "paddleocr-vl" | "pdftotext"; "marker" is legacy/unavailable. */
+  /** "llm" | "auto" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext"; "marker" is legacy/unavailable. */
   pdf_extractor: string;
   /** Retired Marker fields remain in the wire format for old settings files. */
   marker_disable_ocr: boolean;
@@ -426,6 +426,18 @@ export interface Settings {
   paddle_page_retries: number;
   /** Page render resolution used for local vision inference. */
   paddle_render_dpi: number;
+  /** Official full-parser layout and document-restructuring controls. */
+  paddle_full_layout_detection: boolean;
+  paddle_full_layout_threshold: number;
+  paddle_full_layout_nms: boolean;
+  /** "large" | "small" | "union". */
+  paddle_full_layout_merge_bboxes_mode: string;
+  paddle_full_merge_layout_blocks: boolean;
+  paddle_full_ocr_image_blocks: boolean;
+  paddle_full_format_block_content: boolean;
+  paddle_full_merge_tables: boolean;
+  paddle_full_relevel_titles: boolean;
+  paddle_full_show_formula_numbers: boolean;
   /** Wall-clock budget for the complete PDF extraction stage. */
   pdf_extraction_timeout_secs: number;
   /** Reuse versioned local extraction checkpoints. */
@@ -518,6 +530,8 @@ export interface EngineStatus {
   est_disk_mb: number;
   managed_stack_mb: number;
   installing: boolean;
+  available?: boolean;
+  unavailable_reason?: string;
 }
 
 export interface RetiredMarkerStatus {

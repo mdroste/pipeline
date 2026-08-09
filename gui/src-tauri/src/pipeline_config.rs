@@ -355,7 +355,8 @@ fn default_slot_mode() -> String {
 /// parser-specific tuning is centralized in global Settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtractionConfig {
-    /// "auto" | "llm" | "paddleocr-vl" | "pdftotext" | "" (= inherit global).
+    /// "auto" | "llm" | "paddleocr-vl" | "paddleocr-vl-full" |
+    /// "pdftotext" | "" (= inherit global).
     /// The retired "marker" value remains deserializable so users can repair
     /// profiles created before Pipeline 1.0.1; extraction rejects it.
     #[serde(default)]
@@ -2060,7 +2061,7 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
 
     if !matches!(
         profile.extraction.method.as_str(),
-        "" | "auto" | "llm" | "marker" | "paddleocr-vl" | "pdftotext"
+        "" | "auto" | "llm" | "marker" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext"
     ) {
         return Err(format!(
             "Invalid profile extraction method '{}'",
@@ -2771,6 +2772,20 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             current.paddle_max_output_tokens = imported_settings.paddle_max_output_tokens;
             current.paddle_page_retries = imported_settings.paddle_page_retries;
             current.paddle_render_dpi = imported_settings.paddle_render_dpi;
+            current.paddle_full_layout_detection = imported_settings.paddle_full_layout_detection;
+            current.paddle_full_layout_threshold = imported_settings.paddle_full_layout_threshold;
+            current.paddle_full_layout_nms = imported_settings.paddle_full_layout_nms;
+            current.paddle_full_layout_merge_bboxes_mode =
+                imported_settings.paddle_full_layout_merge_bboxes_mode;
+            current.paddle_full_merge_layout_blocks =
+                imported_settings.paddle_full_merge_layout_blocks;
+            current.paddle_full_ocr_image_blocks = imported_settings.paddle_full_ocr_image_blocks;
+            current.paddle_full_format_block_content =
+                imported_settings.paddle_full_format_block_content;
+            current.paddle_full_merge_tables = imported_settings.paddle_full_merge_tables;
+            current.paddle_full_relevel_titles = imported_settings.paddle_full_relevel_titles;
+            current.paddle_full_show_formula_numbers =
+                imported_settings.paddle_full_show_formula_numbers;
             current.pdf_extraction_timeout_secs = imported_settings.pdf_extraction_timeout_secs;
             current.reuse_pdf_extraction_cache = imported_settings.reuse_pdf_extraction_cache;
             current.verbose_logging = imported_settings.verbose_logging;

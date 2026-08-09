@@ -33,6 +33,27 @@ describe("BatchPanel profile semantics", () => {
     listen.mockResolvedValue(() => {});
   });
 
+  it("shows a preloaded active workflow while status synchronization continues", () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_batch_status" || command === "get_watch_status") {
+        return new Promise(() => {});
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    render(
+      <BatchPanel
+        onClose={vi.fn()}
+        onOpenRun={vi.fn()}
+        preloadedSetup={setup()}
+      />,
+    );
+
+    expect(screen.getByRole("textbox", { name: "Tone" })).toHaveValue("neutral");
+    expect(screen.queryByText("Loading active workflow…")).not.toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("get_execution_plan", expect.anything());
+  });
+
   it("collects and passes the full active profile options", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);

@@ -42,7 +42,8 @@ const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
 const AboutPage = lazy(() => import("./components/AboutPage"));
 const HistoryPage = lazy(() => import("./components/HistoryPage"));
-const BatchPanel = lazy(() => import("./components/BatchPanel"));
+const loadBatchPanel = () => import("./components/BatchPanel");
+const BatchPanel = lazy(loadBatchPanel);
 const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
 
 function App() {
@@ -92,6 +93,7 @@ function App() {
     useState<string | null>(null);
   const [runConfigLoading, setRunConfigLoading] = useState(true);
   const [runConfigError, setRunConfigError] = useState<string | null>(null);
+  const [batchSetup, setBatchSetup] = useState<ExecutionPlanEnvelope | null>(null);
   const [preparingRun, setPreparingRun] = useState(false);
   // Variables and extra input slots the active profile declares; both drive
   // the pre-run options modal.
@@ -115,6 +117,9 @@ function App() {
   useEffect(() => {
     invoke<boolean>("mark_smoke_ready").catch((error) => {
       console.warn("Startup readiness signal failed:", error);
+    });
+    void loadBatchPanel().catch((error) => {
+      console.warn("Batch workspace preload failed:", error);
     });
   }, []);
 
@@ -203,12 +208,14 @@ function App() {
         paperPath: selectedPaperPath ?? null,
       });
       if (request !== runConfigRequest.current) return null;
+      setBatchSetup(plan);
       const snapshot = applyRunProfile(plan);
       setDepsReport(plan.readiness);
       return snapshot;
     } catch (error) {
       if (request !== runConfigRequest.current) return null;
       const message = error instanceof Error ? error.message : String(error);
+      setBatchSetup(null);
       setRunConfigError(message);
       setDepsReport(null);
       setDepsError(message);
@@ -250,6 +257,7 @@ function App() {
       setSelectionKey((key) => key + 1);
     }
     setRunProfileConfigSnapshotId(null);
+    setBatchSetup(null);
     setRunConfigLoading(true);
     setConfigVersion((version) => version + 1);
   }, [inputMode]);
@@ -535,6 +543,7 @@ function App() {
               <BatchPanel
                 onClose={() => setPage("main")}
                 showClose={false}
+                preloadedSetup={batchSetup}
                 onOpenRun={(runId) => { setHistoryRunId(runId); setPage("history"); }}
               />
             ) : state.kind === "done" ? (
@@ -556,30 +565,30 @@ function App() {
                     <li className="py-5 sm:pr-5">
                       <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">01</span>
                       <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-                        {inputMode === "none" ? "Start" : "Select input"}
+                        {inputMode === "none" ? "Start" : "Choose an input"}
                       </p>
                       <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
                         {inputMode === "none"
                           ? "No source file is required for this workflow."
-                          : "Use a PDF, LaTeX file, Word document, or project directory."}
+                          : "Select a PDF, LaTeX or Word file, or a project folder."}
                       </p>
                     </li>
                     <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:px-5 dark:border-gray-800">
                       <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">02</span>
                       <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-                        Run a workflow
+                        Run the workflow
                       </p>
                       <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
-                        Prompts execute in parallel or in sequence.
+                        Steps run together when possible and in order when required.
                       </p>
                     </li>
                     <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:pl-5 dark:border-gray-800">
                       <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">03</span>
                       <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-                        Review report(s)
+                        Review the results
                       </p>
                       <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
-                        Findings converge in a single review.
+                        Read the report, inspect saved sources, and export the run.
                       </p>
                     </li>
                   </ol>

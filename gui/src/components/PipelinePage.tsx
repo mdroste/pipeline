@@ -1734,7 +1734,8 @@ const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   { value: "", label: "Inherit from global Settings", hint: "Use whatever PDF extractor is configured globally." },
   { value: "auto", label: "Auto", hint: "Try the global setting; same as inherit." },
   { value: "llm", label: "LLM", hint: "Bounded, page-verified transcription through the active provider. Slower, but preserves equations and original typos." },
-  { value: "paddleocr-vl", label: "Local engine: PaddleOCR-VL 1.6 Q8", hint: "Managed page-parallel extraction with retries and resumable checkpoints. Tune it in Settings → PDF Extraction." },
+  { value: "paddleocr-vl-full", label: "Local engine: PaddleOCR-VL 1.6 Full Parser", hint: "Official layout-aware client with structured regions, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses Pipeline's managed llama.cpp server." },
+  { value: "paddleocr-vl", label: "Local engine: PaddleOCR-VL 1.6 Q8 (fast)", hint: "Managed direct page transcription with retries and resumable checkpoints. Tune it in Settings → PDF Extraction." },
   { value: "pdftotext", label: "pdftotext (basic)", hint: "Fast, but equations are lost. Uses bundled poppler." },
 ];
 

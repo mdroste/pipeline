@@ -4,12 +4,26 @@ import ExportControls from "./ExportControls";
 import { detectReportIssues } from "../lib/issues";
 import { renderSurvey } from "../lib/surveyMarkdown";
 import {
+  buildRunProvenance,
+  formatRunDate,
+  formatRunDuration,
+  formatTokens,
+  provenanceMarkdown as renderProvenanceMarkdown,
+  type RunProvenance,
+} from "../lib/runProvenance";
+import {
   isPaperOrientation,
   type PipelineReport,
   type RunSummary,
 } from "../lib/types";
+import type {
+  ArtifactContent as ExplorerArtifactContent,
+  ArtifactExplorerPreload,
+  RunManifest,
+} from "./ArtifactExplorer";
 
-const ArtifactExplorer = lazy(() => import("./ArtifactExplorer"));
+const loadArtifactExplorer = () => import("./ArtifactExplorer");
+const ArtifactExplorer = lazy(loadArtifactExplorer);
 const IssuesTable = lazy(() => import("./IssuesTable"));
 const ReportViewer = lazy(() => import("./ReportViewer"));
 
@@ -27,41 +41,22 @@ interface Props {
   onBack?: () => void;
 }
 
-type WorkspaceTab = "report" | "issues" | "sources";
+type WorkspaceTab = "report" | "provenance" | "issues" | "sources";
 type OutputView = "clean" | "raw";
 
 const TAB_IDS: Record<WorkspaceTab, string> = {
   report: "report-workspace-tab-report",
+  provenance: "report-workspace-tab-provenance",
   issues: "report-workspace-tab-issues",
   sources: "report-workspace-tab-sources",
 };
 
 const TAB_PANEL_IDS: Record<WorkspaceTab, string> = {
   report: "report-workspace-panel-report",
+  provenance: "report-workspace-panel-provenance",
   issues: "report-workspace-panel-issues",
   sources: "report-workspace-panel-sources",
 };
-
-function formatDuration(seconds?: number | null) {
-  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return "—";
-  const roundedSeconds = Math.round(seconds);
-  const minutes = Math.floor(roundedSeconds / 60);
-  const remainder = roundedSeconds % 60;
-  return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 function reportTitle(report: PipelineReport | null, summary?: RunSummary | null) {
   if (summary?.title) return summary.title;
@@ -73,28 +68,7 @@ function reportTitle(report: PipelineReport | null, summary?: RunSummary | null)
   return "Pipeline report";
 }
 
-function resolvedProvider(report: PipelineReport | null, summary?: RunSummary | null) {
-  if (summary?.provider) return summary.provider;
-  const providers = Array.from(new Set(
-    report?.step_outputs
-      .flatMap((step) => [step.provider, ...(step.calls ?? []).map((call) => call.provider)])
-      .filter((value): value is string => Boolean(value)) ?? [],
-  ));
-  return providers.join(", ") || "Default";
-}
-
-function resolvedModel(report: PipelineReport | null) {
-  const models = Array.from(new Set(
-    report?.step_outputs
-      .flatMap((step) => [step.model, ...(step.calls ?? []).map((call) => call.model)])
-      .filter((value): value is string => Boolean(value)) ?? [],
-  ));
-  if (models.length === 0) return "Automatic";
-  if (models.length <= 2) return models.join(", ");
-  return `${models[0]} +${models.length - 1}`;
-}
-
-export function splitUnexpectedPreamble(markdown: string) {
+export function splitUnexpectedPreamble(markdown: string, paperTitle = "") {
   let clean = markdown
     .replace(
       /<!-- PIPELINE RUN DETAILS START -->[\s\S]*?<!-- PIPELINE RUN DETAILS END -->\s*/g,
@@ -146,10 +120,35 @@ export function splitUnexpectedPreamble(markdown: string) {
     "",
   );
 
+  // The app header already identifies the paper. Older report artifacts used
+  // the paper title and authors as a second document masthead; replace that
+  // duplicate identity with the kind of document the reader is opening.
+  const firstTitle = clean.match(/^#\s+([^\n]+)\n?/);
+  if (
+    firstTitle &&
+    paperTitle.trim() &&
+    firstTitle[1].replace(/[*_`]/g, "").trim() === paperTitle.trim()
+  ) {
+    clean = clean.replace(firstTitle[0], "# Referee Report\n");
+    clean = clean.replace(
+      /^(# Referee Report)\s*\n(?:\s*\n)*(?:\*\*Authors\*\*:[^\n]*(?:\n|$))?/i,
+      "$1\n\n",
+    );
+    clean = clean.replace(/^(# Referee Report)\n{3,}/, "$1\n\n");
+  }
+
   return {
     clean: clean.trim(),
     preamble: narration.filter(Boolean).join("\n\n"),
   };
+}
+
+/** Remove the in-app document label when the PDF has its own masthead. */
+export function reportBodyForPdf(markdown: string): string {
+  return markdown
+    .replace(/^#\s+(?:Referee|Review|Pipeline)?\s*Report\s*\n+/i, "")
+    .replace(/^---\s*\n+/, "")
+    .trim();
 }
 
 function TabButton({
@@ -199,55 +198,129 @@ function TabButton({
   );
 }
 
-function ProvenanceCard({
-  report,
-  runId,
-  summary,
-  durationSecs,
-}: {
-  report: PipelineReport;
-  runId?: string | null;
-  summary?: RunSummary | null;
-  durationSecs?: number | null;
-}) {
+function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
   const fields = [
-    [
-      "Authors",
-      report && isPaperOrientation(report.orientation)
-        ? report.orientation.metadata.authors.join(", ") || "—"
-        : "—",
-    ],
-    ["Workflow", summary?.profile_name || summary?.profile_id || "Current workflow"],
-    ["Provider", resolvedProvider(report, summary)],
-    ["Model", resolvedModel(report)],
-    ["Duration", formatDuration(summary?.duration_secs || durationSecs)],
-    ["Completed", formatDate(summary?.created || report.report_date)],
-    ["Run", runId ? runId.slice(0, 18) : report.paper_hash?.slice(0, 12) || "Unsaved"],
+    ["Review subject", provenance.subject],
+    ["Authors", provenance.authors.join(", ") || "—"],
+    ["Workflow", provenance.workflow],
+    ["Completed", formatRunDate(provenance.completed)],
+    ["Duration", formatRunDuration(provenance.duration_secs)],
+    ["Run", provenance.run_id || "Unsaved"],
+    ["Provider", provenance.provider_summary],
+    ["Model", provenance.model_summary],
   ];
+  const showCacheWrite = provenance.totals.cache_write_input_tokens > 0;
 
   return (
-    <section
-      aria-label="Run provenance"
-      className="mx-auto mt-6 w-[min(52rem,calc(100%-3rem))] rounded-xl border border-gray-200/80
-                 bg-gray-50/70 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/55"
-    >
-      <div className="mb-2 flex items-center gap-2">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-        <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
-          Run provenance
-        </h2>
-      </div>
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
-        {fields.map(([label, value]) => (
-          <div key={label} className="min-w-0">
-            <dt className="text-[11px] text-gray-500 dark:text-gray-400">{label}</dt>
-            <dd className="truncate text-xs font-medium text-gray-700 dark:text-gray-300" title={value}>
-              {value}
-            </dd>
+    <div className="h-full overflow-y-auto">
+      <section aria-label="Run provenance" className="mx-auto max-w-5xl px-8 py-10">
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
+              Completed run
+            </p>
+            <h2 className="mt-1 text-2xl font-semibold tracking-[-0.025em] text-gray-950 dark:text-gray-50">
+              Run provenance
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm text-gray-600 dark:text-gray-300">
+              Reproducibility details and provider-reported token accounting for this report.
+            </p>
           </div>
-        ))}
-      </dl>
-    </section>
+          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+            provenance.status === "done"
+              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+              : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+          }`}>
+            {provenance.status === "done" ? "Completed" : provenance.status}
+          </span>
+        </div>
+
+        <dl className="mt-8 grid gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-2 lg:grid-cols-4 dark:border-gray-800 dark:bg-gray-800">
+          {fields.map(([label, value]) => (
+            <div key={label} className="min-w-0 bg-white px-4 py-3.5 dark:bg-gray-950">
+              <dt className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                {label}
+              </dt>
+              <dd className="mt-1 break-words text-sm font-medium text-gray-800 dark:text-gray-200" title={value}>
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-10">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-gray-950 dark:text-gray-50">Token usage</h3>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Cached input is a subset of logical input, as reported by each provider.
+              </p>
+            </div>
+            <div className="flex gap-5 text-right">
+              {[
+                ["Input", provenance.totals.input_tokens],
+                ["Output", provenance.totals.output_tokens],
+                ["Cached", provenance.totals.cached_input_tokens],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</p>
+                  <p className="text-sm font-semibold tabular-nums text-gray-900 dark:text-gray-100">
+                    {formatTokens(value as number)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
+            <table className="w-full min-w-[42rem] border-collapse text-left text-sm">
+              <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Provider</th>
+                  <th className="px-4 py-2.5 font-medium">Model</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Input</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Output</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Cached</th>
+                  {showCacheWrite && <th className="px-4 py-2.5 text-right font-medium">Cache write</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {provenance.usage.length ? provenance.usage.map((row) => (
+                  <tr key={`${row.provider}:${row.model}`}>
+                    <td className="px-4 py-3 font-medium text-gray-800 dark:text-gray-200">
+                      {row.provider}
+                      {row.transports.length > 0 && (
+                        <span className="ml-2 text-[10px] font-semibold text-gray-400">
+                          {row.transports.join(" + ")}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{row.model}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-gray-600 dark:text-gray-300">{formatTokens(row.input_tokens)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-gray-600 dark:text-gray-300">{formatTokens(row.output_tokens)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-gray-600 dark:text-gray-300">{formatTokens(row.cached_input_tokens)}</td>
+                    {showCacheWrite && (
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-600 dark:text-gray-300">{formatTokens(row.cache_write_input_tokens)}</td>
+                    )}
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan={showCacheWrite ? 6 : 5} className="px-4 py-5 text-center text-gray-500 dark:text-gray-400">
+                      This provider did not report token usage.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {!provenance.usage_matches_total && (
+            <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+              Run totals may also include extraction, orientation, setup calls, or reused step provenance that is not attributable to one saved provider/model row.
+            </p>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -313,6 +386,40 @@ export default function ReportWorkspace({
   const [loading, setLoading] = useState(Boolean(runId && (!initialReport || !initialMarkdown)));
   const [error, setError] = useState<string | null>(null);
   const [outputView, setOutputView] = useState<OutputView>("clean");
+  const [artifactPreload, setArtifactPreload] = useState<ArtifactExplorerPreload | null>(null);
+  const [runManifest, setRunManifest] = useState<RunManifest | null>(null);
+
+  useEffect(() => {
+    setArtifactPreload(null);
+    setRunManifest(null);
+    if (!runId) return;
+    let live = true;
+
+    // Sources are deliberately code-split and normally read artifacts only on
+    // selection. Warm the viewer code, its small manifest, and the one large
+    // text artifact readers commonly open first while they read the report.
+    // The promises are passed through so opening Sources never repeats I/O.
+    const manifest = invoke<RunManifest>("get_run_manifest", { runId });
+    const readableDocument = invoke<ExplorerArtifactContent>("read_artifact", {
+      runId,
+      relPath: "context/document.md",
+    });
+    void loadArtifactExplorer().catch((caught) => {
+      console.error("Failed to preload the artifact viewer:", caught);
+    });
+    // A missing historical artifact must not surface as an unhandled
+    // background error. ArtifactExplorer retries normally if it is selected.
+    void manifest
+      .then((loaded) => {
+        if (live) setRunManifest(loaded);
+      })
+      .catch(() => undefined);
+    void readableDocument.catch(() => undefined);
+    setArtifactPreload({ runId, manifest, readableDocument });
+    return () => {
+      live = false;
+    };
+  }, [runId]);
 
   useEffect(() => {
     setReport(initialReport);
@@ -352,13 +459,30 @@ export default function ReportWorkspace({
     () => (report ? detectReportIssues(report) : null),
     [report],
   );
-  const presentation = useMemo(() => splitUnexpectedPreamble(markdown), [markdown]);
+  const paperTitle =
+    report && isPaperOrientation(report.orientation)
+      ? report.orientation.metadata.title
+      : "";
+  const presentation = useMemo(
+    () => splitUnexpectedPreamble(markdown, paperTitle),
+    [markdown, paperTitle],
+  );
   const visibleMarkdown = outputView === "clean" ? presentation.clean : markdown;
+  const pdfMarkdown = useMemo(
+    () => reportBodyForPdf(presentation.clean),
+    [presentation.clean],
+  );
+  const provenance = useMemo(
+    () => report
+      ? buildRunProvenance({ report, summary, manifest: runManifest, runId, durationSecs })
+      : null,
+    [durationSecs, report, runId, runManifest, summary],
+  );
   const title = reportTitle(report, summary);
-  const status = summary?.status || (report?.failed_steps?.length ? "partial" : "done");
+  const status = provenance?.status || (report?.failed_steps?.length ? "partial" : "done");
   const availableTabs: WorkspaceTab[] = issues && issues.length > 0
-    ? ["report", "issues", "sources"]
-    : ["report", "sources"];
+    ? ["report", "provenance", "issues", "sources"]
+    : ["report", "provenance", "sources"];
   const handleTabKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
     currentTab: WorkspaceTab,
@@ -389,7 +513,7 @@ export default function ReportWorkspace({
     );
   }
 
-  if (error || !report) {
+  if (error || !report || !provenance) {
     return (
       <div className="flex h-full items-center justify-center p-8">
         <div role="alert" className="max-w-md rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
@@ -435,18 +559,20 @@ export default function ReportWorkspace({
               {title}
             </h1>
             <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
-              {summary?.profile_name || "Current workflow"}
+              {provenance.workflow}
               <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
-              {resolvedProvider(report, summary)}
+              <span title={provenance.provider_summary}>{provenance.provider_summary}</span>
               <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
-              {resolvedModel(report)}
+              <span title={provenance.model_summary}>{provenance.model_summary}</span>
               <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
-              {formatDuration(summary?.duration_secs || durationSecs)}
+              {formatRunDuration(provenance.duration_secs)}
             </p>
           </div>
           <ExportControls
             runId={runId}
             markdown={markdown}
+            pdfMarkdown={pdfMarkdown}
+            provenanceMarkdown={renderProvenanceMarkdown(provenance)}
             report={report}
             extractedText={extractedText}
           />
@@ -472,6 +598,14 @@ export default function ReportWorkspace({
           panelId={TAB_PANEL_IDS.report}
           onClick={() => setTab("report")}
           onKeyDown={(event) => handleTabKeyDown(event, "report")}
+        />
+        <TabButton
+          active={tab === "provenance"}
+          id={TAB_IDS.provenance}
+          label="Provenance"
+          panelId={TAB_PANEL_IDS.provenance}
+          onClick={() => setTab("provenance")}
+          onKeyDown={(event) => handleTabKeyDown(event, "provenance")}
         />
         {issues && issues.length > 0 && (
           <TabButton
@@ -511,6 +645,15 @@ export default function ReportWorkspace({
             >
               <IssuesTable issues={issues} runId={runId ?? null} />
             </div>
+          ) : tab === "provenance" ? (
+            <div
+              id={TAB_PANEL_IDS.provenance}
+              role="tabpanel"
+              aria-labelledby={TAB_IDS.provenance}
+              className="h-full"
+            >
+              <ProvenancePanel provenance={provenance} />
+            </div>
           ) : tab === "sources" ? (
             <div
               id={TAB_PANEL_IDS.sources}
@@ -523,6 +666,7 @@ export default function ReportWorkspace({
                   runId={runId}
                   fallbackMarkdown={markdown}
                   deferInitialArtifact
+                  preload={artifactPreload}
                 />
               ) : (
                 <LocalSources extractedText={extractedText ?? ""} report={report} />
@@ -565,17 +709,7 @@ export default function ReportWorkspace({
                   </div>
                 )}
                 <div className="min-h-0 flex-1 overflow-hidden">
-                  <div className="flex h-full min-h-0 flex-col">
-                    <ProvenanceCard
-                      report={report}
-                      runId={runId}
-                      summary={summary}
-                      durationSecs={durationSecs}
-                    />
-                    <div className="min-h-0 flex-1">
-                      <ReportViewer markdown={visibleMarkdown} />
-                    </div>
-                  </div>
+                  <ReportViewer markdown={visibleMarkdown} />
                 </div>
               </div>
             </div>

@@ -164,7 +164,7 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
   };
 
   const uninstall = async (id: string) => {
-    if (!window.confirm("Uninstall this engine? Downloaded model weights will be removed.")) {
+    if (!window.confirm("Uninstall this engine? Its managed runtime, packages, and model files will be removed.")) {
       return;
     }
     setBusy(id);
@@ -296,6 +296,7 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
       <div className="space-y-3">
         {engines.map((engine) => {
           const isBusy = busy === engine.id || (backendBusy && busy === null);
+          const available = engine.available !== false;
           return (
             <div
               key={engine.id}
@@ -306,7 +307,11 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
                   <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                     {engine.label}
                   </span>
-                  {engine.installed ? (
+                  {!available ? (
+                    <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                      unavailable
+                    </span>
+                  ) : engine.installed ? (
                     <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-green-700 text-white dark:bg-green-600">
                       installed{engine.version ? ` v${engine.version}` : ""}
                     </span>
@@ -338,7 +343,7 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
                     <button
                       type="button"
                       onClick={() => install(engine.id)}
-                      disabled={!listenersReady}
+                      disabled={!listenersReady || !available}
                       className="text-xs py-1.5 px-3 rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors"
                     >
                       Install (~{(engine.est_download_mb / 1000).toFixed(1)} GB)
@@ -350,6 +355,12 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
               <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
                 {engine.description}
               </p>
+
+              {!available && engine.unavailable_reason && (
+                <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+                  {engine.unavailable_reason}
+                </p>
+              )}
 
               {engine.installed && engine.managed_stack_mb > 0 && (
                 <p className="text-xs text-gray-500 dark:text-gray-400">

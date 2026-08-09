@@ -76,6 +76,44 @@ describe("Console", () => {
     expect(screen.getByText("3 lines")).toBeInTheDocument();
   });
 
+  it("uses theme-aware chrome and readable log colors", () => {
+    render(
+      <Console
+        logs={[
+          log("info line"),
+          log("WARNING: careful", "warn"),
+          log("ERROR: boom", "error"),
+          log("[stderr] diagnostic", "stderr"),
+        ]}
+        usage={EMPTY_USAGE}
+      />,
+    );
+
+    expect(screen.getByTestId("console-panel")).toHaveClass(
+      "console-panel",
+      "bg-white",
+      "dark:bg-gray-950",
+      "border-gray-200",
+      "dark:border-gray-800",
+    );
+    expect(screen.getByText("info line").parentElement).toHaveClass(
+      "text-gray-700",
+      "dark:text-gray-300",
+    );
+    expect(screen.getByText("WARNING: careful").parentElement).toHaveClass(
+      "text-amber-600",
+      "dark:text-yellow-400",
+    );
+    expect(screen.getByText("ERROR: boom").parentElement).toHaveClass(
+      "text-red-600",
+      "dark:text-red-400",
+    );
+    expect(screen.getByText("[stderr] diagnostic").parentElement).toHaveClass(
+      "text-orange-600",
+      "dark:text-orange-400",
+    );
+  });
+
   it("filters by search text", async () => {
     const user = userEvent.setup();
     render(<Console logs={[log("apple pie"), log("banana split")]} usage={EMPTY_USAGE} />);

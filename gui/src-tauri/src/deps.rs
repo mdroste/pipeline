@@ -675,6 +675,7 @@ struct PdfDependencyRequirements {
     pdftotext: bool,
     pdftoppm: bool,
     paddle: bool,
+    paddle_full: bool,
     configuration_ready: bool,
 }
 
@@ -690,6 +691,7 @@ fn pdf_dependency_requirements(
             pdftotext: false,
             pdftoppm: false,
             paddle: false,
+            paddle_full: false,
             configuration_ready: true,
         };
     };
@@ -703,10 +705,13 @@ fn pdf_dependency_requirements(
         // Paddle renders every page through Poppler before sending it to the
         // managed vision model.
         pdftoppm: extraction && method == "paddleocr-vl",
-        paddle: extraction && method == "paddleocr-vl",
+        paddle: extraction && matches!(method, "paddleocr-vl" | "paddleocr-vl-full"),
+        paddle_full: extraction && method == "paddleocr-vl-full",
         configuration_ready: !extraction
-            || matches!(method, "llm" | "paddleocr-vl" | "pdftotext")
-                && !(method == "llm" && settings.preferred_provider == "local"),
+            || matches!(
+                method,
+                "llm" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext"
+            ) && !(method == "llm" && settings.preferred_provider == "local"),
     }
 }
 
@@ -820,6 +825,7 @@ fn check_all_for(
         // PaddleOCR-VL is a managed stack rather than a PATH dependency. Its
         // resolver verifies the server, model, and vision projector together.
         let paddle_h = s.spawn(crate::engines::paddle_engine_paths);
+        let paddle_full_h = s.spawn(crate::engines::paddle_full_parser_paths);
 
         // Local OpenAI-compatible server: TCP reachability of the configured
         // base URL (fast, no HTTP parse — a listener there is a good signal).
@@ -1017,6 +1023,31 @@ fn check_all_for(
             cli_auth_status: None,
         };
 
+        let paddle_full_paths = paddle_full_h.join().ok().and_then(Result::ok);
+        let paddle_full = DepStatus {
+            name: "PaddleOCR-VL Full Parser".into(),
+            found: paddle_full_paths.is_some(),
+            version: paddle_full_paths
+                .as_ref()
+                .map(|paths| format!("managed {}", paths.release))
+                .unwrap_or_default(),
+            path: paddle_full_paths
+                .as_ref()
+                .map(|paths| paths.script.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            required: pdf_requirements.paddle_full,
+            hint: if paddle_full_paths.is_some() {
+                "Managed PaddleOCR layout client and model are installed.".into()
+            } else if pdf_requirements.paddle_full {
+                "Install PaddleOCR-VL Full Parser from Settings → PDF Extraction before running this workflow."
+                    .into()
+            } else {
+                "Install the optional Full Parser for layout-aware local PDF extraction.".into()
+            },
+            authenticated: None,
+            cli_auth_status: None,
+        };
+
         let extractor = DepStatus {
             name: "PDF extractor configuration".into(),
             found: pdf_requirements.configuration_ready,
@@ -1032,7 +1063,7 @@ fn check_all_for(
                     "LLM PDF extraction is unavailable for local OpenAI-compatible servers. Choose PaddleOCR-VL or pdftotext extraction."
                         .into()
                 }
-                Some("llm" | "paddleocr-vl" | "pdftotext") | None => {
+                Some("llm" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext") | None => {
                     "The selected PDF extraction method is supported.".into()
                 }
                 Some(_) => {
@@ -1067,7 +1098,15 @@ fn check_all_for(
         };
 
         let deps = vec![
-            claude, codex, gemini, local, pdftoppm, pdftotext, paddle, extractor,
+            claude,
+            codex,
+            gemini,
+            local,
+            pdftoppm,
+            pdftotext,
+            paddle,
+            paddle_full,
+            extractor,
         ];
         let ready = deps.iter().all(dependency_ready);
         DepsReport { deps, ready }
@@ -1345,6 +1384,7 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
         assert!(llm.pdftotext);
         assert!(!llm.pdftoppm);
         assert!(!llm.paddle);
+        assert!(!llm.paddle_full);
         assert!(llm.configuration_ready);
 
         config.extraction.method = "paddleocr-vl".to_string();
@@ -1354,7 +1394,18 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
         assert!(!paddle.pdftotext);
         assert!(paddle.pdftoppm);
         assert!(paddle.paddle);
+        assert!(!paddle.paddle_full);
         assert!(paddle.configuration_ready);
+
+        config.extraction.method = "paddleocr-vl-full".to_string();
+        let full =
+            pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.pdf"), None);
+        assert!(full.extraction);
+        assert!(!full.pdftotext);
+        assert!(!full.pdftoppm);
+        assert!(full.paddle);
+        assert!(full.paddle_full);
+        assert!(full.configuration_ready);
 
         config.extraction.method = "marker".to_string();
         let retired =
