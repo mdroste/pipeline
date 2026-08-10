@@ -1392,7 +1392,15 @@ pub(crate) fn build_provider_command(
 /// command. Extraction uses this directly because it runs on blocking worker
 /// threads; async provider and installer commands use `build_silent_command`.
 pub fn configure_silent_command(std_cmd: &mut std::process::Command) {
-    std_cmd.env("PATH", crate::env::full_path());
+    // Preserve a deliberately sanitized PATH on managed-runtime commands.
+    // Ordinary provider commands do not set PATH explicitly and still receive
+    // the GUI-safe resolved PATH here.
+    if !std_cmd
+        .get_envs()
+        .any(|(key, _)| key == std::ffi::OsStr::new("PATH"))
+    {
+        std_cmd.env("PATH", crate::env::full_path());
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

@@ -782,9 +782,9 @@ fn parse_paddle_formula_number(value: &str) -> Option<String> {
     while value.len() >= 2 && value.starts_with('$') && value.ends_with('$') {
         value = value[1..value.len() - 1].trim();
     }
-    if value.starts_with(r"\(") && value.ends_with(r"\)") && value.len() >= 4 {
-        value = value[2..value.len() - 2].trim();
-    } else if value.starts_with(r"\[") && value.ends_with(r"\]") && value.len() >= 4 {
+    let wrapped_in_math_delimiters = (value.starts_with(r"\(") && value.ends_with(r"\)"))
+        || (value.starts_with(r"\[") && value.ends_with(r"\]"));
+    if wrapped_in_math_delimiters && value.len() >= 4 {
         value = value[2..value.len() - 2].trim();
     }
     if let Some(capture) = Regex::new(r"^\\tag\*?\{([^{}]{1,40})\}$")
@@ -817,6 +817,213 @@ fn paddle_formula_number(
     }
     parse_paddle_formula_number(&block.text)
         .or_else(|| parse_paddle_formula_number(&block.markdown))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PaddleBlockGeometry {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+impl PaddleBlockGeometry {
+    fn width(self) -> f64 {
+        self.right - self.left
+    }
+
+    fn height(self) -> f64 {
+        self.bottom - self.top
+    }
+
+    fn center_x(self) -> f64 {
+        (self.left + self.right) / 2.0
+    }
+
+    fn center_y(self) -> f64 {
+        (self.top + self.bottom) / 2.0
+    }
+}
+
+fn paddle_block_geometry(
+    block: &crate::pipeline::extract::PaddleStructuredBlock,
+) -> Option<PaddleBlockGeometry> {
+    let coordinates = if block.bbox.len() >= 4 {
+        Some((block.bbox[0], block.bbox[1], block.bbox[2], block.bbox[3]))
+    } else if block.polygon.len() >= 3 {
+        let mut xs = block
+            .polygon
+            .iter()
+            .filter_map(|point| point.first().copied());
+        let mut ys = block
+            .polygon
+            .iter()
+            .filter_map(|point| point.get(1).copied());
+        let first_x = xs.next()?;
+        let first_y = ys.next()?;
+        Some((
+            xs.clone().fold(first_x, f64::min),
+            ys.clone().fold(first_y, f64::min),
+            xs.fold(first_x, f64::max),
+            ys.fold(first_y, f64::max),
+        ))
+    } else {
+        None
+    }?;
+    let geometry = PaddleBlockGeometry {
+        left: coordinates.0,
+        top: coordinates.1,
+        right: coordinates.2,
+        bottom: coordinates.3,
+    };
+    (coordinates.0.is_finite()
+        && coordinates.1.is_finite()
+        && coordinates.2.is_finite()
+        && coordinates.3.is_finite()
+        && geometry.width() > 0.0
+        && geometry.height() > 0.0)
+        .then_some(geometry)
+}
+
+fn paddle_formula_match_score(
+    equation: &crate::pipeline::extract::PaddleStructuredBlock,
+    number: &crate::pipeline::extract::PaddleStructuredBlock,
+    page_width: f64,
+) -> Option<f64> {
+    if number.confidence.is_some_and(|confidence| confidence < 0.5) {
+        return None;
+    }
+    let equation = paddle_block_geometry(equation)?;
+    let number = paddle_block_geometry(number)?;
+    if number.width() > page_width * 0.22 {
+        return None;
+    }
+
+    let overlap = (equation.bottom.min(number.bottom) - equation.top.max(number.top)).max(0.0);
+    let overlap_ratio = overlap / equation.height().min(number.height()).max(1.0);
+    let vertical_distance = (equation.center_y() - number.center_y()).abs();
+    if overlap_ratio < 0.2
+        && vertical_distance > (equation.height().max(number.height()) * 0.75).max(12.0)
+    {
+        return None;
+    }
+
+    let center_separation = (equation.center_x() - number.center_x()).abs();
+    if center_separation < (equation.width() * 0.2).max(page_width * 0.04) {
+        return None;
+    }
+    let horizontal_gap = if number.left >= equation.right {
+        number.left - equation.right
+    } else if equation.left >= number.right {
+        equation.left - number.right
+    } else {
+        0.0
+    };
+    if horizontal_gap > page_width * 0.4 {
+        return None;
+    }
+    let edge_distance = (number.center_x() - equation.left)
+        .abs()
+        .min((number.center_x() - equation.right).abs());
+    Some(
+        vertical_distance / equation.height().max(number.height()).max(1.0)
+            + 3.0 * horizontal_gap / page_width
+            + 0.5 * edge_distance / page_width,
+    )
+}
+
+fn unambiguous_best(mut candidates: Vec<(usize, f64)>) -> Option<(usize, f64)> {
+    const MIN_SCORE_SEPARATION: f64 = 0.12;
+    candidates.sort_by(|left, right| left.1.total_cmp(&right.1));
+    let best = *candidates.first()?;
+    if candidates
+        .get(1)
+        .is_some_and(|second| second.1 - best.1 < MIN_SCORE_SEPARATION)
+    {
+        None
+    } else {
+        Some(best)
+    }
+}
+
+/// Match formula-number regions to equations using page geometry. A match is
+/// accepted only when the equation and number are mutual, unambiguous nearest
+/// candidates; otherwise the number remains an ordinary visible text block.
+fn match_paddle_formula_numbers(
+    page: &crate::pipeline::extract::PaddleStructuredPage,
+) -> HashMap<usize, usize> {
+    let equations = page
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| paddle_node_kind(block) == "equation")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let numbers = page
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| paddle_formula_number(block).is_some())
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let inferred_width = page
+        .blocks
+        .iter()
+        .filter_map(paddle_block_geometry)
+        .map(|geometry| geometry.right)
+        .fold(0.0, f64::max);
+    let page_width = f64::from(page.width.unwrap_or(0))
+        .max(inferred_width)
+        .max(1.0);
+
+    let mut candidates = Vec::new();
+    for &number_index in &numbers {
+        for &equation_index in &equations {
+            if let Some(score) = paddle_formula_match_score(
+                &page.blocks[equation_index],
+                &page.blocks[number_index],
+                page_width,
+            ) {
+                candidates.push((equation_index, number_index, score));
+            }
+        }
+    }
+    let best_by_number = numbers
+        .iter()
+        .filter_map(|&number_index| {
+            unambiguous_best(
+                candidates
+                    .iter()
+                    .filter(|(_, candidate, _)| *candidate == number_index)
+                    .map(|(equation, _, score)| (*equation, *score))
+                    .collect(),
+            )
+            .map(|best| (number_index, best))
+        })
+        .collect::<HashMap<_, _>>();
+    let best_by_equation = equations
+        .iter()
+        .filter_map(|&equation_index| {
+            unambiguous_best(
+                candidates
+                    .iter()
+                    .filter(|(candidate, _, _)| *candidate == equation_index)
+                    .map(|(_, number, score)| (*number, *score))
+                    .collect(),
+            )
+            .map(|best| (equation_index, best))
+        })
+        .collect::<HashMap<_, _>>();
+
+    best_by_equation
+        .into_iter()
+        .filter_map(|(equation, (number, _))| {
+            best_by_number
+                .get(&number)
+                .is_some_and(|(candidate, _)| *candidate == equation)
+                .then_some((equation, number))
+        })
+        .collect()
 }
 
 fn paddle_block_representation(
@@ -919,43 +1126,22 @@ fn add_paddle_structured_nodes(
 ) {
     let mut heading_stack: [Option<String>; 6] = std::array::from_fn(|_| None);
     for page in &structure.pages {
+        let formula_matches = match_paddle_formula_numbers(page);
+        let matched_numbers = formula_matches.values().copied().collect::<HashSet<_>>();
         for (block_index, block) in page.blocks.iter().enumerate() {
-            if let Some(number) = paddle_formula_number(block) {
-                let follows_equation = block_index > 0
-                    && !is_paddle_formula_number(&page.blocks[block_index - 1])
-                    && paddle_node_kind(&page.blocks[block_index - 1]) == "equation";
-                if follows_equation {
-                    if let Some(equation) = bundle
-                        .nodes
-                        .last_mut()
-                        .filter(|node| node.kind == "equation" && node.page == Some(page.number))
-                    {
-                        if equation.number.is_none() {
-                            equation.number = Some(number);
-                        }
-                        equation
-                            .representations
-                            .push(paddle_block_representation(block, structure));
-                        continue;
-                    }
-                }
-                let precedes_equation = page.blocks.get(block_index + 1).is_some_and(|next| {
-                    !is_paddle_formula_number(next) && paddle_node_kind(next) == "equation"
-                });
-                if precedes_equation {
-                    // The following equation will absorb this leading number
-                    // and retain this block as an additional representation.
-                    continue;
-                }
+            if matched_numbers.contains(&block_index) {
+                // The matched equation owns the number and retains this block
+                // as an additional lossless representation.
+                continue;
             }
             let kind = paddle_node_kind(block);
             let asset_ids = paddle_block_assets(bundle, block, page.number, kind);
             let mut representations = vec![paddle_block_representation(block, structure)];
-            let leading_number = (kind == "equation" && block_index > 0)
-                .then(|| &page.blocks[block_index - 1])
-                .filter(|previous| is_paddle_formula_number(previous));
-            let number = leading_number.and_then(paddle_formula_number);
-            if let Some(number_block) = leading_number {
+            let number_block = formula_matches
+                .get(&block_index)
+                .and_then(|index| page.blocks.get(*index));
+            let number = number_block.and_then(paddle_formula_number);
+            if let Some(number_block) = number_block {
                 representations.push(paddle_block_representation(number_block, structure));
             }
             let mut created = node(
@@ -2416,23 +2602,24 @@ mod tests {
         )
         .unwrap()
         .bundle;
-        let block = |id: &str, label: &str, markdown: &str, order: u32, confidence: f32| {
-            crate::pipeline::extract::PaddleStructuredBlock {
-                block_id: id.to_string(),
-                role: label.to_string(),
-                block_label: label.to_string(),
-                markdown: markdown.to_string(),
-                text: markdown.trim_start_matches('#').trim().to_string(),
-                boundary: None,
-                note_marker: None,
-                order: Some(order),
-                bbox: vec![10.0, order as f64 * 20.0, 500.0, order as f64 * 20.0 + 18.0],
-                polygon: Vec::new(),
-                confidence: Some(confidence),
-                asset_files: Vec::new(),
-                raw: serde_json::json!({ "block_order": order }),
-            }
-        };
+        let block =
+            |id: &str, label: &str, markdown: &str, order: u32, confidence: f32, bbox: [f64; 4]| {
+                crate::pipeline::extract::PaddleStructuredBlock {
+                    block_id: id.to_string(),
+                    role: label.to_string(),
+                    block_label: label.to_string(),
+                    markdown: markdown.to_string(),
+                    text: markdown.trim_start_matches('#').trim().to_string(),
+                    boundary: None,
+                    note_marker: None,
+                    order: Some(order),
+                    bbox: bbox.to_vec(),
+                    polygon: Vec::new(),
+                    confidence: Some(confidence),
+                    asset_files: Vec::new(),
+                    raw: serde_json::json!({ "block_order": order }),
+                }
+            };
         let structure = crate::pipeline::extract::PaddleStructure {
             schema_version: 2,
             parser: "paddleocr-vl-full".to_string(),
@@ -2446,16 +2633,86 @@ mod tests {
                 width: Some(1200),
                 height: Some(1600),
                 blocks: vec![
-                    block("title", "doc_title", "# Results", 1, 0.98),
-                    block("subtitle", "paragraph_title", "## Baseline", 2, 0.94),
-                    block("table", "table", "| x | y |\n|---|---|\n|1|2|", 3, 0.91),
-                    block("formula", "formula", r"$$y=\beta x$$", 4, 0.89),
-                    block("formula-number", "formula_number", "(1)", 5, 0.96),
-                    block("caption", "vision_footnote", "Figure 1. Fit", 6, 0.87),
-                    block("orphan-number", "formula_number", "(99)", 7, 0.82),
-                    block("prose", "text", "Not an equation", 8, 0.90),
-                    block("leading-number", "formula_number", r"$[A.2]$", 9, 0.95),
-                    block("formula-2", "display_formula", r"$$z=\gamma x$$", 10, 0.88),
+                    block(
+                        "title",
+                        "doc_title",
+                        "# Results",
+                        1,
+                        0.98,
+                        [50.0, 20.0, 800.0, 60.0],
+                    ),
+                    block(
+                        "subtitle",
+                        "paragraph_title",
+                        "## Baseline",
+                        2,
+                        0.94,
+                        [50.0, 80.0, 600.0, 110.0],
+                    ),
+                    block(
+                        "table",
+                        "table",
+                        "| x | y |\n|---|---|\n|1|2|",
+                        3,
+                        0.91,
+                        [50.0, 140.0, 900.0, 300.0],
+                    ),
+                    block(
+                        "formula",
+                        "formula",
+                        r"$$y=\beta x$$",
+                        4,
+                        0.89,
+                        [250.0, 340.0, 750.0, 380.0],
+                    ),
+                    block(
+                        "formula-number",
+                        "formula_number",
+                        "(1)",
+                        5,
+                        0.96,
+                        [1050.0, 342.0, 1100.0, 378.0],
+                    ),
+                    block(
+                        "caption",
+                        "vision_footnote",
+                        "Figure 1. Fit",
+                        6,
+                        0.87,
+                        [50.0, 420.0, 600.0, 450.0],
+                    ),
+                    block(
+                        "orphan-number",
+                        "formula_number",
+                        "(99)",
+                        7,
+                        0.82,
+                        [1050.0, 500.0, 1100.0, 530.0],
+                    ),
+                    block(
+                        "prose",
+                        "text",
+                        "Not an equation",
+                        8,
+                        0.90,
+                        [50.0, 500.0, 700.0, 535.0],
+                    ),
+                    block(
+                        "leading-number",
+                        "formula_number",
+                        r"$[A.2]$",
+                        9,
+                        0.95,
+                        [1050.0, 602.0, 1100.0, 638.0],
+                    ),
+                    block(
+                        "formula-2",
+                        "display_formula",
+                        r"$$z=\gamma x$$",
+                        10,
+                        0.88,
+                        [250.0, 600.0, 750.0, 640.0],
+                    ),
                 ],
             }],
         };
@@ -2507,11 +2764,167 @@ mod tests {
         assert_eq!(equation.provenance.method, "paddleocr-vl-full");
         assert_eq!(caption.kind, "caption");
         assert_eq!(table.provenance.confidence, Some(0.91));
-        assert_eq!(table.representations[0].content["bbox"][0], 10.0);
+        assert_eq!(table.representations[0].content["bbox"][0], 50.0);
         assert_eq!(
             table.representations[0].content["parser_settings"]["merge_tables"],
             true
         );
+    }
+
+    #[test]
+    fn paddle_formula_numbers_require_unambiguous_page_geometry() {
+        let mut bundle = build(
+            &extraction("<!-- PAGE 1 -->\nEquations."),
+            tempfile::tempdir().unwrap().path(),
+        )
+        .unwrap()
+        .bundle;
+        let block =
+            |id: &str, label: &str, markdown: &str, order: u32, confidence: f32, bbox: [f64; 4]| {
+                crate::pipeline::extract::PaddleStructuredBlock {
+                    block_id: id.to_string(),
+                    role: label.to_string(),
+                    block_label: label.to_string(),
+                    markdown: markdown.to_string(),
+                    text: markdown.to_string(),
+                    boundary: None,
+                    note_marker: None,
+                    order: Some(order),
+                    bbox: bbox.to_vec(),
+                    polygon: Vec::new(),
+                    confidence: Some(confidence),
+                    asset_files: Vec::new(),
+                    raw: serde_json::Value::Null,
+                }
+            };
+        let structure = crate::pipeline::extract::PaddleStructure {
+            schema_version: 2,
+            parser: "paddleocr-vl-full".to_string(),
+            parser_version: "3.7.0".to_string(),
+            settings: serde_json::Value::Null,
+            quality_notes: Vec::new(),
+            pages: vec![crate::pipeline::extract::PaddleStructuredPage {
+                number: 1,
+                markdown: String::new(),
+                source_text_chars: None,
+                width: Some(1200),
+                height: Some(1600),
+                blocks: vec![
+                    // Reading-order-leading number for the left column.
+                    block(
+                        "left-number",
+                        "formula_number",
+                        "(1)",
+                        1,
+                        0.96,
+                        [480.0, 100.0, 520.0, 130.0],
+                    ),
+                    block(
+                        "left-equation",
+                        "formula",
+                        "$$a=1$$",
+                        2,
+                        0.94,
+                        [50.0, 98.0, 440.0, 132.0],
+                    ),
+                    block(
+                        "right-equation",
+                        "formula",
+                        "$$b=2$$",
+                        3,
+                        0.93,
+                        [650.0, 98.0, 1040.0, 132.0],
+                    ),
+                    // Reading-order-trailing number for the right column.
+                    block(
+                        "right-number",
+                        "formula_number",
+                        "(2)",
+                        4,
+                        0.95,
+                        [1070.0, 100.0, 1110.0, 130.0],
+                    ),
+                    block(
+                        "orphan",
+                        "formula_number",
+                        "(77)",
+                        5,
+                        0.90,
+                        [1070.0, 250.0, 1110.0, 280.0],
+                    ),
+                    block(
+                        "intervening-prose",
+                        "text",
+                        "An unrelated number follows.",
+                        6,
+                        0.90,
+                        [50.0, 245.0, 600.0, 285.0],
+                    ),
+                    block(
+                        "low-confidence-equation",
+                        "formula",
+                        "$$c=3$$",
+                        7,
+                        0.92,
+                        [650.0, 300.0, 1040.0, 332.0],
+                    ),
+                    block(
+                        "low-confidence-number",
+                        "formula_number",
+                        "(8)",
+                        8,
+                        0.20,
+                        [1070.0, 301.0, 1110.0, 331.0],
+                    ),
+                    block(
+                        "ambiguous-left",
+                        "formula",
+                        "$$d=4$$",
+                        9,
+                        0.92,
+                        [50.0, 400.0, 400.0, 432.0],
+                    ),
+                    block(
+                        "ambiguous-number",
+                        "formula_number",
+                        "(9)",
+                        10,
+                        0.95,
+                        [575.0, 401.0, 625.0, 431.0],
+                    ),
+                    block(
+                        "ambiguous-right",
+                        "formula",
+                        "$$e=5$$",
+                        11,
+                        0.92,
+                        [800.0, 400.0, 1150.0, 432.0],
+                    ),
+                ],
+            }],
+        };
+
+        add_paddle_structured_nodes(&mut bundle, &structure);
+
+        let equation = |text: &str| {
+            bundle
+                .nodes
+                .iter()
+                .find(|node| node.kind == "equation" && node.text == text)
+                .unwrap()
+        };
+        assert_eq!(equation("$$a=1$$").number.as_deref(), Some("1"));
+        assert_eq!(equation("$$b=2$$").number.as_deref(), Some("2"));
+        for text in ["$$c=3$$", "$$d=4$$", "$$e=5$$"] {
+            assert_eq!(equation(text).number.as_deref(), None, "{text}");
+        }
+        for number in ["(77)", "(8)", "(9)"] {
+            assert!(bundle.nodes.iter().any(|node| {
+                node.kind == "text_block"
+                    && node.text == number
+                    && node.provenance.method == "paddleocr-vl-full"
+            }));
+        }
     }
 
     #[test]

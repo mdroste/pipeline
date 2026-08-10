@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "release": "paddleocr-3.7.0-paddle-3.2.1-python-3.12.13-r2",
+  "python": {
+    "version": "3.12.13",
+    "buildRelease": "20260623",
+    "license": "PSF-2.0",
+    "artifacts": {
+      "macos-arm64": {
+        "target": "aarch64-apple-darwin",
+        "sha256": "41df7d3ae4757e84b97874f76d634268456aaa271740d33f968d826374998fb7",
+        "lock": "pylock.macos-arm64.toml",
+        "lockSha256": "316f4056bef3db53dcd445ded35f7bc34d0aedcf3a19243e32e7a02deae09260"
+      },
+      "windows-x86_64": {
+        "target": "x86_64-pc-windows-msvc",
+        "sha256": "de3e362376859b060fa8b856c434efa81fcf6d4ede3d6e177c7e2169670cac50",
+        "lock": "pylock.windows-x86_64.toml",
+        "lockSha256": "3b8c4d52cb42020fd88ce84e214c16e7f17e8bb0492ada5b3b292b17391724e8"
+      },
+      "linux-x86_64": {
+        "target": "x86_64-unknown-linux-gnu",
+        "sha256": "10a452caac7041357805f0c19a60576df53f1ab06d1abfc9200f1f0157cb3bd1",
+        "lock": "pylock.linux-x86_64.toml",
+        "lockSha256": "c9e07b1d352347c96403d2162b816b16e43715550db7354f3d61608c501bbcf6"
+      },
+      "linux-aarch64": {
+        "target": "aarch64-unknown-linux-gnu",
+        "sha256": "b85154b9c7ca9de3f85f2c9f032d503151db16ef198de86b885fc61890c075ed",
+        "lock": "pylock.linux-aarch64.toml",
+        "lockSha256": "a17e105f50013713ebacb9a684be5672cf48f8dba625113db74fe429ef3342f3"
+      }
+    }
+  },
+  "uv": {
+    "version": "0.11.26",
+    "license": "Apache-2.0 OR MIT",
+    "artifacts": {
+      "macos-arm64": {
+        "target": "aarch64-apple-darwin",
+        "sha256": "8f7fbf1708399b921857bce71e1d60f0d3ccf52a30caebc1c1a2f175dce13ab6"
+      },
+      "windows-x86_64": {
+        "target": "x86_64-pc-windows-msvc",
+        "sha256": "4e1278ede866be6c0bf32d2f466cc6de7a9fb399ecf20c9ce2d186e52424be47"
+      },
+      "linux-x86_64": {
+        "target": "x86_64-unknown-linux-gnu",
+        "sha256": "6426a73c3837e6e2483ee344cbc00f36394d179afcba6183cb77437e67db4af0"
+      },
+      "linux-aarch64": {
+        "target": "aarch64-unknown-linux-gnu",
+        "sha256": "befa1a59c91e96eb601b0fd9a97c03dd666f17baba644b2b4db9c59a767e387e"
+      }
+    }
+  },
+  "packages": {
+    "paddleocr": "3.7.0",
+    "paddlepaddle": "3.2.1"
+  },
+  "layoutModel": {
+    "name": "PP-DocLayoutV3",
+    "version": "paddle3.0.0",
+    "license": "Apache-2.0",
+    "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-DocLayoutV3_infer.tar",
+    "sha256": "98b9bac88c80f6bc0fda7e0bfc2cae180020371c0b2edbb1eb498a70ace751b1"
+  }
+}

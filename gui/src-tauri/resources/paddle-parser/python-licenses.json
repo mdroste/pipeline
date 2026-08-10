@@ -1,0 +1,481 @@
+{
+  "schemaVersion": 1,
+  "source": "Core Metadata from checksum-locked wheels; classifiers are retained as declared license names when no SPDX expression is published.",
+  "packages": [
+    {
+      "name": "aiohappyeyeballs",
+      "version": "2.7.1",
+      "declaredLicense": "PSF-2.0"
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.14.3",
+      "declaredLicense": "Apache-2.0 AND MIT"
+    },
+    {
+      "name": "aiosignal",
+      "version": "1.4.0",
+      "declaredLicense": "Apache 2.0"
+    },
+    {
+      "name": "aistudio_sdk",
+      "version": "0.3.9",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "anyio",
+      "version": "4.14.2",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "bce-python-sdk",
+      "version": "0.9.76",
+      "declaredLicense": "Apache License 2.0"
+    },
+    {
+      "name": "beautifulsoup4",
+      "version": "4.15.0",
+      "declaredLicense": "MIT License"
+    },
+    {
+      "name": "cachetools",
+      "version": "7.1.7",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "declaredLicense": "MPL-2.0"
+    },
+    {
+      "name": "chardet",
+      "version": "7.5.1",
+      "declaredLicense": "0BSD"
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.4.9",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "click",
+      "version": "8.4.2",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "colorama",
+      "version": "0.4.6",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "colorlog",
+      "version": "6.12.0",
+      "declaredLicense": "MIT License"
+    },
+    {
+      "name": "crc32c",
+      "version": "2.8",
+      "declaredLicense": "LGPL-2.1-or-later"
+    },
+    {
+      "name": "cssselect",
+      "version": "1.5.0",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "cssutils",
+      "version": "2.15.0",
+      "declaredLicense": "LGPL-3.0-or-later"
+    },
+    {
+      "name": "distro",
+      "version": "1.9.0",
+      "declaredLicense": "Apache License, Version 2.0"
+    },
+    {
+      "name": "einops",
+      "version": "0.8.2",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "encutils",
+      "version": "1.0.0",
+      "declaredLicense": "LGPL-3.0-or-later"
+    },
+    {
+      "name": "et_xmlfile",
+      "version": "2.0.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "filelock",
+      "version": "3.32.2",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "frozenlist",
+      "version": "1.8.0",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "fsspec",
+      "version": "2026.7.0",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "ftfy",
+      "version": "6.3.1",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "future",
+      "version": "1.0.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "hf-xet",
+      "version": "1.6.0",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "huggingface_hub",
+      "version": "1.27.0",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "idna",
+      "version": "3.18",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "imagesize",
+      "version": "2.0.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "Jinja2",
+      "version": "3.1.6",
+      "declaredLicense": "OSI Approved :: BSD License"
+    },
+    {
+      "name": "jiter",
+      "version": "0.16.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "joblib",
+      "version": "1.5.3",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "latex2mathml",
+      "version": "3.81.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "lxml",
+      "version": "6.1.1",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "MarkupSafe",
+      "version": "3.0.3",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "modelscope",
+      "version": "1.39.1",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "modelscope-hub",
+      "version": "0.2.0",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "more-itertools",
+      "version": "11.1.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "multidict",
+      "version": "6.7.1",
+      "declaredLicense": "Apache License 2.0"
+    },
+    {
+      "name": "narwhals",
+      "version": "2.24.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "networkx",
+      "version": "3.6.1",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "numpy",
+      "version": "2.3.5",
+      "declaredLicense": "OSI Approved :: BSD License"
+    },
+    {
+      "name": "openai",
+      "version": "2.53.0",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "opencv-contrib-python",
+      "version": "4.10.0.84",
+      "declaredLicense": "Apache 2.0"
+    },
+    {
+      "name": "openpyxl",
+      "version": "3.1.5",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "opt-einsum",
+      "version": "3.3.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "declaredLicense": "Apache-2.0 OR BSD-2-Clause"
+    },
+    {
+      "name": "paddleocr",
+      "version": "3.7.0",
+      "declaredLicense": "Apache License 2.0"
+    },
+    {
+      "name": "paddlepaddle",
+      "version": "3.2.1",
+      "declaredLicense": "Apache Software License"
+    },
+    {
+      "name": "paddlex",
+      "version": "3.7.2",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "pandas",
+      "version": "3.0.5",
+      "declaredLicense": "OSI Approved :: BSD License"
+    },
+    {
+      "name": "pillow",
+      "version": "12.3.0",
+      "declaredLicense": "MIT-CMU"
+    },
+    {
+      "name": "premailer",
+      "version": "3.10.0",
+      "declaredLicense": "Python"
+    },
+    {
+      "name": "prettytable",
+      "version": "3.18.0",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "propcache",
+      "version": "0.5.2",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "protobuf",
+      "version": "7.35.1",
+      "declaredLicense": "3-Clause BSD License"
+    },
+    {
+      "name": "psutil",
+      "version": "7.2.2",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "py-cpuinfo",
+      "version": "9.0.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "pyclipper",
+      "version": "1.4.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "pycryptodome",
+      "version": "3.23.0",
+      "declaredLicense": "BSD, Public Domain"
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.4",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "pydantic_core",
+      "version": "2.46.4",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "pypdfium2",
+      "version": "5.12.1",
+      "declaredLicense": "BSD-3-Clause, Apache-2.0, dependency licenses"
+    },
+    {
+      "name": "python-bidi",
+      "version": "0.6.11",
+      "declaredLicense": "OSI Approved :: GNU Library or Lesser General Public License (LGPL)"
+    },
+    {
+      "name": "python-dateutil",
+      "version": "2.9.0.post0",
+      "declaredLicense": "Dual License"
+    },
+    {
+      "name": "PyYAML",
+      "version": "6.0.2",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "regex",
+      "version": "2026.7.19",
+      "declaredLicense": "Apache-2.0 AND CNRI-Python"
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "ruamel.yaml",
+      "version": "0.19.1",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "safetensors",
+      "version": "0.8.0",
+      "declaredLicense": "OSI Approved :: Apache Software License"
+    },
+    {
+      "name": "scikit-learn",
+      "version": "1.9.0",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "scipy",
+      "version": "1.18.0",
+      "declaredLicense": "OSI Approved :: BSD License"
+    },
+    {
+      "name": "sentencepiece",
+      "version": "0.2.2",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "setuptools",
+      "version": "84.0.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "shapely",
+      "version": "2.1.2",
+      "declaredLicense": "BSD 3-Clause"
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "sniffio",
+      "version": "1.3.1",
+      "declaredLicense": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "soupsieve",
+      "version": "2.9.2",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "threadpoolctl",
+      "version": "3.6.0",
+      "declaredLicense": "BSD-3-Clause"
+    },
+    {
+      "name": "tiktoken",
+      "version": "0.13.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "tokenizers",
+      "version": "0.23.1",
+      "declaredLicense": "OSI Approved :: Apache Software License"
+    },
+    {
+      "name": "tqdm",
+      "version": "4.70.0",
+      "declaredLicense": "MPL-2.0 AND MIT"
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.2",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "declaredLicense": "PSF-2.0"
+    },
+    {
+      "name": "tzdata",
+      "version": "2026.3",
+      "declaredLicense": "Apache-2.0"
+    },
+    {
+      "name": "ujson",
+      "version": "5.13.0",
+      "declaredLicense": "BSD-3-Clause AND TCL"
+    },
+    {
+      "name": "urllib3",
+      "version": "2.7.0",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "wcwidth",
+      "version": "0.8.2",
+      "declaredLicense": "MIT"
+    },
+    {
+      "name": "yarl",
+      "version": "1.24.5",
+      "declaredLicense": "Apache-2.0"
+    }
+  ]
+}

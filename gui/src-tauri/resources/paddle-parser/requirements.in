@@ -1,0 +1,4 @@
+# Release-owned inputs for the optional PaddleOCR-VL Full Parser.
+# Regenerate the per-platform hash locks with scripts/release/lock-paddle-parser.mjs.
+paddleocr[doc-parser]==3.7.0
+paddlepaddle==3.2.1

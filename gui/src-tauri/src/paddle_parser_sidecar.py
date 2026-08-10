@@ -586,6 +586,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--input")
     parser.add_argument("--output")
     parser.add_argument("--assets-dir")
+    parser.add_argument("--layout-model-dir")
     parser.add_argument("--server-url", default="http://127.0.0.1:9/v1")
     parser.add_argument("--server-model", default="paddleocr-vl-1.6")
     parser.add_argument("--api-key", default=os.environ.get("PIPELINE_PADDLE_API_KEY", ""))
@@ -619,6 +620,16 @@ def main() -> int:
     if args.probe and not args.warm_layout:
         print(json.dumps({"ok": True, "paddleocr": version}))
         return 0
+    if not args.layout_model_dir:
+        print("--layout-model-dir is required", file=sys.stderr)
+        return 2
+    layout_model_dir = Path(args.layout_model_dir)
+    required_model_files = ("inference.json", "inference.yml", "inference.pdiparams")
+    if not layout_model_dir.is_dir() or any(
+        not (layout_model_dir / name).is_file() for name in required_model_files
+    ):
+        print("The managed PP-DocLayoutV3 model is incomplete", file=sys.stderr)
+        return 2
 
     pipeline = PaddleOCRVL(
         pipeline_version="v1.6",
@@ -628,6 +639,7 @@ def main() -> int:
         vl_rec_max_concurrency=args.concurrency,
         vl_rec_api_model_name=args.server_model,
         vl_rec_api_key=args.api_key or None,
+        layout_detection_model_dir=str(layout_model_dir),
         use_layout_detection=args.layout_detection,
         layout_threshold=args.layout_threshold,
         layout_nms=args.layout_nms,

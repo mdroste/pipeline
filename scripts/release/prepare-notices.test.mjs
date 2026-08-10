@@ -6,8 +6,70 @@ import {
   cargoComponents,
   npmComponents,
   popplerComponents,
+  pythonRuntimeComponents,
   validateLicenseInventory,
 } from "./prepare-notices.mjs";
+
+test("adds checksum-locked optional Python runtime packages to the SBOM", () => {
+  const components = pythonRuntimeComponents({
+    locks: {
+      "linux-x86_64": `lock-version = "1.0"
+[[packages]]
+name = "Example_Package"
+version = "1.2.3"
+wheels = [{ url = "https://files.pythonhosted.org/example.whl", hashes = { sha256 = "${"a".repeat(64)}" } }]
+`,
+    },
+    runtimeLock: {
+      python: {
+        version: "3.12.13",
+        buildRelease: "20260623",
+        license: "PSF-2.0",
+        artifacts: {
+          "linux-x86_64": {
+            target: "x86_64-unknown-linux-gnu",
+            sha256: "b".repeat(64),
+            lock: "pylock.linux-x86_64.toml",
+            lockSha256: "c".repeat(64),
+          },
+        },
+      },
+      uv: {
+        version: "0.11.26",
+        license: "Apache-2.0 OR MIT",
+        artifacts: {
+          "linux-x86_64": {
+            target: "x86_64-unknown-linux-gnu",
+            sha256: "d".repeat(64),
+          },
+        },
+      },
+      layoutModel: {
+        name: "PP-DocLayoutV3",
+        version: "paddle3.0.0",
+        license: "Apache-2.0",
+        url: "https://example.test/model.tar",
+        sha256: "e".repeat(64),
+      },
+    },
+    licenseInventory: {
+      packages: [{
+        name: "example-package",
+        version: "1.2.3",
+        declaredLicense: "MIT",
+      }],
+    },
+  });
+  const pythonPackage = components.find((item) => item.group === "pypi");
+  assert.equal(pythonPackage.purl, "pkg:pypi/example-package@1.2.3");
+  assert.equal(pythonPackage.licenses[0].license.name, "MIT");
+  assert.ok(pythonPackage.properties.some(
+    (property) => property.name === "pipeline:wheel-sha256"
+      && property.value.startsWith("a".repeat(64)),
+  ));
+  assert.ok(components.some((item) => item.type === "machine-learning-model"));
+  assert.ok(components.some((item) => item.name === "CPython"));
+});
 
 test("extracts locked Cargo packages and their archive checksum", () => {
   const components = cargoComponents('[[package]]\nname = "serde"\nversion = "1.0.0"\nsource = "registry+x"\nchecksum = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n');

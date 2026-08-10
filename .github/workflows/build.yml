@@ -125,6 +125,9 @@ jobs:
         working-directory: gui
         run: npm run test:release
 
+      - name: Paddle full-parser sidecar contract
+        run: python scripts/release/test-paddle-parser-sidecar.py
+
       - name: Cargo test
         working-directory: gui/src-tauri
         run: cargo test --locked --all-targets

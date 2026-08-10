@@ -2029,17 +2029,6 @@ pub fn marker_image_files(paper_hash: &str) -> Result<Vec<PathBuf>, String> {
 
 const EXTRACTION_CACHE_SCHEMA: u32 = 3;
 
-fn executable_identity(path: &Path) -> String {
-    let metadata = fs::metadata(path).ok();
-    let len = metadata.as_ref().map(|value| value.len()).unwrap_or(0);
-    let modified = metadata
-        .and_then(|value| value.modified().ok())
-        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|value| value.as_secs())
-        .unwrap_or(0);
-    format!("{}:{len}:{modified}", path.display())
-}
-
 fn cache_fingerprint(value: &serde_json::Value) -> String {
     let bytes = serde_json::to_vec(value).unwrap_or_default();
     format!("{:x}", Sha256::digest(bytes))[..16].to_string()
@@ -3127,9 +3116,7 @@ fn paddle_checkpoint_dir(
     let identity = serde_json::json!({
         "schema": EXTRACTION_CACHE_SCHEMA,
         "engine": "paddleocr-vl-1.6-q8",
-        "server": executable_identity(&paths.server),
-        "model": executable_identity(&paths.model),
-        "projector": executable_identity(&paths.mmproj),
+        "runtime_integrity": paths.integrity_sha256,
         "concurrency": crate::settings::resolved_paddle_page_concurrency(settings),
         "vision_batch": crate::settings::resolved_paddle_mtmd_batch_tokens(settings),
         "flash_attention": settings.paddle_flash_attention,
@@ -3433,11 +3420,9 @@ fn full_parser_cache_fingerprint(
         "structure_schema": PADDLE_STRUCTURE_SCHEMA,
         "engine": "paddleocr-vl-full",
         "parser_release": paths.release,
-        "python": executable_identity(&paths.python),
-        "sidecar": executable_identity(&paths.script),
-        "server": executable_identity(&paths.paddle.server),
-        "model": executable_identity(&paths.paddle.model),
-        "projector": executable_identity(&paths.paddle.mmproj),
+        "parser_integrity": paths.integrity_sha256,
+        "sidecar_sha256": paths.sidecar_sha256,
+        "recognition_integrity": paths.paddle.integrity_sha256,
         "concurrency": crate::settings::resolved_paddle_page_concurrency(settings),
         "vision_batch": crate::settings::resolved_paddle_mtmd_batch_tokens(settings),
         "flash_attention": settings.paddle_flash_attention,
@@ -3626,6 +3611,8 @@ fn run_paddle_full_sidecar(
         .map_err(|error| format!("Failed to serialize PDF text-layer baseline: {error}"))?;
     let mut command = StdCommand::new(&paths.python);
     let arguments: Vec<std::ffi::OsString> = vec![
+        "-I".into(),
+        "-B".into(),
         paths.script.as_os_str().to_owned(),
         "--input".into(),
         input.as_os_str().to_owned(),
@@ -3633,6 +3620,8 @@ fn run_paddle_full_sidecar(
         output.as_os_str().to_owned(),
         "--assets-dir".into(),
         assets.as_os_str().to_owned(),
+        "--layout-model-dir".into(),
+        paths.layout_model.as_os_str().to_owned(),
         "--server-url".into(),
         base_url.into(),
         "--server-model".into(),
@@ -3669,10 +3658,9 @@ fn run_paddle_full_sidecar(
         boolean(settings.paddle_full_show_formula_numbers).into(),
     ];
     command.args(arguments);
-    command.env("PIPELINE_PADDLE_API_KEY", api_key);
-    for (key, value) in crate::engines::paddle_full_parser_env(paths) {
-        command.env(key, value);
-    }
+    let mut environment = crate::engines::paddle_full_parser_env(paths);
+    environment.push(("PIPELINE_PADDLE_API_KEY".to_string(), api_key.to_string()));
+    crate::engines::apply_managed_environment(&mut command, &environment);
     if let Some(parent) = output.parent() {
         command.current_dir(parent);
     }
@@ -3724,7 +3712,7 @@ async fn extract_paddle_full(
                 activate_paddle_full_cache(&root, &fingerprint)?;
                 extraction_log(
                     app,
-                    "PaddleOCR-VL Full Parser: reused a verified structured cache",
+                    "PaddleOCR-VL Full Parser: reused a schema-validated structured cache",
                 );
                 return Ok(extraction);
             }
@@ -5049,6 +5037,39 @@ pub async fn extract(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_parser_cache_identity_uses_verified_content_digests() {
+        let paddle = crate::engines::PaddleEnginePaths {
+            server: PathBuf::from("/managed/runtime/llama-server"),
+            model: PathBuf::from("/managed/models/model.gguf"),
+            mmproj: PathBuf::from("/managed/models/projector.gguf"),
+            integrity_sha256: "recognition-integrity-a".to_string(),
+        };
+        let mut paths = crate::engines::PaddleFullParserPaths {
+            python: PathBuf::from("/managed/parser/python"),
+            script: PathBuf::from("/managed/parser/sidecar.py"),
+            model_cache: PathBuf::from("/managed/parser/cache"),
+            layout_model: PathBuf::from("/managed/parser/layout"),
+            paddle,
+            release: "parser-release".to_string(),
+            integrity_sha256: "parser-integrity-a".to_string(),
+            sidecar_sha256: "sidecar-a".to_string(),
+        };
+        let settings = crate::settings::Settings::default();
+        let original = full_parser_cache_fingerprint(&paths, &settings);
+
+        // Mutable paths and timestamps are not cache provenance.
+        paths.python = PathBuf::from("/different/path/python");
+        paths.layout_model = PathBuf::from("/different/path/layout");
+        assert_eq!(full_parser_cache_fingerprint(&paths, &settings), original);
+
+        paths.integrity_sha256 = "parser-integrity-b".to_string();
+        assert_ne!(full_parser_cache_fingerprint(&paths, &settings), original);
+        paths.integrity_sha256 = "parser-integrity-a".to_string();
+        paths.paddle.integrity_sha256 = "recognition-integrity-b".to_string();
+        assert_ne!(full_parser_cache_fingerprint(&paths, &settings), original);
+    }
 
     #[test]
     fn direct_pdf_attachment_requires_the_matching_cloud_api_key() {

@@ -135,16 +135,16 @@ only after the user selects Install in Settings, are stored under
   runtime, licensed under MIT, from the project's official GitHub release and
   verifies the release asset's published SHA-256.
 - The optional PaddleOCR-VL Full Parser downloads checksum-pinned uv 0.11.26
-  (MIT OR Apache-2.0), uses it to provision app-owned CPython 3.12 (Python
-  Software Foundation License), and installs exact top-level
-  `paddleocr==3.7.0` and `paddlepaddle==3.2.1` packages (Apache-2.0), including
-  PaddleOCR's document-parser dependencies and PP-DocLayoutV3 model files.
-  These components are stored in a private version directory and removed with
-  the Full Parser. The installer writes a `packages.txt` inventory and binds
-  its SHA-256 into `install.json` so the resolved wheel closure is auditable.
-  License metadata and notices supplied inside those installed distributions
-  remain with the private environment; they are not part of Pipeline's bundled
-  Cargo/npm/Poppler SBOM.
+  (MIT OR Apache-2.0), verified CPython 3.12.13 (Python Software Foundation
+  License), and platform-specific wheel locks rooted at `paddleocr==3.7.0` and
+  `paddlepaddle==3.2.1` (Apache-2.0). Every Python artifact URL and SHA-256 is
+  fixed in a committed PEP 751 lock. PP-DocLayoutV3 is installed from a fixed
+  Paddle model artifact under Apache-2.0 and verified with a release-owned
+  SHA-256 before local initialization. These components are stored in a private
+  version directory and removed with the Full Parser. Release notices include
+  the runtime lock, every platform wheel lock, a Python license inventory, and
+  the optional runtime's package URLs in the CycloneDX build-input SBOM. The
+  same SBOM is vulnerability-scanned before a draft release can complete.
 
 Operating-system frameworks (for example WebView2, WebKit, and macOS system
 frameworks) are not redistributed in Pipeline's resource bundle and are not

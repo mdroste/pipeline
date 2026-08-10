@@ -98,6 +98,129 @@ export function npmComponents(lock) {
   return [...byReference.values()];
 }
 
+function normalizePythonName(name) {
+  return name.toLowerCase().replace(/[-_.]+/g, "-");
+}
+
+export function pythonRuntimeComponents({ locks = {}, runtimeLock, licenseInventory } = {}) {
+  if (!runtimeLock) return [];
+  const licenses = new Map(
+    (licenseInventory?.packages ?? []).map((item) => [
+      `${normalizePythonName(item.name)}@${item.version}`,
+      item.declaredLicense,
+    ]),
+  );
+  const packages = new Map();
+  for (const [platform, contents] of Object.entries(locks)) {
+    for (const block of contents.split("[[packages]]").slice(1)) {
+      const name = block.match(/^\s*name = "([^"]+)"$/m)?.[1];
+      const version = block.match(/^version = "([^"]+)"$/m)?.[1];
+      if (!name || !version) continue;
+      const normalized = normalizePythonName(name);
+      const purl = `pkg:pypi/${encodeURIComponent(normalized)}@${encodeURIComponent(version)}`;
+      const existing = packages.get(purl) ?? {
+        type: "library",
+        "bom-ref": purl,
+        group: "pypi",
+        name: normalized,
+        version,
+        purl,
+        platforms: new Set(),
+        wheels: new Map(),
+      };
+      existing.platforms.add(platform);
+      for (const match of block.matchAll(/url = "([^"]+)"[^}\]]*?sha256 = "([a-f0-9]{64})"/gs)) {
+        existing.wheels.set(match[1], match[2]);
+      }
+      packages.set(purl, existing);
+    }
+  }
+
+  const components = [...packages.values()].map((item) => {
+    const component = {
+      type: item.type,
+      "bom-ref": item["bom-ref"],
+      group: item.group,
+      name: item.name,
+      version: item.version,
+      purl: item.purl,
+      externalReferences: [...item.wheels.keys()]
+        .sort()
+        .map((url) => ({ type: "distribution", url })),
+      properties: [
+        { name: "pipeline:optional-managed-runtime", value: "paddleocr-vl-parser" },
+        { name: "pipeline:platforms", value: [...item.platforms].sort().join(",") },
+        ...[...item.wheels.entries()]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([url, digest]) => ({
+            name: "pipeline:wheel-sha256",
+            value: `${digest} ${url}`,
+          })),
+      ],
+    };
+    const declaredLicense = licenses.get(`${item.name}@${item.version}`);
+    if (declaredLicense) component.licenses = [{ license: { name: declaredLicense } }];
+    return component;
+  });
+
+  for (const [platform, artifact] of Object.entries(runtimeLock.python.artifacts)) {
+    const url = "https://releases.astral.sh/github/python-build-standalone/releases/download/"
+      + `${runtimeLock.python.buildRelease}/cpython-${runtimeLock.python.version}%2B`
+      + `${runtimeLock.python.buildRelease}-${artifact.target}-install_only_stripped.tar.gz`;
+    const purl = `pkg:generic/cpython@${encodeURIComponent(runtimeLock.python.version)}?platform=${encodeURIComponent(platform)}`;
+    components.push({
+      type: "framework",
+      "bom-ref": purl,
+      name: "CPython",
+      version: runtimeLock.python.version,
+      purl,
+      hashes: componentHash("SHA-256", artifact.sha256),
+      licenses: [{ license: { name: runtimeLock.python.license } }],
+      externalReferences: [{ type: "distribution", url }],
+      properties: [{ name: "pipeline:optional-managed-runtime", value: "paddleocr-vl-parser" }],
+    });
+    components.push({
+      type: "file",
+      "bom-ref": `pipeline:paddle-parser-lock:${platform}`,
+      name: artifact.lock,
+      hashes: componentHash("SHA-256", artifact.lockSha256),
+      properties: [{ name: "pipeline:platform", value: platform }],
+    });
+  }
+
+  for (const [platform, artifact] of Object.entries(runtimeLock.uv.artifacts)) {
+    const extension = platform.startsWith("windows-") ? ".zip" : ".tar.gz";
+    const url = `https://github.com/astral-sh/uv/releases/download/${runtimeLock.uv.version}/uv-${artifact.target}${extension}`;
+    const purl = `pkg:generic/astral-sh/uv@${encodeURIComponent(runtimeLock.uv.version)}?platform=${encodeURIComponent(platform)}`;
+    components.push({
+      type: "application",
+      "bom-ref": purl,
+      name: "uv",
+      version: runtimeLock.uv.version,
+      purl,
+      hashes: componentHash("SHA-256", artifact.sha256),
+      licenses: [{ license: { name: runtimeLock.uv.license } }],
+      externalReferences: [{ type: "distribution", url }],
+      properties: [{ name: "pipeline:optional-managed-runtime", value: "paddleocr-vl-parser" }],
+    });
+  }
+
+  const model = runtimeLock.layoutModel;
+  const modelPurl = `pkg:generic/PaddlePaddle/${encodeURIComponent(model.name)}@${encodeURIComponent(model.version)}`;
+  components.push({
+    type: "machine-learning-model",
+    "bom-ref": modelPurl,
+    name: model.name,
+    version: model.version,
+    purl: modelPurl,
+    hashes: componentHash("SHA-256", model.sha256),
+    licenses: [{ license: { name: model.license } }],
+    externalReferences: [{ type: "distribution", url: model.url }],
+    properties: [{ name: "pipeline:optional-managed-runtime", value: "paddleocr-vl-parser" }],
+  });
+  return components;
+}
+
 function nativePackagePurl(provenance, item) {
   if (!item.version) return undefined;
   const manager = provenance.packageInventory?.manager;
@@ -205,7 +328,14 @@ export function popplerComponents(provenance) {
   return components;
 }
 
-export function buildSbom({ version, cargoLock, packageLock, provenance, cargoMetadata }) {
+export function buildSbom({
+  version,
+  cargoLock,
+  packageLock,
+  provenance,
+  cargoMetadata,
+  parserRuntime,
+}) {
   const cargo = cargoComponents(cargoLock);
   const metadataByPackage = new Map(
     (cargoMetadata?.packages ?? []).map((item) => [`${item.name}@${item.version}`, item]),
@@ -218,6 +348,7 @@ export function buildSbom({ version, cargoLock, packageLock, provenance, cargoMe
     ...cargo,
     ...npmComponents(packageLock),
     ...popplerComponents(provenance),
+    ...pythonRuntimeComponents(parserRuntime),
   ].sort((a, b) => a["bom-ref"].localeCompare(b["bom-ref"]));
   const componentReferences = components.map((component) => component["bom-ref"]);
   if (new Set(componentReferences).size !== componentReferences.length) {
@@ -244,7 +375,7 @@ export function buildSbom({ version, cargoLock, packageLock, provenance, cargoMe
         licenses: [{ license: { id: "MIT" } }],
       },
       properties: [
-        { name: "pipeline:scope", value: "locked Rust, npm, and platform Poppler release inputs" },
+        { name: "pipeline:scope", value: "locked Rust, npm, platform Poppler, and optional Paddle parser release inputs" },
         { name: "pipeline:generator", value: "scripts/release/prepare-notices.mjs" },
         { name: "pipeline:platform", value: provenance?.platform ?? "development" },
       ],
@@ -347,6 +478,19 @@ function prepare() {
   const version = validateReleaseIdentity({ rootDir: REPO_ROOT });
   const tauriDir = path.join(REPO_ROOT, "gui", "src-tauri");
   const popplerDir = path.join(tauriDir, "resources", "poppler");
+  const parserDir = path.join(tauriDir, "resources", "paddle-parser");
+  const parserRuntimeLock = JSON.parse(
+    fs.readFileSync(path.join(parserDir, "runtime-lock.json"), "utf8"),
+  );
+  const parserLicenseInventory = JSON.parse(
+    fs.readFileSync(path.join(parserDir, "python-licenses.json"), "utf8"),
+  );
+  const parserLocks = Object.fromEntries(
+    Object.entries(parserRuntimeLock.python.artifacts).map(([platform, artifact]) => [
+      platform,
+      fs.readFileSync(path.join(parserDir, artifact.lock), "utf8"),
+    ]),
+  );
   const provenancePath = path.join(popplerDir, "PROVENANCE.json");
   const releaseBuild = process.env.PIPELINE_RELEASE_BUILD === "1";
   if (releaseBuild && !fs.existsSync(provenancePath)) {
@@ -366,6 +510,9 @@ function prepare() {
     "THIRD_PARTY_LICENSES.md",
     "THIRD_PARTY_SBOM.cdx.json",
     "LICENSE_INVENTORY.json",
+    "PADDLE_PARSER_LICENSE_INVENTORY.json",
+    "PADDLE_PARSER_RUNTIME_LOCK.json",
+    "paddle-parser-locks",
     "licenses",
   ]) {
     fs.rmSync(path.join(output, generated), { recursive: true, force: true });
@@ -373,6 +520,17 @@ function prepare() {
   fs.copyFileSync(path.join(REPO_ROOT, "LICENSE"), path.join(output, "PIPELINE_LICENSE.txt"));
   fs.copyFileSync(path.join(REPO_ROOT, "THIRD_PARTY_LICENSES.md"), path.join(output, "THIRD_PARTY_LICENSES.md"));
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "release", "poppler-lock.json"), path.join(output, "POPPLER_INPUT_LOCK.json"));
+  fs.copyFileSync(
+    path.join(parserDir, "runtime-lock.json"),
+    path.join(output, "PADDLE_PARSER_RUNTIME_LOCK.json"),
+  );
+  fs.mkdirSync(path.join(output, "paddle-parser-locks"), { recursive: true });
+  for (const artifact of Object.values(parserRuntimeLock.python.artifacts)) {
+    fs.copyFileSync(
+      path.join(parserDir, artifact.lock),
+      path.join(output, "paddle-parser-locks", artifact.lock),
+    );
+  }
   if (provenance) {
     fs.copyFileSync(provenancePath, path.join(output, "POPPLER_PROVENANCE.json"));
     const popplerLicenses = path.join(popplerDir, "licenses");
@@ -432,12 +590,76 @@ function prepare() {
     `${JSON.stringify(licenseInventory, null, 2)}\n`,
   );
 
+  const parserLicenseEntries = [
+    ...parserLicenseInventory.packages.map((item) => ({
+      ecosystem: "pypi",
+      name: normalizePythonName(item.name),
+      version: item.version,
+      declaredLicense: item.declaredLicense,
+      licenseFiles: [],
+    })),
+    {
+      ecosystem: "managed-runtime",
+      name: "CPython",
+      version: parserRuntimeLock.python.version,
+      declaredLicense: parserRuntimeLock.python.license,
+      licenseFiles: [],
+    },
+    {
+      ecosystem: "managed-runtime",
+      name: "uv",
+      version: parserRuntimeLock.uv.version,
+      declaredLicense: parserRuntimeLock.uv.license,
+      licenseFiles: [],
+    },
+    {
+      ecosystem: "managed-model",
+      name: parserRuntimeLock.layoutModel.name,
+      version: parserRuntimeLock.layoutModel.version,
+      declaredLicense: parserRuntimeLock.layoutModel.license,
+      licenseFiles: [],
+    },
+  ];
+  const parserLicenseEvidence = validateLicenseInventory(parserLicenseEntries, true);
+  const lockedPythonPackages = new Set(
+    pythonRuntimeComponents({
+      locks: parserLocks,
+      runtimeLock: parserRuntimeLock,
+      licenseInventory: parserLicenseInventory,
+    })
+      .filter((item) => item.group === "pypi")
+      .map((item) => `${item.name}@${item.version}`),
+  );
+  const licensedPythonPackages = new Set(
+    parserLicenseEntries
+      .filter((item) => item.ecosystem === "pypi")
+      .map((item) => `${item.name}@${item.version}`),
+  );
+  const missingLicenseEvidence = [...lockedPythonPackages]
+    .filter((item) => !licensedPythonPackages.has(item));
+  const staleLicenseEvidence = [...licensedPythonPackages]
+    .filter((item) => !lockedPythonPackages.has(item));
+  if (missingLicenseEvidence.length || staleLicenseEvidence.length) {
+    throw new Error(
+      `Paddle parser license evidence does not match its locks (missing: ${missingLicenseEvidence.join(", ") || "none"}; stale: ${staleLicenseEvidence.join(", ") || "none"})`,
+    );
+  }
+  fs.writeFileSync(
+    path.join(output, "PADDLE_PARSER_LICENSE_INVENTORY.json"),
+    `${JSON.stringify(parserLicenseEvidence, null, 2)}\n`,
+  );
+
   const sbom = buildSbom({
     version,
     cargoLock: fs.readFileSync(path.join(tauriDir, "Cargo.lock"), "utf8"),
     packageLock,
     provenance,
     cargoMetadata: metadata,
+    parserRuntime: {
+      locks: parserLocks,
+      runtimeLock: parserRuntimeLock,
+      licenseInventory: parserLicenseInventory,
+    },
   });
   fs.writeFileSync(path.join(output, "THIRD_PARTY_SBOM.cdx.json"), `${JSON.stringify(sbom, null, 2)}\n`);
   fs.writeFileSync(
@@ -449,6 +671,7 @@ function prepare() {
       "Third-party terms and source locations are in THIRD_PARTY_LICENSES.md.",
       "The machine-readable build-input dependency inventory is in THIRD_PARTY_SBOM.cdx.json.",
       "Declared licenses and copied offline license files are audited in LICENSE_INVENTORY.json.",
+      "The optional managed Paddle parser's locks and licenses are in PADDLE_PARSER_RUNTIME_LOCK.json, paddle-parser-locks/, and PADDLE_PARSER_LICENSE_INVENTORY.json.",
       provenance
         ? "This platform's exact Poppler inputs and file hashes are in POPPLER_PROVENANCE.json."
         : "This development build does not contain a release Poppler provenance manifest.",

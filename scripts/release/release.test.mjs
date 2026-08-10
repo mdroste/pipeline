@@ -8,3 +8,4 @@ import "./artifact-integrity.test.mjs";
 import "./validate-release-assets.test.mjs";
 import "./workflow-hardening.test.mjs";
 import "./npm-overrides.test.mjs";
+import "./paddle-parser-lock.test.mjs";

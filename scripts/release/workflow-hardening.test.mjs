@@ -12,7 +12,11 @@ const readText = (...segments) =>
   fs.readFileSync(path.join(ROOT, ...segments), "utf8").replaceAll("\r\n", "\n");
 
 test("all third-party GitHub Actions are pinned to immutable commit SHAs", () => {
-  for (const workflow of ["build.yml", "release.yml"]) {
+  for (const workflow of [
+    "build.yml",
+    "release.yml",
+    "paddle-parser-qualification.yml",
+  ]) {
     const contents = readText(".github", "workflows", workflow);
     const actions = [...contents.matchAll(/\buses:\s+([^@\s]+)@([^\s#]+)/g)];
     assert.ok(actions.length > 0, `${workflow} must use at least one Action`);
@@ -92,6 +96,9 @@ test("release workflow retains signing, protected-environment, and completeness 
     "libfuse2",
     "release-complete:",
     "validate-release-assets.mjs",
+    "Full parser release qualification",
+    "paddle-parser-qualification.yml",
+    "needs: [quality, paddle-parser-qualification]",
   ]) {
     assert.ok(contents.includes(required), `release workflow is missing ${required}`);
   }
