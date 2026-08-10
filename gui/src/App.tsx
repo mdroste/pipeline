@@ -66,6 +66,11 @@ function App() {
   const [depsError, setDepsError] = useState<string | null>(null);
   const runPreflightActive = useRef(false);
   const [page, setPage] = useState<AppPage>("main");
+  const [settingsInitialSection, setSettingsInitialSection] = useState<
+    "llm" | "extraction" | "general"
+  >("llm");
+  const [settingsTargetId, setSettingsTargetId] = useState<string | undefined>();
+  const [settingsNavigationKey, setSettingsNavigationKey] = useState(0);
   const [configVersion, setConfigVersion] = useState(0);
   const [selectionKey, setSelectionKey] = useState(0);
   const [workflowDirty, setWorkflowDirty] = useState(false);
@@ -379,18 +384,25 @@ function App() {
   const handleNavigate = (nextPage: AppPage) => {
     if (!confirmLeaveCurrentPage(nextPage)) return;
     if (page === "settings") void checkDependencies();
+    if (nextPage === "settings" && page !== "settings") {
+      setSettingsInitialSection("llm");
+      setSettingsTargetId(undefined);
+      setSettingsNavigationKey((key) => key + 1);
+    }
     if (nextPage === "history") setHistoryRunId(null);
     setPage(nextPage);
   };
 
   const [showDeps, setShowDeps] = useState(false);
 
-  // Auto-show deps modal on startup if required deps are missing
+  // Auto-show missing dependencies only on the main page. If the user has
+  // already navigated (most importantly, to Settings), do not let a late
+  // readiness response cover that destination with this modal.
   useEffect(() => {
-    if (depsReport && !depsReport.ready) {
+    if (page === "main" && depsReport && !depsReport.ready) {
       setShowDeps(true);
     }
-  }, [depsReport]);
+  }, [depsReport, page]);
 
   return (
     <div data-testid="app-shell" className="flex h-screen flex-col overflow-hidden bg-gray-50 dark:bg-gray-950">
@@ -398,8 +410,14 @@ function App() {
         <DepsCheck
           report={depsReport}
           onDismiss={() => setShowDeps(false)}
-          onRefresh={() => void checkDependencies()}
-          refreshing={depsLoading}
+          onOpenPdfSettings={() => {
+            if (!confirmLeaveCurrentPage("settings")) return;
+            setShowDeps(false);
+            setSettingsInitialSection("extraction");
+            setSettingsTargetId("paddleocr-local-engine");
+            setSettingsNavigationKey((key) => key + 1);
+            setPage("settings");
+          }}
         />
       )}
 
@@ -527,6 +545,9 @@ function App() {
                 dark={dark}
                 onDarkChange={handleDarkChange}
                 onSystemChange={() => void checkDependencies()}
+                initialSection={settingsInitialSection}
+                targetId={settingsTargetId}
+                navigationKey={settingsNavigationKey}
               />
             ) : page === "history" ? (
               <HistoryPage

@@ -62,9 +62,9 @@ compatibility bundle from their cached extraction.
 
 ### PDF
 
-- Text comes from the configured verified LLM, PaddleOCR-VL Fast, PaddleOCR-VL
-  Full Parser, or pdftotext extractor. Marker is retired in 1.0.1; passive
-  decoding remains only for historical run artifacts.
+- Text comes from the configured verified LLM, PaddleOCR-VL Full Parser, or
+  pdftotext extractor. Marker and PaddleOCR-VL Fast retain passive decoding
+  only for historical run artifacts.
 - Page markers are retained when available.
 - Every page is rendered independently of the text extraction method.
 - Full Parser preserves official layout labels, reading order, boxes/polygons,

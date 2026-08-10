@@ -355,11 +355,12 @@ fn default_slot_mode() -> String {
 /// parser-specific tuning is centralized in global Settings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtractionConfig {
-    /// "auto" | "llm" | "paddleocr-vl" | "paddleocr-vl-full" |
-    /// "pdftotext" | "" (= inherit global).
+    /// "auto" | "llm" | "paddleocr-vl-full" | "pdftotext" | "" (= inherit
+    /// global). The retired "paddleocr-vl" value is migrated to the Full
+    /// Parser when older profiles are deserialized.
     /// The retired "marker" value remains deserializable so users can repair
     /// profiles created before Pipeline 1.0.1; extraction rejects it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_extraction_method")]
     pub method: String,
     /// Input mode for the workflow: "" or "document" (single file, default),
     /// "folder" (inventory of a directory; steps Read files on demand), or
@@ -369,6 +370,17 @@ pub struct ExtractionConfig {
     /// Extra named inputs (beyond the primary one) this profile accepts.
     #[serde(default)]
     pub extra_inputs: Vec<InputSlot>,
+}
+
+fn deserialize_extraction_method<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        "paddleocr-vl" => "paddleocr-vl-full".to_string(),
+        _ => value,
+    })
 }
 
 /// Combined config returned to callers.
@@ -904,18 +916,11 @@ fn defaults() -> PipelineConfig {
 /// Profile IDs that cannot be deleted.
 // All are recreated by create_builtin_profiles() on startup, so
 // deleting any of them would silently "undo" itself — block deletion for all.
-const BUILTIN_PROFILES: &[&str] = &[
-    "deep-review",
-    "quick-review",
-    "deep-code-review",
-    "replication-audit",
-    "grant-review",
-];
+const BUILTIN_PROFILES: &[&str] = &["deep-review", "quick-review", "grant-review"];
 
 fn builtin_primary_readers(id: &str) -> &'static [&'static str] {
     match id {
         "deep-review" => &["validate_feedback"],
-        "deep-code-review" => &["code_verify"],
         _ => &[],
     }
 }
@@ -925,13 +930,18 @@ fn builtin_primary_readers(id: &str) -> &'static [&'static str] {
 /// later create custom profiles that happen to reuse one of these IDs.
 const RETIRED_BUILTIN_PROFILES: &[(&str, &str)] = &[
     ("empirical", "deep-review"),
-    ("quick-code-review", "deep-code-review"),
+    ("quick-code-review", "deep-review"),
     ("revision-response", "deep-review"),
     ("thesis-review", "deep-review"),
     ("rubric-grading", "deep-review"),
-    // Very old releases used this ID for the workflow later renamed Quick
-    // Code Review. The current Codebase Review retains the deep workflow ID.
-    ("codebase-review", "deep-code-review"),
+    ("codebase-review", "deep-review"),
+];
+
+/// Built-ins retired after the v3 catalog migration had already shipped.
+/// These need their own marker so existing installations archive them too.
+const V9_RETIRED_BUILTIN_PROFILES: &[(&str, &str)] = &[
+    ("deep-code-review", "deep-review"),
+    ("replication-audit", "deep-review"),
 ];
 
 fn profile_summary(id: String, profile: &ProfileData) -> ProfileSummary {
@@ -1021,13 +1031,6 @@ fn configure_artifact_flow(
     steps
 }
 
-fn folder_extraction() -> ExtractionConfig {
-    ExtractionConfig {
-        input_mode: "folder".into(),
-        ..Default::default()
-    }
-}
-
 /// Domain-neutral profile scaffold: generic wrapper + generic survey prompt.
 /// Folder-input profiles get the folder survey, which explores the tree with
 /// the Read tool instead of surveying the file inventory text.
@@ -1101,130 +1104,6 @@ fn create_builtin_profiles() -> Result<(), String> {
         ),
     )?;
 
-    // Codebase Review — seven parallel passes, consolidate, then a
-    // sequential verify step that re-reads the code to refute findings.
-    write_builtin_if_missing(
-        &profiles.join("deep-code-review.json"),
-        &generic_profile(
-            "Codebase Review",
-            vec![
-                prompt_step(
-                    "code_correctness",
-                    "Correctness",
-                    Phase::Parallel,
-                    &[],
-                    "code_correctness",
-                ),
-                prompt_step(
-                    "code_security",
-                    "Security",
-                    Phase::Parallel,
-                    &[],
-                    "code_security",
-                ),
-                prompt_step(
-                    "code_design",
-                    "Design & Maintainability",
-                    Phase::Parallel,
-                    &[],
-                    "code_design",
-                ),
-                prompt_step(
-                    "code_concurrency",
-                    "Concurrency & Resources",
-                    Phase::Parallel,
-                    &[],
-                    "code_concurrency",
-                ),
-                prompt_step(
-                    "code_errors",
-                    "Error Handling & Edge Cases",
-                    Phase::Parallel,
-                    &[],
-                    "code_errors",
-                ),
-                prompt_step(
-                    "code_performance",
-                    "Performance",
-                    Phase::Parallel,
-                    &[],
-                    "code_performance",
-                ),
-                prompt_step(
-                    "code_tests",
-                    "Test Coverage & Quality",
-                    Phase::Parallel,
-                    &[],
-                    "code_tests",
-                ),
-                prompt_step(
-                    "code_synthesis",
-                    "Consolidate Findings",
-                    Phase::Sequential,
-                    &[],
-                    "code_synthesis",
-                ),
-                prompt_step(
-                    "code_verify",
-                    "Verify Findings",
-                    Phase::Sequential,
-                    &[],
-                    "code_verify",
-                ),
-            ],
-            folder_extraction(),
-            &["code_verify"],
-        ),
-    )?;
-
-    // Replication Package Audit — data-editor-style check of a paper's
-    // replication package (folder input).
-    write_builtin_if_missing(
-        &profiles.join("replication-audit.json"),
-        &generic_profile(
-            "Replication Package Audit",
-            vec![
-                prompt_step(
-                    "repl_completeness",
-                    "Exhibit Completeness",
-                    Phase::Parallel,
-                    &[],
-                    "repl_completeness",
-                ),
-                prompt_step(
-                    "repl_consistency",
-                    "Code–Paper Consistency",
-                    Phase::Parallel,
-                    &[],
-                    "repl_consistency",
-                ),
-                prompt_step(
-                    "repl_portability",
-                    "Portability",
-                    Phase::Parallel,
-                    &[],
-                    "repl_portability",
-                ),
-                prompt_step(
-                    "repl_provenance",
-                    "Data Provenance",
-                    Phase::Parallel,
-                    &[],
-                    "repl_provenance",
-                ),
-                prompt_step(
-                    "repl_synthesis",
-                    "Consolidate Audit",
-                    Phase::Sequential,
-                    &[],
-                    "repl_synthesis",
-                ),
-            ],
-            folder_extraction(),
-            &[],
-        ),
-    )?;
-
     // Grant Proposal Review — document input, panel-reviewer framing.
     write_builtin_if_missing(
         &profiles.join("grant-review.json"),
@@ -1292,6 +1171,23 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         })?;
     }
 
+    let retired_v9_marker = profiles.join(".builtin-catalog-v9");
+    if !retired_v9_marker.exists() {
+        for (id, replacement) in V9_RETIRED_BUILTIN_PROFILES {
+            if profiles.join(format!("{id}.json")).exists() {
+                // Do not leave Settings pointing at a profile archived below.
+                let _ = crate::settings::replace_active_profile_if(id, replacement);
+                archive_retired_profile(profiles, id)?;
+            }
+        }
+        fs::write(&retired_v9_marker, b"paper-and-grant-profile-catalog\n").map_err(|error| {
+            format!(
+                "Failed to record the retired-profile catalog migration '{}': {error}",
+                retired_v9_marker.display()
+            )
+        })?;
+    }
+
     // Artifact access is part of the workflow definition, not an ambient
     // executor default. Refresh every shipped profile into the explicit
     // producer/role format. This must run before migrations that load and
@@ -1332,7 +1228,6 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
     for (id, previous_name, current_name) in [
         ("deep-review", "Deep Review", "Paper Review (Full)"),
         ("quick-review", "Quick Review", "Paper Review (Quick)"),
-        ("deep-code-review", "Deep Code Review", "Codebase Review"),
     ] {
         let path = profiles.join(format!("{id}.json"));
         if !path.exists() {
@@ -2061,7 +1956,7 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
 
     if !matches!(
         profile.extraction.method.as_str(),
-        "" | "auto" | "llm" | "marker" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext"
+        "" | "auto" | "llm" | "marker" | "paddleocr-vl-full" | "pdftotext"
     ) {
         return Err(format!(
             "Invalid profile extraction method '{}'",
@@ -3337,6 +3232,13 @@ mod tests {
     }
 
     #[test]
+    fn retired_fast_paddle_profile_selection_migrates_to_full_parser() {
+        let extraction: ExtractionConfig =
+            serde_json::from_str(r#"{"method":"paddleocr-vl"}"#).unwrap();
+        assert_eq!(extraction.method, "paddleocr-vl-full");
+    }
+
+    #[test]
     fn stock_full_review_enables_shared_context_reuse() {
         assert!(defaults().context_cache.enabled);
         assert!(full_review_profile(false).context_cache.enabled);
@@ -3543,12 +3445,13 @@ mod tests {
     fn builtin_catalog_contains_only_current_profiles() {
         assert_eq!(
             BUILTIN_PROFILES,
+            ["deep-review", "quick-review", "grant-review"]
+        );
+        assert_eq!(
+            V9_RETIRED_BUILTIN_PROFILES,
             [
-                "deep-review",
-                "quick-review",
-                "deep-code-review",
-                "replication-audit",
-                "grant-review",
+                ("deep-code-review", "deep-review"),
+                ("replication-audit", "deep-review"),
             ]
         );
     }
@@ -3567,22 +3470,21 @@ mod tests {
         )
         .unwrap();
 
-        let mut step = step_with_id("code_correctness");
+        let mut step = step_with_id("contribution");
         step.tools = vec!["Read".into()];
-        let mut profile = ProfileData::new("Deep Code Review", vec![step], MergeConfig::default());
-        profile.extraction = folder_extraction();
+        let profile = ProfileData::new("Deep Review", vec![step], MergeConfig::default());
         assert!(validate_profile_data(&profile)
             .unwrap_err()
             .contains("unsupported tool 'Read'"));
 
-        let path = dir.path().join("deep-code-review.json");
+        let path = dir.path().join("deep-review.json");
         fs::write(&path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
 
         migrate_builtin_catalog(dir.path()).unwrap();
 
         let migrated: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         validate_profile_data(&migrated).unwrap();
-        assert_eq!(migrated.name, "Codebase Review");
+        assert_eq!(migrated.name, "Paper Review (Full)");
         assert!(migrated.steps[0].tools.is_empty());
         assert!(migrated.steps[0].context.include.iter().any(|selector| {
             matches!(

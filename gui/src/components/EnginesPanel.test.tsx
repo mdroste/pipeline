@@ -16,17 +16,18 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 function engine(overrides: Partial<EngineStatus> = {}): EngineStatus {
   return {
-    id: "paddleocr-vl",
-    label: "PaddleOCR-VL 1.6 Q8",
-    description: "Compact native extraction.",
+    id: "paddleocr-vl-parser",
+    label: "PaddleOCR-VL 1.6 Full Parser",
+    description: "Layout-aware local extraction.",
     installed: false,
     version: "",
     entry_path: "",
     system_path: "",
-    est_download_mb: 1900,
-    est_disk_mb: 2300,
+    est_download_mb: 2900,
+    est_disk_mb: 3800,
     managed_stack_mb: 0,
     installing: false,
+    install_progress: null,
     ...overrides,
   };
 }
@@ -45,10 +46,10 @@ describe("EnginesPanel", () => {
   it("lists engines with an Install button and size estimate", async () => {
     invoke.mockResolvedValue([engine()]);
     render(<EnginesPanel />);
-    expect(await screen.findByText("PaddleOCR-VL 1.6 Q8")).toBeInTheDocument();
+    expect(await screen.findByText("PaddleOCR-VL 1.6 Full Parser")).toBeInTheDocument();
     expect(screen.getByText("not installed")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Install \(~1\.9 GB\)/ }),
+      screen.getByRole("button", { name: /Install \(~2\.9 GB\)/ }),
     ).toBeInTheDocument();
   });
 
@@ -69,11 +70,11 @@ describe("EnginesPanel", () => {
 
   it("shows installed state with version, disk usage, and Uninstall", async () => {
     invoke.mockResolvedValue([
-      engine({ installed: true, version: "1.6 Q8", managed_stack_mb: 2300 }),
+      engine({ installed: true, version: "3.7.0", managed_stack_mb: 3800 }),
     ]);
     render(<EnginesPanel />);
-    expect(await screen.findByText("installed v1.6 Q8")).toBeInTheDocument();
-    expect(screen.getByText(/Disk usage: 2\.3 GB/)).toBeInTheDocument();
+    expect(await screen.findByText("installed v3.7.0")).toBeInTheDocument();
+    expect(screen.getByText(/Disk usage: 3\.8 GB/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Uninstall" })).toBeInTheDocument();
   });
 
@@ -99,7 +100,7 @@ describe("EnginesPanel", () => {
     );
     await user.click(screen.getByRole("button", { name: "Retry status" }));
 
-    expect(await screen.findByText("PaddleOCR-VL 1.6 Q8")).toBeVisible();
+    expect(await screen.findByText("PaddleOCR-VL 1.6 Full Parser")).toBeVisible();
     await waitFor(() =>
       expect(screen.queryByText(/engine catalog unavailable/)).not.toBeInTheDocument(),
     );
@@ -115,7 +116,7 @@ describe("EnginesPanel", () => {
     });
     render(<EnginesPanel />);
 
-    expect(await screen.findByText("PaddleOCR-VL 1.6 Q8")).toBeVisible();
+    expect(await screen.findByText("PaddleOCR-VL 1.6 Full Parser")).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Retired Marker status could not be checked: marker inspection denied",
     );
@@ -136,7 +137,10 @@ describe("EnginesPanel", () => {
     const user = userEvent.setup();
     render(<EnginesPanel />);
 
-    await screen.findByText("PaddleOCR-VL 1.6 Q8");
+    await screen.findByText("PaddleOCR-VL 1.6 Full Parser");
+    await user.click(screen.getByRole("button", {
+      name: "More information about Local Engines",
+    }));
     await user.click(screen.getByRole("button", { name: "~/.pipeline/" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -184,13 +188,13 @@ describe("EnginesPanel", () => {
       await screen.findByRole("button", { name: /Install/ }),
     );
     expect(invoke).toHaveBeenCalledWith("install_engine", {
-      engineId: "paddleocr-vl",
+      engineId: "paddleocr-vl-parser",
     });
 
     // While installing: phase chips update from events, log lines stream.
     act(() => {
       handlers.get("engines:phase")!({
-        payload: { engine: "paddleocr-vl", phase: "models", status: "running" },
+        payload: { engine: "paddleocr-vl-parser", phase: "models", status: "running" },
       });
       handlers.get("engines:log")!({
         payload: { line: "Downloading model weights..." },
@@ -209,6 +213,49 @@ describe("EnginesPanel", () => {
         invoke.mock.calls.filter(([command]) => command === "list_engines"),
       ).toHaveLength(2),
     );
+  });
+
+  it("restores an in-progress install after the panel is remounted", async () => {
+    let listRequests = 0;
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines") {
+        listRequests += 1;
+        return Promise.resolve([
+          listRequests === 1
+            ? engine()
+            : engine({
+                installing: true,
+                install_progress: {
+                  engine_id: "paddleocr-vl-parser",
+                  phases: { runtime: "done", models: "running" },
+                  log_lines: ["Downloading model weights in the background..."],
+                },
+              }),
+        ]);
+      }
+      if (cmd === "retired_marker_status") {
+        return Promise.resolve({ present: false, bytes: 0 });
+      }
+      if (cmd === "install_engine") return new Promise(() => {});
+      return Promise.resolve();
+    });
+
+    const firstView = render(<EnginesPanel />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Install/ }),
+    );
+    firstView.unmount();
+
+    render(<EnginesPanel />);
+
+    expect(
+      await screen.findByText("Downloading model weights in the background..."),
+    ).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Installation continues in the background if you leave Settings.",
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(invoke.mock.calls.filter(([command]) => command === "install_engine")).toHaveLength(1);
   });
 
   it("cancel button invokes cancel_engine_install", async () => {
@@ -264,7 +311,7 @@ describe("EnginesPanel", () => {
   });
 
   it("uninstall asks for confirmation and skips when declined", async () => {
-    invoke.mockResolvedValue([engine({ installed: true, version: "1.6 Q8" })]);
+    invoke.mockResolvedValue([engine({ installed: true, version: "3.7.0" })]);
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<EnginesPanel />);
     await userEvent.click(
@@ -291,7 +338,7 @@ describe("EnginesPanel", () => {
     );
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("uninstall_engine", {
-        engineId: "paddleocr-vl",
+        engineId: "paddleocr-vl-parser",
       }),
     );
     confirmSpy.mockRestore();

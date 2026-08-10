@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import type { ModelCatalog, ModelSelection, Settings } from "../lib/types";
+import type { EngineStatus, ModelCatalog, ModelSelection, Settings } from "../lib/types";
 import {
   decodeModelSelection,
   effortOptions,
@@ -13,6 +13,7 @@ import {
   withProviderSelection,
 } from "../lib/providers";
 import EnginesPanel from "./EnginesPanel";
+import InfoButton from "./InfoButton";
 import ResizeHandle from "./ResizeHandle";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 
@@ -23,6 +24,9 @@ interface Props {
   dark: boolean;
   onDarkChange: (v: boolean) => void;
   onSystemChange?: () => void;
+  initialSection?: Section;
+  targetId?: string;
+  navigationKey?: number;
 }
 
 type Section = "llm" | "extraction" | "general";
@@ -43,13 +47,16 @@ export default function SettingsPage({
   dark,
   onDarkChange,
   onSystemChange,
+  initialSection = "llm",
+  targetId,
+  navigationKey = 0,
 }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [section, setSection] = useState<Section>("llm");
+  const [section, setSection] = useState<Section>(initialSection);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
@@ -74,6 +81,20 @@ export default function SettingsPage({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    setSection(initialSection);
+  }, [initialSection, navigationKey]);
+
+  useEffect(() => {
+    if (loading || !targetId || section !== initialSection) return;
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(targetId);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "start" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [initialSection, loading, navigationKey, section, targetId]);
 
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
@@ -410,11 +431,13 @@ function ProviderGroup({
   title,
   active,
   hasApiKey,
+  help,
   children,
 }: {
   title: string;
   active: boolean;
   hasApiKey?: boolean;
+  help?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -425,6 +448,7 @@ function ProviderGroup({
     }`}>
       <div className="flex items-center gap-2">
         <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</span>
+        {help && <InfoButton label={title}>{help}</InfoButton>}
         {active && (
           <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900">
             preferred
@@ -474,11 +498,14 @@ function LLMSection({
     <>
       <SectionHeader
         title="Models"
-        description="Configure models for each provider. The preferred provider is used for steps that don't specify an agent."
+        help="Configure models for each provider. The preferred provider is used for steps that do not specify an agent."
       />
 
       <div className="space-y-5">
-        <Field label="Preferred Provider">
+        <Field
+          label="Preferred Provider"
+          help="Provider used when workflow does not specify explicit agent(s)."
+        >
           <select
             aria-label="Preferred Provider"
             value={settings.preferred_provider}
@@ -492,14 +519,14 @@ function LLMSection({
             <option value="gemini">Gemini (Google)</option>
             <option value="local">Local (Ollama / OpenAI-compatible)</option>
           </select>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-            Used when a pipeline step doesn't specify an explicit agent.
-          </p>
         </Field>
 
         {/* Claude */}
         <ProviderGroup title="Claude (Anthropic)" active={settings.preferred_provider === "claude"} hasApiKey={!!settings.anthropic_api_key}>
-          <Field label="API Key">
+          <Field
+            label="API Key"
+            help="Bypasses Claude CLI for faster calls. Leave empty to use the CLI with your subscription."
+          >
             <input
               aria-label="Claude API Key"
               type="password"
@@ -511,9 +538,6 @@ function LLMSection({
               className={`${inputClass} font-mono`}
               autoComplete="off"
             />
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-              Bypasses Claude CLI for faster calls. Leave empty to use CLI (subscription).
-            </p>
           </Field>
           <Field label="Model">
             <ModelPicker
@@ -550,7 +574,10 @@ function LLMSection({
 
         {/* ChatGPT / OpenAI */}
         <ProviderGroup title="ChatGPT (OpenAI)" active={settings.preferred_provider === "codex"} hasApiKey={!!settings.openai_api_key}>
-          <Field label="API Key">
+          <Field
+            label="API Key"
+            help="Bypasses Codex CLI for faster calls. Leave empty to use the CLI."
+          >
             <input
               aria-label="OpenAI API Key"
               type="password"
@@ -562,9 +589,6 @@ function LLMSection({
               className={`${inputClass} font-mono`}
               autoComplete="off"
             />
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-              Bypasses Codex CLI for faster calls. Leave empty to use CLI.
-            </p>
           </Field>
           <Field label="Model">
             <ModelPicker
@@ -601,7 +625,10 @@ function LLMSection({
 
         {/* Gemini */}
         <ProviderGroup title="Gemini (Google)" active={settings.preferred_provider === "gemini"} hasApiKey={!!settings.google_api_key}>
-          <Field label="API Key">
+          <Field
+            label="API Key"
+            help="Bypasses Gemini CLI for faster calls. Leave empty to use the CLI."
+          >
             <input
               aria-label="Gemini API Key"
               type="password"
@@ -613,9 +640,6 @@ function LLMSection({
               className={`${inputClass} font-mono`}
               autoComplete="off"
             />
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-              Bypasses Gemini CLI for faster calls. Leave empty to use CLI.
-            </p>
           </Field>
           <Field label="Model">
             <ModelPicker
@@ -632,9 +656,10 @@ function LLMSection({
         </ProviderGroup>
 
         {/* Local (Ollama / OpenAI-compatible) */}
-        <ProviderGroup title="Local (Ollama)" active={settings.preferred_provider === "local"}>
-          <p className="text-xs text-gray-500 dark:text-gray-400 -mt-1">
-            Runs against any local OpenAI-compatible server. With{" "}
+        <ProviderGroup
+          title="Local (Ollama)"
+          active={settings.preferred_provider === "local"}
+          help={<>Runs against any local OpenAI-compatible server. With{" "}
             <a
               href="https://ollama.com"
               onClick={(e) => {
@@ -645,10 +670,10 @@ function LLMSection({
             >
               ollama.com
             </a>{" "}
-            installed: <span className="font-mono">ollama pull llama3.3</span>, then enter the
-            model name below. LM Studio, llama.cpp, and vLLM work by changing the URL.
-            Local models are weaker than cloud models and may lack file-reading (tool) support.
-          </p>
+            installed, run <span className="font-mono">ollama pull llama3.3</span>, then select
+            the model below. LM Studio, llama.cpp, and vLLM work by changing the URL. Local
+            models may be less capable than cloud models and may lack file-reading support.</>}
+        >
           {externalLinkError && (
             <p role="alert" className="text-xs text-red-700 dark:text-red-300">
               Could not open ollama.com: {externalLinkError}
@@ -730,7 +755,10 @@ function LLMSection({
           </div>
         </Field>
 
-        <Field label="Step Timeout">
+        <Field
+          label="Step Timeout"
+          help="Maximum time for each LLM call. Orientation and extraction calls use half this value."
+        >
           <div className="flex items-center gap-3">
             <select
               aria-label="Step Timeout"
@@ -750,12 +778,12 @@ function LLMSection({
               <option value={3600}>60 minutes</option>
             </select>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-            Max time each LLM call can run before being killed. Orientation and extraction steps use half this value.
-          </p>
         </Field>
 
-        <Field label="Step Retries">
+        <Field
+          label="Step Retries"
+          help="Number of times to retry a failed step before giving up. Set to 0 for no retries."
+        >
           <div className="flex items-center gap-3">
             <input
               aria-label="Step Retries"
@@ -775,9 +803,6 @@ function LLMSection({
               {settings.max_retries}
             </span>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-            Number of times to retry a failed step before giving up. Set to 0 for no retries.
-          </p>
         </Field>
       </div>
     </>
@@ -793,16 +818,25 @@ function ExtractionSection({
   setSettings: (s: Settings) => void;
   onSystemChange?: () => void;
 }) {
+  const [paddleInstalled, setPaddleInstalled] = useState(false);
+  const handleEngineStatusChange = useCallback((engines: EngineStatus[]) => {
+    setPaddleInstalled(
+      engines.some(
+        (engine) => engine.id === "paddleocr-vl-parser" && engine.installed,
+      ),
+    );
+  }, []);
+
   return (
     <>
       <SectionHeader
         title="PDF Extraction"
-        description="Configure how Pipeline extracts text from PDF papers. LaTeX source is always extracted natively."
+        help="These options apply to PDFs. Pipeline always extracts LaTeX source natively."
       />
 
-      <div className="space-y-5">
+      <div className="space-y-4">
         <Field label="PDF Extraction Method">
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {settings.pdf_extractor === "marker" && (
               <div
                 role="alert"
@@ -820,13 +854,12 @@ function ExtractionSection({
               [
                 ["llm", "LLM", "Your configured provider reads the PDF and extracts it to Markdown in bounded page ranges. Most faithful, but slower and potentially costly."],
                 ["paddleocr-vl-full", "Local engine: PaddleOCR-VL 1.6 Full Parser", "Layout-aware extraction with reading order, structured blocks, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses the managed Q8 model."],
-                ["paddleocr-vl", "Local engine: PaddleOCR-VL 1.6 Q8 (fast)", "Direct page transcription with retries and resumable checkpoints. About 1.9 GB; less structure than the full parser."],
                 ["pdftotext", "pdftotext (basic)", "Fast, but equations are lost."],
               ] as const
             ).map(([value, label, desc]) => (
               <label
                 key={value}
-                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
                   settings.pdf_extractor === value
                     ? "border-gray-900 dark:border-gray-300 bg-gray-50 dark:bg-gray-800/50"
                     : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
@@ -855,15 +888,29 @@ function ExtractionSection({
           </div>
         </Field>
 
-        <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
-            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 pl-4">
-              PaddleOCR-VL recognition server
-            </p>
-            <div className="space-y-4 pl-4">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Used by both local PaddleOCR-VL modes. The full parser reuses this managed llama.cpp server; users do not install llama.cpp separately.
-              </p>
-              <Field label="Concurrent pages">
+        <div
+          id="paddleocr-local-engine"
+          tabIndex={-1}
+          className="scroll-mt-4 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+        >
+          <EnginesPanel
+            onSystemChange={onSystemChange}
+            onEngineStatusChange={handleEngineStatusChange}
+          />
+        </div>
+
+        {paddleInstalled && (
+          <>
+            <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
+            <SubsectionHeader
+              label="PaddleOCR-VL recognition server"
+              help="The Full Parser uses Pipeline's managed llama.cpp server for recognition; no separate llama.cpp installation is needed."
+            />
+            <div className="space-y-3 pl-4">
+              <Field
+                label="Concurrent pages"
+                help="Automatic uses two slots on Apple Silicon and one elsewhere. Each slot receives a full 16K context."
+              >
                 <select
                   aria-label="PaddleOCR-VL concurrent pages"
                   value={settings.paddle_page_concurrency}
@@ -881,34 +928,12 @@ function ExtractionSection({
                   <option value={3}>3 pages — high-memory workstation</option>
                   <option value={4}>4 pages — maximum throughput</option>
                 </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-                  Automatic uses two slots on Apple Silicon and one elsewhere. Every slot receives a full 16K context; concurrency no longer halves a page&apos;s context.
-                </p>
               </Field>
 
-              <Field label="Page resolution">
-                <select
-                  aria-label="PaddleOCR-VL page resolution"
-                  value={settings.paddle_render_dpi}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      paddle_render_dpi: parseInt(e.target.value, 10),
-                    })
-                  }
-                  className={selectClass}
-                >
-                  <option value={120}>120 DPI — faster</option>
-                  <option value={150}>150 DPI — recommended</option>
-                  <option value={180}>180 DPI — fine print</option>
-                  <option value={200}>200 DPI — highest detail</option>
-                </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-                  Lower resolution reduces image tokens and vision-prefill time; higher resolution helps small equations and dense tables.
-                </p>
-              </Field>
-
-              <Field label="Vision encoder batch">
+              <Field
+                label="Vision encoder batch"
+                help="Larger batches can speed image encoding when enough GPU memory is available. They do not reduce OCR resolution."
+              >
                 <select
                   aria-label="PaddleOCR-VL vision encoder batch"
                   value={settings.paddle_mtmd_batch_tokens}
@@ -926,9 +951,6 @@ function ExtractionSection({
                   <option value={2048}>2,048 tokens — faster prefill</option>
                   <option value={4096}>4,096 tokens — highest peak memory</option>
                 </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-                  Larger batches can make image encoding faster when sufficient GPU memory is available. They do not reduce OCR resolution.
-                </p>
               </Field>
 
               <Field label="Maximum page output">
@@ -949,7 +971,10 @@ function ExtractionSection({
                 </select>
               </Field>
 
-              <Field label="Page retries">
+              <Field
+                label="Page retries"
+                help="Suspicious layout-aware pages are retried before the Full Parser records an extraction failure."
+              >
                 <select
                   aria-label="PaddleOCR-VL page retries"
                   value={settings.paddle_page_retries}
@@ -966,12 +991,12 @@ function ExtractionSection({
                   <option value={2}>2 retries</option>
                   <option value={3}>3 retries</option>
                 </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-                  Length failures use adaptive page regions instead of repeating the same request.
-                </p>
               </Field>
 
-              <Field label="Flash Attention">
+              <Field
+                label="Flash Attention"
+                help="Automatic is safest across platforms. Force it on when benchmarking a supported GPU; turn it off for compatibility troubleshooting."
+              >
                 <select
                   aria-label="PaddleOCR-VL Flash Attention"
                   value={settings.paddle_flash_attention}
@@ -987,25 +1012,16 @@ function ExtractionSection({
                   <option value="on">On</option>
                   <option value="off">Off</option>
                 </select>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-                  Automatic is safest across platforms. Force it on when benchmarking a supported GPU; turn it off only for compatibility troubleshooting.
-                </p>
               </Field>
-
-              <p className="text-xs text-gray-500 dark:text-gray-400 rounded-md bg-gray-50 dark:bg-gray-800/50 p-3">
-                These controls change recognition throughput and memory use. Restart extraction by starting a new run after saving.
-              </p>
             </div>
-        </div>
+            </div>
 
-        <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
-          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 pl-4">
-            Full parser structure
-          </p>
-          <div className="space-y-4 pl-4">
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              These settings apply only to PaddleOCR-VL Full Parser and are included in its cache fingerprint.
-            </p>
+            <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
+              <SubsectionHeader
+                label="Full parser structure"
+                help="These options are included in the Full Parser cache fingerprint, so changing one creates a distinct cached result."
+              />
+              <div className="space-y-3 pl-4">
             <Toggle
               label="Layout detection and reading order"
               description="Run PP-DocLayoutV3 before recognition and retain semantic regions, coordinates, and reading order."
@@ -1084,19 +1100,24 @@ function ExtractionSection({
               checked={settings.paddle_full_show_formula_numbers}
               onChange={(v) => setSettings({ ...settings, paddle_full_show_formula_numbers: v })}
             />
-          </div>
-        </div>
+              </div>
+            </div>
+          </>
+        )}
 
         <Toggle
           label="Reuse verified extraction cache"
-          description="Reuse exact source-and-settings matches. Fast Paddle resumes verified page checkpoints; Full Parser reuses its validated structure and image cache; verified LLM transcriptions avoid another provider call."
+          description="Reuse exact source-and-settings matches. PaddleOCR-VL Full Parser reuses its validated structure and image cache; verified LLM transcriptions avoid another provider call."
           checked={settings.reuse_pdf_extraction_cache}
           onChange={(v) =>
             setSettings({ ...settings, reuse_pdf_extraction_cache: v })
           }
         />
 
-        <Field label="Extraction time budget">
+        <Field
+          label="Extraction time budget"
+          help="Applies to the complete extraction stage, including retries. An incomplete document fails before orientation instead of silently continuing."
+        >
           <select
             aria-label="PDF extraction time budget"
             value={settings.pdf_extraction_timeout_secs}
@@ -1114,12 +1135,7 @@ function ExtractionSection({
             <option value={1800}>30 minutes — recommended</option>
             <option value={3600}>60 minutes</option>
           </select>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-            Applies to the complete extraction stage, including retries. An incomplete document fails before orientation instead of silently continuing.
-          </p>
         </Field>
-
-        <EnginesPanel onSystemChange={onSystemChange} />
       </div>
     </>
   );
@@ -1140,7 +1156,6 @@ function GeneralSection({
     <>
       <SectionHeader
         title="General"
-        description="Appearance and other application settings."
       />
 
       <div className="space-y-5">
@@ -1261,19 +1276,21 @@ function RunRetention({
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-        Run history retention
-      </label>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-        Past runs are stored under <code>~/.pipeline/runs/</code> with their artifacts and page
-        images, which add up. The oldest completed runs are removed after each run until both
-        limits hold. 0 disables a limit.
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          Run history retention
+        </span>
+        <InfoButton label="Run history retention">
+          Past runs and their artifacts are stored under <code>~/.pipeline/runs/</code>. After
+          each run, Pipeline removes the oldest completed runs until both limits hold. Set a
+          limit to 0 to disable it.
+        </InfoButton>
         {usage && (
-          <>
-            {" "}Currently {usage.count} run{usage.count === 1 ? "" : "s"}, {fmtBytes(usage.bytes)}.
-          </>
+          <span className="ml-auto text-xs font-normal text-gray-500 dark:text-gray-400">
+            {usage.count} run{usage.count === 1 ? "" : "s"} · {fmtBytes(usage.bytes)}
+          </span>
         )}
-      </p>
+      </div>
       <div className="flex items-center gap-2">
         <input
           aria-label="Maximum saved runs"
@@ -1361,7 +1378,6 @@ function ModelPicker({
   const selection = providerSelection(settings, provider);
   const value = encodeModelSelection(selection);
   const known = value === "automatic"
-    || catalog?.roles.some((role) => value === `role:${role.id}`)
     || catalog?.models.some((model) => value === `pinned:${model.id}`);
   const selectValue = known || allowSavedUnknown ? value : "automatic";
   return (
@@ -1376,15 +1392,8 @@ function ModelPicker({
         <option value="automatic">
           Automatic — {catalog?.transport === "api" ? "recommended available model" : "installed CLI default"}
         </option>
-        {!!catalog?.roles.length && (
-          <optgroup label="Stable roles">
-            {catalog.roles.map((role) => (
-              <option key={role.id} value={`role:${role.id}`}>{role.label} — {role.model}</option>
-            ))}
-          </optgroup>
-        )}
         {!!catalog?.models.length && (
-          <optgroup label="Pin exact model">
+          <optgroup label="Available models">
             {catalog.models.map((model) => (
               <option key={model.id} value={`pinned:${model.id}`} disabled={model.deprecated}>
                 {model.display_name || model.id}{model.is_default ? " (default)" : ""}{model.deprecated ? " (deprecated)" : ""}
@@ -1394,7 +1403,11 @@ function ModelPicker({
         )}
         {!known && allowSavedUnknown && (
           <option value={value}>
-            {selection.mode === "pinned" ? selection.model : value} (saved; not currently listed)
+            {selection.mode === "role"
+              ? `${effortLabel(selection.role)} (saved role; choose a model)`
+              : selection.mode === "pinned"
+                ? `${selection.model} (saved; not currently listed)`
+                : "Automatic"}
           </option>
         )}
       </select>
@@ -1445,35 +1458,60 @@ const inputClass =
 function SectionHeader({
   title,
   description,
+  help,
 }: {
   title: string;
-  description: string;
+  description?: string;
+  help?: React.ReactNode;
 }) {
   return (
     <div className="mb-6">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-        {title}
-      </h3>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-        {description}
-      </p>
+      <div className="flex items-center gap-1.5">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {title}
+        </h3>
+        {help && <InfoButton label={title}>{help}</InfoButton>}
+      </div>
+      {description && (
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          {description}
+        </p>
+      )}
     </div>
   );
 }
 
 function Field({
   label,
+  help,
   children,
 }: {
   label: string;
+  help?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <div className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-        {label}
+      <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+        <span>{label}</span>
+        {help && <InfoButton label={label}>{help}</InfoButton>}
       </div>
       {children}
+    </div>
+  );
+}
+
+function SubsectionHeader({
+  label,
+  help,
+}: {
+  label: string;
+  help?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-3 flex items-center gap-1.5 pl-4 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+      <span>{label}</span>
+      {help && <InfoButton label={label}>{help}</InfoButton>}
     </div>
   );
 }
@@ -1490,13 +1528,19 @@ function Toggle({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/40 cursor-pointer transition-colors">
+    <div
+      onClick={() => onChange(!checked)}
+      className="flex cursor-pointer items-start gap-3 rounded-lg p-3 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/40"
+    >
       <button
         type="button"
         role="switch"
         aria-label={label}
         aria-checked={checked}
-        onClick={() => onChange(!checked)}
+        onClick={(event) => {
+          event.stopPropagation();
+          onChange(!checked);
+        }}
         className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors mt-0.5 ${
           checked
             ? "bg-gray-900 dark:bg-gray-200"
@@ -1510,13 +1554,11 @@ function Toggle({
         />
       </button>
       <div className="flex-1">
-        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-          {label}
-        </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-          {description}
+        <div className="flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-gray-100">
+          <span>{label}</span>
+          <InfoButton label={label}>{description}</InfoButton>
         </div>
       </div>
-    </label>
+    </div>
   );
 }

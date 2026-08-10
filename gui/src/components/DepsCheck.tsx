@@ -5,49 +5,241 @@ import useModalDialog from "../hooks/useModalDialog";
 interface Props {
   report: DepsReport;
   onDismiss: () => void;
-  onRefresh?: () => void;
-  refreshing?: boolean;
+  onOpenPdfSettings?: () => void;
+}
+
+type Dependency = DepsReport["deps"][number];
+type DependencyGroup = "models" | "pdf";
+type StatusTone = "success" | "warning" | "danger" | "neutral";
+
+const PROVIDER_DEPENDENCIES = new Set([
+  "Claude CLI",
+  "Codex CLI",
+  "Gemini CLI",
+]);
+
+const HIDDEN_DEPENDENCIES = new Set([
+  "Local LLM server",
+  "PDF extractor configuration",
+]);
+
+const TONE_STYLES: Record<StatusTone, { row: string; icon: string; badge: string }> = {
+  success: {
+    row: "bg-emerald-50/70 dark:bg-emerald-950/20",
+    icon: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
+    badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+  },
+  warning: {
+    row: "bg-amber-50/70 dark:bg-amber-950/20",
+    icon: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
+    badge: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+  },
+  danger: {
+    row: "bg-red-50/80 dark:bg-red-950/25",
+    icon: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400",
+    badge: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+  },
+  neutral: {
+    row: "bg-gray-50/80 dark:bg-gray-800/45",
+    icon: "bg-gray-200/70 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+    badge: "bg-gray-200/70 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
+  },
+};
+
+const isProviderDependency = (dep: Dependency) => PROVIDER_DEPENDENCIES.has(dep.name);
+
+const hasConfiguredApiKey = (dep: Dependency) =>
+  dep.authenticated === true && /API key configured/i.test(dep.hint);
+
+const dependencyAvailable = (dep: Dependency) => {
+  if (!dep.found) return false;
+  if (dep.authenticated !== undefined) return dep.authenticated;
+  if (dep.cli_auth_status === "signed_in") return true;
+  if (dep.cli_auth_status === "signed_out") return false;
+  if (dep.cli_auth_status === "unknown") return false;
+  return true;
+};
+
+const hasAuthWarning = (dep: Dependency) =>
+  dep.authenticated !== true &&
+  (dep.cli_auth_status === "signed_out" || dep.cli_auth_status === "unknown");
+
+const shouldShowHint = (dep: Dependency) => Boolean(dep.hint);
+
+const missingDependencyLabel = (dep: Dependency) => {
+  if (dep.required && /paddleocr-vl/i.test(dep.name)) {
+    return "highly recommended (for PDFs)";
+  }
+  return dep.required ? "required" : "optional";
+};
+
+function dependencyTone(
+  dep: Dependency,
+  group: DependencyGroup,
+  groupReady: boolean,
+): StatusTone {
+  if (dependencyAvailable(dep)) {
+    return hasAuthWarning(dep) ? "warning" : "success";
+  }
+  if (group === "models") return groupReady ? "neutral" : "danger";
+  return dep.required ? "danger" : "warning";
+}
+
+function StatusIcon({ tone }: { tone: StatusTone }) {
+  const styles = TONE_STYLES[tone];
+  return (
+    <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${styles.icon}`}>
+      {tone === "success" ? (
+        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M5 13l4 4L19 7" />
+        </svg>
+      ) : tone === "danger" ? (
+        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      ) : tone === "warning" ? (
+        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 8v5m0 3h.01" />
+        </svg>
+      ) : (
+        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeWidth={2.2} d="M7 12h10" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+function authLabel(dep: Dependency) {
+  if (hasConfiguredApiKey(dep)) return "API key configured";
+  if (dep.cli_auth_status === "signed_in") return "signed in";
+  if (
+    dep.cli_auth_status === "signed_out" ||
+    dep.cli_auth_status === "unknown"
+  ) return "not signed in";
+  return null;
+}
+
+function DependencyRow({
+  dep,
+  group,
+  groupReady,
+  onOpenPdfSettings,
+}: {
+  dep: Dependency;
+  group: DependencyGroup;
+  groupReady: boolean;
+  onOpenPdfSettings?: () => void;
+}) {
+  const available = dependencyAvailable(dep);
+  const tone = dependencyTone(dep, group, groupReady);
+  const styles = TONE_STYLES[tone];
+  const status = authLabel(dep);
+  const unavailableAlternative = group === "models" && groupReady && !available;
+  const badge = available
+    ? status
+    : dep.found && status
+      ? status
+      : unavailableAlternative
+        ? "alternative"
+        : group === "models"
+          ? "set up"
+          : missingDependencyLabel(dep);
+  const pdfSettingsLabel = "Settings → PDF Extraction";
+  const pdfSettingsIndex = dep.hint.indexOf(pdfSettingsLabel);
+  const linksToPdfSettings =
+    !available &&
+    /paddleocr-vl/i.test(dep.name) &&
+    pdfSettingsIndex >= 0 &&
+    Boolean(onOpenPdfSettings);
+
+  return (
+    <div className={`flex items-start gap-3 px-3 py-2.5 text-sm ${styles.row}`}>
+      <StatusIcon tone={tone} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-gray-900 dark:text-gray-100">{dep.name}</span>
+          {dep.found && dep.version && dep.version !== "direct API" && (
+            <span className="max-w-40 truncate text-xs text-gray-500 dark:text-gray-400">
+              {dep.version}
+            </span>
+          )}
+          {badge && (
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ${styles.badge}`}>
+              {badge}
+            </span>
+          )}
+        </div>
+        {shouldShowHint(dep) && !available && (
+          <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-300">
+            {linksToPdfSettings ? (
+              <>
+                {dep.hint.slice(0, pdfSettingsIndex)}
+                <a
+                  href="#paddleocr-local-engine"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onOpenPdfSettings?.();
+                  }}
+                  className="font-medium underline underline-offset-2 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-100"
+                >
+                  {pdfSettingsLabel}
+                </a>
+                {dep.hint.slice(pdfSettingsIndex + pdfSettingsLabel.length)}
+              </>
+            ) : dep.hint}
+          </p>
+        )}
+        {dep.found && dep.path && (
+          <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{dep.path}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionStatus({ ready }: { ready: boolean }) {
+  return (
+    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+      ready
+        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+        : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+    }`}>
+      {ready ? "Ready" : "Needs attention"}
+    </span>
+  );
 }
 
 export default function DepsCheck({
   report,
   onDismiss,
-  onRefresh,
-  refreshing = false,
+  onOpenPdfSettings,
 }: Props) {
   const titleId = useId();
   const descriptionId = useId();
+  const modelsTitleId = useId();
+  const pdfTitleId = useId();
   const dialogRef = useModalDialog<HTMLDivElement>(onDismiss);
-  const missing = report.deps.filter((d) => !d.found);
-  const unauthenticated = report.deps.filter((d) => d.found && d.required && d.authenticated === false);
-  const unverifiedRequired = report.deps.filter(
-    (d) =>
-      d.found &&
-      d.required &&
-      d.authenticated !== true &&
-      d.cli_auth_status === "unknown" &&
-      !/gemini/i.test(d.name),
+  const providerDeps = report.deps.filter(isProviderDependency);
+  const pdfDeps = report.deps.filter(
+    (dep) => !HIDDEN_DEPENDENCIES.has(dep.name) && !isProviderDependency(dep),
   );
-  const missingRequired = missing.filter((d) => d.required);
-  const allGood =
-    report.ready &&
-    missing.length === 0 &&
-    unauthenticated.length === 0 &&
-    unverifiedRequired.length === 0;
+  const localProvider = report.deps.find((dep) => dep.name === "Local LLM server");
+  const modelAccessReady = providerDeps.length === 0 || providerDeps.some(dependencyAvailable) || (
+    localProvider !== undefined && dependencyAvailable(localProvider)
+  );
+  const pdfReady = pdfDeps.every((dep) => !dep.required || dependencyAvailable(dep));
   const hasBlockers = !report.ready;
-
-  const authLabel = (dep: DepsReport["deps"][number]) => {
-    if (dep.cli_auth_status === "signed_in") return "signed in";
-    if (dep.cli_auth_status === "signed_out") return "not signed in";
-    if (dep.cli_auth_status === "unknown") return "sign-in not verified";
-    return null;
-  };
-
-  const needsAuthAttention = (dep: DepsReport["deps"][number]) =>
-    dep.cli_auth_status === "signed_out" || dep.cli_auth_status === "unknown";
+  const blockerMessage = !modelAccessReady && !pdfReady
+    ? "Model access and PDF parsing need attention."
+    : !modelAccessReady
+      ? "Set up at least one model provider or add an API key in Settings."
+      : !pdfReady
+        ? "Required PDF parsing tools are missing."
+        : "Workflow dependencies are not ready.";
 
   return (
-    <div data-testid="dependencies-modal" className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div data-testid="dependencies-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div
         ref={dialogRef}
         role="dialog"
@@ -55,127 +247,83 @@ export default function DepsCheck({
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl max-w-lg w-full p-6"
+        className="max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto rounded-2xl border border-gray-200/80 bg-white p-6 shadow-2xl dark:border-gray-800 dark:bg-gray-900"
       >
-        <h2 id={titleId} className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-1">
+        <h2 id={titleId} className="text-xl font-semibold tracking-tight text-gray-950 dark:text-gray-50">
           Dependencies
         </h2>
-        <p id={descriptionId} className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-          {allGood
-            ? "All dependencies found."
-            : hasBlockers
-              ? "Some required dependencies or sign-ins need attention."
-              : "Some optional tools are unavailable."}
+        <p id={descriptionId} className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+          {hasBlockers
+            ? "Complete the highlighted setup before running this workflow."
+            : "Pipeline has the model access and parsing tools it needs."}
         </p>
 
-        <div className="space-y-2 mb-4">
-          {report.deps.map((dep) => (
-            <div
-              key={dep.name}
-              className={`flex items-start gap-3 p-2.5 rounded-lg text-sm ${
-                dep.found && !needsAuthAttention(dep)
-                  ? "bg-green-50 dark:bg-green-950/35"
-                  : dep.found
-                    ? "bg-orange-50 dark:bg-orange-950/35"
-                    : dep.required
-                      ? "bg-red-50 dark:bg-red-950/35"
-                      : "bg-yellow-50 dark:bg-yellow-950/35"
-              }`}
-            >
-              <span className="mt-0.5 shrink-0">
-                {dep.found && !needsAuthAttention(dep) ? (
-                  <svg className="w-4 h-4 text-green-700 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : dep.found ? (
-                  <svg className="w-4 h-4 text-orange-700 dark:text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                ) : dep.required ? (
-                  <svg className="w-4 h-4 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4 text-yellow-700 dark:text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-900 dark:text-gray-100">{dep.name}</span>
-                  {dep.found ? (
-                    <span className="text-xs text-gray-600 dark:text-gray-300 truncate">
-                      {dep.version}
-                    </span>
-                  ) : (
-                    <span className={`text-xs ${
-                      dep.required
-                        ? "text-red-600 dark:text-red-400"
-                        : "text-yellow-700 dark:text-yellow-400"
-                    }`}>
-                      {dep.required ? "required" : "optional"}
-                    </span>
-                  )}
-                  {authLabel(dep) && (
-                    <span
-                      className={`text-xs whitespace-nowrap ${
-                        dep.cli_auth_status === "signed_in"
-                          ? "text-green-700 dark:text-green-400"
-                          : "text-orange-700 dark:text-orange-400"
-                      }`}
-                    >
-                      {authLabel(dep)}
-                    </span>
-                  )}
-                </div>
-                {(!dep.found || dep.authenticated === false || (
-                  dep.cli_auth_status === "unknown" && dep.authenticated !== true
-                )) && (
-                  <p className="text-xs text-gray-700 dark:text-gray-300 mt-0.5 break-words">
-                    {dep.hint}
-                  </p>
-                )}
-                {dep.found && dep.path && (
-                  <p className="text-xs text-gray-600 dark:text-gray-400 truncate">{dep.path}</p>
-                )}
+        <div className="mt-5 space-y-4">
+          <section aria-labelledby={modelsTitleId} className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
+              <div>
+                <h3 id={modelsTitleId} className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  Model access
+                </h3>
+                <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
+                  Use at least one: GPT (Codex), Claude, or Gemini CLI — or configure a provider API key in Settings.
+                </p>
               </div>
+              <SectionStatus ready={modelAccessReady} />
             </div>
-          ))}
+            <div className="divide-y divide-gray-200/80 dark:divide-gray-700/80">
+              {providerDeps.map((dep) => (
+                <DependencyRow
+                  key={dep.name}
+                  dep={dep}
+                  group="models"
+                  groupReady={modelAccessReady}
+                  onOpenPdfSettings={onOpenPdfSettings}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section aria-labelledby={pdfTitleId} className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
+              <div>
+                <h3 id={pdfTitleId} className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  PDF parsing
+                </h3>
+                <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
+                  Text extraction, page rendering, and document structure tools for PDF workflows.
+                </p>
+              </div>
+              <SectionStatus ready={pdfReady} />
+            </div>
+            <div className="divide-y divide-gray-200/80 dark:divide-gray-700/80">
+              {pdfDeps.map((dep) => (
+                <DependencyRow
+                  key={dep.name}
+                  dep={dep}
+                  group="pdf"
+                  groupReady={pdfReady}
+                  onOpenPdfSettings={onOpenPdfSettings}
+                />
+              ))}
+            </div>
+          </section>
         </div>
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="mt-5 flex items-center justify-end gap-2 border-t border-gray-200 pt-4 dark:border-gray-800">
           {hasBlockers && (
-            <p className="text-sm text-red-600 dark:text-red-400 flex-1">
-              {missingRequired.length > 0 && unauthenticated.length > 0
-                ? "Required dependencies missing or not signed in."
-                : missingRequired.length > 0
-                  ? "Required dependencies missing."
-                  : unauthenticated.length > 0
-                    ? "Required CLI not signed in."
-                    : unverifiedRequired.length > 0
-                      ? "Required CLI sign-in could not be verified."
-                      : "Workflow dependencies are not ready."}
+            <p className="mr-auto text-sm text-red-600 dark:text-red-400">
+              {blockerMessage}
             </p>
-          )}
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              disabled={refreshing}
-              className="py-1.5 px-4 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
-            >
-              {refreshing ? "Checking…" : "Refresh"}
-            </button>
           )}
           <button
             type="button"
             onClick={onDismiss}
             data-testid="dependencies-dismiss"
             data-autofocus
-            className="py-1.5 px-4 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-800"
+            className="rounded-lg bg-gray-900 px-4 py-1.5 text-sm text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
           >
-            {allGood ? "Close" : hasBlockers ? "Dismiss" : "Continue"}
+            {hasBlockers ? "Dismiss" : "Close"}
           </button>
         </div>
       </div>

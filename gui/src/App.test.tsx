@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 
@@ -102,12 +102,18 @@ vi.mock("./components/SettingsPage", () => ({
   default: ({
     onDirtyChange,
     onSystemChange,
+    initialSection,
+    targetId,
   }: {
     onDirtyChange?: (dirty: boolean) => void;
     onSystemChange?: () => void;
+    initialSection?: string;
+    targetId?: string;
   }) => (
     <div>
-      Settings workspace
+      <div>Settings workspace</div>
+      <div>Initial settings section: {initialSection}</div>
+      <div>Settings target: {targetId ?? "none"}</div>
       <button onClick={() => onDirtyChange?.(true)}>Make settings dirty</button>
       <button onClick={() => onSystemChange?.()}>Save mocked settings</button>
     </div>
@@ -226,13 +232,7 @@ describe("App run options", () => {
 
     await user.click(await screen.findByRole("button", { name: "Choose DOCX" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
-    expect(invoke.mock.calls.filter(
-      ([command, args]) =>
-        command === "get_execution_plan" &&
-        (args as { paperPath?: string } | undefined)?.paperPath === "/tmp/test-paper.docx",
-    ).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Run" }));
 
@@ -243,6 +243,11 @@ describe("App run options", () => {
       undefined,
       "doc-runtime",
     ));
+    expect(invoke.mock.calls.filter(
+      ([command, args]) =>
+        command === "get_execution_plan" &&
+        (args as { paperPath?: string } | undefined)?.paperPath === "/tmp/test-paper.docx",
+    ).length).toBeGreaterThanOrEqual(2);
   });
 
   it("retains an exact DOCX readiness check after a same-mode workflow save", async () => {
@@ -312,6 +317,110 @@ describe("App run options", () => {
     );
   });
 
+  it("does not cover Settings when the startup dependency check finishes late", async () => {
+    let resolvePlan!: (plan: {
+      profileId: string;
+      profileConfigSnapshotId: string;
+      profileSnapshotId: string;
+      inputMode: string;
+      variables: never[];
+      inputSlots: never[];
+      readiness: {
+        ready: boolean;
+        deps: Array<{
+          name: string;
+          found: boolean;
+          version: string;
+          path: string;
+          required: boolean;
+          hint: string;
+        }>;
+      };
+      stages: never[];
+    }) => void;
+    invoke.mockImplementation((command: string) => {
+      if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "get_execution_plan") {
+        return new Promise((resolve) => {
+          resolvePlan = resolve;
+        });
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByText("Settings workspace")).toBeVisible();
+
+    await act(async () => {
+      resolvePlan({
+        profileId: "missing-provider",
+        profileConfigSnapshotId: "missing-config",
+        profileSnapshotId: "missing-runtime",
+        inputMode: "document",
+        variables: [],
+        inputSlots: [],
+        readiness: {
+          ready: false,
+          deps: [{
+            name: "Claude CLI",
+            found: false,
+            version: "",
+            path: "",
+            required: true,
+            hint: "Install or configure model access.",
+          }],
+        },
+        stages: [],
+      });
+    });
+
+    expect(screen.getByText("Settings workspace")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Dependencies" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Setup needed" })).toBeVisible();
+  });
+
+  it("opens PDF Extraction settings from a missing PaddleOCR dependency", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "get_execution_plan") {
+        return Promise.resolve({
+          profileId: "local-pdf",
+          profileConfigSnapshotId: "local-pdf-config",
+          profileSnapshotId: "local-pdf-runtime",
+          inputMode: "document",
+          variables: [],
+          inputSlots: [],
+          readiness: {
+            ready: false,
+            deps: [{
+              name: "PaddleOCR-VL Full Parser",
+              found: false,
+              version: "",
+              path: "",
+              required: true,
+              hint: "Recommended for PDFs: Install from Settings → PDF Extraction.",
+            }],
+          },
+          stages: [],
+        });
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("link", {
+      name: "Settings → PDF Extraction",
+    }));
+
+    expect(screen.queryByRole("dialog", { name: "Dependencies" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Settings workspace")).toBeVisible();
+    expect(screen.getByText("Initial settings section: extraction")).toBeVisible();
+    expect(screen.getByText("Settings target: paddleocr-local-engine")).toBeVisible();
+  });
+
   it("fails closed when fresh profile readiness reports a secondary provider missing", async () => {
     let checks = 0;
     invoke.mockImplementation((command: string) => {
@@ -350,7 +459,7 @@ describe("App run options", () => {
     await user.click(screen.getByRole("button", { name: "Run" }));
 
     expect(await screen.findByRole("dialog", { name: "Dependencies" })).toBeVisible();
-    expect(screen.getByText("Required dependencies missing.")).toBeVisible();
+    expect(screen.getByText(/Set up at least one model provider/)).toBeVisible();
     expect(startPipeline).not.toHaveBeenCalled();
     expect(checks).toBe(2);
   });

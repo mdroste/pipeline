@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { EngineStatus, RetiredMarkerStatus } from "../lib/types";
+import InfoButton from "./InfoButton";
 
 type PhaseStatus = "running" | "done" | "failed";
 
@@ -18,7 +19,13 @@ const MAX_LOG_LINES = 200;
  * Installable native extraction engines. Everything lands under
  * ~/.pipeline/native/ and is removed by Uninstall.
  */
-export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () => void }) {
+export default function EnginesPanel({
+  onSystemChange,
+  onEngineStatusChange,
+}: {
+  onSystemChange?: () => void;
+  onEngineStatusChange?: (engines: EngineStatus[]) => void;
+}) {
   const [engines, setEngines] = useState<EngineStatus[]>([]);
   const [retiredMarker, setRetiredMarker] = useState<RetiredMarkerStatus | null>(null);
   const [removingRetiredMarker, setRemovingRetiredMarker] = useState(false);
@@ -51,11 +58,20 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
       (next) => {
         if (refreshGeneration.current !== generation) return;
         setEngines(next);
+        onEngineStatusChange?.(next);
+        const activeProgress = next.find(
+          (engine) => engine.installing && engine.install_progress,
+        )?.install_progress;
+        if (activeProgress) {
+          setPhases(activeProgress.phases as Record<string, PhaseStatus>);
+          setLogLines(activeProgress.log_lines.slice(-MAX_LOG_LINES));
+        }
         setEngineStatusError(null);
       },
       (reason) => {
         if (refreshGeneration.current !== generation) return;
         setEngines([]);
+        onEngineStatusChange?.([]);
         const detail = reason instanceof Error ? reason.message : String(reason);
         setEngineStatusError(`Local engine status could not be loaded: ${detail}`);
       },
@@ -76,7 +92,7 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
     void Promise.allSettled([engineRequest, retiredRequest]).then(() => {
       if (refreshGeneration.current === generation) setRefreshingStatus(false);
     });
-  }, []);
+  }, [onEngineStatusChange]);
 
   const openPipelineDir = useCallback(async () => {
     setOpenDirError(null);
@@ -217,23 +233,25 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
   const backendBusy = engines.some((e) => e.installing);
 
   return (
-    <div className="mt-8">
-      <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">
-        Local Engines
-      </h4>
-      <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-        Installs into{" "}
-        <button
-          type="button"
-          onClick={openPipelineDir}
-          disabled={openingPipelineDir}
-          aria-busy={openingPipelineDir || undefined}
-          className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
-          title="Open this folder"
-        >
-          ~/.pipeline/
-        </button>
-      </p>
+    <div>
+      <div className="mb-3 flex items-center gap-1.5">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          Local Engines
+        </h4>
+        <InfoButton label="Local Engines">
+          Managed engines are installed under{" "}
+          <button
+            type="button"
+            onClick={openPipelineDir}
+            disabled={openingPipelineDir}
+            aria-busy={openingPipelineDir || undefined}
+            className="font-mono text-blue-600 hover:underline dark:text-blue-400"
+          >
+            ~/.pipeline/
+          </button>
+          .
+        </InfoButton>
+      </div>
 
       {openDirError && (
         <p role="alert" className="mb-3 text-xs text-red-700 dark:text-red-400">
@@ -369,26 +387,31 @@ export default function EnginesPanel({ onSystemChange }: { onSystemChange?: () =
               )}
 
               {isBusy && (
-                <div className="flex items-center gap-2">
-                  {PHASES.map((phase) => {
-                    const status = phases[phase.id];
-                    const chip =
-                      status === "done"
-                        ? "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300"
-                        : status === "running"
-                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 animate-pulse"
-                          : status === "failed"
-                            ? "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300"
-                            : "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500";
-                    return (
-                      <span
-                        key={phase.id}
-                        className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded ${chip}`}
-                      >
-                        {phase.label}
-                      </span>
-                    );
-                  })}
+                <div className="space-y-2">
+                  <p className="text-xs text-blue-700 dark:text-blue-300" role="status">
+                    Installation continues in the background if you leave Settings.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {PHASES.map((phase) => {
+                      const status = phases[phase.id];
+                      const chip =
+                        status === "done"
+                          ? "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300"
+                          : status === "running"
+                            ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 animate-pulse"
+                            : status === "failed"
+                              ? "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300"
+                              : "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500";
+                      return (
+                        <span
+                          key={phase.id}
+                          className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded ${chip}`}
+                        >
+                          {phase.label}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 

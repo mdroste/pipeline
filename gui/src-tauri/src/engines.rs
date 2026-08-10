@@ -13,6 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Read as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -283,7 +284,7 @@ fn standalone_python(root: &Path) -> PathBuf {
 fn full_parser_support_for(os: &str, arch: &str) -> Result<(), String> {
     if os == "macos" && arch == "x86_64" {
         return Err(
-            "The official PaddlePaddle 3.2.1 runtime has no Intel macOS wheel. Use the fast PaddleOCR-VL engine on this Mac."
+            "The official PaddlePaddle 3.2.1 runtime has no Intel macOS wheel, so PaddleOCR-VL Full Parser is unavailable on this Mac."
                 .to_string(),
         );
     }
@@ -313,28 +314,24 @@ pub struct EngineSpec {
     pub est_disk_mb: u64,
 }
 
-pub const ENGINES: &[EngineSpec] = &[
-    EngineSpec {
-        id: "paddleocr-vl",
-        label: "PaddleOCR-VL 1.6 Q8 (fast)",
-        description: "Compact local page transcription using the official PaddleOCR-VL 1.6 Q8 \
-                      GGUF model and a managed llama.cpp runtime. About 1.9 GB; no Python, \
-                      containers, API calls, or usage fees. Apache-2.0 model and MIT runtime.",
-        est_download_mb: 1900,
-        est_disk_mb: 2300,
-    },
-    EngineSpec {
-        id: "paddleocr-vl-parser",
-        label: "PaddleOCR-VL 1.6 Full Parser",
-        description: "Adds the official PaddleOCR layout client, PP-DocLayoutV3, structured \
+const PADDLE_RECOGNITION_COMPONENT: EngineSpec = EngineSpec {
+    id: "paddleocr-vl",
+    label: "PaddleOCR-VL 1.6 Q8 recognition component",
+    description: "Internal recognition model and llama.cpp runtime used by the Full Parser.",
+    est_download_mb: 1900,
+    est_disk_mb: 2300,
+};
+
+pub const ENGINES: &[EngineSpec] = &[EngineSpec {
+    id: "paddleocr-vl-parser",
+    label: "PaddleOCR-VL 1.6 Full Parser",
+    description: "Includes the official PaddleOCR layout client, PP-DocLayoutV3, structured \
                       reading order, title hierarchy, formula metadata, and cross-page table \
-                      reconstruction. Reuses the managed Q8 model and llama.cpp server; no \
+                      reconstruction, plus the managed Q8 model and llama.cpp server; no \
                       system Python, pip, Conda, or Docker is required.",
-        // Includes the base Q8 engine when it is not already present.
-        est_download_mb: 2900,
-        est_disk_mb: 3800,
-    },
-];
+    est_download_mb: 2900,
+    est_disk_mb: 3800,
+}];
 
 const PADDLE_BASE_INSTALLED_MB: u64 = 2300;
 const PADDLE_PARSER_ADDON_INSTALLED_MB: u64 = 1500;
@@ -414,6 +411,9 @@ fn check_install_space(
 }
 
 fn engine(id: &str) -> Result<&'static EngineSpec, String> {
+    if id == PADDLE_RECOGNITION_COMPONENT.id {
+        return Ok(&PADDLE_RECOGNITION_COMPONENT);
+    }
     ENGINES
         .iter()
         .find(|e| e.id == id)
@@ -967,7 +967,115 @@ fn paddle_paths_at(root: &Path) -> Option<PaddleEnginePaths> {
 pub fn paddle_engine_paths() -> Result<PaddleEnginePaths, String> {
     let root = paddle_root()?;
     paddle_paths_at(&root).ok_or_else(|| {
-        "PaddleOCR-VL 1.6 Q8 is not installed. Install it from Settings → PDF Extraction."
+        "The PaddleOCR-VL Full Parser recognition component is missing. Install or repair the Full Parser from Settings → PDF Extraction."
+            .to_string()
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct PaddleFullParserStatus {
+    pub script: PathBuf,
+    pub release: String,
+}
+
+fn bounded_regular_file(path: &Path, max_bytes: u64) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() > 0
+            && metadata.len() <= max_bytes
+    })
+}
+
+fn paddle_install_committed(root: &Path) -> bool {
+    let Ok(artifact) = llama_artifact() else {
+        return false;
+    };
+    let manifest_path = root.join("install.json");
+    if !bounded_regular_file(&manifest_path, 2 * 1024 * 1024)
+        || !bounded_regular_file(
+            &root.join("models").join(PADDLE_MODEL_FILE),
+            MAX_PADDLE_MODEL_BYTES,
+        )
+        || !bounded_regular_file(
+            &root.join("models").join(PADDLE_MMPROJ_FILE),
+            MAX_PADDLE_MODEL_BYTES,
+        )
+        || find_file_named(root, &exe("llama-server")).is_none()
+    {
+        return false;
+    }
+    std::fs::read(&manifest_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|manifest| {
+            manifest.get("engine").and_then(serde_json::Value::as_str) == Some("paddleocr-vl")
+                && manifest
+                    .get("model_version")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("1.6")
+                && manifest
+                    .get("model_revision")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(PADDLE_MODEL_REVISION)
+                && manifest
+                    .get("llama_cpp_version")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(LLAMA_CPP_VERSION)
+                && manifest
+                    .get("runtime_sha256")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(artifact.sha256)
+                && manifest
+                    .get("model_sha256")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(PADDLE_MODEL_SHA256)
+                && manifest
+                    .get("mmproj_sha256")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(PADDLE_MMPROJ_SHA256)
+        })
+}
+
+fn paddle_full_parser_status_at(native_root: &Path) -> Option<PaddleFullParserStatus> {
+    let parser_root = native_root.join("paddleocr-parser");
+    let version_root = parser_root.join("versions").join(PADDLE_PARSER_RELEASE);
+    let layout_model = version_root.join("models").join("PP-DocLayoutV3_infer");
+    let script = version_root.join("paddle_parser_sidecar.py");
+    if !paddle_install_committed(&native_root.join("paddleocr-vl"))
+        || !parser_install_committed(&parser_root)
+        || !venv_python(&version_root.join("venv")).is_file()
+        || !bounded_regular_file(&script, 2 * 1024 * 1024)
+        || !bounded_regular_file(&version_root.join("packages.txt"), 2 * 1024 * 1024)
+        || !bounded_regular_file(&version_root.join("pylock.toml"), 4 * 1024 * 1024)
+        || !bounded_regular_file(&version_root.join("runtime-lock.json"), 1024 * 1024)
+        || !bounded_regular_file(
+            &version_root.join("integrity.json"),
+            MAX_INTEGRITY_MANIFEST_BYTES,
+        )
+        || !bounded_regular_file(&layout_model.join("inference.json"), 16 * 1024 * 1024)
+        || !bounded_regular_file(&layout_model.join("inference.yml"), 16 * 1024 * 1024)
+        || !bounded_regular_file(
+            &layout_model.join("inference.pdiparams"),
+            MAX_LAYOUT_MODEL_EXTRACTED_BYTES,
+        )
+    {
+        return None;
+    }
+    Some(PaddleFullParserStatus {
+        script,
+        release: PADDLE_PARSER_RELEASE.to_string(),
+    })
+}
+
+/// Fast startup/status probe. This checks the installer's commit markers and
+/// required file shapes only; extraction still uses `paddle_full_parser_paths`
+/// for complete cryptographic verification before executing the parser.
+pub fn paddle_full_parser_status() -> Result<PaddleFullParserStatus, String> {
+    full_parser_support()?;
+    let native_root = pipeline_home()?.join("native");
+    paddle_full_parser_status_at(&native_root).ok_or_else(|| {
+        "The managed PaddleOCR-VL Full Parser is incomplete. Install or repair it from Settings → PDF Extraction."
             .to_string()
     })
 }
@@ -1376,6 +1484,13 @@ fn dir_size(root: &Path) -> u64 {
 // ── Status ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
+pub struct EngineInstallProgress {
+    pub engine_id: String,
+    pub phases: BTreeMap<String, String>,
+    pub log_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct EngineStatus {
     pub id: String,
     pub label: String,
@@ -1391,6 +1506,7 @@ pub struct EngineStatus {
     /// Size of the whole managed stack (shared across engines), in MB.
     pub managed_stack_mb: u64,
     pub installing: bool,
+    pub install_progress: Option<EngineInstallProgress>,
     pub available: bool,
     pub unavailable_reason: String,
 }
@@ -1439,23 +1555,285 @@ pub fn retired_marker_status() -> RetiredMarkerStatus {
 }
 
 fn remove_retired_marker_path(path: &Path) -> Result<(), String> {
+    remove_owned_path(path).map(|_| ())
+}
+
+/// Remove one exact app-owned path without ever following a symlink. Returns
+/// false when the path is already absent.
+fn remove_owned_path(path: &Path) -> Result<bool, String> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(format!("Failed to inspect {}: {error}", path.display())),
     };
     if metadata.file_type().is_symlink() || metadata.is_file() {
         std::fs::remove_file(path)
-            .map_err(|error| format!("Failed to remove {}: {error}", path.display()))
+            .map_err(|error| format!("Failed to remove {}: {error}", path.display()))?;
     } else if metadata.is_dir() {
         std::fs::remove_dir_all(path)
-            .map_err(|error| format!("Failed to remove {}: {error}", path.display()))
+            .map_err(|error| format!("Failed to remove {}: {error}", path.display()))?;
     } else {
-        Err(format!(
+        return Err(format!(
             "Refusing to remove unexpected filesystem object {}",
             path.display()
-        ))
+        ));
     }
+    Ok(true)
+}
+
+fn path_present(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+fn restore_owned_directory(backup: &Path, target: &Path) -> Result<bool, String> {
+    let metadata = match std::fs::symlink_metadata(backup) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect recovery backup {}: {error}",
+                backup.display()
+            ));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        remove_owned_path(backup)?;
+        return Ok(false);
+    }
+    std::fs::rename(backup, target).map_err(|error| {
+        format!(
+            "Failed to restore {} from {}: {error}",
+            target.display(),
+            backup.display()
+        )
+    })?;
+    Ok(true)
+}
+
+fn remove_children_matching(
+    parent: &Path,
+    mut matches: impl FnMut(&str) -> bool,
+) -> Result<usize, String> {
+    let entries = match std::fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect managed engine directory {}: {error}",
+                parent.display()
+            ));
+        }
+    };
+    let mut removed = 0usize;
+    let mut errors = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                errors.push(format!(
+                    "Failed to inspect an entry under {}: {error}",
+                    parent.display()
+                ));
+                continue;
+            }
+        };
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if matches(&name) {
+            match remove_owned_path(&entry.path()) {
+                Ok(true) => removed += 1,
+                Ok(false) => {}
+                Err(error) => errors.push(error),
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(removed)
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+fn collect_owned_removal(path: &Path, removed: &mut usize, errors: &mut Vec<String>) {
+    match remove_owned_path(path) {
+        Ok(true) => *removed += 1,
+        Ok(false) => {}
+        Err(error) => errors.push(error),
+    }
+}
+
+/// Cheap commit-marker check for startup cleanup. The installer writes this
+/// manifest only after the complete runtime and integrity inventory exist;
+/// normal engine resolution performs the full cryptographic verification.
+fn parser_install_committed(parser_root: &Path) -> bool {
+    let manifest = parser_root
+        .join("versions")
+        .join(PADDLE_PARSER_RELEASE)
+        .join("install.json");
+    match std::fs::symlink_metadata(&manifest) {
+        Ok(metadata)
+            if metadata.is_file()
+                && !metadata.file_type().is_symlink()
+                && metadata.len() <= 2 * 1024 * 1024 => {}
+        _ => return false,
+    }
+    std::fs::read(&manifest)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|value| {
+            value.get("engine").and_then(serde_json::Value::as_str) == Some("paddleocr-vl-parser")
+                && value.get("release").and_then(serde_json::Value::as_str)
+                    == Some(PADDLE_PARSER_RELEASE)
+                && value
+                    .get("integrity_sha256")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|digest| {
+                        digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+        })
+}
+
+/// Clean only installer-owned disposable paths. The caller must hold the
+/// engine lock, which makes every staging and backup name here stale.
+fn cleanup_managed_engine_storage_at(
+    native_root: &Path,
+    current_parser_safe_to_keep: bool,
+) -> Result<usize, String> {
+    let mut removed = 0usize;
+    let mut errors = Vec::new();
+
+    // The native recognition stack swaps atomically. If activation was
+    // interrupted before the new target appeared, put the old target back.
+    let paddle_target = native_root.join("paddleocr-vl");
+    let paddle_backup = native_root.join(".paddleocr-vl-backup");
+    if path_present(&paddle_backup) {
+        if path_present(&paddle_target) {
+            collect_owned_removal(&paddle_backup, &mut removed, &mut errors);
+        } else {
+            match restore_owned_directory(&paddle_backup, &paddle_target) {
+                Ok(true) => {}
+                Ok(false) => removed += 1,
+                Err(error) => errors.push(error),
+            }
+        }
+    }
+    match remove_children_matching(native_root, |name| {
+        name.starts_with(".paddleocr-vl-staging-")
+    }) {
+        Ok(count) => removed += count,
+        Err(error) => errors.push(error),
+    }
+
+    let parser_root = native_root.join("paddleocr-parser");
+    let versions = parser_root.join("versions");
+    let parser_target = versions.join(PADDLE_PARSER_RELEASE);
+    let parser_backup = versions.join(format!(".{PADDLE_PARSER_RELEASE}-backup"));
+    if path_present(&parser_backup) {
+        if current_parser_safe_to_keep {
+            collect_owned_removal(&parser_backup, &mut removed, &mut errors);
+        } else {
+            collect_owned_removal(&parser_target, &mut removed, &mut errors);
+            if !path_present(&parser_target) {
+                match restore_owned_directory(&parser_backup, &parser_target) {
+                    Ok(_) => {}
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+    } else if !current_parser_safe_to_keep {
+        // A current-release directory with neither a valid runtime nor a
+        // rollback copy can only be an interrupted fresh installation.
+        collect_owned_removal(&parser_target, &mut removed, &mut errors);
+    }
+
+    // Older releases are never executable by this build. Preserve arbitrary
+    // user files in `versions`; remove only the installer's release namespace.
+    let current_backup_name = format!(".{PADDLE_PARSER_RELEASE}-backup");
+    match remove_children_matching(&versions, |name| {
+        name != PADDLE_PARSER_RELEASE
+            && name != current_backup_name
+            && (name.starts_with("paddleocr-")
+                || (name.starts_with(".paddleocr-") && name.ends_with("-backup")))
+    }) {
+        Ok(count) => removed += count,
+        Err(error) => errors.push(error),
+    }
+
+    // uv's wheel/archive cache and the pre-versioned Python tree are install
+    // inputs, not runtime dependencies. They are recreated on demand.
+    collect_owned_removal(&parser_root.join("uv-cache"), &mut removed, &mut errors);
+    collect_owned_removal(&parser_root.join("python"), &mut removed, &mut errors);
+
+    let uv_runtime = parser_root.join("runtime");
+    let uv_target = uv_runtime.join(exe("uv"));
+    let uv_backup = uv_runtime.join(format!(".{}-backup", exe("uv")));
+    if path_present(&uv_backup) {
+        if path_present(&uv_target) {
+            collect_owned_removal(&uv_backup, &mut removed, &mut errors);
+        } else {
+            let backup_is_file = std::fs::symlink_metadata(&uv_backup)
+                .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink());
+            if backup_is_file {
+                if let Err(error) = std::fs::rename(&uv_backup, &uv_target) {
+                    errors.push(format!(
+                        "Failed to restore {} from {}: {error}",
+                        uv_target.display(),
+                        uv_backup.display()
+                    ));
+                }
+            } else {
+                collect_owned_removal(&uv_backup, &mut removed, &mut errors);
+            }
+        }
+    }
+    match remove_children_matching(&uv_runtime, |name| name.starts_with(".uv-staging-")) {
+        Ok(count) => removed += count,
+        Err(error) => errors.push(error),
+    }
+
+    if errors.is_empty() {
+        Ok(removed)
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+fn cleanup_managed_engine_storage_locked() -> Result<usize, String> {
+    let home = pipeline_home()?;
+    let native_root = home.join("native");
+    let parser_root = native_root.join("paddleocr-parser");
+    let parser_backup = parser_root
+        .join("versions")
+        .join(format!(".{PADDLE_PARSER_RELEASE}-backup"));
+    // Only pay for full verification in the rare recovery case where cleanup
+    // must choose between a newly activated target and its rollback copy.
+    let parser_safe_to_keep = if path_present(&parser_backup) {
+        parser_runtime_reusable_for_sidecar_refresh(&parser_root)
+    } else {
+        parser_install_committed(&parser_root)
+    };
+    cleanup_managed_engine_storage_at(&native_root, parser_safe_to_keep)
+}
+
+/// Startup maintenance for crashes and older releases. Another Pipeline
+/// process that is actively installing owns the lock, in which case cleanup is
+/// safely deferred to the next startup or install attempt.
+pub fn cleanup_stale_managed_engine_storage() -> Result<usize, String> {
+    let _guard = acquire_engine_guard(false)?;
+    cleanup_managed_engine_storage_locked()
+}
+
+/// Start best-effort maintenance without extending the application's startup
+/// critical path. The engine lock keeps this disjoint from install/uninstall.
+pub fn schedule_stale_managed_engine_cleanup() {
+    let _ = std::thread::Builder::new()
+        .name("managed-engine-cleanup".to_string())
+        .spawn(|| {
+            if let Err(error) = cleanup_stale_managed_engine_storage() {
+                eprintln!("Managed engine cleanup deferred: {error}");
+            }
+        });
 }
 
 /// Status of every registry engine.
@@ -1464,31 +1842,23 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
         .map(|home| dir_size(&home.join("native")) / 1_000_000)
         .unwrap_or(0);
     let installing = INSTALL_RUNNING.load(Ordering::Acquire);
+    let install_progress = if installing {
+        current_install_progress()
+    } else {
+        None
+    };
 
     ENGINES
         .iter()
         .map(|spec| {
             let (entry, version, support) = match spec.id {
-                "paddleocr-vl" => {
-                    let paths = paddle_root().ok().and_then(|root| paddle_paths_at(&root));
-                    (
-                        paths.as_ref().map(|paths| paths.server.clone()),
-                        paths
-                            .as_ref()
-                            .map(|_| "1.6 Q8".to_string())
-                            .unwrap_or_default(),
-                        llama_artifact().map(|_| ()),
-                    )
-                }
                 "paddleocr-vl-parser" => {
-                    let paths = paddle_parser_root()
-                        .ok()
-                        .and_then(|root| paddle_full_parser_paths_at(&root));
+                    let parser_status = paddle_full_parser_status().ok();
                     (
-                        paths.as_ref().map(|paths| paths.script.clone()),
-                        paths
+                        parser_status.as_ref().map(|status| status.script.clone()),
+                        parser_status
                             .as_ref()
-                            .map(|_| PADDLE_PARSER_VERSION.to_string())
+                            .map(|status| status.release.clone())
                             .unwrap_or_default(),
                         full_parser_support(),
                     )
@@ -1510,6 +1880,9 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
                 est_disk_mb: spec.est_disk_mb,
                 managed_stack_mb: stack_mb,
                 installing,
+                install_progress: install_progress
+                    .clone()
+                    .filter(|progress| progress.engine_id == spec.id),
                 available: support.is_ok(),
                 unavailable_reason,
             }
@@ -1519,9 +1892,79 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
 
 // ── Install lifecycle ───────────────────────────────────────────────
 
+static ENGINE_OPERATION_RUNNING: AtomicBool = AtomicBool::new(false);
 static INSTALL_RUNNING: AtomicBool = AtomicBool::new(false);
 static INSTALL_CANCEL: AtomicBool = AtomicBool::new(false);
 static INSTALL_CHILD_PID: Mutex<Option<u32>> = Mutex::new(None);
+static INSTALL_PROGRESS: OnceLock<Mutex<InstallProgressState>> = OnceLock::new();
+
+const INSTALL_PROGRESS_LOG_LINES: usize = 200;
+
+#[derive(Default)]
+struct InstallProgressState {
+    engine_id: String,
+    phases: BTreeMap<String, String>,
+    log_lines: VecDeque<String>,
+}
+
+fn install_progress_state() -> &'static Mutex<InstallProgressState> {
+    INSTALL_PROGRESS.get_or_init(|| Mutex::new(InstallProgressState::default()))
+}
+
+fn clear_install_progress() {
+    *install_progress_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = InstallProgressState::default();
+}
+
+fn reset_install_progress(engine_id: &str) {
+    let mut progress = install_progress_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    *progress = InstallProgressState {
+        engine_id: engine_id.to_string(),
+        ..InstallProgressState::default()
+    };
+}
+
+fn current_install_progress() -> Option<EngineInstallProgress> {
+    let progress = install_progress_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if progress.engine_id.is_empty() {
+        return None;
+    }
+    Some(EngineInstallProgress {
+        engine_id: progress.engine_id.clone(),
+        phases: progress.phases.clone(),
+        log_lines: progress.log_lines.iter().cloned().collect(),
+    })
+}
+
+fn record_install_log(line: &str) {
+    let mut progress = install_progress_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if progress.engine_id.is_empty() {
+        return;
+    }
+    if progress.log_lines.len() == INSTALL_PROGRESS_LOG_LINES {
+        progress.log_lines.pop_front();
+    }
+    progress.log_lines.push_back(line.to_string());
+}
+
+fn record_install_phase(engine_id: &str, phase: &str, status: &str) {
+    let mut progress = install_progress_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if progress.engine_id != engine_id {
+        return;
+    }
+    progress
+        .phases
+        .insert(phase.to_string(), status.to_string());
+}
 
 /// Hard ceiling on a managed-engine download.
 const INSTALL_STEP_TIMEOUT_SECS: u64 = 3600;
@@ -1532,12 +1975,16 @@ const INSTALL_OUTPUT_POST_KILL_SECS: u64 = 2;
 
 struct InstallGuard {
     lock_file: std::fs::File,
+    installing: bool,
 }
 
-fn acquire_install_guard() -> Result<InstallGuard, String> {
+fn acquire_engine_guard(installing: bool) -> Result<InstallGuard, String> {
     use fs2::FileExt as _;
-    if INSTALL_RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("An engine install is already running".to_string());
+    if ENGINE_OPERATION_RUNNING.swap(true, Ordering::SeqCst) {
+        return Err("A managed-engine operation is already running".to_string());
+    }
+    if installing {
+        INSTALL_RUNNING.store(true, Ordering::SeqCst);
     }
     let result = (|| {
         let home = pipeline_home()?;
@@ -1551,19 +1998,34 @@ fn acquire_install_guard() -> Result<InstallGuard, String> {
             .map_err(|e| format!("Failed to open engine lock: {e}"))?;
         lock_file
             .try_lock_exclusive()
-            .map_err(|e| format!("Another Pipeline process is installing an engine ({e})"))?;
-        Ok(InstallGuard { lock_file })
+            .map_err(|e| format!("Another Pipeline process is using managed engines ({e})"))?;
+        Ok(InstallGuard {
+            lock_file,
+            installing,
+        })
     })();
     if result.is_err() {
-        INSTALL_RUNNING.store(false, Ordering::SeqCst);
+        ENGINE_OPERATION_RUNNING.store(false, Ordering::SeqCst);
+        if installing {
+            INSTALL_RUNNING.store(false, Ordering::SeqCst);
+        }
+    } else if installing {
+        clear_install_progress();
     }
     result
 }
 
+fn acquire_install_guard() -> Result<InstallGuard, String> {
+    acquire_engine_guard(true)
+}
+
 impl Drop for InstallGuard {
     fn drop(&mut self) {
-        kill_install_child();
-        INSTALL_RUNNING.store(false, Ordering::SeqCst);
+        if self.installing {
+            kill_install_child();
+            INSTALL_RUNNING.store(false, Ordering::SeqCst);
+        }
+        ENGINE_OPERATION_RUNNING.store(false, Ordering::SeqCst);
         let _ = fs2::FileExt::unlock(&self.lock_file);
     }
 }
@@ -1586,11 +2048,14 @@ fn kill_install_child() {
 }
 
 fn log(app: &AppHandle, line: impl Into<String>) {
-    app.emit("engines:log", serde_json::json!({ "line": line.into() }))
+    let line = line.into();
+    record_install_log(&line);
+    app.emit("engines:log", serde_json::json!({ "line": line }))
         .ok();
 }
 
 fn emit_phase(app: &AppHandle, engine_id: &str, phase: &str, status: &str) {
+    record_install_phase(engine_id, phase, status);
     app.emit(
         "engines:phase",
         serde_json::json!({ "engine": engine_id, "phase": phase, "status": status }),
@@ -3062,9 +3527,20 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
 /// Install a registered native engine. Unknown and retired engine IDs are
 /// rejected before any download or subprocess can begin.
 pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
+    if engine_id != "paddleocr-vl-parser" {
+        return Err(format!("Unknown engine '{engine_id}'"));
+    }
     let spec = engine(engine_id)?;
     let _guard = acquire_install_guard()?;
+    reset_install_progress(engine_id);
     INSTALL_CANCEL.store(false, Ordering::Release);
+    let removed = cleanup_managed_engine_storage_locked()?;
+    if removed > 0 {
+        log(
+            app,
+            format!("Removed {removed} obsolete managed-engine item(s)"),
+        );
+    }
 
     // A sidecar-only parser update reuses the already verified private
     // runtime and does not need the full installation's disk headroom.
@@ -3097,41 +3573,43 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
         }
     }
 
-    match engine_id {
-        "paddleocr-vl" => install_paddle_engine(app, spec).await,
-        "paddleocr-vl-parser" => install_paddle_full_parser(app, spec).await,
-        _ => Err(format!("Unknown engine '{engine_id}'")),
+    let result = install_paddle_full_parser(app, spec).await;
+    if result.is_ok() {
+        match cleanup_managed_engine_storage_locked() {
+            Ok(removed) if removed > 0 => log(
+                app,
+                format!("Removed {removed} temporary managed-engine item(s)"),
+            ),
+            Ok(_) => {}
+            Err(error) => log(
+                app,
+                format!("Warning: managed-engine cleanup will retry at next startup: {error}"),
+            ),
+        }
     }
+    result
 }
 
 /// Uninstall a registered native engine. Retired engine IDs are intentionally
 /// rejected; Pipeline never executes their package managers or entry points.
 pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
+    if engine_id != "paddleocr-vl-parser" {
+        return Err(format!("Unknown engine '{engine_id}'"));
+    }
     let spec = engine(engine_id)?;
     let _guard = acquire_install_guard()?;
     INSTALL_CANCEL.store(false, Ordering::Release);
+    cleanup_managed_engine_storage_locked()?;
 
-    let full_parser_installed = paddle_parser_root()
-        .ok()
-        .and_then(|root| paddle_full_parser_paths_at(&root))
-        .is_some();
-    if engine_id == "paddleocr-vl" && full_parser_installed {
-        return Err(
-            "Uninstall PaddleOCR-VL Full Parser before removing its managed Q8 dependency."
-                .to_string(),
-        );
-    }
-    let root = match engine_id {
-        "paddleocr-vl" => paddle_root()?,
-        "paddleocr-vl-parser" => paddle_parser_root()?,
-        _ => return Err(format!("Unknown engine '{engine_id}'")),
-    };
-    if root.is_dir() {
-        tokio::task::spawn_blocking(move || std::fs::remove_dir_all(root))
-            .await
-            .map_err(|error| format!("Managed engine cleanup task failed: {error}"))?
-            .map_err(|error| format!("Failed to remove {}: {error}", spec.label))?;
-    }
+    let roots = [paddle_parser_root()?, paddle_root()?];
+    tokio::task::spawn_blocking(move || {
+        for root in roots {
+            remove_owned_path(&root)?;
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|error| format!("Managed engine cleanup task failed: {error}"))??;
     log(app, format!("{} uninstalled", spec.label));
     Ok(())
 }
@@ -3216,8 +3694,9 @@ mod tests {
         }
         assert_eq!(
             ids,
-            std::collections::HashSet::from(["paddleocr-vl", "paddleocr-vl-parser"])
+            std::collections::HashSet::from(["paddleocr-vl-parser"])
         );
+        assert!(engine("paddleocr-vl").is_ok());
         assert!(engine("marker").is_err());
     }
 
@@ -3233,6 +3712,223 @@ mod tests {
         assert!(!paths
             .iter()
             .any(|path| path.starts_with(home.join("cache"))));
+    }
+
+    #[test]
+    fn managed_engine_cleanup_removes_only_installer_owned_leftovers() {
+        let native = tempfile::tempdir().unwrap();
+        let native_root = native.path();
+        let parser_root = native_root.join("paddleocr-parser");
+        let versions = parser_root.join("versions");
+        let current = versions.join(PADDLE_PARSER_RELEASE);
+        let current_backup = versions.join(format!(".{PADDLE_PARSER_RELEASE}-backup"));
+        let old_release = versions.join("paddleocr-3.7.0-paddle-3.2.1-r1");
+
+        for path in [
+            native_root.join("paddleocr-vl"),
+            native_root.join(".paddleocr-vl-backup"),
+            native_root.join(".paddleocr-vl-staging-abandoned"),
+            current.clone(),
+            current_backup.clone(),
+            old_release.clone(),
+            parser_root.join("uv-cache"),
+            parser_root.join("python"),
+            parser_root.join("models"),
+            parser_root.join("runtime/.uv-staging-abandoned"),
+        ] {
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("fixture"), b"fixture").unwrap();
+        }
+        std::fs::write(parser_root.join("runtime/uv"), b"uv").unwrap();
+        std::fs::write(parser_root.join("runtime/.uv-backup"), b"old uv").unwrap();
+        std::fs::create_dir_all(versions.join("notes")).unwrap();
+        std::fs::create_dir_all(native_root.join("unrelated-engine-data")).unwrap();
+
+        let removed = cleanup_managed_engine_storage_at(native_root, true).unwrap();
+        assert!(removed >= 7);
+        assert!(native_root.join("paddleocr-vl").is_dir());
+        assert!(!native_root.join(".paddleocr-vl-backup").exists());
+        assert!(!native_root.join(".paddleocr-vl-staging-abandoned").exists());
+        assert!(current.is_dir());
+        assert!(!current_backup.exists());
+        assert!(!old_release.exists());
+        assert!(!parser_root.join("uv-cache").exists());
+        assert!(!parser_root.join("python").exists());
+        assert!(!parser_root.join("runtime/.uv-staging-abandoned").exists());
+        assert!(!parser_root.join("runtime/.uv-backup").exists());
+
+        // Runtime data and names outside the installer's namespaces survive.
+        assert!(parser_root.join("models/fixture").is_file());
+        assert!(parser_root.join("runtime/uv").is_file());
+        assert!(versions.join("notes").is_dir());
+        assert!(native_root.join("unrelated-engine-data").is_dir());
+    }
+
+    #[test]
+    fn managed_engine_cleanup_recovers_interrupted_swaps() {
+        let native = tempfile::tempdir().unwrap();
+        let native_root = native.path();
+        let base_backup = native_root.join(".paddleocr-vl-backup");
+        std::fs::create_dir_all(&base_backup).unwrap();
+        std::fs::write(base_backup.join("previous"), b"base").unwrap();
+
+        let parser_root = native_root.join("paddleocr-parser");
+        let versions = parser_root.join("versions");
+        let current = versions.join(PADDLE_PARSER_RELEASE);
+        let current_backup = versions.join(format!(".{PADDLE_PARSER_RELEASE}-backup"));
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::write(current.join("partial"), b"partial").unwrap();
+        std::fs::create_dir_all(&current_backup).unwrap();
+        std::fs::write(current_backup.join("previous"), b"parser").unwrap();
+        std::fs::create_dir_all(parser_root.join("runtime")).unwrap();
+        std::fs::write(parser_root.join("runtime/.uv-backup"), b"uv").unwrap();
+
+        cleanup_managed_engine_storage_at(native_root, false).unwrap();
+
+        assert!(native_root.join("paddleocr-vl/previous").is_file());
+        assert!(!base_backup.exists());
+        assert!(current.join("previous").is_file());
+        assert!(!current.join("partial").exists());
+        assert!(!current_backup.exists());
+        assert!(parser_root.join("runtime/uv").is_file());
+        assert!(!parser_root.join("runtime/.uv-backup").exists());
+        assert_eq!(
+            cleanup_managed_engine_storage_at(native_root, true).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn managed_engine_cleanup_drops_unrecoverable_partial_parser() {
+        let native = tempfile::tempdir().unwrap();
+        let current = native
+            .path()
+            .join("paddleocr-parser/versions")
+            .join(PADDLE_PARSER_RELEASE);
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::write(current.join("partial"), b"partial").unwrap();
+
+        cleanup_managed_engine_storage_at(native.path(), false).unwrap();
+
+        assert!(!current.exists());
+    }
+
+    #[test]
+    fn parser_cleanup_commit_marker_is_bounded_and_release_specific() {
+        let parser = tempfile::tempdir().unwrap();
+        let version = parser.path().join("versions").join(PADDLE_PARSER_RELEASE);
+        std::fs::create_dir_all(&version).unwrap();
+        let manifest = version.join("install.json");
+        std::fs::write(&manifest, b"not json").unwrap();
+        assert!(!parser_install_committed(parser.path()));
+
+        std::fs::write(
+            &manifest,
+            serde_json::to_vec(&serde_json::json!({
+                "engine": "paddleocr-vl-parser",
+                "release": "obsolete",
+                "integrity_sha256": "0".repeat(64),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!parser_install_committed(parser.path()));
+
+        std::fs::write(
+            &manifest,
+            serde_json::to_vec(&serde_json::json!({
+                "engine": "paddleocr-vl-parser",
+                "release": PADDLE_PARSER_RELEASE,
+                "integrity_sha256": "0".repeat(64),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(parser_install_committed(parser.path()));
+    }
+
+    #[test]
+    fn parser_status_probe_uses_committed_file_shapes() {
+        let native = tempfile::tempdir().unwrap();
+        let base = native.path().join("paddleocr-vl");
+        let base_models = base.join("models");
+        let base_runtime = base.join("runtime");
+        std::fs::create_dir_all(&base_models).unwrap();
+        std::fs::create_dir_all(&base_runtime).unwrap();
+        std::fs::write(base_models.join(PADDLE_MODEL_FILE), b"model").unwrap();
+        std::fs::write(base_models.join(PADDLE_MMPROJ_FILE), b"projector").unwrap();
+        std::fs::write(base_runtime.join(exe("llama-server")), b"server").unwrap();
+        let llama = llama_artifact().unwrap();
+        std::fs::write(
+            base.join("install.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "engine": "paddleocr-vl",
+                "model_version": "1.6",
+                "model_revision": PADDLE_MODEL_REVISION,
+                "llama_cpp_version": LLAMA_CPP_VERSION,
+                "runtime_sha256": llama.sha256,
+                "model_sha256": PADDLE_MODEL_SHA256,
+                "mmproj_sha256": PADDLE_MMPROJ_SHA256,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let parser = native.path().join("paddleocr-parser");
+        let version = parser.join("versions").join(PADDLE_PARSER_RELEASE);
+        let layout = version.join("models/PP-DocLayoutV3_infer");
+        let python = venv_python(&version.join("venv"));
+        std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&layout).unwrap();
+        std::fs::write(&python, b"python").unwrap();
+        for (path, contents) in [
+            (
+                version.join("paddle_parser_sidecar.py"),
+                b"script".as_slice(),
+            ),
+            (version.join("packages.txt"), b"packages".as_slice()),
+            (version.join("pylock.toml"), b"lock".as_slice()),
+            (version.join("runtime-lock.json"), b"runtime".as_slice()),
+            (version.join("integrity.json"), b"integrity".as_slice()),
+            (layout.join("inference.json"), b"json".as_slice()),
+            (layout.join("inference.yml"), b"yaml".as_slice()),
+            (layout.join("inference.pdiparams"), b"params".as_slice()),
+        ] {
+            std::fs::write(path, contents).unwrap();
+        }
+        std::fs::write(
+            version.join("install.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "engine": "paddleocr-vl-parser",
+                "release": PADDLE_PARSER_RELEASE,
+                "integrity_sha256": "0".repeat(64),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let status = paddle_full_parser_status_at(native.path()).unwrap();
+        assert_eq!(status.release, PADDLE_PARSER_RELEASE);
+        assert_eq!(status.script, version.join("paddle_parser_sidecar.py"));
+
+        std::fs::remove_file(base_models.join(PADDLE_MMPROJ_FILE)).unwrap();
+        assert!(paddle_full_parser_status_at(native.path()).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_engine_cleanup_unlinks_staging_symlinks_without_following_them() {
+        let native = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let protected = outside.path().join("keep");
+        std::fs::write(&protected, b"keep").unwrap();
+        let staging_link = native.path().join(".paddleocr-vl-staging-symlink");
+        std::os::unix::fs::symlink(outside.path(), &staging_link).unwrap();
+
+        cleanup_managed_engine_storage_at(native.path(), false).unwrap();
+
+        assert!(!staging_link.exists());
+        assert!(protected.is_file());
     }
 
     #[test]

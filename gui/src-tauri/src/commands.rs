@@ -1647,10 +1647,7 @@ async fn run_pipeline_inner_with_snapshot(
                     );
                 }
             }
-        } else if matches!(
-            extraction.method.as_str(),
-            "paddleocr-vl" | "paddleocr-vl-full"
-        ) {
+        } else if extraction.method == "paddleocr-vl-full" {
             match crate::pipeline::extract::read_paddle_structure_json_for_method(
                 &extraction.paper_hash,
                 &extraction.method,
@@ -1658,11 +1655,7 @@ async fn run_pipeline_inner_with_snapshot(
                 Ok(Some(structure)) => {
                     if let Err(e) = w.add_text(
                         "context/paddle_structure.json",
-                        if extraction.method == "paddleocr-vl-full" {
-                            "PaddleOCR-VL full-parser structure"
-                        } else {
-                            "PaddleOCR-VL structure"
-                        },
+                        "PaddleOCR-VL full-parser structure",
                         "context",
                         &structure,
                     ) {

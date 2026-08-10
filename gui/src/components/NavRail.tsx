@@ -98,27 +98,6 @@ function Icon({ name }: { name: IconName }) {
   }
 }
 
-function Mark() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="h-6 w-6 text-gray-900 dark:text-gray-100"
-      fill="none"
-      viewBox="0 0 24 24"
-    >
-      <circle cx="5" cy="6" r="2" fill="currentColor" />
-      <circle cx="19" cy="12" r="2" fill="currentColor" />
-      <circle cx="5" cy="18" r="2" fill="currentColor" />
-      <path
-        d="M7 6h3.2a3.8 3.8 0 0 1 3.8 3.8v.4a1.8 1.8 0 0 0 1.8 1.8H17M7 18h3.2a3.8 3.8 0 0 0 3.8-3.8v-.4a1.8 1.8 0 0 1 1.8-1.8H17"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.5"
-      />
-    </svg>
-  );
-}
-
 function RailButton({
   active,
   disabled,
@@ -187,9 +166,8 @@ export default function NavRail({
         />
       )}
 
-      <div className="mb-5 flex items-center gap-2.5 px-2">
-        <Mark />
-        <span className="text-sm font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
+      <div className="mb-5 px-2">
+        <span className="text-base font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
           Pipeline
         </span>
       </div>

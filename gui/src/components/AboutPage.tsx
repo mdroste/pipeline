@@ -84,14 +84,6 @@ function HelpContent() {
             description="Two broad review passes followed by a consolidated report."
           />
           <ProfileCard
-            name="Codebase Review"
-            description="Seven passes covering correctness, security, design, concurrency, error handling, performance, and tests, followed by consolidation and verification."
-          />
-          <ProfileCard
-            name="Replication Package Audit"
-            description="Checks a replication package the way a journal data editor would: exhibit completeness, code–paper consistency, portability, and data documentation."
-          />
-          <ProfileCard
             name="Grant Proposal Review"
             description="Reviews a proposal's aims and novelty, feasibility, readability, and internal consistency. The aims step can search the web."
           />
@@ -159,12 +151,6 @@ function HelpContent() {
             tierColor="text-blue-700 bg-blue-50"
             title="PaddleOCR-VL Full Parser"
             description="Uses the optional local engine to recover reading order, document regions, headings, formulas, and tables. Install and configure it under Settings → PDF Extraction."
-          />
-          <TierCard
-            tier="Local add-on"
-            tierColor="text-blue-700 bg-blue-50"
-            title="PaddleOCR-VL Fast"
-            description="Uses the same managed local model for faster page transcription, with fewer structural details than the Full Parser."
           />
           <TierCard
             tier="Built in"

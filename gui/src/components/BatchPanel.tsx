@@ -201,8 +201,7 @@ export default function BatchPanel({
             dependency.authenticated === false ||
             (
               dependency.cli_auth_status === "unknown" &&
-              dependency.authenticated !== true &&
-              !/gemini/i.test(dependency.name)
+              dependency.authenticated !== true
             )
           ),
         )

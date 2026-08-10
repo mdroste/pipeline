@@ -144,11 +144,15 @@ pub struct Settings {
     #[serde(default)]
     pub gemini_api_model_selection: ModelSelection,
 
-    /// PDF extraction method: "llm", "auto", "paddleocr-vl",
-    /// "paddleocr-vl-full", or "pdftotext".
+    /// PDF extraction method: "llm", "auto", "paddleocr-vl-full", or
+    /// "pdftotext". The retired "paddleocr-vl" value is migrated to the Full
+    /// Parser when older settings are deserialized.
     /// The legacy value "marker" remains deserializable so the UI can explain
     /// why the user must choose a supported replacement.
-    #[serde(default = "default_pdf_extractor")]
+    #[serde(
+        default = "default_pdf_extractor",
+        deserialize_with = "deserialize_pdf_extractor"
+    )]
     pub pdf_extractor: String,
 
     /// Retired Marker setting retained only for settings-file compatibility.
@@ -206,7 +210,8 @@ pub struct Settings {
     #[serde(default = "default_paddle_page_retries")]
     pub paddle_page_retries: u32,
 
-    /// DPI used to render each page before PaddleOCR-VL inference.
+    /// Retired direct-Q8 render setting retained for settings-file and bundle
+    /// compatibility. Full Parser owns its rendering policy.
     #[serde(default = "default_paddle_render_dpi")]
     pub paddle_render_dpi: u32,
 
@@ -317,6 +322,17 @@ fn default_local_base_url() -> String {
 
 fn default_pdf_extractor() -> String {
     "llm".to_string()
+}
+
+fn deserialize_pdf_extractor<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        "paddleocr-vl" => "paddleocr-vl-full".to_string(),
+        _ => value,
+    })
 }
 
 fn default_marker_lowres_dpi() -> u32 {
@@ -513,7 +529,7 @@ impl Settings {
         }
         if !matches!(
             self.pdf_extractor.as_str(),
-            "llm" | "auto" | "marker" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext"
+            "llm" | "auto" | "marker" | "paddleocr-vl-full" | "pdftotext"
         ) {
             return Err(format!("Invalid PDF extractor '{}'", self.pdf_extractor));
         }
@@ -1435,6 +1451,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(legacy.pdf_extractor, "marker");
+        assert!(legacy.validate().is_ok());
+    }
+
+    #[test]
+    fn retired_fast_paddle_selection_migrates_to_full_parser() {
+        let legacy: Settings = serde_json::from_str(r#"{"pdf_extractor":"paddleocr-vl"}"#).unwrap();
+        assert_eq!(legacy.pdf_extractor, "paddleocr-vl-full");
         assert!(legacy.validate().is_ok());
     }
 

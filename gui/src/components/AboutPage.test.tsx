@@ -23,8 +23,13 @@ describe("AboutPage", () => {
     expect(screen.getByText(/only the input and earlier results allowed/i)).toBeInTheDocument();
     expect(screen.getByText(/provider's account, plan, and data-use terms/i)).toBeInTheDocument();
     expect(screen.getByText("Workflows")).toBeInTheDocument();
+    expect(screen.getByText("Paper Review (Full)")).toBeInTheDocument();
+    expect(screen.getByText("Paper Review (Quick)")).toBeInTheDocument();
+    expect(screen.getByText("Grant Proposal Review")).toBeInTheDocument();
+    expect(screen.queryByText("Codebase Review")).not.toBeInTheDocument();
+    expect(screen.queryByText("Replication Package Audit")).not.toBeInTheDocument();
     expect(screen.getByText("PaddleOCR-VL Full Parser")).toBeInTheDocument();
-    expect(screen.getByText("PaddleOCR-VL Fast")).toBeInTheDocument();
+    expect(screen.queryByText("PaddleOCR-VL Fast")).not.toBeInTheDocument();
   });
 
   it.each([

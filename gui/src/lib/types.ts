@@ -112,7 +112,7 @@ export interface InputSlot {
 
 /** Per-profile extraction configuration. Parser tuning lives in global Settings. */
 export interface ExtractionConfig {
-  /** "" | "auto" | "llm" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext". "marker" is legacy/unavailable. */
+  /** "" | "auto" | "llm" | "paddleocr-vl-full" | "pdftotext". "marker" is legacy/unavailable. */
   method: string;
   /** "" or "document" | "folder" | "none". Empty = document. */
   input_mode?: string;
@@ -403,7 +403,7 @@ export interface Settings {
   gemini_model: string;
   gemini_cli_model_selection?: ModelSelection;
   gemini_api_model_selection?: ModelSelection;
-  /** "llm" | "auto" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext"; "marker" is legacy/unavailable. */
+  /** "llm" | "auto" | "paddleocr-vl-full" | "pdftotext"; "marker" is legacy/unavailable. */
   pdf_extractor: string;
   /** Retired Marker fields remain in the wire format for old settings files. */
   marker_disable_ocr: boolean;
@@ -424,7 +424,7 @@ export interface Settings {
   paddle_max_output_tokens: number;
   /** Retries for a failed or suspicious OCR page. */
   paddle_page_retries: number;
-  /** Page render resolution used for local vision inference. */
+  /** Retired direct-Q8 render setting retained for wire compatibility. */
   paddle_render_dpi: number;
   /** Official full-parser layout and document-restructuring controls. */
   paddle_full_layout_detection: boolean;
@@ -518,6 +518,12 @@ export type ExportEnvelope =
   | { type: "bundle"; settings: Settings; profiles: ProfileExport[]; active_profile: string };
 
 /** Mirrors engines::EngineStatus. */
+export interface EngineInstallProgress {
+  engine_id: string;
+  phases: Record<string, string>;
+  log_lines: string[];
+}
+
 export interface EngineStatus {
   id: string;
   label: string;
@@ -530,6 +536,7 @@ export interface EngineStatus {
   est_disk_mb: number;
   managed_stack_mb: number;
   installing: boolean;
+  install_progress?: EngineInstallProgress | null;
   available?: boolean;
   unavailable_reason?: string;
 }

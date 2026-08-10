@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPage from "./SettingsPage";
-import type { ModelCatalog, Settings } from "../lib/types";
+import type { EngineStatus, ModelCatalog, Settings } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());
@@ -64,11 +64,33 @@ function makeSettings(): Settings {
   };
 }
 
-function mockLoad(settings: Settings, warnings: string[] = []) {
+function paddleEngine(overrides: Partial<EngineStatus> = {}): EngineStatus {
+  return {
+    id: "paddleocr-vl-parser",
+    label: "PaddleOCR-VL 1.6 Full Parser",
+    description: "Layout-aware local extraction.",
+    installed: false,
+    version: "",
+    entry_path: "",
+    system_path: "",
+    est_download_mb: 2900,
+    est_disk_mb: 3800,
+    managed_stack_mb: 0,
+    installing: false,
+    install_progress: null,
+    ...overrides,
+  };
+}
+
+function mockLoad(
+  settings: Settings,
+  warnings: string[] = [],
+  engines: EngineStatus[] = [],
+) {
   invoke.mockImplementation((cmd: string) => {
     if (cmd === "get_settings") return Promise.resolve({ settings, warnings });
     if (cmd === "save_settings") return Promise.resolve();
-    if (cmd === "list_engines") return Promise.resolve([]);
+    if (cmd === "list_engines") return Promise.resolve(engines);
     if (cmd === "retired_marker_status") {
       return Promise.resolve({ present: false, bytes: 0 });
     }
@@ -112,32 +134,198 @@ describe("SettingsPage", () => {
     expect(invoke).toHaveBeenCalledWith("get_settings");
   });
 
+  it("opens directly to a requested settings section", async () => {
+    mockLoad(makeSettings());
+    const view = render(
+      <SettingsPage
+        onClose={() => {}}
+        dark={false}
+        onDarkChange={() => {}}
+        initialSection="llm"
+      />,
+    );
+    expect(await screen.findByText("Preferred Provider")).toBeVisible();
+
+    view.rerender(
+      <SettingsPage
+        onClose={() => {}}
+        dark={false}
+        onDarkChange={() => {}}
+        initialSection="extraction"
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "PDF Extraction" })).toBeVisible();
+    expect(screen.getByRole("radio", { name: /^LLM\b/ })).toBeVisible();
+  });
+
+  it("focuses and scrolls to a requested settings target", async () => {
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      mockLoad(makeSettings());
+      render(
+        <SettingsPage
+          onClose={() => {}}
+          dark={false}
+          onDarkChange={() => {}}
+          initialSection="extraction"
+          targetId="paddleocr-local-engine"
+          navigationKey={1}
+        />,
+      );
+
+      const target = await waitFor(() => {
+        const element = document.getElementById("paddleocr-local-engine");
+        expect(element).not.toBeNull();
+        return element as HTMLElement;
+      });
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+        expect(target).toHaveFocus();
+      });
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "scrollIntoView",
+          originalScrollIntoView,
+        );
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      }
+    }
+  });
+
+  it("lists discovered models without stable role options", async () => {
+    invoke.mockImplementation((cmd: string, args?: { provider?: string }) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "get_model_catalog") {
+        const result = catalog(args?.provider ?? "local", "cli", "live");
+        if (args?.provider === "claude") {
+          result.roles = [{
+            id: "balanced",
+            label: "Balanced",
+            description: "Stable balanced role",
+            model: "claude-live",
+          }];
+          result.models = [{
+            id: "claude-live",
+            display_name: "Claude Live",
+            description: "Discovered model",
+            is_default: false,
+            supported_efforts: [],
+            capabilities: [],
+            deprecated: false,
+          }];
+        }
+        return Promise.resolve(result);
+      }
+      return Promise.resolve();
+    });
+
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+
+    expect(await screen.findByRole("option", { name: "Claude Live" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Available models" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Stable roles" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Balanced/ })).not.toBeInTheDocument();
+  });
+
   it("surfaces a shell-plugin failure when opening the Ollama site", async () => {
     mockLoad(makeSettings());
     openUrl.mockRejectedValueOnce(new Error("no browser"));
     render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
 
-    await userEvent.setup().click(await screen.findByRole("link", { name: "ollama.com" }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", {
+      name: "More information about Local (Ollama)",
+    }));
+    await user.click(screen.getByRole("link", { name: "ollama.com" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not open ollama.com: no browser",
     );
   });
 
-  it("offers PaddleOCR-VL as a PDF extraction method", async () => {
+  it("keeps secondary explanations in accessible info popovers", async () => {
+    const user = userEvent.setup();
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
-    await userEvent.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+
+    await screen.findByText("Preferred Provider");
     expect(
-      screen.getByRole("radio", {
-        name: /Local engine: PaddleOCR-VL 1\.6 Q8/,
-      }),
-    ).toBeInTheDocument();
+      screen.queryByText("Provider used when workflow does not specify explicit agent(s)."),
+    ).not.toBeInTheDocument();
+
+    const info = screen.getByRole("button", {
+      name: "More information about Preferred Provider",
+    });
+    await user.click(info);
+
+    expect(screen.getByRole("dialog", { name: "Preferred Provider help" })).toHaveTextContent(
+      "Provider used when workflow does not specify explicit agent(s).",
+    );
+    expect(info).toHaveAttribute("aria-expanded", "true");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Preferred Provider help" })).not.toBeInTheDocument();
+    expect(info).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "General" }));
+    const logging = screen.getByRole("switch", { name: "Verbose console logging" });
+    await user.click(screen.getByRole("button", {
+      name: "More information about Verbose console logging",
+    }));
+    expect(logging).toHaveAttribute("aria-checked", "false");
+    await user.click(screen.getByText("Verbose console logging"));
+    expect(logging).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("offers only the PaddleOCR-VL Full Parser as a local PDF extractor", async () => {
+    mockLoad(makeSettings(), [], [paddleEngine()]);
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: "PDF Extraction" }));
     expect(
       screen.getByRole("radio", {
         name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
       }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("radio", { name: /PaddleOCR-VL 1\.6 Q8/ }),
+    ).not.toBeInTheDocument();
+    const engineHeading = screen.getByRole("heading", { name: "Local Engines" });
+    expect(engineHeading).toBeVisible();
+    expect(screen.getByText("not installed")).toBeVisible();
+    expect(screen.queryByText("PaddleOCR-VL recognition server")).not.toBeInTheDocument();
+    expect(screen.queryByText("Full parser structure")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("PaddleOCR-VL concurrent pages")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Layout detection and reading order" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reveals PaddleOCR-VL settings when the local engine is installed", async () => {
+    mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
+    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+
+    const engineHeading = screen.getByRole("heading", { name: "Local Engines" });
+    const recognitionSettings = await screen.findByText("PaddleOCR-VL recognition server");
+    expect(
+      engineHeading.compareDocumentPosition(recognitionSettings) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByText("Full parser structure")).toBeVisible();
   });
 
   it("explains a legacy Marker selection and saves a supported replacement", async () => {
@@ -169,12 +357,12 @@ describe("SettingsPage", () => {
 
   it("shows and saves PaddleOCR-VL performance controls", async () => {
     const user = userEvent.setup();
-    mockLoad(makeSettings());
+    mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
     render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
     await user.click(
       screen.getByRole("radio", {
-        name: /Local engine: PaddleOCR-VL 1\.6 Q8/,
+        name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
       }),
     );
 
@@ -185,10 +373,6 @@ describe("SettingsPage", () => {
     await user.selectOptions(
       screen.getByLabelText("PaddleOCR-VL vision encoder batch"),
       "2048",
-    );
-    await user.selectOptions(
-      screen.getByLabelText("PaddleOCR-VL page resolution"),
-      "120",
     );
     await user.selectOptions(
       screen.getByLabelText("PaddleOCR-VL Flash Attention"),
@@ -208,9 +392,8 @@ describe("SettingsPage", () => {
       expect(invoke).toHaveBeenCalledWith("save_settings", {
         settings: {
           ...makeSettings(),
-          pdf_extractor: "paddleocr-vl",
+          pdf_extractor: "paddleocr-vl-full",
           paddle_page_concurrency: 2,
-          paddle_render_dpi: 120,
           paddle_mtmd_batch_tokens: 2048,
           paddle_flash_attention: "on",
           paddle_max_output_tokens: 8192,
@@ -222,7 +405,7 @@ describe("SettingsPage", () => {
 
   it("shows and saves full-parser structure controls", async () => {
     const user = userEvent.setup();
-    mockLoad(makeSettings());
+    mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
     render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
     await user.click(
@@ -514,7 +697,7 @@ describe("SettingsPage", () => {
     render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
-    await screen.findByText(/Currently 8 runs, 7\.0 GB/);
+    await screen.findByText("8 runs · 7.0 GB");
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     await waitFor(() => {

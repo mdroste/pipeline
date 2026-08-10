@@ -5,6 +5,12 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
+- Consolidated local OCR extraction on PaddleOCR-VL Full Parser. The former
+  direct Q8/fast extractor is no longer offered; saved settings and workflows
+  that selected it migrate automatically to Full Parser. Installation and
+  dependency status now present the parser and its recognition runtime as one
+  managed engine.
+
 ## 1.0.1 — 2026-07-27
 
 ### Security and privacy

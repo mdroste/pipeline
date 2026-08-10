@@ -44,10 +44,7 @@ pub struct DepsReport {
     pub ready: bool,
 }
 
-pub(crate) fn dependency_ready(dependency: &DepStatus) -> bool {
-    if !dependency.required {
-        return true;
-    }
+fn dependency_available(dependency: &DepStatus) -> bool {
     if !dependency.found {
         return false;
     }
@@ -57,13 +54,21 @@ pub(crate) fn dependency_ready(dependency: &DepStatus) -> bool {
     match dependency.cli_auth_status {
         Some(CliAuthStatus::SignedIn) => true,
         Some(CliAuthStatus::SignedOut) => false,
-        // Gemini CLI cannot verify OAuth without making a model request. The
-        // CLI's isolation capability is checked separately before `found` is
-        // set, so its unknown auth state remains launchable.
-        Some(CliAuthStatus::Unknown) => dependency.name == "Gemini CLI",
+        Some(CliAuthStatus::Unknown) => false,
         // Native binaries and managed engines have no authentication state.
         None => true,
     }
+}
+
+pub(crate) fn dependency_ready(dependency: &DepStatus) -> bool {
+    !dependency.required || dependency_available(dependency)
+}
+
+fn dependency_group_ready(required: bool, dependencies: &[&DepStatus]) -> bool {
+    !required
+        || dependencies
+            .iter()
+            .any(|dependency| dependency_available(dependency))
 }
 
 /// A command resolved to the exact program and fixed prefix arguments that can
@@ -500,8 +505,8 @@ fn check_codex_auth(command: &ResolvedCommand) -> Option<bool> {
     Some(output.status.success())
 }
 
-/// Check if Gemini CLI has credentials available.
-/// Gemini uses GEMINI_API_KEY or GOOGLE_API_KEY env vars, or Google auth.
+/// Check if Gemini CLI has usable credentials. ACP session creation refreshes
+/// OAuth without submitting a prompt or making a model call.
 fn check_gemini_auth() -> Option<bool> {
     // Check env vars first
     if std::env::var("GEMINI_API_KEY")
@@ -516,10 +521,12 @@ fn check_gemini_auth() -> Option<bool> {
     {
         return Some(true);
     }
-    // Gemini CLI currently has no stable, noninteractive auth-status command.
-    // A settings-file substring is not evidence of a readable, unexpired
-    // credential, so report this state as unknown rather than green.
-    None
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?
+        .block_on(crate::model_catalog::probe_gemini_cli_auth())
+        .ok()
 }
 
 fn cli_auth_status(found: bool, authenticated: Option<bool>) -> Option<CliAuthStatus> {
@@ -674,7 +681,6 @@ struct PdfDependencyRequirements {
     extraction: bool,
     pdftotext: bool,
     pdftoppm: bool,
-    paddle: bool,
     paddle_full: bool,
     configuration_ready: bool,
 }
@@ -690,7 +696,6 @@ fn pdf_dependency_requirements(
             extraction: false,
             pdftotext: false,
             pdftoppm: false,
-            paddle: false,
             paddle_full: false,
             configuration_ready: true,
         };
@@ -702,16 +707,11 @@ fn pdf_dependency_requirements(
         // LLM extraction treats the pdftotext page map as a mandatory
         // completeness check rather than a best-effort enhancement.
         pdftotext: extraction && matches!(method, "llm" | "pdftotext"),
-        // Paddle renders every page through Poppler before sending it to the
-        // managed vision model.
-        pdftoppm: extraction && method == "paddleocr-vl",
-        paddle: extraction && matches!(method, "paddleocr-vl" | "paddleocr-vl-full"),
+        pdftoppm: false,
         paddle_full: extraction && method == "paddleocr-vl-full",
         configuration_ready: !extraction
-            || matches!(
-                method,
-                "llm" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext"
-            ) && !(method == "llm" && settings.preferred_provider == "local"),
+            || matches!(method, "llm" | "paddleocr-vl-full" | "pdftotext")
+                && !(method == "llm" && settings.preferred_provider == "local"),
     }
 }
 
@@ -822,10 +822,11 @@ fn check_all_for(
         // pdftotext: just check existence (no subprocess needed)
         let pdftotext_h = s.spawn(|| find_on_path("pdftotext"));
 
-        // PaddleOCR-VL is a managed stack rather than a PATH dependency. Its
-        // resolver verifies the server, model, and vision projector together.
-        let paddle_h = s.spawn(crate::engines::paddle_engine_paths);
-        let paddle_full_h = s.spawn(crate::engines::paddle_full_parser_paths);
+        // The Full Parser is one managed extractor whose implementation spans
+        // the native recognition server and the isolated Paddle layout client.
+        // Startup readiness uses the bounded commit-marker probe; extraction
+        // performs the full multi-GB integrity verification before execution.
+        let paddle_full_h = s.spawn(crate::engines::paddle_full_parser_status);
 
         // Local OpenAI-compatible server: TCP reachability of the configured
         // base URL (fast, no HTTP parse — a listener there is a good signal).
@@ -908,7 +909,7 @@ fn check_all_for(
         } else if found && gemini_auth == Some(false) {
             "Gemini CLI is installed but not authenticated. Set GEMINI_API_KEY or run `gemini` to log in."
         } else if found && gemini_auth.is_none() {
-            "Gemini CLI OAuth sign-in cannot be verified without a model request. Pipeline will use the existing CLI session; run `gemini` to sign in if launch reports an authentication error."
+            "Gemini CLI is installed, but sign-in could not be verified. Run `gemini` to sign in, then refresh this check."
         } else {
             "Install Gemini CLI: npm install -g @google/gemini-cli"
         };
@@ -997,36 +998,11 @@ fn check_all_for(
             cli_auth_status: None,
         };
 
-        let paddle_paths = paddle_h.join().ok().and_then(Result::ok);
-        let paddle = DepStatus {
-            name: "PaddleOCR-VL".into(),
-            found: paddle_paths.is_some(),
-            version: paddle_paths
-                .as_ref()
-                .map(|_| "managed 1.6 Q8".to_string())
-                .unwrap_or_default(),
-            path: paddle_paths
-                .as_ref()
-                .map(|paths| paths.server.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            required: pdf_requirements.paddle,
-            hint: if paddle_paths.is_some() {
-                "Managed PaddleOCR-VL runtime and model are installed.".into()
-            } else if pdf_requirements.paddle {
-                "Install PaddleOCR-VL from Settings → PDF Extraction before running this workflow."
-                    .into()
-            } else {
-                "Install PaddleOCR-VL from Settings → PDF Extraction to use local PDF extraction."
-                    .into()
-            },
-            authenticated: None,
-            cli_auth_status: None,
-        };
-
         let paddle_full_paths = paddle_full_h.join().ok().and_then(Result::ok);
+        let paddle_full_found = paddle_full_paths.is_some();
         let paddle_full = DepStatus {
             name: "PaddleOCR-VL Full Parser".into(),
-            found: paddle_full_paths.is_some(),
+            found: paddle_full_found,
             version: paddle_full_paths
                 .as_ref()
                 .map(|paths| format!("managed {}", paths.release))
@@ -1036,13 +1012,13 @@ fn check_all_for(
                 .map(|paths| paths.script.to_string_lossy().to_string())
                 .unwrap_or_default(),
             required: pdf_requirements.paddle_full,
-            hint: if paddle_full_paths.is_some() {
-                "Managed PaddleOCR layout client and model are installed.".into()
-            } else if pdf_requirements.paddle_full {
-                "Install PaddleOCR-VL Full Parser from Settings → PDF Extraction before running this workflow."
+            hint: if paddle_full_found {
+                "Managed PaddleOCR layout client, recognition runtime, and models are installed."
                     .into()
+            } else if pdf_requirements.paddle_full {
+                "Recommended for PDFs: Install from Settings → PDF Extraction.".into()
             } else {
-                "Install the optional Full Parser for layout-aware local PDF extraction.".into()
+                "Install PaddleOCR-VL Full Parser for layout-aware local PDF extraction.".into()
             },
             authenticated: None,
             cli_auth_status: None,
@@ -1063,7 +1039,7 @@ fn check_all_for(
                     "LLM PDF extraction is unavailable for local OpenAI-compatible servers. Choose PaddleOCR-VL or pdftotext extraction."
                         .into()
                 }
-                Some("llm" | "paddleocr-vl" | "paddleocr-vl-full" | "pdftotext") | None => {
+                Some("llm" | "paddleocr-vl-full" | "pdftotext") | None => {
                     "The selected PDF extraction method is supported.".into()
                 }
                 Some(_) => {
@@ -1097,6 +1073,16 @@ fn check_all_for(
             cli_auth_status: None,
         };
 
+        // Model access is an OR-group: any usable CLI, direct API key, or
+        // configured local provider satisfies the dependency check. PDF
+        // parsing requirements remain independently enforced.
+        let model_access_required = !required_providers.is_empty();
+        let model_access_ready =
+            dependency_group_ready(model_access_required, &[&claude, &codex, &gemini, &local]);
+        let pdf_dependencies_ready = [&pdftoppm, &pdftotext, &paddle_full, &extractor]
+            .into_iter()
+            .all(dependency_ready);
+        let ready = model_access_ready && pdf_dependencies_ready;
         let deps = vec![
             claude,
             codex,
@@ -1104,11 +1090,9 @@ fn check_all_for(
             local,
             pdftoppm,
             pdftotext,
-            paddle,
             paddle_full,
             extractor,
         ];
-        let ready = deps.iter().all(dependency_ready);
         DepsReport { deps, ready }
     })
 }
@@ -1142,8 +1126,8 @@ mod tests {
     #[cfg(unix)]
     use super::{check_claude_auth, probe_resolved};
     use super::{
-        cli_auth_status, dependency_ready, help_text_supports_option, parse_host_port,
-        pdf_dependency_requirements, pdf_extraction_may_run, required_providers,
+        cli_auth_status, dependency_group_ready, dependency_ready, help_text_supports_option,
+        parse_host_port, pdf_dependency_requirements, pdf_extraction_may_run, required_providers,
         resolve_command_in, windows_pathexts, CliAuthStatus, DepStatus,
     };
     use std::ffi::{OsStr, OsString};
@@ -1383,19 +1367,8 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
         assert!(llm.extraction);
         assert!(llm.pdftotext);
         assert!(!llm.pdftoppm);
-        assert!(!llm.paddle);
         assert!(!llm.paddle_full);
         assert!(llm.configuration_ready);
-
-        config.extraction.method = "paddleocr-vl".to_string();
-        let paddle =
-            pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.pdf"), None);
-        assert!(paddle.extraction);
-        assert!(!paddle.pdftotext);
-        assert!(paddle.pdftoppm);
-        assert!(paddle.paddle);
-        assert!(!paddle.paddle_full);
-        assert!(paddle.configuration_ready);
 
         config.extraction.method = "paddleocr-vl-full".to_string();
         let full =
@@ -1403,7 +1376,6 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
         assert!(full.extraction);
         assert!(!full.pdftotext);
         assert!(!full.pdftoppm);
-        assert!(full.paddle);
         assert!(full.paddle_full);
         assert!(full.configuration_ready);
 
@@ -1644,7 +1616,7 @@ CALL :find_dp0
     }
 
     #[test]
-    fn gemini_oauth_is_verified_by_invocation_without_weakening_binary_checks() {
+    fn unverified_cli_authentication_fails_closed() {
         let status = |name: &str, found: bool| DepStatus {
             name: name.to_string(),
             found,
@@ -1655,9 +1627,28 @@ CALL :find_dp0
             authenticated: None,
             cli_auth_status: Some(CliAuthStatus::Unknown),
         };
-        assert!(dependency_ready(&status("Gemini CLI", true)));
+        assert!(!dependency_ready(&status("Gemini CLI", true)));
         assert!(!dependency_ready(&status("Gemini CLI", false)));
         assert!(!dependency_ready(&status("Claude CLI", true)));
+    }
+
+    #[test]
+    fn model_access_group_accepts_any_available_provider() {
+        let status = |name: &str, found: bool, authenticated: Option<bool>| DepStatus {
+            name: name.to_string(),
+            found,
+            version: String::new(),
+            path: String::new(),
+            required: true,
+            hint: String::new(),
+            authenticated,
+            cli_auth_status: None,
+        };
+        let missing = status("Claude CLI", false, None);
+        let configured_api = status("Codex CLI", true, Some(true));
+        assert!(dependency_group_ready(true, &[&missing, &configured_api]));
+        assert!(!dependency_group_ready(true, &[&missing]));
+        assert!(dependency_group_ready(false, &[&missing]));
     }
 
     #[test]

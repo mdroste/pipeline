@@ -1,14 +1,27 @@
 # PDF extraction: bounded verification and optimized local engines
 
 Original design notes, 2026-07-03; reliability revision, 2026-07-24; managed
-Full Parser revision, 2026-08-07. Goal:
+Full Parser revision, 2026-08-07; single-parser revision, 2026-08-09. Goal:
 faithful PDF → Markdown + page images with explicit user control, bounded
 latency, resumable local work, and enough provenance to audit the result.
 
-## Managed Full Parser revision (2026-08-07)
+## Single-parser revision (2026-08-09)
 
-Pipeline now exposes two local PaddleOCR-VL methods. **Fast** retains the
-native Q8 page-transcription path. **Full Parser** adds the official
+PaddleOCR-VL Full Parser is the only supported local OCR extractor. The former
+direct Q8/Fast method is retired as an extraction choice. Existing settings,
+profiles, and import bundles that contain `paddleocr-vl` are migrated to
+`paddleocr-vl-full` during deserialization. Historical Fast structures remain
+readable.
+
+The Full Parser is installed and reported as one managed engine even though it
+contains two implementation components: the native Q8/llama.cpp recognition
+server and the isolated PaddleOCR/PP-DocLayoutV3 client. A single install action
+provisions both, and uninstall removes both app-owned roots.
+
+## Managed Full Parser revision (2026-08-07; historical context)
+
+Pipeline initially exposed two local PaddleOCR-VL methods. **Fast** retained the
+native Q8 page-transcription path. **Full Parser** added the official
 `PaddleOCRVL` client and PP-DocLayoutV3 while reusing the same managed,
 authenticated llama.cpp recognition server. It calls `restructure_pages`
 before normalization and preserves official block labels, reading order,
@@ -21,8 +34,8 @@ bootstrap owns CPython 3.12 and a versioned private environment under
 or user-installed LlamaCPP is consulted. The installed sidecar is verified
 against the app's bundled digest, and sidecar-only updates reuse a verified
 pinned runtime without reinstalling Python or Paddle. Supported release
-targets are macOS arm64, Windows x64, and Linux x64/arm64. Intel macOS remains
-on Fast because PaddlePaddle 3.2.1 has no matching wheel.
+targets are macOS arm64, Windows x64, and Linux x64/arm64. Full Parser is
+unavailable on Intel macOS because PaddlePaddle 3.2.1 has no matching wheel.
 
 ## Security retirement (2026-07-27)
 
@@ -60,8 +73,8 @@ preprocessing never silently corrects the paper.
 ## Where extraction stands
 
 The configured method in `extract.rs` is authoritative. LaTeX source is always
-preferred when present; PDF users explicitly select LLM, PaddleOCR-VL Fast,
-PaddleOCR-VL Full Parser, or pdftotext. There is no cross-extractor cascade.
+preferred when present; PDF users explicitly select LLM, PaddleOCR-VL Full
+Parser, or pdftotext. There is no cross-extractor cascade.
 Historical
 weaknesses were:
 
@@ -86,9 +99,9 @@ ICPR 2026 math-formula benchmark, socOCRbench):
   ICPR math benchmark — above Mathpix at 9.64). Our users already have LLM
   credentials because the app requires them. The best extractor is one we
   already dispatch to.
-- **PaddleOCR-VL is the supported local path.** Fast uses only the managed Q8
-  GGUF model and pinned native llama.cpp runtime. Full Parser adds an isolated,
-  app-owned Python package closure to recover the official layout pipeline.
+- **PaddleOCR-VL Full Parser is the supported local path.** It combines the
+  managed Q8 GGUF model and pinned native llama.cpp runtime with an isolated,
+  app-owned Python package closure for the official layout pipeline.
   Other candidates either require NVIDIA hardware uncommon among the target
   users or introduce licensing/deployment constraints that require separate
   evaluation.
@@ -104,9 +117,8 @@ olmOCR-bench). Nothing here bets the architecture on a leaderboard position.
   override, exactly as today. No hidden auto-selection beyond the existing
   "auto" value. Nothing installs without an explicit click.
 - **Lightweight by default.** No Python or model weights are in the app bundle.
-  Both Paddle stacks are opt-in, live entirely under `~/.pipeline/`, report
-  their disk usage, and uninstall
-  cleanly.
+  The Paddle stack is opt-in, lives entirely under `~/.pipeline/`, reports its
+  disk usage, and uninstalls cleanly.
 - **Modular.** Installable local extractors go through a small engine
   registry. Historical Marker artifact parsing is isolated from executable
   discovery and provisioning.
@@ -254,7 +266,7 @@ and figure artifacts remain.
 
 ### PaddleOCR-VL runtime policy
 
-#### Fast
+#### Fast (retired extractor; historical design)
 
 Paddle renders one lossless page image per request (150 DPI by default, with
 120/180/200-DPI overrides) and loads the Q8 model once per document. Automatic
@@ -326,18 +338,18 @@ and its authenticated private recognition server.
 ## Move 4: UI
 
 - **SettingsPage** — extraction choices are "LLM", "Local engine:
-  PaddleOCR-VL Full Parser", "Local engine: PaddleOCR-VL Q8 (fast)", and
-  "pdftotext (basic)". Below them, **Local Engines** exposes both runtimes'
-  size estimates, install progress, platform availability, installed
-  version/disk use, cancellation, and dependency-aware uninstall. A detected
+  PaddleOCR-VL Full Parser", and "pdftotext (basic)". Below them, **Local
+  Engines** exposes the parser's total size estimate, install progress,
+  platform availability, installed version/disk use, cancellation, and
+  uninstall. A detected
   app-managed Marker environment left by an older build gets a separate,
   explicit removal control; no removal is automatic.
 - **PipelinePage** — the per-profile override uses the same supported labels.
   A loaded legacy Marker value appears as disabled with an actionable
   replacement warning.
-- **DepsCheck** — reports Fast and Full Parser as separate managed
-  dependencies when the selected workflow requires them; it does not search
-  for Marker executables.
+- **DepsCheck** — reports Full Parser as one managed dependency and verifies
+  both its recognition and layout components; it does not search for Marker
+  executables.
 - `lib/types.ts` mirrors `EngineSpec`/status types; component tests for the
   engines card (install flow states) and the relabeled dropdown.
 
@@ -384,8 +396,9 @@ and its authenticated private recognition server.
 ## Compatibility
 
 - Supported `pdf_extractor` values are
-  (`llm`/`auto`/`paddleocr-vl`/`paddleocr-vl-full`/`pdftotext`). Existing profiles and export
-  bundles containing `marker` still load for repair, but a document run fails
+  (`llm`/`auto`/`paddleocr-vl-full`/`pdftotext`). The retired
+  `paddleocr-vl` value migrates to `paddleocr-vl-full`. Existing profiles and
+  export bundles containing `marker` still load for repair, but a document run fails
   before command resolution with an actionable replacement message. `"llm"`
   gets bounded verification; profile `"auto"` inherits the global setting.
 - Old saved reports/runs unaffected; new runs gain `pages/` artifacts.
@@ -402,10 +415,10 @@ and its authenticated private recognition server.
   progress / installed / failed), Full Parser controls, retired-environment
   removal, and dropdown labels.
 - Manual matrix before release: macOS arm64, Windows x64, and Linux x64/arm64;
-  install both PaddleOCR-VL modes, extract math/table/figure-heavy papers, and
+  install PaddleOCR-VL Full Parser, extract math/table/figure-heavy papers, and
   verify page completeness, title hierarchy, formula numbers, cross-page
   tables, bounding boxes, and figure associations in the explorer. Confirm
-  Intel macOS shows Full Parser as unavailable without affecting Fast.
+  Intel macOS shows Full Parser as unavailable.
 
 ## Remaining validation
 

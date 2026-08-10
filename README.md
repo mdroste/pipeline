@@ -51,16 +51,14 @@ so basic PDF extraction and page rendering work out of the box with no extra ins
 The extractor selected for a workflow is authoritative; Pipeline does not silently switch methods after a failure.
 
 For higher-quality local extraction, Settings → PDF Extraction can optionally
-install [PaddleOCR-VL 1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF)
-Q8 with a native [llama.cpp](https://github.com/ggml-org/llama.cpp) runtime
-(about 1.9 GB). A second **Full Parser** install adds the official PaddleOCR
-layout client and PP-DocLayoutV3 for structured reading order, title
-hierarchy, formulas, cross-page tables, and figure regions. It reuses
-Pipeline's authenticated llama.cpp server. Users do not need to install
-LlamaCPP, Python, pip, Conda, or Docker: the optional parser provisions a
-private, versioned Python environment beneath `~/.pipeline/`. Both engines
-run locally and can be managed from the same page, along with layout, OCR,
-table/title, speed, memory, retry, and cache controls.
+install the **PaddleOCR-VL 1.6 Full Parser**. It combines the official
+[PaddleOCR-VL 1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF)
+Q8 recognition model, a native [llama.cpp](https://github.com/ggml-org/llama.cpp)
+server, the official PaddleOCR layout client, and PP-DocLayoutV3. The parser
+preserves structured reading order, title hierarchy, formulas, cross-page
+tables, and figure regions. Users do not need to install llama.cpp, Python,
+pip, Conda, or Docker: Pipeline provisions the complete private, versioned
+runtime beneath `~/.pipeline/` and manages it as one local extractor.
 
 Marker extraction is unavailable in Pipeline 1.0.1 because the Python
 dependency versions compatible with Pipeline's integration contain known
@@ -102,11 +100,9 @@ or figure image.
 
 ### Built-in profiles
 
-The app ships five profiles you can use as-is or copy and edit:
+The app ships three profiles you can use as-is or copy and edit:
 
 - **Paper Review (Full)** and **Paper Review (Quick)** — full and abbreviated referee-report workflows.
-- **Codebase Review** — seven code-review passes, consolidation, and verification over a source folder.
-- **Replication Package Audit** — for a folder containing a paper's replication package.
 - **Grant Proposal Review** — aims, feasibility, panel readability, consistency.
 
 ## Configuration

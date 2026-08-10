@@ -719,12 +719,19 @@ async fn cli_version(program: &str) -> String {
     }
 }
 
-pub(crate) async fn rpc_exchange(
+async fn rpc_exchange_impl(
     program: &str,
     args: &[String],
     requests: &[serde_json::Value],
+    accept_error_reply: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
     let mut command = build_provider_command(program, None, args)?;
+    // An ACP discovery/auth probe must never turn a missing Gemini credential
+    // into an interactive browser login. With a valid cached OAuth credential
+    // this has no effect; without one the CLI returns a structured auth error.
+    if program == "gemini" {
+        command.env("NO_BROWSER", "true");
+    }
     command
         .kill_on_drop(true)
         .stdin(Stdio::piped())
@@ -781,13 +788,14 @@ pub(crate) async fn rpc_exchange(
             })
             .await
             .map_err(|_| format!("{program} model discovery timed out"))??;
-            if response.get("error").is_some() {
-                return Err(format!(
-                    "{program} discovery returned {}",
-                    response["error"]
-                ));
+            if response.get("error").is_some() && !accept_error_reply {
+                return Err(provider_discovery_error(program, &response["error"]));
             }
+            let is_error = response.get("error").is_some();
             results.push(response);
+            if is_error {
+                break;
+            }
             if program == "codex" && id == serde_json::json!(1) {
                 tokio::time::timeout(Duration::from_secs(12), async {
                     stdin
@@ -807,6 +815,93 @@ pub(crate) async fn rpc_exchange(
     .await;
     stop_discovery_child(&mut child, &mut guard).await;
     result
+}
+
+pub(crate) async fn rpc_exchange(
+    program: &str,
+    args: &[String],
+    requests: &[serde_json::Value],
+) -> Result<Vec<serde_json::Value>, String> {
+    rpc_exchange_impl(program, args, requests, false).await
+}
+
+fn gemini_auth_error_is_signed_out(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "authentication required",
+        "not authenticated",
+        "manual authorization is required",
+        "failed to sign in",
+        "api key is missing",
+        "api key is not configured",
+        "no authentication is configured",
+        "please set an auth method",
+        "invalid_grant",
+        "credentials are not valid",
+        "credential is not valid",
+        "unauthorized",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+fn provider_discovery_error(program: &str, error: &serde_json::Value) -> String {
+    let message = error["message"].as_str().unwrap_or("");
+    if program == "gemini" && gemini_auth_error_is_signed_out(message) {
+        return "Gemini CLI is not signed in. Run `gemini` to sign in with Google (or configure a Gemini API key), then refresh the model list."
+            .to_string();
+    }
+    format!("{program} discovery returned {error}")
+}
+
+fn gemini_auth_status_from_reply(reply: &serde_json::Value) -> Result<bool, String> {
+    if reply.get("result").is_some() {
+        return Ok(true);
+    }
+    let error = reply
+        .get("error")
+        .ok_or("Gemini auth probe returned neither a result nor an error")?;
+    let message = error["message"].as_str().unwrap_or("");
+    if gemini_auth_error_is_signed_out(message) {
+        Ok(false)
+    } else {
+        Err(format!("Gemini auth probe returned {error}"))
+    }
+}
+
+/// Verify Gemini CLI authentication without submitting a prompt. ACP session
+/// creation refreshes the configured credential and returns model metadata,
+/// but does not make a model call. Browser login is suppressed above so a
+/// missing/expired OAuth credential becomes a structured signed-out result.
+pub(crate) async fn probe_gemini_cli_auth() -> Result<bool, String> {
+    let cwd = std::env::temp_dir().to_string_lossy().to_string();
+    let requests = [
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": 1,
+                "clientCapabilities": {},
+                "clientInfo": {
+                    "name": "pipeline-auth-probe",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }
+        }),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/new",
+            "params": { "cwd": cwd, "mcpServers": [] }
+        }),
+    ];
+    let replies = rpc_exchange_impl("gemini", &["--acp".into()], &requests, true).await?;
+    let reply = replies
+        .iter()
+        .find(|reply| reply["id"] == serde_json::json!(2))
+        .ok_or("Gemini auth probe ended before session creation")?;
+    gemini_auth_status_from_reply(reply)
 }
 
 /// Ask Claude Code for the same account-aware model list exposed by its
@@ -1342,6 +1437,51 @@ mod tests {
                 assert_eq!(bytes, b"1234");
                 assert!(overflowed);
             });
+    }
+
+    #[test]
+    fn gemini_acp_session_creation_reports_auth_without_a_prompt() {
+        assert_eq!(
+            gemini_auth_status_from_reply(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "models": { "availableModels": [] } }
+            })),
+            Ok(true)
+        );
+        assert_eq!(
+            gemini_auth_status_from_reply(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "error": {
+                    "code": -32000,
+                    "message": "Gemini API key is missing or not configured."
+                }
+            })),
+            Ok(false)
+        );
+        assert!(gemini_auth_status_from_reply(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "error": { "code": -32000, "message": "Connection timed out" }
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn gemini_catalog_auth_errors_are_actionable() {
+        let error = serde_json::json!({
+            "code": -32000,
+            "message": "Gemini API key is missing or not configured."
+        });
+        assert_eq!(
+            provider_discovery_error("gemini", &error),
+            "Gemini CLI is not signed in. Run `gemini` to sign in with Google (or configure a Gemini API key), then refresh the model list."
+        );
+        assert_eq!(
+            provider_discovery_error("codex", &error),
+            format!("codex discovery returned {error}")
+        );
     }
 
     #[test]
