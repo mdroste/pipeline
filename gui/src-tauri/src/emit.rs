@@ -1,6 +1,6 @@
 //! Event-sink abstraction.
 //!
-//! The pipeline emits progress as `pipeline:*` / `batch:*` / `watch:*` events.
+//! The pipeline emits progress as `pipeline:*` / `batch:*` events.
 //! In the GUI these go through a Tauri `AppHandle`; in the headless CLI there is
 //! no Tauri runtime, so both implement this trait and the pipeline code depends
 //! only on `&EventBus` rather than a concrete `AppHandle`.
@@ -34,7 +34,7 @@ pub fn from_app(app: tauri::AppHandle) -> EventBus {
 }
 
 /// Wrap an event sink for work that must not drive the foreground pipeline UI.
-/// Batch and watch runs publish their own `batch:*` / `watch:*` lifecycle; if
+/// Batch runs publish their own `batch:*` lifecycle; if
 /// their internal `pipeline:*` events reach `usePipeline`, the main page can be
 /// left displaying a background run as though the user started it there.
 struct BackgroundEvents {
@@ -116,8 +116,8 @@ mod tests {
         let bus = background(&inner);
         bus.emit_event("pipeline:stage", serde_json::json!({}))
             .unwrap();
-        bus.emit_event("watch:status", serde_json::json!({}))
+        bus.emit_event("batch:progress", serde_json::json!({}))
             .unwrap();
-        assert_eq!(*recorder.0.lock().unwrap(), vec!["watch:status"]);
+        assert_eq!(*recorder.0.lock().unwrap(), vec!["batch:progress"]);
     }
 }

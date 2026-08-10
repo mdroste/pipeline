@@ -11,7 +11,19 @@ import RunSetupPanel from "./components/RunSetupPanel";
 import { usePipeline } from "./hooks/usePipeline";
 import usePersistentPanelWidth from "./hooks/usePersistentPanelWidth";
 import { isMac } from "./lib/platform";
-import type { DepsReport, VarSpec, InputSlot, PipelineConfig } from "./lib/types";
+import {
+  readThemePreference,
+  resolveDarkTheme,
+  THEME_STORAGE_KEY,
+  type ThemePreference,
+} from "./lib/theme";
+import type {
+  DepsReport,
+  VarSpec,
+  InputSlot,
+  PipelineConfig,
+  PrimaryInputSelection,
+} from "./lib/types";
 import type { ExecutionPlanStage } from "./lib/pipelineHelpers";
 
 interface RunProfileSnapshot {
@@ -25,13 +37,16 @@ interface RunProfileSnapshot {
 
 interface PendingRun extends RunProfileSnapshot {
   paperPath: string;
+  inputSelection: PrimaryInputSelection | null;
 }
 
 interface ExecutionPlanEnvelope {
   profileId: string;
   profileConfigSnapshotId: string;
   profileSnapshotId: string;
+  configuredInputMode?: string;
   inputMode: string;
+  inputInterpretation: string;
   variables: VarSpec[];
   inputSlots: InputSlot[];
   readiness: DepsReport;
@@ -45,6 +60,14 @@ const HistoryPage = lazy(() => import("./components/HistoryPage"));
 const loadBatchPanel = () => import("./components/BatchPanel");
 const BatchPanel = lazy(loadBatchPanel);
 const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
+
+function plannedInterpretation(selection: PrimaryInputSelection | null): string | null {
+  if (!selection) return null;
+  if (selection.interpretation !== "batch") {
+    return selection.interpretation;
+  }
+  return selection.selectionKind === "folder" ? "source_tree" : "document";
+}
 
 function App() {
   const {
@@ -61,6 +84,7 @@ function App() {
     stageHistory,
   } = usePipeline();
   const [paperPath, setPaperPath] = useState<string | null>(null);
+  const [inputSelection, setInputSelection] = useState<PrimaryInputSelection | null>(null);
   const [depsReport, setDepsReport] = useState<DepsReport | null>(null);
   const [depsLoading, setDepsLoading] = useState(true);
   const [depsError, setDepsError] = useState<string | null>(null);
@@ -98,33 +122,29 @@ function App() {
     useState<string | null>(null);
   const [runConfigLoading, setRunConfigLoading] = useState(true);
   const [runConfigError, setRunConfigError] = useState<string | null>(null);
-  const [batchSetup, setBatchSetup] = useState<ExecutionPlanEnvelope | null>(null);
   const [preparingRun, setPreparingRun] = useState(false);
   // Variables and extra input slots the active profile declares; both drive
   // the pre-run options modal.
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
   const [activeRunPlan, setActiveRunPlan] = useState<ExecutionPlanStage[] | null>(null);
   const launchActive = useRef(false);
-  const selectedInputRef = useRef({ inputMode, paperPath });
-  selectedInputRef.current = { inputMode, paperPath };
+  const selectedInputRef = useRef({ inputMode, paperPath, inputSelection });
+  selectedInputRef.current = { inputMode, paperPath, inputSelection };
   // A run id to open in History (e.g. from a batch job's "Open" link).
   const [historyRunId, setHistoryRunId] = useState<string | null>(null);
-  // Theme: explicit choice in Settings is persisted; otherwise follow the OS.
-  const [dark, setDark] = useState(() => {
-    const stored = localStorage.getItem("theme");
-    if (stored === "dark") return true;
-    if (stored === "light") return false;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
-  });
+  const [theme, setTheme] = useState<ThemePreference>(() =>
+    readThemePreference(localStorage),
+  );
+  const [systemIsDark, setSystemIsDark] = useState(() =>
+    window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+  const dark = resolveDarkTheme(theme, systemIsDark);
 
   // Release smoke tests set a private environment variable and wait for this
   // IPC round trip. Normal app launches take the no-op path in Rust.
   useEffect(() => {
     invoke<boolean>("mark_smoke_ready").catch((error) => {
       console.warn("Startup readiness signal failed:", error);
-    });
-    void loadBatchPanel().catch((error) => {
-      console.warn("Batch workspace preload failed:", error);
     });
   }, []);
 
@@ -156,36 +176,44 @@ function App() {
     };
   }, []);
 
-  const handleDarkChange = useCallback((v: boolean) => {
-    localStorage.setItem("theme", v ? "dark" : "light");
-    setDark(v);
+  const handleThemeChange = useCallback((preference: ThemePreference) => {
+    localStorage.setItem(THEME_STORAGE_KEY, preference);
+    setTheme(preference);
   }, []);
 
   useEffect(() => {
     document.documentElement.classList.add("theme-transitioning");
     document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
     const timer = setTimeout(() => {
       document.documentElement.classList.remove("theme-transitioning");
     }, 350);
     return () => clearTimeout(timer);
   }, [dark]);
 
-  // Follow OS theme changes unless the user set an explicit preference
+  // matchMedia is provided by WebKit/WebView2/WebKitGTK, so system appearance
+  // changes update the React UI on macOS, Windows, and Linux.
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = (e: MediaQueryListEvent) => {
-      if (!localStorage.getItem("theme")) setDark(e.matches);
-    };
+    const handler = (e: MediaQueryListEvent) => setSystemIsDark(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
+
+  // Keep native window chrome in step with the web content. Passing null asks
+  // Tauri to follow the OS and is supported across desktop platforms.
+  useEffect(() => {
+    getCurrentWindow()
+      .setTheme(theme === "system" ? null : theme)
+      .catch((error) => console.warn("Unable to apply window theme:", error));
+  }, [theme]);
 
   const runConfigRequest = useRef(0);
   const applyRunProfile = useCallback((plan: ExecutionPlanEnvelope): RunProfileSnapshot => {
     const snapshot = {
       profileId: plan.profileId,
       profileConfigSnapshotId: plan.profileConfigSnapshotId,
-      inputMode: plan.inputMode || "document",
+      inputMode: plan.configuredInputMode || plan.inputMode || "document",
       variables: plan.variables ?? [],
       inputSlots: plan.inputSlots ?? [],
       readiness: plan.readiness,
@@ -198,6 +226,7 @@ function App() {
   const loadRunConfig = useCallback(async (
     expectedProfileConfigSnapshotId?: string | null,
     selectedPaperPath?: string | null,
+    selectedInterpretation?: string | null,
   ): Promise<RunProfileSnapshot | null> => {
     const request = ++runConfigRequest.current;
     setRunConfigLoading(true);
@@ -211,16 +240,15 @@ function App() {
         expectedProfileConfigSnapshotId: expectedProfileConfigSnapshotId ?? null,
         diff: false,
         paperPath: selectedPaperPath ?? null,
+        inputInterpretation: selectedInterpretation ?? null,
       });
       if (request !== runConfigRequest.current) return null;
-      setBatchSetup(plan);
       const snapshot = applyRunProfile(plan);
       setDepsReport(plan.readiness);
       return snapshot;
     } catch (error) {
       if (request !== runConfigRequest.current) return null;
       const message = error instanceof Error ? error.message : String(error);
-      setBatchSetup(null);
       setRunConfigError(message);
       setDepsReport(null);
       setDepsError(message);
@@ -237,15 +265,17 @@ function App() {
     const snapshot = await loadRunConfig(
       null,
       inputMode === "none" ? "" : paperPath,
+      plannedInterpretation(inputSelection),
     );
     return snapshot?.readiness ?? null;
-  }, [inputMode, loadRunConfig, paperPath]);
+  }, [inputMode, inputSelection, loadRunConfig, paperPath]);
 
   useEffect(() => {
     const selected = selectedInputRef.current;
     void loadRunConfig(
       null,
       selected.inputMode === "none" ? "" : selected.paperPath,
+      plannedInterpretation(selected.inputSelection),
     );
   }, [configVersion, loadRunConfig]);
 
@@ -258,11 +288,11 @@ function App() {
     if (!config || nextInputMode !== inputMode) {
       setInputMode(nextInputMode);
       setPaperPath(null);
+      setInputSelection(null);
       setPendingRun(null);
       setSelectionKey((key) => key + 1);
     }
     setRunProfileConfigSnapshotId(null);
-    setBatchSetup(null);
     setRunConfigLoading(true);
     setConfigVersion((version) => version + 1);
   }, [inputMode]);
@@ -281,12 +311,46 @@ function App() {
     launchActive.current = true;
     setPreparingRun(true);
     try {
+      if (snapshot.inputSelection?.interpretation === "batch") {
+        let paths = snapshot.inputSelection.paths;
+        if (snapshot.inputSelection.selectionKind === "folder") {
+          paths = await invoke<string[]>("list_input_files", {
+            dir: snapshot.inputSelection.paths[0],
+          });
+        }
+        if (paths.length === 0) {
+          throw new Error("No PDF, LaTeX, or Word documents were found in the selected folder.");
+        }
+        const representativePath = paths[0];
+        const plan = await invoke<ExecutionPlanEnvelope>("get_execution_plan", {
+          variables: variables ?? null,
+          extraInputs: extraInputs ?? null,
+          expectedProfileConfigSnapshotId: snapshot.profileConfigSnapshotId,
+          diff: false,
+          paperPath: representativePath,
+          inputInterpretation: "document",
+        });
+        setDepsReport(plan.readiness);
+        if (!plan.readiness.ready) {
+          setShowDeps(true);
+          return;
+        }
+        await invoke("start_batch", {
+          paths,
+          variables: variables ?? null,
+          extraInputs: extraInputs ?? null,
+          expectedProfileConfigSnapshotId: plan.profileConfigSnapshotId,
+        });
+        setPage("batch");
+        return;
+      }
       const plan = await invoke<ExecutionPlanEnvelope>("get_execution_plan", {
         variables: variables ?? null,
         extraInputs: extraInputs ?? null,
         expectedProfileConfigSnapshotId: snapshot.profileConfigSnapshotId,
         diff: false,
         paperPath: snapshot.paperPath,
+        inputInterpretation: snapshot.inputSelection?.interpretation ?? null,
       });
       setDepsReport(plan.readiness);
       if (!plan.readiness.ready) {
@@ -297,6 +361,7 @@ function App() {
       setActiveRunPlan(plan.stages);
       void startPipeline(
         snapshot.paperPath,
+        snapshot.inputSelection?.interpretation,
         false,
         variables,
         extraInputs,
@@ -330,20 +395,25 @@ function App() {
       const snapshot = await loadRunConfig(
         runProfileConfigSnapshotId,
         inputMode === "none" ? "" : paperPath,
+        plannedInterpretation(inputSelection),
       );
       if (!snapshot) return;
       if (!snapshot.readiness.ready) {
         setShowDeps(true);
         return;
       }
-      const selectedPath = snapshot.inputMode === "none" ? "" : paperPath;
-      if (!selectedPath) {
+      const selectedPath = snapshot.inputMode === "none" ? "" : (paperPath ?? "");
+      if (snapshot.inputMode !== "none" && !selectedPath) {
         setRunConfigError(
           "The active workflow requires an input. Select it again before running.",
         );
         return;
       }
-      const pending = { ...snapshot, paperPath: selectedPath };
+      if (snapshot.inputMode !== "none" && !inputSelection) {
+        setRunConfigError("Select an input and declare how Pipeline should use it.");
+        return;
+      }
+      const pending = { ...snapshot, paperPath: selectedPath, inputSelection };
       if (snapshot.variables.length > 0 || snapshot.inputSlots.length > 0) {
         setPendingRun(pending);
         return;
@@ -374,6 +444,7 @@ function App() {
     }
     reset();
     setPaperPath(null);
+    setInputSelection(null);
     setHistoryRunId(null);
     setPendingRun(null);
     setActiveRunPlan(null);
@@ -498,12 +569,15 @@ function App() {
             onPaperPathChange={(path) => {
               setPaperPath(path);
               if (path) setRunConfigError(null);
-              // Readiness depends on the effective input type: .tex/.docx can
-              // bypass the PDF extractor required by a conservative startup
-              // check. Refresh against the selected path before gating Run.
+            }}
+            onInputSelectionChange={(selection) => {
+              setInputSelection(selection);
+              setPaperPath(selection?.paths[0] ?? null);
+              if (selection) setRunConfigError(null);
               void loadRunConfig(
                 runProfileConfigSnapshotId,
-                inputMode === "none" ? "" : path,
+                inputMode === "none" ? "" : selection?.paths[0] ?? null,
+                plannedInterpretation(selection),
               );
             }}
             onPrivacyDetails={() => setPage("help")}
@@ -542,8 +616,8 @@ function App() {
                 onClose={() => setPage("main")}
                 onDirtyChange={setSettingsDirty}
                 showBack={false}
-                dark={dark}
-                onDarkChange={handleDarkChange}
+                theme={theme}
+                onThemeChange={handleThemeChange}
                 onSystemChange={() => void checkDependencies()}
                 initialSection={settingsInitialSection}
                 targetId={settingsTargetId}
@@ -564,7 +638,6 @@ function App() {
               <BatchPanel
                 onClose={() => setPage("main")}
                 showClose={false}
-                preloadedSetup={batchSetup}
                 onOpenRun={(runId) => { setHistoryRunId(runId); setPage("history"); }}
               />
             ) : state.kind === "done" ? (
@@ -591,7 +664,7 @@ function App() {
                       <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
                         {inputMode === "none"
                           ? "No source file is required for this workflow."
-                          : "Select a PDF, LaTeX or Word file, or a project folder."}
+                          : "Select one or more documents or a folder, then declare how Pipeline should use them."}
                       </p>
                     </li>
                     <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:px-5 dark:border-gray-800">

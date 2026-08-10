@@ -273,9 +273,10 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
           </div>
 
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
-            <table className="w-full min-w-[42rem] border-collapse text-left text-sm">
+            <table className="w-full min-w-[52rem] border-collapse text-left text-sm">
               <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
+                  <th className="px-4 py-2.5 font-medium">Step</th>
                   <th className="px-4 py-2.5 font-medium">Provider</th>
                   <th className="px-4 py-2.5 font-medium">Model</th>
                   <th className="px-4 py-2.5 text-right font-medium">Input</th>
@@ -285,8 +286,11 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                {provenance.usage.length ? provenance.usage.map((row) => (
-                  <tr key={`${row.provider}:${row.model}`}>
+                {provenance.step_usage.length ? provenance.step_usage.map((row) => (
+                  <tr key={`${row.step_id}:${row.provider}:${row.model}`}>
+                    <td className="px-4 py-3 font-medium text-gray-800 dark:text-gray-200" title={row.step_id}>
+                      {row.step_label}
+                    </td>
                     <td className="px-4 py-3 font-medium text-gray-800 dark:text-gray-200">
                       {row.provider}
                       {row.transports.length > 0 && (
@@ -305,7 +309,7 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={showCacheWrite ? 6 : 5} className="px-4 py-5 text-center text-gray-500 dark:text-gray-400">
+                    <td colSpan={showCacheWrite ? 7 : 6} className="px-4 py-5 text-center text-gray-500 dark:text-gray-400">
                       This provider did not report token usage.
                     </td>
                   </tr>

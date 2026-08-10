@@ -25,7 +25,7 @@ const manifest = {
     { rel_path: "artifacts/01_technical.md", label: "Technical", kind: "markdown", bytes: 80, sha256: "cc", group: "step" },
     { rel_path: "artifacts/02_analysis.py", label: "Analysis script", kind: "code", bytes: 60, sha256: "dd", group: "step" },
     { rel_path: "artifacts/03_results.csv", label: "Results table", kind: "csv", bytes: 40, sha256: "ee", group: "step" },
-    { rel_path: "artifacts/04_model.pdf", label: "Model PDF", kind: "binary", bytes: 5000, sha256: "ff", group: "step" },
+    { rel_path: "artifacts/04_model.pdf", label: "Model PDF", kind: "pdf", bytes: 5000, sha256: "ff", group: "step" },
   ],
 };
 
@@ -43,6 +43,11 @@ function mockBackend(contents: Record<string, unknown>) {
     }
     if (cmd === "read_page_artifact") {
       const key = `page:${args?.page}`;
+      if (key in contents) return Promise.resolve(contents[key]);
+      return Promise.reject(new Error(`no content for ${key}`));
+    }
+    if (cmd === "read_pdf_artifact_page") {
+      const key = `pdf:${args?.relPath}:page:${args?.page}`;
       if (key in contents) return Promise.resolve(contents[key]);
       return Promise.reject(new Error(`no content for ${key}`));
     }
@@ -385,35 +390,75 @@ describe("ArtifactExplorer", () => {
     expect(screen.getByText("beta")).toBeInTheDocument();
   });
 
-  it("shows an open-externally card for binary artifacts", async () => {
+  it("renders PDF artifacts inline and returns to the previous artifact", async () => {
     const user = userEvent.setup();
     mockBackend({
       "report.md": textContent("markdown", "# R"),
       "artifacts/04_model.pdf": {
-        kind: "binary", bytes: 5000, text: null, base64: null,
+        kind: "pdf", bytes: 5000, text: null, base64: null,
         truncated: false, abs_path: "/runs/x/artifacts/04_model.pdf",
+      },
+      "pdf:artifacts/04_model.pdf:page:1": {
+        page: 1, has_previous: false, has_next: false, base64: "aGVsbG8=",
       },
     });
     render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
     await user.click(await screen.findByRole("button", { name: "Model PDF" }));
 
-    const open = await screen.findByRole("button", { name: "Open in system viewer" });
-    await user.click(open);
-    expect(openExternal).toHaveBeenCalledWith("/runs/x/artifacts/04_model.pdf");
+    expect(await screen.findByRole("img", { name: "Model PDF, page 1" })).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith("read_pdf_artifact_page", {
+      runId: manifest.run_id,
+      relPath: "artifacts/04_model.pdf",
+      page: 1,
+    });
+    expect(screen.queryByRole("button", { name: "Open in system viewer" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("heading", { name: "R" })).toBeVisible();
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it("surfaces system-viewer plugin failures for binary artifacts", async () => {
+  it("shows Back when previewing an image artifact", async () => {
     const user = userEvent.setup();
-    openExternal.mockRejectedValueOnce(new Error("shell plugin unavailable"));
     mockBackend({
       "report.md": textContent("markdown", "# R"),
-      "artifacts/04_model.pdf": {
-        kind: "binary", bytes: 5000, text: null, base64: null,
-        truncated: false, abs_path: "/runs/x/artifacts/04_model.pdf",
+      "artifacts/figures/figure-1.png": {
+        kind: "image", bytes: 500, text: null, base64: "aGVsbG8=",
+        truncated: false, abs_path: "/runs/x/artifacts/figures/figure-1.png",
       },
     });
     render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
-    await user.click(await screen.findByRole("button", { name: "Model PDF" }));
+    await user.click(await screen.findByRole("button", { name: "figure_1.png" }));
+
+    expect(await screen.findByRole("img", { name: "figure_1.png" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("heading", { name: "R" })).toBeVisible();
+  });
+
+  it("surfaces system-viewer plugin failures for other binary artifacts", async () => {
+    const user = userEvent.setup();
+    openExternal.mockRejectedValueOnce(new Error("shell plugin unavailable"));
+    const binaryManifest = {
+      ...manifest,
+      artifacts: [
+        ...manifest.artifacts,
+        { rel_path: "artifacts/data.zip", label: "Data archive", kind: "binary", bytes: 5000, sha256: "gg", group: "files" },
+      ],
+    };
+    invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "get_run_manifest") return Promise.resolve(binaryManifest);
+      if (cmd === "read_artifact" && args?.relPath === "report.md") {
+        return Promise.resolve(textContent("markdown", "# R"));
+      }
+      if (cmd === "read_artifact" && args?.relPath === "artifacts/data.zip") {
+        return Promise.resolve({
+          kind: "binary", bytes: 5000, text: null, base64: null,
+          truncated: false, abs_path: "/runs/x/artifacts/data.zip",
+        });
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+    await user.click(await screen.findByRole("button", { name: "Data archive" }));
     await user.click(
       await screen.findByRole("button", { name: "Open in system viewer" }),
     );

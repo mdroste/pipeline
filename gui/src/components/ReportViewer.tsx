@@ -11,6 +11,7 @@ import {
   stripPresentationalHtml,
 } from "../lib/mathMarkdown";
 import {
+  latexToReadableText,
   rehypeValidateMath,
   remarkRepairMath,
   REPORT_KATEX_OPTIONS,
@@ -40,6 +41,7 @@ interface ReportHeading {
   level: number;
   text: string;
   id: string;
+  hasProse: boolean;
 }
 
 interface ReportIssue {
@@ -51,6 +53,19 @@ interface ReportIssue {
 }
 
 type ReportNavigationEntry = ReportHeading | ReportIssue;
+
+function isAuthorFootnoteMath(expression: string): boolean {
+  return /^(?:\^\s*\{\s*(?:\*+|\\(?:ast|star|dagger|ddagger)|[\u2020\u2021])\s*\}|(?:\*+|\\(?:ast|star|dagger|ddagger)|[\u2020\u2021]))$/iu.test(
+    expression.trim(),
+  );
+}
+
+function hasNavigationProse(text: string): boolean {
+  const withoutCommands = text.replace(/\\[A-Za-z]+/g, "");
+  if (/\p{Letter}{2,}/u.test(withoutCommands)) return true;
+  const hasFormulaSyntax = /[\\_^=<>+*/]/.test(withoutCommands);
+  return !hasFormulaSyntax && /[\p{Letter}\p{Number}]/u.test(withoutCommands);
+}
 
 /**
  * Catches render errors from rehype-katex/remark-math so malformed `$…$`
@@ -108,11 +123,17 @@ function slugBase(text: string): string {
   );
 }
 
-function astText(node: MarkdownAstNode): string {
+function astText(node: MarkdownAstNode, omitMath = false): string {
   if (node.type === "image") return node.alt ?? "";
+  if (node.type === "inlineMath" || node.type === "math") {
+    const expression = node.value ?? "";
+    return omitMath || isAuthorFootnoteMath(expression)
+      ? ""
+      : latexToReadableText(expression);
+  }
   if (typeof node.value === "string") return node.value;
   if (node.type === "break") return " ";
-  return node.children?.map(astText).join("") ?? "";
+  return node.children?.map((child) => astText(child, omitMath)).join("") ?? "";
 }
 
 function visitAst(
@@ -132,17 +153,24 @@ function issueFromParagraph(node: MarkdownAstNode): { number: string; text: stri
 }
 
 /**
- * Parse the document once to establish navigation labels and IDs. Numbered
- * issue cards are the report's actual contents; Markdown headings are retained
- * as a fallback for reports that do not use the standard issue format.
+ * Parse the document once to establish navigation labels, IDs, and document
+ * order. Markdown headings provide the section structure, while numbered issue
+ * cards add direct links to the generated comments within those sections.
  */
 function buildNavigationIndex(markdown: string): {
   headings: ReportHeading[];
   issues: ReportIssue[];
+  entries: ReportNavigationEntry[];
 } {
-  const tree = unified().use(remarkParse).use(remarkGfm).parse(markdown);
+  const processor = unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(remarkMath)
+    .use(remarkRepairMath);
+  const tree = processor.runSync(processor.parse(markdown));
   const headings: ReportHeading[] = [];
   const issues: ReportIssue[] = [];
+  const entries: ReportNavigationEntry[] = [];
   const usedIds = new Set<string>();
 
   const uniqueId = (base: string) => {
@@ -159,27 +187,33 @@ function buildNavigationIndex(markdown: string): {
   visitAst(tree as MarkdownAstNode, (node) => {
     if (node.type === "heading" && typeof node.depth === "number") {
       const text = plainHeadingText(astText(node));
-      headings.push({
+      const prose = plainHeadingText(astText(node, true));
+      const heading: ReportHeading = {
         kind: "heading",
         level: node.depth,
         text,
         id: uniqueId(slugBase(text)),
-      });
+        hasProse: hasNavigationProse(prose),
+      };
+      headings.push(heading);
+      entries.push(heading);
       return;
     }
     const issue = issueFromParagraph(node);
     if (issue) {
-      issues.push({
+      const entry: ReportIssue = {
         kind: "issue",
         level: 0,
         number: issue.number,
         text: issue.text,
         id: uniqueId(`issue-${issue.number}-${slugBase(issue.text)}`),
-      });
+      };
+      issues.push(entry);
+      entries.push(entry);
     }
   });
 
-  return { headings, issues };
+  return { headings, issues, entries };
 }
 
 /**
@@ -250,12 +284,16 @@ export function plainHeadingText(markdown: string): string {
       .replace(/(^|[\s([{"'])([*_])(?=\S)(.+?\S)\2(?=$|[\s)\]}"'.,!?;:])/g, "$1$3");
   }
 
-  // PaddleOCR may render a title's author-footnote marker as inline math
-  // (for example `$ ^{*} $`). It is useful in the document body but is not
-  // part of the title and should not occupy a separate token in navigation.
+  // TOC labels are plain text, so leaving inline math delimiters untouched
+  // exposes model-authored TeX such as `$\\phi$`. Reuse the report math
+  // fallback's compact text representation to preserve meaningful symbols
+  // without leaking raw delimiters, commands, or braces into navigation.
+  // PaddleOCR author-footnote markers remain useful in the document title but
+  // are not part of its navigation label, so omit those entirely.
   text = text.replace(
-    /\s*\$\s*(?:\^\s*\{\s*(?:\*+|\\(?:ast|star|dagger|ddagger)|[\u2020\u2021])\s*\}|(?:\*+|\\(?:ast|star|dagger|ddagger)|[\u2020\u2021]))\s*\$/giu,
-    "",
+    /(\$\$|\$)([\s\S]*?)\1/g,
+    (_match, _delimiter: string, expression: string) =>
+      isAuthorFootnoteMath(expression) ? "" : latexToReadableText(expression),
   );
 
   if (typeof document !== "undefined" && text.includes("&")) {
@@ -303,14 +341,21 @@ function ReportViewer({ markdown }: Props) {
     [normalizedMarkdown],
   );
   const headings = useMemo(() => {
-    return navigationIndex.headings.filter((heading) => heading.level <= 3);
+    return navigationIndex.headings.filter(
+      (heading) => heading.level <= 3 && heading.hasProse,
+    );
   }, [navigationIndex.headings]);
   const contents = useMemo<ReportNavigationEntry[]>(() => {
-    if (navigationIndex.issues.length) return navigationIndex.issues;
+    if (navigationIndex.issues.length) {
+      return navigationIndex.entries.filter(
+        (entry) =>
+          entry.kind === "issue" || (entry.level <= 2 && entry.hasProse),
+      );
+    }
     return headings.length > 3
       ? headings.filter((heading) => heading.level <= 2)
       : [];
-  }, [headings, navigationIndex.issues]);
+  }, [headings, navigationIndex.entries, navigationIndex.issues.length]);
   const remarkNavigationIds = useMemo(() => {
     return navigationIdPlugin(navigationIndex.headings, navigationIndex.issues);
   }, [navigationIndex.headings, navigationIndex.issues]);

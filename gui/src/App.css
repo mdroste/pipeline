@@ -46,6 +46,8 @@ html.theme-transitioning *::after {
   padding: 0.25rem 0.5rem;
   border-radius: 0.25rem;
   color: theme("colors.gray.500");
+  hyphens: auto;
+  text-align: justify;
   text-decoration: none;
   transition: color 0.15s, background-color 0.15s;
   line-height: 1.4;
@@ -84,6 +86,7 @@ html.theme-transitioning *::after {
   grid-template-columns: 2rem minmax(0, 1fr);
   gap: 0.35rem;
   align-items: start;
+  margin-left: 0.75rem;
   padding: 0.4rem 0.5rem;
   color: theme("colors.gray.600");
 }
@@ -111,7 +114,9 @@ html.theme-transitioning *::after {
   margin: 0 auto;
   padding: 2.5rem 3rem 4rem;
   color: theme("colors.gray.800");
+  hyphens: auto;
   line-height: 1.7;
+  text-align: justify;
 }
 
 .dark .report-content {

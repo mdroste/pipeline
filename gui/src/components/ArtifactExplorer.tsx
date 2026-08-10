@@ -1,9 +1,9 @@
 // Run-artifact explorer: a manifest-driven tree beside a kind-dispatched
-// viewer. All file bytes arrive through the `read_artifact` Tauri command
-// (validated + size-capped in Rust) — never file:// URLs — so rendering is
-// identical across WKWebView / WebView2 / WebKitGTK.
+// viewer. Source bytes arrive through validated, size-capped Tauri commands —
+// never file:// URLs. PDFs are rendered to bounded page images in Rust, so
+// previews behave consistently across WKWebView / WebView2 / WebKitGTK.
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import hljs from "highlight.js/lib/common";
@@ -56,6 +56,13 @@ export interface ArtifactContent {
   base64: string | null;
   truncated: boolean;
   abs_path: string;
+}
+
+interface PdfArtifactPage {
+  page: number;
+  has_previous: boolean;
+  has_next: boolean;
+  base64: string;
 }
 
 interface DocumentRepresentation {
@@ -283,6 +290,111 @@ function BinaryCard({
           {openError}
         </p>
       )}
+    </div>
+  );
+}
+
+function PdfView({
+  runId,
+  entry,
+  content,
+}: {
+  runId: string;
+  entry: ArtifactEntry | null;
+  content: ArtifactContent;
+}) {
+  const [page, setPage] = useState(1);
+  const [preview, setPreview] = useState<PdfArtifactPage | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const relPath = entry?.rel_path ?? "";
+
+  useEffect(() => {
+    if (!relPath) return;
+    let live = true;
+    setPreview(null);
+    setPreviewError(null);
+    invoke<PdfArtifactPage>("read_pdf_artifact_page", { runId, relPath, page })
+      .then((result) => {
+        if (live) setPreview(result);
+      })
+      .catch((caught) => {
+        if (!live) return;
+        const message = caught instanceof Error ? caught.message : String(caught);
+        setPreviewError(message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [attempt, page, relPath, runId]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-200
+                      bg-white px-4 py-2 dark:border-gray-800 dark:bg-gray-950">
+        <div className="min-w-0">
+          <p className="truncate text-xs font-medium text-gray-700 dark:text-gray-200">
+            {entry?.label ?? "PDF artifact"}
+          </p>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            {formatBytes(content.bytes)} · rendered in Pipeline
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPage((value) => Math.max(1, value - 1))}
+            disabled={!preview?.has_previous}
+            aria-label="Previous PDF page"
+            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50
+                       disabled:cursor-default disabled:opacity-40 dark:border-gray-700 dark:text-gray-300
+                       dark:hover:bg-gray-800"
+          >
+            Previous
+          </button>
+          <span className="min-w-14 text-center text-xs text-gray-600 dark:text-gray-300">
+            Page {page}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((value) => value + 1)}
+            disabled={!preview?.has_next}
+            aria-label="Next PDF page"
+            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50
+                       disabled:cursor-default disabled:opacity-40 dark:border-gray-700 dark:text-gray-300
+                       dark:hover:bg-gray-800"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto bg-gray-50 p-4 dark:bg-gray-900">
+        {previewError ? (
+          <div role="alert" className="mx-auto mt-8 max-w-lg rounded-lg border border-red-200 bg-red-50 p-4
+                                       text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+            <p className="font-medium">Could not render this PDF in Pipeline.</p>
+            <p className="mt-1 text-xs">{previewError}</p>
+            <button
+              type="button"
+              onClick={() => setAttempt((value) => value + 1)}
+              className="mt-3 rounded border border-red-300 px-2 py-1 text-xs hover:bg-red-100
+                         dark:border-red-800 dark:hover:bg-red-900/40"
+            >
+              Retry
+            </button>
+          </div>
+        ) : preview ? (
+          <img
+            src={`data:image/jpeg;base64,${preview.base64}`}
+            alt={`${entry?.label ?? "PDF artifact"}, page ${preview.page}`}
+            className="mx-auto h-auto max-w-full shadow-sm"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-gray-400">
+            <div className="animate-spin h-5 w-5 rounded-full border-2 border-gray-300 border-t-gray-600" />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -662,12 +774,14 @@ function DocumentBundleView({
 }
 
 const Viewer = memo(function Viewer({
+  runId,
   entry,
   content,
   artifacts,
   pageArtifacts,
   onSelectArtifact,
 }: {
+  runId: string;
   entry: ArtifactEntry | null;
   content: ArtifactContent;
   artifacts: ArtifactEntry[];
@@ -686,6 +800,9 @@ const Viewer = memo(function Viewer({
         />
       </div>
     );
+  }
+  if (content.kind === "pdf") {
+    return <PdfView key={entry?.rel_path} runId={runId} entry={entry} content={content} />;
   }
   if (content.kind === "binary" || content.text === null) {
     return <BinaryCard entry={entry} content={content} />;
@@ -986,6 +1103,7 @@ export default function ArtifactExplorer({
   const [selected, setSelected] = useState<string>(
     deferInitialArtifact ? "" : "report.md",
   );
+  const [selectionHistory, setSelectionHistory] = useState<string[]>([]);
   const [content, setContent] = useState<ArtifactContent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [navigationOpen, setNavigationOpen] = useState(true);
@@ -1004,6 +1122,7 @@ export default function ArtifactExplorer({
     setManifest(null);
     setManifestError(null);
     setSelected(deferInitialArtifact ? "" : "report.md");
+    setSelectionHistory([]);
     setContent(null);
     setLoadError(null);
     const request = preload?.runId === runId
@@ -1081,6 +1200,19 @@ export default function ArtifactExplorer({
     () => new Map((manifest?.artifacts ?? []).map((artifact) => [artifact.rel_path, artifact])),
     [manifest],
   );
+  const selectArtifact = useCallback((next: string) => {
+    if (!next || next === selected) return;
+    if (selected) {
+      setSelectionHistory((history) => [...history.slice(-99), selected]);
+    }
+    setSelected(next);
+  }, [selected]);
+  const goBack = useCallback(() => {
+    const previous = selectionHistory[selectionHistory.length - 1];
+    if (!previous) return;
+    setSelectionHistory((history) => history.slice(0, -1));
+    setSelected(previous);
+  }, [selectionHistory]);
 
   // Graceful degradation: no manifest → plain report view.
   if (manifestError) {
@@ -1170,13 +1302,13 @@ export default function ArtifactExplorer({
                       items={items}
                       index={compactPages}
                       selected={selected}
-                      onSelect={setSelected}
+                      onSelect={selectArtifact}
                     />
                   ) : (
                     <ArtifactList
                       items={items}
                       selected={selected}
-                      onSelect={setSelected}
+                      onSelect={selectArtifact}
                     />
                   )}
                 </div>
@@ -1210,28 +1342,52 @@ export default function ArtifactExplorer({
       )}
 
       {/* Viewer */}
-      <div className="flex-1 min-w-0 overflow-auto">
-        {loadError ? (
-          <div className="p-6 text-sm text-gray-500 dark:text-gray-400">
-            Could not read this artifact: {loadError}
-          </div>
-        ) : !selected ? (
-          <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
-            Select an artifact to preview it.
-          </div>
-        ) : content ? (
-          <Viewer
-            entry={entry}
-            content={content}
-            artifacts={manifest.artifacts}
-            pageArtifacts={manifest.page_artifacts}
-            onSelectArtifact={setSelected}
-          />
-        ) : (
-          <div className="flex items-center justify-center h-full text-gray-400">
-            <div className="animate-spin w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        {content && (content.kind === "image" || content.kind === "pdf") && (
+          <div className="flex shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4 py-2
+                          dark:border-gray-800 dark:bg-gray-950">
+            <button
+              type="button"
+              onClick={goBack}
+              disabled={selectionHistory.length === 0}
+              className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-gray-600
+                         hover:bg-gray-100 hover:text-gray-900 disabled:cursor-default disabled:opacity-40
+                         dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white"
+            >
+              <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m15 18-6-6 6-6" />
+              </svg>
+              Back
+            </button>
+            <span className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
+              {entry?.label ?? "Figure"}
+            </span>
           </div>
         )}
+        <div className="min-h-0 flex-1 overflow-auto">
+          {loadError ? (
+            <div className="p-6 text-sm text-gray-500 dark:text-gray-400">
+              Could not read this artifact: {loadError}
+            </div>
+          ) : !selected ? (
+            <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+              Select an artifact to preview it.
+            </div>
+          ) : content ? (
+            <Viewer
+              runId={runId}
+              entry={entry}
+              content={content}
+              artifacts={manifest.artifacts}
+              pageArtifacts={manifest.page_artifacts}
+              onSelectArtifact={selectArtifact}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-400">
+              <div className="animate-spin w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full" />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

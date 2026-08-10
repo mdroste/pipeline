@@ -16,13 +16,14 @@ import EnginesPanel from "./EnginesPanel";
 import InfoButton from "./InfoButton";
 import ResizeHandle from "./ResizeHandle";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
+import type { ThemePreference } from "../lib/theme";
 
 interface Props {
   onClose: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   showBack?: boolean;
-  dark: boolean;
-  onDarkChange: (v: boolean) => void;
+  theme: ThemePreference;
+  onThemeChange: (theme: ThemePreference) => void;
   onSystemChange?: () => void;
   initialSection?: Section;
   targetId?: string;
@@ -44,8 +45,8 @@ export default function SettingsPage({
   onClose,
   onDirtyChange,
   showBack = true,
-  dark,
-  onDarkChange,
+  theme,
+  onThemeChange,
   onSystemChange,
   initialSection = "llm",
   targetId,
@@ -402,7 +403,12 @@ export default function SettingsPage({
             />
           )}
           {section === "general" && (
-            <GeneralSection settings={settings} setSettings={setSettings} dark={dark} onDarkChange={onDarkChange} />
+            <GeneralSection
+              settings={settings}
+              setSettings={setSettings}
+              theme={theme}
+              onThemeChange={onThemeChange}
+            />
           )}
 
           {/* Save bar */}
@@ -1144,13 +1150,13 @@ function ExtractionSection({
 function GeneralSection({
   settings,
   setSettings,
-  dark,
-  onDarkChange,
+  theme,
+  onThemeChange,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
-  dark: boolean;
-  onDarkChange: (v: boolean) => void;
+  theme: ThemePreference;
+  onThemeChange: (theme: ThemePreference) => void;
 }) {
   return (
     <>
@@ -1159,12 +1165,21 @@ function GeneralSection({
       />
 
       <div className="space-y-5">
-        <Toggle
-          label="Dark mode"
-          description="Applied immediately, no save needed. Follows the system appearance until you set it here."
-          checked={dark}
-          onChange={onDarkChange}
-        />
+        <Field
+          label="Appearance"
+          help="Applied immediately, with no save needed. System follows your operating system's light or dark appearance."
+        >
+          <select
+            aria-label="Appearance"
+            value={theme}
+            onChange={(event) => onThemeChange(event.target.value as ThemePreference)}
+            className={selectClass}
+          >
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </Field>
         <Toggle
           label="Verbose console logging"
           description="Show full LLM subprocess output in the console (commands, stdout, stderr). Useful for debugging."

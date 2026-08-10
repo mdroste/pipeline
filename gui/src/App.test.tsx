@@ -6,11 +6,14 @@ import App from "./App";
 const invoke = vi.hoisted(() => vi.fn());
 const startPipeline = vi.hoisted(() => vi.fn());
 const onCloseRequested = vi.hoisted(() => vi.fn());
+const setWindowTheme = vi.hoisted(() => vi.fn());
 const workflowInputMode = vi.hoisted(() => ({ value: "document" }));
+let systemIsDark = false;
+let systemThemeListener: ((event: MediaQueryListEvent) => void) | undefined;
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ onCloseRequested }),
+  getCurrentWindow: () => ({ onCloseRequested, setTheme: setWindowTheme }),
 }));
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: () => Promise.resolve("test"),
@@ -35,14 +38,42 @@ vi.mock("./components/PaperSelector", () => ({
   default: ({
     inputMode,
     onPathChange,
+    onSelectionChange,
   }: {
     inputMode: string;
     onPathChange: (path: string) => void;
+    onSelectionChange?: (selection: {
+      paths: string[];
+      interpretation: "document" | "batch";
+      selectionKind: "file";
+    }) => void;
   }) => (
     <>
       <span>Primary mode: {inputMode}</span>
-      <button onClick={() => onPathChange("/tmp/test-paper.pdf")}>Choose test paper</button>
-      <button onClick={() => onPathChange("/tmp/test-paper.docx")}>Choose DOCX</button>
+      <button onClick={() => {
+        onPathChange("/tmp/test-paper.pdf");
+        onSelectionChange?.({
+          paths: ["/tmp/test-paper.pdf"],
+          interpretation: "document",
+          selectionKind: "file",
+        });
+      }}>Choose test paper</button>
+      <button onClick={() => {
+        onPathChange("/tmp/test-paper.docx");
+        onSelectionChange?.({
+          paths: ["/tmp/test-paper.docx"],
+          interpretation: "document",
+          selectionKind: "file",
+        });
+      }}>Choose DOCX</button>
+      <button onClick={() => {
+        onPathChange("/tmp/a.pdf");
+        onSelectionChange?.({
+          paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
+          interpretation: "batch",
+          selectionKind: "file",
+        });
+      }}>Choose two papers</button>
     </>
   ),
 }));
@@ -102,11 +133,15 @@ vi.mock("./components/SettingsPage", () => ({
   default: ({
     onDirtyChange,
     onSystemChange,
+    theme,
+    onThemeChange,
     initialSection,
     targetId,
   }: {
     onDirtyChange?: (dirty: boolean) => void;
     onSystemChange?: () => void;
+    theme?: "light" | "dark" | "system";
+    onThemeChange?: (theme: "light" | "dark" | "system") => void;
     initialSection?: string;
     targetId?: string;
   }) => (
@@ -114,6 +149,10 @@ vi.mock("./components/SettingsPage", () => ({
       <div>Settings workspace</div>
       <div>Initial settings section: {initialSection}</div>
       <div>Settings target: {targetId ?? "none"}</div>
+      <div>Current theme: {theme}</div>
+      <button onClick={() => onThemeChange?.("light")}>Use light theme</button>
+      <button onClick={() => onThemeChange?.("dark")}>Use dark theme</button>
+      <button onClick={() => onThemeChange?.("system")}>Use system theme</button>
       <button onClick={() => onDirtyChange?.(true)}>Make settings dirty</button>
       <button onClick={() => onSystemChange?.()}>Save mocked settings</button>
     </div>
@@ -127,14 +166,22 @@ describe("App run options", () => {
     startPipeline.mockReset();
     onCloseRequested.mockReset();
     onCloseRequested.mockResolvedValue(vi.fn());
+    setWindowTheme.mockReset();
+    setWindowTheme.mockResolvedValue(undefined);
     workflowInputMode.value = "document";
+    systemIsDark = false;
+    systemThemeListener = undefined;
     localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
-        matches: false,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
+        matches: systemIsDark,
+        addEventListener: (_event: string, listener: (event: MediaQueryListEvent) => void) => {
+          systemThemeListener = listener;
+        },
+        removeEventListener: (_event: string, listener: (event: MediaQueryListEvent) => void) => {
+          if (systemThemeListener === listener) systemThemeListener = undefined;
+        },
       })),
     });
     invoke.mockImplementation((command: string) => {
@@ -154,8 +201,37 @@ describe("App run options", () => {
           ],
         });
       }
+      if (command === "start_batch") return Promise.resolve();
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
+  });
+
+  it("supports light, dark, and live system appearance preferences", async () => {
+    systemIsDark = true;
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveClass("dark");
+      expect(setWindowTheme).toHaveBeenCalledWith(null);
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: "Use light theme" }));
+    expect(localStorage.getItem("theme")).toBe("light");
+    expect(document.documentElement).not.toHaveClass("dark");
+    expect(setWindowTheme).toHaveBeenLastCalledWith("light");
+
+    act(() => systemThemeListener?.({ matches: true } as MediaQueryListEvent));
+    expect(document.documentElement).not.toHaveClass("dark");
+
+    await user.click(screen.getByRole("button", { name: "Use system theme" }));
+    expect(localStorage.getItem("theme")).toBe("system");
+    expect(setWindowTheme).toHaveBeenLastCalledWith(null);
+    expect(document.documentElement).toHaveClass("dark");
+
+    act(() => systemThemeListener?.({ matches: false } as MediaQueryListEvent));
+    expect(document.documentElement).not.toHaveClass("dark");
   });
 
   it("keeps revision reconciliation out of the main run controls", async () => {
@@ -175,9 +251,11 @@ describe("App run options", () => {
         expectedProfileConfigSnapshotId: "config-test",
         diff: false,
         paperPath: "/tmp/test-paper.pdf",
+        inputInterpretation: "document",
       });
       expect(startPipeline).toHaveBeenLastCalledWith(
         "/tmp/test-paper.pdf",
+        "document",
         false,
         undefined,
         undefined,
@@ -187,14 +265,28 @@ describe("App run options", () => {
     });
   });
 
-  it("warms Batch with the active workflow plan loaded at startup", async () => {
-    const user = userEvent.setup();
+  it("keeps batch selection in New run instead of the left navigation", async () => {
     render(<App />);
 
     await screen.findByRole("button", { name: "Run" });
-    await user.click(screen.getByRole("button", { name: "Batch" }));
+    expect(screen.queryByRole("button", { name: "Batch" })).not.toBeInTheDocument();
+  });
 
-    expect(await screen.findByText("Batch workspace · config-test")).toBeVisible();
+  it("launches several selected documents as a batch from New run", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Choose two papers" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_batch", {
+      paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
+      variables: null,
+      extraInputs: null,
+      expectedProfileConfigSnapshotId: "config-test",
+    }));
+    expect(await screen.findByText("Batch workspace · no setup")).toBeVisible();
+    expect(startPipeline).not.toHaveBeenCalled();
   });
 
   it("rechecks readiness for DOCX so a conservative extractor failure does not block the run", async () => {
@@ -238,6 +330,7 @@ describe("App run options", () => {
 
     await waitFor(() => expect(startPipeline).toHaveBeenCalledWith(
       "/tmp/test-paper.docx",
+      "document",
       false,
       undefined,
       undefined,
@@ -313,6 +406,7 @@ describe("App run options", () => {
         expectedProfileConfigSnapshotId: null,
         diff: false,
         paperPath: null,
+        inputInterpretation: null,
       }),
     );
   });

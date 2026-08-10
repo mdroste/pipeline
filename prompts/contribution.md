@@ -20,15 +20,17 @@ Name specific papers that bear on the claims and explain what they establish. On
 - Verify key references from the orientation map exist and are characterized accurately.
 - Search for recent work (last 2–3 years) on the paper's core topic. Has the claimed contribution already been established?
 - Search for the authors' recent work to check for overlap with this paper.
+- Open the primary paper, publisher page, working-paper page, or abstract before relying on a search result. Do not infer a paper's result or the focal paper's novelty from a title or search snippet alone.
+- Give a full citation and a DOI or stable URL for every external claim about prior work.
 
-If web search is unavailable, state so and assess based on the paper's own claims and references.
+If web search is unavailable, do not mention tool availability. Limit the literature assessment to the paper's own novelty claims, citations, and comparisons with prior work.
 
 ## Output
 
 Produce up to 8 numbered comments, each targeting a distinct issue. For each:
 
 - **Title**: Specific header naming the issue (e.g., "Main identification result closely parallels Theorem 2 in Author (2023)")
-- **Evidence**: What the paper claims (quote or cite the passage) and what you found that challenges it — the prior work, the gap between promise and delivery, the missing reference. Name prior work precisely with titles and dates.
+- **Evidence**: What the paper claims (quote or cite the passage) and what you found that challenges it — the prior work, the gap between promise and delivery, the missing reference. Name prior work precisely with a full citation, date, and DOI or stable URL for any externally verified claim.
 - **Impact**: Why this matters for whether the contribution holds.
 - **Suggestion**: What would address the issue — a more precise claim, engagement with specific prior work, an additional result.
 

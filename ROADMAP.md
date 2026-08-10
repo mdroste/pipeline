@@ -17,7 +17,7 @@ two, L = several weeks), not current commitments.
 The deficiencies described in the original baseline are no longer a statement
 of current behavior. The tree now has durable run history and logs, usage and
 timing records, dependency scheduling, conditions, variables, named inputs,
-structured outputs, fan-out, batch/watch operation, resumable re-runs, a
+structured outputs, fan-out, batch operation, resumable re-runs, a
 headless CLI, report search, issue annotations, and run comparison.
 
 The app currently ships five built-in profiles across papers, code,
@@ -170,8 +170,6 @@ Structured outputs are what make 1.2.2 conditionals and 1.4.2's issue table reli
 >
 > **Per-pass cancel:** a `PASS_KEY` task-local lets `register_child_pid` attribute each subprocess to its pass; `cancel_pass` kills just that pass's processes and marks it so it won't retry (other passes continue). A ✕ button appears on each running pass in the progress view.
 >
-> **Watch folder:** a dependency-free 5s poll (`start_watch`/`stop_watch`/`get_watch_status`) runs the active profile on files added to a folder, one at a time; surfaced in `BatchPanel`.
->
 > **Resume boundary:** re-run requires a sufficiently recent run with the
 > structured report and captured inputs needed by the active profile. Older
 > run formats remain readable but may not be eligible for re-execution.
@@ -209,8 +207,6 @@ This enables cron jobs, CI hooks (run the code-review profile on a repo), and sc
 ### 1.3.4 Smaller items
 
 - **Per-pass cancel** (M): kill one step's child PID (already tracked per call) and mark that pass failed without aborting the wave. Global cancel stays.
-- **Watch folder** (S, ships behind a setting, off by default): watch a directory; new PDF → enqueue with a chosen profile. Trivial once the queue exists.
-
 ---
 
 ## 1.4 — Reading and comparing ✅ *implemented*

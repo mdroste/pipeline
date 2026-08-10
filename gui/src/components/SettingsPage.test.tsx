@@ -124,7 +124,7 @@ describe("SettingsPage", () => {
 
   it("loads settings and renders the LLM provider section", async () => {
     mockLoad(makeSettings());
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     expect(await screen.findByText("Preferred Provider")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Claude (Anthropic)" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "ChatGPT (OpenAI)" })).toBeInTheDocument();
@@ -139,8 +139,8 @@ describe("SettingsPage", () => {
     const view = render(
       <SettingsPage
         onClose={() => {}}
-        dark={false}
-        onDarkChange={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
         initialSection="llm"
       />,
     );
@@ -149,8 +149,8 @@ describe("SettingsPage", () => {
     view.rerender(
       <SettingsPage
         onClose={() => {}}
-        dark={false}
-        onDarkChange={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
         initialSection="extraction"
       />,
     );
@@ -174,8 +174,8 @@ describe("SettingsPage", () => {
       render(
         <SettingsPage
           onClose={() => {}}
-          dark={false}
-          onDarkChange={() => {}}
+          theme="light"
+          onThemeChange={() => {}}
           initialSection="extraction"
           targetId="paddleocr-local-engine"
           navigationKey={1}
@@ -233,7 +233,7 @@ describe("SettingsPage", () => {
       return Promise.resolve();
     });
 
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     expect(await screen.findByRole("option", { name: "Claude Live" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Available models" })).toBeInTheDocument();
@@ -244,7 +244,7 @@ describe("SettingsPage", () => {
   it("surfaces a shell-plugin failure when opening the Ollama site", async () => {
     mockLoad(makeSettings());
     openUrl.mockRejectedValueOnce(new Error("no browser"));
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", {
@@ -260,7 +260,7 @@ describe("SettingsPage", () => {
   it("keeps secondary explanations in accessible info popovers", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await screen.findByText("Preferred Provider");
     expect(
@@ -291,9 +291,32 @@ describe("SettingsPage", () => {
     expect(logging).toHaveAttribute("aria-checked", "true");
   });
 
+  it("offers system, light, and dark appearance choices", async () => {
+    const user = userEvent.setup();
+    const onThemeChange = vi.fn();
+    mockLoad(makeSettings());
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="system"
+        onThemeChange={onThemeChange}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "General" }));
+    const appearance = screen.getByRole("combobox", { name: "Appearance" });
+    expect(appearance).toHaveValue("system");
+    expect(screen.getByRole("option", { name: "System" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Light" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Dark" })).toBeInTheDocument();
+
+    await user.selectOptions(appearance, "dark");
+    expect(onThemeChange).toHaveBeenCalledWith("dark");
+  });
+
   it("offers only the PaddleOCR-VL Full Parser as a local PDF extractor", async () => {
     mockLoad(makeSettings(), [], [paddleEngine()]);
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await userEvent.click(await screen.findByRole("button", { name: "PDF Extraction" }));
     expect(
       screen.getByRole("radio", {
@@ -316,7 +339,7 @@ describe("SettingsPage", () => {
 
   it("reveals PaddleOCR-VL settings when the local engine is installed", async () => {
     mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await userEvent.click(await screen.findByRole("button", { name: "PDF Extraction" }));
 
     const engineHeading = screen.getByRole("heading", { name: "Local Engines" });
@@ -331,7 +354,7 @@ describe("SettingsPage", () => {
   it("explains a legacy Marker selection and saves a supported replacement", async () => {
     const user = userEvent.setup();
     mockLoad({ ...makeSettings(), pdf_extractor: "marker" });
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -358,7 +381,7 @@ describe("SettingsPage", () => {
   it("shows and saves PaddleOCR-VL performance controls", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
     await user.click(
       screen.getByRole("radio", {
@@ -406,7 +429,7 @@ describe("SettingsPage", () => {
   it("shows and saves full-parser structure controls", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
     await user.click(
       screen.getByRole("radio", {
@@ -443,7 +466,7 @@ describe("SettingsPage", () => {
     mockLoad(makeSettings(), [
       "Settings file has invalid JSON: oops. It was moved to settings.json.corrupt",
     ]);
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     expect(
       await screen.findByText(/settings\.json\.corrupt/),
     ).toBeInTheDocument();
@@ -452,7 +475,7 @@ describe("SettingsPage", () => {
   it("saves settings and shows the saved indicator", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await screen.findByText("Preferred Provider");
 
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -484,8 +507,8 @@ describe("SettingsPage", () => {
       <SettingsPage
         onClose={() => {}}
         onDirtyChange={onDirtyChange}
-        dark={false}
-        onDarkChange={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
       />,
     );
 
@@ -519,7 +542,7 @@ describe("SettingsPage", () => {
       return Promise.resolve();
     });
     const user = userEvent.setup();
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     expect(await screen.findByText("CLI · saved-account")).toBeVisible();
     expect(claudeRequests).toBe(1);
@@ -568,7 +591,7 @@ describe("SettingsPage", () => {
       return Promise.resolve();
     });
     const user = userEvent.setup();
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     expect(await screen.findByText("CLI · saved-account")).toBeVisible();
     await user.type(screen.getByLabelText("Claude API Key"), "sk-complete-key");
@@ -617,7 +640,7 @@ describe("SettingsPage", () => {
       return Promise.resolve();
     });
     const user = userEvent.setup();
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     const key = await screen.findByPlaceholderText("sk-ant-... (optional, enables direct API)");
     await waitFor(() => expect(claudeRequests).toBe(1));
@@ -643,7 +666,7 @@ describe("SettingsPage", () => {
   it("keeps automatic revision reconciliation off by default and persists opt-in", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
     const reconciliation = screen.getByRole("switch", {
@@ -694,7 +717,7 @@ describe("SettingsPage", () => {
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
     await screen.findByText("8 runs · 7.0 GB");
@@ -742,7 +765,7 @@ describe("SettingsPage", () => {
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     const confirmSpy = vi.spyOn(window, "confirm");
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
@@ -777,7 +800,7 @@ describe("SettingsPage", () => {
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
@@ -801,7 +824,7 @@ describe("SettingsPage", () => {
       }
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
-    render(<SettingsPage onClose={() => {}} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
@@ -816,7 +839,7 @@ describe("SettingsPage", () => {
     invoke.mockRejectedValue(new Error("disk on fire"));
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<SettingsPage onClose={onClose} dark={false} onDarkChange={() => {}} />);
+    render(<SettingsPage onClose={onClose} theme="light" onThemeChange={() => {}} />);
 
     expect(
       await screen.findByText(/Failed to load settings/),

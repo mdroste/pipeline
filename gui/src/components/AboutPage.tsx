@@ -47,7 +47,7 @@ function HelpContent() {
           <StageCard
             number="1"
             title="Choose a workflow and input"
-            description="On New run, select a workflow and the document or folder it should examine. A workflow can also run from its instructions alone."
+            description="On New run, select one or more files or a folder, then say whether Pipeline should treat the selection as one document, one LaTeX project, a browsable source tree, or independent batch jobs."
           />
           <StageCard
             number="2"
@@ -112,11 +112,11 @@ function HelpContent() {
 
       <Section title="Run several documents">
         <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-          Open <span className="font-medium text-gray-700 dark:text-gray-300">Batch</span> to
-          apply the active document workflow to a list of files, one at a time.
-          You can add individual files, add every supported document in a folder,
-          or watch a folder and run new files as they arrive. Batch and folder
-          watching are available for document-input workflows.
+          On <span className="font-medium text-gray-700 dark:text-gray-300">New run</span>,
+          select several documents or choose a folder and set its meaning to
+          <span className="font-medium text-gray-700 dark:text-gray-300"> Batch of documents</span>.
+          Pipeline applies the active workflow to each supported document as an
+          independent run and shows the queue in the same workspace.
         </p>
       </Section>
 

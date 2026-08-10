@@ -91,6 +91,8 @@ describe("ReportWorkspace", () => {
 
     await user.click(screen.getByRole("tab", { name: "Provenance" }));
     expect(await screen.findByRole("region", { name: "Run provenance" })).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "Step" })).toBeVisible();
+    expect(screen.getByRole("cell", { name: "Technical" })).toBeVisible();
     expect(screen.getAllByText("1,200")[0]).toBeVisible();
     expect(screen.getAllByText("180")[0]).toBeVisible();
     expect(screen.getAllByText("900")[0]).toBeVisible();
@@ -109,6 +111,37 @@ describe("ReportWorkspace", () => {
     await user.click(screen.getByRole("tab", { name: "Provenance" }));
     expect(screen.getAllByText("2m 0s")[0]).toBeVisible();
     expect(screen.queryByText("1m 60s")).not.toBeInTheDocument();
+  });
+
+  it("shows a separate token row for each model used by a step", async () => {
+    const user = userEvent.setup();
+    const report = makeReport();
+    report.step_outputs[0].calls = [
+      {
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        input_tokens: 700,
+        output_tokens: 80,
+      },
+      {
+        provider: "claude",
+        model: "claude-opus-4-8",
+        input_tokens: 500,
+        output_tokens: 100,
+      },
+    ];
+
+    render(
+      <ReportWorkspace
+        markdown={"# Referee Report\n\nBody."}
+        report={report}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    expect(screen.getAllByRole("cell", { name: "Technical" })).toHaveLength(2);
+    expect(screen.getByRole("cell", { name: "gpt-5.6-sol" })).toBeVisible();
+    expect(screen.getByRole("cell", { name: "claude-opus-4-8" })).toBeVisible();
   });
 
   it("hides unexpected preamble by default and offers the raw output", async () => {

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { BatchJob, WatchStatus, InputSlot, VarSpec, DepsReport } from "../lib/types";
+import type { BatchJob, InputSlot, VarSpec, DepsReport } from "../lib/types";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 
 interface Props {
@@ -63,7 +63,6 @@ export default function BatchPanel({
   const [staged, setStaged] = useState<string[]>([]);
   // Live job list from the backend once a batch is running.
   const [jobs, setJobs] = useState<BatchJob[]>([]);
-  const [watch, setWatch] = useState<WatchStatus | null>(null);
   const [inputMode, setInputMode] = useState(preloadedSetup?.inputMode || "document");
   const [variables, setVariables] = useState<VarSpec[]>(initialSpecs);
   const [variableValues, setVariableValues] = useState<Record<string, string>>(
@@ -116,7 +115,6 @@ export default function BatchPanel({
     const listenerSetup = Promise.allSettled([
       listen<BatchJob[]>("batch:progress", (e) => setJobs(e.payload)),
       listen("batch:done", () => invoke<BatchJob[]>("get_batch_status").then(setJobs).catch(() => {})),
-      listen<WatchStatus>("watch:status", (e) => setWatch(e.payload)),
     ]);
     listenerSetup
       .then((registrations) => {
@@ -141,7 +139,6 @@ export default function BatchPanel({
         // run can start between the initial status read and listener setup.
         return Promise.all([
           invoke<BatchJob[]>("get_batch_status"),
-          invoke<WatchStatus>("get_watch_status"),
           warmSetup
             ? Promise.resolve(warmSetup)
             : invoke<BatchSetupEnvelope>("get_execution_plan", {
@@ -155,9 +152,8 @@ export default function BatchPanel({
       })
       .then((result) => {
         if (!live || request !== profileRequest.current || !result) return;
-        const [loadedJobs, loadedWatch, setup] = result;
+        const [loadedJobs, setup] = result;
         setJobs(loadedJobs);
-        setWatch(loadedWatch);
         // The warm setup is already editable. Do not reset a user's variable
         // or named-input choices when the slower status reads finish.
         if (!warmSetup) applySetup(setup);
@@ -218,41 +214,6 @@ export default function BatchPanel({
     return setup;
   }, [extraInputs, profileConfigSnapshotId, variableValues]);
 
-  const startWatch = useCallback(async () => {
-    setError(null);
-    setErrorCanRetrySetup(false);
-    setPreparingStart(true);
-    try {
-      const missing = inputSlots.find((slot) => slot.required && !extraInputs[slot.key]);
-      if (missing) {
-        setError(`Select the required input “${missing.label || missing.key}” before watching.`);
-        return;
-      }
-      let dir: string | string[] | null;
-      try {
-        dir = await open({ directory: true });
-      } catch (caught) {
-        const message = caught instanceof Error ? caught.message : String(caught);
-        setError(`Could not open the folder picker for watching: ${message}`);
-        return;
-      }
-      if (typeof dir !== "string") return;
-      const setup = await prepareCurrentSetup(null);
-      await invoke("start_watch", {
-        folder: dir,
-        variables: variableValues,
-        extraInputs,
-        expectedProfileConfigSnapshotId: setup.profileConfigSnapshotId,
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(`Watching could not be started: ${message}`);
-      setErrorCanRetrySetup(true);
-    } finally {
-      setPreparingStart(false);
-    }
-  }, [extraInputs, inputSlots, prepareCurrentSetup, variableValues]);
-
   const pickExtraInput = useCallback(async (slot: InputSlot) => {
     setError(null);
     setErrorCanRetrySetup(false);
@@ -293,21 +254,6 @@ export default function BatchPanel({
       const message = caught instanceof Error ? caught.message : String(caught);
       setError(
         `Could not open the file picker for “${spec.label || spec.key}”: ${message}`,
-      );
-    }
-  }, []);
-
-  const stopWatch = useCallback(async () => {
-    setError(null);
-    setErrorCanRetrySetup(false);
-    try {
-      const stopped = await invoke<WatchStatus>("stop_watch");
-      setWatch(stopped);
-    } catch (caught) {
-      setError(
-        `Watching could not be stopped: ${
-          caught instanceof Error ? caught.message : String(caught)
-        }`,
       );
     }
   }, []);
@@ -443,7 +389,7 @@ export default function BatchPanel({
 
         {!profileLoading && !documentMode && (
           <div role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200">
-            <p className="font-medium">Batch and watch require a document-input workflow.</p>
+            <p className="font-medium">Batch processing requires a document-input workflow.</p>
             <p className="mt-1 text-xs leading-5">
               The active workflow uses {inputMode === "none" ? "no primary input" : "a folder input"}.
               Switch to a document workflow before queuing files.
@@ -451,13 +397,13 @@ export default function BatchPanel({
           </div>
         )}
 
-        {documentMode && (variables.length > 0 || inputSlots.length > 0) && !running && !watch?.active && (
+        {documentMode && (variables.length > 0 || inputSlots.length > 0) && !running && (
           <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-2">
             <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
               Shared run options
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              These values are captured once and supplied to every batch or watch job.
+              These values are captured once and supplied to every batch job.
             </p>
             {variables.map((spec) => {
               const id = `batch-variable-${spec.key}`;
@@ -573,80 +519,6 @@ export default function BatchPanel({
             )}
           </div>
         )}
-
-        {/* Watch a folder */}
-        {documentMode && !profileLoading && <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-3">
-          <div className="flex items-center gap-2">
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Watch a folder</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                {watch?.active
-                  ? <>Watching <span className="font-mono">{watch.folder}</span> — new files run automatically.</>
-                  : "Auto-run the active profile on files added to a folder."}
-              </p>
-              <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-                Watching pauses while another pipeline run is active, then resumes automatically.
-              </p>
-              {watch?.paused && (
-                <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-                  Paused while another run is active.
-                </p>
-              )}
-              {watch?.error && (
-                <p role="alert" className="mt-1 text-xs font-medium text-red-700 dark:text-red-300">
-                  Watch stopped: {watch.error}
-                </p>
-              )}
-              {watch?.active && (watch.profile_id || watch.profile_snapshot_id) && (
-                <p className="mt-1 break-all text-[11px] text-gray-500 dark:text-gray-400">
-                  Captured profile <span className="font-mono">{watch.profile_id || "unknown"}</span>
-                  {watch.profile_snapshot_id && (
-                    <> · snapshot <span className="font-mono">{watch.profile_snapshot_id}</span></>
-                  )}
-                  {optionSummary && <> · {optionSummary}</>}
-                </p>
-              )}
-            </div>
-            {watch?.active ? (
-              <button
-                type="button"
-                onClick={stopWatch}
-                className="px-3 py-1.5 text-sm rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
-              >
-                Stop watching
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={startWatch}
-                disabled={!listenersReady || !profileConfigSnapshotId || preparingStart}
-                className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Watch folder…
-              </button>
-            )}
-          </div>
-          {watch && watch.processed.length > 0 && (
-            <div className="mt-2 space-y-1">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Processed {watch.processed_total ?? watch.processed.length}
-                {(watch.failed_total ?? 0) > 0 && <span className="text-red-500"> · {watch.failed_total} failed</span>}
-                {(watch.processed_total ?? watch.processed.length) > watch.processed.length && <> · showing latest {watch.processed.length}</>}
-              </p>
-              {watch.processed.map((j, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs">
-                  <span className="flex-1 truncate text-gray-700 dark:text-gray-300" title={j.path}>{j.name}</span>
-                  <span className={statusColor(j.status)}>{j.status}</span>
-                  {j.run_id && (
-                    <button onClick={() => onOpenRun(j.run_id!)} className="text-blue-600 dark:text-blue-400 hover:underline">
-                      Open
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>}
 
         {/* Running / finished job list */}
         {jobs.length > 0 && (

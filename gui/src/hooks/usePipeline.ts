@@ -74,6 +74,7 @@ export interface RuntimeStage {
   kind: RuntimeStageKind;
   label: string;
   stepIds: string[];
+  stepLabels?: string[];
   passes: Record<string, PassStatus>;
   status: "active" | "done" | "failed" | "skipped";
 }
@@ -159,10 +160,11 @@ export function usePipeline() {
           id: string;
           label: string;
           stepIds: string[];
+          stepLabels?: string[];
           skipped?: boolean;
         }>("pipeline:stage", (event) => {
           if (!mounted) return;
-          const { stage, id, label, stepIds, skipped = false } = event.payload;
+          const { stage, id, label, stepIds, stepLabels = [], skipped = false } = event.payload;
           if (stage !== "extracting" &&
               stage !== "orienting" &&
               stage !== "dispatching" &&
@@ -181,6 +183,7 @@ export function usePipeline() {
               kind,
               label,
               stepIds,
+              stepLabels,
               passes: {},
               status: skipped ? "skipped" : "active",
             });
@@ -427,6 +430,7 @@ export function usePipeline() {
   const startPipeline = useCallback(
     async (
       paperPath: string,
+      inputInterpretation?: string,
       diff?: boolean,
       variables?: Record<string, string>,
       extraInputs?: Record<string, string>,
@@ -442,6 +446,7 @@ export function usePipeline() {
       try {
         const result = await invoke<PipelineResult>("run_pipeline", {
           paperPath,
+          inputInterpretation: inputInterpretation ?? null,
           diff: diff ?? false,
           variables: variables ?? null,
           extraInputs: extraInputs ?? null,

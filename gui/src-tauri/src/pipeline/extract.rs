@@ -387,7 +387,7 @@ fn stage_provider_input(source: &Path, root: &Path) -> Result<PathBuf, String> {
 }
 
 /// Find the main .tex file in a directory by looking for \documentclass.
-fn find_main_tex(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn find_main_tex(dir: &Path) -> Option<PathBuf> {
     let tex_files: Vec<PathBuf> = fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
@@ -3327,6 +3327,15 @@ pub struct RenderedPdfPages {
     pub truncated: bool,
 }
 
+/// One requested PDF page rendered for the artifact explorer, plus whether a
+/// following page exists. Rendering the requested page and its successor in a
+/// single bounded Poppler call avoids loading the PDF into the webview and
+/// gives the frontend enough information for direct page navigation.
+pub struct RenderedPdfPagePreview {
+    pub name: String,
+    pub has_next: bool,
+}
+
 fn rendered_page_limit(requested: u32) -> u32 {
     requested.clamp(1, MAX_RENDERED_PDF_PAGES)
 }
@@ -3337,6 +3346,88 @@ pub fn render_pdf_pages(
     max_pages: u32,
 ) -> Result<RenderedPdfPages, String> {
     render_pdf_pages_with_profile(pdf, out_dir, max_pages)
+}
+
+pub fn render_pdf_page_preview(
+    pdf: &Path,
+    out_dir: &Path,
+    page: u32,
+) -> Result<RenderedPdfPagePreview, String> {
+    if page == 0 || page > MAX_RENDERED_PDF_PAGES {
+        return Err(format!(
+            "PDF preview page must be between 1 and {MAX_RENDERED_PDF_PAGES}"
+        ));
+    }
+    let bin = find_command("pdftoppm").ok_or("pdftoppm not found on PATH")?;
+    let pdf_str = pdf
+        .to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", pdf.display()))?;
+    fs::create_dir_all(out_dir)
+        .map_err(|e| format!("Failed to create {}: {e}", out_dir.display()))?;
+    let prefix = out_dir.join("page");
+    let prefix_str = prefix
+        .to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
+    let first_page = page.to_string();
+    let last_page = page
+        .saturating_add(1)
+        .min(MAX_RENDERED_PDF_PAGES)
+        .to_string();
+    let args = vec![
+        "-jpeg".into(),
+        "-scale-to".into(),
+        "2400".into(),
+        "-jpegopt".into(),
+        "quality=90".into(),
+        "-f".into(),
+        first_page,
+        "-l".into(),
+        last_page,
+        pdf_str.into(),
+        prefix_str.into(),
+    ];
+    let mut command = bin.command(args);
+    command.env("PATH", env::full_path());
+    let output =
+        crate::process::run_bounded(&mut command, std::time::Duration::from_secs(60), 1_000_000)
+            .map_err(|error| format!("pdftoppm PDF preview failed: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let suffix = if output.stderr_truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        return Err(format!(
+            "pdftoppm failed to render PDF page {page}: {}{suffix}",
+            stderr.trim()
+        ));
+    }
+
+    let names: Vec<String> = fs::read_dir(out_dir)
+        .map_err(|e| format!("Failed to list {}: {e}", out_dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|name| name.starts_with("page-") && name.ends_with(".jpg"))
+        .collect();
+    let page_number = |name: &str| {
+        name.strip_prefix("page-")
+            .and_then(|value| value.strip_suffix(".jpg"))
+            .and_then(|value| value.parse::<u32>().ok())
+    };
+    let Some(name) = names
+        .iter()
+        .find(|name| page_number(name) == Some(page))
+        .cloned()
+    else {
+        return Err(format!("PDF page {page} is not available"));
+    };
+    Ok(RenderedPdfPagePreview {
+        name,
+        has_next: names
+            .iter()
+            .any(|name| page_number(name) == page.checked_add(1)),
+    })
 }
 
 fn render_pdf_pages_with_profile(
@@ -4389,6 +4480,48 @@ mod tests {
         assert_eq!(rendered_page_limit(50), 50);
         assert_eq!(rendered_page_limit(500), MAX_RENDERED_PDF_PAGES);
         assert_eq!(MAX_RENDERED_PDF_PAGES, 300);
+    }
+
+    #[test]
+    fn pdf_artifact_preview_renders_a_jpeg_when_poppler_is_available() {
+        if find_command("pdftoppm").is_none() {
+            return;
+        }
+        let stream = "BT /F1 18 Tf 72 720 Td (Pipeline PDF preview) Tj ET\n";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".to_string(),
+            format!("<< /Length {} >>\nstream\n{stream}endstream", stream.len()),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+        let mut pdf = "%PDF-1.4\n".to_string();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", index + 1));
+        }
+        let xref = pdf.len();
+        pdf.push_str(&format!(
+            "xref\n0 {}\n0000000000 65535 f \n",
+            objects.len() + 1
+        ));
+        for offset in offsets {
+            pdf.push_str(&format!("{offset:010} 00000 n \n"));
+        }
+        pdf.push_str(&format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        ));
+
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("figure.pdf");
+        let output = temp.path().join("rendered");
+        fs::write(&input, pdf).unwrap();
+        let preview = render_pdf_page_preview(&input, &output, 1).unwrap();
+        assert!(!preview.has_next);
+        let jpeg = fs::read(output.join(preview.name)).unwrap();
+        assert!(jpeg.starts_with(&[0xff, 0xd8, 0xff]));
     }
 
     #[test]

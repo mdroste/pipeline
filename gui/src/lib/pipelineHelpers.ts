@@ -204,6 +204,7 @@ export interface ExecutionPlanStage {
   kind: ExecutionStageKind;
   label: string;
   stepIds: string[];
+  stepLabels?: string[];
 }
 
 // ── Drag-drop helpers ───────────────────────────────────────────────

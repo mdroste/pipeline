@@ -52,6 +52,8 @@ pub fn report_output_format(write_dir: Option<&str>, nonce: &str) -> String {
          {start}\n\
          [complete report]\n\
          {end}\n\
+         The first marker ends in START and the closing marker ends in END; do not repeat the \
+         opening marker as the closing marker.\n\
          Put nothing before the start marker or after the end marker. Do not include progress \
          narration, acknowledgments, or a description of your process.{artifact_note}\n\
          Use `$...$` for inline math and `$$...$$` for display math. Do not use `\\(...\\)` or \
@@ -59,24 +61,37 @@ pub fn report_output_format(write_dir: Option<&str>, nonce: &str) -> String {
     )
 }
 
-/// Extract a complete, nonce-delimited report. Unlike the legacy helper below,
-/// this fails closed: missing/duplicate markers, partial output, surrounding
-/// narration, and empty reports are all rejected and can trigger a retry.
+/// Extract a complete, nonce-delimited report.
+///
+/// The random nonce, rather than the human-readable START/END label, identifies
+/// the boundary. Exactly two nonce-bearing markers therefore delimit an
+/// unambiguous report even when a model repeats START as the closing label,
+/// swaps the labels, or adds narration outside them. Fewer markers may indicate
+/// truncated output and more markers are ambiguous, so both still fail closed.
 pub fn extract_report_envelope(text: &str, nonce: &str) -> Result<String, String> {
     let (start, end) = report_markers(nonce);
-    if text.matches(&start).count() != 1 || text.matches(&end).count() != 1 {
-        return Err("missing or duplicate report boundary markers".to_string());
+    let start_count = text.matches(&start).count();
+    let end_count = text.matches(&end).count();
+    let mut boundaries = text
+        .match_indices(&start)
+        .map(|(position, marker)| (position, marker.len()))
+        .chain(
+            text.match_indices(&end)
+                .map(|(position, marker)| (position, marker.len())),
+        )
+        .collect::<Vec<_>>();
+    boundaries.sort_unstable_by_key(|(position, _)| *position);
+
+    if boundaries.len() != 2 {
+        return Err(format!(
+            "expected exactly two report boundary markers; found {} ({start_count} START, {end_count} END)",
+            boundaries.len()
+        ));
     }
-    let start_pos = text.find(&start).ok_or("missing report start marker")?;
-    let content_start = start_pos + start.len();
-    let relative_end = text[content_start..]
-        .find(&end)
-        .ok_or("missing report end marker")?;
-    let end_pos = content_start + relative_end;
-    if !text[..start_pos].trim().is_empty() || !text[end_pos + end.len()..].trim().is_empty() {
-        return Err("text appeared outside the report boundary markers".to_string());
-    }
-    let report = text[content_start..end_pos].trim();
+
+    let content_start = boundaries[0].0 + boundaries[0].1;
+    let content_end = boundaries[1].0;
+    let report = text[content_start..content_end].trim();
     if report.is_empty() {
         return Err("report between boundary markers was empty".to_string());
     }
@@ -835,7 +850,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nonce_report_envelope_accepts_only_complete_clean_boundaries() {
+    fn nonce_report_envelope_accepts_two_unambiguous_boundaries() {
         let nonce = "abc123";
         let (start, end) = report_markers(nonce);
         let clean = format!("{start}\n## Report\n\nClean.\n{end}");
@@ -844,10 +859,32 @@ mod tests {
             "## Report\n\nClean."
         );
 
-        assert!(extract_report_envelope(&format!("Narration\n{clean}"), nonce).is_err());
+        assert_eq!(
+            extract_report_envelope(&format!("Here is the report.\n{clean}\nDone."), nonce)
+                .unwrap(),
+            "## Report\n\nClean."
+        );
+        assert_eq!(
+            extract_report_envelope(
+                &format!("{start}\n## Report\n\nRepeated opening label.\n{start}"),
+                nonce
+            )
+            .unwrap(),
+            "## Report\n\nRepeated opening label."
+        );
+        assert_eq!(
+            extract_report_envelope(
+                &format!("{end}\n## Report\n\nSwapped labels.\n{start}"),
+                nonce
+            )
+            .unwrap(),
+            "## Report\n\nSwapped labels."
+        );
+
         assert!(extract_report_envelope(&format!("{start}\npartial"), nonce).is_err());
         assert!(extract_report_envelope(&clean, "different").is_err());
         assert!(extract_report_envelope(&format!("{clean}\n{clean}"), nonce).is_err());
+        assert!(extract_report_envelope(&format!("{start}\n{end}"), nonce).is_err());
     }
 
     #[test]

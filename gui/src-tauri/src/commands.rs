@@ -289,6 +289,7 @@ impl PipelineTask {
         guard: PipelineGuard,
         bus: crate::emit::EventBus,
         paper_path: String,
+        input_interpretation: Option<String>,
         diff: bool,
         variables: std::collections::HashMap<String, String>,
         extra_inputs: std::collections::HashMap<String, String>,
@@ -299,6 +300,7 @@ impl PipelineTask {
             run_pipeline_inner_with_snapshot(
                 &bus,
                 &paper_path,
+                input_interpretation.as_deref(),
                 diff,
                 variables,
                 extra_inputs,
@@ -560,7 +562,7 @@ pub struct BatchJob {
     pub run_id: Option<String>,
     pub error: Option<String>,
     pub duration_secs: u64,
-    /// Immutable profile used by this batch or watch-folder job.
+    /// Immutable profile used by this batch job.
     pub profile_id: String,
     /// Content fingerprint shared by every job in one batch.
     pub profile_snapshot_id: String,
@@ -568,47 +570,6 @@ pub struct BatchJob {
 
 static BATCH: std::sync::Mutex<Vec<BatchJob>> = std::sync::Mutex::new(Vec::new());
 static BATCH_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-// ── Watch folder (1.3.4) ────────────────────────────────────────────
-//
-// A background poll of a folder: files that appear after watching starts are
-// run through the pipeline one at a time with the active profile. Dependency-
-// free (no file-watcher crate) — a 5s poll is plenty for this use case.
-
-#[derive(Clone, Default, serde::Serialize)]
-pub struct WatchStatus {
-    pub active: bool,
-    /// True while another foreground/batch run owns the global run guard.
-    pub paused: bool,
-    /// Terminal watcher failure, such as the folder becoming unreadable.
-    pub error: Option<String>,
-    pub folder: String,
-    /// Immutable active profile captured when this watcher started.
-    pub profile_id: String,
-    /// Fingerprint of the captured profile, settings, variables, and inputs.
-    pub profile_snapshot_id: String,
-    /// Files processed since watching started (newest last).
-    pub processed: Vec<BatchJob>,
-    /// Aggregate counts remain accurate when the detailed history is pruned.
-    pub processed_total: u64,
-    pub failed_total: u64,
-}
-
-/// Each start/stop advances the generation. An old task can never observe a
-/// later watcher's `active=true` state and revive itself.
-static WATCH_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-const MAX_WATCH_HISTORY: usize = 200;
-static WATCH_STATE: std::sync::Mutex<WatchStatus> = std::sync::Mutex::new(WatchStatus {
-    active: false,
-    paused: false,
-    error: None,
-    folder: String::new(),
-    profile_id: String::new(),
-    profile_snapshot_id: String::new(),
-    processed: Vec::new(),
-    processed_total: 0,
-    failed_total: 0,
-});
 
 fn basename(path: &str) -> String {
     std::path::Path::new(path)
@@ -1094,6 +1055,7 @@ fn enforce_retention(app: &crate::emit::EventBus, keep: usize, max_bytes: u64) {
 struct RunCompletion {
     input_path: String,
     input_mode: String,
+    input_interpretation: String,
     profile_name: String,
     variables: std::collections::HashMap<String, String>,
     extra_inputs: std::collections::HashMap<String, String>,
@@ -1122,6 +1084,7 @@ fn complete_run(
     let meta = crate::runs::RunFinishMeta {
         input_path: completion.input_path,
         input_mode: completion.input_mode,
+        input_interpretation: completion.input_interpretation,
         profile_id: settings.active_profile.clone(),
         profile_name: completion.profile_name,
         provider: settings.preferred_provider.clone(),
@@ -1169,6 +1132,7 @@ fn complete_run(
 pub async fn run_pipeline(
     app: AppHandle,
     paper_path: String,
+    input_interpretation: Option<String>,
     diff: bool,
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
@@ -1181,10 +1145,15 @@ pub async fn run_pipeline(
     crate::safety::validate_runtime_context(&variables, "Run variables")?;
     crate::safety::validate_runtime_context(&extra_inputs, "Named input paths")?;
     let snapshot = load_run_snapshot()?;
-    validate_primary_input_path(&snapshot.config, Some(&paper_path))?;
+    validate_primary_input_selection(
+        &snapshot.config,
+        Some(&paper_path),
+        input_interpretation.as_deref(),
+    )?;
     validate_named_input_paths(&snapshot.config, &extra_inputs, true)?;
     let snapshot = bind_runtime_snapshot(snapshot, &variables, &extra_inputs)?;
-    let snapshot = bind_foreground_launch(snapshot, &paper_path, diff)?;
+    let snapshot =
+        bind_foreground_launch(snapshot, &paper_path, input_interpretation.as_deref(), diff)?;
     let expected_profile_snapshot_id = expected_profile_snapshot_id
         .as_deref()
         .filter(|expected| !expected.is_empty())
@@ -1206,6 +1175,7 @@ pub async fn run_pipeline(
         guard,
         bus,
         paper_path,
+        input_interpretation,
         diff,
         variables,
         extra_inputs,
@@ -1230,6 +1200,7 @@ pub async fn run_headless(
         guard,
         bus,
         paper_path.to_string(),
+        None,
         false,
         variables,
         extra_inputs,
@@ -1320,11 +1291,17 @@ fn bind_runtime_snapshot(
 fn bind_foreground_launch(
     mut snapshot: RunSnapshot,
     paper_path: &str,
+    input_interpretation: Option<&str>,
     diff: bool,
 ) -> Result<RunSnapshot, String> {
     use sha2::{Digest as _, Sha256};
-    let encoded = serde_json::to_vec(&(snapshot.fingerprint.as_str(), paper_path, diff))
-        .map_err(|error| format!("Could not fingerprint launch options: {error}"))?;
+    let encoded = serde_json::to_vec(&(
+        snapshot.fingerprint.as_str(),
+        paper_path,
+        input_interpretation,
+        diff,
+    ))
+    .map_err(|error| format!("Could not fingerprint launch options: {error}"))?;
     let digest = format!("{:x}", Sha256::digest(encoded));
     snapshot.fingerprint = digest[..16].to_string();
     Ok(snapshot)
@@ -1361,17 +1338,6 @@ fn require_snapshot_dependencies(report: &crate::deps::DepsReport) -> Result<(),
         "The captured workflow is not ready to run. {}",
         blockers.join(" ")
     ))
-}
-
-fn require_document_input(snapshot: &RunSnapshot, operation: &str) -> Result<(), String> {
-    let input_mode = snapshot.config.extraction.input_mode.trim();
-    if !matches!(input_mode, "" | "document") {
-        return Err(format!(
-            "{operation} requires a document-input profile; the active profile uses '{}' input",
-            input_mode
-        ));
-    }
-    Ok(())
 }
 
 /// Validate a concrete primary selection against the captured workflow before
@@ -1418,6 +1384,94 @@ fn validate_primary_input_path(
         _ => {}
     }
     Ok(())
+}
+
+/// Validate the run-time meaning assigned to the primary selection. Path kind
+/// and input semantics are deliberately separate: the same directory may be a
+/// LaTeX document project or a browsable source tree. Calls from older clients
+/// omit the interpretation and retain the legacy workflow/path validation.
+fn validate_primary_input_selection(
+    config: &PipelineConfig,
+    input_path: Option<&str>,
+    interpretation: Option<&str>,
+) -> Result<(), String> {
+    let Some(raw) = interpretation
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return validate_primary_input_path(config, input_path);
+    };
+    let Some(input_path) = input_path else {
+        return Ok(());
+    };
+    if config.extraction.input_mode.trim() == "none" {
+        return Err("The active workflow does not accept a primary input".to_string());
+    }
+    if input_path.trim().is_empty() {
+        return Err("The active workflow requires a primary input".to_string());
+    }
+    let path = std::path::Path::new(input_path);
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("The selected input is unavailable: {error}"))?;
+    match raw {
+        "document" => {
+            if !metadata.is_file() {
+                return Err("A document input must be a regular file".to_string());
+            }
+            let supported = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    matches!(
+                        extension.to_ascii_lowercase().as_str(),
+                        "pdf" | "tex" | "docx"
+                    )
+                });
+            if !supported {
+                return Err("A document input must be a PDF, TeX, or DOCX file".to_string());
+            }
+        }
+        "latex_project" => {
+            if !metadata.is_dir() {
+                return Err("A LaTeX project input must be a folder".to_string());
+            }
+            if crate::pipeline::extract::find_main_tex(path).is_none() {
+                return Err(
+                    "The selected folder has no top-level TeX file containing \\documentclass"
+                        .to_string(),
+                );
+            }
+        }
+        "source_tree" => {
+            if !metadata.is_dir() {
+                return Err("A browsable source-tree input must be a folder".to_string());
+            }
+        }
+        "batch" => {
+            return Err("A batch selection must be launched through the batch runner".to_string());
+        }
+        _ => {
+            return Err(format!(
+                "Unknown input interpretation '{raw}'. Expected document, latex_project, source_tree, or batch"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resolved_input_interpretation<'a>(
+    configured: &str,
+    input_path: &str,
+    requested: Option<&'a str>,
+) -> &'a str {
+    if let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) {
+        return requested;
+    }
+    match extract::effective_input_mode(configured, input_path) {
+        "folder" => "source_tree",
+        "none" => "none",
+        _ => "document",
+    }
 }
 
 fn validate_named_input_paths(
@@ -1484,6 +1538,7 @@ fn validate_named_input_paths(
 async fn run_pipeline_inner_with_snapshot(
     app: &crate::emit::EventBus,
     paper_path: &str,
+    requested_input_interpretation: Option<&str>,
     diff: bool,
     provided_vars: std::collections::HashMap<String, String>,
     provided_inputs: std::collections::HashMap<String, String>,
@@ -1497,7 +1552,11 @@ async fn run_pipeline_inner_with_snapshot(
         Some(snapshot) => snapshot,
         None => load_run_snapshot()?,
     };
-    validate_primary_input_path(&snapshot.config, Some(paper_path))?;
+    validate_primary_input_selection(
+        &snapshot.config,
+        Some(paper_path),
+        requested_input_interpretation,
+    )?;
     validate_named_input_paths(&snapshot.config, &provided_inputs, true)?;
     let RunSnapshot {
         settings,
@@ -1521,8 +1580,19 @@ async fn run_pipeline_inner_with_snapshot(
     crate::safety::validate_runtime_context(&variables, "Run variables")?;
     crate::safety::validate_runtime_context(&provided_inputs, "Named input paths")?;
     crate::safety::validate_run_budget(&config, &settings)?;
+    let input_interpretation = resolved_input_interpretation(
+        &config.extraction.input_mode,
+        paper_path,
+        requested_input_interpretation,
+    );
+    let input_mode = match input_interpretation {
+        "source_tree" => "folder",
+        "none" => "none",
+        _ => "document",
+    };
+    let input_processing_label = executor::input_processing_label(input_interpretation);
     let preprocessing_log = start_preprocessing_log();
-    crate::pipeline::logging::emit(app, format!("Preparing document bundle from {paper_path}"));
+    crate::pipeline::logging::emit(app, format!("{input_processing_label} from {paper_path}"));
 
     // Extract paper text
     app.emit_event(
@@ -1530,12 +1600,9 @@ async fn run_pipeline_inner_with_snapshot(
         serde_json::json!({
             "stage": "extracting",
             "id": "extracting",
-            "label": if config.extraction.input_mode == "none" {
-                "Prepare run"
-            } else {
-                "Extract input"
-            },
+            "label": input_processing_label,
             "stepIds": [],
+            "stepLabels": [],
         }),
     )
     .ok();
@@ -1548,7 +1615,6 @@ async fn run_pipeline_inner_with_snapshot(
     )
     .ok();
     let extract_start = std::time::Instant::now();
-    let input_mode = extract::effective_input_mode(&config.extraction.input_mode, paper_path);
     let extraction_result = match input_mode {
         "folder" => extract::ingest_folder_async(paper_path).await,
         "none" => Ok(extract::ingest_none()),
@@ -1593,6 +1659,7 @@ async fn run_pipeline_inner_with_snapshot(
         crate::runs::RunFinishMeta {
             input_path: paper_path.to_string(),
             input_mode: input_mode.to_string(),
+            input_interpretation: input_interpretation.to_string(),
             profile_id: settings.active_profile.clone(),
             profile_name: profile_name.clone(),
             provider: settings.preferred_provider.clone(),
@@ -2003,8 +2070,9 @@ async fn run_pipeline_inner_with_snapshot(
             serde_json::json!({
                 "stage": "orienting",
                 "id": "orienting",
-                "label": "Build orientation map",
+                "label": "Creating orientation map",
                 "stepIds": [],
+                "stepLabels": [],
             }),
         )
         .ok();
@@ -2340,6 +2408,7 @@ async fn run_pipeline_inner_with_snapshot(
         RunCompletion {
             input_path: paper_path.to_string(),
             input_mode: input_mode.to_string(),
+            input_interpretation: input_interpretation.to_string(),
             profile_name,
             variables,
             extra_inputs: persisted_inputs,
@@ -2560,8 +2629,9 @@ async fn rerun_run_inner(
                 serde_json::json!({
                     "stage": "orienting",
                     "id": "orienting",
-                    "label": "Build orientation map",
+                    "label": "Creating orientation map",
                     "stepIds": [],
+                    "stepLabels": [],
                 }),
             )
             .ok();
@@ -2627,6 +2697,7 @@ async fn rerun_run_inner(
         crate::runs::RunFinishMeta {
             input_path: parent.input_path.clone(),
             input_mode: parent.input_mode.clone(),
+            input_interpretation: parent.input_interpretation.clone(),
             profile_id: settings.active_profile.clone(),
             profile_name: profile_name.clone(),
             provider: settings.preferred_provider.clone(),
@@ -2891,6 +2962,7 @@ async fn rerun_run_inner(
         RunCompletion {
             input_path: parent.input_path,
             input_mode: parent.input_mode,
+            input_interpretation: parent.input_interpretation,
             profile_name,
             variables,
             extra_inputs: persisted_inputs,
@@ -2913,6 +2985,19 @@ pub async fn read_artifact(
     rel_path: String,
 ) -> Result<crate::runs::ArtifactContent, String> {
     crate::runs::read_artifact(&run_id, &rel_path)
+}
+
+#[tauri::command]
+pub async fn read_pdf_artifact_page(
+    run_id: String,
+    rel_path: String,
+    page: u32,
+) -> Result<crate::runs::PdfArtifactPage, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::runs::read_pdf_artifact_page(&run_id, &rel_path, page)
+    })
+    .await
+    .map_err(|error| format!("PDF preview task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -3211,9 +3296,11 @@ pub async fn start_batch(
                 .to_string(),
         );
     }
-    require_document_input(&snapshot, "Batch processing")?;
+    if snapshot.config.extraction.input_mode.trim() == "none" {
+        return Err("Batch processing requires a workflow that accepts input".to_string());
+    }
     for path in &paths {
-        validate_primary_input_path(&snapshot.config, Some(path))?;
+        validate_primary_input_selection(&snapshot.config, Some(path), Some("document"))?;
     }
     let vars = variables.unwrap_or_default();
     let inputs = extra_inputs.unwrap_or_default();
@@ -3286,6 +3373,7 @@ pub async fn start_batch(
             let result = run_pipeline_inner_with_snapshot(
                 &run_bus,
                 path,
+                Some("document"),
                 false,
                 vars.clone(),
                 inputs.clone(),
@@ -3360,7 +3448,7 @@ pub async fn cancel_batch() -> Result<(), String> {
 }
 
 /// Input files (PDF/LaTeX/Word) directly under `dir`, non-recursive and sorted;
-/// hidden files skipped. Shared by "queue this folder" and the watcher.
+/// hidden files skipped. Used by "queue this folder".
 fn scan_input_files(dir: &str) -> Result<Vec<String>, String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("Cannot read folder: {e}"))?;
     let mut files: Vec<String> = Vec::new();
@@ -3396,295 +3484,6 @@ fn scan_input_files(dir: &str) -> Result<Vec<String>, String> {
 #[tauri::command]
 pub async fn list_input_files(dir: String) -> Result<Vec<String>, String> {
     scan_input_files(&dir)
-}
-
-// --- Watch folder ---
-
-fn emit_watch(app: &crate::emit::EventBus) {
-    let state = WATCH_STATE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
-    let _ = app.emit_event(
-        "watch:status",
-        serde_json::to_value(&state).unwrap_or_default(),
-    );
-}
-
-fn push_watch_job(state: &mut WatchStatus, job: BatchJob) {
-    state.processed_total = state.processed_total.saturating_add(1);
-    if job.status == "failed" {
-        state.failed_total = state.failed_total.saturating_add(1);
-    }
-    state.processed.push(job);
-    if state.processed.len() > MAX_WATCH_HISTORY {
-        let excess = state.processed.len() - MAX_WATCH_HISTORY;
-        state.processed.drain(..excess);
-    }
-}
-
-/// Start watching `folder`: files that appear from now on are run through the
-/// pipeline with the active profile, one at a time. Files already present are
-/// treated as the baseline and not run.
-#[tauri::command]
-pub async fn start_watch(
-    app: AppHandle,
-    folder: String,
-    variables: Option<std::collections::HashMap<String, String>>,
-    extra_inputs: Option<std::collections::HashMap<String, String>>,
-    expected_profile_config_snapshot_id: Option<String>,
-) -> Result<(), String> {
-    if folder.trim().is_empty() {
-        return Err("No folder to watch".into());
-    }
-    // A watcher is one durable execution definition, not a series of runs
-    // against whatever profile happens to be active at each poll.
-    let snapshot = load_run_snapshot()?;
-    let expected_profile_config_snapshot_id = expected_profile_config_snapshot_id
-        .as_deref()
-        .filter(|expected| !expected.is_empty())
-        .ok_or("Watch setup has not been prepared. Reload the active workflow before starting.")?;
-    if expected_profile_config_snapshot_id != snapshot.config_fingerprint {
-        return Err(
-            "The active profile or settings changed while watch inputs were being collected. Reload the watch setup and try again."
-                .to_string(),
-        );
-    }
-    require_document_input(&snapshot, "Folder watching")?;
-    let vars = variables.unwrap_or_default();
-    let inputs = extra_inputs.unwrap_or_default();
-    crate::safety::validate_runtime_context(&vars, "Watch variables")?;
-    crate::safety::validate_runtime_context(&inputs, "Watch named input paths")?;
-    validate_named_input_paths(&snapshot.config, &inputs, true)?;
-    let dependencies = check_snapshot_dependencies(&snapshot, false, None, &inputs).await?;
-    require_snapshot_dependencies(&dependencies)?;
-    let snapshot = bind_runtime_snapshot(snapshot, &vars, &inputs)?;
-    let watch_profile_id = snapshot.settings.active_profile.clone();
-    let watch_snapshot_id = snapshot.fingerprint.clone();
-    // Capture the baseline once. A second asynchronous scan would classify
-    // files added in between as pre-existing and silently miss them.
-    let baseline = scan_input_files(&folder)?;
-    let generation = {
-        let mut st = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
-        if st.active {
-            return Err("Already watching a folder".into());
-        }
-        let generation = WATCH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
-        *st = WatchStatus {
-            active: true,
-            paused: false,
-            error: None,
-            folder: folder.clone(),
-            profile_id: watch_profile_id.clone(),
-            profile_snapshot_id: watch_snapshot_id.clone(),
-            processed: Vec::new(),
-            processed_total: 0,
-            failed_total: 0,
-        };
-        generation
-    };
-    let bus = crate::emit::from_app(app);
-    let run_bus = crate::emit::background(&bus);
-    let _ = bus.emit_event(
-        "pipeline:log",
-        serde_json::json!({"line": format!(
-            "Watch snapshot: profile '{}' ({})",
-            watch_profile_id, watch_snapshot_id
-        )}),
-    );
-    emit_watch(&bus);
-
-    tauri::async_runtime::spawn(async move {
-        // Baseline: files already present are not (re)processed.
-        let mut seen: std::collections::HashSet<String> = baseline.into_iter().collect();
-        let mut observations: std::collections::HashMap<
-            String,
-            (u64, Option<std::time::SystemTime>),
-        > = std::collections::HashMap::new();
-        while WATCH_GENERATION.load(std::sync::atomic::Ordering::Acquire) == generation {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            if WATCH_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation {
-                break;
-            }
-            let current = match scan_input_files(&folder) {
-                Ok(files) => files,
-                Err(error) => {
-                    let message =
-                        format!("Watch stopped because the folder could not be read: {error}");
-                    {
-                        let mut state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
-                        state.active = false;
-                        state.paused = false;
-                        state.error = Some(message.clone());
-                    }
-                    let _ = bus.emit_event("pipeline:log", serde_json::json!({"line": message}));
-                    emit_watch(&bus);
-                    break;
-                }
-            };
-            let current_set: std::collections::HashSet<String> = current.iter().cloned().collect();
-            // Removed files no longer need tombstones. This bounds watcher
-            // bookkeeping by the current folder contents rather than by all
-            // names ever observed during a long-running session.
-            seen.retain(|path| current_set.contains(path));
-            observations.retain(|path, _| current_set.contains(path));
-            for path in current {
-                if seen.contains(&path) {
-                    continue;
-                }
-                // Require two consecutive scans with the same size and mtime;
-                // files copied into a watched folder are otherwise submitted
-                // while still incomplete and never retried.
-                let fingerprint = match std::fs::metadata(&path) {
-                    Ok(meta) => (meta.len(), meta.modified().ok()),
-                    Err(_) => continue,
-                };
-                if observations.insert(path.clone(), fingerprint).as_ref() != Some(&fingerprint) {
-                    continue;
-                }
-                // Skip this cycle if any run is active; retry next poll (don't
-                // mark as seen, so it's picked up once free).
-                let guard = match acquire_pipeline_guard() {
-                    Ok(guard) => guard,
-                    Err(_) => {
-                        let changed = {
-                            let mut state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
-                            let changed = !state.paused;
-                            state.paused = true;
-                            changed
-                        };
-                        if changed {
-                            emit_watch(&bus);
-                        }
-                        break;
-                    }
-                };
-                let resumed = {
-                    let mut state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
-                    let resumed = state.paused;
-                    state.paused = false;
-                    resumed
-                };
-                if resumed {
-                    emit_watch(&bus);
-                }
-                if WATCH_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation {
-                    drop(guard);
-                    break;
-                }
-                let name = basename(&path);
-                let started = std::time::Instant::now();
-                let result = run_pipeline_inner_with_snapshot(
-                    &run_bus,
-                    &path,
-                    false,
-                    vars.clone(),
-                    inputs.clone(),
-                    Some(snapshot.clone()),
-                )
-                .await;
-                let duration_secs = started.elapsed().as_secs();
-                drop(guard);
-                if WATCH_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation {
-                    break;
-                }
-                seen.insert(path.clone());
-                observations.remove(&path);
-                let job = match result {
-                    Ok(v) if v.get("status").and_then(|s| s.as_str()) != Some("partial") => {
-                        BatchJob {
-                            path: path.clone(),
-                            name,
-                            status: "done".to_string(),
-                            run_id: v
-                                .get("run_id")
-                                .and_then(|r| r.as_str())
-                                .map(|s| s.to_string()),
-                            error: None,
-                            duration_secs,
-                            profile_id: watch_profile_id.clone(),
-                            profile_snapshot_id: watch_snapshot_id.clone(),
-                        }
-                    }
-                    Ok(v) => BatchJob {
-                        path: path.clone(),
-                        name,
-                        status: "failed".to_string(),
-                        run_id: v
-                            .get("run_id")
-                            .and_then(|r| r.as_str())
-                            .map(|s| s.to_string()),
-                        error: Some("One or more pipeline steps failed".to_string()),
-                        duration_secs,
-                        profile_id: watch_profile_id.clone(),
-                        profile_snapshot_id: watch_snapshot_id.clone(),
-                    },
-                    Err(e) => BatchJob {
-                        path: path.clone(),
-                        name,
-                        status: "failed".to_string(),
-                        run_id: None,
-                        error: Some(e),
-                        duration_secs,
-                        profile_id: watch_profile_id.clone(),
-                        profile_snapshot_id: watch_snapshot_id.clone(),
-                    },
-                };
-                let mut state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
-                push_watch_job(&mut state, job);
-                drop(state);
-                emit_watch(&bus);
-                if WATCH_GENERATION.load(std::sync::atomic::Ordering::Acquire) != generation {
-                    break;
-                }
-            }
-        }
-        if WATCH_GENERATION.load(std::sync::atomic::Ordering::Acquire) == generation {
-            let mut state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
-            state.active = false;
-            state.paused = false;
-            state.profile_id.clear();
-            state.profile_snapshot_id.clear();
-            drop(state);
-            emit_watch(&bus);
-        }
-    });
-    Ok(())
-}
-
-fn mark_watch_stopped(state: &mut WatchStatus) {
-    state.active = false;
-    state.paused = false;
-    state.error = None;
-    state.profile_id.clear();
-    state.profile_snapshot_id.clear();
-}
-
-/// Stop watching (the current file, if any, finishes first) and publish the
-/// transition immediately. The retired task observes the generation change
-/// and deliberately emits nothing, so the command itself owns this event.
-#[tauri::command]
-pub async fn stop_watch(app: AppHandle) -> Result<WatchStatus, String> {
-    WATCH_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-    let updated = {
-        let mut state = WATCH_STATE.lock().unwrap_or_else(|e| e.into_inner());
-        mark_watch_stopped(&mut state);
-        state.clone()
-    };
-    let bus = crate::emit::from_app(app);
-    let _ = bus.emit_event(
-        "watch:status",
-        serde_json::to_value(&updated).unwrap_or_default(),
-    );
-    Ok(updated)
-}
-
-#[tauri::command]
-pub async fn get_watch_status() -> Result<WatchStatus, String> {
-    Ok(WATCH_STATE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone())
 }
 
 // --- File I/O ---
@@ -4283,25 +4082,27 @@ fn restore_print_math(mut html: String, protected: &[ProtectedPrintMath]) -> Str
     html
 }
 
-fn build_print_report_html(
-    markdown: &str,
-    provenance_markdown: Option<&str>,
-) -> Result<String, String> {
+/// Match the numbered issue treatment used by ReportViewer. Pulldown-cmark
+/// renders `**#N. Title**` as a plain strong paragraph, so the standalone
+/// export needs this small structural pass before it can share the viewer's
+/// visual hierarchy.
+fn style_print_issue_headers(html: String) -> String {
+    let issue_header = regex::Regex::new(r#"(?s)<p><strong>#([0-9]+)\.\s*(.*?)</strong></p>"#)
+        .expect("print issue-header regex is valid");
+    issue_header
+        .replace_all(&html, |captures: &regex::Captures<'_>| {
+            format!(
+                "<div class=\"comment-header\"><span class=\"comment-num\">{}</span><span class=\"comment-title\">{}</span></div>",
+                &captures[1], &captures[2]
+            )
+        })
+        .into_owned()
+}
+
+fn render_print_markdown(markdown: &str) -> String {
     use pulldown_cmark::{html, Options, Parser};
 
-    let report_markdown =
-        output::normalize_math_delimiters(&output::clean_export_markdown(markdown));
-    let markdown = match provenance_markdown
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(provenance) => format!(
-            "{}\n\n---\n\n{}",
-            output::normalize_math_delimiters(&output::clean_export_markdown(provenance)),
-            report_markdown.trim_start(),
-        ),
-        None => report_markdown,
-    };
+    let markdown = output::normalize_math_delimiters(&output::clean_export_markdown(markdown));
     let (markdown, protected_math) = protect_print_math(&markdown);
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
@@ -4311,15 +4112,36 @@ fn build_print_report_html(
     html::push_html(&mut html_body, parser);
 
     // Sanitize HTML to strip <script>, event handlers, and other XSS vectors
-    // that could be injected via LLM output (e.g. prompt injection in paper text).
-    // ammonia's defaults allow standard text/table/list elements. Images keep
-    // their alt text but lose `src`, so opening the temporary print document
-    // cannot fetch model-authored remote or local subresources.
+    // that could be injected via LLM output (e.g. prompt injection in paper
+    // text). Images keep their alt text but lose `src`, so opening the
+    // temporary print document cannot fetch remote or local subresources.
     let html_body = ammonia::Builder::default()
         .rm_tag_attributes("img", &["src"])
         .clean(&html_body)
         .to_string();
-    let html_body = restore_print_math(html_body, &protected_math);
+    restore_print_math(style_print_issue_headers(html_body), &protected_math)
+}
+
+/// Keep only the compact opening metadata. Older callers may still send the
+/// former detailed provenance section, so discard that suffix defensively.
+fn print_provenance_masthead(html: String) -> String {
+    const DETAILS_HEADING: &str = "<h2>Run provenance</h2>";
+    match html.split_once(DETAILS_HEADING) {
+        Some((masthead, _)) => masthead.to_string(),
+        None => html,
+    }
+}
+
+fn build_print_report_html(
+    markdown: &str,
+    provenance_markdown: Option<&str>,
+) -> Result<String, String> {
+    let report_html = render_print_markdown(markdown);
+    let provenance_html = provenance_markdown
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(render_print_markdown)
+        .map(print_provenance_masthead);
 
     // KaTeX code, CSS, and every WOFF2 face are compiled into this one HTML
     // document. The print path therefore performs no network or file fetches.
@@ -4329,9 +4151,14 @@ fn build_print_report_html(
     let katex_css = offline_katex_css()?;
 
     let mut html_doc = String::with_capacity(
-        katex_css.len() + KATEX_JS.len() + AUTO_RENDER_JS.len() + html_body.len() + 2048,
+        katex_css.len()
+            + KATEX_JS.len()
+            + AUTO_RENDER_JS.len()
+            + report_html.len()
+            + provenance_html.as_ref().map_or(0, String::len)
+            + 12_288,
     );
-    html_doc.push_str("<!DOCTYPE html>\n<html><head>\n<meta charset=\"utf-8\">\n<title>Pipeline Report</title>\n<style>\n");
+    html_doc.push_str("<!DOCTYPE html>\n<html><head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Pipeline Report</title>\n<style>\n");
     html_doc.push_str(&katex_css);
     html_doc.push_str("\n</style>\n<script>\n");
     html_doc.push_str(KATEX_JS);
@@ -4339,27 +4166,72 @@ fn build_print_report_html(
     html_doc.push_str(AUTO_RENDER_JS);
     html_doc.push_str(concat!(
         "\n</script>\n<style>\n",
-        "@page { margin: 0.72in 0.75in 0.78in; }\n",
-        "body { font-family: \"Times New Roman\", Times, serif; max-width: 48em; margin: 2em auto; padding: 0 1em; line-height: 1.52; color: #111; }\n",
-        "h1 { font-size: 1.75em; line-height: 1.15; margin: 0 0 0.5em; }\n",
-        "body > h1:first-child + p { color: #333; font-size: 1.05em; margin: 0 0 0.35em; }\n",
-        "h2 { font-size: 1.2em; border-bottom: 1px solid #bbb; padding-bottom: 0.2em; margin-top: 1.7em; }\n",
-        "h3 { font-size: 1.05em; } hr { border: none; border-top: 1px solid #ccc; margin: 1.6em 0; }\n",
-        "table { border-collapse: collapse; width: 100%; margin: 1em 0; }\n",
-        "th, td { border: 1px solid #ccc; padding: 0.42em 0.6em; text-align: left; vertical-align: top; }\n",
-        "th { background: #f3f3f3; font-size: 0.88em; }\n",
-        "code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }\n",
-        "pre { background: #f4f4f4; padding: 1em; overflow-x: auto; border-radius: 4px; }\n",
-        "pre code { background: none; padding: 0; }\n",
-        "blockquote { border-left: 3px solid #ccc; margin: 1em 0; padding: 0.5em 1em; color: #555; }\n",
-        ".pipeline-display-equation { break-before: avoid; break-inside: avoid; }\n",
-        ".katex-display { margin: 0.9em 0; overflow: visible; }\n",
-        "h1, h2, h3, table, .katex-display { break-inside: avoid; }\n",
-        "p:has(> strong:first-child) { break-after: avoid; }\n",
-        "@media print { body { margin: 0; max-width: none; padding: 0; } a { color: inherit; text-decoration: none; } }\n",
-        "</style>\n</head><body>\n",
+        ":root { --ink: #20242a; --muted: #66707a; --navy: #18364d; --rule: #d7d9d8; --paper: #fffefb; --canvas: #e9e7e2; color-scheme: light; font-family: \"Iowan Old Style\", \"Palatino Linotype\", \"Book Antiqua\", Palatino, Georgia, \"Times New Roman\", serif; }\n",
+        "* { box-sizing: border-box; }\n",
+        "html { background: var(--canvas); }\n",
+        "body { margin: 0; color: var(--ink); font-size: 16px; line-height: 1.68; -webkit-font-smoothing: antialiased; font-kerning: normal; text-rendering: optimizeLegibility; }\n",
+        ".report-document { width: min(50rem, calc(100% - 2rem)); margin: 2.75rem auto; padding: 4rem 4.5rem 4.75rem; background: var(--paper); border: 1px solid rgba(41, 47, 54, 0.12); border-radius: 0.2rem; box-shadow: 0 22px 55px rgba(35, 38, 41, 0.13); }\n",
+        "h1, h2, h3 { break-after: avoid; break-inside: avoid; }\n",
+        "h1 { margin: 0 0 1rem; color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 1.7rem; font-weight: 680; letter-spacing: -0.025em; line-height: 1.2; }\n",
+        "h2 { margin: 2.9rem 0 1.15rem; padding-bottom: 0.45rem; border-bottom: 1px solid var(--rule); color: var(--navy); font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.78rem; font-weight: 750; letter-spacing: 0.105em; line-height: 1.4; text-transform: uppercase; }\n",
+        "h3 { margin: 2rem 0 0.75rem; color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.98rem; font-weight: 700; line-height: 1.4; }\n",
+        "p { margin: 0 0 0.82rem; orphans: 3; widows: 3; }\n",
+        "ul, ol { margin: 0 0 0.9rem; padding-left: 1.35rem; }\n",
+        "li { margin-bottom: 0.32rem; padding-left: 0.15rem; line-height: 1.58; }\n",
+        "li > p { margin-bottom: 0.35rem; }\n",
+        "a { color: var(--navy); text-decoration-color: #9aabb6; text-underline-offset: 0.16em; }\n",
+        "strong { color: #171a1e; font-weight: 700; }\n",
+        "hr { margin: 2.25rem 0; border: 0; border-top: 1px solid var(--rule); }\n",
+        ".report-masthead { margin-bottom: 2.25rem; padding: 0 0 1.25rem; border-bottom: 1px solid var(--rule); }\n",
+        ".report-masthead > h1 { margin: 0 0 0.8rem; color: var(--ink); font-size: 0.92rem; font-weight: 720; letter-spacing: -0.01em; text-transform: none; }\n",
+        ".report-masthead > p { display: grid; grid-template-columns: 7.15rem minmax(0, 1fr); column-gap: 0.65rem; margin: 0.24rem 0; color: #4f5961; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.73rem; line-height: 1.45; }\n",
+        ".report-masthead > p strong { color: var(--muted); font-size: 0.67rem; font-weight: 700; letter-spacing: 0.025em; }\n",
+        ".report-body > h1:first-child, .report-body > h2:first-child, .report-body > h3:first-child { margin-top: 0; }\n",
+        ".comment-header { display: grid; grid-template-columns: 1.75rem minmax(0, 1fr); align-items: start; column-gap: 0.8rem; margin: 2.25rem 0 0.72rem; padding: 0.85rem 0 0; border-top: 1px solid var(--rule); break-after: avoid; break-inside: avoid; }\n",
+        ".comment-num { display: inline-flex; width: 1.55rem; height: 1.55rem; align-items: center; justify-content: center; border-radius: 999px; background: var(--navy); color: #fff; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.68rem; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1; }\n",
+        ".comment-title { padding-top: 0.05rem; color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.98rem; font-weight: 700; line-height: 1.42; }\n",
+        "blockquote { margin: 1.25rem 0 1.35rem; padding: 0.65rem 0 0.65rem 1.1rem; border-left: 2px solid #9cabb4; color: #4f5961; font-size: 0.95em; font-style: italic; break-inside: avoid; }\n",
+        "code { padding: 0.12rem 0.32rem; border-radius: 0.2rem; background: #f1f0ed; color: #30373d; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8em; overflow-wrap: anywhere; }\n",
+        "pre { margin: 1.15rem 0; padding: 1rem 1.1rem; overflow: auto; border: 1px solid #deddd9; border-radius: 0.25rem; background: #f7f6f3; white-space: pre-wrap; overflow-wrap: anywhere; break-inside: avoid; }\n",
+        "pre code { padding: 0; background: transparent; font-size: 0.8125rem; }\n",
+        "table { width: 100%; margin: 1.35rem 0 1.6rem; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.79rem; line-height: 1.45; font-variant-numeric: tabular-nums; }\n",
+        "th, td { padding: 0.48rem 0.52rem; border: 0; border-bottom: 1px solid #dfe1e1; text-align: left; vertical-align: top; overflow-wrap: anywhere; }\n",
+        "th { border-top: 1.5px solid #59636b; border-bottom-color: #8a9298; background: transparent; color: #566069; font-size: 0.67rem; font-weight: 750; letter-spacing: 0.065em; text-transform: uppercase; }\n",
+        "tbody tr:last-child td { border-bottom: 1.5px solid #59636b; }\n",
+        "thead { display: table-header-group; }\n",
+        "tr { break-inside: avoid; }\n",
+        ".pipeline-display-equation, .katex-display { break-before: avoid; break-inside: avoid; }\n",
+        ".katex { font-size: 1em; }\n",
+        ".katex-display { margin: 1.15rem 0; overflow: visible; }\n",
+        "img { max-width: 100%; height: auto; }\n",
+        "@page { margin: 0 0 0.28in; }\n",
+        "@page { @bottom-center { content: counter(page) \" / \" counter(pages); color: #7b838a; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 8pt; font-variant-numeric: tabular-nums; } }\n",
+        "@media print {\n",
+        "  html, body { background: #fff; }\n",
+        "  body { color: var(--ink); font-size: 10.4pt; line-height: 1.6; print-color-adjust: exact; -webkit-print-color-adjust: exact; }\n",
+        "  .report-document { width: 100%; max-width: none; margin: 0; padding: 0.72in 0.82in 0.7in; border: 0; border-radius: 0; box-shadow: none; -webkit-box-decoration-break: clone; box-decoration-break: clone; }\n",
+        "  h1 { font-size: 21pt; }\n",
+        "  h2 { margin-top: 2.2rem; font-size: 8.3pt; }\n",
+        "  h3 { margin-top: 1.5rem; font-size: 10.7pt; }\n",
+        "  .report-masthead { margin-bottom: 1.65rem; padding-bottom: 1rem; }\n",
+        "  .comment-header { margin-top: 1.55rem; padding-top: 0.65rem; }\n",
+        "  .comment-num { width: 1.42rem; height: 1.42rem; font-size: 6.8pt; }\n",
+        "  .comment-title { font-size: 10.2pt; }\n",
+        "  a { color: inherit; text-decoration: none; }\n",
+        "  pre, blockquote { break-inside: avoid; }\n",
+        "}\n",
+        "@media (max-width: 640px) { .report-document { width: 100%; margin: 0; padding: 2.25rem 1.35rem 3rem; border: 0; border-radius: 0; box-shadow: none; } .report-masthead > p { grid-template-columns: 1fr; row-gap: 0.05rem; margin-top: 0.45rem; } }\n",
+        "</style>\n</head><body>\n<article class=\"report-document\">\n",
     ));
-    html_doc.push_str(&html_body);
+    if let Some(provenance_html) = provenance_html.as_ref() {
+        html_doc.push_str("<header class=\"report-masthead\">\n");
+        html_doc.push_str(provenance_html);
+        html_doc.push_str("</header>\n");
+    }
+    html_doc.push_str("<main class=\"report-body\">\n");
+    html_doc.push_str(&report_html);
+    html_doc.push_str("</main>\n");
+    html_doc.push_str("</article>");
     // Rendering is synchronous, but embedded webfonts are not. Wait for the
     // font set before the final paint and print dialog.
     html_doc.push_str(concat!(
@@ -4537,7 +4409,9 @@ pub struct ExecutionPlanResponse {
     pub profile_id: String,
     pub profile_config_snapshot_id: String,
     pub profile_snapshot_id: String,
+    pub configured_input_mode: String,
     pub input_mode: String,
+    pub input_interpretation: String,
     pub variables: Vec<crate::pipeline_config::VarSpec>,
     pub input_slots: Vec<crate::pipeline_config::InputSlot>,
     pub readiness: crate::deps::DepsReport,
@@ -4553,6 +4427,7 @@ pub async fn get_execution_plan(
     expected_profile_config_snapshot_id: Option<String>,
     diff: Option<bool>,
     paper_path: Option<String>,
+    input_interpretation: Option<String>,
 ) -> Result<ExecutionPlanResponse, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
@@ -4569,7 +4444,11 @@ pub async fn get_execution_plan(
                 .to_string(),
         );
     }
-    validate_primary_input_path(&snapshot.config, paper_path.as_deref())?;
+    validate_primary_input_selection(
+        &snapshot.config,
+        paper_path.as_deref(),
+        input_interpretation.as_deref(),
+    )?;
     // This command is also used to discover the profile's input slots before
     // the user has filled them. Validate every concrete selection here; the
     // execution commands enforce that all required slots are present.
@@ -4578,25 +4457,52 @@ pub async fn get_execution_plan(
     let readiness =
         check_snapshot_dependencies(&snapshot, diff, paper_path.as_deref(), &extra_inputs).await?;
     let profile_config_snapshot_id = snapshot.config_fingerprint.clone();
-    let input_mode = paper_path
+    let resolved_interpretation = paper_path
         .as_deref()
         .map(|path| {
-            extract::effective_input_mode(&snapshot.config.extraction.input_mode, path).to_string()
+            resolved_input_interpretation(
+                &snapshot.config.extraction.input_mode,
+                path,
+                input_interpretation.as_deref(),
+            )
+            .to_string()
         })
         .unwrap_or_else(|| match snapshot.config.extraction.input_mode.trim() {
-            "" => "document".to_string(),
-            mode => mode.to_string(),
+            "folder" => "source_tree".to_string(),
+            "none" => "none".to_string(),
+            _ => input_interpretation
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "document".to_string()),
         });
+    let input_mode = match resolved_interpretation.as_str() {
+        "source_tree" => "folder".to_string(),
+        "none" => "none".to_string(),
+        _ => "document".to_string(),
+    };
     let variable_specs = snapshot.config.variables.clone();
     let input_slots = snapshot.config.extraction.extra_inputs.clone();
     let snapshot = bind_runtime_snapshot(snapshot, &variables, &extra_inputs)?;
-    let snapshot = bind_foreground_launch(snapshot, paper_path.as_deref().unwrap_or(""), diff)?;
-    let stages = executor::execution_plan(&snapshot.config)?;
+    let snapshot = bind_foreground_launch(
+        snapshot,
+        paper_path.as_deref().unwrap_or(""),
+        input_interpretation.as_deref(),
+        diff,
+    )?;
+    let mut stages = executor::execution_plan(&snapshot.config)?;
+    if let Some(stage) = stages.iter_mut().find(|stage| stage.kind == "extracting") {
+        stage.label = executor::input_processing_label(&resolved_interpretation).to_string();
+    }
     Ok(ExecutionPlanResponse {
         profile_id: snapshot.settings.active_profile,
         profile_config_snapshot_id,
         profile_snapshot_id: snapshot.fingerprint,
+        configured_input_mode: match snapshot.config.extraction.input_mode.trim() {
+            "" => "document".to_string(),
+            mode => mode.to_string(),
+        },
         input_mode,
+        input_interpretation: resolved_interpretation,
         variables: variable_specs,
         input_slots,
         readiness,
@@ -4906,33 +4812,6 @@ mod tests {
         }
     }
 
-    fn test_snapshot(config: PipelineConfig) -> RunSnapshot {
-        RunSnapshot {
-            settings: crate::settings::Settings::default(),
-            config,
-            profile_name: "test".to_string(),
-            config_fingerprint: "test-config".to_string(),
-            fingerprint: "test-runtime".to_string(),
-        }
-    }
-
-    #[test]
-    fn batch_and_watch_accept_legacy_default_document_mode() {
-        let mut config = empty_test_config();
-        config.extraction.input_mode.clear();
-        assert!(require_document_input(&test_snapshot(config), "Batch processing").is_ok());
-
-        let mut config = empty_test_config();
-        config.extraction.input_mode = "document".to_string();
-        assert!(require_document_input(&test_snapshot(config), "Folder watching").is_ok());
-
-        for mode in ["folder", "none"] {
-            let mut config = empty_test_config();
-            config.extraction.input_mode = mode.to_string();
-            assert!(require_document_input(&test_snapshot(config), "Batch processing").is_err());
-        }
-    }
-
     #[test]
     fn primary_input_validation_enforces_explicit_mode_path_kinds() {
         let root = tempfile::tempdir().unwrap();
@@ -4961,6 +4840,44 @@ mod tests {
         config.extraction.input_mode = "document".to_string();
         assert!(validate_primary_input_path(&config, Some("")).is_err());
         assert!(validate_primary_input_path(&config, None).is_ok());
+    }
+
+    #[test]
+    fn explicit_input_interpretation_separates_container_from_meaning() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::write(
+            project.join("main.tex"),
+            b"\\documentclass{article}\n\\begin{document}Paper\\end{document}",
+        )
+        .unwrap();
+        let document = root.path().join("paper.pdf");
+        std::fs::write(&document, b"fixture").unwrap();
+        let config = empty_test_config();
+
+        assert!(
+            validate_primary_input_selection(&config, project.to_str(), Some("latex_project"),)
+                .is_ok()
+        );
+        assert!(
+            validate_primary_input_selection(&config, project.to_str(), Some("source_tree"),)
+                .is_ok()
+        );
+        assert!(
+            validate_primary_input_selection(&config, project.to_str(), Some("document"),).is_err()
+        );
+        assert!(
+            validate_primary_input_selection(&config, document.to_str(), Some("document"),).is_ok()
+        );
+        assert_eq!(
+            resolved_input_interpretation(
+                "document",
+                project.to_str().unwrap(),
+                Some("latex_project")
+            ),
+            "latex_project"
+        );
     }
 
     #[test]
@@ -5081,6 +4998,7 @@ mod tests {
         let first_launch = bind_foreground_launch(
             bind_runtime_snapshot(snapshot(), &variables_a, &inputs).unwrap(),
             "/papers/a.pdf",
+            None,
             false,
         )
         .unwrap()
@@ -5088,6 +5006,7 @@ mod tests {
         let other_path = bind_foreground_launch(
             bind_runtime_snapshot(snapshot(), &variables_a, &inputs).unwrap(),
             "/papers/b.pdf",
+            None,
             false,
         )
         .unwrap()
@@ -5095,6 +5014,7 @@ mod tests {
         let other_diff = bind_foreground_launch(
             bind_runtime_snapshot(snapshot(), &variables_a, &inputs).unwrap(),
             "/papers/a.pdf",
+            None,
             true,
         )
         .unwrap()
@@ -5145,12 +5065,26 @@ mod tests {
     #[test]
     fn print_html_is_self_contained_and_waits_for_fonts() {
         let html = build_print_report_html(
-            "An equation: $y=x$.\n\n![Remote figure](https://example.invalid/pixel.png)",
-            None,
+            "**#12. Identification needs work**\n\nAn equation: $y=x$.\n\n![Remote figure](https://example.invalid/pixel.png)",
+            Some("# Pipeline\n\n**Document:** A paper\n\n**Workflow:** Full review\n\n## Run provenance\n\nBOTTOM DETAILS MUST NOT PRINT"),
         )
         .unwrap();
         assert!(html.contains("data:font/woff2;base64,"));
         assert!(html.contains("document.fonts.ready"));
+        assert!(html.contains("class=\"report-document\""));
+        assert!(html.contains("class=\"report-masthead\""));
+        assert!(html.contains("class=\"report-body\""));
+        assert!(!html.contains("class=\"report-provenance\""));
+        assert!(!html.contains("BOTTOM DETAILS MUST NOT PRINT"));
+        assert!(html.contains("class=\"comment-header\""));
+        assert!(html.contains("class=\"comment-num\">12</span>"));
+        assert!(!html.contains("<p><strong>#12."));
+        assert!(html.contains("-apple-system"));
+        assert!(html.contains("Iowan Old Style"));
+        assert!(html.contains("@page { margin: 0 0 0.28in; }"));
+        assert!(html.contains("counter(page) \" / \" counter(pages)"));
+        assert!(html.contains("padding: 0.72in 0.82in 0.7in"));
+        assert!(html.contains("box-decoration-break: clone"));
         assert!(html.contains("Remote figure"));
         assert!(!html.contains("https://example.invalid/pixel.png"));
         assert!(!html.contains("url(fonts/"));
@@ -5318,65 +5252,6 @@ mod tests {
         .unwrap();
         assert_eq!(normalized.host_str(), Some("example.com"));
         assert!(normalized.fragment().is_none());
-    }
-
-    #[test]
-    fn watch_history_is_bounded_to_recent_jobs() {
-        let mut state = WatchStatus::default();
-        for index in 0..(MAX_WATCH_HISTORY + 5) {
-            push_watch_job(
-                &mut state,
-                BatchJob {
-                    path: index.to_string(),
-                    name: index.to_string(),
-                    status: if index == 1 { "failed" } else { "done" }.into(),
-                    run_id: None,
-                    error: None,
-                    duration_secs: 0,
-                    profile_id: String::new(),
-                    profile_snapshot_id: String::new(),
-                },
-            );
-        }
-        assert_eq!(state.processed.len(), MAX_WATCH_HISTORY);
-        assert_eq!(state.processed.first().unwrap().path, "5");
-        assert_eq!(state.processed_total, (MAX_WATCH_HISTORY + 5) as u64);
-        assert_eq!(state.failed_total, 1);
-    }
-
-    #[test]
-    fn stopping_watch_clears_live_state_but_retains_history() {
-        let mut state = WatchStatus {
-            active: true,
-            paused: true,
-            error: Some("old failure".to_string()),
-            folder: "/papers/inbox".to_string(),
-            profile_id: "profile-a".to_string(),
-            profile_snapshot_id: "snapshot-a".to_string(),
-            processed: vec![BatchJob {
-                path: "/papers/inbox/paper.pdf".to_string(),
-                name: "paper.pdf".to_string(),
-                status: "done".to_string(),
-                run_id: Some("run-a".to_string()),
-                error: None,
-                duration_secs: 1,
-                profile_id: "profile-a".to_string(),
-                profile_snapshot_id: "snapshot-a".to_string(),
-            }],
-            processed_total: 1,
-            failed_total: 0,
-        };
-
-        mark_watch_stopped(&mut state);
-
-        assert!(!state.active);
-        assert!(!state.paused);
-        assert!(state.error.is_none());
-        assert!(state.profile_id.is_empty());
-        assert!(state.profile_snapshot_id.is_empty());
-        assert_eq!(state.folder, "/papers/inbox");
-        assert_eq!(state.processed.len(), 1);
-        assert_eq!(state.processed_total, 1);
     }
 
     // Exercises the batch job-status helpers over the global BATCH state. This

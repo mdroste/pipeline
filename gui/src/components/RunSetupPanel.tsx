@@ -2,7 +2,7 @@ import { useState } from "react";
 import PaperSelector from "./PaperSelector";
 import ResizeHandle from "./ResizeHandle";
 import WorkflowPanel from "./WorkflowPanel";
-import type { PipelineConfig } from "../lib/types";
+import type { PipelineConfig, PrimaryInputSelection } from "../lib/types";
 
 const PRIVACY_NOTICE_KEY = "pipeline.privacyNoticeAcknowledged.v1";
 
@@ -22,6 +22,7 @@ interface Props {
   onConfigureWorkflow: () => void;
   onGenerate: () => void;
   onPaperPathChange: (path: string | null) => void;
+  onInputSelectionChange: (selection: PrimaryInputSelection | null) => void;
   onPrivacyDetails: () => void;
   onProfileChange: (config?: PipelineConfig) => void;
   onRetryConfig: () => void;
@@ -45,6 +46,7 @@ export default function RunSetupPanel({
   onConfigureWorkflow,
   onGenerate,
   onPaperPathChange,
+  onInputSelectionChange,
   onPrivacyDetails,
   onProfileChange,
   onRetryConfig,
@@ -83,7 +85,7 @@ export default function RunSetupPanel({
             New run
           </h1>
           <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Choose an input and the workflow to run.
+            Choose inputs, say how Pipeline should use them, and select a workflow.
           </p>
         </header>
 
@@ -97,6 +99,7 @@ export default function RunSetupPanel({
               key={selectionKey}
               inputMode={inputMode}
               onPathChange={onPaperPathChange}
+              onSelectionChange={onInputSelectionChange}
               disabled={configLoading}
             />
           )}

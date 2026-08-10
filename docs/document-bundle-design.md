@@ -89,7 +89,7 @@ compatibility bundle from their cached extraction.
 
 ### DOCX
 
-- `.docx` is accepted by the picker, batch/watch scanners, and CLI scanner.
+- `.docx` is accepted by the picker, batch scanner, and CLI scanner.
 - `word/document.xml` is read from the ZIP container under XML and archive
   size caps.
 - Paragraphs/headings become Markdown; Word tables retain a grid

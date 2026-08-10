@@ -298,6 +298,10 @@ pub struct StepCallRecord {
     pub model_source: String,
     #[serde(default)]
     pub model_catalog_updated_at: String,
+    /// Resolved reasoning-effort setting requested for this call. Empty for
+    /// reports saved before effort provenance was recorded.
+    #[serde(default)]
+    pub effort: String,
     #[serde(default)]
     pub duration_secs: u64,
     #[serde(default)]

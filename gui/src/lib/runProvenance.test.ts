@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PipelineReport } from "./types";
 import {
   aggregateProviderModelUsage,
+  aggregateStepModelUsage,
   buildRunProvenance,
   provenanceMarkdown,
 } from "./runProvenance";
@@ -39,6 +40,7 @@ function report(): PipelineReport {
             provider: "codex",
             model: "gpt-5.6-sol",
             model_transport: "cli",
+            effort: "high",
             input_tokens: 1_000,
             output_tokens: 100,
             cached_input_tokens: 700,
@@ -47,6 +49,7 @@ function report(): PipelineReport {
             provider: "claude",
             model: "claude-opus-4-8",
             model_transport: "api",
+            effort: "max",
             input_tokens: 2_000,
             output_tokens: 200,
             cached_input_tokens: 1_500,
@@ -67,6 +70,7 @@ describe("run provenance", () => {
         provider: "Codex",
         model: "gpt-5.6-sol",
         transports: ["CLI"],
+        efforts: ["high"],
         input_tokens: 1_000,
         output_tokens: 100,
         cached_input_tokens: 700,
@@ -75,9 +79,33 @@ describe("run provenance", () => {
         provider: "Claude",
         model: "claude-opus-4-8",
         transports: ["API"],
+        efforts: ["max"],
         input_tokens: 2_000,
         output_tokens: 200,
         cached_input_tokens: 1_500,
+      }),
+    ]);
+  });
+
+  it("keeps step boundaries while splitting a multi-model step", () => {
+    const usage = aggregateStepModelUsage(report());
+
+    expect(usage).toEqual([
+      expect.objectContaining({
+        step_id: "technical",
+        step_label: "Technical",
+        provider: "Codex",
+        model: "gpt-5.6-sol",
+        input_tokens: 1_000,
+        output_tokens: 100,
+      }),
+      expect.objectContaining({
+        step_id: "technical",
+        step_label: "Technical",
+        provider: "Claude",
+        model: "claude-opus-4-8",
+        input_tokens: 2_000,
+        output_tokens: 200,
       }),
     ]);
   });
@@ -104,10 +132,14 @@ describe("run provenance", () => {
     expect(provenance.usage_matches_total).toBe(false);
 
     const markdown = provenanceMarkdown(provenance);
-    expect(markdown).toContain("# Referee report");
-    expect(markdown).toContain("Review of **Networks and Policy**");
-    expect(markdown).toContain("Codex (CLI) | gpt-5.6-sol | 1,000 | 100 | 700");
-    expect(markdown).toContain("Claude (API) | claude-opus-4-8 | 2,000 | 200 | 1,500");
-    expect(markdown).toContain("**Run total**");
+    expect(markdown).toContain("# Pipeline");
+    expect(markdown).toContain("**Document:** Networks and Policy");
+    expect(markdown).toContain("**Workflow:** Paper Review (Full)");
+    expect(markdown).toContain("**Token usage:** 3,500 input · 350 output · 2,300 cached");
+    expect(markdown).toContain(
+      "**Models / providers:** Codex (CLI) / gpt-5.6-sol / effort high; Claude (API) / claude-opus-4-8 / effort max",
+    );
+    expect(markdown).not.toContain("## Run provenance");
+    expect(markdown).not.toContain("**Run total**");
   });
 });

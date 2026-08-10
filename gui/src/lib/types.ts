@@ -110,6 +110,20 @@ export interface InputSlot {
   required?: boolean;
 }
 
+/** Run-time meaning assigned to the primary file-system selection. */
+export type InputInterpretation =
+  | "document"
+  | "latex_project"
+  | "source_tree"
+  | "batch";
+
+/** One primary selection may contain several paths when it represents a batch. */
+export interface PrimaryInputSelection {
+  paths: string[];
+  interpretation: InputInterpretation;
+  selectionKind: "file" | "folder";
+}
+
 /** Per-profile extraction configuration. Parser tuning lives in global Settings. */
 export interface ExtractionConfig {
   /** "" | "auto" | "llm" | "paddleocr-vl-full" | "pdftotext". "marker" is legacy/unavailable. */
@@ -201,6 +215,8 @@ export interface StepCallRecord {
   model_policy?: string;
   model_source?: string;
   model_catalog_updated_at?: string;
+  /** Resolved reasoning-effort setting requested for this call. */
+  effort?: string;
   duration_secs?: number;
   input_tokens?: number;
   output_tokens?: number;
@@ -330,6 +346,7 @@ export interface RunSummary {
   input_name: string;
   input_path: string;
   input_mode: string;
+  input_interpretation?: string;
   profile_id: string;
   profile_name: string;
   provider: string;
@@ -365,19 +382,6 @@ export interface BatchJob {
   duration_secs: number;
   profile_id?: string;
   profile_snapshot_id?: string;
-}
-
-/** Mirrors commands::WatchStatus. */
-export interface WatchStatus {
-  active: boolean;
-  paused?: boolean;
-  error?: string | null;
-  folder: string;
-  profile_id?: string;
-  profile_snapshot_id?: string;
-  processed: BatchJob[];
-  processed_total: number;
-  failed_total: number;
 }
 
 export interface PipelineResult {

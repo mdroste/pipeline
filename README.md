@@ -160,10 +160,13 @@ once per file matching a glob, with `{item}` bound to each file).
 Custom profiles can be created, exported, imported from a file or a URL, and shared.
 Settings and profiles are stored in `~/.pipeline/`.
 
-## Batch and watch
+## Batch inputs
 
-The **Batch** panel runs the active profile over many papers, or a whole folder, 
-one at a time. **Watch a folder** does the same automatically as files are added. 
+On **New run**, select several documents—or select a folder and declare it a
+**Batch of documents**—to run the active profile over each document, one at a
+time. The same input control can declare a folder to be one LaTeX paper or a
+browsable source tree; Pipeline no longer infers that semantic choice from the
+path alone.
 A separate **run history** lets you reopen, re-run (reusing prior work), compare, 
 and annotate past runs.
 

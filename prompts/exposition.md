@@ -10,7 +10,7 @@ You have an orientation map (JSON) that inventories the paper's structure, state
 Flag symbols used before they are defined, defined differently in different places, or departing from field conventions without justification. Quote the specific passage.
 
 ### Buried key information
-Is the main result clearly stated within the first two pages? If not, where does it first appear and what stands in the way? Is essential information buried in an appendix while secondary material occupies the main text?
+Does the introduction state the central question, main result, mechanism, and scope before asking the reader to absorb the technical setup? If not, identify what is missing, where it first appears, and what stands in the way. Judge the sequencing in light of the paper's complexity rather than applying a fixed page-count rule. Is essential information buried in an appendix while secondary material occupies the main text?
 
 ### Framing vs. content mismatch
 Does the introduction frame the paper as doing X while the body actually does Y? Are terms defined one way but used another? Quote the conflicting passages.

@@ -35,7 +35,7 @@ describe("BatchPanel profile semantics", () => {
 
   it("shows a preloaded active workflow while status synchronization continues", () => {
     invoke.mockImplementation((command: string) => {
-      if (command === "get_batch_status" || command === "get_watch_status") {
+      if (command === "get_batch_status") {
         return new Promise(() => {});
       }
       return Promise.reject(new Error(`unexpected command: ${command}`));
@@ -57,9 +57,6 @@ describe("BatchPanel profile semantics", () => {
   it("collects and passes the full active profile options", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_watch_status") {
-        return Promise.resolve({ active: false, folder: "", processed: [], processed_total: 0, failed_total: 0 });
-      }
       if (command === "get_execution_plan") return Promise.resolve(setup());
       if (command === "start_batch") return Promise.resolve();
       return Promise.reject(new Error(`unexpected command: ${command}`));
@@ -90,9 +87,6 @@ describe("BatchPanel profile semantics", () => {
   it("surfaces a file-picker plugin failure without suggesting a setup retry", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_watch_status") {
-        return Promise.resolve({ active: false, folder: "", processed: [], processed_total: 0, failed_total: 0 });
-      }
       if (command === "get_execution_plan") return Promise.resolve(setup());
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
@@ -112,9 +106,6 @@ describe("BatchPanel profile semantics", () => {
   it("identifies the field when a named-input picker fails", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_watch_status") {
-        return Promise.resolve({ active: false, folder: "", processed: [], processed_total: 0, failed_total: 0 });
-      }
       if (command === "get_execution_plan") return Promise.resolve(setup());
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
@@ -133,9 +124,6 @@ describe("BatchPanel profile semantics", () => {
   it("preflights a PDF-capable representative when a mixed batch starts with DOCX", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_watch_status") {
-        return Promise.resolve({ active: false, folder: "", processed: [], processed_total: 0, failed_total: 0 });
-      }
       if (command === "get_execution_plan") return Promise.resolve(setup());
       if (command === "start_batch") return Promise.resolve();
       return Promise.reject(new Error(`unexpected command: ${command}`));
@@ -161,27 +149,23 @@ describe("BatchPanel profile semantics", () => {
   });
 
   it.each(["folder", "none"])(
-    "explicitly gates batch and watch for %s workflows",
+    "explicitly gates batch processing for %s workflows",
     async (inputMode) => {
       invoke.mockImplementation((command: string) => {
         if (command === "get_batch_status") return Promise.resolve([]);
-        if (command === "get_watch_status") {
-          return Promise.resolve({ active: false, folder: "", processed: [], processed_total: 0, failed_total: 0 });
-        }
         if (command === "get_execution_plan") return Promise.resolve(setup(inputMode));
         return Promise.reject(new Error(`unexpected command: ${command}`));
       });
       render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
 
       expect(
-        await screen.findByText("Batch and watch require a document-input workflow."),
+        await screen.findByText("Batch processing requires a document-input workflow."),
       ).toBeVisible();
       expect(screen.queryByRole("button", { name: "Add files…" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Watch folder…" })).not.toBeInTheDocument();
     },
   );
 
-  it("shows the exact captured profile and snapshot for batch and watch", async () => {
+  it("shows the exact captured profile and snapshot for a batch", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") {
         return Promise.resolve([{
@@ -195,44 +179,29 @@ describe("BatchPanel profile semantics", () => {
           profile_snapshot_id: "batch-snapshot-exact",
         }]);
       }
-      if (command === "get_watch_status") {
-        return Promise.resolve({
-          active: true,
-          folder: "/watch",
-          profile_id: "review",
-          profile_snapshot_id: "watch-snapshot-exact",
-          processed: [],
-          processed_total: 0,
-          failed_total: 0,
-        });
-      }
       if (command === "get_execution_plan") return Promise.resolve(setup());
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
     render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
 
     expect(await screen.findByText("batch-snapshot-exact")).toBeVisible();
-    expect(screen.getByText("watch-snapshot-exact")).toBeVisible();
-    expect(screen.getAllByText(/variables: Tone/).length).toBeGreaterThan(0);
-    expect(screen.queryByDisplayValue("neutral")).not.toBeInTheDocument();
+    expect(screen.getByText(/variables: Tone/)).toBeVisible();
   });
 
   it("cleans successful listeners and keeps mutations disabled after partial registration failure", async () => {
-    const cleanups = [vi.fn(), vi.fn(), vi.fn()];
+    const cleanups = [vi.fn(), vi.fn()];
     let registration = 0;
     listen.mockImplementation(() => {
       const index = registration++;
       return index === 1
-        ? Promise.reject(new Error("watch listener denied"))
+        ? Promise.reject(new Error("batch listener denied"))
         : Promise.resolve(cleanups[index]);
     });
     render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("watch listener denied");
+    expect(await screen.findByRole("alert")).toHaveTextContent("batch listener denied");
     expect(cleanups[0]).toHaveBeenCalledTimes(1);
-    expect(cleanups[2]).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Start batch (0)" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Watch folder…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Retry setup" })).toBeEnabled();
   });
 
@@ -240,9 +209,6 @@ describe("BatchPanel profile semantics", () => {
     let plans = 0;
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_watch_status") {
-        return Promise.resolve({ active: false, folder: "", processed: [], processed_total: 0, failed_total: 0 });
-      }
       if (command === "get_execution_plan") {
         plans += 1;
         return plans === 1
@@ -268,63 +234,4 @@ describe("BatchPanel profile semantics", () => {
     expect(invoke).not.toHaveBeenCalledWith("start_batch", expect.anything());
   });
 
-  it("shows when watching is paused or stopped by a terminal folder error", async () => {
-    invoke.mockImplementation((command: string) => {
-      if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_watch_status") {
-        return Promise.resolve({
-          active: true,
-          paused: true,
-          error: "Folder is no longer readable",
-          folder: "/watch",
-          processed: [],
-          processed_total: 0,
-          failed_total: 0,
-        });
-      }
-      if (command === "get_execution_plan") return Promise.resolve(setup());
-      return Promise.reject(new Error(`unexpected command: ${command}`));
-    });
-    render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
-
-    expect(await screen.findByText("Paused while another run is active.")).toBeVisible();
-    expect(screen.getByText(/Watch stopped: Folder is no longer readable/)).toBeVisible();
-  });
-
-  it("uses the authoritative stopped status instead of waiting for a later event", async () => {
-    const activeWatch = {
-      active: true,
-      paused: false,
-      error: null,
-      folder: "/watch",
-      profile_id: "review",
-      profile_snapshot_id: "watch-snapshot",
-      processed: [],
-      processed_total: 0,
-      failed_total: 0,
-    };
-    const stoppedWatch = {
-      ...activeWatch,
-      active: false,
-      folder: "",
-      profile_id: "",
-      profile_snapshot_id: "",
-    };
-    invoke.mockImplementation((command: string) => {
-      if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_watch_status") return Promise.resolve(activeWatch);
-      if (command === "get_execution_plan") return Promise.resolve(setup());
-      if (command === "stop_watch") return Promise.resolve(stoppedWatch);
-      return Promise.reject(new Error(`unexpected command: ${command}`));
-    });
-    const user = userEvent.setup();
-    render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
-
-    await user.click(await screen.findByRole("button", { name: "Stop watching" }));
-
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Watch folder…" })).toBeEnabled(),
-    );
-    expect(invoke).toHaveBeenCalledWith("stop_watch");
-  });
 });

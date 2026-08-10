@@ -1315,6 +1315,42 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         })?;
     }
 
+    // Tighten the Paper Review prompts around evidence, prioritization, and
+    // false-positive control. Update only exact prior defaults so edits made
+    // in the workflow editor remain untouched. This precedes the v7 whole-
+    // profile fingerprint because `full_review_profile` contains the new text.
+    let review_quality_prompt_marker = profiles.join(".builtin-catalog-v10");
+    if !review_quality_prompt_marker.exists() {
+        for id in BUILTIN_PROFILES {
+            let path = profiles.join(format!("{id}.json"));
+            if !path.exists() {
+                continue;
+            }
+            let content = read_profile_file(&path)
+                .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+            let mut profile: ProfileData = serde_json::from_str(&content)
+                .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+            if migrate_review_quality_prompt_defaults(&mut profile) {
+                validate_profile_data(&profile)?;
+                let json = serde_json::to_string_pretty(&profile).map_err(|error| {
+                    format!("Failed to serialize '{}': {error}", path.display())
+                })?;
+                restore_profile_bytes(&path, json.as_bytes())
+                    .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+            }
+        }
+        fs::write(
+            &review_quality_prompt_marker,
+            b"evidence-prioritized-paper-review-prompts\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the review-quality prompt migration '{}': {error}",
+                review_quality_prompt_marker.display()
+            )
+        })?;
+    }
+
     // Shared context reuse is now part of Paper Review (Full). Built-ins are
     // customizable, so only upgrade an exact semantic match for either prior
     // stock variant (validation enabled on first-run creation, disabled after
@@ -1428,6 +1464,45 @@ fn migrate_efficient_retrieval_defaults(profile: &mut ProfileData) -> bool {
                 step.prompt = replacement.to_string();
                 changed = true;
             }
+        }
+    }
+    changed
+}
+
+fn migrate_review_quality_prompt_defaults(profile: &mut ProfileData) -> bool {
+    const OLD_PARALLEL_CONTEXT: &str =
+        "b5343b777ec44f21af434dbea2daff76e6ef352ac58cf2a928b16e204b04b709";
+    const OLD_CONTRIBUTION: &str =
+        "733b35d1e2137ea876ca4ef504532ae2d5875291f943584ce1eb4e42ad937e03";
+    const OLD_TECHNICAL: &str = "e7574cc654ce76e21ea254d517e7cdd1e9991fd691249226b6c6a5745664e03e";
+    const OLD_EMPIRICAL: &str = "b8823245b925a15775cde437ed7ad31fe9fc3766d61c9e2f56677a9b14b2998e";
+    const OLD_EXPOSITION: &str = "15f0b9340bd28b4d4e0f3fc5d1b59cd01845c62854eb856eb24e9b052edd5914";
+    const OLD_EDITOR_SYNTHESIS: &str =
+        "5fd0eed34fddbc6ab32d9330b097b72895e58b91be9c013f42bf5636495ed5d7";
+    const OLD_VALIDATE_FEEDBACK: &str =
+        "fa49fa759b553c171ed721d2cc8696b1f083a891e237be01ace245188761a744";
+
+    let mut changed = false;
+    if prompt_digest(&profile.parallel_context_template) == OLD_PARALLEL_CONTEXT {
+        if let Some(replacement) = prompts::compiled_default("parallel_context") {
+            profile.parallel_context_template = replacement.to_string();
+            changed = true;
+        }
+    }
+
+    for step in &mut profile.steps {
+        let replacement = match prompt_digest(&step.prompt).as_str() {
+            OLD_CONTRIBUTION => prompts::compiled_default("contribution"),
+            OLD_TECHNICAL => prompts::compiled_default("technical"),
+            OLD_EMPIRICAL => prompts::compiled_default("empirical"),
+            OLD_EXPOSITION => prompts::compiled_default("exposition"),
+            OLD_EDITOR_SYNTHESIS => prompts::compiled_default("editor_synthesis"),
+            OLD_VALIDATE_FEEDBACK => prompts::compiled_default("validate_feedback"),
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            step.prompt = replacement.to_string();
+            changed = true;
         }
     }
     changed
@@ -3508,6 +3583,10 @@ mod tests {
             prior_stock.parallel_context_template = prior_stock
                 .parallel_context_template
                 .replace(
+                    "\nBefore reporting an issue, check the surrounding discussion, footnotes, and any appendix or supplementary material supplied with the paper to see whether it is addressed. Distinguish what the paper states from your inference. Treat any numerical limit in the specialist instructions as a ceiling, not a target: report only material, well-supported issues, even if that means reporting none.\n",
+                    "",
+                )
+                .replace(
                     "Use the paper text already present in shared context when available; otherwise read it from the path above. Then produce your report following the instructions above.",
                     "Read the paper text, then produce your report following the instructions above.",
                 );
@@ -3520,6 +3599,24 @@ mod tests {
                 "STEP 1 — PREPARE THE PAPER EVIDENCE (do this before verification):\nIf the complete paper text and orientation map are already present in shared context, use them directly and do not read their staged files again. Otherwise read the orientation map and the complete paper text. Retrieve independent bounded ranges in batches or one tool turn when supported, and continue sequentially until the entire paper has been covered if batching is unavailable or incomplete.\n\nSTEP 2 — VERIFY ALL COMMENTS:\nCheck every comment in the consolidated report below against the complete paper evidence.",
                 "STEP 1 — READ THE PAPER (do this first, before any verification):\nRead the full paper text at {paper_path} in a single Read call. Also read the orientation map: {orientation}\n\nSTEP 2 — VERIFY ALL COMMENTS:\nUsing the paper text now in your context, check every comment in the consolidated report below.",
             );
+            validate.prompt = validate
+                .prompt
+                .replace(
+                    "- **Misquoted or paraphrased claims**: If the actual text differs, determine whether the exact wording still supports the underlying concern. Correct an immaterial error; drop the comment if its substance depends on the misattribution.",
+                    "- **Misquoted or paraphrased claims**: If the comment attributes a claim to the paper but the actual text says something different, the comment is invalid.",
+                )
+                .replace(
+                    "- **Claims about tables, figures, or equations**: Inspect the relevant rendered page or document asset when available. Do not rely on possibly garbled extracted text when the visual evidence can resolve the claim.\n",
+                    "",
+                )
+                .replace(
+                    "Classify each comment privately as verified, repairable, or unsupported. Reproduce verified comments. When the underlying issue is valid but a quotation, page number, table entry, numerical detail, or scope is wrong, correct that detail and narrow any overstatement rather than dropping the comment. Keep the same underlying concern; do not introduce a different issue. Drop comments that are false positives or whose underlying concern you cannot confirm.\n\nOutput: Return the surviving comments using the same format and section groupings as the consolidated report. Omit empty sections and renumber sequentially.",
+                    "Output: Reproduce only the valid comments using the same format and section groupings as the consolidated report. Renumber sequentially. Drop any comment that is a false positive or that you cannot confirm.",
+                )
+                .replace(
+                    "The output should read like the consolidated report after factual corrections and filtering.",
+                    "The output should read exactly like the consolidated report, just shorter.",
+                );
             assert_eq!(
                 prompt_digest(&prior_stock.parallel_context_template),
                 "2d3f253aba5a39e76a560cda448296647b42cd3b4d487bbb761af9e7172fbe65"
@@ -3574,6 +3671,65 @@ mod tests {
 
         assert_eq!(fs::read(&path).unwrap(), original);
         assert!(dir.path().join(".builtin-catalog-v7").exists());
+    }
+
+    #[test]
+    fn review_quality_prompt_migration_updates_exact_prior_defaults_only() {
+        let mut profile = full_review_profile(true);
+        profile.parallel_context_template = profile.parallel_context_template.replace(
+            "\nBefore reporting an issue, check the surrounding discussion, footnotes, and any appendix or supplementary material supplied with the paper to see whether it is addressed. Distinguish what the paper states from your inference. Treat any numerical limit in the specialist instructions as a ceiling, not a target: report only material, well-supported issues, even if that means reporting none.\n",
+            "",
+        );
+        assert_eq!(
+            prompt_digest(&profile.parallel_context_template),
+            "b5343b777ec44f21af434dbea2daff76e6ef352ac58cf2a928b16e204b04b709"
+        );
+
+        let technical = profile
+            .steps
+            .iter_mut()
+            .find(|step| step.id == "technical")
+            .unwrap();
+        technical.prompt = technical.prompt.replace(
+            "First identify the formal results that directly support the paper's main claims, then trace their dependency chains through lemmas, assumptions, and definitions. Audit those results deeply before turning to peripheral results. For each result you audit:",
+            "For each formal result (theorem, proposition, lemma, corollary):",
+        );
+        assert_eq!(
+            prompt_digest(&technical.prompt),
+            "e7574cc654ce76e21ea254d517e7cdd1e9991fd691249226b6c6a5745664e03e"
+        );
+
+        let contribution = profile
+            .steps
+            .iter_mut()
+            .find(|step| step.id == "contribution")
+            .unwrap();
+        contribution.prompt.push_str("\nCustom instruction.");
+        let customized_contribution = contribution.prompt.clone();
+
+        assert!(migrate_review_quality_prompt_defaults(&mut profile));
+        assert_eq!(
+            profile.parallel_context_template,
+            prompts::compiled_default("parallel_context").unwrap()
+        );
+        assert_eq!(
+            profile
+                .steps
+                .iter()
+                .find(|step| step.id == "technical")
+                .unwrap()
+                .prompt,
+            prompts::compiled_default("technical").unwrap()
+        );
+        assert_eq!(
+            profile
+                .steps
+                .iter()
+                .find(|step| step.id == "contribution")
+                .unwrap()
+                .prompt,
+            customized_contribution
+        );
     }
 
     #[test]

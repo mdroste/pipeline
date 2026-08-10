@@ -1,8 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
 import type { LlmRequestDetails, LogEntry, UsageState } from "../hooks/usePipeline";
-import type { ToolCallCounts } from "../lib/types";
 
 interface Props {
   logs: LogEntry[];
@@ -65,61 +62,16 @@ function freshInputTokens(usage: UsageState["total"]): number {
   return Math.max(0, usage.input - usage.cached - usage.cacheWrite);
 }
 
-function toolCallTotal(counts: ToolCallCounts): number {
-  return (
-    counts.text_file +
-    counts.image +
-    counts.web +
-    counts.shell_or_other +
-    counts.unknown
-  );
-}
-
-function toolCallBreakdown(counts: ToolCallCounts): string {
-  return [
-    counts.text_file > 0 ? `${fmtCount(counts.text_file)} text/file` : "",
-    counts.image > 0 ? `${fmtCount(counts.image)} image` : "",
-    counts.web > 0 ? `${fmtCount(counts.web)} web` : "",
-    counts.shell_or_other > 0
-      ? `${fmtCount(counts.shell_or_other)} shell/other`
-      : "",
-    counts.unknown > 0 ? `${fmtCount(counts.unknown)} unknown` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
-}
-
-function reportedActivity(usage: UsageState["total"]): string {
-  const tools = toolCallTotal(usage.toolCalls);
-  return [
-    usage.modelRoundTrips > 0
-      ? `${fmtCount(usage.modelRoundTrips)} reported model round trips`
-      : "",
-    tools > 0
-      ? `${fmtCount(tools)} reported tool calls (${toolCallBreakdown(usage.toolCalls)})`
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" and ");
-}
-
-function hasReportedUsage(usage: UsageState["total"]): boolean {
-  return (
-    usage.input + usage.output > 0 ||
-    usage.modelRoundTrips > 0 ||
-    toolCallTotal(usage.toolCalls) > 0
-  );
+function hasTokenUsage(usage: UsageState["total"]): boolean {
+  return usage.input + usage.output > 0;
 }
 
 function usageDescription(usage: UsageState["total"]): string {
   const fresh = freshInputTokens(usage);
-  const activity = reportedActivity(usage);
   return [
     `Token usage: ${fmtCount(usage.input)} logical input tokens equals ${fmtCount(fresh)} fresh input tokens plus ${fmtCount(usage.cached)} cache-read tokens plus ${fmtCount(usage.cacheWrite)} cache-write tokens; ${fmtCount(usage.output)} output tokens.`,
-    activity ? `Model activity: ${activity}.` : "",
     "Cache reads and cache writes are subsets of logical input, not additional tokens.",
     "Fresh input equals logical input minus cache reads minus cache writes.",
-    "Model round trips and tool calls are shown only when the provider or CLI reports them; unknown tool kinds remain in the unknown bucket.",
     "For an API-equivalent dollar estimate, price fresh input, cache reads, cache writes, and output at their separate list rates; cache reads are discounted, not free.",
     "The completed report's Run summary calculates this estimate for recognized models.",
     "Only providers that report usage are included.",
@@ -305,7 +257,7 @@ function RequestDetails({
 
 /** The pipeline console: session filter, text search, level filter, timestamps,
  *  per-line copy, jump-to-error, auto-scroll that pauses when scrolled up, and
- *  copy/save of the visible lines. */
+ *  copy of the visible lines. */
 export default function Console({ logs, usage }: Props) {
   const [open, setOpen] = useState(true);
   const [height, setHeight] = useState(DEFAULT_CONSOLE_HEIGHT);
@@ -314,8 +266,6 @@ export default function Console({ logs, usage }: Props) {
   const [level, setLevel] = useState<LevelFilter>("all");
   const [showTimestamps, setShowTimestamps] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   // Auto-follow the tail unless the user scrolls up.
   const [follow, setFollow] = useState(true);
 
@@ -481,23 +431,6 @@ export default function Console({ logs, usage }: Props) {
     setTimeout(() => setCopied(false), 1500);
   }, [copyText, visibleText]);
 
-  const saveToFile = useCallback(async () => {
-    setSaveError(null);
-    try {
-      const path = await save({
-        defaultPath: "pipeline-console.log",
-        filters: [{ name: "Log", extensions: ["log", "txt"] }],
-      });
-      if (!path) return;
-      await invoke("save_text_file", { path, content: visibleText() });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setSaveError(`Could not save the console log: ${message}`);
-    }
-  }, [visibleText]);
-
   return (
     <div
       data-testid="console-panel"
@@ -555,9 +488,6 @@ export default function Console({ logs, usage }: Props) {
                 const tok = u
                   ? ` · ${fmtTokens(u.input)} logical input = ${fmtTokens(freshInputTokens(u))} fresh${cacheRead}${cacheWrite} → ${fmtTokens(u.output)} output`
                   : "";
-                const activity = u && reportedActivity(u)
-                  ? ` · ${reportedActivity(u)}`
-                  : "";
                 const request = s.request
                   ? ` · ${s.request.provider_label} ${s.request.transport.toUpperCase()} · ${s.request.model}`
                   : "";
@@ -567,8 +497,7 @@ export default function Console({ logs, usage }: Props) {
                       s.label +
                       request +
                       ` (${s.count})` +
-                      tok +
-                      activity}
+                      tok}
                   </option>
                 );
               })}
@@ -606,16 +535,7 @@ export default function Console({ logs, usage }: Props) {
         </div>
 
         <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
-          {saveError && (
-            <span
-              role="alert"
-              title={saveError}
-              className="max-w-64 truncate text-red-600 dark:text-red-400"
-            >
-              {saveError}
-            </span>
-          )}
-          {hasReportedUsage(usage.total) && (
+          {hasTokenUsage(usage.total) && (
             <span
               className="text-gray-500 dark:text-gray-400"
               aria-label={usageDescription(usage.total)}
@@ -640,12 +560,6 @@ export default function Console({ logs, usage }: Props) {
               )}
               {" · "}
               {fmtTokens(usage.total.output)} output
-              {reportedActivity(usage.total) && (
-                <span className="text-violet-600 dark:text-violet-400">
-                  {" · "}
-                  {reportedActivity(usage.total)}
-                </span>
-              )}
             </span>
           )}
           {errorCount > 0 && (
@@ -678,14 +592,6 @@ export default function Console({ logs, usage }: Props) {
             title={activeSession === "master" ? "Copy all shown lines" : "Copy this session's lines"}
           >
             {copied ? "Copied ✓" : "Copy"}
-          </button>
-          <button
-            onClick={saveToFile}
-            disabled={visibleLogs.length === 0}
-            className="cursor-pointer rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 disabled:cursor-default disabled:opacity-40 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-            title="Save shown lines to a file"
-          >
-            {saved ? "Saved ✓" : "Save"}
           </button>
         </div>
       </div>

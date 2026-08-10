@@ -17,6 +17,12 @@ export interface ProviderModelUsage extends UsageTotals {
   provider: string;
   model: string;
   transports: string[];
+  efforts: string[];
+}
+
+export interface StepModelUsage extends ProviderModelUsage {
+  step_id: string;
+  step_label: string;
 }
 
 export interface ProvenanceManifest {
@@ -41,6 +47,7 @@ export interface RunProvenance {
   run_id: string;
   status: string;
   usage: ProviderModelUsage[];
+  step_usage: StepModelUsage[];
   totals: UsageTotals;
   usage_matches_total: boolean;
   provider_summary: string;
@@ -79,7 +86,7 @@ function displayProvider(value: string): string {
 function usageIdentity(
   step: StepOutput,
   call?: StepCallRecord,
-): { provider: string; model: string; transport: string } {
+): { provider: string; model: string; transport: string; effort: string } {
   const provider =
     call?.provider?.trim() ||
     call?.agent?.trim() ||
@@ -90,6 +97,7 @@ function usageIdentity(
     provider: displayProvider(provider),
     model: call?.model?.trim() || step.model?.trim() || "Automatic",
     transport: call?.model_transport?.trim() || step.model_transport?.trim() || "",
+    effort: call?.effort?.trim() || "",
   };
 }
 
@@ -103,7 +111,7 @@ export function aggregateProviderModelUsage(
 ): ProviderModelUsage[] {
   const groups = new Map<
     string,
-    ProviderModelUsage & { transportSet: Set<string> }
+    ProviderModelUsage & { transportSet: Set<string>; effortSet: Set<string> }
   >();
 
   for (const step of report.step_outputs) {
@@ -119,19 +127,74 @@ export function aggregateProviderModelUsage(
           provider: identity.provider,
           model: identity.model,
           transports: [],
+          efforts: [],
           transportSet: new Set<string>(),
+          effortSet: new Set<string>(),
           ...ZERO_USAGE,
         };
         groups.set(key, group);
       }
       addUsage(group, call ?? step);
       if (identity.transport) group.transportSet.add(identity.transport.toUpperCase());
+      if (identity.effort) group.effortSet.add(identity.effort);
     }
   }
 
-  return Array.from(groups.values()).map(({ transportSet, ...group }) => ({
+  return Array.from(groups.values()).map(({ transportSet, effortSet, ...group }) => ({
     ...group,
     transports: Array.from(transportSet),
+    efforts: Array.from(effortSet),
+  }));
+}
+
+/**
+ * Attribute token records to each saved step and provider/model pair. This is
+ * intentionally separate from the run-wide provider/model aggregation: the
+ * latter remains useful for compact summaries, while this preserves the step
+ * boundary needed by the provenance table.
+ */
+export function aggregateStepModelUsage(report: PipelineReport): StepModelUsage[] {
+  const groups = new Map<
+    string,
+    StepModelUsage & { transportSet: Set<string>; effortSet: Set<string> }
+  >();
+
+  for (const step of report.step_outputs) {
+    const records: Array<StepCallRecord | undefined> = step.calls?.length
+      ? step.calls
+      : [undefined];
+    for (const call of records) {
+      const identity = usageIdentity(step, call);
+      const key = [
+        step.step_id.toLocaleLowerCase(),
+        identity.provider.toLocaleLowerCase(),
+        identity.model.toLocaleLowerCase(),
+      ].join("\u0000");
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          step_id: step.step_id,
+          step_label: step.step_label || step.step_id,
+          provider: identity.provider,
+          model: identity.model,
+          transports: [],
+          efforts: [],
+          transportSet: new Set<string>(),
+          effortSet: new Set<string>(),
+          ...ZERO_USAGE,
+        };
+        groups.set(key, group);
+      }
+      addUsage(group, call ?? step);
+      if (identity.transport) group.transportSet.add(identity.transport.toUpperCase());
+      if (identity.effort) group.effortSet.add(identity.effort);
+    }
+  }
+
+  return Array.from(groups.values()).map(({ transportSet, effortSet, ...group }) => ({
+    ...group,
+    transports: Array.from(transportSet),
+    efforts: Array.from(effortSet),
   }));
 }
 
@@ -190,6 +253,7 @@ export function buildRunProvenance({
 }): RunProvenance {
   const paper = isPaperOrientation(report.orientation) ? report.orientation : null;
   const usage = aggregateProviderModelUsage(report);
+  const stepUsage = aggregateStepModelUsage(report);
   const attributedTotals = totalsForRows(usage);
   const totals = authoritativeTotals(summary, manifest) ?? attributedTotals;
   const fallbackProvider = summary?.provider || manifest?.provider || "Default";
@@ -226,6 +290,7 @@ export function buildRunProvenance({
       manifest?.status ||
       (report.failed_steps?.length ? "partial" : "done"),
     usage,
+    step_usage: stepUsage,
     totals,
     usage_matches_total: sameUsage(attributedTotals, totals),
     provider_summary: providers.join(", ") || "Default",
@@ -266,67 +331,38 @@ function escapeMarkdown(value: string): string {
     .trim();
 }
 
-/** Build the self-contained masthead prepended to the PDF export. */
-export function provenanceMarkdown(provenance: RunProvenance): string {
-  const lines = [
-    "# Referee report",
-    "",
-    `Review of **${escapeMarkdown(provenance.subject)}**`,
-  ];
-  if (provenance.authors.length) {
-    lines.push("", `Authors: ${escapeMarkdown(provenance.authors.join(", "))}`);
-  }
-  lines.push(
-    "",
-    "## Run provenance",
-    "",
-    "| Workflow | Completed | Duration | Run |",
-    "| --- | --- | ---: | --- |",
-    `| ${escapeMarkdown(provenance.workflow)} | ${escapeMarkdown(formatRunDate(provenance.completed))} | ${formatRunDuration(provenance.duration_secs)} | ${escapeMarkdown(provenance.run_id || "Unsaved")} |`,
-    "",
-  );
+function modelUsageLabel(row: ProviderModelUsage): string {
+  const transport = row.transports.length ? ` (${row.transports.join(" + ")})` : "";
+  const effort = row.efforts.length ? row.efforts.join(" + ") : "not recorded";
+  return `${row.provider}${transport} / ${row.model} / effort ${effort}`;
+}
 
-  const showCacheWrite = provenance.totals.cache_write_input_tokens > 0;
-  const usageHeader = showCacheWrite
-    ? "| Provider | Model | Input | Output | Cached input | Cache write |"
-    : "| Provider | Model | Input | Output | Cached input |";
-  const usageRule = showCacheWrite
-    ? "| --- | --- | ---: | ---: | ---: | ---: |"
-    : "| --- | --- | ---: | ---: | ---: |";
-  lines.push(usageHeader, usageRule);
-  for (const row of provenance.usage) {
-    const transport = row.transports.length ? ` (${row.transports.join(" + ")})` : "";
-    const cells = [
-      escapeMarkdown(`${row.provider}${transport}`),
-      escapeMarkdown(row.model),
-      formatTokens(row.input_tokens),
-      formatTokens(row.output_tokens),
-      formatTokens(row.cached_input_tokens),
-    ];
-    if (showCacheWrite) cells.push(formatTokens(row.cache_write_input_tokens));
-    lines.push(`| ${cells.join(" | ")} |`);
-  }
-  if (!provenance.usage.length) {
-    const cells = ["Not reported", "Not reported", "0", "0", "0"];
-    if (showCacheWrite) cells.push("0");
-    lines.push(`| ${cells.join(" | ")} |`);
-  }
-  const totalCells = [
-    "**Run total**",
-    "",
-    `**${formatTokens(provenance.totals.input_tokens)}**`,
-    `**${formatTokens(provenance.totals.output_tokens)}**`,
-    `**${formatTokens(provenance.totals.cached_input_tokens)}**`,
+function tokenSummary(provenance: RunProvenance): string {
+  const parts = [
+    `${formatTokens(provenance.totals.input_tokens)} input`,
+    `${formatTokens(provenance.totals.output_tokens)} output`,
+    `${formatTokens(provenance.totals.cached_input_tokens)} cached`,
   ];
-  if (showCacheWrite) {
-    totalCells.push(`**${formatTokens(provenance.totals.cache_write_input_tokens)}**`);
+  if (provenance.totals.cache_write_input_tokens > 0) {
+    parts.push(`${formatTokens(provenance.totals.cache_write_input_tokens)} cache write`);
   }
-  lines.push(`| ${totalCells.join(" | ")} |`);
-  if (!provenance.usage_matches_total) {
-    lines.push(
-      "",
-      "_The run total includes setup calls not attached to a saved report step, or reused step provenance from an earlier run._",
-    );
-  }
-  return lines.join("\n");
+  return parts.join(" · ");
+}
+
+/** Build the compact provenance block prepended to the PDF export. */
+export function provenanceMarkdown(provenance: RunProvenance): string {
+  const modelSummary = provenance.usage.length
+    ? provenance.usage.map(modelUsageLabel).join("; ")
+    : `${provenance.provider_summary} / ${provenance.model_summary} / effort not recorded`;
+  return [
+    "# Pipeline",
+    "",
+    `**Document:** ${escapeMarkdown(provenance.subject)}`,
+    "",
+    `**Workflow:** ${escapeMarkdown(provenance.workflow)}`,
+    "",
+    `**Token usage:** ${escapeMarkdown(tokenSummary(provenance))}`,
+    "",
+    `**Models / providers:** ${escapeMarkdown(modelSummary)}`,
+  ].join("\n");
 }

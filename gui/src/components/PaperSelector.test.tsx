@@ -24,16 +24,28 @@ describe("PaperSelector", () => {
 
   it("calls onPathChange with the chosen file and displays its basename", async () => {
     const onPathChange = vi.fn();
+    const onSelectionChange = vi.fn();
     openDialog.mockResolvedValueOnce("/papers/example/draft.pdf");
 
-    render(<PaperSelector onPathChange={onPathChange} disabled={false} />);
+    render(
+      <PaperSelector
+        onPathChange={onPathChange}
+        onSelectionChange={onSelectionChange}
+        disabled={false}
+      />,
+    );
     await userEvent.setup().click(screen.getByRole("button", { name: /select file/i }));
 
     expect(openDialog).toHaveBeenCalledWith({
-      multiple: false,
+      multiple: true,
       filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }],
     });
     expect(onPathChange).toHaveBeenCalledWith("/papers/example/draft.pdf");
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      paths: ["/papers/example/draft.pdf"],
+      interpretation: "document",
+      selectionKind: "file",
+    });
     expect(screen.getByRole("button", { name: "draft.pdf" })).toBeInTheDocument();
     expect(screen.getByText("/papers/example/draft.pdf")).toBeInTheDocument();
   });
@@ -53,12 +65,60 @@ describe("PaperSelector", () => {
     const onPathChange = vi.fn();
     render(<PaperSelector onPathChange={onPathChange} disabled={false} />);
 
-    // The folder button has title="Select LaTeX project folder".
-    const folderBtn = screen.getByTitle("Select LaTeX project folder");
+    const folderBtn = screen.getByTitle("Select folder");
     await userEvent.setup().click(folderBtn);
 
     expect(openDialog).toHaveBeenCalledWith({ directory: true, multiple: false });
     expect(onPathChange).toHaveBeenCalledWith("/papers/latex-project");
+    expect(screen.getByRole("combobox", { name: "Input interpretation" })).toHaveValue(
+      "latex_project",
+    );
+    expect(screen.queryByRole("option", { name: "Watch for new documents" })).not.toBeInTheDocument();
+  });
+
+  it("turns several selected files into an explicit batch", async () => {
+    const onSelectionChange = vi.fn();
+    openDialog.mockResolvedValueOnce(["/papers/a.pdf", "/papers/b.docx"]);
+    render(
+      <PaperSelector
+        onPathChange={() => {}}
+        onSelectionChange={onSelectionChange}
+        disabled={false}
+      />,
+    );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /select files/i }));
+
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      paths: ["/papers/a.pdf", "/papers/b.docx"],
+      interpretation: "batch",
+      selectionKind: "file",
+    });
+    expect(screen.getByRole("combobox", { name: "Input interpretation" })).toHaveValue("batch");
+  });
+
+  it("lets a selected folder be reinterpreted as a source tree", async () => {
+    const onSelectionChange = vi.fn();
+    openDialog.mockResolvedValueOnce("/papers/project");
+    render(
+      <PaperSelector
+        onPathChange={() => {}}
+        onSelectionChange={onSelectionChange}
+        disabled={false}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("Select folder"));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Input interpretation" }),
+      "source_tree",
+    );
+
+    expect(onSelectionChange).toHaveBeenLastCalledWith({
+      paths: ["/papers/project"],
+      interpretation: "source_tree",
+      selectionKind: "folder",
+    });
   });
 
   it("surfaces file picker failures while treating a resolved null as cancellation", async () => {

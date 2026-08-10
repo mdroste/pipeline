@@ -61,7 +61,7 @@ describe("ReportViewer", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("lists numbered report issues instead of section headings or math fragments", () => {
+  it("lists section headings and numbered report issues in document order", () => {
     const markdown = [
       "# Referee Report $ ^{*} $",
       "",
@@ -84,16 +84,18 @@ describe("ReportViewer", () => {
     const links = within(toc!).getAllByRole("link");
 
     expect(links.map((link) => link.textContent)).toEqual([
+      "Referee Report",
+      "Errors & Inconsistencies",
       "#1Euler equation omits the continuation value",
+      "Threats to the Main Results",
       "#2Instrument exclusion is not supported",
     ]);
-    expect(within(toc!).queryByText("Errors & Inconsistencies")).not.toBeInTheDocument();
     expect(toc).not.toHaveTextContent(/beta|u'|continuation value\}\$/);
-    expect(links[0]).toHaveAttribute(
+    expect(links[2]).toHaveAttribute(
       "href",
       "#issue-1-euler-equation-omits-the-continuation-value",
     );
-    expect(document.querySelector(links[0].getAttribute("href")!)).not.toBeNull();
+    expect(document.querySelector(links[2].getAttribute("href")!)).not.toBeNull();
   });
 
   it("uses unique Unicode heading IDs shared by the TOC and rendered headings", () => {
@@ -190,6 +192,50 @@ describe("ReportViewer", () => {
       }),
     ).toHaveAttribute("href", "#strategic-complementarities-in-posted-wages");
     expect(toc).not.toHaveTextContent(/\^\{|\$\s*\^/);
+  });
+
+  it("renders title math as readable TOC text instead of raw TeX", () => {
+    const markdown = [
+      "# Report",
+      "",
+      "## $x_t = \\beta x_{t-1}$",
+      "",
+      "## y_t = \\rho y_{t-1} + \\varepsilon_t",
+      "",
+      "## Identification under $\\gamma^w \\neq \\gamma$",
+      "",
+      "**#1. The restriction $x_t = \\beta x_{t-1}$ is unsupported**",
+      "",
+      "## Calibration",
+      "",
+      "**#2. The value $0.106$ is mislabeled**",
+    ].join("\n");
+
+    render(<ReportViewer markdown={markdown} />);
+    const toc = screen.getByText("Contents").closest("nav");
+    expect(toc).not.toBeNull();
+    const tocQueries = within(toc!);
+
+    expect(
+      tocQueries.getByRole("link", {
+        name: "Identification under γ^w ≠ γ",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      tocQueries.getByRole("link", {
+        name: "#1The restriction x_t = β x_(t-1) is unsupported",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      tocQueries.getByRole("link", {
+        name: "#2The value 0.106 is mislabeled",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      tocQueries.queryByRole("link", { name: "x_t = β x_(t-1)" }),
+    ).not.toBeInTheDocument();
+    expect(toc).not.toHaveTextContent(/y_t|rho|varepsilon/);
+    expect(toc).not.toHaveTextContent(/\$|\\(?:gamma|neq|beta)|[{}]/);
   });
 
   it("removes raw HTML wrappers from report content while preserving their text", () => {

@@ -84,6 +84,7 @@ pub fn run() {
             commands::cancel_pass,
             commands::get_run_manifest,
             commands::read_artifact,
+            commands::read_pdf_artifact_page,
             commands::read_page_artifact,
             commands::list_runs,
             commands::get_run_report,
@@ -99,9 +100,6 @@ pub fn run() {
             commands::get_batch_status,
             commands::cancel_batch,
             commands::list_input_files,
-            commands::start_watch,
-            commands::stop_watch,
-            commands::get_watch_status,
             // Resume / partial re-run
             commands::rerun_run,
             // Annotations

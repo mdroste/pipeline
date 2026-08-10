@@ -45,6 +45,7 @@ fn call_records_for_output(output: &StepOutput) -> Vec<StepCallRecord> {
         model_policy: output.model_policy.clone(),
         model_source: output.model_source.clone(),
         model_catalog_updated_at: output.model_catalog_updated_at.clone(),
+        effort: String::new(),
         duration_secs: output.duration_secs,
         input_tokens: output.input_tokens,
         output_tokens: output.output_tokens,
@@ -292,6 +293,11 @@ pub async fn merge_step_outputs(
                 model_policy: resolution.selection.label(),
                 model_source: resolution.source.clone(),
                 model_catalog_updated_at: resolution.catalog_updated_at.clone(),
+                effort: if effort.trim().is_empty() {
+                    "default".to_string()
+                } else {
+                    effort.clone()
+                },
                 duration_secs: call.duration_secs,
                 input_tokens: call.usage.input_tokens,
                 output_tokens: call.usage.output_tokens,

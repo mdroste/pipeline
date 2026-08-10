@@ -6,7 +6,7 @@ You have an orientation map (JSON) that inventories all formal results, their pr
 
 ## How to reason
 
-For each formal result (theorem, proposition, lemma, corollary):
+First identify the formal results that directly support the paper's main claims, then trace their dependency chains through lemmas, assumptions, and definitions. Audit those results deeply before turning to peripheral results. For each result you audit:
 
 1. Read the statement and its proof in full.
 2. Identify the key steps. For each non-trivial step, work through the algebra or logic yourself.

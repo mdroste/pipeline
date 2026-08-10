@@ -591,6 +591,18 @@ pub struct ExecutionPlanStage {
     pub kind: String,
     pub label: String,
     pub step_ids: Vec<String>,
+    pub step_labels: Vec<String>,
+}
+
+/// Human-facing work item for the input-preparation stage. The selected
+/// container and its declared interpretation are distinct, so a folder used
+/// as a source tree must not be described as a document bundle.
+pub fn input_processing_label(input_interpretation: &str) -> &'static str {
+    match input_interpretation.trim() {
+        "source_tree" => "Creating source-tree inventory",
+        "none" => "Preparing workflow context",
+        _ => "Creating document bundle",
+    }
 }
 
 /// Simulate the exact readiness scheduler used by [`execute_steps`] without
@@ -600,19 +612,17 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
     let mut plan = vec![ExecutionPlanStage {
         id: "extracting".to_string(),
         kind: "extracting".to_string(),
-        label: if config.extraction.input_mode == "none" {
-            "Prepare run".to_string()
-        } else {
-            "Extract input".to_string()
-        },
+        label: input_processing_label(&config.extraction.input_mode).to_string(),
         step_ids: Vec::new(),
+        step_labels: Vec::new(),
     }];
     if config.use_orientation {
         plan.push(ExecutionPlanStage {
             id: "orienting".to_string(),
             kind: "orienting".to_string(),
-            label: "Build orientation map".to_string(),
+            label: "Creating orientation map".to_string(),
             step_ids: Vec::new(),
+            step_labels: Vec::new(),
         });
     }
 
@@ -650,8 +660,12 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
             plan.push(ExecutionPlanStage {
                 id: format!("wave-{schedule_index}-parallel"),
                 kind: "dispatching".to_string(),
-                label: format!("Parallel wave {parallel_number}"),
+                label: "Parallel agent wave".to_string(),
                 step_ids: wave_steps.iter().map(|step| step.id.clone()).collect(),
+                step_labels: wave_steps
+                    .iter()
+                    .map(|step| step.label.clone())
+                    .collect(),
             });
             let merged_step_ids = wave_steps
                 .iter()
@@ -664,6 +678,11 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
                     kind: "merging".to_string(),
                     label: format!("Merge parallel wave {parallel_number}"),
                     step_ids: merged_step_ids,
+                    step_labels: wave_steps
+                        .iter()
+                        .filter(|step| step.agents.len() > 1)
+                        .map(|step| step.label.clone())
+                        .collect(),
                 });
             }
             mark_steps_done(&mut done, &wave_steps);
@@ -677,12 +696,13 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
         plan.push(ExecutionPlanStage {
             id: format!("wave-{schedule_index}-sequential"),
             kind: "synthesizing".to_string(),
-            label: if step.label.is_empty() {
+            label: "Sequential agent wave".to_string(),
+            step_ids: vec![step.id.clone()],
+            step_labels: vec![if step.label.is_empty() {
                 format!("Sequential step {sequential_number}")
             } else {
                 step.label.clone()
-            },
-            step_ids: vec![step.id.clone()],
+            }],
         });
         done.insert(step.id.clone());
         remaining.retain(|candidate| *candidate != index);
@@ -692,6 +712,7 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
         kind: "done".to_string(),
         label: "Complete".to_string(),
         step_ids: Vec::new(),
+        step_labels: Vec::new(),
     });
     Ok(plan)
 }
@@ -760,15 +781,24 @@ pub async fn execute_steps(
         if !ready_parallel.is_empty() {
             parallel_number += 1;
             let wave_id = format!("wave-{schedule_index}-parallel");
-            let wave_label = format!("Parallel wave {parallel_number}");
+            let wave_label = "Parallel agent wave";
             let wave_step_ids = ready_parallel
                 .iter()
                 .map(|index| enabled[*index].id.clone())
+                .collect::<Vec<_>>();
+            let wave_step_labels = ready_parallel
+                .iter()
+                .map(|index| enabled[*index].label.clone())
                 .collect::<Vec<_>>();
             let merged_step_ids = ready_parallel
                 .iter()
                 .filter(|index| enabled[**index].agents.len() > 1)
                 .map(|index| enabled[*index].id.clone())
+                .collect::<Vec<_>>();
+            let merged_step_labels = ready_parallel
+                .iter()
+                .filter(|index| enabled[**index].agents.len() > 1)
+                .map(|index| enabled[*index].label.clone())
                 .collect::<Vec<_>>();
             let planned_merge = config.merge.enabled && !merged_step_ids.is_empty();
             app.emit_event(
@@ -778,6 +808,7 @@ pub async fn execute_steps(
                     "id": wave_id,
                     "label": wave_label,
                     "stepIds": wave_step_ids,
+                    "stepLabels": wave_step_labels,
                 }),
             )
             .ok();
@@ -870,6 +901,7 @@ pub async fn execute_steps(
                             "id": format!("wave-{schedule_index}-merge"),
                             "label": format!("Merge parallel wave {parallel_number}"),
                             "stepIds": merged_step_ids,
+                            "stepLabels": merged_step_labels,
                             "skipped": !has_multi_agent,
                         }),
                     )
@@ -910,6 +942,7 @@ pub async fn execute_steps(
                         "id": format!("wave-{schedule_index}-merge"),
                         "label": format!("Merge parallel wave {parallel_number}"),
                         "stepIds": merged_step_ids,
+                        "stepLabels": merged_step_labels,
                         "skipped": true,
                     }),
                 )
@@ -928,12 +961,13 @@ pub async fn execute_steps(
             serde_json::json!({
                 "stage": "synthesizing",
                 "id": format!("wave-{schedule_index}-sequential"),
-                "label": if step.label.is_empty() {
+                "label": "Sequential agent wave",
+                "stepIds": [step.id.clone()],
+                "stepLabels": [if step.label.is_empty() {
                     format!("Sequential step {sequential_number}")
                 } else {
                     step.label.clone()
-                },
-                "stepIds": [step.id.clone()],
+                }],
             }),
         )
         .ok();
@@ -1687,6 +1721,7 @@ fn step_output(
     agent: &str,
     call: StepCallResult,
     resolution: &crate::model_catalog::ResolvedModel,
+    effort: &str,
 ) -> StepOutput {
     let call_record = crate::models::StepCallRecord {
         role: "step".to_string(),
@@ -1697,6 +1732,11 @@ fn step_output(
         model_policy: resolution.selection.label(),
         model_source: resolution.source.clone(),
         model_catalog_updated_at: resolution.catalog_updated_at.clone(),
+        effort: if effort.trim().is_empty() {
+            "default".to_string()
+        } else {
+            effort.to_string()
+        },
         duration_secs: call.duration_secs,
         input_tokens: call.usage.input_tokens,
         output_tokens: call.usage.output_tokens,
@@ -2129,6 +2169,7 @@ async fn run_parallel_wave(
                             &agent_name,
                             call,
                             &resolution,
+                            &effort_override,
                         );
                         output.merge_group = merge_group;
                         output.fan_out_item = fan_out_item;
@@ -2546,6 +2587,7 @@ async fn run_sequential_step(
         agent.unwrap_or(""),
         call,
         &resolution,
+        &effort,
     ))
 }
 

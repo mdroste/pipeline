@@ -1,13 +1,8 @@
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Console from "./Console";
 import type { LlmRequestDetails, LogEntry, UsageState } from "../hooks/usePipeline";
-
-const invoke = vi.hoisted(() => vi.fn());
-const save = vi.hoisted(() => vi.fn());
-vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save }));
 
 const NO_TOOL_CALLS = {
   text_file: 0,
@@ -58,11 +53,6 @@ const REQUEST: LlmRequestDetails = {
 };
 
 describe("Console", () => {
-  beforeEach(() => {
-    invoke.mockReset();
-    save.mockReset();
-  });
-
   it("renders all lines by default", () => {
     render(
       <Console
@@ -135,19 +125,6 @@ describe("Console", () => {
     expect(screen.queryByText("info line")).not.toBeInTheDocument();
     expect(screen.queryByText("WARNING: w")).not.toBeInTheDocument();
     expect(screen.getByText("ERROR: e")).toBeInTheDocument();
-  });
-
-  it("surfaces save-dialog failures instead of presenting them as cancellation", async () => {
-    save.mockRejectedValueOnce(new Error("dialog plugin unavailable"));
-    const user = userEvent.setup();
-    render(<Console logs={[log("hello")]} usage={EMPTY_USAGE} />);
-
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not save the console log: dialog plugin unavailable",
-    );
-    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("shows an error count that reflects the whole log, not the filter", () => {
@@ -302,16 +279,12 @@ describe("Console", () => {
     expect(selector).toHaveTextContent(
       "50k logical input = 2k fresh + 40k cache read + 8k cache write → 2k output",
     );
-    expect(selector).toHaveTextContent(
-      "7 reported model round trips and 7 reported tool calls",
-    );
-    const summary = screen.getByLabelText(/Model activity: 7 reported model round trips/);
-    expect(summary.getAttribute("title")).toContain(
-      "7 reported tool calls (3 text/file, 1 image, 2 web, 1 unknown)",
-    );
-    expect(summary.getAttribute("title")).toContain(
-      "unknown tool kinds remain in the unknown bucket",
-    );
+    expect(selector).not.toHaveTextContent("reported tool calls");
+    expect(selector).not.toHaveTextContent("reported model round trips");
+    const summary = screen.getByLabelText(/50,000 logical input tokens/);
+    expect(summary.getAttribute("title")).not.toContain("tool calls");
+    expect(summary.getAttribute("title")).not.toContain("model round trips");
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 
   it("labels bounded request fields when their previews are truncated", async () => {

@@ -13,7 +13,6 @@ type IconName =
   | "new"
   | "current"
   | "runs"
-  | "batch"
   | "workflows"
   | "help"
   | "settings";
@@ -61,15 +60,6 @@ function Icon({ name }: { name: IconName }) {
         <svg {...common}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 4.75h9M7.5 9.5h9M7.5 14.25h5.5" />
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 3.25h14a1.5 1.5 0 0 1 1.5 1.5v14.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V4.75A1.5 1.5 0 0 1 5 3.25Z" />
-        </svg>
-      );
-    case "batch":
-      return (
-        <svg {...common}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h11M8 12h11M8 17h11" />
-          <circle cx="4.5" cy="7" r=".75" fill="currentColor" stroke="none" />
-          <circle cx="4.5" cy="12" r=".75" fill="currentColor" stroke="none" />
-          <circle cx="4.5" cy="17" r=".75" fill="currentColor" stroke="none" />
         </svg>
       );
     case "workflows":
@@ -200,12 +190,6 @@ export default function NavRail({
           icon="runs"
           label="History"
           onClick={() => onNavigate("history")}
-        />
-        <RailButton
-          active={activePage === "batch"}
-          icon="batch"
-          label="Batch"
-          onClick={() => onNavigate("batch")}
         />
         <RailButton
           active={activePage === "pipeline"}

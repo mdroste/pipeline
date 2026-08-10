@@ -10,10 +10,10 @@
 //! ```
 //!
 //! The manifest is the frontend's source of truth: the artifact explorer
-//! never walks the filesystem, and all file bytes flow through
-//! `read_artifact` (one Tauri command with path validation and size caps)
-//! rather than file:// URLs — that keeps the viewer identical across
-//! WKWebView / WebView2 / WebKitGTK.
+//! never walks the filesystem. Source bytes flow through path-validated,
+//! size-capped Tauri commands; PDF artifacts cross the boundary only as
+//! derived page images. No viewer uses file:// URLs, keeping behavior
+//! consistent across WKWebView / WebView2 / WebKitGTK.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -47,7 +47,7 @@ pub struct ArtifactEntry {
     pub rel_path: String,
     /// Human-readable label for the explorer tree.
     pub label: String,
-    /// Detected kind: markdown | code | json | csv | image | text | binary.
+    /// Detected kind: markdown | code | json | csv | image | pdf | text | binary.
     pub kind: String,
     pub bytes: u64,
     /// First 16 hex chars of the SHA-256, matching the paper-hash style.
@@ -98,6 +98,10 @@ pub struct RunManifest {
     pub created: String,
     pub input_path: String,
     pub input_mode: String,
+    /// Explicit run-time meaning assigned to the primary selection. Empty on
+    /// manifests written before input interpretations were introduced.
+    #[serde(default)]
+    pub input_interpretation: String,
     pub profile_id: String,
     pub profile_name: String,
     pub provider: String,
@@ -151,6 +155,7 @@ pub struct RunManifest {
 pub struct RunFinishMeta {
     pub input_path: String,
     pub input_mode: String,
+    pub input_interpretation: String,
     pub profile_id: String,
     pub profile_name: String,
     pub provider: String,
@@ -175,6 +180,7 @@ pub struct RunSummary {
     pub input_name: String,
     pub input_path: String,
     pub input_mode: String,
+    pub input_interpretation: String,
     pub profile_id: String,
     pub profile_name: String,
     pub provider: String,
@@ -234,6 +240,7 @@ impl RunManifest {
             input_name: input_basename(&self.input_path),
             input_path: self.input_path.clone(),
             input_mode: self.input_mode.clone(),
+            input_interpretation: self.input_interpretation.clone(),
             profile_id: self.profile_id.clone(),
             profile_name: self.profile_name.clone(),
             provider: self.provider.clone(),
@@ -279,6 +286,15 @@ pub struct ArtifactContent {
     pub abs_path: String,
 }
 
+/// One PDF page rendered to an inline-safe JPEG for the artifact explorer.
+#[derive(Debug, Serialize)]
+pub struct PdfArtifactPage {
+    pub page: u32,
+    pub has_previous: bool,
+    pub has_next: bool,
+    pub base64: String,
+}
+
 pub fn runs_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
     let dir = home.join(".pipeline").join("runs");
@@ -318,7 +334,8 @@ pub fn detect_kind(rel_path: &str, head: &[u8]) -> &'static str {
         | "h" | "hpp" | "java" | "go" | "rb" | "sh" | "sql" | "tex" | "bib" | "toml" | "yaml"
         | "yml" | "html" | "css" | "m" | "f90" | "sas" | "stan" => "code",
         "txt" | "log" => "text",
-        "pdf" | "zip" | "gz" | "xlsx" | "docx" | "pptx" | "dta" | "rds" | "parquet" => "binary",
+        "pdf" => "pdf",
+        "zip" | "gz" | "xlsx" | "docx" | "pptx" | "dta" | "rds" | "parquet" => "binary",
         _ => {
             if head.contains(&0) {
                 "binary"
@@ -743,6 +760,7 @@ impl RunWriter {
             created: self.created.clone(),
             input_path: self.meta.input_path.clone(),
             input_mode: self.meta.input_mode.clone(),
+            input_interpretation: self.meta.input_interpretation.clone(),
             profile_id: self.meta.profile_id.clone(),
             profile_name: self.meta.profile_name.clone(),
             provider: self.meta.provider.clone(),
@@ -1309,6 +1327,7 @@ fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
         created,
         input_path: String::new(),
         input_mode: String::new(),
+        input_interpretation: String::new(),
         profile_id: String::new(),
         profile_name: String::new(),
         provider: String::new(),
@@ -1707,10 +1726,7 @@ pub fn purge_runs_with_expected_preview(
     Ok(removed)
 }
 
-/// Read an artifact for display. The single choke point for file bytes
-/// reaching the webview: validates the path stays inside the run dir,
-/// applies size caps, and never returns raw binary.
-pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, String> {
+fn resolve_artifact_path(run_id: &str, rel_path: &str) -> Result<PathBuf, String> {
     validate_run_id(run_id)?;
     if rel_path.is_empty()
         || Path::new(rel_path).is_absolute()
@@ -1729,6 +1745,14 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
     if !path.starts_with(&run_dir) {
         return Err("Invalid artifact path".into());
     }
+    Ok(path)
+}
+
+/// Read an artifact for display. The single choke point for file bytes
+/// reaching the webview: validates the path stays inside the run dir,
+/// applies size caps, and never returns raw binary.
+pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, String> {
+    let path = resolve_artifact_path(run_id, rel_path)?;
 
     let abs_path = path.to_string_lossy().replace('\\', "/");
 
@@ -1783,7 +1807,7 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
                 abs_path,
             })
         }
-        "binary" => Ok(ArtifactContent {
+        "binary" | "pdf" => Ok(ArtifactContent {
             kind: kind.into(),
             bytes: size,
             text: None,
@@ -1810,6 +1834,44 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
     }
 }
 
+/// Render one page of a PDF artifact through the same bundled Poppler path
+/// used for document-page previews. The source path remains run-scoped and
+/// only the bounded JPEG result crosses the IPC boundary.
+pub fn read_pdf_artifact_page(
+    run_id: &str,
+    rel_path: &str,
+    page: u32,
+) -> Result<PdfArtifactPage, String> {
+    let path = resolve_artifact_path(run_id, rel_path)?;
+    if detect_kind(rel_path, &[]) != "pdf" {
+        return Err("This artifact is not a PDF".to_string());
+    }
+    // Reopen with the shared no-follow guard before handing the canonical path
+    // to Poppler. This also rejects directories and other special files.
+    crate::safety::open_regular_file(&path)
+        .map_err(|error| format!("Cannot open PDF artifact: {error}"))?;
+    let temp = tempfile::Builder::new()
+        .prefix("pipeline-pdf-preview-")
+        .tempdir()
+        .map_err(|error| format!("Could not create PDF preview directory: {error}"))?;
+    let rendered = crate::pipeline::extract::render_pdf_page_preview(&path, temp.path(), page)?;
+    let rendered_path = temp.path().join(rendered.name);
+    let (bytes, grew_too_large) = read_at_most(&rendered_path, MAX_IMAGE_BYTES as usize)?;
+    if grew_too_large {
+        return Err(format!(
+            "Rendered PDF page exceeds the {} MB inline preview limit",
+            MAX_IMAGE_BYTES / 1_000_000
+        ));
+    }
+    use base64::Engine as _;
+    Ok(PdfArtifactPage {
+        page,
+        has_previous: page > 1,
+        has_next: rendered.has_next,
+        base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+    })
+}
+
 /// Read one image from a completed run's compact page index. Only the selected
 /// page reaches the webview; the other page files are never opened.
 pub fn read_page_artifact(run_id: &str, page: u32) -> Result<ArtifactContent, String> {
@@ -1833,7 +1895,7 @@ mod tests {
         assert_eq!(detect_kind("analysis.py", b""), "code");
         assert_eq!(detect_kind("data.csv", b""), "csv");
         assert_eq!(detect_kind("fig.png", b""), "image");
-        assert_eq!(detect_kind("paper.pdf", b""), "binary");
+        assert_eq!(detect_kind("paper.pdf", b""), "pdf");
         assert_eq!(detect_kind("README", b"plain text"), "text");
         assert_eq!(detect_kind("blob", b"\x00\x01\x02"), "binary");
     }
@@ -2028,6 +2090,7 @@ mod tests {
             created: "2026-07-07T10:00:00+00:00".into(),
             input_path: "/home/u/paper.tex".into(),
             input_mode: "document".into(),
+            input_interpretation: "document".into(),
             profile_id: "deep-review".into(),
             profile_name: "Deep Review".into(),
             provider: "claude".into(),
