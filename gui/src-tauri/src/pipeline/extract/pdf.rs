@@ -44,7 +44,7 @@ pub(super) const PADDLE_READINESS_POLL_INTERVAL: std::time::Duration =
 pub(super) fn paddle_server_token() -> Result<String, String> {
     use std::fmt::Write as _;
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes)
+    getrandom::fill(&mut bytes)
         .map_err(|error| format!("Failed to generate managed server credentials: {error}"))?;
     let mut token = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

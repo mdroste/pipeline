@@ -20,7 +20,7 @@ const RUN_DETAILS_END: &str = "<!-- PIPELINE RUN DETAILS END -->";
 /// with; a random call nonce makes the report boundary unambiguous.
 pub fn new_report_nonce() -> Result<String, String> {
     let mut bytes = [0u8; 16];
-    getrandom::getrandom(&mut bytes).map_err(|error| format!("RNG failed: {error}"))?;
+    getrandom::fill(&mut bytes).map_err(|error| format!("RNG failed: {error}"))?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 

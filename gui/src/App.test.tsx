@@ -234,7 +234,7 @@ describe("App run options", () => {
     });
 
     await user.click(await screen.findByRole("button", { name: "Settings" }));
-    await user.click(screen.getByRole("button", { name: "Use light theme" }));
+    await user.click(await screen.findByRole("button", { name: "Use light theme" }));
     expect(localStorage.getItem("theme")).toBe("light");
     expect(document.documentElement).not.toHaveClass("dark");
     expect(setWindowTheme).toHaveBeenLastCalledWith("light");
@@ -242,7 +242,7 @@ describe("App run options", () => {
     act(() => systemThemeListener?.({ matches: true } as MediaQueryListEvent));
     expect(document.documentElement).not.toHaveClass("dark");
 
-    await user.click(screen.getByRole("button", { name: "Use system theme" }));
+    await user.click(await screen.findByRole("button", { name: "Use system theme" }));
     expect(localStorage.getItem("theme")).toBe("system");
     expect(setWindowTheme).toHaveBeenLastCalledWith(null);
     expect(document.documentElement).toHaveClass("dark");

@@ -222,8 +222,7 @@ impl CapturedAttempt {
         let attempt = self.attempt;
         let truncated = self.truncated;
         let clean_reason = crate::safety::strip_span_tags(reason)
-            .replace('\r', " ")
-            .replace('\n', " ")
+            .replace(['\r', '\n'], " ")
             .chars()
             .take(1_000)
             .collect::<String>();

@@ -541,7 +541,9 @@ function ReportViewerContent({ markdown }: Props) {
                     p: ({ children, node, ...props }) => {
                       const childArray = React.Children.toArray(children);
                       if (childArray.length === 1 && React.isValidElement(childArray[0])) {
-                        const child = childArray[0] as React.ReactElement;
+                        const child = childArray[0] as React.ReactElement<{
+                          children?: React.ReactNode;
+                        }>;
                         const split = splitCommentPrefix(child.props?.children);
                         if (split) {
                           return (

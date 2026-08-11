@@ -34,7 +34,7 @@ static RUN_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn title_words(value: &str) -> String {
     let words = value
-        .split(|character| character == '-' || character == '_')
+        .split(['-', '_'])
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>();
     let mut text = words.join(" ");
@@ -1971,7 +1971,7 @@ pub fn read_pdf_artifact_page(
     let prefetched_next = rendered.next_name.as_deref().and_then(|name| {
         encode_page(name)
             .ok()
-            .and_then(|base64| page.checked_add(1).map(|next_page| (base64, next_page)))
+            .zip(page.checked_add(1))
             .map(|(base64, next_page)| PrefetchedPdfArtifactPage {
                 page: next_page,
                 has_previous: true,
