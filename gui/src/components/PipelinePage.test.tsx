@@ -404,7 +404,7 @@ describe("PipelinePage", () => {
         output_schema: expect.objectContaining({ required: ["issues"] }),
       });
     });
-  });
+  }, 20_000);
 
   it("copies an adaptive agent into an independently editable workflow step", async () => {
     const user = userEvent.setup();

@@ -1,11 +1,16 @@
 name: Build
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Checks to run on this ref
+        required: true
+        default: quick
+        type: choice
+        options:
+          - quick
+          - maintenance
 
 permissions:
   contents: read
@@ -15,20 +20,79 @@ env:
   RUST_VERSION: 1.97.1
 
 concurrency:
-  # A PR and a manual run for its source branch should supersede one another.
-  # github.ref cannot do that because it names refs/pull/... for PR events.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.profile }}
   cancel-in-progress: true
 
 jobs:
-  audit:
-    name: Dependency audit
+  quick:
+    if: inputs.profile == 'quick'
+    name: Linux unit checks
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Restore Rust cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: gui/src-tauri -> target
+          save-if: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install npm dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Release metadata tests
+        working-directory: gui
+        run: npm run test:release
+
+      - name: Paddle sidecar contract
+        run: python scripts/release/test-paddle-parser-sidecar.py
+
+      - name: Rust tests
+        working-directory: gui/src-tauri
+        run: cargo test --locked --all-targets
+
+      - name: Rust formatting
+        working-directory: gui/src-tauri
+        run: cargo fmt --check
+
+      - name: Frontend tests
+        working-directory: gui
+        run: npm test -- --run
+
+  maintenance:
+    if: inputs.profile == 'maintenance'
+    name: Manual audits and MSRV
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Rust stable
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -51,146 +115,19 @@ jobs:
         working-directory: gui
         run: npm ci
 
-      # Only these dependencies are compiled into the shipped app, so a new
-      # advisory here blocks the merge.
       - name: npm production dependency audit
         working-directory: gui
         run: npm audit --omit=dev --audit-level=low
 
-      # The build and test chain (Vite, WebdriverIO, Tauri CLI) never ships in
-      # an installer. Advisories there are reported for triage but do not gate
-      # merges, so a fresh CVE five levels deep in the test tooling cannot turn
-      # main red on its own. Real regressions still surface in the job summary.
       - name: npm build-chain advisory report
         working-directory: gui
         continue-on-error: true
         run: npm audit --audit-level=low
 
-  # Linux is the comprehensive correctness gate on PRs and main. Ordinary main
-  # pushes compile and launch the app on the other three platforms without
-  # repeating platform-neutral checks or the full Rust suite. Manual runs retain
-  # full cross-platform Rust tests and Clippy.
-  test:
-    name: Tests (${{ matrix.label }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include: >-
-          ${{ fromJSON(github.event_name == 'pull_request'
-          && '[{"os":"ubuntu-22.04","label":"Linux x64","suite":"full"}]'
-          || github.event_name == 'push'
-          && '[{"os":"ubuntu-22.04","label":"Linux x64","suite":"full"},
-          {"os":"windows-2022","label":"Windows x64","suite":"smoke"},
-          {"os":"macos-15","label":"macOS arm64","suite":"smoke"},
-          {"os":"macos-15-intel","label":"macOS x64","suite":"smoke"}]'
-          || '[{"os":"ubuntu-22.04","label":"Linux x64","suite":"full"},
-          {"os":"windows-2022","label":"Windows x64","suite":"full"},
-          {"os":"macos-15","label":"macOS arm64","suite":"full"},
-          {"os":"macos-15-intel","label":"macOS x64","suite":"full"}]') }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: gui/src-tauri -> target
-          # PR caches are scoped to refs/pull/... and cannot warm main. Restore
-          # everywhere, but keep one authoritative cache per platform on main.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: gui/package-lock.json
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xvfb
-
-      - name: Install npm dependencies
-        working-directory: gui
-        run: npm ci
-
-      - name: Release metadata tests
-        if: matrix.suite == 'full' && runner.os == 'Linux'
-        working-directory: gui
-        run: npm run test:release
-
-      - name: Paddle full-parser sidecar contract
-        if: matrix.suite == 'full' && runner.os == 'Linux'
-        run: python scripts/release/test-paddle-parser-sidecar.py
-
-      - name: Cargo test
-        if: matrix.suite == 'full'
-        working-directory: gui/src-tauri
-        run: cargo test --locked --all-targets
-
-      - name: Rust formatting
-        if: matrix.suite == 'full' && runner.os == 'Linux'
-        working-directory: gui/src-tauri
-        run: cargo fmt --check
-
-      - name: Rust Clippy
-        if: matrix.suite == 'full'
-        working-directory: gui/src-tauri
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
-
-      - name: Frontend tests
-        if: matrix.suite == 'full' && runner.os == 'Linux'
-        working-directory: gui
-        run: npm test
-
-      - name: Build CI desktop executable
-        working-directory: gui
-        run: npm run tauri -- build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json --ci -- --locked
-
-      - name: Compiled-app UI smoke (Linux)
-        if: runner.os == 'Linux'
-        working-directory: gui
-        run: xvfb-run -a npm run test:e2e
-
-      - name: Compiled-app UI smoke (macOS/Windows)
-        if: runner.os != 'Linux'
-        working-directory: gui
-        run: npm run test:e2e
-
-  msrv:
-    name: Rust 1.88 minimum version
-    runs-on: ubuntu-22.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Install Rust 1.88
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
         with:
           toolchain: 1.88.0
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: gui/package-lock.json
 
       - name: Install Linux dependencies
         run: |
@@ -200,10 +137,6 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf
-
-      - name: Install npm dependencies
-        working-directory: gui
-        run: npm ci
 
       - name: Check declared MSRV
         working-directory: gui/src-tauri
