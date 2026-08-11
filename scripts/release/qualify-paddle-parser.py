@@ -107,6 +107,33 @@ def extract_tar(archive_path: Path, destination: Path, mode: str) -> None:
             archive.extractall(destination)
 
 
+def provision_layout_model(model_lock: dict[str, object], workspace: Path) -> Path:
+    model_archive = workspace / "PP-DocLayoutV3_infer.tar"
+    models = workspace / "models"
+    models.mkdir()
+    try:
+        download_verified(
+            str(model_lock["url"]), model_archive, str(model_lock["sha256"])
+        )
+        extract_tar(model_archive, models, "r:")
+    except urllib.error.HTTPError:
+        fallback = model_lock.get("qualificationFallback")
+        if not isinstance(fallback, dict):
+            raise
+        base_url = str(fallback["baseUrl"]).rstrip("/")
+        revision = str(fallback["revision"])
+        files = fallback["files"]
+        if not isinstance(files, dict):
+            raise RuntimeError("Layout-model fallback files must be an object")
+        model = models / "PP-DocLayoutV3_infer"
+        model.mkdir()
+        for name, expected in files.items():
+            download_verified(
+                f"{base_url}/{revision}/{name}", model / name, str(expected)
+            )
+    return models / "PP-DocLayoutV3_infer"
+
+
 def extract_uv(archive_path: Path, destination: Path, windows: bool) -> Path:
     name = "uv.exe" if windows else "uv"
     if windows:
@@ -274,13 +301,8 @@ def qualify(workspace: Path) -> None:
         environment,
     )
 
-    model_archive = workspace / "PP-DocLayoutV3_infer.tar"
     model_lock = runtime_lock["layoutModel"]
-    download_verified(model_lock["url"], model_archive, model_lock["sha256"])
-    models = workspace / "models"
-    models.mkdir()
-    extract_tar(model_archive, models, "r:")
-    model = models / "PP-DocLayoutV3_infer"
+    model = provision_layout_model(model_lock, workspace)
 
     environment.update(
         {

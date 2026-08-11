@@ -37,6 +37,18 @@ test("managed Paddle parser inputs are complete checksum locks", () => {
   });
   assert.match(runtime.layoutModel.url, /^https:\/\/paddle-model-ecology\.bj\.bcebos\.com\//);
   assert.match(runtime.layoutModel.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(
+    runtime.layoutModel.qualificationFallback.baseUrl,
+    "https://huggingface.co/PaddlePaddle/PP-DocLayoutV3/resolve",
+  );
+  assert.match(runtime.layoutModel.qualificationFallback.revision, /^[a-f0-9]{40}$/);
+  assert.deepEqual(
+    Object.keys(runtime.layoutModel.qualificationFallback.files).sort(),
+    ["inference.json", "inference.pdiparams", "inference.yml"],
+  );
+  for (const digest of Object.values(runtime.layoutModel.qualificationFallback.files)) {
+    assert.match(digest, /^[a-f0-9]{64}$/);
+  }
 
   const expectedPlatforms = [
     "linux-aarch64",
