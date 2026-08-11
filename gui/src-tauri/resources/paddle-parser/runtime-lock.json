@@ -63,6 +63,15 @@
     "version": "paddle3.0.0",
     "license": "Apache-2.0",
     "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-DocLayoutV3_infer.tar",
-    "sha256": "98b9bac88c80f6bc0fda7e0bfc2cae180020371c0b2edbb1eb498a70ace751b1"
+    "sha256": "98b9bac88c80f6bc0fda7e0bfc2cae180020371c0b2edbb1eb498a70ace751b1",
+    "qualificationFallback": {
+      "baseUrl": "https://huggingface.co/PaddlePaddle/PP-DocLayoutV3/resolve",
+      "revision": "7b48a7566925fa464281f930c58eee04fe2c862a",
+      "files": {
+        "inference.json": "2b68367c5b312a03de5a6e1642c597c8f95165a7e40cd59c6700cf4a5042f4fd",
+        "inference.yml": "506fcfac13b3b546ae40d7886b44126420f392adb694e3f8bb6a6286a1f90fdc",
+        "inference.pdiparams": "70bd316b0582769ec968829fd1feb1a6a58b7c941b938327e551b6b12b45c137"
+      }
+    }
   }
 }
