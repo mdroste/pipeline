@@ -3740,6 +3740,8 @@ mod tests {
         let native = tempfile::tempdir().unwrap();
         let native_root = native.path();
         let parser_root = native_root.join("paddleocr-parser");
+        let uv_name = exe("uv");
+        let uv_backup_name = format!(".{uv_name}-backup");
         let versions = parser_root.join("versions");
         let current = versions.join(PADDLE_PARSER_RELEASE);
         let current_backup = versions.join(format!(".{PADDLE_PARSER_RELEASE}-backup"));
@@ -3760,8 +3762,8 @@ mod tests {
             std::fs::create_dir_all(&path).unwrap();
             std::fs::write(path.join("fixture"), b"fixture").unwrap();
         }
-        std::fs::write(parser_root.join("runtime/uv"), b"uv").unwrap();
-        std::fs::write(parser_root.join("runtime/.uv-backup"), b"old uv").unwrap();
+        std::fs::write(parser_root.join("runtime").join(&uv_name), b"uv").unwrap();
+        std::fs::write(parser_root.join("runtime").join(&uv_backup_name), b"old uv").unwrap();
         std::fs::create_dir_all(versions.join("notes")).unwrap();
         std::fs::create_dir_all(native_root.join("unrelated-engine-data")).unwrap();
 
@@ -3776,11 +3778,11 @@ mod tests {
         assert!(!parser_root.join("uv-cache").exists());
         assert!(!parser_root.join("python").exists());
         assert!(!parser_root.join("runtime/.uv-staging-abandoned").exists());
-        assert!(!parser_root.join("runtime/.uv-backup").exists());
+        assert!(!parser_root.join("runtime").join(&uv_backup_name).exists());
 
         // Runtime data and names outside the installer's namespaces survive.
         assert!(parser_root.join("models/fixture").is_file());
-        assert!(parser_root.join("runtime/uv").is_file());
+        assert!(parser_root.join("runtime").join(&uv_name).is_file());
         assert!(versions.join("notes").is_dir());
         assert!(native_root.join("unrelated-engine-data").is_dir());
     }
@@ -3789,6 +3791,8 @@ mod tests {
     fn managed_engine_cleanup_recovers_interrupted_swaps() {
         let native = tempfile::tempdir().unwrap();
         let native_root = native.path();
+        let uv_name = exe("uv");
+        let uv_backup_name = format!(".{uv_name}-backup");
         let base_backup = native_root.join(".paddleocr-vl-backup");
         std::fs::create_dir_all(&base_backup).unwrap();
         std::fs::write(base_backup.join("previous"), b"base").unwrap();
@@ -3802,7 +3806,7 @@ mod tests {
         std::fs::create_dir_all(&current_backup).unwrap();
         std::fs::write(current_backup.join("previous"), b"parser").unwrap();
         std::fs::create_dir_all(parser_root.join("runtime")).unwrap();
-        std::fs::write(parser_root.join("runtime/.uv-backup"), b"uv").unwrap();
+        std::fs::write(parser_root.join("runtime").join(&uv_backup_name), b"uv").unwrap();
 
         cleanup_managed_engine_storage_at(native_root, false).unwrap();
 
@@ -3811,8 +3815,8 @@ mod tests {
         assert!(current.join("previous").is_file());
         assert!(!current.join("partial").exists());
         assert!(!current_backup.exists());
-        assert!(parser_root.join("runtime/uv").is_file());
-        assert!(!parser_root.join("runtime/.uv-backup").exists());
+        assert!(parser_root.join("runtime").join(&uv_name).is_file());
+        assert!(!parser_root.join("runtime").join(&uv_backup_name).exists());
         assert_eq!(
             cleanup_managed_engine_storage_at(native_root, true).unwrap(),
             0
