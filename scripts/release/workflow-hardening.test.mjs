@@ -98,6 +98,7 @@ test("Tauri packages only the GUI and uses a cache-friendly release profile", ()
   assert.match(cargo, /\[profile\.release\][\s\S]*incremental = true/);
   assert.doesNotMatch(cargo, /lto\s*=\s*true|codegen-units\s*=\s*1/);
   assert.deepEqual(config.bundle.targets, ["app", "dmg", "appimage", "nsis"]);
+  assert.equal(config.build.beforeBundleCommand, "node ../scripts/release/sign-macos-cli.mjs");
   assert.deepEqual(config.bundle.resources.filter((item) => item.includes("notices/")), [
     "resources/notices/NOTICE.txt",
     "resources/notices/PIPELINE_LICENSE.txt",
