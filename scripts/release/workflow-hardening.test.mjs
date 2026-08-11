@@ -58,7 +58,7 @@ test("CI and release use the repository's exact supported toolchains", () => {
   assert.match(packageJson.engines.node, new RegExp(`(?:\\^|>=)${nodeVersion.replaceAll(".", "\\.")}`));
 });
 
-test("release workflow retains signing, protected-environment, and completeness gates", () => {
+test("release workflow retains signed tags, macOS signing, and completeness gates", () => {
   const contents = readText(".github", "workflows", "release.yml");
   for (const required of [
     "Require a verified signed annotated tag",
@@ -73,8 +73,11 @@ test("release workflow retains signing, protected-environment, and completeness 
     'if [ "$target_sha" != "$GITHUB_SHA" ]',
     "is lightweight",
     "name: release",
-    "WINDOWS_CERTIFICATE",
-    "Get-AuthenticodeSignature",
+    "Import Apple code-signing cert (macOS)",
+    "APPLE_CERTIFICATE",
+    "APPLE_SIGNING_IDENTITY",
+    "APPLE_ID",
+    "Windows packages are currently unsigned",
     "actions/attest-build-provenance@",
     "anchore/scan-action@",
     "Artifact-SBOM.cdx.json",
@@ -127,6 +130,12 @@ test("release workflow retains signing, protected-environment, and completeness 
   assert.ok(
     contents.includes("/assets?per_page=100"),
     "draft asset lookup must paginate beyond GitHub's default page",
+  );
+  assert.ok(
+    !contents.includes("WINDOWS_CERTIFICATE") &&
+      !contents.includes("Get-AuthenticodeSignature") &&
+      !contents.includes("tauri.windows-signing.conf.json"),
+    "unsigned Windows releases must not require or claim Authenticode signing",
   );
 });
 
