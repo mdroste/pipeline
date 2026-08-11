@@ -773,6 +773,29 @@ fn integrity_metadata_digest(root: &Path, entries: &[IntegrityEntry]) -> Result<
             digest.update(metadata.ctime().to_le_bytes());
             digest.update(metadata.ctime_nsec().to_le_bytes());
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle as _;
+            use windows_sys::Win32::Storage::FileSystem::{
+                GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            };
+
+            let file = std::fs::File::open(&path).map_err(|error| {
+                format!("Failed to open managed runtime file for identity check: {error}")
+            })?;
+            let mut info = BY_HANDLE_FILE_INFORMATION::default();
+            // SAFETY: `file` owns a valid handle for the duration of the call,
+            // and `info` is a writable structure of the required type.
+            if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+                return Err(format!(
+                    "Failed to identify managed runtime file: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            digest.update(info.dwVolumeSerialNumber.to_le_bytes());
+            digest.update(info.nFileIndexHigh.to_le_bytes());
+            digest.update(info.nFileIndexLow.to_le_bytes());
+        }
     }
     Ok(format!("{:x}", digest.finalize()))
 }
