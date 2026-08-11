@@ -93,7 +93,7 @@ export function AdaptiveSlotEditorPanel({
         <section className="rounded-xl border border-green-200 bg-green-50/60 p-4 dark:border-green-950 dark:bg-green-950/20">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-300">Synthesis input</h4>
           <p className="mt-2 text-sm leading-6 text-green-900 dark:text-green-100">
-            Every materialized specialist report feeds directly into <span className="font-medium">Consolidate Auto Review</span>, alongside Contribution &amp; Literature, Claims &amp; Consistency, and Exposition &amp; Architecture.
+            Every materialized specialist report feeds directly into <span className="font-medium">Consolidate</span>, alongside Contribution &amp; Literature, Claims &amp; Consistency, and Exposition &amp; Architecture.
           </p>
         </section>
 

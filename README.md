@@ -62,6 +62,10 @@ Pipeline offers three PDF extraction paths:
   llama.cpp server, and layout tools under `~/.pipeline/`; it does not use the
   user's Python, pip, Conda, or Docker installation.
 
+The global default is **Automatic**: Pipeline uses the Full Parser when a
+complete managed installation is detected and LLM extraction otherwise. An
+explicit global or per-workflow selection overrides that policy.
+
 The Full Parser preserves reading order, headings, formulas, tables, and figure
 regions. It is available on Apple Silicon macOS and on supported Windows and
 Linux architectures; Intel macOS is not supported. The download and installed

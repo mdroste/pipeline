@@ -209,12 +209,7 @@ pub fn steps() -> Vec<StepConfig> {
             &[],
         ),
     ];
-    let mut synthesis = base_step(
-        "auto_synthesis",
-        "Consolidate Auto Review",
-        SYNTHESIS.to_string(),
-        &[],
-    );
+    let mut synthesis = base_step("auto_synthesis", "Consolidate", SYNTHESIS.to_string(), &[]);
     synthesis.phase = Phase::Sequential;
     steps.push(synthesis);
     steps

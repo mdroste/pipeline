@@ -624,11 +624,12 @@ fn effective_pdf_extractor<'a>(
     config: &'a crate::pipeline_config::PipelineConfig,
 ) -> &'a str {
     let method = config.extraction.method.trim();
-    if method.is_empty() || method == "auto" {
+    let configured = if method.is_empty() || method == "auto" {
         settings.pdf_extractor.as_str()
     } else {
         method
-    }
+    };
+    crate::settings::resolve_pdf_extractor(configured)
 }
 
 fn document_path_may_need_pdf(path: &str) -> bool {

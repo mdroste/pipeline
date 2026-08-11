@@ -142,7 +142,7 @@ describe("RunPreview", () => {
         {
           ...config.steps[1],
           id: "auto_synthesis",
-          label: "Consolidate Auto Review",
+          label: "Consolidate",
           context: {
             include: [
               { kind: "step", step: "auto_contribution", parts: ["report"] },
@@ -171,7 +171,7 @@ describe("RunPreview", () => {
               stepIds: ["auto_contribution", "auto_consistency", "auto_exposition"],
               stepLabels: ["Contribution & Literature", "Claims & Consistency", "Exposition & Architecture"],
             },
-            { id: "synthesis", kind: "synthesizing", label: "Sequential agent wave", stepIds: ["auto_synthesis"], stepLabels: ["Consolidate Auto Review"] },
+            { id: "synthesis", kind: "synthesizing", label: "Sequential agent wave", stepIds: ["auto_synthesis"], stepLabels: ["Consolidate"] },
             { id: "done", kind: "done", label: "Complete", stepIds: [] },
           ],
         }}

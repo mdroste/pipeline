@@ -15,15 +15,16 @@ pub async fn extract(
     }
 
     // Resolve the effective extraction method: profile override beats global.
-    // An explicit "auto" or empty string falls through to whatever the global
-    // setting says.
+    // An explicit profile "auto" or empty string inherits the global policy;
+    // global "auto" selects an installed Full Parser, then LLM otherwise.
     let settings = crate::settings::load();
     let cfg_method = extraction_cfg.method.trim();
-    let effective_method = if cfg_method.is_empty() || cfg_method == "auto" {
-        settings.pdf_extractor.clone()
+    let configured_method = if cfg_method.is_empty() || cfg_method == "auto" {
+        settings.pdf_extractor.as_str()
     } else {
-        cfg_method.to_string()
+        cfg_method
     };
+    let effective_method = crate::settings::resolve_pdf_extractor(configured_method).to_string();
     if ext_eq(&path, "pdf") || (path.is_dir() && find_main_tex(&path).is_none()) {
         let source = if cfg_method.is_empty() || cfg_method == "auto" {
             "global setting"

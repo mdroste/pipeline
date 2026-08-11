@@ -145,8 +145,9 @@ pub struct Settings {
     pub gemini_api_model_selection: ModelSelection,
 
     /// PDF extraction method: "llm", "auto", "paddleocr-vl-full", or
-    /// "pdftotext". The retired "paddleocr-vl" value is migrated to the Full
-    /// Parser when older settings are deserialized.
+    /// "pdftotext". "auto" uses an installed Full Parser and otherwise LLM.
+    /// The retired "paddleocr-vl" value is migrated to the Full Parser when
+    /// older settings are deserialized.
     /// The legacy value "marker" remains deserializable so the UI can explain
     /// why the user must choose a supported replacement.
     #[serde(
@@ -321,7 +322,32 @@ fn default_local_base_url() -> String {
 }
 
 fn default_pdf_extractor() -> String {
-    "llm".to_string()
+    "auto".to_string()
+}
+
+/// Resolve the global automatic PDF policy without introducing a fallback
+/// between extractors. The chosen method remains authoritative for the run.
+pub(crate) fn resolve_pdf_extractor(configured: &str) -> &str {
+    if configured == "auto" {
+        resolve_pdf_extractor_for_paddle_availability(
+            configured,
+            crate::engines::paddle_full_parser_status().is_ok(),
+        )
+    } else {
+        configured
+    }
+}
+
+fn resolve_pdf_extractor_for_paddle_availability(configured: &str, paddle_installed: bool) -> &str {
+    if configured == "auto" {
+        if paddle_installed {
+            "paddleocr-vl-full"
+        } else {
+            "llm"
+        }
+    } else {
+        configured
+    }
 }
 
 fn deserialize_pdf_extractor<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -461,7 +487,7 @@ impl Default for Settings {
             gemini_model: String::new(),
             gemini_cli_model_selection: ModelSelection::Automatic,
             gemini_api_model_selection: ModelSelection::Automatic,
-            pdf_extractor: "llm".to_string(),
+            pdf_extractor: default_pdf_extractor(),
             marker_disable_ocr: false,
             marker_force_ocr: false,
             marker_disable_images: false,
@@ -1461,6 +1487,30 @@ mod tests {
         let legacy: Settings = serde_json::from_str(r#"{"pdf_extractor":"paddleocr-vl"}"#).unwrap();
         assert_eq!(legacy.pdf_extractor, "paddleocr-vl-full");
         assert!(legacy.validate().is_ok());
+    }
+
+    #[test]
+    fn automatic_pdf_extractor_prefers_an_installed_full_parser() {
+        assert_eq!(Settings::default().pdf_extractor, "auto");
+        let without_saved_preference: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(without_saved_preference.pdf_extractor, "auto");
+
+        assert_eq!(
+            resolve_pdf_extractor_for_paddle_availability("auto", true),
+            "paddleocr-vl-full"
+        );
+        assert_eq!(
+            resolve_pdf_extractor_for_paddle_availability("auto", false),
+            "llm"
+        );
+        assert_eq!(
+            resolve_pdf_extractor_for_paddle_availability("llm", true),
+            "llm"
+        );
+        assert_eq!(
+            resolve_pdf_extractor_for_paddle_availability("pdftotext", true),
+            "pdftotext"
+        );
     }
 
     #[test]

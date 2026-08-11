@@ -791,25 +791,25 @@ function App() {
                       <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
                         {inputMode === "none"
                           ? "No source file is required for this workflow."
-                          : "Select one or more documents or a folder, then declare how Pipeline should use them."}
+                          : "Select a document or folder."}
                       </p>
                     </li>
                     <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:px-5 dark:border-gray-800">
                       <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">02</span>
                       <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-                        Run the workflow
+                        Run a workflow
                       </p>
                       <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
-                        Steps run together when possible and in order when required.
+                        Workflow steps run either in parallel or sequentially.
                       </p>
                     </li>
                     <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:pl-5 dark:border-gray-800">
                       <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">03</span>
                       <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-                        Review the results
+                        Review
                       </p>
                       <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
-                        Read the report, inspect saved sources, and export the run.
+                        Read and save report(s).
                       </p>
                     </li>
                   </ol>

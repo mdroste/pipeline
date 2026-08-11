@@ -858,6 +858,9 @@ function ExtractionSection({
             )}
             {(
               [
+                ["auto", "Automatic", paddleInstalled
+                  ? "PaddleOCR-VL Full Parser is installed, so Pipeline will use it. If the parser is later removed, Pipeline will use LLM extraction."
+                  : "Uses PaddleOCR-VL Full Parser when it is installed; otherwise uses LLM extraction."],
                 ["llm", "LLM", "Your configured provider reads the PDF and extracts it to Markdown in bounded page ranges. Most faithful, but slower and potentially costly."],
                 ["paddleocr-vl-full", "Local engine: PaddleOCR-VL 1.6 Full Parser", "Layout-aware extraction with reading order, structured blocks, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses the managed Q8 model."],
                 ["pdftotext", "pdftotext (basic)", "Fast, but equations are lost."],

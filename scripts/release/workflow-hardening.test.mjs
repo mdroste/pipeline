@@ -58,6 +58,59 @@ test("CI and release use the repository's exact supported toolchains", () => {
   assert.match(packageJson.engines.node, new RegExp(`(?:\\^|>=)${nodeVersion.replaceAll(".", "\\.")}`));
 });
 
+test("build CI keeps full validation separate from routine platform smoke", () => {
+  const contents = readText(".github", "workflows", "build.yml");
+
+  for (const required of [
+    "github.event.pull_request.head.repo.full_name || github.repository",
+    "github.head_ref || github.ref_name",
+    "github.event_name == 'push'",
+    "if: matrix.suite == 'full'",
+    "if: matrix.suite == 'full' && runner.os == 'Linux'",
+    "save-if: ${{ github.ref == 'refs/heads/main' }}",
+    "cache-on-failure: ${{ github.ref == 'refs/heads/main' }}",
+  ]) {
+    assert.ok(contents.includes(required), `build workflow is missing ${required}`);
+  }
+
+  const matrixBlock = contents.slice(
+    contents.indexOf("        include: >-"),
+    contents.indexOf("    runs-on: ${{ matrix.os }}"),
+  );
+  const variants = [...matrixBlock.matchAll(/'(\[[^']+\])'/g)].map((match) =>
+    JSON.parse(match[1]),
+  );
+  assert.deepEqual(
+    variants.map((rows) => rows.map(({ label, suite }) => [label, suite])),
+    [
+      [["Linux x64", "full"]],
+      [
+        ["Linux x64", "full"],
+        ["Windows x64", "smoke"],
+        ["macOS arm64", "smoke"],
+        ["macOS x64", "smoke"],
+      ],
+      [
+        ["Linux x64", "full"],
+        ["Windows x64", "full"],
+        ["macOS arm64", "full"],
+        ["macOS x64", "full"],
+      ],
+    ],
+  );
+
+  assert.doesNotMatch(
+    contents,
+    /^\s*schedule:\s*$/m,
+    "routine build CI must not run on a schedule",
+  );
+  assert.doesNotMatch(
+    contents,
+    /^\s*run:\s+npm run build\s*$/m,
+    "CI must let Tauri's beforeBuildCommand perform the frontend production build once",
+  );
+});
+
 test("release workflow retains signed tags, macOS signing, and completeness gates", () => {
   const contents = readText(".github", "workflows", "release.yml");
   for (const required of [
