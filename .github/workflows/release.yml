@@ -209,6 +209,7 @@ jobs:
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: gui/src-tauri -> target
+          cache-on-failure: true
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -462,8 +463,11 @@ jobs:
 
           # DT_RUNPATH on an executable is not inherited by grandchildren.
           # Give every copied shared object its own sibling lookup path.
-          patchelf --set-rpath '$ORIGIN/lib' "$dest/pdftoppm"
-          patchelf --set-rpath '$ORIGIN/lib' "$dest/pdftotext"
+          # linuxdeploy appends a sibling lookup to every ELF under usr/lib.
+          # Apply its final executable RPATH before generating provenance so
+          # the later packaging pass is byte-for-byte idempotent.
+          patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$dest/pdftoppm"
+          patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$dest/pdftotext"
           while IFS= read -r library; do
             file "$library" | grep -q ELF && patchelf --set-rpath '$ORIGIN' "$library"
           done < <(find "$dest/lib" -type f | sort)
