@@ -131,6 +131,7 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     "APPLE_SIGNING_IDENTITY",
     "APPLE_ID",
     "NODE_OPTIONS: --use-system-ca",
+    "plutil -extract LSRequiresCarbon raw",
     "Windows packages are currently unsigned",
     "actions/attest-build-provenance@",
     "anchore/scan-action@",
@@ -180,6 +181,15 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     [...contents.matchAll(/bash scripts\/release\/validate-signed-tag-binding\.sh/g)].length,
     3,
     "publishing jobs must revalidate tag binding before build, upload, and final validation",
+  );
+  assert.equal(
+    [...contents.matchAll(/plutil -extract LSRequiresCarbon raw/g)].length,
+    2,
+    "both macOS app and DMG validation must read the Carbon Boolean independent of plutil display formatting",
+  );
+  assert.ok(
+    !contents.includes('grep -q \'"LSRequiresCarbon" => false\''),
+    "macOS validation must not depend on plutil -p Boolean rendering",
   );
   assert.ok(
     !contents.includes("APPIMAGE_EXTRACT_AND_RUN"),

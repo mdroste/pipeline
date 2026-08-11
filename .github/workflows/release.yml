@@ -802,7 +802,8 @@ jobs:
             exit 1
           fi
 
-          if ! plutil -p "${app_path}/Contents/Info.plist" | grep -q '"LSRequiresCarbon" => false'; then
+          requires_carbon="$(plutil -extract LSRequiresCarbon raw "${app_path}/Contents/Info.plist")"
+          if [ "${requires_carbon}" != "false" ]; then
             echo "Info.plist must not require Carbon"
             plutil -p "${app_path}/Contents/Info.plist"
             exit 1
@@ -895,7 +896,8 @@ jobs:
             exit 1
           fi
 
-          if ! plutil -p "${mount_dir}/Pipeline.app/Contents/Info.plist" | grep -q '"LSRequiresCarbon" => false'; then
+          dmg_requires_carbon="$(plutil -extract LSRequiresCarbon raw "${dmg_app}/Contents/Info.plist")"
+          if [ "${dmg_requires_carbon}" != "false" ]; then
             echo "Info.plist inside DMG must not require Carbon"
             plutil -p "${mount_dir}/Pipeline.app/Contents/Info.plist"
             exit 1
