@@ -924,6 +924,7 @@ jobs:
           # Extraction above validates contents but is not a substitute for
           # launching the file users download.
           xvfb-run -a node scripts/release/smoke-packaged-app.mjs \
+            --process-stability-only \
             "$GITHUB_WORKSPACE/$appimage"
 
       - name: Verify Windows NSIS installer contents

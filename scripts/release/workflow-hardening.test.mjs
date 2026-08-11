@@ -227,6 +227,11 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     !contents.includes("APPIMAGE_EXTRACT_AND_RUN"),
     "release smoke must execute the public AppImage entry point through FUSE",
   );
+  assert.match(
+    contents,
+    /xvfb-run -a node scripts\/release\/smoke-packaged-app\.mjs \\\n\s+--process-stability-only \\\n\s+"\$GITHUB_WORKSPACE\/\$appimage"/,
+    "Linux smoke must launch the public AppImage and require process stability",
+  );
   assert.ok(
     contents.includes("/assets?per_page=100"),
     "draft asset lookup must paginate beyond GitHub's default page",

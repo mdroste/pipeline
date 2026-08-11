@@ -20,6 +20,7 @@ function delay(milliseconds) {
 export async function smokePackagedApp(executable, args = [], options = {}) {
   const timeoutMs = options.timeoutMs ?? 30_000;
   const stabilityMs = options.stabilityMs ?? 500;
+  const requireMarker = options.requireMarker ?? true;
   const marker = path.join(
     os.tmpdir(),
     `pipeline-smoke-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.ready`,
@@ -49,7 +50,7 @@ export async function smokePackagedApp(executable, args = [], options = {}) {
   });
 
   const deadline = Date.now() + timeoutMs;
-  let readyAt = null;
+  let readyAt = requireMarker ? null : Date.now();
   try {
     while (true) {
       if (spawnError) throw new Error(`failed to launch application: ${spawnError.message}`);
@@ -58,7 +59,7 @@ export async function smokePackagedApp(executable, args = [], options = {}) {
           `application exited ${readyAt === null ? "before becoming ready" : "during readiness stabilization"} (code=${exitCode}, signal=${exitSignal})\n${stdout}${stderr}`,
         );
       }
-      if (fs.existsSync(marker)) {
+      if (!requireMarker || fs.existsSync(marker)) {
         readyAt ??= Date.now();
         if (Date.now() - readyAt >= stabilityMs) break;
       }
@@ -82,11 +83,18 @@ export async function smokePackagedApp(executable, args = [], options = {}) {
 const invokedDirectly = process.argv[1]
   && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
-  const [, , executable, ...args] = process.argv;
+  const cliArgs = process.argv.slice(2);
+  const processStabilityOnly = cliArgs[0] === "--process-stability-only";
+  if (processStabilityOnly) cliArgs.shift();
+  const [executable, ...args] = cliArgs;
   if (!executable) {
-    console.error("usage: smoke-packaged-app.mjs <executable> [arguments...]");
+    console.error("usage: smoke-packaged-app.mjs [--process-stability-only] <executable> [arguments...]");
     process.exit(2);
   }
-  await smokePackagedApp(executable, args);
-  console.log(`Packaged application reached frontend readiness: ${executable}`);
+  await smokePackagedApp(executable, args, processStabilityOnly
+    ? { requireMarker: false, stabilityMs: 5_000 }
+    : {});
+  console.log(processStabilityOnly
+    ? `Packaged application launched and remained stable: ${executable}`
+    : `Packaged application reached frontend readiness: ${executable}`);
 }

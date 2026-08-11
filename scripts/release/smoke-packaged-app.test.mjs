@@ -17,6 +17,14 @@ test("packaged-app smoke waits for the frontend readiness marker", async () => {
   );
 });
 
+test("packaged-app smoke can validate process stability without a frontend marker", async () => {
+  await smokePackagedApp(
+    process.execPath,
+    ["-e", "setInterval(() => {}, 1000)"],
+    { requireMarker: false, stabilityMs: 100, timeoutMs: 1_000 },
+  );
+});
+
 test("packaged-app smoke fails when the process exits before readiness", async () => {
   await assert.rejects(
     smokePackagedApp(process.execPath, ["-e", "process.exit(7)"], { timeoutMs: 5_000 }),
