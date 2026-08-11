@@ -664,6 +664,10 @@ jobs:
         working-directory: gui
         env:
           PIPELINE_RELEASE_BUILD: "1"
+          # linuxdeploy strips every ELF file in the AppDir by default, which
+          # would mutate the checksum-locked Poppler executables after their
+          # provenance is generated. Preserve those validated resource bytes.
+          NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
           # Keep Apple credentials out of the Linux and Windows process
           # environments even though this is a shared matrix step.
           APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_SIGNING_IDENTITY || '' }}

@@ -131,6 +131,7 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     "if: inputs.operation == 'package'",
     "if: inputs.operation == 'publish'",
     "Build package",
+    "NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}",
     "Publish validated platform assets to the draft",
     "gh release create \"${TAG}\" --draft --verify-tag",
     "gh release edit \"${TAG}\" --draft=false --latest",
