@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -43,18 +44,34 @@ def platform_key() -> str:
 
 
 def download_verified(url: str, destination: Path, expected: str) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "pipeline-qualification"})
-    digest = hashlib.sha256()
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/octet-stream,*/*;q=0.8",
+            "Referer": "https://www.paddleocr.ai/",
+            "User-Agent": "Pipeline/0.9 release-qualification (+https://github.com/mdroste/pipeline)",
+        },
+    )
     certificate_file = os.environ.get("SSL_CERT_FILE")
     if not certificate_file and Path("/etc/ssl/cert.pem").is_file():
         certificate_file = "/etc/ssl/cert.pem"
     context = ssl.create_default_context(cafile=certificate_file)
-    with urllib.request.urlopen(
-        request, timeout=60, context=context
-    ) as response, destination.open("wb") as output:
-        while chunk := response.read(1024 * 1024):
-            digest.update(chunk)
-            output.write(chunk)
+    retryable_statuses = {403, 408, 429, 500, 502, 503, 504}
+    for attempt in range(3):
+        digest = hashlib.sha256()
+        try:
+            with urllib.request.urlopen(
+                request, timeout=60, context=context
+            ) as response, destination.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    digest.update(chunk)
+                    output.write(chunk)
+            break
+        except urllib.error.HTTPError as error:
+            destination.unlink(missing_ok=True)
+            if error.code not in retryable_statuses or attempt == 2:
+                raise
+            time.sleep(2**attempt)
     actual = digest.hexdigest()
     if actual != expected:
         raise RuntimeError(
