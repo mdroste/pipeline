@@ -187,7 +187,7 @@ jobs:
           - os: windows-2022
             label: Windows
             rust_target: ""
-            tauri_args: --config src-tauri/tauri.windows-signing.conf.json
+            tauri_args: ""
             expected_arch: ""
             asset_arch: ""
             max_minos: ""
@@ -653,87 +653,6 @@ jobs:
             "${provenance_extra[@]}"
           node scripts/release/smoke-poppler.mjs "$dest"
 
-      - name: Require and import Windows code-signing certificate
-        id: windows_signing
-        if: matrix.label == 'Windows'
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          foreach ($required in @(
-            "WINDOWS_CERTIFICATE",
-            "WINDOWS_CERTIFICATE_PASSWORD",
-            "WINDOWS_TIMESTAMP_URL"
-          )) {
-            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$required").Value)) {
-              throw "$required is required for a public Windows release. Configure it in the protected release environment."
-            }
-          }
-
-          $pfxPath = Join-Path $env:RUNNER_TEMP "pipeline-windows-signing.pfx"
-          try {
-            try {
-              $pfxBytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
-            } catch {
-              throw "WINDOWS_CERTIFICATE is not valid base64: $($_.Exception.Message)"
-            }
-            [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
-            $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-            $importedCertificates = @(Import-PfxCertificate `
-              -FilePath $pfxPath `
-              -CertStoreLocation Cert:\CurrentUser\My `
-              -Password $password)
-          } finally {
-            Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
-          }
-
-          $certificate = $importedCertificates |
-            Where-Object { $_.HasPrivateKey } |
-            Select-Object -First 1
-          if (-not $certificate) {
-            throw "The imported Windows certificate does not expose a private key."
-          }
-          $codeSigningOid = "1.3.6.1.5.5.7.3.3"
-          if ($certificate.EnhancedKeyUsageList.ObjectId.Value -notcontains $codeSigningOid) {
-            throw "The imported Windows certificate is not valid for code signing."
-          }
-          if ($certificate.NotAfter -le (Get-Date).AddDays(7)) {
-            throw "The Windows code-signing certificate expires within seven days."
-          }
-          [Uri]$timestampUri = $null
-          if (
-            -not [Uri]::TryCreate(
-              $env:WINDOWS_TIMESTAMP_URL,
-              [UriKind]::Absolute,
-              [ref]$timestampUri
-            )
-            -or $timestampUri.Scheme -notin @("http", "https")
-          ) {
-            throw "WINDOWS_TIMESTAMP_URL must be an absolute http(s) URL approved by the certificate issuer."
-          }
-
-          $signingConfig = [ordered]@{
-            bundle = [ordered]@{
-              windows = [ordered]@{
-                certificateThumbprint = $certificate.Thumbprint
-                digestAlgorithm = "sha256"
-                timestampUrl = $env:WINDOWS_TIMESTAMP_URL
-                allowDowngrades = $false
-                webviewInstallMode = [ordered]@{
-                  type = "offlineInstaller"
-                  silent = $true
-                }
-              }
-            }
-          }
-          $signingConfig |
-            ConvertTo-Json -Depth 5 |
-            Set-Content "gui/src-tauri/tauri.windows-signing.conf.json" -Encoding utf8NoBOM
-          "thumbprint=$($certificate.Thumbprint)" | Add-Content $env:GITHUB_OUTPUT
-
       - name: Revalidate signed tag binding before build
         shell: bash
         env:
@@ -777,9 +696,9 @@ jobs:
             ### Windows
             Download `Pipeline-${{ steps.version.outputs.num }}-Windows.exe` and double-click to install.
 
-            The Windows application and installer are Authenticode-signed and
-            timestamped. Release CI rejects either artifact unless Windows
-            reports a valid signature.
+            Windows packages are currently unsigned. Windows may display an
+            **Unknown publisher** or Microsoft Defender SmartScreen warning;
+            verify the adjacent `.sha256` checksum before installing.
 
             ### Linux
             Download `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage`,
@@ -804,19 +723,6 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.tauri_args }} -- --locked
-
-      - name: Remove Windows private signing certificate
-        if: always() && matrix.label == 'Windows' && steps.windows_signing.outputs.thumbprint != ''
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ steps.windows_signing.outputs.thumbprint }}
-        run: |
-          $certificatePath = "Cert:\CurrentUser\My\$env:WINDOWS_CERTIFICATE_THUMBPRINT"
-          if (Test-Path $certificatePath) {
-            Remove-Item $certificatePath -Force
-          }
-          Remove-Item "gui/src-tauri/tauri.windows-signing.conf.json" `
-            -Force -ErrorAction SilentlyContinue
 
       - name: Verify macOS artifact architecture
         if: startsWith(matrix.label, 'macOS')
@@ -1115,23 +1021,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          function Assert-AuthenticodeSignature([string]$Path) {
-            $signature = Get-AuthenticodeSignature -FilePath $Path
-            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-              throw "Authenticode verification failed for ${Path}: $($signature.Status) $($signature.StatusMessage)"
-            }
-            if (-not $signature.SignerCertificate) {
-              throw "Authenticode verification found no signer certificate for $Path"
-            }
-            if (-not $signature.TimeStamperCertificate) {
-              throw "Authenticode verification found no trusted timestamp for $Path"
-            }
-            return $signature
-          }
-
           $installer = Get-ChildItem "gui/src-tauri/target/release/bundle/nsis/Pipeline_*_x64-setup.exe" | Select-Object -First 1
           if (-not $installer) { throw "Windows NSIS installer was not produced" }
-          $installerSignature = Assert-AuthenticodeSignature $installer.FullName
 
           $installDir = Join-Path $env:RUNNER_TEMP "pipeline-smoke-install"
           $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -PassThru
@@ -1141,10 +1032,6 @@ jobs:
             Where-Object { $_.Name -ne "uninstall.exe" } |
             Select-Object -First 1
           if (-not $application) { throw "Installed Pipeline executable was not found under $installDir" }
-          $applicationSignature = Assert-AuthenticodeSignature $application.FullName
-          if ($applicationSignature.SignerCertificate.Thumbprint -ne $installerSignature.SignerCertificate.Thumbprint) {
-            throw "The installed application and NSIS installer were signed by different certificates."
-          }
           node scripts/release/smoke-packaged-app.mjs $application.FullName
 
           $uninstaller = Get-ChildItem $installDir -Recurse -File -Filter "uninstall.exe" | Select-Object -First 1
