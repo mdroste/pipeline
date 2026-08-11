@@ -2253,6 +2253,7 @@ fn unpack_python_archive(archive_path: &Path, destination: &Path) -> Result<Path
     let mut archive = tar::Archive::new(decoder);
     let mut total = 0u64;
     let mut entries_seen = 0usize;
+    #[cfg(unix)]
     let mut symlinks = Vec::new();
     for entry in archive
         .entries()
@@ -2281,8 +2282,13 @@ fn unpack_python_archive(archive_path: &Path, destination: &Path) -> Result<Path
             if !archive_link_stays_within_root(&relative, &link_name) {
                 return Err("Unsafe symlink target in Python archive".to_string());
             }
-            symlinks.push((target, link_name));
-            continue;
+            #[cfg(unix)]
+            {
+                symlinks.push((target, link_name));
+                continue;
+            }
+            #[cfg(not(unix))]
+            return Err("Unexpected symlink in Windows Python archive".to_string());
         }
         if kind.is_dir() {
             std::fs::create_dir_all(&target)
@@ -2316,6 +2322,7 @@ fn unpack_python_archive(archive_path: &Path, destination: &Path) -> Result<Path
                 .map_err(|error| format!("Failed to set Python permissions: {error}"))?;
         }
     }
+    #[cfg(unix)]
     for (target, link_name) in symlinks {
         if let Some(parent) = target.parent() {
             if path_has_symlink_component(destination, parent) {
@@ -2327,11 +2334,8 @@ fn unpack_python_archive(archive_path: &Path, destination: &Path) -> Result<Path
         if std::fs::symlink_metadata(&target).is_ok() {
             return Err("Python archive contains a duplicate symlink path".to_string());
         }
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&link_name, &target)
             .map_err(|error| format!("Failed to extract Python symlink: {error}"))?;
-        #[cfg(not(unix))]
-        return Err("Unexpected symlink in Windows Python archive".to_string());
     }
     let python = standalone_python(destination);
     if !python.is_file() {
@@ -2494,11 +2498,13 @@ fn unpack_llama_archive(
                         .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
                 }
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(&link_name, &target)
-                    .map_err(|error| format!("Failed to extract llama.cpp symlink: {error}"))?;
+                {
+                    std::os::unix::fs::symlink(&link_name, &target)
+                        .map_err(|error| format!("Failed to extract llama.cpp symlink: {error}"))?;
+                    continue;
+                }
                 #[cfg(not(unix))]
                 return Err("Unexpected symlink in llama.cpp archive".to_string());
-                continue;
             }
             if !kind.is_file() && !kind.is_dir() {
                 continue;
