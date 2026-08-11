@@ -7,6 +7,10 @@ import type { PipelineReport } from "../lib/types";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
+// Lazy workspace panels can take longer than Testing Library's one-second
+// default to import on busy CI runners, especially the Intel macOS runner.
+const lazyPanelWait = { timeout: 5_000 };
+
 function makeReport(): PipelineReport {
   return {
     orientation: {
@@ -76,7 +80,7 @@ describe("ReportWorkspace", () => {
       "tabindex",
       "-1",
     );
-    expect(await screen.findByRole("tabpanel", { name: "Report" })).toHaveAttribute(
+    expect(await screen.findByRole("tabpanel", { name: "Report" }, lazyPanelWait)).toHaveAttribute(
       "aria-labelledby",
       "report-workspace-tab-report",
     );
@@ -202,7 +206,7 @@ describe("ReportWorkspace", () => {
     expect(sourcesTab).toHaveAttribute("aria-selected", "true");
     expect(sourcesTab).toHaveAttribute("tabindex", "0");
     expect(reportTab).toHaveAttribute("tabindex", "-1");
-    expect(await screen.findByRole("tabpanel", { name: "Sources" })).toHaveAttribute(
+    expect(await screen.findByRole("tabpanel", { name: "Sources" }, lazyPanelWait)).toHaveAttribute(
       "id",
       "report-workspace-panel-sources",
     );
@@ -251,7 +255,7 @@ describe("ReportWorkspace", () => {
     await user.keyboard("{ArrowRight}");
     expect(issuesTab).toHaveFocus();
     expect(issuesTab).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("tabpanel", { name: /Issues/ })).toHaveAttribute(
+    expect(await screen.findByRole("tabpanel", { name: /Issues/ }, lazyPanelWait)).toHaveAttribute(
       "aria-labelledby",
       "report-workspace-tab-issues",
     );
