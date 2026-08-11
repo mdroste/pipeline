@@ -113,7 +113,7 @@ describe("WaveDiagram", () => {
           step({ id: "auto_contribution", label: "Contribution & Literature" }),
           step({ id: "auto_consistency", label: "Claims & Consistency" }),
           step({ id: "auto_exposition", label: "Exposition & Architecture" }),
-          step({ id: "auto_synthesis", label: "Consolidate Auto Review", phase: "sequential" }),
+          step({ id: "auto_synthesis", label: "Consolidate", phase: "sequential" }),
         ]}
         merge={merge}
         useOrientation={true}

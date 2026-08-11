@@ -351,6 +351,30 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Full parser structure")).toBeVisible();
   });
 
+  it("shows the automatic default using an installed Full Parser", async () => {
+    const user = userEvent.setup();
+    mockLoad(
+      { ...makeSettings(), pdf_extractor: "auto" },
+      [],
+      [paddleEngine({ installed: true })],
+    );
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+
+    expect(screen.getByRole("radio", { name: /^Automatic/ })).toBeChecked();
+    expect(
+      await screen.findByText(/Full Parser is installed, so Pipeline will use it/),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("radio", { name: /^LLM/ }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: { ...makeSettings(), pdf_extractor: "llm" },
+      }),
+    );
+  });
+
   it("explains a legacy Marker selection and saves a supported replacement", async () => {
     const user = userEvent.setup();
     mockLoad({ ...makeSettings(), pdf_extractor: "marker" });

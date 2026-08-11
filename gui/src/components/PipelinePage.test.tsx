@@ -773,7 +773,7 @@ describe("PipelinePage", () => {
       { ...config.steps[0], id: "auto_contribution", label: "Contribution & Literature" },
       { ...config.steps[0], id: "auto_consistency", label: "Claims & Consistency" },
       { ...config.steps[0], id: "auto_exposition", label: "Exposition & Architecture" },
-      { ...config.steps[1], id: "auto_synthesis", label: "Consolidate Auto Review" },
+      { ...config.steps[1], id: "auto_synthesis", label: "Consolidate" },
     ];
     mockLoad(config);
     render(<PipelinePage onClose={() => {}} />);

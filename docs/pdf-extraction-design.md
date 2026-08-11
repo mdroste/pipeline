@@ -72,9 +72,11 @@ preprocessing never silently corrects the paper.
 
 ## Where extraction stands
 
-The configured method in `extract.rs` is authoritative. LaTeX source is always
-preferred when present; PDF users explicitly select LLM, PaddleOCR-VL Full
-Parser, or pdftotext. There is no cross-extractor cascade.
+The method resolved in `extract.rs` is authoritative. LaTeX source is always
+preferred when present. The global automatic policy resolves to PaddleOCR-VL
+Full Parser when it is installed and to LLM extraction otherwise; users may
+instead explicitly select LLM, Full Parser, or pdftotext. Resolution occurs
+before extraction, so there is no cross-extractor cascade.
 Historical
 weaknesses were:
 
@@ -337,8 +339,9 @@ and its authenticated private recognition server.
 
 ## Move 4: UI
 
-- **SettingsPage** — extraction choices are "LLM", "Local engine:
-  PaddleOCR-VL Full Parser", and "pdftotext (basic)". Below them, **Local
+- **SettingsPage** — extraction choices are "Automatic", "LLM", "Local engine:
+  PaddleOCR-VL Full Parser", and "pdftotext (basic)". Automatic uses the Full
+  Parser when installed and LLM extraction otherwise. Below them, **Local
   Engines** exposes the parser's total size estimate, install progress,
   platform availability, installed version/disk use, cancellation, and
   uninstall. A detected
@@ -400,7 +403,8 @@ and its authenticated private recognition server.
   `paddleocr-vl` value migrates to `paddleocr-vl-full`. Existing profiles and
   export bundles containing `marker` still load for repair, but a document run fails
   before command resolution with an actionable replacement message. `"llm"`
-  gets bounded verification; profile `"auto"` inherits the global setting.
+  gets bounded verification; profile `"auto"` inherits the global setting,
+  and global `"auto"` resolves to an installed Full Parser or otherwise LLM.
 - Old saved reports/runs unaffected; new runs gain `pages/` artifacts.
 - CI unchanged (no new bundled binaries to sign). Release workflow unchanged.
 
