@@ -672,6 +672,10 @@ jobs:
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The hosted runner's GitHub path can terminate TLS with a CA that
+          # Node does not bundle. Trust the runner's installed system CA store
+          # for tauri-action's draft-release API calls and artifact uploads.
+          NODE_OPTIONS: --use-system-ca
           PIPELINE_RELEASE_BUILD: "1"
           # Keep Apple credentials out of the Linux and Windows process
           # environments even though this is a shared matrix step.

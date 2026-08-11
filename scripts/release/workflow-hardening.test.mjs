@@ -130,6 +130,7 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     "APPLE_CERTIFICATE",
     "APPLE_SIGNING_IDENTITY",
     "APPLE_ID",
+    "NODE_OPTIONS: --use-system-ca",
     "Windows packages are currently unsigned",
     "actions/attest-build-provenance@",
     "anchore/scan-action@",
