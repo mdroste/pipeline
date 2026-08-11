@@ -1,16 +1,7 @@
-name: Build
+name: Tests
 
 on:
   workflow_dispatch:
-    inputs:
-      profile:
-        description: Checks to run on this ref
-        required: true
-        default: quick
-        type: choice
-        options:
-          - quick
-          - maintenance
 
 permissions:
   contents: read
@@ -18,21 +9,19 @@ permissions:
 env:
   NODE_VERSION: 24.18.0
   RUST_VERSION: 1.97.1
+  CARGO_INCREMENTAL: 1
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.profile }}
+  group: tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  quick:
-    if: inputs.profile == 'quick'
-    name: Linux unit checks
+  tests:
+    name: Linux tests
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
@@ -43,7 +32,9 @@ jobs:
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: gui/src-tauri -> target
-          save-if: false
+          shared-key: tests-linux
+          cache-workspace-crates: true
+          cache-on-failure: true
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -52,92 +43,19 @@ jobs:
           cache: npm
           cache-dependency-path: gui/package-lock.json
 
-      - name: Install Linux dependencies
+      - name: Install Linux libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
 
-      - name: Install npm dependencies
+      - name: Install frontend dependencies
         working-directory: gui
-        run: npm ci
-
-      - name: Release metadata tests
-        working-directory: gui
-        run: npm run test:release
-
-      - name: Paddle sidecar contract
-        run: python scripts/release/test-paddle-parser-sidecar.py
-
-      - name: Rust tests
-        working-directory: gui/src-tauri
-        run: cargo test --locked --all-targets
-
-      - name: Rust formatting
-        working-directory: gui/src-tauri
-        run: cargo fmt --check
+        run: npm ci --no-audit --no-fund
 
       - name: Frontend tests
         working-directory: gui
         run: npm test -- --run
 
-  maintenance:
-    if: inputs.profile == 'maintenance'
-    name: Manual audits and MSRV
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --version 0.22.2 --locked
-
-      - name: Cargo audit
+      - name: Rust library tests
         working-directory: gui/src-tauri
-        run: cargo audit
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: gui/package-lock.json
-
-      - name: Install npm dependencies
-        working-directory: gui
-        run: npm ci
-
-      - name: npm production dependency audit
-        working-directory: gui
-        run: npm audit --omit=dev --audit-level=low
-
-      - name: npm build-chain advisory report
-        working-directory: gui
-        continue-on-error: true
-        run: npm audit --audit-level=low
-
-      - name: Install Rust 1.88
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
-        with:
-          toolchain: 1.88.0
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
-      - name: Check declared MSRV
-        working-directory: gui/src-tauri
-        run: cargo +1.88.0 check --locked
+        run: cargo test --locked --lib

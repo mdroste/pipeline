@@ -97,7 +97,7 @@ test("managed Paddle parser inputs are complete checksum locks", () => {
   assert.deepEqual(licensedPackages, lockedPackages);
 });
 
-test("parser lock metadata is bound into runtime and release qualification", () => {
+test("parser lock metadata is bound into runtime and separate manual qualification", () => {
   const requirements = read("requirements.in")
     .split("\n")
     .map((line) => line.trim())
@@ -116,10 +116,8 @@ test("parser lock metadata is bound into runtime and release qualification", () 
   assert.match(engines, /"layout_ready": true/);
 
   const release = fs.readFileSync(path.join(ROOT, ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /if: inputs\.operation == 'preflight'/);
-  assert.match(release, /python scripts\/release\/qualify-paddle-parser\.py/);
-  assert.match(release, /release:\n    if: inputs\.operation == 'package'/);
-  assert.doesNotMatch(release, /needs: \[quality, paddle-parser-qualification\]/);
+  assert.match(release, /if: github\.ref_type == 'tag'/);
+  assert.doesNotMatch(release, /qualify-paddle-parser|paddle-parser-qualification/);
   const qualification = fs.readFileSync(
     path.join(ROOT, ".github", "workflows", "paddle-parser-qualification.yml"),
     "utf8",

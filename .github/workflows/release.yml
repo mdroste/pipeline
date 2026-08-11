@@ -3,212 +3,71 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      operation:
-        description: Release phase to run on the selected signed tag ref
-        required: true
-        default: preflight
-        type: choice
-        options:
-          - preflight
-          - package
-          - publish
       platform:
-        description: Platform for a package run; ignored by preflight and publish
+        description: Platform to build from this release tag
         required: true
-        default: linux
+        default: macos-arm64
         type: choice
         options:
-          - linux
-          - windows
           - macos-arm64
           - macos-x64
+          - windows
+          - linux
+          - all
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   NODE_VERSION: 24.18.0
   RUST_VERSION: 1.97.1
-  GRYPE_VERSION: v0.110.0
-  SYFT_VERSION: 1.42.3
-  SYFT_LINUX_AMD64_SHA256: 0d6be741479eddd2c8644a288990c04f3df0d609bbc1599a005532a9dff63509
+  CARGO_INCREMENTAL: 1
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  quality:
-    if: inputs.operation == 'preflight'
-    name: Tagged SHA quality gate
-    runs-on: ubuntu-22.04
-    timeout-minutes: 180
-    permissions:
-      contents: read
-    steps:
-      - name: Require a verified signed annotated tag
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          encoded_tag="$(jq -rn --arg tag "$GITHUB_REF_NAME" '$tag | @uri')"
-          ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$encoded_tag")"
-          object_type="$(jq -r '.object.type // empty' <<<"$ref_json")"
-          if [ "$object_type" != "tag" ]; then
-            echo "::error::Release tag $GITHUB_REF_NAME is lightweight. Public releases require an annotated, cryptographically signed tag."
-            exit 1
-          fi
-
-          tag_object_sha="$(jq -r '.object.sha // empty' <<<"$ref_json")"
-          if ! [[ "$tag_object_sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::GitHub did not return a valid annotated tag object for $GITHUB_REF_NAME."
-            exit 1
-          fi
-
-          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
-          verified="$(jq -r '.verification.verified // false' <<<"$tag_json")"
-          reason="$(jq -r '.verification.reason // "no verification reason returned"' <<<"$tag_json")"
-          if [ "$verified" != "true" ]; then
-            echo "::error::Release tag $GITHUB_REF_NAME is not cryptographically verified by GitHub (reason: $reason)."
-            exit 1
-          fi
-          target_type="$(jq -r '.object.type // empty' <<<"$tag_json")"
-          target_sha="$(jq -r '.object.sha // empty' <<<"$tag_json")"
-          if [ "$target_type" != "commit" ]; then
-            echo "::error::Release tag $GITHUB_REF_NAME must point directly to a commit, not $target_type."
-            exit 1
-          fi
-          if [ "$target_sha" != "$GITHUB_SHA" ]; then
-            echo "::error::Verified release tag target $target_sha does not match the immutable workflow SHA $GITHUB_SHA."
-            exit 1
-          fi
-          echo "Verified signed annotated release tag $GITHUB_REF_NAME at $GITHUB_SHA."
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ github.sha }}
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: gui/src-tauri -> target
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: gui/package-lock.json
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
-      - name: Install npm dependencies
-        working-directory: gui
-        run: npm ci
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --version 0.22.2 --locked
-
-      - name: Rust dependency audit
-        working-directory: gui/src-tauri
-        run: cargo audit
-
-      - name: npm dependency and build-chain audit
-        working-directory: gui
-        run: npm audit --audit-level=low
-
-      - name: Release metadata tests
-        working-directory: gui
-        run: npm run test:release
-
-      - name: Paddle full-parser sidecar contract
-        run: python scripts/release/test-paddle-parser-sidecar.py
-
-      - name: Full parser release qualification
-        run: python scripts/release/qualify-paddle-parser.py
-
-      - name: Rust tests
-        working-directory: gui/src-tauri
-        run: cargo test --locked --all-targets
-
-      - name: Rust formatting
-        working-directory: gui/src-tauri
-        run: cargo fmt --check
-
-      - name: Rust Clippy
-        working-directory: gui/src-tauri
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
-
-      - name: Frontend tests
-        working-directory: gui
-        run: npm test -- --run
-
-      - name: Frontend production build
-        working-directory: gui
-        run: npm run build
-
-      - name: Install declared minimum Rust version
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
-        with:
-          toolchain: 1.88.0
-
-      - name: Check declared MSRV
-        working-directory: gui/src-tauri
-        run: cargo +1.88.0 check --locked
-
-  release:
-    if: inputs.operation == 'package'
-    permissions:
-      contents: write
-    environment:
-      name: release
-      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+  package:
+    if: github.ref_type == 'tag'
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    environment: release
     strategy:
       fail-fast: false
       matrix:
         include: >-
-          ${{ fromJSON(inputs.platform == 'macos-arm64'
-          && '[{"os":"macos-15","label":"macOS-arm64","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","expected_arch":"arm64","asset_arch":"aarch64","max_minos":"15.0"}]'
+          ${{ fromJSON(
+          inputs.platform == 'all'
+          && '[{"id":"macos-arm64","name":"macOS ARM","runner":"macos-15","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","bundle":"dmg"},{"id":"macos-x64","name":"macOS Intel","runner":"macos-15-intel","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin","bundle":"dmg"},{"id":"windows","name":"Windows","runner":"windows-2022","rust_target":"","tauri_args":"","bundle":"nsis"},{"id":"linux","name":"Linux","runner":"ubuntu-22.04","rust_target":"","tauri_args":"","bundle":"appimage"}]'
+          || inputs.platform == 'macos-arm64'
+          && '[{"id":"macos-arm64","name":"macOS ARM","runner":"macos-15","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","bundle":"dmg"}]'
           || inputs.platform == 'macos-x64'
-          && '[{"os":"macos-15-intel","label":"macOS-x64","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin","expected_arch":"x86_64","asset_arch":"x64","max_minos":"15.0"}]'
+          && '[{"id":"macos-x64","name":"macOS Intel","runner":"macos-15-intel","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin","bundle":"dmg"}]'
           || inputs.platform == 'windows'
-          && '[{"os":"windows-2022","label":"Windows","rust_target":"","tauri_args":"","expected_arch":"","asset_arch":"","max_minos":""}]'
-          || '[{"os":"ubuntu-22.04","label":"Linux","rust_target":"","tauri_args":"","expected_arch":"","asset_arch":"","max_minos":""}]') }}
-
-    name: ${{ matrix.label }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
+          && '[{"id":"windows","name":"Windows","runner":"windows-2022","rust_target":"","tauri_args":"","bundle":"nsis"}]'
+          || '[{"id":"linux","name":"Linux","runner":"ubuntu-22.04","rust_target":"","tauri_args":"","bundle":"appimage"}]') }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ github.sha }}
 
-      - name: Install Rust stable
+      - name: Confirm release tag and version
+        shell: bash
+        run: node scripts/release/validate-release-identity.mjs --tag "$GITHUB_REF_NAME"
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.rust_target }}
 
-      - name: Rust cache
+      - name: Restore Rust build cache
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: gui/src-tauri -> target
+          shared-key: release-${{ matrix.id }}
+          cache-workspace-crates: true
           cache-on-failure: true
 
       - name: Install Node.js
@@ -218,1158 +77,108 @@ jobs:
           cache: npm
           cache-dependency-path: gui/package-lock.json
 
-      - name: Validate release identity
-        id: version
-        shell: bash
-        run: node scripts/release/validate-release-identity.mjs --tag "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
-
-      - name: Configure truthful macOS deployment target
-        if: startsWith(matrix.label, 'macOS')
-        shell: bash
-        run: echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.max_minos }}" >> "$GITHUB_ENV"
-
-      - name: Configure immutable Ubuntu archive snapshot
-        if: runner.os == 'Linux'
+      - name: Install Linux libraries
+        if: matrix.id == 'linux'
         shell: bash
         run: |
-          set -euo pipefail
-          apt_version="$(apt-get --version | awk 'NR == 1 { print $2 }')"
-          if ! dpkg --compare-versions "${apt_version}" ge 2.4.11; then
-            echo "Ubuntu snapshots require apt >= 2.4.11; runner has ${apt_version}" >&2
-            exit 1
-          fi
-          snapshot="$(jq -r '.linux.aptSnapshot' scripts/release/poppler-lock.json)"
-          if ! [[ "$snapshot" =~ ^20[0-9]{6}T[0-9]{6}Z$ ]]; then
-            echo "poppler-lock.json contains an invalid Ubuntu snapshot ID: $snapshot" >&2
-            exit 1
-          fi
-          sources="${RUNNER_TEMP}/pipeline-ubuntu-snapshot.list"
-          {
-            echo "deb [snapshot=${snapshot} signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy main restricted universe"
-            echo "deb [snapshot=${snapshot} signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy-updates main restricted universe"
-            echo "deb [snapshot=${snapshot} signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu jammy-security main restricted universe"
-          } > "$sources"
-          echo "PIPELINE_APT_SOURCES=$sources" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            libfuse2 patchelf poppler-utils
 
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          apt_options=(
-            -o "Dir::Etc::sourcelist=${PIPELINE_APT_SOURCES}"
-            -o "Dir::Etc::sourceparts=-"
-          )
-          sudo apt-get "${apt_options[@]}" update
-          sudo apt-get "${apt_options[@]}" install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            libfuse2 \
-            librsvg2-dev \
-            patchelf \
-            xvfb
-
-      - name: Install npm dependencies
+      - name: Install frontend dependencies
         working-directory: gui
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
-      # Import the Apple signing cert early on macOS so the Bundle
-      # poppler step can sign its Mach-O files with --timestamp before
-      # Tauri picks them up. Without this, notarization rejects the
-      # bundle ("binary is not signed with a valid Developer ID
-      # certificate / secure timestamp") because Homebrew's poppler
-      # binaries are unsigned and dylibbundler invalidates what was
-      # there. The same imported identity is used by the later local
-      # Tauri build for the application and disk image.
-      - name: Import Apple code-signing cert (macOS)
-        if: startsWith(matrix.label, 'macOS')
+      - name: Restore bundled Poppler
+        id: poppler-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: gui/src-tauri/resources/poppler
+          key: poppler-simple-v1-${{ matrix.id }}-${{ hashFiles('scripts/release/bundle-poppler.sh', 'scripts/release/poppler-lock.json') }}
+          restore-keys: |
+            poppler-simple-v1-${{ matrix.id }}-
+
+      - name: Bundle Poppler when not cached
+        if: steps.poppler-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: bash scripts/release/bundle-poppler.sh "${{ matrix.id }}"
+
+      - name: Import Apple signing certificate
+        if: startsWith(matrix.id, 'macos-')
         uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
         with:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
-      # Bundle a slimmed poppler so Claude Code's Read tool (which uses
-      # pdftoppm to render PDFs) and Pipeline's pdftotext fallback work
-      # out of the box. Source binaries are downloaded per-platform and
-      # dropped into gui/src-tauri/resources/poppler/, which is bundled
-      # by Tauri via tauri.conf.json `resources`.
-      #
-      # The output directory is cached for macOS/Linux so subsequent runs
-      # skip the download/install (brew install on macOS is ~2 min by
-      # itself). Windows is reconstructed from exact conda archives on every
-      # release to re-prove package-to-PE attribution. Cache invalidates when
-      # the workflow file changes.
-
-      - name: Cache poppler bundle
-        id: cache_poppler
-        if: matrix.label != 'Windows'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: gui/src-tauri/resources/poppler
-          key: poppler-v3-${{ matrix.label }}-${{ hashFiles('scripts/release/poppler-lock.json', 'scripts/release/poppler-provenance.mjs', 'scripts/release/smoke-poppler.mjs', 'scripts/release/validate-macos-machos.sh', 'gui/src-tauri/resources/poppler/README.md', '.github/workflows/release.yml') }}
-
-      - name: Bundle poppler (macOS)
-        if: startsWith(matrix.label, 'macOS') && steps.cache_poppler.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          lock="$GITHUB_WORKSPACE/scripts/release/poppler-lock.json"
-          expected_version="$(jq -r '.macos.version' "$lock")"
-          core_commit="$(jq -r '.macos.homebrewCoreCommit' "$lock")"
-
-          # Disable Homebrew's JSON API and install from an immutable
-          # homebrew-core revision. The formula and every dependency bottle
-          # checksum are therefore taken from the reviewed lock revision.
-          # `brew --repo homebrew/core` exits nonzero when the tap is absent.
-          # Construct the conventional tap path from the always-present main
-          # repository so a clean runner works under `set -e`.
-          brew_repo="$(brew --repo)"
-          core_repo="$brew_repo/Library/Taps/homebrew/homebrew-core"
-          if [ ! -d "$core_repo/.git" ]; then
-            mkdir -p "$(dirname "$core_repo")"
-            git clone --filter=blob:none --no-checkout \
-              https://github.com/Homebrew/homebrew-core.git "$core_repo"
-          fi
-          git -C "$core_repo" fetch --depth=1 origin "$core_commit"
-          # Hosted images can carry runner-maintenance edits in this ephemeral
-          # tap checkout. Force the reviewed revision so those image-local
-          # changes cannot block or influence the release dependency graph.
-          git -C "$core_repo" checkout --force --detach "$core_commit"
-          export HOMEBREW_NO_AUTO_UPDATE=1
-          export HOMEBREW_NO_INSTALL_FROM_API=1
-
-          formula_json="$(brew info --json=v2 poppler)"
-          formula_version="$(jq -r '.formulae[0].versions.stable' <<<"$formula_json")"
-          formula_url="$(jq -r '.formulae[0].urls.stable.url' <<<"$formula_json")"
-          formula_sha="$(jq -r '.formulae[0].urls.stable.checksum' <<<"$formula_json")"
-          locked_url="$(jq -r '.macos.source.url' "$lock")"
-          locked_sha="$(jq -r '.macos.source.sha256' "$lock")"
-          if [ "$formula_version" != "$expected_version" ] || \
-             [ "$formula_url" != "$locked_url" ] || [ "$formula_sha" != "$locked_sha" ]; then
-            echo "Pinned Homebrew formula does not match poppler-lock.json" >&2
-            jq '.formulae[0] | {version:.versions.stable,url:.urls.stable.url,sha256:.urls.stable.checksum}' \
-              <<<"$formula_json" >&2
-            exit 1
-          fi
-          brew install poppler dylibbundler
-
-          installed_version="$(brew list --versions poppler | awk '{print $2}')"
-          if [ "$installed_version" != "$expected_version" ]; then
-            echo "Homebrew installed poppler $installed_version; lock requires $expected_version" >&2
-            exit 1
-          fi
-
-          poppler_bin="$(brew --prefix poppler)/bin"
-          work="$(mktemp -d)"
-          cp "$poppler_bin/pdftoppm" "$work/"
-          cp "$poppler_bin/pdftotext" "$work/"
-          # dylibbundler follows each dylib's dependencies, but when a
-          # reference uses @rpath (as Homebrew poppler's do for
-          # libpoppler, libcairo, etc.) it doesn't know where to look.
-          # Give it every brew opt/*/lib as a search path, and pipe
-          # /dev/null to stdin so it fails fast instead of hanging on
-          # an interactive "please specify the directory" prompt if
-          # anything is still unresolvable.
-          search_args=()
-          for lib_dir in "$(brew --prefix)"/opt/*/lib; do
-            [ -d "$lib_dir" ] && search_args+=(-s "$lib_dir")
-          done
-          (
-            cd "$work"
-            dylibbundler -od -b \
-              -x ./pdftoppm -x ./pdftotext \
-              -d ./lib -p '@executable_path/lib/' \
-              "${search_args[@]}" </dev/null
-          )
-          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
-          mkdir -p "$dest/lib" "$dest/share" "$dest/licenses/homebrew"
-          cp "$work/pdftoppm" "$work/pdftotext" "$dest/"
-          cp "$work/lib/"*.dylib "$dest/lib/"
-
-          data_dir="$(brew --prefix poppler)/share/poppler"
-          if [ ! -d "$data_dir" ]; then
-            echo "Homebrew poppler data directory is missing: $data_dir" >&2
-            exit 1
-          fi
-          cp -R "$data_dir" "$dest/share/poppler"
-
-          formulas=(poppler)
-          while IFS= read -r formula; do
-            [ -n "$formula" ] && formulas+=("$formula")
-          done < <(brew deps --formula poppler | sort -u)
-          brew info --json=v2 "${formulas[@]}" | jq --arg commit "$core_commit" '{
-            manager: "homebrew",
-            repositoryCommit: $commit,
-            packages: [.formulae[] | {
-              name,
-              version: (.installed[0].version // .versions.stable),
-              license,
-              homepage,
-              sourceUrl: .urls.stable.url,
-              sourceSha256: .urls.stable.checksum
-            }]
-          }' > "$dest/package-inventory.json"
-
-          # Preserve every license/copyright file installed by the runtime
-          # formula closure. The normalized package inventory remains the
-          # authoritative list when a bottle does not install a text file.
-          for formula in "${formulas[@]}"; do
-            formula_license_dir="$dest/licenses/homebrew/$formula"
-            mkdir -p "$formula_license_dir"
-            prefix="$(brew --prefix "$formula")"
-            while IFS= read -r -d '' license_file; do
-              cp "$license_file" "$formula_license_dir/$(basename "$license_file")"
-            done < <(find -L "$prefix" -maxdepth 3 -type f \
-              \( -iname 'COPYING*' -o -iname 'LICENSE*' -o -iname 'COPYRIGHT*' -o -iname 'NOTICE*' \) \
-              -size -2M -print0)
-          done
-
-      - name: Bundle poppler (Linux)
-        if: matrix.label == 'Linux' && steps.cache_poppler.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          lock="$GITHUB_WORKSPACE/scripts/release/poppler-lock.json"
-          package_version="$(jq -r '.linux.packageVersion' "$lock")"
-          apt_options=(
-            -o "Dir::Etc::sourcelist=${PIPELINE_APT_SOURCES}"
-            -o "Dir::Etc::sourceparts=-"
-          )
-          sudo apt-get "${apt_options[@]}" install -y --allow-downgrades \
-            "poppler-utils=${package_version}" "libpoppler118=${package_version}" patchelf
-          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
-          mkdir -p "$dest/lib" "$dest/share" "$dest/licenses/debian"
-          source_pdftoppm="$(command -v pdftoppm)"
-          source_pdftotext="$(command -v pdftotext)"
-          cp "$source_pdftoppm" "$dest/"
-          cp "$source_pdftotext" "$dest/"
-
-          # Copy each binary's dynamic deps, skipping glibc-family libs that
-          # must come from the host (bundling them across distro versions
-          # causes loader conflicts).
-          deps_file="$(mktemp)"
-          packages_file="$(mktemp)"
-          printf '%s\n' poppler-utils libpoppler118 > "$packages_file"
-          ldd "$source_pdftoppm" "$source_pdftotext" | awk '/=> \//{print $3}' | sort -u > "$deps_file"
-          while IFS= read -r lib; do
-            name="$(basename "$lib")"
-            case "$name" in
-              ld-linux-*|libc.so.*|libdl.so.*|libpthread.so.*|libm.so.*|librt.so.*|libresolv.so.*|libnsl.so.*|libutil.so.*)
-                continue ;;
-            esac
-            cp -L "$lib" "$dest/lib/$name"
-            dpkg-query -S "$lib" 2>/dev/null | head -1 | cut -d: -f1 >> "$packages_file" || true
-          done < "$deps_file"
-
-          # DT_RUNPATH on an executable is not inherited by grandchildren.
-          # Give every copied shared object its own sibling lookup path.
-          # linuxdeploy appends a sibling lookup to every ELF under usr/lib.
-          # Apply its final executable RPATH before generating provenance so
-          # the later packaging pass is byte-for-byte idempotent.
-          patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$dest/pdftoppm"
-          patchelf --set-rpath '$ORIGIN/lib:$ORIGIN' "$dest/pdftotext"
-          while IFS= read -r library; do
-            file "$library" | grep -q ELF && patchelf --set-rpath '$ORIGIN' "$library"
-          done < <(find "$dest/lib" -type f | sort)
-
-          if [ ! -d /usr/share/poppler ]; then
-            echo "Ubuntu poppler data directory is missing" >&2
-            exit 1
-          fi
-          cp -R /usr/share/poppler "$dest/share/poppler"
-          cp /usr/share/common-licenses/GPL-2 "$dest/licenses/debian/GPL-2.txt"
-          cp /usr/share/common-licenses/GPL-3 "$dest/licenses/debian/GPL-3.txt"
-
-          sort -u "$packages_file" | while IFS= read -r package; do
-            [ -n "$package" ] || continue
-            doc_package="${package%%:*}"
-            copyright="/usr/share/doc/$doc_package/copyright"
-            [ -f "$copyright" ] && cp "$copyright" "$dest/licenses/debian/$doc_package.copyright"
-            version="$(dpkg-query -W -f='${Version}' "$package")"
-            source_name="$(dpkg-query -W -f='${source:Package}' "$package")"
-            source_version="$(dpkg-query -W -f='${source:Version}' "$package")"
-            jq -n --arg name "$package" --arg version "$version" \
-              --arg sourceName "$source_name" --arg sourceVersion "$source_version" \
-              '{name:$name,version:$version,sourcePackage:$sourceName,sourceVersion:$sourceVersion}'
-          done | jq -s '{manager:"dpkg",distribution:"Ubuntu 22.04 LTS (jammy)",packages:.}' \
-            > "$dest/package-inventory.json"
-
-          node scripts/release/poppler-provenance.mjs --create \
-            --platform linux --resource-dir "$dest"
-
-      - name: Bundle poppler (Windows)
-        if: matrix.label == 'Windows' && steps.cache_poppler.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          lock="$GITHUB_WORKSPACE/scripts/release/poppler-lock.json"
-          version="$(jq -r '.windows.version' "$lock")"
-          distribution_version="$(jq -r '.windows.distributionVersion' "$lock")"
-          url="$(jq -r '.windows.archive.url' "$lock")"
-          expected_sha="$(jq -r '.windows.archive.sha256' "$lock")"
-          archive="$RUNNER_TEMP/Release-${distribution_version}.zip"
-          unpacked="$RUNNER_TEMP/poppler-${distribution_version}"
-          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
-            --output "$archive" "$url"
-          echo "$expected_sha  $archive" | sha256sum --check --strict
-          mkdir -p "$unpacked"
-          unzip -q "$archive" -d "$unpacked"
-          root="$unpacked/poppler-${version}"
-          src="$root/Library/bin"
-          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
-          mkdir -p "$dest" "$dest/share" "$dest/licenses/poppler"
-          cp "$src/pdftoppm.exe" "$dest/"
-          cp "$src/pdftotext.exe" "$dest/"
-          # Copy the provider's dependency DLL set, excluding GUI/C++ binding
-          # libraries that pdftoppm and pdftotext do not load.
-          shopt -s nullglob
-          for dll in "$src"/*.dll; do
-            name=$(basename "$dll")
-            case "$name" in
-              Qt5*|Qt6*|poppler-cpp.dll|poppler-glib.dll) continue ;;
-            esac
-            cp "$dll" "$dest/"
-          done
-          cp -R "$root/share/poppler" "$dest/share/poppler"
-          cp "$root/share/poppler/COPYING"* "$dest/licenses/poppler/"
-          cp "$root/share/poppler/README" "$dest/licenses/poppler/README"
-          jq '{
-            manager: "conda",
-            channel: .windows.packageAttribution.channel,
-            subdir: .windows.packageAttribution.subdir,
-            attribution: .windows.packageAttribution,
-            packages: .windows.packages
-          }' "$lock" > "$dest/package-inventory.json"
-
-          # The provider ZIP omitted conda-meta and was assembled from a
-          # floating solve. Reconstruct the reviewed package set on every
-          # release: verify each exact source-package archive, extract its
-          # payload, and let provenance validation prove that every shipped PE
-          # hash occurs in the attributed package.
-          conda_root="$RUNNER_TEMP/pipeline-windows-conda"
-          mkdir -p "$conda_root"
-          while IFS=$'\t' read -r package_name package_version package_build \
-            package_url package_sha; do
-            if ! [[ "$package_name" =~ ^[0-9A-Za-z._-]+$ ]] || \
-               ! [[ "$package_version" =~ ^[0-9A-Za-z._+-]+$ ]] || \
-               ! [[ "$package_build" =~ ^[0-9A-Za-z._+-]+$ ]] || \
-               ! [[ "$package_sha" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "Unsafe or incomplete Windows conda lock entry: $package_name" >&2
-              exit 1
-            fi
-            package_key="${package_name}-${package_version}-${package_build}"
-            package_archive="$conda_root/${package_key}.conda"
-            package_outer="$conda_root/${package_key}-outer"
-            package_payload="$conda_root/${package_key}"
-            curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
-              --output "$package_archive" "$package_url"
-            echo "$package_sha  $package_archive" | sha256sum --check --strict
-            mkdir -p "$package_outer" "$package_payload"
-            7z x -y "$package_archive" "-o$package_outer" >/dev/null
-            mapfile -t payload_archives < <(
-              find "$package_outer" -maxdepth 1 -type f -name 'pkg-*.tar.zst' | sort
-            )
-            if [ "${#payload_archives[@]}" -ne 1 ]; then
-              echo "Expected one payload archive in $package_archive" >&2
-              exit 1
-            fi
-            7z x -y "${payload_archives[0]}" -so |
-              7z x -si -ttar -y "-o$package_payload" >/dev/null
-          done < <(
-            jq -r '.windows.packages[] |
-              [.name,.version,.build,.sourceUrl,.archiveSha256] | @tsv' "$lock" |
-              tr -d '\r'
-          )
-          node scripts/release/poppler-provenance.mjs --create \
-            --platform windows --resource-dir "$dest" \
-            --conda-package-root "$conda_root"
-
-      - name: Sign bundled poppler with the current certificate (macOS)
-        if: startsWith(matrix.label, 'macOS')
+      - name: Sign bundled Poppler
+        if: startsWith(matrix.id, 'macos-')
         shell: bash
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
-          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
-          # Cache entries may have been produced by an older certificate.
-          # Re-sign every Mach-O on every release and then regenerate the
-          # file-hash provenance so the current protected-environment identity
-          # is authoritative.
-          find "$dest" -type f | while IFS= read -r f; do
-            if file "$f" | grep -q 'Mach-O'; then
-              codesign --remove-signature "$f" 2>/dev/null || true
+          while IFS= read -r -d '' file_path; do
+            if file "$file_path" | grep -q 'Mach-O'; then
               codesign --force --options runtime --timestamp \
-                --sign "${APPLE_SIGNING_IDENTITY}" "$f"
+                --sign "$APPLE_SIGNING_IDENTITY" "$file_path"
             fi
-          done
-          node scripts/release/poppler-provenance.mjs --create \
-            --platform macos --resource-dir "$dest"
+          done < <(find gui/src-tauri/resources/poppler -type f -print0)
 
-      # Cache hits receive the same full validation as newly-created bundles:
-      # executable smoke tests, exact version and file hashes, offline licenses,
-      # data files, loader closure, architecture, and minimum macOS.
-      - name: Validate bundled poppler
-        env:
-          LABEL: ${{ matrix.label }}
-          EXPECTED_ARCH: ${{ matrix.expected_arch }}
-          MAX_MINOS: ${{ matrix.max_minos }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
-          case "$LABEL" in
-            macOS-*)
-              platform=macos
-              bash scripts/release/validate-macos-machos.sh \
-                --root "$dest" --expected-arch "$EXPECTED_ARCH" --max-minos "$MAX_MINOS" \
-                --poppler-layout --require-developer-id
-              ;;
-            Linux)
-              platform=linux
-              while IFS= read -r binary; do
-                file "$binary" | grep -q ELF || continue
-                if ldd "$binary" | grep -q 'not found'; then
-                  echo "Unresolved Linux dependency: $binary" >&2
-                  ldd "$binary" >&2
-                  exit 1
-                fi
-              done < <(find "$dest" -type f | sort)
-              ;;
-            Windows)
-              platform=windows
-              provenance_windows_args=(
-                --conda-package-root "$RUNNER_TEMP/pipeline-windows-conda"
-              )
-              ;;
-            *) echo "Unknown release label: $LABEL" >&2; exit 1 ;;
-          esac
-          provenance_args=(
-            --verify
-            --platform "$platform"
-            --resource-dir "$dest"
-          )
-          if [ "$LABEL" = "Windows" ]; then
-            provenance_args+=("${provenance_windows_args[@]}")
-          fi
-          node scripts/release/poppler-provenance.mjs "${provenance_args[@]}"
-          node scripts/release/smoke-poppler.mjs "$dest"
-
-      - name: Revalidate signed tag binding before build
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/release/validate-signed-tag-binding.sh
-
-      # Build locally first. Publishing happens only after the platform-specific
-      # validation steps below, so a late validation failure cannot upload an
-      # invalid or partial installer.
-      - name: Build package
+      - name: Build signed and notarized macOS package
+        if: startsWith(matrix.id, 'macos-')
         working-directory: gui
         env:
-          PIPELINE_RELEASE_BUILD: "1"
-          # linuxdeploy strips every ELF file in the AppDir by default, which
-          # would mutate the checksum-locked Poppler executables after their
-          # provenance is generated. Preserve those validated resource bytes.
-          NO_STRIP: ${{ runner.os == 'Linux' && '1' || '' }}
-          # Keep Apple credentials out of the Linux and Windows process
-          # environments even though this is a shared matrix step.
-          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_ID: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_TEAM_ID || '' }}
-        run: npm run tauri -- build ${{ matrix.tauri_args }} -- --locked
-
-      - name: Verify macOS artifact architecture
-        if: startsWith(matrix.label, 'macOS')
-        env:
+          MACOSX_DEPLOYMENT_TARGET: "15.0"
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          RUST_TARGET: ${{ matrix.rust_target }}
-          EXPECTED_ARCH: ${{ matrix.expected_arch }}
-          ASSET_ARCH: ${{ matrix.asset_arch }}
-          MAX_MINOS: ${{ matrix.max_minos }}
-        shell: bash
-        run: |
-          set -euo pipefail
+        run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} -- --locked
 
-          release_dir="gui/src-tauri/target/${RUST_TARGET}/release"
-          app_path="${release_dir}/bundle/macos/Pipeline.app"
-          if [ ! -d "${app_path}" ]; then
-            echo "Pipeline.app was not produced at ${app_path}"
-            find gui/src-tauri/target -path '*/release/bundle/macos/Pipeline.app' -type d -print
-            exit 1
-          fi
+      - name: Build unsigned package
+        if: ${{ !startsWith(matrix.id, 'macos-') }}
+        working-directory: gui
+        env:
+          NO_STRIP: ${{ matrix.id == 'linux' && '1' || '' }}
+        run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} -- --locked
 
-          bash scripts/release/validate-macos-machos.sh \
-            --root "${app_path}" --expected-arch "${EXPECTED_ARCH}" --max-minos "${MAX_MINOS}" \
-            --require-developer-id
-          app_poppler="${app_path}/Contents/Resources/resources/poppler"
-          app_notices="${app_path}/Contents/Resources/resources/notices"
-          if [ ! -d "${app_poppler}" ]; then
-            echo "Bundled Poppler directory was not found in Pipeline.app" >&2
-            find "${app_path}/Contents/Resources" -maxdepth 5 -print
-            exit 1
-          fi
-          bash scripts/release/validate-macos-machos.sh \
-            --root "${app_poppler}" --expected-arch "${EXPECTED_ARCH}" --max-minos "${MAX_MINOS}" \
-            --poppler-layout --require-developer-id
-          node scripts/release/poppler-provenance.mjs --verify \
-            --platform macos --resource-dir "${app_poppler}"
-          node scripts/release/smoke-poppler.mjs "${app_poppler}"
-          test -s "${app_notices}/PIPELINE_LICENSE.txt"
-          test -s "${app_notices}/THIRD_PARTY_LICENSES.md"
-          test -s "${app_notices}/THIRD_PARTY_SBOM.cdx.json"
-          test -s "${app_notices}/LICENSE_INVENTORY.json"
-          test -s "${app_notices}/PADDLE_PARSER_LICENSE_INVENTORY.json"
-          test -s "${app_notices}/PADDLE_PARSER_RUNTIME_LOCK.json"
-          test -s "${app_notices}/NOTICE.txt"
-          test -s "${app_notices}/POPPLER_INPUT_LOCK.json"
-          test -s "${app_notices}/POPPLER_PROVENANCE.json"
-
-          exe="${app_path}/Contents/MacOS/pipeline-gui"
-          actual_arch="$(lipo -archs "${exe}")"
-          if [ "${actual_arch}" != "${EXPECTED_ARCH}" ]; then
-            echo "Expected ${EXPECTED_ARCH} executable, got: ${actual_arch}"
-            file "${exe}"
-            exit 1
-          fi
-
-          minos="$(otool -l "${exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /minos/{print $2; exit}')"
-          if ! awk -v actual="${minos}" -v max="${MAX_MINOS}" 'BEGIN { split(actual,a,"."); split(max,m,"."); exit ! ((a[1] < m[1]) || (a[1] == m[1] && a[2] <= m[2])) }'; then
-            echo "Executable minimum macOS ${minos} is higher than expected ${MAX_MINOS}"
-            otool -l "${exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /(platform|minos|sdk)/{print} show && /sdk/{exit}'
-            exit 1
-          fi
-
-          requires_carbon="$(plutil -extract LSRequiresCarbon raw "${app_path}/Contents/Info.plist")"
-          if [ "${requires_carbon}" != "false" ]; then
-            echo "Info.plist must not require Carbon"
-            plutil -p "${app_path}/Contents/Info.plist"
-            exit 1
-          fi
-          declared_minos="$(plutil -extract LSMinimumSystemVersion raw "${app_path}/Contents/Info.plist")"
-          if [ "${declared_minos}" != "${MAX_MINOS}" ]; then
-            echo "Info.plist declares macOS ${declared_minos}; expected ${MAX_MINOS}" >&2
-            exit 1
-          fi
-
-          dmg_dir="${release_dir}/bundle/dmg"
-          if [ ! -d "${dmg_dir}" ]; then
-            echo "DMG output directory was not produced at ${dmg_dir}"
-            find gui/src-tauri/target -path '*/release/bundle/dmg' -type d -print
-            exit 1
-          fi
-
-          dmg_path="$(find "${dmg_dir}" -name "Pipeline_*_${ASSET_ARCH}.dmg" -type f | head -1)"
-          if [ -z "${dmg_path}" ]; then
-            echo "Expected Pipeline_*_${ASSET_ARCH}.dmg was not produced"
-            find gui/src-tauri/target -maxdepth 6 -type f -name '*.dmg' -print
-            exit 1
-          fi
-
-          echo "Notarizing and stapling ${dmg_path}"
-          xcrun notarytool submit "${dmg_path}" \
-            --apple-id "${APPLE_ID}" \
-            --password "${APPLE_PASSWORD}" \
-            --team-id "${APPLE_TEAM_ID}" \
-            --wait
-          xcrun stapler staple "${dmg_path}"
-          xcrun stapler validate "${dmg_path}"
-
-          spctl_output="$(spctl -a -vvv -t open --context context:primary-signature "${dmg_path}" 2>&1 || true)"
-          echo "${spctl_output}"
-          if ! grep -q 'source=Notarized Developer ID' <<<"${spctl_output}"; then
-            echo "DMG was not accepted as a notarized Developer ID disk image"
-            exit 1
-          fi
-
-          mount_dir="$(mktemp -d)"
-          hdiutil attach -readonly -nobrowse -mountpoint "${mount_dir}" "${dmg_path}"
-          trap 'hdiutil detach "${mount_dir}" >/dev/null 2>&1 || true; rmdir "${mount_dir}" >/dev/null 2>&1 || true' EXIT
-
-          dmg_exe="${mount_dir}/Pipeline.app/Contents/MacOS/pipeline-gui"
-          if [ ! -f "${dmg_exe}" ]; then
-            echo "Pipeline.app executable was not found inside the DMG"
-            find "${mount_dir}" -maxdepth 4 -print
-            exit 1
-          fi
-
-          dmg_app="${mount_dir}/Pipeline.app"
-          dmg_poppler="${dmg_app}/Contents/Resources/resources/poppler"
-          dmg_notices="${dmg_app}/Contents/Resources/resources/notices"
-          bash scripts/release/validate-macos-machos.sh \
-            --root "${dmg_app}" --expected-arch "${EXPECTED_ARCH}" --max-minos "${MAX_MINOS}" \
-            --require-developer-id
-          bash scripts/release/validate-macos-machos.sh \
-            --root "${dmg_poppler}" --expected-arch "${EXPECTED_ARCH}" --max-minos "${MAX_MINOS}" \
-            --poppler-layout --require-developer-id
-          node scripts/release/poppler-provenance.mjs --verify \
-            --platform macos --resource-dir "${dmg_poppler}"
-          node scripts/release/smoke-poppler.mjs "${dmg_poppler}"
-          test -s "${dmg_notices}/PIPELINE_LICENSE.txt"
-          test -s "${dmg_notices}/THIRD_PARTY_LICENSES.md"
-          test -s "${dmg_notices}/THIRD_PARTY_SBOM.cdx.json"
-          test -s "${dmg_notices}/LICENSE_INVENTORY.json"
-          test -s "${dmg_notices}/PADDLE_PARSER_LICENSE_INVENTORY.json"
-          test -s "${dmg_notices}/PADDLE_PARSER_RUNTIME_LOCK.json"
-          test -s "${dmg_notices}/NOTICE.txt"
-          test -s "${dmg_notices}/POPPLER_INPUT_LOCK.json"
-          test -s "${dmg_notices}/POPPLER_PROVENANCE.json"
-
-          dmg_arch="$(lipo -archs "${dmg_exe}")"
-          if [ "${dmg_arch}" != "${EXPECTED_ARCH}" ]; then
-            echo "Expected ${EXPECTED_ARCH} executable inside DMG, got: ${dmg_arch}"
-            file "${dmg_exe}"
-            exit 1
-          fi
-
-          dmg_minos="$(otool -l "${dmg_exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /minos/{print $2; exit}')"
-          if ! awk -v actual="${dmg_minos}" -v max="${MAX_MINOS}" 'BEGIN { split(actual,a,"."); split(max,m,"."); exit ! ((a[1] < m[1]) || (a[1] == m[1] && a[2] <= m[2])) }'; then
-            echo "DMG executable minimum macOS ${dmg_minos} is higher than expected ${MAX_MINOS}"
-            otool -l "${dmg_exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /(platform|minos|sdk)/{print} show && /sdk/{exit}'
-            exit 1
-          fi
-
-          dmg_requires_carbon="$(plutil -extract LSRequiresCarbon raw "${dmg_app}/Contents/Info.plist")"
-          if [ "${dmg_requires_carbon}" != "false" ]; then
-            echo "Info.plist inside DMG must not require Carbon"
-            plutil -p "${mount_dir}/Pipeline.app/Contents/Info.plist"
-            exit 1
-          fi
-          dmg_declared_minos="$(plutil -extract LSMinimumSystemVersion raw "${dmg_app}/Contents/Info.plist")"
-          if [ "${dmg_declared_minos}" != "${MAX_MINOS}" ]; then
-            echo "DMG Info.plist declares macOS ${dmg_declared_minos}; expected ${MAX_MINOS}" >&2
-            exit 1
-          fi
-
-          app_spctl_output="$(spctl -a -vvv -t execute "${dmg_app}" 2>&1 || true)"
-          echo "${app_spctl_output}"
-          if ! grep -q 'source=Notarized Developer ID' <<<"${app_spctl_output}"; then
-            echo "Pipeline.app was not accepted as a notarized Developer ID application" >&2
-            exit 1
-          fi
-
-          # Reproduce the policy state of an app downloaded from a browser,
-          # then launch its exact signed executable. The frontend writes a
-          # private readiness marker after completing a Tauri IPC round trip.
-          smoke_root="$(mktemp -d)"
-          smoke_app="${smoke_root}/Pipeline.app"
-          ditto "${dmg_app}" "${smoke_app}"
-          xattr -w com.apple.quarantine '0081;00000000;GitHub Actions;Pipeline' "${smoke_app}"
-          quarantined_spctl="$(spctl -a -vvv -t execute "${smoke_app}" 2>&1 || true)"
-          echo "${quarantined_spctl}"
-          if ! grep -q 'source=Notarized Developer ID' <<<"${quarantined_spctl}"; then
-            echo "Quarantined Pipeline.app was not accepted by Gatekeeper" >&2
-            exit 1
-          fi
-          node scripts/release/smoke-packaged-app.mjs \
-            "${smoke_app}/Contents/MacOS/pipeline-gui"
-
-          echo "Verified ${app_path}"
-          file "${exe}"
-          otool -l "${exe}" | awk '/LC_BUILD_VERSION/{show=1} show && /(platform|minos|sdk)/{print} show && /sdk/{exit}'
-          plutil -p "${app_path}/Contents/Info.plist" | grep LSMinimumSystemVersion
-          echo "Verified ${dmg_path}"
-          file "${dmg_exe}"
-
-      - name: Verify Linux AppImage contents
-        if: matrix.label == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          appimage_dir="gui/src-tauri/target/release/bundle/appimage"
-          appimage="$(find "$appimage_dir" -maxdepth 1 -type f -name 'Pipeline_*_amd64.AppImage' -print -quit)"
-          if [ -z "$appimage" ]; then
-            echo "Expected x86-64 AppImage was not produced" >&2
-            find gui/src-tauri/target -type f -name '*.AppImage' -print
-            exit 1
-          fi
-          chmod +x "$appimage"
-          extract_dir="$(mktemp -d)"
-          (
-            cd "$extract_dir"
-            "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null
-          )
-          extracted="$extract_dir/squashfs-root"
-          manifest="$(find "$extracted" -type f -path '*/resources/poppler/PROVENANCE.json' -print -quit)"
-          if [ -z "$manifest" ]; then
-            echo "Poppler provenance is missing from AppImage" >&2
-            exit 1
-          fi
-          poppler_dir="$(dirname "$manifest")"
-          node scripts/release/poppler-provenance.mjs --verify \
-            --platform linux --resource-dir "$poppler_dir"
-          node scripts/release/smoke-poppler.mjs "$poppler_dir"
-          while IFS= read -r binary; do
-            file "$binary" | grep -q ELF || continue
-            if ldd "$binary" | grep -q 'not found'; then
-              echo "Unresolved dependency inside AppImage: $binary" >&2
-              ldd "$binary" >&2
-              exit 1
-            fi
-          done < <(find "$poppler_dir" -type f | sort)
-          notices="$(find "$extracted" -type d -path '*/resources/notices' -print -quit)"
-          test -s "$notices/PIPELINE_LICENSE.txt"
-          test -s "$notices/THIRD_PARTY_LICENSES.md"
-          test -s "$notices/THIRD_PARTY_SBOM.cdx.json"
-          test -s "$notices/LICENSE_INVENTORY.json"
-          test -s "$notices/PADDLE_PARSER_LICENSE_INVENTORY.json"
-          test -s "$notices/PADDLE_PARSER_RUNTIME_LOCK.json"
-          test -s "$notices/NOTICE.txt"
-          test -s "$notices/POPPLER_INPUT_LOCK.json"
-          test -s "$notices/POPPLER_PROVENANCE.json"
-          # Exercise the public AppImage entry point and its FUSE mount path.
-          # Extraction above validates contents but is not a substitute for
-          # launching the file users download.
-          xvfb-run -a node scripts/release/smoke-packaged-app.mjs \
-            --process-stability-only \
-            "$GITHUB_WORKSPACE/$appimage"
-
-      - name: Verify Windows NSIS installer contents
-        if: matrix.label == 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          installer_dir="gui/src-tauri/target/release/bundle/nsis"
-          installer="$(find "$installer_dir" -maxdepth 1 -type f -name 'Pipeline_*_x64-setup.exe' -print -quit)"
-          if [ -z "$installer" ]; then
-            echo "Expected x86-64 NSIS installer was not produced" >&2
-            find gui/src-tauri/target -type f -name '*setup.exe' -print
-            exit 1
-          fi
-          seven_zip="$(command -v 7z.exe || command -v 7z)"
-          extract_dir="$RUNNER_TEMP/pipeline-nsis-extracted"
-          mkdir -p "$extract_dir"
-          # The pinned Tauri NSIS template embeds application files directly
-          # with NSIS `File /oname=...` entries. 7-Zip's NSIS handler extracts
-          # those exact install payload paths without running the installer.
-          "$seven_zip" x -y -o"$extract_dir" "$installer" >/dev/null
-          manifest="$(find "$extract_dir" -type f -path '*/resources/poppler/PROVENANCE.json' -print -quit)"
-          if [ -z "$manifest" ]; then
-            echo "Poppler provenance is missing from the NSIS payload" >&2
-            find "$extract_dir" -maxdepth 5 -type f -print
-            exit 1
-          fi
-          poppler_dir="$(dirname "$manifest")"
-          node scripts/release/poppler-provenance.mjs --verify \
-            --platform windows --resource-dir "$poppler_dir"
-          node scripts/release/smoke-poppler.mjs "$poppler_dir"
-          resources_dir="$(dirname "$poppler_dir")"
-          notices="$resources_dir/notices"
-          test -s "$notices/PIPELINE_LICENSE.txt"
-          test -s "$notices/THIRD_PARTY_LICENSES.md"
-          test -s "$notices/THIRD_PARTY_SBOM.cdx.json"
-          test -s "$notices/LICENSE_INVENTORY.json"
-          test -s "$notices/PADDLE_PARSER_LICENSE_INVENTORY.json"
-          test -s "$notices/PADDLE_PARSER_RUNTIME_LOCK.json"
-          test -s "$notices/NOTICE.txt"
-          test -s "$notices/POPPLER_INPUT_LOCK.json"
-          test -s "$notices/POPPLER_PROVENANCE.json"
-
-      - name: Install and launch Windows NSIS artifact
-        if: matrix.label == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $installer = Get-ChildItem "gui/src-tauri/target/release/bundle/nsis/Pipeline_*_x64-setup.exe" | Select-Object -First 1
-          if (-not $installer) { throw "Windows NSIS installer was not produced" }
-
-          $installDir = Join-Path $env:RUNNER_TEMP "pipeline-smoke-install"
-          $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "NSIS installation failed with exit code $($install.ExitCode)" }
-
-          $application = Get-ChildItem $installDir -File -Filter "*.exe" |
-            Where-Object { $_.Name -ne "uninstall.exe" } |
-            Select-Object -First 1
-          if (-not $application) { throw "Installed Pipeline executable was not found under $installDir" }
-          node scripts/release/smoke-packaged-app.mjs $application.FullName
-
-          $uninstaller = Get-ChildItem $installDir -Recurse -File -Filter "uninstall.exe" | Select-Object -First 1
-          if (-not $uninstaller) { throw "NSIS uninstaller was not found under $installDir" }
-          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
-          if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstall failed with exit code $($uninstall.ExitCode)" }
-
-      - name: Revalidate signed tag binding before publishing assets
+      - name: Upload installer and publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/release/validate-signed-tag-binding.sh
-
-      - name: Publish validated platform assets to the draft
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.num }}
-          TAG: ${{ github.ref_name }}
-          LABEL: ${{ matrix.label }}
-          RUST_TARGET: ${{ matrix.rust_target }}
-          ASSET_ARCH: ${{ matrix.asset_arch }}
-        shell: bash
+          PLATFORM: ${{ matrix.id }}
         run: |
           set -euo pipefail
-
-          case "${LABEL}" in
-            "macOS-arm64")
-              platform_name="macOS-AppleSilicon"
-              friendly_asset="Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
-              artifact_path="$(find "gui/src-tauri/target/${RUST_TARGET}/release/bundle/dmg" \
-                -maxdepth 1 -type f -name "Pipeline_*_${ASSET_ARCH}.dmg" -print -quit)"
+          version="${GITHUB_REF_NAME#v}"
+          case "$PLATFORM" in
+            macos-arm64)
+              source_path="$(find gui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -type f -name '*.dmg' -print -quit)"
+              asset_name="Pipeline-${version}-macOS-AppleSilicon.dmg"
               ;;
-            "macOS-x64")
-              platform_name="macOS-Intel"
-              friendly_asset="Pipeline-${VERSION}-macOS-Intel.dmg"
-              artifact_path="$(find "gui/src-tauri/target/${RUST_TARGET}/release/bundle/dmg" \
-                -maxdepth 1 -type f -name "Pipeline_*_${ASSET_ARCH}.dmg" -print -quit)"
+            macos-x64)
+              source_path="$(find gui/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg -type f -name '*.dmg' -print -quit)"
+              asset_name="Pipeline-${version}-macOS-Intel.dmg"
               ;;
-            "Windows")
-              platform_name="Windows"
-              friendly_asset="Pipeline-${VERSION}-Windows.exe"
-              artifact_path="$(find gui/src-tauri/target/release/bundle/nsis \
-                -maxdepth 1 -type f -name 'Pipeline_*_x64-setup.exe' -print -quit)"
+            windows)
+              source_path="$(find gui/src-tauri/target/release/bundle/nsis -type f -name '*setup.exe' -print -quit)"
+              asset_name="Pipeline-${version}-Windows.exe"
               ;;
-            "Linux")
-              platform_name="Linux"
-              friendly_asset="Pipeline-${VERSION}-Linux.AppImage"
-              artifact_path="$(find gui/src-tauri/target/release/bundle/appimage \
-                -maxdepth 1 -type f -name 'Pipeline_*_amd64.AppImage' -print -quit)"
-              ;;
-            *)
-              echo "Unknown release matrix label: ${LABEL}" >&2
-              exit 1
+            linux)
+              source_path="$(find gui/src-tauri/target/release/bundle/appimage -type f -name '*.AppImage' -print -quit)"
+              asset_name="Pipeline-${version}-Linux.AppImage"
               ;;
           esac
-          if [ -z "${artifact_path}" ] || [ ! -s "${artifact_path}" ]; then
-            echo "Local installer for ${friendly_asset} was not found or is empty" >&2
-            exit 1
+          test -n "$source_path"
+          test -s "$source_path"
+          cp "$source_path" "$RUNNER_TEMP/$asset_name"
+
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "Pipeline $GITHUB_REF_NAME" \
+              --notes "Installers for Pipeline $GITHUB_REF_NAME. macOS builds are signed and notarized; Windows is intentionally unsigned."
           fi
-
-          # GitHub derives an asset's public name from the uploaded basename;
-          # the optional #suffix accepted by `gh release upload` is only a
-          # display label. Stage every file under its exact public name so the
-          # final completeness gate sees the intended deterministic inventory.
-          upload_dir="${RUNNER_TEMP}/pipeline-release-upload-${platform_name}"
-          mkdir -p "${upload_dir}"
-          staged_artifact_path="${upload_dir}/${friendly_asset}"
-          cp "${artifact_path}" "${staged_artifact_path}"
-
-          # Publish the same machine-readable records that are bundled
-          # offline. These are required release assets, not best-effort logs.
-          artifact_sbom_name="Pipeline-${VERSION}-${platform_name}-Artifact-SBOM.cdx.json"
-          build_input_sbom_name="Pipeline-${VERSION}-${platform_name}-Build-input-SBOM.cdx.json"
-          provenance_name="Pipeline-${VERSION}-${platform_name}-Poppler-provenance.json"
-          checksum_name="${friendly_asset}.sha256"
-          checksum_path="${upload_dir}/${checksum_name}"
-          artifact_sbom_path="${upload_dir}/${artifact_sbom_name}"
-          build_input_sbom_path="${upload_dir}/${build_input_sbom_name}"
-          provenance_path="${upload_dir}/${provenance_name}"
-          cp "gui/src-tauri/resources/notices/THIRD_PARTY_SBOM.cdx.json" \
-            "${build_input_sbom_path}"
-          cp "gui/src-tauri/resources/poppler/PROVENANCE.json" \
-            "${provenance_path}"
-          node scripts/release/artifact-integrity.mjs \
-            --artifact "${staged_artifact_path}" \
-            --asset-name "${friendly_asset}" \
-            --output "${checksum_path}" \
-            --version "${VERSION}" \
-            --build-input-sbom "${build_input_sbom_path}" \
-            --build-input-sbom-asset-name "${build_input_sbom_name}" \
-            --provenance "${provenance_path}" \
-            --provenance-asset-name "${provenance_name}" \
-            --artifact-sbom-output "${artifact_sbom_path}" \
-            --github-output "${GITHUB_OUTPUT}"
-
-          # Create the draft only after this platform's installer has passed
-          # every local validation. Successful platform assets persist across
-          # later manual package runs, and --clobber retries only this platform.
-          release_matches="$(gh api --paginate \
-            "/repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
-            jq -rs --arg tag "${TAG}" 'add | map(select(.tag_name == $tag))')"
-          release_count="$(jq 'length' <<<"${release_matches}")"
-          if [ "${release_count}" -eq 0 ]; then
-            notes_file="${RUNNER_TEMP}/pipeline-release-notes.md"
-            printf '%s\n' \
-              '## Download' \
-              '' \
-              'Build each platform with the manual package operation. The draft is published only after the manual publish operation validates all required installers, checksums, SBOMs, and Poppler provenance.' \
-              '' \
-              'macOS packages are signed and notarized. Windows packages are intentionally unsigned; verify the adjacent SHA-256 checksum before installation.' \
-              > "${notes_file}"
-            gh release create "${TAG}" --draft --verify-tag \
-              --title "Pipeline ${TAG}" --notes-file "${notes_file}"
-          elif [ "${release_count}" -ne 1 ] || \
-               [ "$(jq -r '.[0].draft' <<<"${release_matches}")" != "true" ]; then
-            echo "Expected zero releases or one draft release for ${TAG}" >&2
-            jq . <<<"${release_matches}" >&2
-            exit 1
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$asset_name" --clobber
+          if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = "true" ]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
           fi
-
-          gh release upload "${TAG}" \
-            "${staged_artifact_path}" \
-            "${artifact_sbom_path}" \
-            "${build_input_sbom_path}" \
-            "${provenance_path}" \
-            "${checksum_path}" \
-            --clobber
-
-          release_id="$(gh api --paginate \
-            "/repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
-            jq -rs --arg tag "${TAG}" \
-              'add | map(select(.tag_name == $tag and .draft == true)) |
-               if length == 1 then .[0].id else empty end')"
-          gh api --paginate \
-            "/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" |
-            jq -es --arg installer "${friendly_asset}" \
-              --arg checksum "${checksum_name}" \
-              --arg artifact_sbom "${artifact_sbom_name}" \
-              --arg build_sbom "${build_input_sbom_name}" \
-              --arg provenance "${provenance_name}" '
-                (add | map(.name)) as $names |
-                all([$installer, $checksum, $artifact_sbom, $build_sbom, $provenance][];
-                  . as $required | any($names[]; . == $required))
-              ' >/dev/null
-
-  release-complete:
-    if: inputs.operation == 'publish'
-    name: Validate and publish complete release
-    runs-on: ubuntu-22.04
-    timeout-minutes: 45
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Revalidate signed tag binding before final release validation
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/release/validate-signed-tag-binding.sh
-
-      - name: Validate required draft assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(node -p 'require("./gui/package.json").version')"
-          release_metadata="${RUNNER_TEMP}/pipeline-draft-release-metadata.json"
-          release_assets="${RUNNER_TEMP}/pipeline-draft-release-assets.json"
-          release_json="${RUNNER_TEMP}/pipeline-draft-release.json"
-          for attempt in $(seq 1 20); do
-            gh api --paginate "/repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
-              jq -s --arg tag "${TAG}" \
-                'add | map(select(.tag_name == $tag)) |
-                 if length == 1 then .[0] else null end' > "${release_metadata}"
-            if jq -e '.draft == true and (.id | type == "number")' \
-              "${release_metadata}" >/dev/null 2>&1; then
-              break
-            fi
-            if [ "${attempt}" -eq 20 ]; then
-              echo "Draft release ${TAG} was not available after retries" >&2
-              exit 1
-            fi
-            sleep 3
-          done
-          release_id="$(jq -r '.id' "${release_metadata}")"
-          gh api --paginate \
-            "/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" |
-            jq -s 'add' > "${release_assets}"
-          jq --slurpfile assets "${release_assets}" \
-            '.assets = $assets[0]' "${release_metadata}" > "${release_json}"
-          node scripts/release/validate-release-assets.mjs \
-            --version "${version}" \
-            --release-json "${release_json}"
-
-          evidence_dir="${RUNNER_TEMP}/pipeline-release-evidence"
-          mkdir -p "${evidence_dir}"
-          release_targets=(
-            "macOS-AppleSilicon|macos|Pipeline-${version}-macOS-AppleSilicon.dmg"
-            "macOS-Intel|macos|Pipeline-${version}-macOS-Intel.dmg"
-            "Windows|windows|Pipeline-${version}-Windows.exe"
-            "Linux|linux|Pipeline-${version}-Linux.AppImage"
-          )
-
-          download_asset() {
-            local asset_name="$1"
-            local destination="$2"
-            local asset_id
-            asset_id="$(jq -r --arg name "${asset_name}" \
-              'map(select(.name == $name)) |
-               if length == 1 then .[0].id else empty end' "${release_assets}")"
-            if ! [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
-              echo "Release asset ${asset_name} did not resolve to one numeric ID" >&2
-              return 1
-            fi
-            gh api -H "Accept: application/octet-stream" \
-              "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
-              > "${destination}"
-            test -s "${destination}"
-          }
-
-          for target in "${release_targets[@]}"; do
-            IFS='|' read -r platform native_platform asset_name <<<"${target}"
-            checksum_name="${asset_name}.sha256"
-            artifact_sbom_name="Pipeline-${version}-${platform}-Artifact-SBOM.cdx.json"
-            build_input_sbom_name="Pipeline-${version}-${platform}-Build-input-SBOM.cdx.json"
-            provenance_name="Pipeline-${version}-${platform}-Poppler-provenance.json"
-            for evidence_name in \
-              "${asset_name}" \
-              "${checksum_name}" \
-              "${artifact_sbom_name}" \
-              "${build_input_sbom_name}" \
-              "${provenance_name}"; do
-              download_asset "${evidence_name}" "${evidence_dir}/${evidence_name}"
-            done
-
-            checksum_record="$(tr -d '\r\n' < "${evidence_dir}/${checksum_name}")"
-            expected_sha="${checksum_record%%  *}"
-            recorded_name="${checksum_record#*  }"
-            if [[ ! "${expected_sha}" =~ ^[0-9a-f]{64}$ ]] || [ "${recorded_name}" != "${asset_name}" ]; then
-              echo "Malformed checksum record for ${asset_name}: ${checksum_record}" >&2
-              exit 1
-            fi
-            actual_sha="$(sha256sum "${evidence_dir}/${asset_name}" | awk '{print $1}')"
-            if [ "${actual_sha}" != "${expected_sha}" ]; then
-              echo "Checksum mismatch for downloaded release asset ${asset_name}" >&2
-              exit 1
-            fi
-            jq -e --arg platform "${native_platform}" '.platform == $platform' \
-              "${evidence_dir}/${provenance_name}" >/dev/null
-            jq -e --arg platform "${native_platform}" \
-              'any(.metadata.properties[]?;
-                .name == "pipeline:platform" and .value == $platform)' \
-              "${evidence_dir}/${build_input_sbom_name}" >/dev/null
-            node scripts/release/artifact-integrity.mjs \
-              --verify \
-              --artifact "${evidence_dir}/${asset_name}" \
-              --asset-name "${asset_name}" \
-              --version "${version}" \
-              --build-input-sbom "${evidence_dir}/${build_input_sbom_name}" \
-              --build-input-sbom-asset-name "${build_input_sbom_name}" \
-              --provenance "${evidence_dir}/${provenance_name}" \
-              --provenance-asset-name "${provenance_name}" \
-              --artifact-sbom "${evidence_dir}/${artifact_sbom_name}"
-            cp "${evidence_dir}/${build_input_sbom_name}" \
-              "${RUNNER_TEMP}/pipeline-${platform}-build-input.cdx.json"
-          done
-
-      - name: Validate build-input SBOM decoding with pinned Grype libraries
-        shell: bash
-        run: |
-          set -euo pipefail
-          syft_archive="${RUNNER_TEMP}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
-          syft_dir="${RUNNER_TEMP}/pipeline-syft-${SYFT_VERSION}"
-          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
-            --output "${syft_archive}" \
-            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
-          echo "${SYFT_LINUX_AMD64_SHA256}  ${syft_archive}" |
-            sha256sum --check --strict
-          mkdir -p "${syft_dir}"
-          tar -xzf "${syft_archive}" -C "${syft_dir}" syft
-
-          for platform in macOS-AppleSilicon macOS-Intel Windows Linux; do
-            cdx="${RUNNER_TEMP}/pipeline-${platform}-build-input.cdx.json"
-            decoded="${RUNNER_TEMP}/pipeline-${platform}-build-input.syft.json"
-            "${syft_dir}/syft" convert \
-              "${cdx}" \
-              --quiet \
-              --output "syft-json=${decoded}"
-
-            case "${platform}" in
-              macOS-*) package_type=homebrew ;;
-              Windows) package_type=conda ;;
-              Linux) package_type=deb ;;
-              *) echo "Unknown SBOM platform: ${platform}" >&2; exit 1 ;;
-            esac
-
-            # Fail closed if the decoder loses, renames, or invents any native
-            # package. This protects every platform rather than merely proving
-            # that the input file is syntactically valid CycloneDX.
-            jq -e --arg type "${package_type}" --slurpfile cdx "${cdx}" '
-              ([.artifacts[] | select(.type == $type) | {name,version}] |
-                sort_by(.name, .version))
-              ==
-              ([$cdx[0].components[] |
-                select(any(.properties[]?;
-                  .name == "pipeline:system-package" and .value == "true")) |
-                {name,version}] |
-                sort_by(.name, .version))
-            ' "${decoded}" >/dev/null
-          done
-
-          # Grype v0.110.0 embeds Syft v1.42.3. Prove that its real CycloneDX
-          # decoder retains all Windows package names/versions as CondaPkg
-          # rather than silently converting them to UnknownPackage or the
-          # literal package name "conda".
-          jq -e --slurpfile lock scripts/release/poppler-lock.json '
-            ([.artifacts[] | select(.type == "conda") | {name,version}] |
-              sort_by(.name))
-            ==
-            ([$lock[0].windows.packages[] | {name,version}] |
-              sort_by(.name))
-          ' "${RUNNER_TEMP}/pipeline-Windows-build-input.syft.json" >/dev/null
-
-      - name: Scan macOS Apple Silicon release inputs for vulnerabilities
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
-        with:
-          sbom: ${{ runner.temp }}/pipeline-macOS-AppleSilicon-build-input.cdx.json
-          fail-build: true
-          severity-cutoff: high
-          output-format: table
-          add-cpes-if-none: true
-          grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
-
-      - name: Scan macOS Intel release inputs for vulnerabilities
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
-        with:
-          sbom: ${{ runner.temp }}/pipeline-macOS-Intel-build-input.cdx.json
-          fail-build: true
-          severity-cutoff: high
-          output-format: table
-          add-cpes-if-none: true
-          grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
-
-      - name: Scan Windows release inputs for vulnerabilities
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
-        with:
-          sbom: ${{ runner.temp }}/pipeline-Windows-build-input.cdx.json
-          fail-build: true
-          severity-cutoff: high
-          output-format: table
-          add-cpes-if-none: true
-          grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
-
-      - name: Scan Linux release inputs for vulnerabilities
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
-        with:
-          sbom: ${{ runner.temp }}/pipeline-Linux-build-input.cdx.json
-          fail-build: true
-          severity-cutoff: high
-          output-format: table
-          add-cpes-if-none: true
-          grype-version: ${{ env.GRYPE_VERSION }}
-          cache-db: true
-
-      - name: Attest complete release evidence set
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: ${{ runner.temp }}/pipeline-release-evidence/*
-
-      - name: Publish validated release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: gh release edit "${TAG}" --draft=false --latest

@@ -40,7 +40,12 @@ function fixture(overrides = {}) {
             silent: true,
           },
         },
-        resources: overrides.resources ?? ["resources/poppler/**/*", "resources/notices/**/*"],
+        resources: overrides.resources ?? [
+          "resources/poppler/**/*",
+          "resources/notices/NOTICE.txt",
+          "resources/notices/PIPELINE_LICENSE.txt",
+          "resources/notices/THIRD_PARTY_LICENSES.md",
+        ],
       },
     }),
   );
@@ -161,7 +166,7 @@ test("requires the self-contained Windows WebView2 installer", () => {
   );
 });
 
-test("requires both generated release resource trees", () => {
+test("requires Poppler and the three package notice files", () => {
   const root = fixture({ resources: ["resources/poppler/**/*"] });
   assert.throws(() => validateReleaseIdentity({ rootDir: root }), /resources\/notices/);
 });

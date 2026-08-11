@@ -131,7 +131,12 @@ export function validateReleaseIdentity({ rootDir = REPO_ROOT, tag, existingTags
       "Tauri release config must embed the silent Windows WebView2 offlineInstaller",
     );
   }
-  for (const resource of ["resources/poppler/**/*", "resources/notices/**/*"]) {
+  for (const resource of [
+    "resources/poppler/**/*",
+    "resources/notices/NOTICE.txt",
+    "resources/notices/PIPELINE_LICENSE.txt",
+    "resources/notices/THIRD_PARTY_LICENSES.md",
+  ]) {
     if (!tauriConfig.bundle?.resources?.includes(resource)) {
       throw new Error(`Tauri release resources must include ${resource}`);
     }

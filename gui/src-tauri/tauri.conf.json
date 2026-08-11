@@ -41,7 +41,9 @@
     "resources": [
       "../../prompts/*",
       "resources/poppler/**/*",
-      "resources/notices/**/*"
+      "resources/notices/NOTICE.txt",
+      "resources/notices/PIPELINE_LICENSE.txt",
+      "resources/notices/THIRD_PARTY_LICENSES.md"
     ],
     "licenseFile": "../../LICENSE",
     "macOS": {

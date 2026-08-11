@@ -35,7 +35,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "prepare:release-resources": "node ../scripts/release/prepare-notices.mjs",
+    "prepare:release-resources": "node ../scripts/release/prepare-package-notices.mjs",
     "test:release": "node --test ../scripts/release/release.test.mjs && node ../scripts/release/validate-release-identity.mjs",
     "test:e2e": "wdio run ./wdio.conf.mjs",
     "test": "vitest run",

@@ -5,31 +5,9 @@ desktop bundle also contains compiled Rust/JavaScript dependencies and a
 platform-specific Poppler command-line distribution. This notice describes the
 release inputs; it does not replace the license text supplied by any project.
 
-Every release contains an offline `notices/` directory with:
-
-- this notice and Pipeline's MIT license;
-- `THIRD_PARTY_SBOM.cdx.json`, a CycloneDX inventory of locked Cargo/npm inputs,
-  the exact Poppler package inventory available for that platform, and SHA-256
-  hashes for every bundled Poppler file;
-- `LICENSE_INVENTORY.json`, which maps every resolved Cargo/npm package to its
-  declared license and any copied offline license/NOTICE files;
-- `POPPLER_PROVENANCE.json` and `POPPLER_INPUT_LOCK.json`; and
-- license/copyright files shipped by the Cargo, npm, and Poppler package inputs.
-
-This offline document is the platform build-input SBOM. The GitHub release
-attaches it beside a separate artifact SBOM and Poppler provenance. The artifact
-SBOM records the exact installer SHA-256 and the hashes of both evidence files,
-so an input inventory cannot be silently substituted between platform builds.
-
-Release preparation fails when a resolved Cargo/npm package has neither a
-declared license nor a copied offline license file. Native provenance likewise
-requires a nonempty, unique package inventory and bundled license evidence:
-Linux requires a version and Debian copyright file for every copied package;
-Homebrew requires a version plus declared or offline license evidence for every
-formula; and Windows requires an exact version, build, license declaration,
-source-package hash, and file-hash attribution for every shipped DLL or
-executable. These mechanical checks help detect omissions; they are not legal
-determinations that every obligation has been satisfied.
+Every installer contains this notice, Pipeline's MIT license, and the Poppler
+license text supplied with that platform's Poppler distribution. The GitHub
+release page publishes the platform installers themselves.
 
 ## Poppler release inputs
 
@@ -57,11 +35,9 @@ Corresponding source and packaging provenance:
   Binary packaging recipe: `https://github.com/oschwartz10612/poppler-windows/tree/v25.12.0-0`;
   it repackages conda-forge's Poppler build and dependency DLLs.
 
-These URLs and hashes are provenance for obtaining and checking source; source
-archives are not embedded in the installed application. Poppler's COPYING,
-GPL, Adobe data, and README notices supplied by each binary package are bundled
-offline. The macOS build additionally gathers installed Homebrew license files;
-the Linux build gathers Debian copyright files and the common GPL texts.
+These URLs and hashes identify corresponding source; source archives are not
+embedded in the installed application. Poppler's COPYING or GPL text and the
+required character-map data supplied by each binary package are bundled.
 
 Before a public release is published, the maintainer must complete the legal
 review in `RELEASING.md`, including confirmation of the required corresponding-
@@ -71,14 +47,8 @@ that upstream URLs alone satisfy a particular GPL distribution option.
 ## Windows Poppler DLL closure
 
 The provider ran an unpinned conda solve and did not preserve `conda-meta` in
-its ZIP. Pipeline reconstructed the closure by matching the SHA-256 of every
-shipped DLL and executable to the payload in an exact conda-forge `win-64`
-package archive. `scripts/release/poppler-lock.json` pins each package name,
-version, build, declared license, download URL, package-archive SHA-256, and
-owned PE-file hashes. Release validation fails if a PE file is unattributed,
-has more than one owner, or differs from the pinned payload. The build-input
-SBOM emits those records as Anchore CondaPkg identities for version-level
-vulnerability matching.
+its ZIP. `scripts/release/poppler-lock.json` records the reviewed package
+closure, including package versions, builds, licenses, source URLs, and hashes.
 
 | Conda package | Exact version / build | Declared license |
 |---|---|---|
@@ -111,15 +81,9 @@ and any additional notices or source offer that review requires.
 ## Rust and JavaScript dependencies
 
 The application links Rust crates and ships a compiled JavaScript frontend.
-Their exact names, versions, package checksums, and declared license expressions
-are generated from `Cargo.lock`, Cargo metadata, and
-`package-lock.json` into the CycloneDX SBOM. Release preparation also copies
-the license, COPYING, copyright, and NOTICE files that installed crate/npm
-packages provide. This avoids a manually maintained dependency list drifting
-from the binaries. The build-input SBOM marks npm production and development
-inputs separately. Cargo and npm advisories are checked directly from their
-locks; every platform SBOM is additionally scanned for high or critical native
-findings before the draft release can complete.
+Their exact versions and package checksums are locked in `Cargo.lock` and
+`package-lock.json`; their upstream license declarations remain the governing
+terms.
 
 ## Optional managed extraction engines
 
@@ -141,10 +105,8 @@ only after the user selects Install in Settings, are stored under
   fixed in a committed PEP 751 lock. PP-DocLayoutV3 is installed from a fixed
   Paddle model artifact under Apache-2.0 and verified with a release-owned
   SHA-256 before local initialization. These components are stored in a private
-  version directory and removed with the Full Parser. Release notices include
-  the runtime lock, every platform wheel lock, a Python license inventory, and
-  the optional runtime's package URLs in the CycloneDX build-input SBOM. The
-  same SBOM is vulnerability-scanned before a draft release can complete.
+  version directory and removed with the Full Parser. Its runtime and wheel
+  locks remain in the source repository.
 
 Operating-system frameworks (for example WebView2, WebKit, and macOS system
 frameworks) are not redistributed in Pipeline's resource bundle and are not
