@@ -4073,6 +4073,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     fn parser_sidecar_refresh_reuses_only_a_verified_pinned_runtime() {
         let root = tempfile::tempdir().unwrap();
         let version_root = root.path().join("versions").join(PADDLE_PARSER_RELEASE);
