@@ -341,7 +341,10 @@ jobs:
               https://github.com/Homebrew/homebrew-core.git "$core_repo"
           fi
           git -C "$core_repo" fetch --depth=1 origin "$core_commit"
-          git -C "$core_repo" checkout --detach "$core_commit"
+          # Hosted images can carry runner-maintenance edits in this ephemeral
+          # tap checkout. Force the reviewed revision so those image-local
+          # changes cannot block or influence the release dependency graph.
+          git -C "$core_repo" checkout --force --detach "$core_commit"
           export HOMEBREW_NO_AUTO_UPDATE=1
           export HOMEBREW_NO_INSTALL_FROM_API=1
 

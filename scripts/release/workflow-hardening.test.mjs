@@ -102,6 +102,7 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     "Full parser release qualification",
     "paddle-parser-qualification.yml",
     "needs: [quality, paddle-parser-qualification]",
+    'git -C "$core_repo" checkout --force --detach "$core_commit"',
   ]) {
     assert.ok(contents.includes(required), `release workflow is missing ${required}`);
   }
