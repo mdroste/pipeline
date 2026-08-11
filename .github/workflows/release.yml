@@ -584,7 +584,8 @@ jobs:
               7z x -si -ttar -y "-o$package_payload" >/dev/null
           done < <(
             jq -r '.windows.packages[] |
-              [.name,.version,.build,.sourceUrl,.archiveSha256] | @tsv' "$lock"
+              [.name,.version,.build,.sourceUrl,.archiveSha256] | @tsv' "$lock" |
+              tr -d '\r'
           )
           node scripts/release/poppler-provenance.mjs --create \
             --platform windows --resource-dir "$dest" \

@@ -215,6 +215,10 @@ test("Windows release uses a complete versioned conda attribution lock", () => {
   assert.ok(!workflow.includes(".windows.components"));
   assert.ok(workflow.includes("7z x -y \"$package_archive\""));
   assert.ok(workflow.includes("sha256sum --check --strict"));
+  assert.ok(
+    workflow.includes("tr -d '\\r'"),
+    "Windows lock TSV must normalize jq CRLF before strict field validation",
+  );
 });
 
 test("native SBOM scan uses the reviewed Anchore action and supported v7.4.0 inputs", () => {
