@@ -3,32 +3,18 @@ name: Paddle parser qualification
 on:
   workflow_call:
   workflow_dispatch:
-  schedule:
-    - cron: "17 8 * * 1"
 
 permissions:
   contents: read
 
 concurrency:
   group: paddle-parser-qualification-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   qualify:
-    name: Real parser (${{ matrix.label }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            label: macOS arm64
-          - os: windows-2022
-            label: Windows x64
-          - os: ubuntu-22.04
-            label: Linux x64
-          - os: ubuntu-24.04-arm
-            label: Linux arm64
-    runs-on: ${{ matrix.os }}
+    name: Real parser (Linux x64)
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

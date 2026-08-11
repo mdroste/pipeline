@@ -1,8 +1,27 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Release phase to run on the selected signed tag ref
+        required: true
+        default: preflight
+        type: choice
+        options:
+          - preflight
+          - package
+          - publish
+      platform:
+        description: Platform for a package run; ignored by preflight and publish
+        required: true
+        default: linux
+        type: choice
+        options:
+          - linux
+          - windows
+          - macos-arm64
+          - macos-x64
 
 permissions:
   contents: read
@@ -19,15 +38,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  paddle-parser-qualification:
-    name: Full parser release qualification
-    needs: quality
-    uses: ./.github/workflows/paddle-parser-qualification.yml
-
   quality:
+    if: inputs.operation == 'preflight'
     name: Tagged SHA quality gate
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     permissions:
       contents: read
     steps:
@@ -123,6 +138,9 @@ jobs:
       - name: Paddle full-parser sidecar contract
         run: python scripts/release/test-paddle-parser-sidecar.py
 
+      - name: Full parser release qualification
+        run: python scripts/release/qualify-paddle-parser.py
+
       - name: Rust tests
         working-directory: gui/src-tauri
         run: cargo test --locked --all-targets
@@ -153,7 +171,7 @@ jobs:
         run: cargo +1.88.0 check --locked
 
   release:
-    needs: [quality, paddle-parser-qualification]
+    if: inputs.operation == 'package'
     permissions:
       contents: write
     environment:
@@ -162,35 +180,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-15
-            label: macOS-arm64
-            rust_target: aarch64-apple-darwin
-            tauri_args: --target aarch64-apple-darwin
-            expected_arch: arm64
-            asset_arch: aarch64
-            max_minos: "15.0"
-          - os: macos-15-intel
-            label: macOS-x64
-            rust_target: x86_64-apple-darwin
-            tauri_args: --target x86_64-apple-darwin
-            expected_arch: x86_64
-            asset_arch: x64
-            max_minos: "15.0"
-          - os: ubuntu-22.04
-            label: Linux
-            rust_target: ""
-            tauri_args: ""
-            expected_arch: ""
-            asset_arch: ""
-            max_minos: ""
-          - os: windows-2022
-            label: Windows
-            rust_target: ""
-            tauri_args: ""
-            expected_arch: ""
-            asset_arch: ""
-            max_minos: ""
+        include: >-
+          ${{ fromJSON(inputs.platform == 'macos-arm64'
+          && '[{"os":"macos-15","label":"macOS-arm64","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","expected_arch":"arm64","asset_arch":"aarch64","max_minos":"15.0"}]'
+          || inputs.platform == 'macos-x64'
+          && '[{"os":"macos-15-intel","label":"macOS-x64","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin","expected_arch":"x86_64","asset_arch":"x64","max_minos":"15.0"}]'
+          || inputs.platform == 'windows'
+          && '[{"os":"windows-2022","label":"Windows","rust_target":"","tauri_args":"","expected_arch":"","asset_arch":"","max_minos":""}]'
+          || '[{"os":"ubuntu-22.04","label":"Linux","rust_target":"","tauri_args":"","expected_arch":"","asset_arch":"","max_minos":""}]') }}
 
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
@@ -275,22 +272,14 @@ jobs:
         working-directory: gui
         run: npm ci
 
-      - name: Platform Rust tests
-        working-directory: gui/src-tauri
-        run: cargo test --locked --all-targets
-
-      - name: Platform frontend tests
-        working-directory: gui
-        run: npm test -- --run
-
       # Import the Apple signing cert early on macOS so the Bundle
       # poppler step can sign its Mach-O files with --timestamp before
       # Tauri picks them up. Without this, notarization rejects the
       # bundle ("binary is not signed with a valid Developer ID
       # certificate / secure timestamp") because Homebrew's poppler
       # binaries are unsigned and dylibbundler invalidates what was
-      # there. tauri-action imports the cert again into its own
-      # keychain for the main build; the two coexist fine.
+      # there. The same imported identity is used by the later local
+      # Tauri build for the application and disk image.
       - name: Import Apple code-signing cert (macOS)
         if: startsWith(matrix.label, 'macOS')
         uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
@@ -668,74 +657,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/release/validate-signed-tag-binding.sh
 
-      - name: Build and release
-        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+      # Build locally first. Publishing happens only after the platform-specific
+      # validation steps below, so a late validation failure cannot upload an
+      # invalid or partial installer.
+      - name: Build package
+        working-directory: gui
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The hosted runner's GitHub path can terminate TLS with a CA that
-          # Node does not bundle. Trust the runner's installed system CA store
-          # for tauri-action's draft-release API calls and artifact uploads.
-          NODE_OPTIONS: --use-system-ca
           PIPELINE_RELEASE_BUILD: "1"
           # Keep Apple credentials out of the Linux and Windows process
           # environments even though this is a shared matrix step.
-          APPLE_CERTIFICATE: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_SIGNING_IDENTITY || '' }}
           APPLE_ID: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_ID || '' }}
           APPLE_PASSWORD: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ startsWith(matrix.label, 'macOS') && secrets.APPLE_TEAM_ID || '' }}
-        with:
-          projectPath: gui
-          tagName: ${{ github.ref_name }}
-          releaseName: "Pipeline ${{ github.ref_name }}"
-          releaseBody: |
-            ## Download
-
-            Pick the file for your platform, then see the instructions below.
-
-            ### macOS
-            - **Apple Silicon** (M1 / M2 / M3 / M4) → `Pipeline-${{ steps.version.outputs.num }}-macOS-AppleSilicon.dmg`
-            - **Intel** → `Pipeline-${{ steps.version.outputs.num }}-macOS-Intel.dmg`
-
-            Not sure which? Apple menu → About This Mac → look at **Chip**.
-
-            Open the `.dmg` and drag Pipeline into your Applications folder, then launch from Applications.
-
-            These builds require **macOS 15.0 or later**. This is the minimum
-            supported by the complete, checksummed Poppler library closure in
-            the current release infrastructure.
-
-            ### Windows
-            Download `Pipeline-${{ steps.version.outputs.num }}-Windows.exe` and double-click to install.
-
-            Windows packages are currently unsigned. Windows may display an
-            **Unknown publisher** or Microsoft Defender SmartScreen warning;
-            verify the adjacent `.sha256` checksum before installing.
-
-            ### Linux
-            Download `Pipeline-${{ steps.version.outputs.num }}-Linux.AppImage`,
-            make it executable (`chmod +x <file>`), then run it. The release
-            baseline is x86-64 Ubuntu 22.04 or a compatible newer distribution
-            with FUSE 2 (`sudo apt-get install libfuse2` on a minimal Ubuntu
-            installation).
-
-            Separate platform-specific CycloneDX artifact and build-input SBOMs
-            plus Poppler provenance are published beside each installer. The
-            artifact SBOM binds the installer, build-input SBOM, and provenance
-            hashes. Build-input notices are also available offline in the
-            installed application resources. Every evidence file has a GitHub
-            build-provenance attestation, and each installer has a same-named
-            `.sha256` checksum.
-
-            ---
-
-            ### Requirements
-            Configure at least one supported LLM provider (Claude, Codex,
-            Gemini, or an API/local endpoint) before starting a run.
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.tauri_args }} -- --locked
+        run: npm run tauri -- build ${{ matrix.tauri_args }} -- --locked
 
       - name: Verify macOS artifact architecture
         if: startsWith(matrix.label, 'macOS')
@@ -743,8 +678,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
           RUST_TARGET: ${{ matrix.rust_target }}
           EXPECTED_ARCH: ${{ matrix.expected_arch }}
           ASSET_ARCH: ${{ matrix.asset_arch }}
@@ -843,11 +776,6 @@ jobs:
             echo "DMG was not accepted as a notarized Developer ID disk image"
             exit 1
           fi
-
-          # tauri-action uploads the DMG before this post-build check runs.
-          # Replace that uploaded asset with the notarized and stapled copy
-          # before the later rename step gives it its public download name.
-          gh release upload "${TAG}" "${dmg_path}#$(basename "${dmg_path}")" --clobber
 
           mount_dir="$(mktemp -d)"
           hdiutil attach -readonly -nobrowse -mountpoint "${mount_dir}" "${dmg_path}"
@@ -1060,8 +988,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/release/validate-signed-tag-binding.sh
 
-      - name: Rename release assets
-        id: release_assets
+      - name: Publish validated platform assets to the draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.num }}
@@ -1073,115 +1000,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          # /releases/tags/{tag} does not return draft releases. Resolve the
-          # unique draft through the paginated collection once, then query its
-          # paginated asset endpoint. A repository with more than 30 releases
-          # must not make current release assets invisible to this gate.
-          release_id=""
-          for attempt in $(seq 1 20); do
-            release_id="$(gh api --paginate \
-              "/repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
-              jq -rs --arg tag "${TAG}" \
-                'add | map(select(.tag_name == $tag and .draft == true)) |
-                 if length == 1 then .[0].id else empty end' || true)"
-            if [[ "${release_id}" =~ ^[0-9]+$ ]]; then
-              break
-            fi
-            if [ "${attempt}" -eq 20 ]; then
-              echo "Unique draft release ${TAG} was not available after retries" >&2
-              exit 1
-            fi
-            sleep 3
-          done
-
-          lookup_asset_id() {
-            local name="$1"
-            local asset_id=""
-            for attempt in $(seq 1 20); do
-              asset_id="$(gh api --paginate \
-                "/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" |
-                jq -rs --arg name "${name}" \
-                  'add | map(select(.name == $name)) |
-                   if length == 1 then .[0].id else empty end' || true)"
-              if [[ "${asset_id}" =~ ^[0-9]+$ ]]; then
-                echo "${asset_id}"
-                return 0
-              fi
-              sleep 3
-            done
-            return 1
-          }
-
-          rename_asset() {
-            local old_name="$1"
-            local new_name="$2"
-            local asset_id
-            if asset_id=$(lookup_asset_id "${old_name}"); then
-              echo "Renaming ${old_name} → ${new_name}"
-              gh api -X PATCH "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
-                -f name="${new_name}" > /dev/null
-            else
-              echo "Required release asset ${old_name} was not found after retries" >&2
-              return 1
-            fi
-            lookup_asset_id "${new_name}" >/dev/null || {
-              echo "Renamed asset ${new_name} did not appear in the release" >&2
-              return 1
-            }
-          }
-
-          # Tauri produces updater tarballs (.app.tar.gz and .sig) on
-          # macOS whenever signing is configured, regardless of whether
-          # "updater" is in bundle.targets. Since we don't ship an
-          # in-app updater, these files just clutter the release page.
-          # Each macOS job deletes its own.
-          delete_asset() {
-            local name="$1"
-            local asset_id
-            if asset_id=$(lookup_asset_id "${name}"); then
-              echo "Deleting ${name}"
-              gh api -X DELETE "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > /dev/null
-            else
-              echo "Skip delete: ${name} not found (already gone or never created)"
-            fi
-          }
-
           case "${LABEL}" in
             "macOS-arm64")
               platform_name="macOS-AppleSilicon"
               friendly_asset="Pipeline-${VERSION}-macOS-AppleSilicon.dmg"
               artifact_path="$(find "gui/src-tauri/target/${RUST_TARGET}/release/bundle/dmg" \
                 -maxdepth 1 -type f -name "Pipeline_*_${ASSET_ARCH}.dmg" -print -quit)"
-              rename_asset "Pipeline_${VERSION}_aarch64.dmg" \
-                           "${friendly_asset}"
-              delete_asset "Pipeline_aarch64.app.tar.gz"
-              delete_asset "Pipeline_aarch64.app.tar.gz.sig"
               ;;
             "macOS-x64")
               platform_name="macOS-Intel"
               friendly_asset="Pipeline-${VERSION}-macOS-Intel.dmg"
               artifact_path="$(find "gui/src-tauri/target/${RUST_TARGET}/release/bundle/dmg" \
                 -maxdepth 1 -type f -name "Pipeline_*_${ASSET_ARCH}.dmg" -print -quit)"
-              rename_asset "Pipeline_${VERSION}_x64.dmg" \
-                           "${friendly_asset}"
-              delete_asset "Pipeline_x64.app.tar.gz"
-              delete_asset "Pipeline_x64.app.tar.gz.sig"
               ;;
             "Windows")
               platform_name="Windows"
               friendly_asset="Pipeline-${VERSION}-Windows.exe"
               artifact_path="$(find gui/src-tauri/target/release/bundle/nsis \
                 -maxdepth 1 -type f -name 'Pipeline_*_x64-setup.exe' -print -quit)"
-              rename_asset "Pipeline_${VERSION}_x64-setup.exe" \
-                           "${friendly_asset}"
               ;;
             "Linux")
               platform_name="Linux"
               friendly_asset="Pipeline-${VERSION}-Linux.AppImage"
               artifact_path="$(find gui/src-tauri/target/release/bundle/appimage \
                 -maxdepth 1 -type f -name 'Pipeline_*_amd64.AppImage' -print -quit)"
-              rename_asset "Pipeline_${VERSION}_amd64.AppImage" \
-                           "${friendly_asset}"
               ;;
             *)
               echo "Unknown release matrix label: ${LABEL}" >&2
@@ -1193,44 +1035,98 @@ jobs:
             exit 1
           fi
 
+          # GitHub derives an asset's public name from the uploaded basename;
+          # the optional #suffix accepted by `gh release upload` is only a
+          # display label. Stage every file under its exact public name so the
+          # final completeness gate sees the intended deterministic inventory.
+          upload_dir="${RUNNER_TEMP}/pipeline-release-upload-${platform_name}"
+          mkdir -p "${upload_dir}"
+          staged_artifact_path="${upload_dir}/${friendly_asset}"
+          cp "${artifact_path}" "${staged_artifact_path}"
+
           # Publish the same machine-readable records that are bundled
           # offline. These are required release assets, not best-effort logs.
           artifact_sbom_name="Pipeline-${VERSION}-${platform_name}-Artifact-SBOM.cdx.json"
           build_input_sbom_name="Pipeline-${VERSION}-${platform_name}-Build-input-SBOM.cdx.json"
           provenance_name="Pipeline-${VERSION}-${platform_name}-Poppler-provenance.json"
           checksum_name="${friendly_asset}.sha256"
-          checksum_path="${RUNNER_TEMP}/${checksum_name}"
-          artifact_sbom_path="${RUNNER_TEMP}/${artifact_sbom_name}"
+          checksum_path="${upload_dir}/${checksum_name}"
+          artifact_sbom_path="${upload_dir}/${artifact_sbom_name}"
+          build_input_sbom_path="${upload_dir}/${build_input_sbom_name}"
+          provenance_path="${upload_dir}/${provenance_name}"
+          cp "gui/src-tauri/resources/notices/THIRD_PARTY_SBOM.cdx.json" \
+            "${build_input_sbom_path}"
+          cp "gui/src-tauri/resources/poppler/PROVENANCE.json" \
+            "${provenance_path}"
           node scripts/release/artifact-integrity.mjs \
-            --artifact "${artifact_path}" \
+            --artifact "${staged_artifact_path}" \
             --asset-name "${friendly_asset}" \
             --output "${checksum_path}" \
             --version "${VERSION}" \
-            --build-input-sbom "gui/src-tauri/resources/notices/THIRD_PARTY_SBOM.cdx.json" \
+            --build-input-sbom "${build_input_sbom_path}" \
             --build-input-sbom-asset-name "${build_input_sbom_name}" \
-            --provenance "gui/src-tauri/resources/poppler/PROVENANCE.json" \
+            --provenance "${provenance_path}" \
             --provenance-asset-name "${provenance_name}" \
             --artifact-sbom-output "${artifact_sbom_path}" \
             --github-output "${GITHUB_OUTPUT}"
+
+          # Create the draft only after this platform's installer has passed
+          # every local validation. Successful platform assets persist across
+          # later manual package runs, and --clobber retries only this platform.
+          release_matches="$(gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+            jq -rs --arg tag "${TAG}" 'add | map(select(.tag_name == $tag))')"
+          release_count="$(jq 'length' <<<"${release_matches}")"
+          if [ "${release_count}" -eq 0 ]; then
+            notes_file="${RUNNER_TEMP}/pipeline-release-notes.md"
+            printf '%s\n' \
+              '## Download' \
+              '' \
+              'Build each platform with the manual package operation. The draft is published only after the manual publish operation validates all required installers, checksums, SBOMs, and Poppler provenance.' \
+              '' \
+              'macOS packages are signed and notarized. Windows packages are intentionally unsigned; verify the adjacent SHA-256 checksum before installation.' \
+              > "${notes_file}"
+            gh release create "${TAG}" --draft --verify-tag \
+              --title "Pipeline ${TAG}" --notes-file "${notes_file}"
+          elif [ "${release_count}" -ne 1 ] || \
+               [ "$(jq -r '.[0].draft' <<<"${release_matches}")" != "true" ]; then
+            echo "Expected zero releases or one draft release for ${TAG}" >&2
+            jq . <<<"${release_matches}" >&2
+            exit 1
+          fi
+
           gh release upload "${TAG}" \
-            "${artifact_sbom_path}#${artifact_sbom_name}" \
-            "gui/src-tauri/resources/notices/THIRD_PARTY_SBOM.cdx.json#${build_input_sbom_name}" \
-            "gui/src-tauri/resources/poppler/PROVENANCE.json#${provenance_name}" \
-            "${checksum_path}#${checksum_name}" \
+            "${staged_artifact_path}" \
+            "${artifact_sbom_path}" \
+            "${build_input_sbom_path}" \
+            "${provenance_path}" \
+            "${checksum_path}" \
             --clobber
-          lookup_asset_id "${friendly_asset}" >/dev/null
-          lookup_asset_id "${artifact_sbom_name}" >/dev/null
-          lookup_asset_id "${build_input_sbom_name}" >/dev/null
-          lookup_asset_id "${provenance_name}" >/dev/null
-          lookup_asset_id "${checksum_name}" >/dev/null
+
+          release_id="$(gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+            jq -rs --arg tag "${TAG}" \
+              'add | map(select(.tag_name == $tag and .draft == true)) |
+               if length == 1 then .[0].id else empty end')"
+          gh api --paginate \
+            "/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" |
+            jq -es --arg installer "${friendly_asset}" \
+              --arg checksum "${checksum_name}" \
+              --arg artifact_sbom "${artifact_sbom_name}" \
+              --arg build_sbom "${build_input_sbom_name}" \
+              --arg provenance "${provenance_name}" '
+                (add | map(.name)) as $names |
+                all([$installer, $checksum, $artifact_sbom, $build_sbom, $provenance][];
+                  . as $required | any($names[]; . == $required))
+              ' >/dev/null
 
   release-complete:
-    name: Verify complete draft release
-    needs: release
+    if: inputs.operation == 'publish'
+    name: Validate and publish complete release
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     permissions:
-      contents: read
+      contents: write
       id-token: write
       attestations: write
     steps:
@@ -1462,3 +1358,9 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ runner.temp }}/pipeline-release-evidence/*
+
+      - name: Publish validated release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "${TAG}" --draft=false --latest

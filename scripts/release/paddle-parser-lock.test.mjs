@@ -116,13 +116,15 @@ test("parser lock metadata is bound into runtime and release qualification", () 
   assert.match(engines, /"layout_ready": true/);
 
   const release = fs.readFileSync(path.join(ROOT, ".github", "workflows", "release.yml"), "utf8");
-  assert.match(release, /needs: \[quality, paddle-parser-qualification\]/);
+  assert.match(release, /if: inputs\.operation == 'preflight'/);
+  assert.match(release, /python scripts\/release\/qualify-paddle-parser\.py/);
+  assert.match(release, /release:\n    if: inputs\.operation == 'package'/);
+  assert.doesNotMatch(release, /needs: \[quality, paddle-parser-qualification\]/);
   const qualification = fs.readFileSync(
     path.join(ROOT, ".github", "workflows", "paddle-parser-qualification.yml"),
     "utf8",
   );
-  for (const runner of ["macos-15", "windows-2022", "ubuntu-22.04", "ubuntu-24.04-arm"]) {
-    assert.ok(qualification.includes(`os: ${runner}`));
-  }
+  assert.ok(qualification.includes("runs-on: ubuntu-22.04"));
+  assert.doesNotMatch(qualification, /(?:macos|windows)-\d+|ubuntu-24\.04-arm/i);
   assert.ok(qualification.includes("qualify-paddle-parser.py"));
 });

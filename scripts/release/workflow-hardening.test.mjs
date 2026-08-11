@@ -44,71 +44,61 @@ test("CI and release use the repository's exact supported toolchains", () => {
     assert.ok(!contents.includes("toolchain: stable"), `${workflow} must not float Rust stable`);
     assert.ok(!/node-version:\s+(?:22|24)\s*$/m.test(contents), `${workflow} must not float a Node major`);
     assert.ok(
-      contents.includes("cargo clippy --locked --all-targets --all-features -- -D warnings"),
-      `${workflow} must run the same locked all-feature Clippy gate`,
-    );
-    assert.ok(
       contents.includes("cargo +1.88.0 check --locked"),
       `${workflow} must bypass the pinned default when checking the declared MSRV`,
     );
   }
+  assert.ok(
+    readText(".github", "workflows", "release.yml")
+      .includes("cargo clippy --locked --all-targets --all-features -- -D warnings"),
+    "manual release preflight must retain the locked all-feature Clippy gate",
+  );
 
   const packageJson = JSON.parse(readText("gui", "package.json"));
   assert.equal(packageJson.packageManager, "npm@11.16.0");
   assert.match(packageJson.engines.node, new RegExp(`(?:\\^|>=)${nodeVersion.replaceAll(".", "\\.")}`));
 });
 
-test("build CI keeps full validation separate from routine platform smoke", () => {
+test("build CI is manual-only and uses one Ubuntu runner at a time", () => {
   const contents = readText(".github", "workflows", "build.yml");
 
   for (const required of [
-    "github.event.pull_request.head.repo.full_name || github.repository",
-    "github.head_ref || github.ref_name",
-    "github.event_name == 'push'",
-    "if: matrix.suite == 'full'",
-    "if: matrix.suite == 'full' && runner.os == 'Linux'",
-    "save-if: ${{ github.ref == 'refs/heads/main' }}",
-    "cache-on-failure: ${{ github.ref == 'refs/heads/main' }}",
+    "workflow_dispatch:",
+    "profile:",
+    "- quick",
+    "- maintenance",
+    "if: inputs.profile == 'quick'",
+    "if: inputs.profile == 'maintenance'",
+    "name: Linux unit checks",
+    "name: Manual audits and MSRV",
+    "cargo test --locked --all-targets",
+    "npm test -- --run",
+    "cargo +1.88.0 check --locked",
   ]) {
     assert.ok(contents.includes(required), `build workflow is missing ${required}`);
   }
 
-  const matrixBlock = contents.slice(
-    contents.indexOf("        include: >-"),
-    contents.indexOf("    runs-on: ${{ matrix.os }}"),
-  );
-  const variants = [...matrixBlock.matchAll(/'(\[[^']+\])'/g)].map((match) =>
-    JSON.parse(match[1]),
-  );
-  assert.deepEqual(
-    variants.map((rows) => rows.map(({ label, suite }) => [label, suite])),
-    [
-      [["Linux x64", "full"]],
-      [
-        ["Linux x64", "full"],
-        ["Windows x64", "smoke"],
-        ["macOS arm64", "smoke"],
-        ["macOS x64", "smoke"],
-      ],
-      [
-        ["Linux x64", "full"],
-        ["Windows x64", "full"],
-        ["macOS arm64", "full"],
-        ["macOS x64", "full"],
-      ],
-    ],
-  );
+  assert.equal([...contents.matchAll(/runs-on:\s+ubuntu-22\.04/g)].length, 2);
+  assert.doesNotMatch(contents, /^\s+(?:push|pull_request|schedule):\s*$/m);
+  assert.doesNotMatch(contents, /(?:windows|macos)-\d+/i);
+  assert.doesNotMatch(contents, /npm run tauri|test:e2e/);
+});
 
-  assert.doesNotMatch(
-    contents,
-    /^\s*schedule:\s*$/m,
-    "routine build CI must not run on a schedule",
-  );
-  assert.doesNotMatch(
-    contents,
-    /^\s*run:\s+npm run build\s*$/m,
-    "CI must let Tauri's beforeBuildCommand perform the frontend production build once",
-  );
+test("real parser qualification is manual and Linux-only", () => {
+  const contents = readText(".github", "workflows", "paddle-parser-qualification.yml");
+  assert.ok(contents.includes("workflow_dispatch:"));
+  assert.ok(contents.includes("workflow_call:"));
+  assert.ok(contents.includes("runs-on: ubuntu-22.04"));
+  assert.ok(contents.includes("Real parser (Linux x64)"));
+  assert.doesNotMatch(contents, /^\s*schedule:\s*$/m);
+  assert.doesNotMatch(contents, /matrix:|windows-|macos-|ubuntu-24\.04-arm/);
+});
+
+test("Dependabot batches each ecosystem monthly without automatic CI", () => {
+  const contents = readText(".github", "dependabot.yml");
+  assert.equal([...contents.matchAll(/interval:\s+monthly/g)].length, 3);
+  assert.equal([...contents.matchAll(/^\s+groups:\s*$/gm)].length, 3);
+  assert.ok(contents.includes("CI is manual-only"));
 });
 
 test("release workflow retains signed tags, macOS signing, and completeness gates", () => {
@@ -130,9 +120,20 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     "APPLE_CERTIFICATE",
     "APPLE_SIGNING_IDENTITY",
     "APPLE_ID",
-    "NODE_OPTIONS: --use-system-ca",
     "plutil -extract LSRequiresCarbon raw",
-    "Windows packages are currently unsigned",
+    "Windows packages are intentionally unsigned",
+    "operation:",
+    "- preflight",
+    "- package",
+    "- publish",
+    "platform:",
+    "if: inputs.operation == 'preflight'",
+    "if: inputs.operation == 'package'",
+    "if: inputs.operation == 'publish'",
+    "Build package",
+    "Publish validated platform assets to the draft",
+    "gh release create \"${TAG}\" --draft --verify-tag",
+    "gh release edit \"${TAG}\" --draft=false --latest",
     "actions/attest-build-provenance@",
     "anchore/scan-action@",
     "Artifact-SBOM.cdx.json",
@@ -155,8 +156,7 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     "release-complete:",
     "validate-release-assets.mjs",
     "Full parser release qualification",
-    "paddle-parser-qualification.yml",
-    "needs: [quality, paddle-parser-qualification]",
+    "python scripts/release/qualify-paddle-parser.py",
     'git -C "$core_repo" checkout --force --detach "$core_commit"',
     "provenance_args=(",
     'provenance_args+=("${provenance_windows_args[@]}")',
@@ -175,6 +175,36 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     immutableCheckoutCount,
     checkoutCount,
     "every release checkout must explicitly use the immutable workflow SHA",
+  );
+  assert.doesNotMatch(
+    contents,
+    /^\s*(?:push|pull_request|schedule):\s*$/m,
+    "no repository event or schedule may automatically start the release workflow",
+  );
+  assert.doesNotMatch(
+    contents,
+    /name: Platform (?:Rust|frontend) tests/,
+    "platform packaging must not repeat platform-neutral test suites",
+  );
+  assert.match(contents, /group: release-\$\{\{ github\.ref \}\}/);
+  assert.match(contents, /cancel-in-progress: false/);
+  assert.equal(
+    [...contents.matchAll(/runs-on: ubuntu-22\.04/g)].length,
+    2,
+    "preflight and publish should each use one Linux runner",
+  );
+  const uploadStart = contents.indexOf('gh release upload "${TAG}"');
+  const uploadEnd = contents.indexOf("--clobber", uploadStart);
+  assert.ok(uploadStart >= 0 && uploadEnd > uploadStart);
+  assert.doesNotMatch(
+    contents.slice(uploadStart, uploadEnd),
+    /#/,
+    "release files must be staged under their exact public basenames, not labels",
+  );
+  assert.ok(
+    contents.indexOf("Verify macOS artifact architecture")
+      < contents.indexOf("Publish validated platform assets to the draft"),
+    "platform validation must precede draft upload",
   );
 
   assert.equal(
