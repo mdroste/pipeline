@@ -624,7 +624,6 @@ jobs:
         run: |
           set -euo pipefail
           dest="$GITHUB_WORKSPACE/gui/src-tauri/resources/poppler"
-          provenance_extra=()
           case "$LABEL" in
             macOS-*)
               platform=macos
@@ -645,15 +644,21 @@ jobs:
               ;;
             Windows)
               platform=windows
-              provenance_extra=(
+              provenance_windows_args=(
                 --conda-package-root "$RUNNER_TEMP/pipeline-windows-conda"
               )
               ;;
             *) echo "Unknown release label: $LABEL" >&2; exit 1 ;;
           esac
-          node scripts/release/poppler-provenance.mjs --verify \
-            --platform "$platform" --resource-dir "$dest" \
-            "${provenance_extra[@]}"
+          provenance_args=(
+            --verify
+            --platform "$platform"
+            --resource-dir "$dest"
+          )
+          if [ "$LABEL" = "Windows" ]; then
+            provenance_args+=("${provenance_windows_args[@]}")
+          fi
+          node scripts/release/poppler-provenance.mjs "${provenance_args[@]}"
           node scripts/release/smoke-poppler.mjs "$dest"
 
       - name: Revalidate signed tag binding before build

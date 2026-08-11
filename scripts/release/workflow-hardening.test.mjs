@@ -103,6 +103,9 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
     "paddle-parser-qualification.yml",
     "needs: [quality, paddle-parser-qualification]",
     'git -C "$core_repo" checkout --force --detach "$core_commit"',
+    "provenance_args=(",
+    'provenance_args+=("${provenance_windows_args[@]}")',
+    'node scripts/release/poppler-provenance.mjs "${provenance_args[@]}"',
   ]) {
     assert.ok(contents.includes(required), `release workflow is missing ${required}`);
   }
@@ -137,6 +140,10 @@ test("release workflow retains signed tags, macOS signing, and completeness gate
       !contents.includes("Get-AuthenticodeSignature") &&
       !contents.includes("tauri.windows-signing.conf.json"),
     "unsigned Windows releases must not require or claim Authenticode signing",
+  );
+  assert.ok(
+    !contents.includes("provenance_extra=()"),
+    "macOS Bash 3.2 must not expand an empty array under set -u",
   );
 });
 
