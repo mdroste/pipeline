@@ -39,7 +39,7 @@ unavailable on Intel macOS because PaddlePaddle 3.2.1 has no matching wheel.
 
 ## Security retirement (2026-07-27)
 
-Marker installation and execution were removed for Pipeline 1.0.1. The
+Marker installation and execution were removed for Pipeline 0.9.0. The
 Marker release compatible with Pipeline's integration requires a Python
 dependency closure with known security vulnerabilities, and the current
 upstream release still constrains at least one affected dependency below its
@@ -204,7 +204,7 @@ EngineSpec { id, label, description, pip_spec, entry_point,
 
 The original registry shipped one Python entry — `marker` (`pip_spec:
 "marker-pdf"`, entry point `marker_single`, ~500 MB packages + ~2–3 GB
-models). Pipeline 1.0.1 removed the Python engine kind, uv provisioning, and
+models). Pipeline 0.9.0 removed the Python engine kind, uv provisioning, and
 this registry entry. At that release the registry contained only native
 PaddleOCR-VL; the later Full Parser add-on reintroduces a narrowly scoped
 managed Python engine, not generic Python-tool discovery.
@@ -238,13 +238,13 @@ of tools/ + hf/), `uninstall_engine(id)` (`uv tool uninstall` + remove hf/),
 `cancel_install()`. All exposed as Tauri commands.
 
 The retired implementation checked `~/.pipeline/bin/` before PATH and
-redirected managed Marker model weights to `~/.pipeline/hf`. Pipeline 1.0.1
+redirected managed Marker model weights to `~/.pipeline/hf`. Pipeline 0.9.0
 does neither: dependency checks ignore Marker and the extraction guard rejects
 the legacy value before hashing or command resolution.
 
 The historical licensing assessment treated uv as MIT/Apache dual and Marker
 as GPL-3 code with separately licensed model weights. Neither component is
-downloaded or bundled by Pipeline 1.0.1.
+downloaded or bundled by Pipeline 0.9.0.
 
 ## Historical Move 3: Marker invocation upgrade (retired)
 
@@ -261,7 +261,7 @@ disable or force OCR. Settings also exposed figure extraction, low/high
 resolution DPI, machine-aware PDF-text workers, and layout/OCR recognition
 batches. Successful Markdown, figures, and an engine/settings manifest are
 reused only on an exact match. These controls and the invocation path were
-removed in 1.0.1. Only passive readers for previously saved Marker structure
+removed in 0.9.0. Only passive readers for previously saved Marker structure
 and figure artifacts remain.
 
 ### PaddleOCR-VL runtime policy
@@ -366,9 +366,9 @@ and its authenticated private recognition server.
    the engine on a generated one-page PDF and downgrades to a warning on
    failure; uninstall keeps uv and the wheel cache (small, make reinstall
    fast) and removes model weights only when the last engine goes. This
-   Python/uv path was removed in 1.0.1; provisioning now covers only native
+   Python/uv path was removed in 0.9.0; provisioning now covers only native
    PaddleOCR-VL.*
-3. **Engines UI + Marker upgrade** (Moves 3–4; retired in 1.0.1).
+3. **Engines UI + Marker upgrade** (Moves 3–4; retired in 0.9.0).
    *Implemented 2026-07-03. The Local Engines cards live inside Settings →
    Text Extraction (EnginesPanel.tsx) rather than a separate nav section;
    Marker output went to `~/.pipeline/cache/marker/{hash}/` and figure

@@ -1,0 +1,7 @@
+# Design-Based and Practice Research
+
+Audit research in which iterative design, prototyping, research-through-design, or intervention refinement is itself the method of inquiry. Reconstruct the problem framing, stakeholders and setting, design conjecture, iterations, decision records, artifacts, enactment, observations, and the inferential move from one design episode to a reusable principle. Check whether changes between iterations are documented, whether success criteria move after results are observed, and whether the final artifact is evaluated against the need and constraints that motivated it.
+
+Assess triangulation across observations, interviews, performance evidence, and artifact behavior; researcher and practitioner roles; negative cases and abandoned alternatives; implementation fidelity; and transfer from the studied setting to the claimed class of settings. Distinguish a compelling artifact, a local improvement, and evidence for a general design principle. Do not impose randomized-trial standards when the paper makes a design-knowledge claim, but require evidence that discriminates the proposed mechanism from novelty, facilitation, or exceptional local support.
+
+For each concern, identify the iteration, artifact, design claim, or transfer claim affected and propose the smallest additional design trace, comparative enactment, stakeholder evidence, failure analysis, or qualification needed.

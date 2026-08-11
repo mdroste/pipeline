@@ -85,4 +85,40 @@ describe("renderSurvey", () => {
     expect(md).toContain("| 1 | Model | 2–5 |");
     expect(md).toContain("## Stated Contribution");
   });
+
+  it("renders an adaptive review plan and its selection reasons", () => {
+    const md = renderSurvey({
+      metadata: {
+        title: "A Paper",
+        authors: [],
+        date: null,
+        paper_type: "theory",
+        page_count: 30,
+        has_appendix: true,
+        has_online_appendix: false,
+      },
+      review_plan: {
+        primary_domain: "Economics",
+        subject: "Quantitative macroeconomics",
+        paper_forms: ["formal_theory", "quantitative_model"],
+        methods: ["dynamic programming"],
+        subject_specialist_ids: ["subject_economics_macro"],
+        method_specialist_ids: ["formal_proofs", "quantitative_computation"],
+        selection_notes: [
+          { id: "formal_proofs", reason: "The main result depends on four propositions." },
+        ],
+        routing_uncertainty: [],
+      },
+      sections: [],
+      formal_results: [],
+      tables_figures: [],
+      notation: [],
+      stated_contribution: "A result.",
+      key_references: [],
+      extraction_quality_notes: [],
+    });
+    expect(md).toContain("## Detected Review Plan");
+    expect(md).toContain("**Subject**: Quantitative macroeconomics");
+    expect(md).toContain("**Formal Proofs**: The main result depends on four propositions.");
+  });
 });

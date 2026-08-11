@@ -138,6 +138,24 @@ describe("Console", () => {
     expect(screen.getByTitle("Scroll to the first error")).toHaveTextContent("2 errors");
   });
 
+  it("bounds live DOM rows while preserving counts and error navigation", async () => {
+    const user = userEvent.setup();
+    const logs = [
+      log("ERROR: earliest", "error"),
+      ...Array.from({ length: 650 }, (_, index) => log(`line ${index}`)),
+    ];
+    render(<Console logs={logs} usage={EMPTY_USAGE} />);
+
+    expect(screen.getByText("651 lines")).toBeVisible();
+    expect(screen.getByText(/Showing 600 of 651 matching lines/)).toBeVisible();
+    expect(screen.queryByText("ERROR: earliest")).not.toBeInTheDocument();
+    expect(screen.getByText("line 649")).toBeVisible();
+
+    await user.click(screen.getByTitle("Scroll to the first error"));
+    expect(screen.getByText("ERROR: earliest")).toBeVisible();
+    expect(screen.queryByText("line 649")).not.toBeInTheDocument();
+  });
+
   it("decomposes logical input into fresh, cache-read, and cache-write tokens", () => {
     render(
       <Console

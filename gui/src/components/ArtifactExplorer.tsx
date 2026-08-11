@@ -3,7 +3,7 @@
 // never file:// URLs. PDFs are rendered to bounded page images in Rust, so
 // previews behave consistently across WKWebView / WebView2 / WebKitGTK.
 
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import hljs from "highlight.js/lib/common";
@@ -58,11 +58,15 @@ export interface ArtifactContent {
   abs_path: string;
 }
 
-interface PdfArtifactPage {
+interface PdfArtifactPagePreview {
   page: number;
   has_previous: boolean;
   has_next: boolean;
   base64: string;
+}
+
+interface PdfArtifactPage extends PdfArtifactPagePreview {
+  prefetched_next?: PdfArtifactPagePreview | null;
 }
 
 interface DocumentRepresentation {
@@ -131,7 +135,17 @@ interface Props {
   deferInitialArtifact?: boolean;
   /** Background work started by the report workspace before Sources opens. */
   preload?: ArtifactExplorerPreload | null;
+  /** External navigation request, for example from an evidence-linked issue. */
+  selectionRequest?: ArtifactSelectionRequest | null;
 }
+
+export interface ArtifactSelectionRequest {
+  key: number;
+  page?: number;
+  relPath?: string;
+}
+
+export type ArtifactSelectionTarget = Omit<ArtifactSelectionRequest, "key">;
 
 export interface ArtifactExplorerPreload {
   runId: string;
@@ -307,16 +321,37 @@ function PdfView({
   const [preview, setPreview] = useState<PdfArtifactPage | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const previewCache = useRef(new Map<number, PdfArtifactPagePreview>());
   const relPath = entry?.rel_path ?? "";
 
   useEffect(() => {
     if (!relPath) return;
+    const cached = previewCache.current.get(page);
+    if (cached) {
+      // Refresh LRU order without changing the cached value.
+      previewCache.current.delete(page);
+      previewCache.current.set(page, cached);
+      setPreview(cached);
+      setPreviewError(null);
+      return;
+    }
     let live = true;
     setPreview(null);
     setPreviewError(null);
     invoke<PdfArtifactPage>("read_pdf_artifact_page", { runId, relPath, page })
       .then((result) => {
-        if (live) setPreview(result);
+        if (!live) return;
+        const cache = previewCache.current;
+        cache.set(result.page, result);
+        if (result.prefetched_next) {
+          cache.set(result.prefetched_next.page, result.prefetched_next);
+        }
+        while (cache.size > 6) {
+          const oldest = cache.keys().next().value;
+          if (oldest === undefined) break;
+          cache.delete(oldest);
+        }
+        setPreview(result);
       })
       .catch((caught) => {
         if (!live) return;
@@ -376,7 +411,10 @@ function PdfView({
             <p className="mt-1 text-xs">{previewError}</p>
             <button
               type="button"
-              onClick={() => setAttempt((value) => value + 1)}
+              onClick={() => {
+                previewCache.current.delete(page);
+                setAttempt((value) => value + 1);
+              }}
               className="mt-3 rounded border border-red-300 px-2 py-1 text-xs hover:bg-red-100
                          dark:border-red-800 dark:hover:bg-red-900/40"
             >
@@ -802,7 +840,7 @@ const Viewer = memo(function Viewer({
     );
   }
   if (content.kind === "pdf") {
-    return <PdfView key={entry?.rel_path} runId={runId} entry={entry} content={content} />;
+    return <PdfView key={`${runId}:${entry?.rel_path}`} runId={runId} entry={entry} content={content} />;
   }
   if (content.kind === "binary" || content.text === null) {
     return <BinaryCard entry={entry} content={content} />;
@@ -884,6 +922,7 @@ const GROUPS: { id: string; label: string }[] = [
   { id: "tables", label: "Tables" },
   { id: "equations", label: "Equations" },
   { id: "context", label: "Context" },
+  { id: "agent_response", label: "Agent reports" },
   { id: "step", label: "Steps" },
   { id: "files", label: "Files" },
 ];
@@ -1096,6 +1135,7 @@ export default function ArtifactExplorer({
   fallbackMarkdown,
   deferInitialArtifact = false,
   preload = null,
+  selectionRequest = null,
 }: Props) {
   const [manifest, setManifest] = useState<RunManifest | null>(null);
   const [manifestError, setManifestError] = useState<string | null>(null);
@@ -1207,6 +1247,31 @@ export default function ArtifactExplorer({
     }
     setSelected(next);
   }, [selected]);
+  useEffect(() => {
+    if (!manifest || !selectionRequest) return;
+    let next = "";
+    if (selectionRequest.relPath) {
+      const indexedPage = indexedPageForPath(selectionRequest.relPath, manifest.page_artifacts);
+      if (indexedPage !== null) {
+        next = pageSelection(indexedPage);
+      } else if (manifest.artifacts.some((artifact) => artifact.rel_path === selectionRequest.relPath)) {
+        next = selectionRequest.relPath;
+      }
+    }
+    if (!next && selectionRequest.page && selectionRequest.page > 0) {
+      if (manifest.page_artifacts && selectionRequest.page <= manifest.page_artifacts.count) {
+        next = pageSelection(selectionRequest.page);
+      } else {
+        next = manifest.artifacts.find((artifact) =>
+          artifact.group === "pages" && pageNumber(artifact) === selectionRequest.page,
+        )?.rel_path ?? "";
+      }
+    }
+    if (next) {
+      setNavigationOpen(true);
+      selectArtifact(next);
+    }
+  }, [manifest, selectArtifact, selectionRequest]);
   const goBack = useCallback(() => {
     const previous = selectionHistory[selectionHistory.length - 1];
     if (!previous) return;

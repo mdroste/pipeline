@@ -848,7 +848,7 @@ function ExtractionSection({
                 role="alert"
                 className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
               >
-                <div className="font-medium">Marker is unavailable in Pipeline 1.0.1</div>
+                <div className="font-medium">Marker is unavailable in Pipeline 0.9.0</div>
                 <p className="mt-1 text-xs leading-relaxed">
                   Its compatible Python dependency closure contains known security vulnerabilities.
                   Choose PaddleOCR-VL, LLM extraction, or pdftotext below, then save Settings.

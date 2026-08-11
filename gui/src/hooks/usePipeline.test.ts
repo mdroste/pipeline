@@ -65,6 +65,21 @@ function emitPass(name: string, status: string) {
   handlers["pipeline:pass"]({ payload: { name, status } });
 }
 
+function emitRouting() {
+  handlers["pipeline:routing"]({
+    payload: {
+      primaryDomain: "Economics",
+      subject: "Quantitative macroeconomics",
+      subjectIds: ["subject_economics_macro"],
+      subjectLabels: ["Economics — Macroeconomics"],
+      methodIds: ["formal_proofs"],
+      methodLabels: ["Method — Formal Proofs"],
+      specialistIds: ["subject_economics_macro", "formal_proofs"],
+      specialistLabels: ["Economics — Macroeconomics", "Method — Formal Proofs"],
+    },
+  });
+}
+
 describe("usePipeline log buffering", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -85,7 +100,7 @@ describe("usePipeline log buffering", () => {
       emitLog("line two", { session: 3, label: "Orientation map", level: "info" });
     });
 
-    // The flush interval runs every 100ms.
+    // Buffered logs are flushed on a short interval rather than per event.
     await waitFor(() => expect(result.current.logs).toHaveLength(2));
     const logs = result.current.logs;
     // Line with no session metadata defaults to a null/master entry.
@@ -190,11 +205,11 @@ describe("usePipeline log buffering", () => {
     await waitFor(() => expect(result.current.listenersReady).toBe(true));
 
     unmount();
-    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(5));
   });
 
   it("cleans partial registrations and fails closed when one listener rejects", async () => {
-    const cleanups = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+    const cleanups = [vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn()];
     let registration = 0;
     listenMock.mockImplementation(
       (name: string, cb: (event: { payload: unknown }) => void) => {
@@ -216,9 +231,28 @@ describe("usePipeline log buffering", () => {
     expect(cleanups[0]).toHaveBeenCalledTimes(1);
     expect(cleanups[2]).toHaveBeenCalledTimes(1);
     expect(cleanups[3]).toHaveBeenCalledTimes(1);
+    expect(cleanups[4]).toHaveBeenCalledTimes(1);
 
     unmount();
     consoleError.mockRestore();
+  });
+
+  it("exposes the detected review routing summary", async () => {
+    const { result, unmount } = renderHook(() => usePipeline());
+    await waitFor(() => expect(result.current.listenersReady).toBe(true));
+
+    act(() => emitRouting());
+    expect(result.current.reviewRouting).toEqual({
+      primaryDomain: "Economics",
+      subject: "Quantitative macroeconomics",
+      subjectIds: ["subject_economics_macro"],
+      subjectLabels: ["Economics — Macroeconomics"],
+      methodIds: ["formal_proofs"],
+      methodLabels: ["Method — Formal Proofs"],
+      specialistIds: ["subject_economics_macro", "formal_proofs"],
+      specialistLabels: ["Economics — Macroeconomics", "Method — Formal Proofs"],
+    });
+    unmount();
   });
 
   it("preserves repeated runtime stages and their pass results", async () => {

@@ -37,7 +37,7 @@ a correspondingly numbered public release was published.
 | **1.3** | Throughput | Implemented |
 | **1.4** | Reading and comparing | Implemented |
 | **1.5** | Polish and trust | Partial; the remaining ideas are listed below |
-| **2.0** | Platform foundations | Schema v2, fan-out, and URL import implemented; a curated template gallery remains external work |
+| **2.0** | Platform foundations | Schema v2, fan-out, URL import, and a local curated template gallery implemented |
 
 The detailed scopes below preserve the original proposal tense and rationale.
 They may describe a pre-implementation “today”; the development-status notes
@@ -165,8 +165,10 @@ Structured outputs are what make 1.2.2 conditionals and 1.4.2's issue table reli
 > **Resume / partial re-run:** every run writes a structured `report.json`; `RunManifest` gained `parent_run_id`; the executor accepts a `preloaded` map (a preloaded step reuses the parent output instead of executing) and exposes `dependents_of`; a `rerun_run` command reuses the parent's cached extraction + orientation — "Re-run failed" and "Re-run" buttons on the History page, using the *active* profile so editing a prompt and re-running is cheap.
 >
 > **Headless CLI:** the pipeline's `AppHandle` dependency was abstracted behind
-> an `emit::Events` trait / `EventBus`. A second binary, `pipeline-cli` (`run` /
-> `batch` / `profiles`), reuses the engine without a window or WebView.
+> an `emit::Events` trait / `EventBus`. A second binary, `pipeline-cli` (`run`,
+> `check`, `batch`, `profiles`, and managed-engine commands), reuses the engine
+> without a window or WebView. Run and check preflight the concrete input, so a
+> PDF requires its selected parser while TeX and DOCX avoid PDF-only checks.
 >
 > **Per-pass cancel:** a `PASS_KEY` task-local lets `register_child_pid` attribute each subprocess to its pass; `cancel_pass` kills just that pass's processes and marks it so it won't retry (other passes continue). A ✕ button appears on each running pass in the progress view.
 >
@@ -197,9 +199,12 @@ Every step already writes its output under `runs/{id}/artifacts/steps/`. Record 
 A second binary target in the existing crate (`src-tauri` already holds all the logic; the Tauri `AppHandle` is only used for event emission, which becomes a stdout/JSON-lines sink behind a small trait):
 
 ```
-pipeline run --profile deep-review --input paper.pdf --var journal="AER" --out report.md
-pipeline batch --profile grading --input-dir ./submissions/
-pipeline profiles list
+pipeline-cli profiles
+pipeline-cli check --profile deep-review --input paper.pdf
+pipeline-cli run --profile deep-review --input paper.pdf --var journal="AER" --out report.md
+pipeline-cli batch --profile grading --input-dir ./submissions/
+pipeline-cli engines install paddle
+pipeline-cli engines uninstall paddle --yes
 ```
 
 This enables cron jobs, CI hooks (run the code-review profile on a repo), and scripting — and it is the cheap path to "applied to many tasks," because tasks that don't fit a GUI (nightly re-review of a working draft) fit a one-line cron entry. Exit codes reflect failed steps.
@@ -272,8 +277,8 @@ Smaller items, batched. Roughly in order of value:
 
 2.0 is less about new machinery than about declaring the generalized model stable and building the library on top of it.
 
-> **Development status:** schema v2, fan-out, generalized validation, and URL
-> import are implemented. The curated gallery itself has not been created.
+> **Development status:** schema v2, fan-out, generalized validation, URL
+> import, and a local curated gallery are implemented.
 >
 > **Fan-out (map) steps:** `StepConfig.for_each { glob, max }` runs a step once per file matching a glob under the input, binding `{item}` in the prompt; outputs are keyed `step_id/item` and combine through the existing merge/`{step:id}` machinery. A dependency-free glob matcher (`pipeline/glob.rs`, tested: `*`, `?`, `**/`) resolves against the input folder, capped at `max`. Editor field in the step's advanced options.
 >
@@ -281,7 +286,7 @@ Smaller items, batched. Roughly in order of value:
 >
 > **Generalized-profile validation:** Revision-response, rubric-grading, and thesis-review workflows originally exercised extra inputs, variables, structured output, and fan-out. All three were later retired from the default catalog while the underlying engine capabilities remain available to custom profiles.
 >
-> **Template sharing:** `import_profile_from_url` fetches a shared profile JSON over HTTPS (size-capped, schema-checked, redirect- and private-network-restricted) and imports it; a "From URL…" button in the profile controls. The *curated gallery repo* itself is external content (a GitHub repo of template JSONs) not created here — import-from-URL is the mechanism it would use.
+> **Template sharing:** `import_profile_from_url` fetches a shared profile JSON over HTTPS (size-capped, schema-checked, redirect- and private-network-restricted) and imports it; a "From URL…" button in the profile controls. `WorkflowGalleryPage` separately installs curated profile definitions compiled into the frontend. Installed templates are ordinary editable local profiles; no network request or distinct runtime format is involved.
 
 ### 2.0.1 Profile schema v2 (M)
 
@@ -289,7 +294,7 @@ Add an explicit `schema_version` to profile JSON; v2 is the 1.2 feature set (dep
 
 ### 2.0.2 Template gallery (M)
 
-"New from template" backed by a curated repo of profile JSONs (fetched like `updates.rs` fetches releases — plain GitHub, no accounts, no telemetry). Import-from-URL for sharing profiles in a lab or a syllabus. The existing envelope import already validates and de-duplicates IDs; the gallery is mostly UI plus a signed-manifest check.
+The implemented gallery is a dedicated page backed by curated profile definitions compiled into the frontend. It installs each selection as an ordinary editable local profile. Import-from-URL remains available for sharing profiles in a lab or a syllabus; a separately hosted gallery and signed remote manifest are not required by the current implementation.
 
 ### 2.0.3 Fan-out (map) steps (L)
 

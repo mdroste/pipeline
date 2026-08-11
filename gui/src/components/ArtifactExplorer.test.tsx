@@ -156,6 +156,33 @@ describe("ArtifactExplorer", () => {
     expect(screen.getByRole("textbox", { name: "Page number" })).toBeVisible();
   });
 
+  it("opens a compact page from an external evidence request", async () => {
+    mockBackend({
+      "page:1": {
+        kind: "image",
+        bytes: 500,
+        text: null,
+        base64: "aGVsbG8=",
+        truncated: false,
+        abs_path: "/runs/x/page-1.jpg",
+      },
+    });
+    render(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        deferInitialArtifact
+        selectionRequest={{ key: 1, page: 1 }}
+      />,
+    );
+
+    expect(await screen.findByRole("img", { name: "Page 1" })).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith("read_page_artifact", {
+      runId: manifest.run_id,
+      page: 1,
+    });
+  });
+
   it("jumps directly through a long compact page index without materializing page buttons", async () => {
     const user = userEvent.setup();
     const longManifest = {
@@ -400,6 +427,7 @@ describe("ArtifactExplorer", () => {
       },
       "pdf:artifacts/04_model.pdf:page:1": {
         page: 1, has_previous: false, has_next: false, base64: "aGVsbG8=",
+        prefetched_next: null,
       },
     });
     render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
@@ -415,6 +443,37 @@ describe("ArtifactExplorer", () => {
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(await screen.findByRole("heading", { name: "R" })).toBeVisible();
     expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("reuses a prefetched PDF successor without another backend render", async () => {
+    const user = userEvent.setup();
+    mockBackend({
+      "report.md": textContent("markdown", "# R"),
+      "artifacts/04_model.pdf": {
+        kind: "pdf", bytes: 5000, text: null, base64: null,
+        truncated: false, abs_path: "/runs/x/artifacts/04_model.pdf",
+      },
+      "pdf:artifacts/04_model.pdf:page:1": {
+        page: 1,
+        has_previous: false,
+        has_next: true,
+        base64: "cGFnZTE=",
+        prefetched_next: {
+          page: 2,
+          has_previous: true,
+          has_next: false,
+          base64: "cGFnZTI=",
+        },
+      },
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+    await user.click(await screen.findByRole("button", { name: "Model PDF" }));
+    expect(await screen.findByRole("img", { name: "Model PDF, page 1" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Next PDF page" }));
+    expect(await screen.findByRole("img", { name: "Model PDF, page 2" })).toBeVisible();
+    expect(invoke.mock.calls.filter(([command]) => command === "read_pdf_artifact_page"))
+      .toHaveLength(1);
   });
 
   it("shows Back when previewing an image artifact", async () => {

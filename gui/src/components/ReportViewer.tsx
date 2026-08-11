@@ -54,6 +54,45 @@ interface ReportIssue {
 
 type ReportNavigationEntry = ReportHeading | ReportIssue;
 
+const MAX_RENDER_CHARS = 2_000_000;
+
+class ReportRenderErrorBoundary extends React.Component<
+  { markdown: string; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("Report rendering failed, falling back to plain text:", error);
+  }
+
+  componentDidUpdate(previous: { markdown: string }) {
+    if (previous.markdown !== this.props.markdown && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    const truncated = this.props.markdown.length > MAX_RENDER_CHARS;
+    return (
+      <div className="h-full overflow-auto p-6">
+        <div role="alert" className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+          This response could not be rendered as Markdown. Showing its preserved plain text instead.
+        </div>
+        <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-gray-800 dark:text-gray-200">
+          {this.props.markdown.slice(0, MAX_RENDER_CHARS)}
+          {truncated ? "\n\n[Plain-text preview truncated.]" : ""}
+        </pre>
+      </div>
+    );
+  }
+}
+
 function isAuthorFootnoteMath(expression: string): boolean {
   return /^(?:\^\s*\{\s*(?:\*+|\\(?:ast|star|dagger|ddagger)|[\u2020\u2021])\s*\}|(?:\*+|\\(?:ast|star|dagger|ddagger)|[\u2020\u2021]))$/iu.test(
     expression.trim(),
@@ -318,7 +357,7 @@ export function stripInternalReportMarkers(markdown: string): string {
   );
 }
 
-function ReportViewer({ markdown }: Props) {
+function ReportViewerContent({ markdown }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentsOpen, setContentsOpen] = useState(true);
   const [contentsWidth, setContentsWidth] = usePersistentPanelWidth(
@@ -327,12 +366,17 @@ function ReportViewer({ markdown }: Props) {
     184,
     360,
   );
+  const previewTruncated = markdown.length > MAX_RENDER_CHARS;
+  const boundedMarkdown = useMemo(
+    () => markdown.slice(0, MAX_RENDER_CHARS),
+    [markdown],
+  );
   const normalizedMarkdown = useMemo(
     () =>
       normalizeMathDelimiters(
-        stripPresentationalHtml(stripInternalReportMarkers(markdown)),
+        stripPresentationalHtml(stripInternalReportMarkers(boundedMarkdown)),
       ),
-    [markdown],
+    [boundedMarkdown],
   );
   const find = useFindBar(contentRef, normalizedMarkdown);
 
@@ -452,6 +496,11 @@ function ReportViewer({ markdown }: Props) {
       {/* Report content */}
       <div className="flex-1 overflow-y-auto">
         <div className="report-content" ref={contentRef}>
+          {previewTruncated && (
+            <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+              This unusually large response is truncated in the interactive preview. The saved artifact remains unchanged.
+            </div>
+          )}
           <MathErrorBoundary resetKey={normalizedMarkdown}>
             {(fallback) => (
               <>
@@ -515,6 +564,14 @@ function ReportViewer({ markdown }: Props) {
         </div>
       </div>
     </div>
+  );
+}
+
+function ReportViewer(props: Props) {
+  return (
+    <ReportRenderErrorBoundary markdown={props.markdown}>
+      <ReportViewerContent {...props} />
+    </ReportRenderErrorBoundary>
   );
 }
 

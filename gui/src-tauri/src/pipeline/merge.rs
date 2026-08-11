@@ -74,6 +74,7 @@ pub async fn merge_step_outputs(
     outputs: Vec<StepOutput>,
     merge_config: &MergeConfig,
     semaphore: &Arc<Semaphore>,
+    run_artifact_dir: Option<&str>,
     settings: &crate::settings::Settings,
 ) -> Result<Vec<StepOutput>, String> {
     // Validate merge prompt has required placeholders
@@ -207,6 +208,7 @@ pub async fn merge_step_outputs(
 
         let app_handle = app.clone();
         let merge_key_done = merge_key.clone();
+        let response_root = run_artifact_dir.map(str::to_string);
         let sem = semaphore.clone();
         let timeout = settings.step_timeout_secs.max(60);
         let run_settings = settings.clone();
@@ -284,6 +286,29 @@ pub async fn merge_step_outputs(
                 shared_context: None,
             })
             .await;
+            let mut response_capture = match call.output.as_ref() {
+                Ok(raw_text) => match super::response_journal::capture(
+                    response_root.as_deref(),
+                    &merge_key_done,
+                    1,
+                    "terminal",
+                    raw_text,
+                )
+                .await
+                {
+                    Ok(capture) => capture,
+                    Err(error) => {
+                        let _ = app_handle.emit_event(
+                            "pipeline:log",
+                            serde_json::json!({ "line": format!(
+                                "WARNING: could not preserve merge response for {base_id}: {error}"
+                            )}),
+                        );
+                        None
+                    }
+                },
+                Err(_) => None,
+            };
             let merge_call = StepCallRecord {
                 role: "merge".to_string(),
                 provider: provider.clone(),
@@ -308,6 +333,19 @@ pub async fn merge_step_outputs(
                 attempt_count: 1,
             };
             if let Some(error) = cancellation_error() {
+                if let Some(capture) = response_capture.take() {
+                    if let Err(journal_error) = capture
+                        .finish(super::response_journal::AttemptStatus::Ignored, &error)
+                        .await
+                    {
+                        let _ = app_handle.emit_event(
+                            "pipeline:log",
+                            serde_json::json!({ "line": format!(
+                                "WARNING: could not classify cancelled merge response for {base_id}: {journal_error}"
+                            )}),
+                        );
+                    }
+                }
                 let _ = app_handle.emit_event(
                     "pipeline:pass",
                     serde_json::json!({ "name": merge_key_done, "status": "error" }),
@@ -327,6 +365,22 @@ pub async fn merge_step_outputs(
                     let report = match extract_report_envelope(&raw_text, &report_nonce) {
                         Ok(report) => report,
                         Err(error) => {
+                            if let Some(capture) = response_capture.take() {
+                                if let Err(journal_error) = capture
+                                    .finish(
+                                        super::response_journal::AttemptStatus::RejectedEnvelope,
+                                        &error,
+                                    )
+                                    .await
+                                {
+                                    let _ = app_handle.emit_event(
+                                        "pipeline:log",
+                                        serde_json::json!({ "line": format!(
+                                            "WARNING: could not classify rejected merge response for {base_id}: {journal_error}"
+                                        )}),
+                                    );
+                                }
+                            }
                             let _ = app_handle.emit_event(
                                 "pipeline:pass",
                                 serde_json::json!({ "name": merge_key_done, "status": "error" }),
@@ -342,6 +396,22 @@ pub async fn merge_step_outputs(
                             ));
                         }
                     };
+                    if let Some(capture) = response_capture.take() {
+                        if let Err(error) = capture
+                            .finish(
+                                super::response_journal::AttemptStatus::Accepted,
+                                "Validated report boundaries.",
+                            )
+                            .await
+                        {
+                            let _ = app_handle.emit_event(
+                                "pipeline:log",
+                                serde_json::json!({ "line": format!(
+                                    "WARNING: could not classify accepted merge response for {base_id}: {error}"
+                                )}),
+                            );
+                        }
+                    }
                     let _ = app_handle.emit_event(
                         "pipeline:pass",
                         serde_json::json!({ "name": merge_key_done, "status": "done" }),

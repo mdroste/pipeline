@@ -7,19 +7,25 @@ export type AppPage =
   | "settings"
   | "help"
   | "history"
-  | "batch";
+  | "batch"
+  | "projects"
+  | "gallery";
 
 type IconName =
   | "new"
   | "current"
+  | "batch"
   | "runs"
+  | "projects"
   | "workflows"
+  | "gallery"
   | "help"
   | "settings";
 
 interface Props {
   activePage: AppPage;
   hasCurrentRun: boolean;
+  hasActiveBatch: boolean;
   runInProgress: boolean;
   isMac: boolean;
   dependenciesReady: boolean | null;
@@ -55,11 +61,27 @@ function Icon({ name }: { name: IconName }) {
           <circle cx="12" cy="12" r="8.25" />
         </svg>
       );
+    case "batch":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.5h9M8.25 12h9M8.25 17.5h9" />
+          <circle cx="4.75" cy="6.5" r="1" fill="currentColor" stroke="none" />
+          <circle cx="4.75" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="4.75" cy="17.5" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      );
     case "runs":
       return (
         <svg {...common}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 4.75h9M7.5 9.5h9M7.5 14.25h5.5" />
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 3.25h14a1.5 1.5 0 0 1 1.5 1.5v14.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V4.75A1.5 1.5 0 0 1 5 3.25Z" />
+        </svg>
+      );
+    case "projects":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 7.25h6l1.5 2h9v8.5a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2V7.25Z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5.75 7.25V5.5a1.5 1.5 0 0 1 1.5-1.5h4.25l1.5 2h4.75a1.5 1.5 0 0 1 1.5 1.5v1.75" />
         </svg>
       );
     case "workflows":
@@ -69,6 +91,15 @@ function Icon({ name }: { name: IconName }) {
           <circle cx="18" cy="12" r="2.25" />
           <circle cx="6" cy="18" r="2.25" />
           <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6h2.25A3.5 3.5 0 0 1 14 9.5v0A2.5 2.5 0 0 0 16.5 12M8.25 18h2.25A3.5 3.5 0 0 0 14 14.5v0A2.5 2.5 0 0 1 16.5 12" />
+        </svg>
+      );
+    case "gallery":
+      return (
+        <svg {...common}>
+          <rect x="3.75" y="4" width="6.5" height="6.5" rx="1.25" />
+          <rect x="13.75" y="4" width="6.5" height="6.5" rx="1.25" />
+          <rect x="3.75" y="13.5" width="6.5" height="6.5" rx="1.25" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M17 13.75v6M14 16.75h6" />
         </svg>
       );
     case "help":
@@ -132,6 +163,7 @@ function RailButton({
 export default function NavRail({
   activePage,
   hasCurrentRun,
+  hasActiveBatch,
   runInProgress,
   isMac,
   dependenciesReady,
@@ -185,6 +217,20 @@ export default function NavRail({
             ) : undefined}
           />
         )}
+        {hasActiveBatch && (
+          <RailButton
+            active={activePage === "batch"}
+            icon="batch"
+            label="Current batch"
+            onClick={() => onNavigate("batch")}
+            suffix={(
+              <span
+                aria-label="running"
+                className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_0_3px_rgba(59,130,246,0.12)]"
+              />
+            )}
+          />
+        )}
         <RailButton
           active={activePage === "history"}
           icon="runs"
@@ -192,10 +238,22 @@ export default function NavRail({
           onClick={() => onNavigate("history")}
         />
         <RailButton
+          active={activePage === "projects"}
+          icon="projects"
+          label="Projects"
+          onClick={() => onNavigate("projects")}
+        />
+        <RailButton
           active={activePage === "pipeline"}
           icon="workflows"
           label="Workflows"
           onClick={() => onNavigate("pipeline")}
+        />
+        <RailButton
+          active={activePage === "gallery"}
+          icon="gallery"
+          label="Gallery"
+          onClick={() => onNavigate("gallery")}
         />
       </nav>
 

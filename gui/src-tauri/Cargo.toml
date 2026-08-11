@@ -1,6 +1,6 @@
 [package]
 name = "pipeline-gui"
-version = "1.0.1"
+version = "0.9.0"
 description = "Native desktop app for multi-pass, LLM-assisted document review"
 homepage = "https://github.com/mdroste/pipeline"
 repository = "https://github.com/mdroste/pipeline"

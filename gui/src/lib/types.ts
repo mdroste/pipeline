@@ -44,7 +44,7 @@ export interface ModelCatalog {
 /** Deterministic guard controlling whether a step runs (mirrors RunCondition). */
 export type RunCondition =
   | { kind: "output_matches"; step: string; pattern: string; negate?: boolean }
-  | { kind: "survey_path"; pointer: string; equals?: unknown; exists?: boolean };
+  | { kind: "survey_path"; pointer: string; equals?: unknown; exists?: boolean; contains?: unknown };
 
 export type PrimaryArtifactPart = "text" | "structure" | "visuals" | "source";
 export type NamedInputArtifactPart = "text" | "source";
@@ -157,6 +157,8 @@ export interface PipelineConfig {
   use_orientation: boolean;
   /** Custom orientation-map prompt. Empty = use the default (prompts/orientation.md). */
   orientation_prompt: string;
+  /** Optional JSON-shape contract for the orientation call. */
+  orientation_schema?: Record<string, unknown> | null;
   extraction: ExtractionConfig;
   parallel_context_template: string;
   /** Run-time variables the profile declares; referenced in prompts as {var:key}. */
@@ -260,6 +262,47 @@ export interface OrientationMap {
   stated_contribution: string;
   key_references: string[];
   extraction_quality_notes: ExtractionQualityNote[];
+  review_plan?: ReviewPlan | null;
+}
+
+export interface ReviewSelectionNote {
+  id: string;
+  reason: string;
+}
+
+export interface ReviewPlan {
+  primary_domain: string;
+  subject: string;
+  paper_forms: string[];
+  methods: string[];
+  subject_specialist_ids?: string[];
+  /** Legacy Auto Review v1 field selection retained for saved reports. */
+  field_specialist_id?: string;
+  method_specialist_ids: string[];
+  selection_notes: ReviewSelectionNote[];
+  routing_uncertainty: string[];
+}
+
+export interface AutoReviewCatalogRole {
+  id: string;
+  label: string;
+  level: "discipline" | "subfield" | "method";
+  description: string;
+  exclusions: string;
+}
+
+export interface AutoReviewCatalogDiscipline {
+  id: string;
+  label: string;
+  roles: AutoReviewCatalogRole[];
+}
+
+export interface AutoReviewCatalog {
+  contract: string;
+  subjectCount: number;
+  methodCount: number;
+  disciplines: AutoReviewCatalogDiscipline[];
+  methods: AutoReviewCatalogRole[];
 }
 
 /** True when a survey JSON has the paper-review orientation shape. */
@@ -370,6 +413,79 @@ export interface RunSummary {
 export interface RunsDiskUsage {
   count: number;
   bytes: number;
+}
+
+/** Local metadata grouping immutable runs into one continuing body of work. */
+export interface Project {
+  schema_version: number;
+  id: string;
+  name: string;
+  description: string;
+  created: string;
+  updated: string;
+  run_ids: string[];
+}
+
+export interface ProjectsResponse {
+  projects: Project[];
+  warnings: string[];
+}
+
+export type ProjectIssueStatus = "open" | "addressed" | "dismissed" | "regressed";
+
+export interface ProjectIssueEvidence {
+  page?: number;
+  line_start?: number;
+  line_end?: number;
+  node_id?: string;
+  asset_id?: string;
+  artifact_path?: string;
+  description?: string;
+  quote?: string;
+}
+
+/** One immutable observation of a project issue in a saved run. */
+export interface ProjectIssueOccurrence {
+  key: string;
+  run_id: string;
+  issue_id: string;
+  observed_at: string;
+  profile_id: string;
+  profile_name: string;
+  input_name: string;
+  input_mode: string;
+  input_interpretation: string;
+  step_id: string;
+  step_label: string;
+  title: string;
+  severity: string;
+  section: string;
+  body: string;
+  evidence: ProjectIssueEvidence[];
+  annotation_status?: string;
+  annotation_note?: string;
+}
+
+/** Durable identity and user decision spanning one or more run occurrences. */
+export interface ProjectIssue {
+  id: string;
+  title: string;
+  severity: string;
+  section: string;
+  status: ProjectIssueStatus;
+  note: string;
+  created: string;
+  updated: string;
+  decision_updated: string;
+  occurrences: ProjectIssueOccurrence[];
+}
+
+export interface ProjectIssueLedger {
+  schema_version: number;
+  project_id: string;
+  updated: string;
+  issues: ProjectIssue[];
+  warnings: string[];
 }
 
 /** Mirrors commands::BatchJob — one input in a batch run. */
@@ -503,6 +619,13 @@ export interface ProfileExport {
   name: string;
   steps: StepConfig[];
   merge: MergeConfig;
+  context_cache?: ContextCacheConfig;
+  use_orientation?: boolean;
+  orientation_prompt?: string;
+  orientation_schema?: Record<string, unknown> | null;
+  extraction?: ExtractionConfig;
+  parallel_context_template?: string;
+  variables?: VarSpec[];
 }
 
 export type ExportEnvelope =
@@ -516,6 +639,7 @@ export type ExportEnvelope =
       context_cache?: ContextCacheConfig;
       use_orientation?: boolean;
       orientation_prompt?: string;
+      orientation_schema?: Record<string, unknown> | null;
       extraction?: ExtractionConfig;
       parallel_context_template?: string;
     }

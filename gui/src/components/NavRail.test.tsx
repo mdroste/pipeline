@@ -10,6 +10,7 @@ function renderRail(
   const props: ComponentProps<typeof NavRail> = {
     activePage: "main",
     hasCurrentRun: false,
+    hasActiveBatch: false,
     runInProgress: false,
     isMac: false,
     dependenciesReady: true,
@@ -41,6 +42,10 @@ describe("NavRail", () => {
 
     await user.click(screen.getByRole("button", { name: "History" }));
     expect(props.onNavigate).toHaveBeenCalledWith("history");
+    await user.click(screen.getByRole("button", { name: "Projects" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("projects");
+    await user.click(screen.getByRole("button", { name: "Gallery" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("gallery");
   });
 
   it("adds a current-run destination and locks new runs while executing", () => {
@@ -53,6 +58,19 @@ describe("NavRail", () => {
     expect(
       screen.getByRole("button", { name: /Current run/ }),
     ).toHaveAttribute("aria-current", "page");
+  });
+
+  it("keeps an active batch reachable while locking new runs", async () => {
+    const user = userEvent.setup();
+    const props = renderRail({
+      activePage: "history",
+      hasActiveBatch: true,
+      runInProgress: true,
+    });
+
+    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /Current batch/ }));
+    expect(props.onNavigate).toHaveBeenCalledWith("batch");
   });
 
   it("opens dependency details from the system status", async () => {

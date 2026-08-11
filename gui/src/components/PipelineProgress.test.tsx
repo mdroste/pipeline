@@ -4,17 +4,164 @@ import PipelineProgress from "./PipelineProgress";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import type { RuntimeStage } from "../hooks/usePipeline";
 
+const autoReviewPlan: ExecutionPlanStage[] = [
+  { id: "extract", kind: "extracting", label: "Creating document bundle", stepIds: [] },
+  { id: "orient", kind: "orienting", label: "Creating orientation map & review plan", stepIds: [] },
+  {
+    id: "reviews",
+    kind: "dispatching",
+    label: "Parallel agent wave",
+    stepIds: ["contribution", "claims", "exposition"],
+    stepLabels: ["Contribution & Literature", "Claims & Consistency", "Exposition & Argument"],
+  },
+  {
+    id: "synthesis",
+    kind: "synthesizing",
+    label: "Sequential agent wave",
+    stepIds: ["auto_synthesis"],
+    stepLabels: ["Auto Review Synthesis"],
+  },
+  { id: "done", kind: "done", label: "Complete", stepIds: [] },
+];
+
+const autoReviewRouting = {
+  primaryDomain: "Mathematics",
+  subject: "Algebraic geometry",
+  subjectIds: ["subject_mathematics_algebraic_geometry"],
+  subjectLabels: ["Mathematics — Algebraic Geometry"],
+  methodIds: ["formal_proofs"],
+  methodLabels: ["Method — Formal Proofs"],
+  specialistIds: ["subject_mathematics_algebraic_geometry", "formal_proofs"],
+  specialistLabels: ["Mathematics — Algebraic Geometry", "Method — Formal Proofs"],
+};
+
 describe("PipelineProgress", () => {
   it("renders the base stages without the merge stage by default", () => {
     render(<PipelineProgress state={{ kind: "extracting" }} />);
-    expect(screen.getByText("Extract text")).toBeInTheDocument();
-    expect(screen.getByText("Run parallel steps")).toBeInTheDocument();
+    expect(screen.getByText("Processing inputs")).toBeInTheDocument();
+    expect(screen.getByText("Creating document bundle")).toBeInTheDocument();
+    expect(screen.getByText("Creating orientation map")).toBeInTheDocument();
+    expect(screen.getByText("Parallel agent wave")).toBeInTheDocument();
+    expect(screen.getByText("Sequential agent wave")).toBeInTheDocument();
     expect(screen.queryByText("Merge cross-agent reports")).not.toBeInTheDocument();
+  });
+
+  it("uses an input-specific preparation label and omits orientation when disabled", () => {
+    render(
+      <PipelineProgress
+        state={{ kind: "extracting" }}
+        plan={[
+          {
+            id: "extracting",
+            kind: "extracting",
+            label: "Creating source-tree inventory",
+            stepIds: [],
+          },
+          { id: "done", kind: "done", label: "Complete", stepIds: [] },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Processing inputs")).toBeInTheDocument();
+    expect(screen.getByText("Creating source-tree inventory")).toBeInTheDocument();
+    expect(screen.queryByText("Creating orientation map")).not.toBeInTheDocument();
+  });
+
+  it("preserves the combined Auto Review orientation label", () => {
+    render(
+      <PipelineProgress
+        state={{ kind: "orienting" }}
+        plan={[
+          { id: "extracting", kind: "extracting", label: "Creating document bundle", stepIds: [] },
+          { id: "orienting", kind: "orienting", label: "Creating orientation map & review plan", stepIds: [] },
+          { id: "done", kind: "done", label: "Complete", stepIds: [] },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Creating orientation map & review plan")).toBeInTheDocument();
+  });
+
+  it("resolves the adaptive-agent placeholder into the selected specialists", () => {
+    const { rerender } = render(
+      <PipelineProgress state={{ kind: "orienting" }} plan={autoReviewPlan} />,
+    );
+
+    let parallelWave = screen.getByText("Parallel agent wave").closest("[data-status]");
+    expect(parallelWave).toHaveTextContent("Adaptive agents");
+    expect(parallelWave).toHaveTextContent("pending");
+
+    rerender(
+      <PipelineProgress
+        state={{ kind: "orienting" }}
+        plan={autoReviewPlan}
+        reviewRouting={autoReviewRouting}
+      />,
+    );
+    parallelWave = screen.getByText("Parallel agent wave").closest("[data-status]");
+    expect(parallelWave).not.toHaveTextContent("Adaptive agents");
+    expect(parallelWave).toHaveTextContent("Mathematics — Algebraic Geometry");
+    expect(parallelWave).toHaveTextContent("Method — Formal Proofs");
+
+    const stageHistory: RuntimeStage[] = [
+      {
+        id: "reviews",
+        kind: "dispatching",
+        label: "Parallel agent wave",
+        stepIds: [
+          "contribution",
+          "claims",
+          "exposition",
+          "subject_mathematics_algebraic_geometry",
+          "formal_proofs",
+        ],
+        stepLabels: [
+          "Contribution & Literature",
+          "Claims & Consistency",
+          "Exposition & Argument",
+          "Mathematics — Algebraic Geometry",
+          "Method — Formal Proofs",
+        ],
+        status: "active",
+        passes: {},
+      },
+    ];
+    rerender(
+      <PipelineProgress
+        state={{ kind: "dispatching", passes: {} }}
+        plan={autoReviewPlan}
+        stageHistory={stageHistory}
+        reviewRouting={autoReviewRouting}
+      />,
+    );
+    parallelWave = screen.getByText("Parallel agent wave").closest("[data-status]");
+    expect(parallelWave?.textContent?.match(/Mathematics — Algebraic Geometry/g)).toHaveLength(1);
+    expect(parallelWave?.textContent?.match(/Method — Formal Proofs/g)).toHaveLength(1);
   });
 
   it("shows the merge stage while merging", () => {
     render(<PipelineProgress state={{ kind: "merging", passes: {} }} />);
     expect(screen.getByText("Merge cross-agent reports")).toBeInTheDocument();
+  });
+
+  it("shows the auto-detected subject and selected specialists", () => {
+    render(
+      <PipelineProgress
+        state={{ kind: "dispatching", passes: {} }}
+        reviewRouting={{
+          primaryDomain: "Economics",
+          subject: "Quantitative macroeconomics",
+          subjectIds: ["subject_economics_macro"],
+          subjectLabels: ["Economics — Macroeconomics"],
+          methodIds: ["formal_proofs"],
+          methodLabels: ["Method — Formal Proofs"],
+          specialistIds: ["subject_economics_macro", "formal_proofs"],
+          specialistLabels: ["Economics — Macroeconomics", "Method — Formal Proofs"],
+        }}
+      />,
+    );
+    expect(screen.getByText("Auto-detected review")).toBeInTheDocument();
+    expect(screen.getByText("Economics · Quantitative macroeconomics")).toBeInTheDocument();
+    expect(screen.getByText(/Subject:/).closest("p")).toHaveTextContent("Subject: Economics — Macroeconomics");
+    expect(screen.getByText(/Methods:/).closest("p")).toHaveTextContent("Methods: Method — Formal Proofs");
   });
 
   it("uses release-contrast text for elapsed status metadata", () => {
@@ -44,7 +191,7 @@ describe("PipelineProgress", () => {
     expect(screen.getByText("Technical (Claude)")).toBeInTheDocument();
     expect(screen.getByText("Empirical")).toBeInTheDocument();
     expect(screen.getByText("running")).toBeInTheDocument();
-    expect(screen.getByText("done")).toBeInTheDocument();
+    expect(screen.getAllByText("done").length).toBeGreaterThan(0);
   });
 
   it("formats merge pass keys", () => {
@@ -62,8 +209,9 @@ describe("PipelineProgress", () => {
         state={{ kind: "error", message: "boom", failedAt: "extracting" }}
       />,
     );
-    expect(screen.getByText("failed")).toBeInTheDocument();
-    expect(screen.getByText("Extract text")).toBeInTheDocument();
+    expect(screen.getAllByText("failed").length).toBeGreaterThan(0);
+    expect(screen.getByText("Processing inputs")).toBeInTheDocument();
+    expect(screen.getByText("Creating document bundle")).toBeInTheDocument();
   });
 
   it("labels a cancelled run as cancelled rather than failed", () => {
@@ -82,17 +230,17 @@ describe("PipelineProgress", () => {
 
   it("retains completed passes across alternating parallel and sequential waves", () => {
     const plan: ExecutionPlanStage[] = [
-      { id: "extract", kind: "extracting", label: "Extract input", stepIds: [] },
-      { id: "p1", kind: "dispatching", label: "Parallel wave 1", stepIds: ["first"] },
-      { id: "s1", kind: "synthesizing", label: "Synthesis", stepIds: ["middle"] },
-      { id: "p2", kind: "dispatching", label: "Parallel wave 2", stepIds: ["last"] },
+      { id: "extract", kind: "extracting", label: "Creating document bundle", stepIds: [] },
+      { id: "p1", kind: "dispatching", label: "Parallel agent wave", stepIds: ["first"], stepLabels: ["First review"] },
+      { id: "s1", kind: "synthesizing", label: "Sequential agent wave", stepIds: ["middle"], stepLabels: ["Editorial synthesis"] },
+      { id: "p2", kind: "dispatching", label: "Parallel agent wave", stepIds: ["last"], stepLabels: ["Final check"] },
       { id: "done", kind: "done", label: "Complete", stepIds: [] },
     ];
     const stageHistory: RuntimeStage[] = [
-      { id: "extract", kind: "extracting", label: "Extract input", stepIds: [], status: "done", passes: {} },
-      { id: "p1", kind: "dispatching", label: "Parallel wave 1", stepIds: ["first"], status: "done", passes: { first: "done" } },
-      { id: "s1", kind: "synthesizing", label: "Synthesis", stepIds: ["middle"], status: "done", passes: { middle: "done" } },
-      { id: "p2", kind: "dispatching", label: "Parallel wave 2", stepIds: ["last"], status: "active", passes: { last: "running" } },
+      { id: "extract", kind: "extracting", label: "Creating document bundle", stepIds: [], status: "done", passes: {} },
+      { id: "p1", kind: "dispatching", label: "Parallel agent wave", stepIds: ["first"], stepLabels: ["First review"], status: "done", passes: { first: "done" } },
+      { id: "s1", kind: "synthesizing", label: "Sequential agent wave", stepIds: ["middle"], stepLabels: ["Editorial synthesis"], status: "done", passes: { middle: "done" } },
+      { id: "p2", kind: "dispatching", label: "Parallel agent wave", stepIds: ["last"], stepLabels: ["Final check"], status: "active", passes: { last: "running" } },
     ];
     render(
       <PipelineProgress
@@ -102,13 +250,13 @@ describe("PipelineProgress", () => {
       />,
     );
 
-    expect(screen.getByText("Parallel wave 1")).toBeInTheDocument();
-    expect(screen.getByText("Parallel wave 2")).toBeInTheDocument();
-    expect(screen.getByText("First")).toBeInTheDocument();
-    expect(screen.getByText("Middle")).toBeInTheDocument();
-    expect(screen.getByText("Last")).toBeInTheDocument();
-    expect(screen.getByText("Parallel wave 1").closest("[data-status]")).toHaveAttribute("data-status", "done");
-    expect(screen.getByText("Parallel wave 2").closest("[data-status]")).toHaveAttribute("data-status", "active");
+    expect(screen.getAllByText("Parallel agent wave")).toHaveLength(2);
+    expect(screen.getByText("Sequential agent wave")).toBeInTheDocument();
+    expect(screen.getByText("First review")).toBeInTheDocument();
+    expect(screen.getByText("Editorial synthesis")).toBeInTheDocument();
+    expect(screen.getByText("Final check")).toBeInTheDocument();
+    expect(screen.getByText("First review").closest("[data-status]")).toHaveAttribute("data-status", "done");
+    expect(screen.getByText("Final check").closest("[data-status]")).toHaveAttribute("data-status", "active");
   });
 
   it("uses stable IDs when adjacent planned stages have the same kind", () => {
@@ -129,8 +277,8 @@ describe("PipelineProgress", () => {
         ]}
       />,
     );
-    expect(screen.getByText("Conditional wave").closest("[data-status]")).toHaveAttribute("data-status", "done");
-    expect(screen.getByText("Later wave").closest("[data-status]")).toHaveAttribute("data-status", "active");
+    expect(screen.getByText("Guarded").closest("[data-status]")).toHaveAttribute("data-status", "done");
+    expect(screen.getByText("Later").closest("[data-status]")).toHaveAttribute("data-status", "active");
   });
 
   it("shows an explicitly skipped planned stage without shifting a later same-kind stage", () => {

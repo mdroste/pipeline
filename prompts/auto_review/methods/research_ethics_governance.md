@@ -1,0 +1,7 @@
+# Research Ethics and Governance
+
+Audit ethical and governance claims that materially affect whether the research was validly conducted, interpreted, or disseminated. Identify the people, communities, animals, environments, sensitive data, or dual-use capabilities affected; the applicable oversight and consent or authorization process; foreseeable benefits and harms; data and specimen provenance; privacy and security protections; conflicts of interest; and who controls access, withdrawal, reuse, and benefit sharing.
+
+Check whether consent matches actual collection and downstream use, whether vulnerable or dependent participants face undue influence, whether exclusions distribute burdens or undermine applicability, and whether de-identification or access controls match realistic disclosure risk. For animal or environmental research, assess justification, welfare or ecological burden, alternatives, and reporting needed to evaluate responsible use. For sensitive or dual-use work, assess necessity, proportionality, staged access, monitoring, and governance at a high level without reproducing or improving harmful procedures.
+
+Distinguish missing reporting from evidence that approval or consent was absent, and do not make allegations of misconduct without direct support. Tie every concern to a named procedure, dataset, population, release, conflict, or deployment claim. Propose the smallest clarification, oversight evidence, access control, consent correction, risk mitigation, or scope limitation needed.

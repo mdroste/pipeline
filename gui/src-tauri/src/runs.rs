@@ -32,6 +32,63 @@ const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ANNOTATION_BYTES: usize = 1_000_000;
 static RUN_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+fn title_words(value: &str) -> String {
+    let words = value
+        .split(|character| character == '-' || character == '_')
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    let mut text = words.join(" ");
+    if let Some(first) = text.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    text
+}
+
+fn agent_response_label(rel_path: &str) -> String {
+    let stem = Path::new(rel_path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(rel_path);
+    let Some((producer_with_hash, attempt_and_status)) = stem.rsplit_once("--attempt-") else {
+        return title_words(stem);
+    };
+    let producer = producer_with_hash
+        .rsplit_once("--")
+        .map(|(readable, _hash)| readable)
+        .unwrap_or(producer_with_hash);
+    let (attempt, remainder) = attempt_and_status
+        .split_once('-')
+        .unwrap_or((attempt_and_status, "response-captured"));
+    let statuses = [
+        ("rejected-envelope", "Rejected boundaries"),
+        ("rejected-schema", "Rejected schema"),
+        ("accepted", "Accepted"),
+        ("ignored", "Not selected"),
+        ("captured", "Captured before validation"),
+    ];
+    let (source, status) = statuses
+        .iter()
+        .find_map(|(suffix, label)| {
+            remainder
+                .strip_suffix(&format!("-{suffix}"))
+                .map(|source| (source, *label))
+        })
+        .unwrap_or((remainder, "Captured response"));
+    let attempt_display = attempt.trim_start_matches('0');
+    let attempt_display = if attempt_display.is_empty() {
+        "0"
+    } else {
+        attempt_display
+    };
+    format!(
+        "{} · Attempt {} · {} · {}",
+        title_words(producer),
+        attempt_display,
+        title_words(source),
+        status,
+    )
+}
+
 pub fn new_run_id(paper_hash: &str) -> String {
     let sequence = RUN_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     format!(
@@ -52,7 +109,7 @@ pub struct ArtifactEntry {
     pub bytes: u64,
     /// First 16 hex chars of the SHA-256, matching the paper-hash style.
     pub sha256: String,
-    /// Grouping hint for the explorer: report | context | step.
+    /// Grouping hint for the explorer: report | context | agent_response | step.
     pub group: String,
 }
 
@@ -288,11 +345,20 @@ pub struct ArtifactContent {
 
 /// One PDF page rendered to an inline-safe JPEG for the artifact explorer.
 #[derive(Debug, Serialize)]
+pub struct PrefetchedPdfArtifactPage {
+    pub page: u32,
+    pub has_previous: bool,
+    pub has_next: bool,
+    pub base64: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct PdfArtifactPage {
     pub page: u32,
     pub has_previous: bool,
     pub has_next: bool,
     pub base64: String,
+    pub prefetched_next: Option<PrefetchedPdfArtifactPage>,
 }
 
 pub fn runs_dir() -> Result<PathBuf, String> {
@@ -553,11 +619,17 @@ impl RunWriter {
     /// and the walk is capped defensively. Returns how many were added.
     pub fn register_unlisted(&mut self, subdir: &str, group: &str) -> usize {
         const MAX_UNLISTED: usize = 500;
+        const MAX_AGENT_RESPONSES: usize = 2_000;
         const MAX_UNLISTED_BYTES: u64 = 50_000_000;
         const MAX_TOTAL_UNLISTED_BYTES: u64 = 250_000_000;
         let known: std::collections::HashSet<String> =
             self.artifacts.iter().map(|a| a.rel_path.clone()).collect();
         let mut added = 0usize;
+        let max_unlisted = if group == "agent_response" {
+            MAX_AGENT_RESPONSES
+        } else {
+            MAX_UNLISTED
+        };
         let mut total_bytes = 0u64;
         let mut stack = vec![self.dir.join(subdir)];
         let mut walk = crate::safety::WalkBudget::new("Run artifact discovery");
@@ -615,17 +687,21 @@ impl RunWriter {
                 if known.contains(&rel_str) {
                     continue;
                 }
-                if added >= MAX_UNLISTED {
+                if added >= max_unlisted {
                     // Keep walking after the registration cap. Otherwise a
                     // model can place unlimited unindexed files after the
                     // first 500 and evade every byte quota.
                     let _ = fs::remove_file(&path);
                     continue;
                 }
-                let label = rel_str
+                let relative_label = rel_str
                     .strip_prefix(&format!("{subdir}/"))
-                    .unwrap_or(&rel_str)
-                    .to_string();
+                    .unwrap_or(&rel_str);
+                let label = if group == "agent_response" {
+                    agent_response_label(relative_label)
+                } else {
+                    relative_label.to_string()
+                };
                 if self.register_existing(&rel_str, &label, group).is_ok() {
                     added += 1;
                     total_bytes += metadata.len();
@@ -905,16 +981,25 @@ fn register_recovered_directory(
         })
         .collect();
     paths.sort();
-    for path in paths.into_iter().take(500) {
+    let limit = if group == "agent_response" {
+        2_000
+    } else {
+        500
+    };
+    for path in paths.into_iter().take(limit) {
         let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
         let relative = format!("{rel_dir}/{name}");
-        let label = path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or(name);
-        register_recovered_artifact(manifest, dir, &relative, label, group);
+        let label = if group == "agent_response" {
+            agent_response_label(&relative)
+        } else {
+            path.file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or(name)
+                .to_string()
+        };
+        register_recovered_artifact(manifest, dir, &relative, &label, group);
     }
 }
 
@@ -989,13 +1074,19 @@ fn recover_resumable_run_dir(dir: &Path, manifest: &mut RunManifest) -> Result<b
     ) {
         return Ok(false);
     }
+    let artifact_count_before = manifest.artifacts.len();
+    register_recovered_directory(manifest, dir, "artifacts/agent-responses", "agent_response");
+    let recovered_response_index = manifest.artifacts.len() > artifact_count_before;
     let report_is_valid =
         read_utf8_at_most(&dir.join("report.json"), MAX_REPORT_BYTES, "Run report")
             .ok()
             .and_then(|json| serde_json::from_str::<crate::models::PipelineReport>(&json).ok())
             .is_some();
     if report_is_valid {
-        return Ok(false);
+        if recovered_response_index {
+            write_manifest(dir, manifest)?;
+        }
+        return Ok(recovered_response_index);
     }
     // A re-run always starts from the captured extraction. If it was never
     // written, this job stopped before there was a safe restart point.
@@ -1125,6 +1216,7 @@ fn recover_resumable_run_dir(dir: &Path, manifest: &mut RunManifest) -> Result<b
     register_recovered_directory(manifest, dir, "artifacts/pages", "pages");
     register_recovered_directory(manifest, dir, "artifacts/figures", "figures");
     register_recovered_directory(manifest, dir, "artifacts/document/figures", "figures");
+    register_recovered_directory(manifest, dir, "artifacts/agent-responses", "agent_response");
     register_recovered_artifact(
         manifest,
         dir,
@@ -1322,7 +1414,7 @@ fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
         .map(chrono::DateTime::<chrono::Local>::from)
         .unwrap_or_else(chrono::Local::now)
         .to_rfc3339();
-    let manifest = RunManifest {
+    let mut manifest = RunManifest {
         run_id,
         created,
         input_path: String::new(),
@@ -1345,6 +1437,12 @@ fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
         extra_input_sources: Default::default(),
         parent_run_id: None,
     };
+    register_recovered_directory(
+        &mut manifest,
+        dir,
+        "artifacts/agent-responses",
+        "agent_response",
+    );
     write_manifest(dir, &manifest).ok()?;
     Some(manifest)
 }
@@ -1855,20 +1953,38 @@ pub fn read_pdf_artifact_page(
         .tempdir()
         .map_err(|error| format!("Could not create PDF preview directory: {error}"))?;
     let rendered = crate::pipeline::extract::render_pdf_page_preview(&path, temp.path(), page)?;
-    let rendered_path = temp.path().join(rendered.name);
-    let (bytes, grew_too_large) = read_at_most(&rendered_path, MAX_IMAGE_BYTES as usize)?;
-    if grew_too_large {
-        return Err(format!(
-            "Rendered PDF page exceeds the {} MB inline preview limit",
-            MAX_IMAGE_BYTES / 1_000_000
-        ));
-    }
     use base64::Engine as _;
+    let encode_page = |name: &str| -> Result<String, String> {
+        let rendered_path = temp.path().join(name);
+        let (bytes, grew_too_large) = read_at_most(&rendered_path, MAX_IMAGE_BYTES as usize)?;
+        if grew_too_large {
+            return Err(format!(
+                "Rendered PDF page exceeds the {} MB inline preview limit",
+                MAX_IMAGE_BYTES / 1_000_000
+            ));
+        }
+        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+    };
+    let base64 = encode_page(&rendered.name)?;
+    // A look-ahead failure must not make the requested page unreadable. The
+    // frontend simply falls back to a normal request for the next page.
+    let prefetched_next = rendered.next_name.as_deref().and_then(|name| {
+        encode_page(name)
+            .ok()
+            .and_then(|base64| page.checked_add(1).map(|next_page| (base64, next_page)))
+            .map(|(base64, next_page)| PrefetchedPdfArtifactPage {
+                page: next_page,
+                has_previous: true,
+                has_next: rendered.next_has_next,
+                base64,
+            })
+    });
     Ok(PdfArtifactPage {
         page,
         has_previous: page > 1,
         has_next: rendered.has_next,
-        base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        base64,
+        prefetched_next,
     })
 }
 
@@ -1898,6 +2014,22 @@ mod tests {
         assert_eq!(detect_kind("paper.pdf", b""), "pdf");
         assert_eq!(detect_kind("README", b"plain text"), "text");
         assert_eq!(detect_kind("blob", b"\x00\x01\x02"), "binary");
+    }
+
+    #[test]
+    fn response_journal_paths_get_reader_friendly_labels() {
+        assert_eq!(
+            agent_response_label(
+                "technical-codex--0123456789ab--attempt-01-terminal-rejected-envelope.md"
+            ),
+            "Technical codex · Attempt 1 · Terminal · Rejected boundaries"
+        );
+        assert_eq!(
+            agent_response_label(
+                "merge-technical--0123456789ab--attempt-02-compatibility-file-accepted.md"
+            ),
+            "Merge technical · Attempt 2 · Compatibility file · Accepted"
+        );
     }
 
     #[test]

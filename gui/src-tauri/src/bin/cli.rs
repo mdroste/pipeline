@@ -1,111 +1,578 @@
 //! Headless CLI for Pipeline.
 //!
-//! Reuses the same engine as the GUI (the pipeline depends only on an
-//! `EventBus`, not a Tauri `AppHandle`), so runs happen without a window or
-//! webview — suitable for cron jobs, CI, and scripting. Progress is printed to
-//! stderr; the report goes to stdout or `--out`.
-//!
-//!   pipeline-cli run --input paper.pdf [--profile deep-review] [--var k=v]... [--extra-input k=path]... [--out report.md]
-//!   pipeline-cli batch --input-dir ./papers [--profile grading] [--var k=v]... [--extra-input k=path]...
-//!   pipeline-cli profiles
+//! The CLI captures the same settings/profile snapshot and runs the same
+//! dependency preflight and execution engine as the desktop app. Progress is
+//! printed to stderr; a single report goes to stdout or `--out`.
 
 use pipeline_gui_lib::emit::{CliEvents, EventBus};
-use pipeline_gui_lib::{commands, pipeline_config};
-use std::collections::HashMap;
+use pipeline_gui_lib::{commands, engines, pipeline_config};
+use std::collections::{HashMap, HashSet};
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+const MAIN_HELP: &str = "\
+Pipeline CLI
+
+USAGE:
+  pipeline-cli run [OPTIONS]
+  pipeline-cli check [OPTIONS]
+  pipeline-cli batch --input-dir <DIR> [OPTIONS]
+  pipeline-cli profiles [--json]
+  pipeline-cli profiles show <ID>
+  pipeline-cli engines [status] [--json]
+  pipeline-cli engines install paddle
+  pipeline-cli engines uninstall paddle --yes
+
+COMMANDS:
+  run       Run one workflow
+  check     Check dependencies for one prospective run
+  batch     Run one workflow over each supported document in a folder
+  profiles  List or inspect installed workflows
+  engines   Inspect or manage the PaddleOCR-VL Full Parser bundle
+  help      Show help for Pipeline or one command
+
+Run `pipeline-cli help <COMMAND>` for command-specific help.
+The CLI uses settings and profiles from ~/.pipeline/ and saves every run there.
+";
+
+const RUN_HELP: &str = "\
+Run one Pipeline workflow
+
+USAGE:
+  pipeline-cli run [--input <PATH>] [--interpret-as <KIND>]
+                       [--profile <ID>] [--var <KEY=VALUE>]...
+                       [--extra-input <KEY=PATH>]... [--out <FILE>] [--force]
+
+OPTIONS:
+  -i, --input <PATH>          Primary document or folder. Omit only for a
+                              workflow configured with no primary input.
+      --interpret-as <KIND>   document, latex-project, or source-tree.
+  -p, --profile <ID>          Workflow for this run. Does not change the
+                              desktop app's active workflow.
+      --var <KEY=VALUE>       Workflow variable; repeat for multiple values.
+      --extra-input <KEY=PATH>
+                              Named input; repeat for multiple inputs.
+  -o, --out <FILE>            Write Markdown to FILE instead of stdout.
+      --force                 Replace an existing --out file.
+  -h, --help                  Show this help.
+
+Progress goes to stderr. A non-zero exit status indicates invalid arguments,
+failed preflight, interruption, or one or more failed workflow steps.
+";
+
+const BATCH_HELP: &str = "\
+Run one Pipeline workflow over a folder of documents
+
+USAGE:
+  pipeline-cli batch --input-dir <DIR> [--profile <ID>]
+                     [--var <KEY=VALUE>]...
+                     [--extra-input <KEY=PATH>]... [--out-dir <DIR>] [--force]
+
+OPTIONS:
+  -i, --input-dir <DIR>       Folder containing PDF, TeX, or DOCX inputs.
+  -p, --profile <ID>          Workflow for this batch. Does not change the
+                              desktop app's active workflow.
+      --var <KEY=VALUE>       Workflow variable; repeat for multiple values.
+      --extra-input <KEY=PATH>
+                              Named input shared by every run; repeatable.
+  -o, --out-dir <DIR>         Also write each Markdown report to DIR.
+      --force                 Replace existing reports in --out-dir.
+  -h, --help                  Show this help.
+
+Folder discovery is non-recursive and skips hidden files. Every run is also
+saved in Pipeline's normal run store under ~/.pipeline/runs/.
+";
+
+const CHECK_HELP: &str = "\
+Check dependencies for one prospective Pipeline run
+
+USAGE:
+  pipeline-cli check [--input <PATH>] [--interpret-as <KIND>]
+                     [--profile <ID>] [--var <KEY=VALUE>]...
+                     [--extra-input <KEY=PATH>]... [--json]
+
+OPTIONS:
+  -i, --input <PATH>          Primary document or folder. For a PDF, this
+                              checks the workflow's selected PDF parser.
+      --interpret-as <KIND>   document, latex-project, or source-tree.
+  -p, --profile <ID>          Workflow to check without changing the desktop
+                              app's active workflow.
+      --var <KEY=VALUE>       Workflow variable; repeatable.
+      --extra-input <KEY=PATH>
+                              Named input; repeatable. Named PDFs also trigger
+                              the selected PDF-parser dependency check.
+      --json                  Print the complete dependency report as JSON.
+  -h, --help                  Show this help.
+
+No extraction or model call is made. Exit status 0 means the exact run is
+ready; exit status 1 means one or more required dependencies are unavailable.
+";
+
+const PROFILES_HELP: &str = "\
+List or inspect Pipeline workflows
+
+USAGE:
+  pipeline-cli profiles [--json]
+  pipeline-cli profiles show <ID>
+
+OPTIONS:
+      --json  Print the profile-summary list as JSON.
+  -h, --help  Show this help.
+
+The active desktop workflow is marked with `*` in the human-readable list.
+`profiles show` prints the workflow's current export JSON.
+";
+
+const ENGINES_HELP: &str = "\
+Inspect or manage Pipeline's local PaddleOCR-VL Full Parser bundle
+
+USAGE:
+  pipeline-cli engines [status] [--json]
+  pipeline-cli engines install paddle
+  pipeline-cli engines uninstall paddle --yes
+
+COMMANDS:
+  status      Show availability, installation state, version, and disk usage.
+  install     Install or repair the checksum-pinned managed bundle.
+  uninstall   Remove both app-owned Paddle bundle roots. Requires --yes.
+
+`paddle` is an alias for the registry ID `paddleocr-vl-parser`. Installation
+downloads roughly 2.9 GB and requires roughly 3.8 GB after installation. All
+files remain under ~/.pipeline/native/; no system Python, pip, Conda, Docker,
+or llama.cpp installation is used.
+";
+
+#[derive(Debug)]
+enum ParseAction {
+    Execute(Command),
+    Help(&'static str),
+    Version,
+}
+
+#[derive(Debug)]
+enum Command {
+    Run(RunArgs),
+    Check(CheckArgs),
+    Batch(BatchArgs),
+    Profiles(ProfilesArgs),
+    Engines(EnginesArgs),
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RunArgs {
+    input: Option<String>,
+    input_interpretation: Option<String>,
+    profile_id: Option<String>,
+    variables: HashMap<String, String>,
+    extra_inputs: HashMap<String, String>,
+    out: Option<String>,
+    force: bool,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BatchArgs {
+    input_dir: String,
+    profile_id: Option<String>,
+    variables: HashMap<String, String>,
+    extra_inputs: HashMap<String, String>,
+    out_dir: Option<String>,
+    force: bool,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CheckArgs {
+    input: Option<String>,
+    input_interpretation: Option<String>,
+    profile_id: Option<String>,
+    variables: HashMap<String, String>,
+    extra_inputs: HashMap<String, String>,
+    json: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ProfilesArgs {
+    List { json: bool },
+    Show { id: String },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EnginesArgs {
+    Status { json: bool },
+    Install { id: String },
+    Uninstall { id: String },
+}
+
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let action = match parse_cli(&args) {
+        Ok(action) => action,
+        Err(error) => {
+            eprintln!("error: {error}\n\nTry `pipeline-cli --help` for usage.");
+            std::process::exit(2);
+        }
+    };
+
+    let command = match action {
+        ParseAction::Help(help) => {
+            print!("{help}");
+            return;
+        }
+        ParseAction::Version => {
+            println!("pipeline-cli {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        ParseAction::Execute(command) => command,
+    };
+
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
     {
         Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("Failed to start runtime: {e}");
+        Err(error) => {
+            eprintln!("Failed to start runtime: {error}");
             std::process::exit(1);
         }
     };
-    std::process::exit(rt.block_on(dispatch(&args)));
+    std::process::exit(rt.block_on(dispatch(command)));
 }
 
-async fn dispatch(args: &[String]) -> i32 {
-    match args.get(1).map(String::as_str) {
-        Some("run") => cmd_run(&args[2..]).await,
-        Some("batch") => cmd_batch(&args[2..]).await,
-        Some("profiles") => cmd_profiles(),
-        Some("help") | Some("--help") | Some("-h") | None => {
-            print_help();
-            0
+fn parse_cli(args: &[String]) -> Result<ParseAction, String> {
+    let Some(command) = args.first().map(String::as_str) else {
+        return Ok(ParseAction::Help(MAIN_HELP));
+    };
+    match command {
+        "run" => parse_run(&args[1..]),
+        "check" => parse_check(&args[1..]),
+        "batch" => parse_batch(&args[1..]),
+        "profiles" => parse_profiles(&args[1..]),
+        "engines" => parse_engines(&args[1..]),
+        "help" => parse_help(&args[1..]),
+        "--help" | "-h" => {
+            reject_trailing(&args[1..], "--help")?;
+            Ok(ParseAction::Help(MAIN_HELP))
         }
-        Some(other) => {
-            eprintln!("Unknown command: {other}\n");
-            print_help();
-            2
+        "--version" | "-V" => {
+            reject_trailing(&args[1..], "--version")?;
+            Ok(ParseAction::Version)
         }
+        other => Err(format!("unknown command '{other}'")),
     }
 }
 
-fn print_help() {
-    eprintln!(
-        "Pipeline CLI\n\n\
-         USAGE:\n  \
-         pipeline-cli run --input <file> [--profile <id>] [--var k=v]... [--extra-input k=path]... [--out <file>]\n  \
-         pipeline-cli batch --input-dir <dir> [--profile <id>] [--var k=v]... [--extra-input k=path]...\n  \
-         pipeline-cli profiles\n\n\
-         Uses the same profiles and settings as the desktop app (~/.pipeline/).\n\
-         Progress prints to stderr; the report prints to stdout unless --out is given.\n\
-         Exit code is non-zero if any step fails."
-    );
+fn parse_help(args: &[String]) -> Result<ParseAction, String> {
+    match args {
+        [] => Ok(ParseAction::Help(MAIN_HELP)),
+        [command] if command == "run" => Ok(ParseAction::Help(RUN_HELP)),
+        [command] if command == "check" => Ok(ParseAction::Help(CHECK_HELP)),
+        [command] if command == "batch" => Ok(ParseAction::Help(BATCH_HELP)),
+        [command] if command == "profiles" => Ok(ParseAction::Help(PROFILES_HELP)),
+        [command] if command == "engines" => Ok(ParseAction::Help(ENGINES_HELP)),
+        [command] => Err(format!("unknown command '{command}'")),
+        _ => Err("help accepts at most one command name".to_string()),
+    }
 }
 
-/// Value following `--name`, if present.
-fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-    args.iter()
-        .position(|a| a == name)
-        .and_then(|i| args.get(i + 1))
-        .map(String::as_str)
-}
-
-/// All values for a repeatable `--name`.
-fn repeated(args: &[String], name: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == name {
-            if let Some(v) = args.get(i + 1) {
-                out.push(v.clone());
+fn parse_check(args: &[String]) -> Result<ParseAction, String> {
+    let mut parsed = CheckArgs::default();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--help" | "-h" => return Ok(ParseAction::Help(CHECK_HELP)),
+            "--input" | "-i" => {
+                let value = next_value(args, &mut index, "--input")?;
+                set_once(&mut parsed.input, value, "--input")?;
             }
-            i += 2;
-        } else {
-            i += 1;
+            "--interpret-as" => {
+                let value = next_value(args, &mut index, "--interpret-as")?;
+                let value = normalize_input_interpretation(&value)?;
+                set_once(&mut parsed.input_interpretation, value, "--interpret-as")?;
+            }
+            "--profile" | "-p" => {
+                let value = next_value(args, &mut index, "--profile")?;
+                set_once(&mut parsed.profile_id, value, "--profile")?;
+            }
+            "--var" => {
+                let value = next_value(args, &mut index, "--var")?;
+                insert_assignment(&mut parsed.variables, &value, "--var", true)?;
+            }
+            "--extra-input" => {
+                let value = next_value(args, &mut index, "--extra-input")?;
+                insert_assignment(&mut parsed.extra_inputs, &value, "--extra-input", false)?;
+            }
+            "--json" if !parsed.json => parsed.json = true,
+            "--json" => return Err("check: --json may be specified only once".to_string()),
+            unknown => return Err(format!("check: unknown argument '{unknown}'")),
         }
+        index += 1;
     }
-    out
+    if parsed.input_interpretation.is_some() && parsed.input.is_none() {
+        return Err("check: --interpret-as requires --input".to_string());
+    }
+    Ok(ParseAction::Execute(Command::Check(parsed)))
 }
 
-fn select_profile(args: &[String]) -> Result<(), i32> {
-    if let Some(profile) = flag(args, "--profile") {
-        if let Err(e) = pipeline_config::switch_profile(profile) {
-            eprintln!("Failed to select profile '{profile}': {e}");
-            return Err(2);
+fn parse_run(args: &[String]) -> Result<ParseAction, String> {
+    let mut parsed = RunArgs::default();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--help" | "-h" => return Ok(ParseAction::Help(RUN_HELP)),
+            "--input" | "-i" => {
+                let value = next_value(args, &mut index, "--input")?;
+                set_once(&mut parsed.input, value, "--input")?;
+            }
+            "--interpret-as" => {
+                let value = next_value(args, &mut index, "--interpret-as")?;
+                let value = normalize_input_interpretation(&value)?;
+                set_once(&mut parsed.input_interpretation, value, "--interpret-as")?;
+            }
+            "--profile" | "-p" => {
+                let value = next_value(args, &mut index, "--profile")?;
+                set_once(&mut parsed.profile_id, value, "--profile")?;
+            }
+            "--var" => {
+                let value = next_value(args, &mut index, "--var")?;
+                insert_assignment(&mut parsed.variables, &value, "--var", true)?;
+            }
+            "--extra-input" => {
+                let value = next_value(args, &mut index, "--extra-input")?;
+                insert_assignment(&mut parsed.extra_inputs, &value, "--extra-input", false)?;
+            }
+            "--out" | "-o" => {
+                let value = next_value(args, &mut index, "--out")?;
+                set_once(&mut parsed.out, value, "--out")?;
+            }
+            "--force" if !parsed.force => parsed.force = true,
+            "--force" => return Err("run: --force may be specified only once".to_string()),
+            unknown => return Err(format!("run: unknown argument '{unknown}'")),
         }
+        index += 1;
+    }
+    if parsed.input_interpretation.is_some() && parsed.input.is_none() {
+        return Err("run: --interpret-as requires --input".to_string());
+    }
+    if parsed.force && matches!(parsed.out.as_deref(), None | Some("-")) {
+        return Err("run: --force requires a file destination in --out".to_string());
+    }
+    Ok(ParseAction::Execute(Command::Run(parsed)))
+}
+
+fn parse_batch(args: &[String]) -> Result<ParseAction, String> {
+    let mut parsed = BatchArgs::default();
+    let mut input_dir = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--help" | "-h" => return Ok(ParseAction::Help(BATCH_HELP)),
+            "--input-dir" | "-i" => {
+                let value = next_value(args, &mut index, "--input-dir")?;
+                set_once(&mut input_dir, value, "--input-dir")?;
+            }
+            "--profile" | "-p" => {
+                let value = next_value(args, &mut index, "--profile")?;
+                set_once(&mut parsed.profile_id, value, "--profile")?;
+            }
+            "--var" => {
+                let value = next_value(args, &mut index, "--var")?;
+                insert_assignment(&mut parsed.variables, &value, "--var", true)?;
+            }
+            "--extra-input" => {
+                let value = next_value(args, &mut index, "--extra-input")?;
+                insert_assignment(&mut parsed.extra_inputs, &value, "--extra-input", false)?;
+            }
+            "--out-dir" | "-o" => {
+                let value = next_value(args, &mut index, "--out-dir")?;
+                set_once(&mut parsed.out_dir, value, "--out-dir")?;
+            }
+            "--force" if !parsed.force => parsed.force = true,
+            "--force" => return Err("batch: --force may be specified only once".to_string()),
+            unknown => return Err(format!("batch: unknown argument '{unknown}'")),
+        }
+        index += 1;
+    }
+    parsed.input_dir = input_dir.ok_or("batch: --input-dir <DIR> is required")?;
+    if parsed.force && parsed.out_dir.is_none() {
+        return Err("batch: --force requires --out-dir".to_string());
+    }
+    Ok(ParseAction::Execute(Command::Batch(parsed)))
+}
+
+fn parse_profiles(args: &[String]) -> Result<ParseAction, String> {
+    if args.first().map(String::as_str) == Some("show") {
+        return match &args[1..] {
+            [flag] if matches!(flag.as_str(), "--help" | "-h") => {
+                Ok(ParseAction::Help(PROFILES_HELP))
+            }
+            [id] if !id.starts_with('-') => Ok(ParseAction::Execute(Command::Profiles(
+                ProfilesArgs::Show { id: id.clone() },
+            ))),
+            [] => Err("profiles show: <ID> is required".to_string()),
+            _ => Err("profiles show: expected exactly one profile ID".to_string()),
+        };
+    }
+
+    let mut json = false;
+    for arg in args {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(ParseAction::Help(PROFILES_HELP)),
+            "--json" if !json => json = true,
+            "--json" => return Err("profiles: --json may be specified only once".to_string()),
+            unknown => return Err(format!("profiles: unknown argument '{unknown}'")),
+        }
+    }
+    Ok(ParseAction::Execute(Command::Profiles(
+        ProfilesArgs::List { json },
+    )))
+}
+
+fn parse_engines(args: &[String]) -> Result<ParseAction, String> {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        return Ok(ParseAction::Help(ENGINES_HELP));
+    }
+    let Some(action) = args.first().map(String::as_str) else {
+        return Ok(ParseAction::Execute(Command::Engines(
+            EnginesArgs::Status { json: false },
+        )));
+    };
+    match action {
+        "status" => match &args[1..] {
+            [] => Ok(ParseAction::Execute(Command::Engines(
+                EnginesArgs::Status { json: false },
+            ))),
+            [flag] if flag == "--json" => Ok(ParseAction::Execute(Command::Engines(
+                EnginesArgs::Status { json: true },
+            ))),
+            _ => Err("engines status: expected only optional --json".to_string()),
+        },
+        "--json" if args.len() == 1 => Ok(ParseAction::Execute(Command::Engines(
+            EnginesArgs::Status { json: true },
+        ))),
+        "install" => match &args[1..] {
+            [id] => Ok(ParseAction::Execute(Command::Engines(
+                EnginesArgs::Install {
+                    id: normalize_engine_id(id)?,
+                },
+            ))),
+            [] => Err("engines install: engine ID or 'paddle' is required".to_string()),
+            _ => Err("engines install: expected exactly one engine ID".to_string()),
+        },
+        "uninstall" => {
+            let mut id = None;
+            let mut confirmed = false;
+            for arg in &args[1..] {
+                match arg.as_str() {
+                    "--yes" if !confirmed => confirmed = true,
+                    "--yes" => {
+                        return Err(
+                            "engines uninstall: --yes may be specified only once".to_string()
+                        )
+                    }
+                    value if !value.starts_with('-') && id.is_none() => id = Some(value),
+                    unknown => {
+                        return Err(format!(
+                            "engines uninstall: unexpected argument '{unknown}'"
+                        ))
+                    }
+                }
+            }
+            let id = id.ok_or("engines uninstall: engine ID or 'paddle' is required")?;
+            if !confirmed {
+                return Err(
+                    "engines uninstall: pass --yes to confirm removal of the managed Paddle bundle"
+                        .to_string(),
+                );
+            }
+            Ok(ParseAction::Execute(Command::Engines(
+                EnginesArgs::Uninstall {
+                    id: normalize_engine_id(id)?,
+                },
+            )))
+        }
+        unknown => Err(format!("engines: unknown command or argument '{unknown}'")),
+    }
+}
+
+fn normalize_engine_id(value: &str) -> Result<String, String> {
+    match value {
+        "paddle" | "paddleocr-vl-full" | "paddleocr-vl-parser" => {
+            Ok("paddleocr-vl-parser".to_string())
+        }
+        _ => Err(format!(
+            "unknown engine '{value}'; expected 'paddle' or 'paddleocr-vl-parser'"
+        )),
+    }
+}
+
+fn next_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
+    *index += 1;
+    let value = args
+        .get(*index)
+        .filter(|value| !value.starts_with('-') || value.as_str() == "-")
+        .ok_or_else(|| format!("{flag} requires a value"))?;
+    if value.is_empty() {
+        return Err(format!("{flag} requires a non-empty value"));
+    }
+    Ok(value.clone())
+}
+
+fn set_once(slot: &mut Option<String>, value: String, flag: &str) -> Result<(), String> {
+    if slot.replace(value).is_some() {
+        return Err(format!("{flag} may be specified only once"));
     }
     Ok(())
 }
 
-fn key_values(args: &[String], name: &str) -> Result<HashMap<String, String>, String> {
-    let mut values = HashMap::new();
-    for value in repeated(args, name) {
-        let Some((key, value)) = value.split_once('=') else {
-            return Err(format!("{name} expects key=value, got '{value}'"));
-        };
-        if key.trim().is_empty() || value.trim().is_empty() {
-            return Err(format!("{name} expects a non-empty key and value"));
-        }
-        values.insert(key.to_string(), value.to_string());
+fn insert_assignment(
+    values: &mut HashMap<String, String>,
+    assignment: &str,
+    flag: &str,
+    allow_empty_value: bool,
+) -> Result<(), String> {
+    let Some((key, value)) = assignment.split_once('=') else {
+        return Err(format!("{flag} expects KEY=VALUE, got '{assignment}'"));
+    };
+    let key = key.trim();
+    if key.is_empty() || (!allow_empty_value && value.trim().is_empty()) {
+        return Err(format!("{flag} expects a non-empty key and value"));
     }
-    Ok(values)
+    if values.insert(key.to_string(), value.to_string()).is_some() {
+        return Err(format!("{flag} repeats key '{key}'"));
+    }
+    Ok(())
+}
+
+fn normalize_input_interpretation(value: &str) -> Result<String, String> {
+    match value {
+        "document" => Ok("document".to_string()),
+        "latex-project" | "latex_project" => Ok("latex_project".to_string()),
+        "source-tree" | "source_tree" => Ok("source_tree".to_string()),
+        _ => Err(format!(
+            "--interpret-as expects document, latex-project, or source-tree; got '{value}'"
+        )),
+    }
+}
+
+fn reject_trailing(args: &[String], flag: &str) -> Result<(), String> {
+    if args.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{flag} does not accept additional arguments"))
+    }
+}
+
+async fn dispatch(command: Command) -> i32 {
+    match command {
+        Command::Run(args) => cmd_run(args).await,
+        Command::Check(args) => cmd_check(args).await,
+        Command::Batch(args) => cmd_batch(args).await,
+        Command::Profiles(args) => cmd_profiles(args),
+        Command::Engines(args) => cmd_engines(args).await,
+    }
 }
 
 #[cfg(unix)]
@@ -138,12 +605,10 @@ async fn shutdown_signal() {
 
 async fn run_with_interrupt(
     bus: EventBus,
-    input: &str,
-    vars: HashMap<String, String>,
-    extra_inputs: HashMap<String, String>,
+    options: commands::HeadlessRunOptions,
 ) -> Result<serde_json::Value, String> {
     use std::future::Future as _;
-    let mut run = std::pin::pin!(commands::run_headless(bus, input, vars, extra_inputs));
+    let mut run = std::pin::pin!(commands::run_headless_with_options(bus, options));
     let mut signal = std::pin::pin!(shutdown_signal());
     let completed = std::future::poll_fn(|cx| {
         if let std::task::Poll::Ready(result) = run.as_mut().poll(cx) {
@@ -175,122 +640,224 @@ fn is_interruption(error: &str) -> bool {
     error.contains("cancel") || error.contains("interrupt")
 }
 
-async fn cmd_run(args: &[String]) -> i32 {
-    let Some(input) = flag(args, "--input") else {
-        eprintln!("run: --input <file> is required");
-        return 2;
-    };
-    if let Err(code) = select_profile(args) {
-        return code;
+async fn cmd_run(args: RunArgs) -> i32 {
+    if let Some(path) = args.out.as_deref().filter(|path| *path != "-") {
+        if let Err(error) = validate_output_path(Path::new(path), args.force) {
+            eprintln!("Error: {error}");
+            return 2;
+        }
     }
-    let vars = match key_values(args, "--var") {
-        Ok(values) => values,
-        Err(error) => {
-            eprintln!("run: {error}");
-            return 2;
-        }
+    let options = commands::HeadlessRunOptions {
+        profile_id: args.profile_id,
+        input_path: args.input.unwrap_or_default(),
+        input_interpretation: args.input_interpretation,
+        variables: args.variables,
+        extra_inputs: args.extra_inputs,
     };
-    let extra_inputs = match key_values(args, "--extra-input") {
-        Ok(values) => values,
-        Err(error) => {
-            eprintln!("run: {error}");
-            return 2;
-        }
-    };
-
     let bus: EventBus = Arc::new(CliEvents);
-    match run_with_interrupt(bus, input, vars, extra_inputs).await {
-        Ok(v) => {
-            let markdown = v.get("markdown").and_then(|m| m.as_str()).unwrap_or("");
-            match flag(args, "--out") {
-                Some(out) => {
-                    if let Err(e) = std::fs::write(out, markdown) {
-                        eprintln!("Failed to write {out}: {e}");
-                        return 1;
-                    }
-                    eprintln!("Wrote report to {out}");
-                }
-                None => println!("{markdown}"),
-            }
-            if let Some(run_id) = v.get("run_id").and_then(|r| r.as_str()) {
-                eprintln!("Run: {run_id}");
-            }
-            let failed = v
-                .get("report")
-                .and_then(|r| r.get("failed_steps"))
-                .and_then(|f| f.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            if failed > 0 {
-                eprintln!("{failed} step(s) failed");
-                1
-            } else {
-                0
-            }
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            if is_interruption(&e) {
-                130
-            } else {
-                1
-            }
-        }
+    match run_with_interrupt(bus, options).await {
+        Ok(value) => finish_single_run(&value, args.out.as_deref(), args.force),
+        Err(error) => report_run_error(&error),
     }
 }
 
-async fn cmd_batch(args: &[String]) -> i32 {
-    let Some(dir) = flag(args, "--input-dir") else {
-        eprintln!("batch: --input-dir <dir> is required");
-        return 2;
+async fn cmd_check(args: CheckArgs) -> i32 {
+    let options = commands::HeadlessRunOptions {
+        profile_id: args.profile_id,
+        input_path: args.input.unwrap_or_default(),
+        input_interpretation: args.input_interpretation,
+        variables: args.variables,
+        extra_inputs: args.extra_inputs,
     };
-    if let Err(code) = select_profile(args) {
-        return code;
+    let report = match commands::check_headless_dependencies(&options).await {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return 2;
+        }
+    };
+    if args.json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(encoded) => println!("{encoded}"),
+            Err(error) => {
+                eprintln!("Error: failed to encode dependency report: {error}");
+                return 1;
+            }
+        }
+    } else {
+        let required = report
+            .deps
+            .iter()
+            .filter(|dependency| dependency.required)
+            .collect::<Vec<_>>();
+        if required.is_empty() {
+            println!("No external dependencies are required for this run.");
+        }
+        for dependency in required {
+            let ready = pipeline_gui_lib::deps::dependency_ready(dependency);
+            let marker = if ready { "ok" } else { "missing" };
+            let detail = if !dependency.version.is_empty() {
+                format!(" ({})", dependency.version)
+            } else {
+                String::new()
+            };
+            println!("[{marker}] {}{detail}", dependency.name);
+            if !ready {
+                println!("  {}", dependency.hint);
+            }
+        }
+        println!(
+            "Dependency check: {}",
+            if report.ready { "ready" } else { "not ready" }
+        );
     }
-    let vars = match key_values(args, "--var") {
-        Ok(values) => values,
+    if report.ready {
+        0
+    } else {
+        1
+    }
+}
+
+fn finish_single_run(value: &serde_json::Value, out: Option<&str>, force: bool) -> i32 {
+    let markdown = match report_markdown(value) {
+        Ok(markdown) => markdown,
         Err(error) => {
-            eprintln!("batch: {error}");
+            eprintln!("Error: {error}");
+            return 1;
+        }
+    };
+    match out {
+        Some("-") => println!("{markdown}"),
+        Some(path) => {
+            if let Err(error) = write_report_file(Path::new(path), markdown, force) {
+                eprintln!("Error: {error}");
+                return 1;
+            }
+            eprintln!("Wrote report to {path}");
+        }
+        None => println!("{markdown}"),
+    }
+    if let Some(run_id) = value.get("run_id").and_then(|id| id.as_str()) {
+        eprintln!("Run: {run_id}");
+    }
+    let failed = failed_step_count(value);
+    if failed > 0 {
+        eprintln!("{failed} step(s) failed");
+        1
+    } else {
+        0
+    }
+}
+
+fn report_markdown(value: &serde_json::Value) -> Result<&str, String> {
+    value
+        .get("markdown")
+        .and_then(|markdown| markdown.as_str())
+        .filter(|markdown| !markdown.is_empty())
+        .ok_or_else(|| "Pipeline returned no Markdown report".to_string())
+}
+
+fn failed_step_count(value: &serde_json::Value) -> usize {
+    value
+        .get("report")
+        .and_then(|report| report.get("failed_steps"))
+        .and_then(|failed| failed.as_array())
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn report_run_error(error: &str) -> i32 {
+    eprintln!("Error: {error}");
+    if is_interruption(error) {
+        130
+    } else {
+        1
+    }
+}
+
+async fn cmd_batch(args: BatchArgs) -> i32 {
+    let selected_profile = args
+        .profile_id
+        .clone()
+        .unwrap_or_else(pipeline_config::get_active_profile_id);
+    let (config, _) = match pipeline_config::load_required_profile_for(&selected_profile) {
+        Ok(profile) => profile,
+        Err(error) => {
+            eprintln!("Error: {error}");
             return 2;
         }
     };
-    let extra_inputs = match key_values(args, "--extra-input") {
-        Ok(values) => values,
-        Err(error) => {
-            eprintln!("batch: {error}");
-            return 2;
-        }
-    };
-    let files = match scan_inputs(dir) {
-        Ok(f) if !f.is_empty() => f,
+    if config.extraction.input_mode.trim() == "none" {
+        eprintln!("Error: batch processing requires a workflow that accepts input");
+        return 2;
+    }
+
+    let files = match commands::scan_input_files(&args.input_dir) {
+        Ok(files) if !files.is_empty() => files,
         Ok(_) => {
-            eprintln!("No .pdf, .tex, or .docx files found in {dir}");
+            eprintln!(
+                "No PDF, TeX, or DOCX files found directly inside {}",
+                args.input_dir
+            );
             return 2;
         }
-        Err(e) => {
-            eprintln!("Cannot read {dir}: {e}");
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return 2;
+        }
+    };
+
+    let output_paths = match prepare_batch_outputs(args.out_dir.as_deref(), &files, args.force) {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("Error: {error}");
             return 2;
         }
     };
 
     let mut failures = 0;
-    for (i, path) in files.iter().enumerate() {
-        eprintln!("\n[{}/{}] {path}", i + 1, files.len());
+    for (index, path) in files.iter().enumerate() {
+        eprintln!("\n[{}/{}] {path}", index + 1, files.len());
         let bus: EventBus = Arc::new(CliEvents);
-        match run_with_interrupt(bus, path, vars.clone(), extra_inputs.clone()).await {
-            Ok(v) => {
-                if let Some(run_id) = v.get("run_id").and_then(|r| r.as_str()) {
-                    eprintln!("  → {run_id}");
+        let options = commands::HeadlessRunOptions {
+            profile_id: Some(selected_profile.clone()),
+            input_path: path.clone(),
+            input_interpretation: Some("document".to_string()),
+            variables: args.variables.clone(),
+            extra_inputs: args.extra_inputs.clone(),
+        };
+        match run_with_interrupt(bus, options).await {
+            Ok(value) => {
+                let markdown = match report_markdown(&value) {
+                    Ok(markdown) => markdown,
+                    Err(error) => {
+                        eprintln!("  failed: {error}");
+                        failures += 1;
+                        continue;
+                    }
+                };
+                if let Some(output_path) = output_paths.as_ref().map(|paths| &paths[index]) {
+                    match write_report_file(output_path, markdown, args.force) {
+                        Ok(()) => eprintln!("  report: {}", output_path.display()),
+                        Err(error) => {
+                            eprintln!("  failed to save report: {error}");
+                            failures += 1;
+                            continue;
+                        }
+                    }
                 }
-                if v.get("status").and_then(|s| s.as_str()) == Some("partial") {
-                    eprintln!("  failed: one or more pipeline steps failed");
+                if let Some(run_id) = value.get("run_id").and_then(|id| id.as_str()) {
+                    eprintln!("  run: {run_id}");
+                }
+                if failed_step_count(&value) > 0 {
+                    eprintln!("  failed: one or more workflow steps failed");
                     failures += 1;
                 }
             }
-            Err(e) => {
-                eprintln!("  failed: {e}");
+            Err(error) => {
+                eprintln!("  failed: {error}");
                 failures += 1;
-                if is_interruption(&e) {
+                if is_interruption(&error) {
                     return 130;
                 }
             }
@@ -308,44 +875,274 @@ async fn cmd_batch(args: &[String]) -> i32 {
     }
 }
 
-fn scan_inputs(dir: &str) -> std::io::Result<Vec<String>> {
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
-        }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .unwrap_or_default();
-        if matches!(ext.as_str(), "pdf" | "tex" | "docx") {
-            files.push(path.to_string_lossy().replace('\\', "/"));
-        }
+fn prepare_batch_outputs(
+    out_dir: Option<&str>,
+    files: &[String],
+    force: bool,
+) -> Result<Option<Vec<PathBuf>>, String> {
+    let Some(out_dir) = out_dir else {
+        return Ok(None);
+    };
+    let out_dir = PathBuf::from(out_dir);
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|error| format!("Could not create output directory: {error}"))?;
+    if !out_dir.is_dir() {
+        return Err(format!("{} is not a directory", out_dir.display()));
     }
-    files.sort();
-    Ok(files)
+
+    let mut seen = HashSet::new();
+    let mut outputs = Vec::with_capacity(files.len());
+    for input in files {
+        let stem = Path::new(input)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| !stem.is_empty())
+            .ok_or_else(|| format!("Cannot derive an output name from '{input}'"))?;
+        let output = out_dir.join(format!("{stem}.md"));
+        let collision_key = output.to_string_lossy().to_lowercase();
+        if !seen.insert(collision_key) {
+            return Err(format!(
+                "multiple inputs would write {}; use distinct input filenames",
+                output.display()
+            ));
+        }
+        validate_output_path(&output, force)?;
+        outputs.push(output);
+    }
+    Ok(Some(outputs))
 }
 
-fn cmd_profiles() -> i32 {
-    match pipeline_config::list_profiles() {
-        Ok(profiles) => {
-            let active = pipeline_config::get_active_profile_id();
-            for p in profiles {
-                let marker = if p.id == active { "*" } else { " " };
-                println!("{marker} {:22} {} ({} steps)", p.id, p.name, p.step_count);
-            }
-            0
+fn validate_output_path(path: &Path, force: bool) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
+            "{} is a symbolic link; choose a regular output path",
+            path.display()
+        )),
+        Ok(metadata) if !metadata.is_file() => {
+            Err(format!("{} is not a regular file", path.display()))
         }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            1
+        Ok(_) if !force => Err(format!(
+            "{} already exists; pass --force to replace it",
+            path.display()
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                if !parent.is_dir() {
+                    return Err(format!(
+                        "output directory {} does not exist or is not a directory",
+                        parent.display()
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "Could not inspect output path {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn write_report_file(path: &Path, markdown: &str, force: bool) -> Result<(), String> {
+    if force {
+        return std::fs::write(path, markdown)
+            .map_err(|error| format!("Failed to write {}: {error}", path.display()));
+    }
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                format!(
+                    "{} already exists; pass --force to replace it",
+                    path.display()
+                )
+            } else {
+                format!("Failed to create {}: {error}", path.display())
+            }
+        })?;
+    output
+        .write_all(markdown.as_bytes())
+        .map_err(|error| format!("Failed to write {}: {error}", path.display()))
+}
+
+fn cmd_profiles(args: ProfilesArgs) -> i32 {
+    match args {
+        ProfilesArgs::Show { id } => match pipeline_config::export_profile_data(&id) {
+            Ok(profile) => {
+                println!("{profile}");
+                0
+            }
+            Err(error) => {
+                eprintln!("Error: {error}");
+                1
+            }
+        },
+        ProfilesArgs::List { json } => match pipeline_config::list_profiles() {
+            Ok(profiles) if profiles.is_empty() => {
+                eprintln!(
+                    "Error: no profiles were found; Pipeline may not have been able to initialize ~/.pipeline/profiles"
+                );
+                1
+            }
+            Ok(profiles) if json => match serde_json::to_string_pretty(&profiles) {
+                Ok(encoded) => {
+                    println!("{encoded}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("Error: failed to encode profiles: {error}");
+                    1
+                }
+            },
+            Ok(profiles) => {
+                let active = pipeline_config::get_active_profile_id();
+                for profile in profiles {
+                    let marker = if profile.id == active { "*" } else { " " };
+                    println!(
+                        "{marker} {:22} {} ({} steps)",
+                        profile.id, profile.name, profile.step_count
+                    );
+                }
+                0
+            }
+            Err(error) => {
+                eprintln!("Error: {error}");
+                1
+            }
+        },
+    }
+}
+
+async fn cmd_engines(args: EnginesArgs) -> i32 {
+    match args {
+        EnginesArgs::Status { json } => cmd_engine_status(json).await,
+        EnginesArgs::Install { id } => {
+            let status = tokio::task::spawn_blocking(engines::engine_statuses)
+                .await
+                .ok()
+                .and_then(|statuses| statuses.into_iter().find(|status| status.id == id));
+            if let Some(status) = status.as_ref() {
+                if !status.available {
+                    eprintln!("Error: {}", status.unavailable_reason);
+                    return 1;
+                }
+                eprintln!(
+                    "{} {} (about {} MB download, {} MB installed)",
+                    if status.installed {
+                        "Repairing"
+                    } else {
+                        "Installing"
+                    },
+                    status.label,
+                    status.est_download_mb,
+                    status.est_disk_mb
+                );
+            }
+            let bus: EventBus = Arc::new(CliEvents);
+            match install_engine_with_interrupt(bus, &id).await {
+                Ok(()) => {
+                    eprintln!("PaddleOCR-VL Full Parser installation complete.");
+                    0
+                }
+                Err(error) => report_run_error(&error),
+            }
+        }
+        EnginesArgs::Uninstall { id } => {
+            let bus: EventBus = Arc::new(CliEvents);
+            match engines::uninstall_engine(&bus, &id).await {
+                Ok(()) => {
+                    eprintln!("PaddleOCR-VL Full Parser bundle removed.");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    1
+                }
+            }
+        }
+    }
+}
+
+async fn cmd_engine_status(json: bool) -> i32 {
+    let statuses = match tokio::task::spawn_blocking(engines::engine_statuses).await {
+        Ok(statuses) => statuses,
+        Err(error) => {
+            eprintln!("Error: engine status task failed: {error}");
+            return 1;
+        }
+    };
+    if json {
+        match serde_json::to_string_pretty(&statuses) {
+            Ok(encoded) => println!("{encoded}"),
+            Err(error) => {
+                eprintln!("Error: failed to encode engine status: {error}");
+                return 1;
+            }
+        }
+        return 0;
+    }
+    for status in statuses {
+        let state = if !status.available {
+            "unavailable"
+        } else if status.installing {
+            "installing"
+        } else if status.installed {
+            "installed"
+        } else {
+            "not installed"
+        };
+        println!("{}: {state}", status.label);
+        println!("  id: {}", status.id);
+        if !status.version.is_empty() {
+            println!("  version: {}", status.version);
+        }
+        if !status.entry_path.is_empty() {
+            println!("  entry: {}", status.entry_path);
+        }
+        println!(
+            "  estimated download/install: {} MB / {} MB",
+            status.est_download_mb, status.est_disk_mb
+        );
+        println!("  managed stack on disk: {} MB", status.managed_stack_mb);
+        if !status.unavailable_reason.is_empty() {
+            println!("  reason: {}", status.unavailable_reason);
+        }
+    }
+    0
+}
+
+async fn install_engine_with_interrupt(bus: EventBus, id: &str) -> Result<(), String> {
+    use std::future::Future as _;
+    let mut install = std::pin::pin!(engines::install_engine(&bus, id));
+    let mut signal = std::pin::pin!(shutdown_signal());
+    let completed = std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(result) = install.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(result));
+        }
+        if signal.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        std::task::Poll::Pending
+    })
+    .await;
+    match completed {
+        Some(result) => result,
+        None => {
+            eprintln!("Interrupt received; cancelling the engine installation…");
+            engines::cancel_install();
+            match tokio::time::timeout(std::time::Duration::from_secs(15), install.as_mut()).await {
+                Ok(_) => Err("Engine installation cancelled by interrupt".to_string()),
+                Err(_) => Err(
+                    "Engine installation cancellation timed out; child processes were terminated"
+                        .to_string(),
+                ),
+            }
         }
     }
 }
@@ -354,23 +1151,203 @@ fn cmd_profiles() -> i32 {
 mod tests {
     use super::*;
 
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
     #[test]
-    fn key_value_flags_support_named_inputs_and_reject_malformed_values() {
-        let args = vec![
-            "--extra-input".to_string(),
-            "rubric=/tmp/rubric.pdf".to_string(),
-        ];
+    fn subcommand_help_is_handled_before_required_options() {
+        assert!(matches!(
+            parse_cli(&strings(&["run", "--help"])),
+            Ok(ParseAction::Help(help)) if help == RUN_HELP
+        ));
+        assert!(matches!(
+            parse_cli(&strings(&["batch", "-h"])),
+            Ok(ParseAction::Help(help)) if help == BATCH_HELP
+        ));
+    }
+
+    #[test]
+    fn run_parser_supports_current_input_and_runtime_options() {
+        let action = parse_cli(&strings(&[
+            "run",
+            "--input",
+            "/tmp/project",
+            "--interpret-as",
+            "latex-project",
+            "--profile",
+            "deep-review",
+            "--var",
+            "audience=editor",
+            "--var",
+            "optional=",
+            "--extra-input",
+            "appendix=/tmp/appendix.pdf",
+            "--out",
+            "/tmp/report.md",
+            "--force",
+        ]))
+        .unwrap();
+        let ParseAction::Execute(Command::Run(parsed)) = action else {
+            panic!("expected parsed run command");
+        };
+        assert_eq!(parsed.input.as_deref(), Some("/tmp/project"));
         assert_eq!(
-            key_values(&args, "--extra-input").unwrap().get("rubric"),
-            Some(&"/tmp/rubric.pdf".to_string())
+            parsed.input_interpretation.as_deref(),
+            Some("latex_project")
         );
-        assert!(key_values(&["--var".to_string(), "broken".to_string()], "--var").is_err());
+        assert_eq!(parsed.profile_id.as_deref(), Some("deep-review"));
+        assert_eq!(
+            parsed.variables.get("audience").map(String::as_str),
+            Some("editor")
+        );
+        assert_eq!(
+            parsed.variables.get("optional").map(String::as_str),
+            Some("")
+        );
+        assert_eq!(
+            parsed.extra_inputs.get("appendix").map(String::as_str),
+            Some("/tmp/appendix.pdf")
+        );
+        assert_eq!(parsed.out.as_deref(), Some("/tmp/report.md"));
+        assert!(parsed.force);
+    }
+
+    #[test]
+    fn run_parser_allows_no_input_but_not_an_orphaned_interpretation() {
+        assert!(matches!(
+            parse_cli(&strings(&["run", "--profile", "prompt-only"])),
+            Ok(ParseAction::Execute(Command::Run(_)))
+        ));
+        assert!(parse_cli(&strings(&["run", "--interpret-as", "document"])).is_err());
+    }
+
+    #[test]
+    fn parser_rejects_unknown_duplicate_and_missing_arguments() {
+        assert!(parse_cli(&strings(&["run", "--wat"])).is_err());
+        assert!(parse_cli(&strings(&["run", "--input"])).is_err());
+        assert!(parse_cli(&strings(&["run", "--profile", "one", "--profile", "two"])).is_err());
+        assert!(parse_cli(&strings(&["run", "--var", "key=one", "--var", "key=two"])).is_err());
+    }
+
+    #[test]
+    fn profiles_support_machine_readable_listing_and_inspection() {
+        assert!(matches!(
+            parse_cli(&strings(&["profiles", "--json"])),
+            Ok(ParseAction::Execute(Command::Profiles(
+                ProfilesArgs::List { json: true }
+            )))
+        ));
+        assert!(matches!(
+            parse_cli(&strings(&["profiles", "show", "quick-review"])),
+            Ok(ParseAction::Execute(Command::Profiles(
+                ProfilesArgs::Show { id }
+            ))) if id == "quick-review"
+        ));
+    }
+
+    #[test]
+    fn dependency_check_parser_keeps_the_concrete_pdf_input() {
+        let action = parse_cli(&strings(&[
+            "check",
+            "--profile",
+            "paddle-review",
+            "--input",
+            "/tmp/paper.PDF",
+            "--interpret-as",
+            "document",
+            "--json",
+        ]))
+        .unwrap();
+        let ParseAction::Execute(Command::Check(parsed)) = action else {
+            panic!("expected parsed dependency check");
+        };
+        assert_eq!(parsed.input.as_deref(), Some("/tmp/paper.PDF"));
+        assert_eq!(parsed.input_interpretation.as_deref(), Some("document"));
+        assert_eq!(parsed.profile_id.as_deref(), Some("paddle-review"));
+        assert!(parsed.json);
+    }
+
+    #[test]
+    fn engine_commands_use_the_managed_parser_id_and_confirm_uninstall() {
+        assert!(matches!(
+            parse_cli(&strings(&["engines", "install", "paddle"])),
+            Ok(ParseAction::Execute(Command::Engines(
+                EnginesArgs::Install { id }
+            ))) if id == "paddleocr-vl-parser"
+        ));
+        assert!(parse_cli(&strings(&["engines", "uninstall", "paddle"])).is_err());
+        assert!(matches!(
+            parse_cli(&strings(&[
+                "engines",
+                "uninstall",
+                "paddleocr-vl-parser",
+                "--yes"
+            ])),
+            Ok(ParseAction::Execute(Command::Engines(
+                EnginesArgs::Uninstall { id }
+            ))) if id == "paddleocr-vl-parser"
+        ));
+    }
+
+    #[test]
+    fn batch_parser_requires_a_folder_and_supports_report_export() {
+        let action = parse_cli(&strings(&[
+            "batch",
+            "--input-dir",
+            "/tmp/papers",
+            "--profile",
+            "quick-review",
+            "--out-dir",
+            "/tmp/reports",
+            "--force",
+        ]))
+        .unwrap();
+        let ParseAction::Execute(Command::Batch(parsed)) = action else {
+            panic!("expected parsed batch command");
+        };
+        assert_eq!(parsed.input_dir, "/tmp/papers");
+        assert_eq!(parsed.profile_id.as_deref(), Some("quick-review"));
+        assert_eq!(parsed.out_dir.as_deref(), Some("/tmp/reports"));
+        assert!(parsed.force);
+        assert!(parse_cli(&strings(&["batch", "--profile", "quick-review"])).is_err());
+    }
+
+    #[test]
+    fn batch_output_names_fail_before_overwriting_colliding_stems() {
+        let temp = tempfile::tempdir().unwrap();
+        let inputs = strings(&["/tmp/paper.pdf", "/tmp/paper.docx"]);
+        let error = prepare_batch_outputs(temp.path().to_str(), &inputs, false).unwrap_err();
+        assert!(error.contains("multiple inputs would write"));
+    }
+
+    #[test]
+    fn report_outputs_require_force_before_replacing_a_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("report.md");
+        write_report_file(&output, "first", false).unwrap();
+        assert!(write_report_file(&output, "second", false).is_err());
+        write_report_file(&output, "second", true).unwrap();
+        assert_eq!(std::fs::read_to_string(output).unwrap(), "second");
+    }
+
+    #[test]
+    fn output_validation_rejects_existing_files_and_missing_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("report.md");
+        std::fs::write(&output, "existing").unwrap();
+        assert!(validate_output_path(&output, false).is_err());
+        assert!(validate_output_path(&output, true).is_ok());
+        assert!(validate_output_path(&temp.path().join("missing/report.md"), false).is_err());
     }
 
     #[test]
     fn interruption_errors_map_to_shell_interrupt_status() {
         assert!(is_interruption("Pipeline cancelled by interrupt"));
         assert!(is_interruption("Pipeline cancellation timed out"));
+        assert!(is_interruption(
+            "Engine installation cancelled by interrupt"
+        ));
         assert!(!is_interruption("provider authentication failed"));
     }
 }

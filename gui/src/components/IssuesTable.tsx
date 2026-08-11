@@ -3,13 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Issue } from "../lib/issues";
+import type { Issue, IssueEvidence } from "../lib/issues";
 import { severityRank } from "../lib/issues";
 import SafeMarkdownLink from "./SafeMarkdownLink";
 
 interface Props {
   issues: Issue[];
   runId: string | null;
+  onOpenEvidence?: (evidence: IssueEvidence) => void;
 }
 
 type Verdict = "accept" | "reject" | "done" | "";
@@ -36,7 +37,24 @@ const VERDICT_STYLES: Record<Verdict, string> = {
   "": "",
 };
 
-export default function IssuesTable({ issues, runId }: Props) {
+function evidenceCitation(item: IssueEvidence): string {
+  const references = [
+    item.page ? `p. ${item.page}` : "",
+    item.lineStart
+      ? `line ${item.lineStart}${item.lineEnd && item.lineEnd !== item.lineStart ? `–${item.lineEnd}` : ""}`
+      : "",
+    item.nodeId ? `node ${item.nodeId}` : "",
+    item.assetId ? `asset ${item.assetId}` : "",
+    item.artifactPath ? `artifact ${item.artifactPath}` : "",
+  ].filter(Boolean);
+  const location = references.join(", ") || item.description || "source";
+  const description = item.description && item.description !== location
+    ? ` — ${item.description}`
+    : "";
+  return `${location}${description}${item.quote ? ` (“${item.quote}”)` : ""}`;
+}
+
+export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
   const [annotations, setAnnotations] = useState<Annotations>({});
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -196,7 +214,10 @@ export default function IssuesTable({ issues, runId }: Props) {
       accepted
         .map((i, n) => {
           const note = annotations[i.id]?.note?.trim();
-          return `## ${n + 1}. ${i.title}${i.severity ? ` _(${i.severity})_` : ""}\n\n${i.body}${note ? `\n\n> **Note:** ${note}` : ""}`;
+          const evidence = i.evidence?.length
+            ? `\n\n**Evidence:** ${i.evidence.map(evidenceCitation).join("; ")}`
+            : "";
+          return `## ${n + 1}. ${i.title}${i.severity ? ` _(${i.severity})_` : ""}\n\n${i.body}${evidence}${note ? `\n\n> **Note:** ${note}` : ""}`;
         })
         .join("\n\n");
     try {
@@ -360,6 +381,55 @@ export default function IssuesTable({ issues, runId }: Props) {
                       {issue.body}
                     </ReactMarkdown>
                   </div>
+                  {issue.evidence && issue.evidence.length > 0 && (
+                    <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900/70">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">Evidence</p>
+                      <div className="mt-2 space-y-2">
+                        {issue.evidence.map((evidence, evidenceIndex) => {
+                          const canOpen = !!onOpenEvidence && (!!evidence.page || !!evidence.artifactPath);
+                          const lineLabel = evidence.lineStart
+                            ? `:${evidence.lineStart}${evidence.lineEnd && evidence.lineEnd !== evidence.lineStart ? `–${evidence.lineEnd}` : ""}`
+                            : "";
+                          const label = evidence.page
+                            ? `Page ${evidence.page}`
+                            : evidence.artifactPath
+                              ? `${evidence.artifactPath}${lineLabel}`
+                              : evidence.description || evidence.assetId || evidence.nodeId || (lineLabel ? `Line ${lineLabel.slice(1)}` : `Source ${evidenceIndex + 1}`);
+                          const location = (
+                            <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-medium ${
+                              canOpen
+                                ? "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:text-gray-950 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:text-white"
+                                : "border-gray-200 text-gray-500 dark:border-gray-800 dark:text-gray-400"
+                            }`}>
+                              {label}
+                            </span>
+                          );
+                          return (
+                            <div key={`${evidence.page ?? ""}-${evidence.nodeId ?? ""}-${evidenceIndex}`} className="text-xs text-gray-600 dark:text-gray-400">
+                              <div className="flex flex-wrap items-center gap-2">
+                                {canOpen ? (
+                                  <button
+                                    type="button"
+                                    aria-label={`View ${label} evidence`}
+                                    onClick={() => onOpenEvidence(evidence)}
+                                  >
+                                    {location}
+                                  </button>
+                                ) : location}
+                                {evidence.description && evidence.description !== label && <span>{evidence.description}</span>}
+                                {evidence.nodeId && <span className="font-mono text-[10px] text-gray-400">{evidence.nodeId}</span>}
+                              </div>
+                              {evidence.quote && (
+                                <blockquote className="mt-1.5 border-l-2 border-gray-300 pl-2 text-[11px] italic text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                                  {evidence.quote}
+                                </blockquote>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <input
                     aria-label={`Note for issue: ${issue.title}`}
                     value={ann?.note ?? ""}

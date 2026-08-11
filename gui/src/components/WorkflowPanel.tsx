@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PipelineConfig, ProfileSummary, StepConfig } from "../lib/types";
 import { computeWaves } from "../lib/pipelineHelpers";
+import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 
 interface Props {
   disabled: boolean;
@@ -26,6 +27,7 @@ export default function WorkflowPanel({
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [catalogOpen, setCatalogOpen] = useState(false);
 
   useEffect(() => {
     let stale = false;
@@ -58,6 +60,7 @@ export default function WorkflowPanel({
     setSwitching(true);
     setError(null);
     try {
+      setCatalogOpen(false);
       const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
       setConfig(newConfig);
       setActiveId(id);
@@ -90,6 +93,8 @@ export default function WorkflowPanel({
 
   const enabledSteps = config.steps.filter((s) => s.enabled);
   const disabledCount = config.steps.length - enabledSteps.length;
+  const autoAssembled = config.orientation_schema?.["x-pipeline-contract"] === "auto-review-v2";
+  const autoReview = autoAssembled || activeId === "auto-review";
 
   const groups: { phase: StepConfig["phase"]; steps: StepConfig[] }[] = computeWaves(config.steps)
     .map((wave) => wave.kind === "parallel"
@@ -132,7 +137,7 @@ export default function WorkflowPanel({
             <p className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">
               {group.phase === "parallel" ? "Parallel" : "Sequential"}
             </p>
-            {group.steps.map((step) => (
+            {group.steps.filter((step) => !step.run_if).map((step) => (
               <div key={step.id} className="flex items-center gap-2 py-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
                 <span className="text-xs text-gray-600 dark:text-gray-400 truncate">
@@ -145,12 +150,47 @@ export default function WorkflowPanel({
                 )}
               </div>
             ))}
+            {!autoReview && (() => {
+              const conditional = group.steps.filter((step) => !!step.run_if);
+              if (conditional.length === 0) return null;
+              return (
+                <details className="mt-1 rounded-md border border-gray-200 px-2 py-1 dark:border-gray-700">
+                  <summary className="cursor-pointer text-[11px] text-gray-600 dark:text-gray-400">
+                    {conditional.length} conditional specialist{conditional.length === 1 ? "" : "s"}
+                  </summary>
+                  <div className="mt-1 border-t border-gray-100 pt-1 dark:border-gray-800">
+                    {conditional.map((step) => (
+                      <div key={step.id} className="flex items-center gap-2 py-0.5">
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300 dark:bg-gray-600" />
+                        <span className="truncate text-xs text-gray-600 dark:text-gray-400">
+                          {step.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            })()}
           </div>
         ))}
         {enabledSteps.length === 0 && (
           <p className="text-xs text-gray-500 dark:text-gray-400">
             No steps enabled.
           </p>
+        )}
+        {autoReview && (
+          <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 dark:border-blue-900/70 dark:bg-blue-950/25">
+            <p className="text-[11px] leading-4 text-blue-900 dark:text-blue-200">
+              Orientation assembles 1–2 subject and 1–4 method specialists for each paper.
+            </p>
+            <button
+              type="button"
+              onClick={() => setCatalogOpen(true)}
+              className="mt-1 text-[11px] font-medium text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
+            >
+              Browse specialist catalog
+            </button>
+          </div>
         )}
         {disabledCount > 0 && (
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5">
@@ -168,6 +208,7 @@ export default function WorkflowPanel({
       >
         Edit workflow…
       </button>
+      {catalogOpen && <AutoReviewCatalogDialog onClose={() => setCatalogOpen(false)} />}
     </div>
   );
 }

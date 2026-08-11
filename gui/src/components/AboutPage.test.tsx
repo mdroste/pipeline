@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));
 describe("AboutPage", () => {
   beforeEach(() => {
     getVersion.mockReset();
-    getVersion.mockResolvedValue("1.0.1");
+    getVersion.mockResolvedValue("0.9.0");
     openUrl.mockReset();
   });
 

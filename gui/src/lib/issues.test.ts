@@ -36,6 +36,23 @@ describe("issues parsing", () => {
     expect(issues.map((i) => i.id)).toEqual(["1", "2"]);
   });
 
+  it("normalizes bounded evidence links and drops unsafe artifact paths", () => {
+    const issues = parseIssues(JSON.stringify({
+      issues: [{
+        title: "Evidence-backed issue",
+        evidence: [
+          { page: 4, node_id: "node-12", description: "Proposition statement" },
+          { artifact_path: "artifacts/figures/figure-2.png", asset_id: "figure-2" },
+          { artifact_path: "../outside.txt", page: -1 },
+        ],
+      }],
+    }))!;
+    expect(issues[0].evidence).toEqual([
+      { page: 4, nodeId: "node-12", description: "Proposition statement" },
+      { assetId: "figure-2", artifactPath: "artifacts/figures/figure-2.png" },
+    ]);
+  });
+
   it("continues past valid non-issue JSON to a later issue candidate", () => {
     const issues = parseIssues(
       'metadata: {"model":"x"}\nresult: {"issues":[{"title":"Actual issue","severity":"major"}]}',

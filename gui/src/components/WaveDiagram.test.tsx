@@ -88,8 +88,7 @@ describe("WaveDiagram", () => {
     expect(screen.getByText(/No enabled review steps/)).toBeInTheDocument();
   });
 
-  it("collapses and expands the diagram", async () => {
-    const user = userEvent.setup();
+  it("summarizes execution size and provider calls", () => {
     render(
       <WaveDiagram
         steps={[step({ id: "technical", label: "Technical" })]}
@@ -99,9 +98,37 @@ describe("WaveDiagram", () => {
         onSelect={() => {}}
       />,
     );
-    await user.click(screen.getByTitle("Hide diagram"));
-    expect(screen.queryByRole("button", { name: "Technical" })).not.toBeInTheDocument();
-    await user.click(screen.getByTitle("Show diagram"));
+    expect(screen.getByRole("heading", { name: "Workflow overview" })).toBeInTheDocument();
+    expect(screen.getByText(/1 enabled step in 1 execution wave/)).toBeInTheDocument();
+    expect(screen.getByText(/up to 1 provider call before retries/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Technical" })).toBeInTheDocument();
+  });
+
+  it("represents Auto Review as a combined orientation call and two adaptive slots", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <WaveDiagram
+        steps={[
+          step({ id: "auto_contribution", label: "Contribution & Literature" }),
+          step({ id: "auto_consistency", label: "Claims & Consistency" }),
+          step({ id: "auto_exposition", label: "Exposition & Architecture" }),
+          step({ id: "auto_synthesis", label: "Consolidate Auto Review", phase: "sequential" }),
+        ]}
+        merge={merge}
+        useOrientation={true}
+        adaptiveReview={true}
+        selectedId={null}
+        onSelect={onSelect}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Orient + classify" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Subject specialists (1–2)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Method specialists (1–4)" })).toBeInTheDocument();
+    expect(screen.getByText(/4 saved steps plus 2–6 auto-selected specialists/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Method specialists (1–4)" }));
+    expect(onSelect).toHaveBeenLastCalledWith("auto_method_slot");
   });
 });

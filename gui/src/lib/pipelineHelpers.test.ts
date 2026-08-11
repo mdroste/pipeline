@@ -3,7 +3,6 @@ import {
   computeWaves,
   findUnknownPlaceholders,
   placeholdersFor,
-  reorderSteps,
 } from "./pipelineHelpers";
 import type { StepConfig } from "./types";
 
@@ -119,24 +118,5 @@ describe("placeholdersFor", () => {
     }).map((p) => p.token);
     expect(tokens).toContain("{prior_outputs}");
     expect(tokens).toContain("{step:empirical}");
-  });
-});
-
-describe("reorderSteps", () => {
-  const steps = [step({ id: "a" }), step({ id: "b" }), step({ id: "c" })];
-
-  it("moves a step and applies the target phase", () => {
-    const next = reorderSteps(steps, 0, 2, "sequential");
-    expect(next.map((s) => s.id)).toEqual(["b", "c", "a"]);
-    expect(next[2].phase).toBe("sequential");
-  });
-
-  it("clamps out-of-range destinations and rejects invalid sources", () => {
-    expect(reorderSteps(steps, 1, 99, "parallel").map((s) => s.id)).toEqual([
-      "a",
-      "c",
-      "b",
-    ]);
-    expect(reorderSteps(steps, -1, 0, "parallel")).toBe(steps);
   });
 });

@@ -362,7 +362,7 @@ Await the relevant state transitions with `act`, `findBy*`, or `waitFor`; explic
 | `cargo +1.88.0 check --locked --all-targets --all-features` | **Pass** — declared MSRV |
 | `cargo fmt --all -- --check` | **Pass** |
 | `cargo clippy --locked --all-targets --all-features -- -D warnings` | **Pass** — SOL-01 regression closed |
-| `npm run test:release` | **Pass** — 57 release-script tests and identity validation for Pipeline 1.0.1 |
+| `npm run test:release` | **Pass** — 57 release-script tests and identity validation for Pipeline 0.9.0 |
 | `npm run prepare:release-resources` | **Pass** — generated notices and a 1,442-component CycloneDX SBOM |
 | Generated optional-runtime SBOM evidence | **Pass** — 95 PyPI components, 95 wheel hashes, no missing licenses, PP-DocLayoutV3 present, and 98 parser license entries including CPython, uv, and the model |
 | `python3 scripts/release/test-paddle-parser-sidecar.py` | **Pass** — ordinary-CI parser contract |

@@ -132,4 +132,54 @@ describe("IssuesTable annotation lifecycle", () => {
     );
     expect(invoke).not.toHaveBeenCalled();
   });
+
+  it("opens an evidence-linked page from an expanded issue", async () => {
+    const onOpenEvidence = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <IssuesTable
+        issues={[{
+          ...issues[0],
+          evidence: [{ page: 7, nodeId: "paragraph-12", description: "Identification claim" }],
+        }]}
+        runId=""
+        onOpenEvidence={onOpenEvidence}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /^First issue/i }));
+    await user.click(screen.getByRole("button", { name: "View Page 7 evidence" }));
+    expect(onOpenEvidence).toHaveBeenCalledWith({
+      page: 7,
+      nodeId: "paragraph-12",
+      description: "Identification claim",
+    });
+  });
+
+  it("retains concrete evidence identifiers in accepted-issue exports", async () => {
+    save.mockResolvedValueOnce("/tmp/accepted.md");
+    const user = userEvent.setup();
+    render(
+      <IssuesTable
+        issues={[{
+          ...issues[0],
+          evidence: [{
+            page: 7,
+            nodeId: "paragraph-12",
+            artifactPath: "artifacts/pages/page-7.png",
+            description: "Identification claim",
+          }],
+        }]}
+        runId=""
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "accept issue: First issue" }));
+    await user.click(screen.getByRole("button", { name: "Export accepted" }));
+
+    expect(invoke).toHaveBeenCalledWith("save_text_file", {
+      path: "/tmp/accepted.md",
+      content: expect.stringContaining(
+        "p. 7, node paragraph-12, artifact artifacts/pages/page-7.png — Identification claim",
+      ),
+    });
+  });
 });

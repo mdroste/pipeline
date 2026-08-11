@@ -104,6 +104,40 @@ pub struct ExtractionQualityNote {
     pub description: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReviewSelectionNote {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+/// Optional adaptive-review routing data produced by Paper Review (Auto).
+/// It remains part of the raw orientation artifact; this typed view exists for
+/// human-facing rendering, provenance, and host-owned workflow materialization.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReviewPlan {
+    #[serde(default)]
+    pub primary_domain: String,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub paper_forms: Vec<String>,
+    #[serde(default)]
+    pub methods: Vec<String>,
+    #[serde(default)]
+    pub subject_specialist_ids: Vec<String>,
+    /// Legacy Auto Review v1 field selection, retained for saved reports.
+    #[serde(default)]
+    pub field_specialist_id: String,
+    #[serde(default)]
+    pub method_specialist_ids: Vec<String>,
+    #[serde(default)]
+    pub selection_notes: Vec<ReviewSelectionNote>,
+    #[serde(default)]
+    pub routing_uncertainty: Vec<String>,
+}
+
 /// Typed *paper-review view* of a survey JSON. The survey itself is stored as
 /// raw `serde_json::Value` (any schema a profile's survey prompt produces);
 /// this struct is only how the built-in paper profiles interpret it for
@@ -128,6 +162,8 @@ pub struct OrientationMap {
     pub key_references: Vec<String>,
     #[serde(default)]
     pub extraction_quality_notes: Vec<ExtractionQualityNote>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_plan: Option<ReviewPlan>,
 }
 
 impl OrientationMap {
@@ -165,6 +201,7 @@ impl OrientationMap {
             stated_contribution: String::new(),
             key_references: vec![],
             extraction_quality_notes: vec![],
+            review_plan: None,
         }
     }
 }
@@ -555,6 +592,7 @@ mod tests {
             stated_contribution: String::new(),
             key_references: vec![],
             extraction_quality_notes: vec![],
+            review_plan: None,
         }
     }
 

@@ -358,7 +358,7 @@ describe("SettingsPage", () => {
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Marker is unavailable in Pipeline 1.0.1",
+      "Marker is unavailable in Pipeline 0.9.0",
     );
     expect(
       screen.queryByRole("radio", { name: /marker-pdf/i }),

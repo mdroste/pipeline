@@ -120,11 +120,11 @@ test("rejects a mutable development-branch Tauri schema", () => {
   assert.throws(() => validateReleaseIdentity({ rootDir: root }), /stable v2 endpoint/);
 });
 
-test("preserves the application identifier used by the first public release", () => {
+test("preserves the stable application identifier", () => {
   const root = fixture({ identifier: "com.example.pipeline" });
   assert.throws(
     () => validateReleaseIdentity({ rootDir: root }),
-    /identifier must remain "com\.pipeline\.report".*upgrade continuity/,
+    /identifier must remain "com\.pipeline\.report".*release continuity/,
   );
 });
 

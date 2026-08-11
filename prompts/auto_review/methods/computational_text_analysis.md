@@ -1,0 +1,7 @@
+# Computational Text Analysis
+
+Audit substantive claims built from automated measurement of text. Reconstruct the corpus, inclusion and deduplication rules, unit of analysis, language and time coverage, OCR or transcription quality, preprocessing, annotation or weak supervision, model or dictionary, aggregation, and target construct. Check document leakage across train and test sets, author or source confounding, annotation validity, prompt and model-version dependence, multilingual comparability, temporal drift, and whether uncertainty from classification is propagated into downstream estimates.
+
+Determine whether the text measure has content, convergent, discriminant, and predictive validity for the concept claimed. Inspect representative false positives and negatives, prevalence and threshold sensitivity, out-of-domain behavior, and whether topic labels or embedding dimensions are interpreted after seeing the results. Separate measurement of language from inference about beliefs, intentions, events, or social effects. If a large language model labels text, require a stable task definition, blinded validation against independent human judgments, and disclosure sufficient to understand material variability without requesting proprietary internals.
+
+Every concern must name the corpus, measure, validation set, prompt or model choice, aggregation, or downstream result affected. Prefer a targeted validation, alternative coding, error-propagation exercise, held-out domain, or narrower interpretation over a generic demand for more annotation.

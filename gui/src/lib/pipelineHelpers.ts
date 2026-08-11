@@ -2,7 +2,7 @@
 // Kept separate from PipelinePage.tsx so the rules can be unit-tested or reused
 // by future UI surfaces (e.g. a step-test runner) without lifting the whole page.
 
-import type { Phase, StepConfig } from "./types";
+import type { StepConfig } from "./types";
 
 // ── Placeholder catalog ─────────────────────────────────────────────
 
@@ -205,28 +205,4 @@ export interface ExecutionPlanStage {
   label: string;
   stepIds: string[];
   stepLabels?: string[];
-}
-
-// ── Drag-drop helpers ───────────────────────────────────────────────
-
-/**
- * Compute the new step list after a drag-drop. `fromIdx` is the original
- * position of the dragged step; `toIdx` is the index it should occupy
- * AFTER removal of the source. `targetPhase` lets the drop site override
- * the dragged step's phase (e.g. when crossing the parallel/sequential
- * section boundary).
- */
-export function reorderSteps(
-  steps: StepConfig[],
-  fromIdx: number,
-  toIdx: number,
-  targetPhase: Phase,
-): StepConfig[] {
-  if (fromIdx < 0 || fromIdx >= steps.length) return steps;
-  const next = steps.slice();
-  const [moved] = next.splice(fromIdx, 1);
-  const adjusted = { ...moved, phase: targetPhase };
-  const clampedTo = Math.max(0, Math.min(toIdx, next.length));
-  next.splice(clampedTo, 0, adjusted);
-  return next;
 }

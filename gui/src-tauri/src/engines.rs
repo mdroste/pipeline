@@ -19,7 +19,6 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use tauri::{AppHandle, Emitter};
 
 // ── Pinned PaddleOCR-VL native stack ───────────────────────────────
 
@@ -599,6 +598,16 @@ fn symlink_target_bytes(path: &Path) -> Result<Vec<u8>, String> {
     }
 }
 
+fn ignorable_integrity_metadata(path: &Path, metadata: &std::fs::Metadata) -> bool {
+    // Finder may create this inert metadata file after the user opens
+    // ~/.pipeline/ from Settings. It is not part of the executable runtime
+    // closure, so exclude it while continuing to reject every other unlisted
+    // file, symlink, or filesystem object.
+    metadata.is_file()
+        && !metadata.file_type().is_symlink()
+        && path.file_name() == Some(std::ffi::OsStr::new(".DS_Store"))
+}
+
 fn collect_integrity_entries(root: &Path, scopes: &[&str]) -> Result<Vec<IntegrityEntry>, String> {
     let mut stack = scopes
         .iter()
@@ -613,6 +622,9 @@ fn collect_integrity_entries(root: &Path, scopes: &[&str]) -> Result<Vec<Integri
                 path.display()
             )
         })?;
+        if ignorable_integrity_metadata(&path, &metadata) {
+            continue;
+        }
         if metadata.is_dir() {
             let mut children = std::fs::read_dir(&path)
                 .map_err(|error| format!("Failed to inspect managed runtime: {error}"))?
@@ -689,6 +701,9 @@ fn collect_integrity_paths(root: &Path, scopes: &[String]) -> Result<Vec<String>
     while let Some(path) = stack.pop() {
         let metadata = std::fs::symlink_metadata(&path)
             .map_err(|error| format!("Managed runtime integrity inventory changed: {error}"))?;
+        if ignorable_integrity_metadata(&path, &metadata) {
+            continue;
+        }
         if metadata.is_dir() {
             let mut children = std::fs::read_dir(&path)
                 .map_err(|error| format!("Failed to inspect managed runtime: {error}"))?
@@ -2047,16 +2062,16 @@ fn kill_install_child() {
     }
 }
 
-fn log(app: &AppHandle, line: impl Into<String>) {
+fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
     let line = line.into();
     record_install_log(&line);
-    app.emit("engines:log", serde_json::json!({ "line": line }))
+    app.emit_event("engines:log", serde_json::json!({ "line": line }))
         .ok();
 }
 
-fn emit_phase(app: &AppHandle, engine_id: &str, phase: &str, status: &str) {
+fn emit_phase(app: &crate::emit::EventBus, engine_id: &str, phase: &str, status: &str) {
     record_install_phase(engine_id, phase, status);
-    app.emit(
+    app.emit_event(
         "engines:phase",
         serde_json::json!({ "engine": engine_id, "phase": phase, "status": status }),
     )
@@ -2081,7 +2096,7 @@ where
 }
 
 async fn download_verified(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     url: &str,
     destination: &Path,
     expected_sha256: &str,
@@ -2714,7 +2729,7 @@ fn uv_env() -> Result<Vec<(String, String)>, String> {
     ])
 }
 
-async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
+async fn ensure_uv(app: &crate::emit::EventBus) -> Result<PathBuf, String> {
     let uv_path = uv_binary_path()?;
     let artifact = uv_artifact()?;
     if uv_path.is_file() {
@@ -2962,7 +2977,7 @@ fn unregister_install_pid(pid: u32) {
 }
 
 async fn run_install_step(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     program: &Path,
     args: &[String],
     environment: &[(String, String)],
@@ -3073,7 +3088,10 @@ async fn run_install_step(
     Ok(())
 }
 
-async fn install_paddle_engine(app: &AppHandle, spec: &EngineSpec) -> Result<(), String> {
+async fn install_paddle_engine(
+    app: &crate::emit::EventBus,
+    spec: &EngineSpec,
+) -> Result<(), String> {
     let artifact = llama_artifact()?;
     let native_dir = pipeline_home()?.join("native");
     std::fs::create_dir_all(&native_dir)
@@ -3224,7 +3242,10 @@ async fn install_paddle_engine(app: &AppHandle, spec: &EngineSpec) -> Result<(),
     Ok(())
 }
 
-async fn install_paddle_full_parser(app: &AppHandle, spec: &EngineSpec) -> Result<(), String> {
+async fn install_paddle_full_parser(
+    app: &crate::emit::EventBus,
+    spec: &EngineSpec,
+) -> Result<(), String> {
     full_parser_support()?;
     let python_artifact = python_artifact()?;
 
@@ -3526,7 +3547,7 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
 
 /// Install a registered native engine. Unknown and retired engine IDs are
 /// rejected before any download or subprocess can begin.
-pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
+pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Result<(), String> {
     if engine_id != "paddleocr-vl-parser" {
         return Err(format!("Unknown engine '{engine_id}'"));
     }
@@ -3592,7 +3613,7 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
 
 /// Uninstall a registered native engine. Retired engine IDs are intentionally
 /// rejected; Pipeline never executes their package managers or entry points.
-pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
+pub async fn uninstall_engine(app: &crate::emit::EventBus, engine_id: &str) -> Result<(), String> {
     if engine_id != "paddleocr-vl-parser" {
         return Err(format!("Unknown engine '{engine_id}'"));
     }
@@ -3616,7 +3637,7 @@ pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), St
 
 /// Remove only the retired app-managed Marker venv and its known launch
 /// shims. Model/cache directories and every run artifact remain untouched.
-pub async fn remove_retired_marker(app: &AppHandle) -> Result<(), String> {
+pub async fn remove_retired_marker(app: &crate::emit::EventBus) -> Result<(), String> {
     let _guard = acquire_install_guard()?;
     INSTALL_CANCEL.store(false, Ordering::Release);
     let paths = retired_marker_paths()?;
@@ -4116,6 +4137,9 @@ mod tests {
         std::fs::create_dir_all(&runtime).unwrap();
         let program = runtime.join("program");
         std::fs::write(&program, b"trusted").unwrap();
+        // Opening ~/.pipeline/ in Finder may add this inert metadata file.
+        // It must neither enter nor invalidate the executable inventory.
+        std::fs::write(runtime.join(".DS_Store"), b"finder metadata").unwrap();
         let expected_file_sha256 = format!("{:x}", Sha256::digest(b"trusted"));
         let manifest_sha256 = write_install_integrity(root.path(), &["runtime"]).unwrap();
         verify_install_integrity(
