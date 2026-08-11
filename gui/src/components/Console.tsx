@@ -11,6 +11,7 @@ type LevelFilter = "all" | "warn" | "error";
 const DEFAULT_CONSOLE_HEIGHT = 192;
 const MIN_CONSOLE_HEIGHT = 96;
 const CONSOLE_VIEWPORT_MARGIN = 96;
+const MAX_RENDERED_LOG_LINES = 600;
 
 function maxConsoleHeight(): number {
   return Math.max(MIN_CONSOLE_HEIGHT, window.innerHeight - CONSOLE_VIEWPORT_MARGIN);
@@ -268,6 +269,7 @@ export default function Console({ logs, usage }: Props) {
   const [copied, setCopied] = useState(false);
   // Auto-follow the tail unless the user scrolls up.
   const [follow, setFollow] = useState(true);
+  const [showFirstError, setShowFirstError] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -322,8 +324,10 @@ export default function Console({ logs, usage }: Props) {
     setHeight(clampConsoleHeight(next));
   }, [height]);
 
-  // Group console lines by headless session for the per-session selector.
-  const sessions = useMemo(() => {
+  // Build the session summary and global error count in one pass. This runs
+  // whenever the buffered log snapshot changes, so avoid separate full-log
+  // scans for header metadata.
+  const { sessions, errorCount } = useMemo(() => {
     const map = new Map<
       number,
       {
@@ -334,7 +338,9 @@ export default function Console({ logs, usage }: Props) {
         request?: LlmRequestDetails;
       }
     >();
+    let errors = 0;
     for (const e of logs) {
+      if (isError(e)) errors++;
       if (e.session == null) continue;
       let s = map.get(e.session);
       if (!s) {
@@ -346,7 +352,10 @@ export default function Console({ logs, usage }: Props) {
       if (isError(e)) s.hasError = true;
       if (e.request) s.request = e.request;
     }
-    return Array.from(map.values()).sort((a, b) => a.id - b.id);
+    return {
+      sessions: Array.from(map.values()).sort((a, b) => a.id - b.id),
+      errorCount: errors,
+    };
   }, [logs]);
 
   // A stale selection (previous run's session id) falls back to the master view.
@@ -370,29 +379,51 @@ export default function Console({ logs, usage }: Props) {
     });
   }, [logs, activeSession, level, needle]);
 
-  const errorCount = useMemo(() => logs.filter(isError).length, [logs]);
+  const renderedLogs = useMemo(() => {
+    if (visibleLogs.length <= MAX_RENDERED_LOG_LINES) return visibleLogs;
+    if (showFirstError) {
+      const firstError = visibleLogs.findIndex(isError);
+      if (firstError >= 0) {
+        const start = Math.min(
+          firstError,
+          visibleLogs.length - MAX_RENDERED_LOG_LINES,
+        );
+        return visibleLogs.slice(start, start + MAX_RENDERED_LOG_LINES);
+      }
+    }
+    return visibleLogs.slice(-MAX_RENDERED_LOG_LINES);
+  }, [showFirstError, visibleLogs]);
+
+  useEffect(() => {
+    setShowFirstError(false);
+  }, [activeSession, level, needle]);
 
   // Auto-scroll to the tail when following; disabled once the user scrolls up.
   useEffect(() => {
-    if (open && follow) endRef.current?.scrollIntoView?.({ behavior: "smooth" });
-  }, [visibleLogs, open, follow]);
+    const element = scrollRef.current;
+    if (open && follow && element) element.scrollTop = element.scrollHeight;
+  }, [renderedLogs, open, follow]);
+
+  useEffect(() => {
+    if (!showFirstError) return;
+    scrollRef.current
+      ?.querySelector<HTMLElement>("[data-error='1']")
+      ?.scrollIntoView?.({ block: "center" });
+  }, [renderedLogs, showFirstError]);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
     setFollow(atBottom);
+    if (atBottom) setShowFirstError(false);
   }, []);
 
   const jumpToFirstError = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const first = el.querySelector<HTMLElement>("[data-error='1']");
-    if (first) {
-      setFollow(false);
-      first.scrollIntoView?.({ behavior: "smooth", block: "center" });
-    }
-  }, []);
+    if (!visibleLogs.some(isError)) return;
+    setFollow(false);
+    setShowFirstError(true);
+  }, [visibleLogs]);
 
   const visibleText = useCallback(
     () =>
@@ -606,7 +637,15 @@ export default function Console({ logs, usage }: Props) {
             />
           )}
           <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
-            {visibleLogs.map((entry, i) => (
+            {visibleLogs.length > renderedLogs.length && (
+              <div
+                role="status"
+                className="mb-1 text-gray-400 dark:text-gray-600"
+              >
+                Showing {renderedLogs.length} of {visibleLogs.length} matching lines. Copy includes all.
+              </div>
+            )}
+            {renderedLogs.map((entry, i) => (
               <div
                 key={i}
                 data-error={isError(entry) ? "1" : undefined}
@@ -629,7 +668,10 @@ export default function Console({ logs, usage }: Props) {
           </pre>
           {!follow && (
             <button
-              onClick={() => setFollow(true)}
+              onClick={() => {
+                setShowFirstError(false);
+                setFollow(true);
+              }}
               className="sticky bottom-2 left-1/2 float-right mr-2 -translate-x-1/2 rounded-full border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700 shadow-lg transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
               title="Resume following the log tail"
             >

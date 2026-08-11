@@ -100,7 +100,7 @@ export function validateReleaseIdentity({ rootDir = REPO_ROOT, tag, existingTags
   }
   if (tauriConfig.identifier !== STABLE_APP_IDENTIFIER) {
     throw new Error(
-      `Tauri identifier must remain ${JSON.stringify(STABLE_APP_IDENTIFIER)} for v1.0.0 upgrade continuity, got ${JSON.stringify(tauriConfig.identifier)}`,
+      `Tauri identifier must remain ${JSON.stringify(STABLE_APP_IDENTIFIER)} for release continuity, got ${JSON.stringify(tauriConfig.identifier)}`,
     );
   }
   const mainWindow = tauriConfig.app?.windows?.[0];

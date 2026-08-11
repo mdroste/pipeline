@@ -599,7 +599,7 @@ pub struct ExecutionPlanStage {
 /// as a source tree must not be described as a document bundle.
 pub fn input_processing_label(input_interpretation: &str) -> &'static str {
     match input_interpretation.trim() {
-        "source_tree" => "Creating source-tree inventory",
+        "folder" | "source_tree" => "Creating source-tree inventory",
         "none" => "Preparing workflow context",
         _ => "Creating document bundle",
     }
@@ -620,7 +620,12 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
         plan.push(ExecutionPlanStage {
             id: "orienting".to_string(),
             kind: "orienting".to_string(),
-            label: "Creating orientation map".to_string(),
+            label: if crate::auto_review::uses_auto_review_contract(config) {
+                "Creating orientation map & review plan"
+            } else {
+                "Creating orientation map"
+            }
+            .to_string(),
             step_ids: Vec::new(),
             step_labels: Vec::new(),
         });
@@ -662,10 +667,7 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
                 kind: "dispatching".to_string(),
                 label: "Parallel agent wave".to_string(),
                 step_ids: wave_steps.iter().map(|step| step.id.clone()).collect(),
-                step_labels: wave_steps
-                    .iter()
-                    .map(|step| step.label.clone())
-                    .collect(),
+                step_labels: wave_steps.iter().map(|step| step.label.clone()).collect(),
             });
             let merged_step_ids = wave_steps
                 .iter()
@@ -747,6 +749,70 @@ pub async fn execute_steps(
     let shared_context_pool = super::context_cache::PreparedContextPool::default();
     let mut all_outputs: Vec<StepOutput> = Vec::new();
     let mut failed_steps: Vec<StepFailure> = Vec::new();
+
+    if let Some(plan) = orientation_value
+        .pointer("/review_plan")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<crate::models::ReviewPlan>(value).ok())
+    {
+        let subject_ids = if plan.subject_specialist_ids.is_empty() {
+            std::iter::once(plan.field_specialist_id.as_str())
+                .filter(|id| !id.is_empty())
+                .collect::<Vec<_>>()
+        } else {
+            plan.subject_specialist_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        };
+        let method_ids = plan
+            .method_specialist_ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        let subject_labels = subject_ids
+            .iter()
+            .map(|id| crate::auto_review::label_for(id).unwrap_or(id).to_string())
+            .collect::<Vec<_>>();
+        let method_labels = method_ids
+            .iter()
+            .map(|id| crate::auto_review::label_for(id).unwrap_or(id).to_string())
+            .collect::<Vec<_>>();
+        let ids = subject_ids
+            .iter()
+            .chain(method_ids.iter())
+            .copied()
+            .collect::<Vec<_>>();
+        let labels = ids
+            .iter()
+            .map(|id| crate::auto_review::label_for(id).unwrap_or(id).to_string())
+            .collect::<Vec<_>>();
+        let _ = app.emit_event(
+            "pipeline:routing",
+            serde_json::json!({
+                "primaryDomain": plan.primary_domain,
+                "subject": plan.subject,
+                "subjectIds": subject_ids,
+                "subjectLabels": subject_labels,
+                "methodIds": method_ids,
+                "methodLabels": method_labels,
+                "specialistIds": ids,
+                "specialistLabels": labels,
+            }),
+        );
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({
+                "line": format!(
+                    "Auto review detected {} / {}; selected {}",
+                    plan.primary_domain,
+                    plan.subject,
+                    labels.join(", ")
+                )
+            }),
+        );
+    }
 
     let enabled: Vec<&StepConfig> = config.steps.iter().filter(|s| s.enabled).collect();
     let deps = resolve_dependencies(&enabled);
@@ -913,6 +979,7 @@ pub async fn execute_steps(
                         wave_outputs.clone(),
                         &config.merge,
                         &semaphore,
+                        write_dir,
                         settings,
                     )
                     .await
@@ -1413,6 +1480,9 @@ struct StepCallRequest<'a> {
     agent: Option<&'a str>,
     cwd: Option<&'a str>,
     read_dirs: &'a [String],
+    /// Host-owned run `artifacts/` root used for response journaling. This is
+    /// deliberately broader than, and never granted as, the model write root.
+    run_artifact_dir: Option<&'a str>,
     write_dir: Option<&'a str>,
     report_rel: &'a str,
     report_nonce: &'a str,
@@ -1432,6 +1502,55 @@ struct StepCallResult {
     attempt_count: u32,
 }
 
+async fn capture_response(
+    request: &StepCallRequest<'_>,
+    attempt: u32,
+    source: &str,
+    text: &str,
+) -> Option<super::response_journal::CapturedAttempt> {
+    match super::response_journal::capture(
+        request.run_artifact_dir,
+        request.pass_key,
+        attempt,
+        source,
+        text,
+    )
+    .await
+    {
+        Ok(capture) => capture,
+        Err(error) => {
+            let _ = request.app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "WARNING: could not preserve {} response attempt {}: {error}",
+                    request.log_label, attempt,
+                )}),
+            );
+            None
+        }
+    }
+}
+
+async fn finish_response_capture(
+    request: &StepCallRequest<'_>,
+    capture: Option<super::response_journal::CapturedAttempt>,
+    status: super::response_journal::AttemptStatus,
+    reason: &str,
+) {
+    let Some(capture) = capture else {
+        return;
+    };
+    if let Err(error) = capture.finish(status, reason).await {
+        let _ = request.app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": format!(
+                "WARNING: could not classify a preserved response for {}: {error}",
+                request.log_label,
+            )}),
+        );
+    }
+}
+
 /// Execute one logical step call, including retries, report-file handoff, and
 /// structured-output validation. Scheduling and terminal pass events remain
 /// with the parallel/sequential callers.
@@ -1443,6 +1562,7 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
     let mut total_usage = crate::pipeline::logging::CallUsage::default();
 
     for attempt in 0..=max_retries {
+        let attempt_number = attempt.saturating_add(1);
         if let Some(error) = cancellation_error(request.pass_key) {
             return Err(error);
         }
@@ -1504,15 +1624,59 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
         total_duration_secs = total_duration_secs.saturating_add(call.duration_secs);
         total_usage.add_usage(call.usage);
 
+        let compatibility_file = ingest_report_file(request.write_dir, request.report_rel).await;
+        // Preserve provider-returned text before interpreting it. A malformed
+        // envelope or schema can reject control-plane use without erasing the
+        // report a reader may still want to inspect.
+        let mut terminal_capture = match call.output.as_ref() {
+            Ok(stdout) => capture_response(&request, attempt_number, "terminal", stdout).await,
+            Err(_) => None,
+        };
+        let mut file_capture = match compatibility_file.as_deref() {
+            Some(report_file) => {
+                capture_response(&request, attempt_number, "compatibility-file", report_file).await
+            }
+            None => None,
+        };
+
         if let Some(error) = cancellation_error(request.pass_key) {
+            finish_response_capture(
+                &request,
+                terminal_capture.take(),
+                super::response_journal::AttemptStatus::Ignored,
+                &error,
+            )
+            .await;
+            finish_response_capture(
+                &request,
+                file_capture.take(),
+                super::response_journal::AttemptStatus::Ignored,
+                &error,
+            )
+            .await;
             return Err(error);
         }
 
-        let compatibility_file = ingest_report_file(request.write_dir, request.report_rel).await;
-        let text = match call.output {
+        let (text, mut accepted_capture) = match call.output {
             Ok(stdout) => match extract_report_envelope(&stdout, request.report_nonce) {
-                Ok(report) => report,
+                Ok(report) => {
+                    finish_response_capture(
+                        &request,
+                        file_capture.take(),
+                        super::response_journal::AttemptStatus::Ignored,
+                        "The validated terminal response was selected instead.",
+                    )
+                    .await;
+                    (report, terminal_capture.take())
+                }
                 Err(stdout_error) => {
+                    finish_response_capture(
+                        &request,
+                        terminal_capture.take(),
+                        super::response_journal::AttemptStatus::RejectedEnvelope,
+                        &stdout_error,
+                    )
+                    .await;
                     if let Some(report_file) = compatibility_file {
                         match extract_report_envelope(&report_file, request.report_nonce) {
                             Ok(report) => {
@@ -1523,9 +1687,16 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                                         request.log_label,
                                     )}),
                                 );
-                                report
+                                (report, file_capture.take())
                             }
                             Err(file_error) => {
+                                finish_response_capture(
+                                    &request,
+                                    file_capture.take(),
+                                    super::response_journal::AttemptStatus::RejectedEnvelope,
+                                    &file_error,
+                                )
+                                .await;
                                 last_error = format!(
                                     "invalid terminal report ({stdout_error}); compatibility report file was also invalid ({file_error})"
                                 );
@@ -1540,24 +1711,40 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             },
             Err(error) => {
                 if is_cancellation_error(&error) {
+                    finish_response_capture(
+                        &request,
+                        file_capture.take(),
+                        super::response_journal::AttemptStatus::Ignored,
+                        &error,
+                    )
+                    .await;
                     return Err(error);
                 }
                 if let Some(report_file) = compatibility_file {
-                    if let Ok(report) = extract_report_envelope(&report_file, request.report_nonce)
-                    {
-                        let _ = request.app.emit_event(
-                            "pipeline:log",
-                            serde_json::json!({ "line": format!(
-                                "{}: call reported an error but wrote a complete validated compatibility report; using it. ({error})",
-                                request.log_label,
-                            )}),
-                        );
-                        report
-                    } else {
-                        last_error = format!(
-                            "{error}; compatibility report file did not contain a complete validated report"
-                        );
-                        continue;
+                    match extract_report_envelope(&report_file, request.report_nonce) {
+                        Ok(report) => {
+                            let _ = request.app.emit_event(
+                                "pipeline:log",
+                                serde_json::json!({ "line": format!(
+                                    "{}: call reported an error but wrote a complete validated compatibility report; using it. ({error})",
+                                    request.log_label,
+                                )}),
+                            );
+                            (report, file_capture.take())
+                        }
+                        Err(file_error) => {
+                            finish_response_capture(
+                                &request,
+                                file_capture.take(),
+                                super::response_journal::AttemptStatus::RejectedEnvelope,
+                                &file_error,
+                            )
+                            .await;
+                            last_error = format!(
+                                "{error}; compatibility report file did not contain a complete validated report ({file_error})"
+                            );
+                            continue;
+                        }
                     }
                 } else {
                     last_error = error;
@@ -1569,6 +1756,13 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
 
         if let Some(schema) = request.output_schema {
             if let Err(reason) = crate::pipeline::structured::check(schema, &text) {
+                finish_response_capture(
+                    &request,
+                    accepted_capture.take(),
+                    super::response_journal::AttemptStatus::RejectedSchema,
+                    &reason,
+                )
+                .await;
                 last_error = if attempt < max_retries {
                     format!("output did not satisfy schema: {reason}")
                 } else {
@@ -1577,6 +1771,18 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                 continue;
             }
         }
+
+        finish_response_capture(
+            &request,
+            accepted_capture.take(),
+            super::response_journal::AttemptStatus::Accepted,
+            if request.output_schema.is_some() {
+                "Validated report boundaries and output schema."
+            } else {
+                "Validated report boundaries."
+            },
+        )
+        .await;
 
         return Ok(StepCallResult {
             text,
@@ -1985,6 +2191,7 @@ async fn run_parallel_wave(
                 orientation_value,
                 shared_context_pool,
             )?;
+            let run_artifact_dir = write_dir.map(str::to_string);
             let task_write_dir = step_write_dir(write_dir, &step_key)?;
             let tools = tools_with_write(
                 &step.tools,
@@ -2146,6 +2353,7 @@ async fn run_parallel_wave(
                     agent: Some(&agent_name),
                     cwd: task_cwd.as_deref(),
                     read_dirs: &task_read_dirs,
+                    run_artifact_dir: run_artifact_dir.as_deref(),
                     write_dir: task_write_dir.as_deref(),
                     report_rel: &report_rel,
                     report_nonce: &report_nonce,
@@ -2263,7 +2471,11 @@ fn expand_template(
 
     let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
     let mut prior_text = String::new();
-    for (index, output) in prior_outputs.iter().enumerate() {
+    for (index, output) in prior_outputs
+        .iter()
+        .filter(|output| !output.skipped)
+        .enumerate()
+    {
         if index > 0 {
             crate::safety::push_str_limited(
                 &mut prior_text,
@@ -2289,7 +2501,9 @@ fn expand_template(
     }
 
     let last_output_text = prior_outputs
-        .last()
+        .iter()
+        .rev()
+        .find(|output| !output.skipped)
         .map(|o| o.raw_text.as_str())
         .unwrap_or("(not yet generated)");
 
@@ -2566,6 +2780,7 @@ async fn run_sequential_step(
         agent,
         cwd: source_dir.as_deref(),
         read_dirs: &artifacts.read_dirs,
+        run_artifact_dir: write_dir,
         write_dir: task_write_dir.as_deref(),
         report_rel,
         report_nonce: &report_nonce,
@@ -2621,6 +2836,27 @@ mod tests {
     }
 
     #[test]
+    fn input_processing_label_matches_the_declared_input_meaning() {
+        assert_eq!(
+            input_processing_label("document"),
+            "Creating document bundle"
+        );
+        assert_eq!(
+            input_processing_label("latex_project"),
+            "Creating document bundle"
+        );
+        assert_eq!(
+            input_processing_label("folder"),
+            "Creating source-tree inventory"
+        );
+        assert_eq!(
+            input_processing_label("source_tree"),
+            "Creating source-tree inventory"
+        );
+        assert_eq!(input_processing_label("none"), "Preparing workflow context");
+    }
+
+    #[test]
     fn execution_plan_uses_the_runtime_readiness_scheduler() {
         let mut first = make_step("first", Phase::Parallel);
         first.agents = vec!["claude".into(), "codex".into()];
@@ -2634,6 +2870,7 @@ mod tests {
             pointer: "/paper/type".into(),
             equals: Some(serde_json::json!("theory")),
             exists: None,
+            contains: None,
         });
         let mut disabled = make_step("disabled", Phase::Sequential);
         disabled.enabled = false;
@@ -2643,6 +2880,7 @@ mod tests {
             context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: Default::default(),
             parallel_context_template: String::new(),
             variables: Vec::new(),
@@ -2664,12 +2902,22 @@ mod tests {
             ]
         );
         assert_eq!(plan[2].step_ids, vec!["first", "second"]);
+        assert_eq!(plan[2].label, "Parallel agent wave");
+        assert_eq!(plan[2].step_labels, vec!["first", "second"]);
         assert_eq!(plan[3].step_ids, vec!["first"]);
-        assert_eq!(plan[4].label, "Synthesize evidence");
+        assert_eq!(plan[4].label, "Sequential agent wave");
+        assert_eq!(plan[4].step_labels, vec!["Synthesize evidence"]);
         assert_eq!(plan[5].step_ids, vec!["follow-up"]);
         assert!(plan
             .iter()
             .all(|stage| !stage.step_ids.contains(&"disabled".to_string())));
+
+        let mut auto_config = config;
+        auto_config.orientation_schema = Some(serde_json::json!({
+            "x-pipeline-contract": crate::auto_review::AUTO_REVIEW_CONTRACT
+        }));
+        let auto_plan = execution_plan(&auto_config).unwrap();
+        assert_eq!(auto_plan[1].label, "Creating orientation map & review plan");
     }
 
     #[test]
@@ -2693,6 +2941,7 @@ mod tests {
             context_cache: Default::default(),
             use_orientation: false,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: Default::default(),
             parallel_context_template: String::new(),
             variables: Vec::new(),
@@ -2750,6 +2999,9 @@ mod tests {
         );
         assert_eq!(stages[1]["skipped"], true);
         assert!(stages.iter().all(|payload| payload["stepIds"].is_array()));
+        assert!(stages
+            .iter()
+            .all(|payload| payload["stepLabels"].is_array()));
     }
 
     #[test]
@@ -3155,6 +3407,7 @@ mod tests {
             context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: Default::default(),
             parallel_context_template: String::new(),
             variables: Vec::new(),
@@ -3543,6 +3796,39 @@ mod tests {
             expand_template(template, "", "", &prior, "/paper.txt", "", "/source.tex").unwrap();
         assert!(result.contains("## S1"));
         assert!(result.contains("text | text"));
+    }
+
+    #[test]
+    fn aggregate_placeholders_omit_skipped_reports_but_named_refs_keep_them() {
+        let prior = vec![
+            StepOutput {
+                step_id: "selected".into(),
+                step_label: "Selected".into(),
+                raw_text: "useful finding".into(),
+                ..Default::default()
+            },
+            StepOutput {
+                step_id: "not_selected".into(),
+                step_label: "Not Selected".into(),
+                raw_text: "_(skipped: run_if condition not met)_".into(),
+                skipped: true,
+                ..Default::default()
+            },
+        ];
+        let result = expand_template(
+            "{prior_outputs}\nLAST={last_output}\nEXPLICIT={step:not_selected}",
+            "",
+            "",
+            &prior,
+            "",
+            "",
+            "",
+        )
+        .unwrap();
+        assert!(result.contains("## Selected\n\nuseful finding"));
+        assert!(!result.contains("## Not Selected"));
+        assert!(result.contains("LAST=useful finding"));
+        assert!(result.contains("EXPLICIT=_(skipped: run_if condition not met)_"));
     }
 
     #[test]

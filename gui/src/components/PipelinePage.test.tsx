@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PipelinePage from "./PipelinePage";
-import type { PipelineConfig, ProfileSummary } from "../lib/types";
+import type {
+  AutoReviewCatalog,
+  PipelineConfig,
+  ProfileSummary,
+  StepConfig,
+} from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 const dialogMocks = vi.hoisted(() => ({
@@ -58,14 +63,65 @@ const profiles: ProfileSummary[] = [
   { id: "deep-review", name: "Paper Review (Full)", step_count: 2, builtin: true },
 ];
 
-function mockLoad(config: PipelineConfig) {
+function mockLoad(config: PipelineConfig, extra: Record<string, unknown> = {}) {
   invoke.mockImplementation((cmd: string) => {
     if (cmd === "get_pipeline_config") return Promise.resolve(config);
     if (cmd === "list_profiles") return Promise.resolve(profiles);
     if (cmd === "get_active_profile") return Promise.resolve("deep-review");
     if (cmd === "save_pipeline_config") return Promise.resolve();
+    if (cmd in extra) return Promise.resolve(extra[cmd]);
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   });
+}
+
+const macroSpecialist: StepConfig = {
+  id: "subject_economics_macro",
+  label: "Economics — Macroeconomics",
+  prompt: "# Economics — Macroeconomics\n\nDefault host-owned macro prompt.",
+  enabled: true,
+  phase: "parallel",
+  tools: [],
+  agents: [],
+  after: [],
+  context: { include: [] },
+};
+
+const adaptiveCatalog: AutoReviewCatalog = {
+  contract: "auto-review-v2",
+  subjectCount: 1,
+  methodCount: 1,
+  disciplines: [{
+    id: "economics",
+    label: "Economics",
+    roles: [{
+      id: "subject_economics_macro",
+      label: "Economics — Macroeconomics",
+      level: "subfield",
+      description: "Macroeconomics, policy, growth, business cycles, and aggregate dynamics.",
+      exclusions: "the contribution is primarily microeconomic.",
+    }],
+  }],
+  methods: [{
+    id: "formal_proofs",
+    label: "Method — Formal Proofs",
+    level: "method",
+    description: "Central theorems and derivations require proof verification.",
+    exclusions: "routine algebra.",
+  }],
+};
+
+async function addBlankStep(
+  user: ReturnType<typeof userEvent.setup>,
+  name = "Custom Step",
+  phase: "parallel" | "sequential" = "parallel",
+) {
+  await user.click(screen.getByRole("button", { name: "+ Add step" }));
+  await user.click(screen.getByRole("tab", { name: "Blank step" }));
+  await user.type(screen.getByRole("textbox", { name: "Step name" }), name);
+  if (phase === "sequential") {
+    await user.click(screen.getByRole("radio", { name: /After earlier steps/ }));
+  }
+  await user.click(screen.getByRole("button", { name: "Create step" }));
 }
 
 describe("PipelinePage", () => {
@@ -237,10 +293,10 @@ describe("PipelinePage", () => {
     config.extraction.method = "marker";
     mockLoad(config);
     render(<PipelinePage onClose={() => {}} />);
-    await userEvent.click(await screen.findByText("Extract"));
+    await userEvent.click(await screen.findByRole("button", { name: "Input & extraction" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Marker is unavailable in Pipeline 1.0.1",
+      "Marker is unavailable in Pipeline 0.9.0",
     );
     expect(
       screen.getByRole("option", {
@@ -263,7 +319,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "+ Parallel" }));
+    await addBlankStep(user);
     const save = screen.getByRole("button", { name: "Save" });
     expect(save).toBeEnabled();
 
@@ -285,7 +341,9 @@ describe("PipelinePage", () => {
       (c) => c[0] === "save_pipeline_config",
     );
     expect(saveCall?.[1].config.steps.length).toBe(3);
-    expect(saveCall?.[1].config.steps[2]).toMatchObject({
+    expect(saveCall?.[1].config.steps.find(
+      (step: { id: string }) => step.id === "custom_step",
+    )).toMatchObject({
       after: [],
       context: {
         include: [
@@ -293,6 +351,111 @@ describe("PipelinePage", () => {
           { kind: "survey" },
         ],
       },
+    });
+  });
+
+  it("guides step creation while preserving the full editable config", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getByRole("button", { name: "+ Add step" }));
+    expect(screen.getByRole("dialog", { name: "Add workflow step" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create step" })).toBeDisabled();
+    await user.type(
+      screen.getByRole("textbox", { name: "Step name" }),
+      "Identification audit",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "What should this step do?" }),
+      "Check whether each empirical claim follows from the stated design.",
+    );
+    await user.click(screen.getByRole("radio", { name: /After earlier steps/ }));
+    await user.click(screen.getByRole("radio", { name: /Structured issues/ }));
+    await user.click(screen.getByRole("button", { name: "Create step" }));
+
+    expect(screen.getByRole("textbox", { name: "Step label" })).toHaveValue("Identification audit");
+    expect(screen.getByTestId("step-summary")).toHaveTextContent(
+      "Runs after its selected dependencies using the profile’s default provider",
+    );
+    expect(screen.getByTestId("step-summary")).toHaveTextContent("Produces structured issues JSON");
+    expect(screen.getByRole("tab", { name: "Prompt" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Inputs & dependencies" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Execution rules" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Model & agents" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const added = saveCall?.[1].config.steps.find(
+        (step: { id: string }) => step.id === "identification_audit",
+      );
+      expect(added).toMatchObject({
+        label: "Identification audit",
+        phase: "sequential",
+        context: {
+          include: [
+            { kind: "survey" },
+            { kind: "step", step: "technical", parts: ["report"] },
+            { kind: "step", step: "consolidate", parts: ["report"] },
+          ],
+        },
+        output_schema: expect.objectContaining({ required: ["issues"] }),
+      });
+    });
+  });
+
+  it("copies an adaptive agent into an independently editable workflow step", async () => {
+    const user = userEvent.setup();
+    const defaultPrompt = macroSpecialist.prompt;
+    mockLoad(makeConfig(), {
+      get_auto_review_catalog: adaptiveCatalog,
+      get_auto_review_specialist_step: macroSpecialist,
+    });
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    await user.click(screen.getByRole("button", { name: "+ Add step" }));
+    await user.click(screen.getByRole("tab", { name: "From templates" }));
+    expect(await screen.findByText("Add one fixed specialist")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Guided setup" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Blank step" })).toBeInTheDocument();
+
+    const search = screen.getByRole("searchbox", { name: "Search adaptive agents" });
+    await user.type(search, "macro");
+    await user.click(screen.getByRole("button", { name: "Economics — Macroeconomics" }));
+    expect(screen.getByText(/copies a snapshot/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Copy step" }));
+
+    const prompt = await screen.findByRole("textbox", {
+      name: "Prompt for Economics — Macroeconomics",
+    });
+    expect(prompt).toHaveValue(defaultPrompt);
+    await user.clear(prompt);
+    await user.type(prompt, "My workflow-local macro prompt.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const copied = saveCall?.[1].config.steps.find(
+        (step: { id: string }) => step.id === "manual_subject_economics_macro",
+      );
+      expect(copied).toMatchObject({
+        label: "Economics — Macroeconomics",
+        prompt: "My workflow-local macro prompt.",
+        phase: "parallel",
+        context: {
+          include: [
+            { kind: "primary", parts: ["text", "structure", "visuals", "source"] },
+            { kind: "survey" },
+          ],
+        },
+      });
+    });
+    expect(macroSpecialist.prompt).toBe(defaultPrompt);
+    expect(invoke).toHaveBeenCalledWith("get_auto_review_specialist_step", {
+      id: "subject_economics_macro",
     });
   });
 
@@ -316,11 +479,11 @@ describe("PipelinePage", () => {
     );
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "+ Parallel" }));
+    await addBlankStep(user, "First custom step");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "+ Parallel" }));
+    await addBlankStep(user, "Second custom step");
     await act(async () => finishSave());
 
     await waitFor(() => {
@@ -337,7 +500,7 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
-    await user.click(screen.getByRole("button", { name: /Artifact access & execution rules/ }));
+    await user.click(screen.getByRole("tab", { name: "Inputs & dependencies" }));
     expect(screen.queryByRole("button", { name: "Prior reports" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Report" })).not.toBeInTheDocument();
     const readableText = screen.getByRole("checkbox", { name: "Readable text" });
@@ -364,7 +527,8 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Consolidate Issues");
 
     await user.click(screen.getAllByRole("button", { name: "Consolidate Issues" })[0]);
-    await user.click(screen.getByRole("button", { name: "Parallel" }));
+    await user.click(screen.getByRole("tab", { name: "Execution rules" }));
+    await user.click(screen.getByRole("button", { name: "Independently (parallel)" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -381,14 +545,14 @@ describe("PipelinePage", () => {
     });
   });
 
-  it("offers keyboard-operable step reordering", async () => {
+  it("offers keyboard-operable sequential step reordering", async () => {
     const config = makeConfig();
-    config.steps.splice(1, 0, {
-      id: "empirical",
-      label: "Empirical",
+    config.steps.push({
+      id: "validate",
+      label: "Validate Feedback",
       prompt: "",
       enabled: true,
-      phase: "parallel",
+      phase: "sequential",
       tools: [],
       agents: [],
       context: { include: [] },
@@ -398,29 +562,34 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Move Technical down" }));
+    await user.click(screen.getByRole("button", { name: "Move Consolidate Issues down" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
       expect(saveCall?.[1].config.steps.map((step: { id: string }) => step.id)).toEqual([
-        "empirical",
         "technical",
+        "validate",
         "consolidate",
       ]);
     });
   });
 
-  it("names workflow fields and gives reorder controls 24px targets", async () => {
+  it("shows 24px reorder controls only for sequential steps and no drag handles", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
-    render(<PipelinePage onClose={() => {}} />);
+    const { container } = render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
     expect(
       screen.getByRole("combobox", { name: "Active workflow profile" }),
     ).toBeInTheDocument();
-    const moveDown = screen.getByRole("button", { name: "Move Technical down" });
+    expect(screen.queryByRole("button", { name: "Move Technical up" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Move Technical down" })).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Drag to reorder")).not.toBeInTheDocument();
+    expect(container.querySelector('[draggable="true"]')).toBeNull();
+
+    const moveDown = screen.getByRole("button", { name: "Move Consolidate Issues down" });
     expect(moveDown).toHaveClass("h-6", "w-6");
 
     await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
@@ -429,7 +598,7 @@ describe("PipelinePage", () => {
       screen.getByRole("textbox", { name: "Prompt for Technical" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Extract" }));
+    await user.click(screen.getByRole("button", { name: "Input & extraction" }));
     expect(
       screen.getByRole("combobox", { name: "Workflow input mode" }),
     ).toBeInTheDocument();
@@ -520,7 +689,7 @@ describe("PipelinePage", () => {
     });
 
     alertSpy.mockClear();
-    await user.click(screen.getByRole("button", { name: "Orient" }));
+    await user.click(screen.getByRole("button", { name: "Orientation map" }));
     await user.click(screen.getByRole("button", { name: "Insert generic survey" }));
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalledWith(
@@ -547,7 +716,7 @@ describe("PipelinePage", () => {
     expect(onDirtyChange).toHaveBeenCalledWith(false);
     expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "+ Parallel" }));
+    await addBlankStep(user);
     await waitFor(() => expect(onDirtyChange).toHaveBeenCalledWith(true));
 
     unmount();
@@ -584,12 +753,52 @@ describe("PipelinePage", () => {
     });
   });
 
-  it("renders the execution-shape diagram for the loaded steps", async () => {
+  it("offers an overview without duplicating it in the primary step list", async () => {
+    const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    expect(screen.getByText("Execution shape")).toBeInTheDocument();
+    expect(screen.queryByText("Workflow overview")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(screen.getByText("Workflow overview")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Extract" })).toBeInTheDocument();
+  });
+
+  it("shows compact Auto Review slots and their direct synthesis contract", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.orientation_schema = { "x-pipeline-contract": "auto-review-v2" };
+    config.steps = [
+      { ...config.steps[0], id: "auto_contribution", label: "Contribution & Literature" },
+      { ...config.steps[0], id: "auto_consistency", label: "Claims & Consistency" },
+      { ...config.steps[0], id: "auto_exposition", label: "Exposition & Architecture" },
+      { ...config.steps[1], id: "auto_synthesis", label: "Consolidate Auto Review" },
+    ];
+    mockLoad(config);
+    render(<PipelinePage onClose={() => {}} />);
+
+    const orientation = await screen.findByRole("button", { name: "Orientation & classification" });
+    expect(screen.getByRole("button", { name: "Subject specialists — Auto-filled from orientation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Method specialists — Auto-filled from orientation" })).toBeInTheDocument();
+    expect(screen.getAllByText("Auto-filled from orientation").length).toBeGreaterThan(0);
+
+    await user.click(orientation);
+    expect(screen.getByRole("heading", { name: "Orientation & Classification" })).toBeInTheDocument();
+    expect(screen.getByText(/One LLM call builds the paper orientation map/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Method specialists — Auto-filled from orientation" }));
+    expect(screen.getByRole("heading", { name: "Method specialists" })).toBeInTheDocument();
+    expect(screen.getByText(/Every materialized specialist report feeds directly/)).toBeInTheDocument();
+    expect(screen.getByText(/alongside Contribution & Literature/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Browse method specialist catalog" }));
+    expect(screen.getByRole("dialog", { name: "Specialist catalog" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Methods" })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("button", { name: "Close specialist catalog" }));
+
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(screen.getByRole("button", { name: "Orient + classify" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Subject specialists (1–2)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Method specialists (1–4)" })).toBeInTheDocument();
   });
 });

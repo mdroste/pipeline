@@ -92,6 +92,37 @@ function renderOrientationMap(orientation: OrientationMap): string {
   if (metadata.has_online_appendix) md += `**Online appendix**: yes  \n`;
   md += `\n`;
 
+  if (orientation.review_plan) {
+    const plan = orientation.review_plan;
+    md += `## Detected Review Plan\n\n`;
+    if (plan.primary_domain) md += `**Domain**: ${plan.primary_domain}  \n`;
+    if (plan.subject) md += `**Subject**: ${plan.subject}  \n`;
+    if (plan.paper_forms?.length) {
+      md += `**Paper form**: ${plan.paper_forms.map(titleCase).join(", ")}  \n`;
+    }
+    if (plan.methods?.length) md += `**Methods**: ${plan.methods.join(", ")}  \n`;
+    md += `\n`;
+    if (plan.selection_notes?.length) {
+      md += `### Selected Specialists\n\n`;
+      for (const note of plan.selection_notes) {
+        const label = note.id.replace(/^subject_/, "").replace(/^field_/, "");
+        md += `- **${titleCase(label)}**: ${note.reason}\n`;
+      }
+      md += `\n`;
+    } else {
+      const subjectIds = plan.subject_specialist_ids?.length
+        ? plan.subject_specialist_ids
+        : [plan.field_specialist_id].filter((id): id is string => !!id);
+      const ids = [...subjectIds, ...(plan.method_specialist_ids ?? [])].filter(Boolean);
+      if (ids.length) md += ids.map((id) => `- ${titleCase(id)}`).join("\n") + "\n\n";
+    }
+    if (plan.routing_uncertainty?.length) {
+      md += `### Routing Uncertainty\n\n`;
+      for (const uncertainty of plan.routing_uncertainty) md += `- ${uncertainty}\n`;
+      md += `\n`;
+    }
+  }
+
   if (orientation.stated_contribution) {
     md += `## Stated Contribution\n\n${orientation.stated_contribution}\n\n`;
   }

@@ -189,7 +189,7 @@ fn push(target: &mut String, value: &str) -> Result<(), String> {
 /// Generate an RFC 4122 version-4 UUID without adding another dependency.
 pub fn new_session_id() -> Result<String, String> {
     let mut bytes = [0u8; 16];
-    getrandom::getrandom(&mut bytes)
+    getrandom::fill(&mut bytes)
         .map_err(|error| format!("Failed to create cache session id: {error}"))?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;

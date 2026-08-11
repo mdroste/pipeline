@@ -37,6 +37,7 @@ pub fn condition_met(
             pointer,
             equals,
             exists,
+            contains,
         } => {
             let found = orientation.pointer(pointer);
             let mut ok = true;
@@ -46,8 +47,14 @@ pub fn condition_met(
             if let Some(want) = equals {
                 ok &= found.map(|v| v == want).unwrap_or(false);
             }
+            if let Some(want) = contains {
+                ok &= found
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| items.iter().any(|item| item == want))
+                    .unwrap_or(false);
+            }
             // Neither constraint set → default to a presence check.
-            if exists.is_none() && equals.is_none() {
+            if exists.is_none() && equals.is_none() && contains.is_none() {
                 ok = found.is_some();
             }
             ok
@@ -166,6 +173,7 @@ mod tests {
             pointer: "/metadata/paper_type".into(),
             equals: Some(serde_json::json!("empirical")),
             exists: None,
+            contains: None,
         };
         assert!(condition_met(&c, &survey(), &[]));
 
@@ -173,6 +181,7 @@ mod tests {
             pointer: "/metadata/paper_type".into(),
             equals: Some(serde_json::json!("theory")),
             exists: None,
+            contains: None,
         };
         assert!(!condition_met(&c2, &survey(), &[]));
     }
@@ -183,6 +192,7 @@ mod tests {
             pointer: "/flags/has_code".into(),
             equals: None,
             exists: Some(true),
+            contains: None,
         };
         assert!(condition_met(&present, &survey(), &[]));
 
@@ -190,6 +200,7 @@ mod tests {
             pointer: "/flags/missing".into(),
             equals: None,
             exists: Some(false),
+            contains: None,
         };
         assert!(condition_met(&absent, &survey(), &[]));
 
@@ -198,7 +209,32 @@ mod tests {
             pointer: "/metadata/paper_type".into(),
             equals: None,
             exists: None,
+            contains: None,
         };
         assert!(condition_met(&default_presence, &survey(), &[]));
+    }
+
+    #[test]
+    fn survey_path_array_contains() {
+        let survey = serde_json::json!({
+            "review_plan": {
+                "specialist_ids": ["formal_proofs", "mathematics"]
+            }
+        });
+        let selected = RunCondition::SurveyPath {
+            pointer: "/review_plan/specialist_ids".into(),
+            equals: None,
+            exists: None,
+            contains: Some(serde_json::json!("formal_proofs")),
+        };
+        assert!(condition_met(&selected, &survey, &[]));
+
+        let absent = RunCondition::SurveyPath {
+            pointer: "/review_plan/specialist_ids".into(),
+            equals: None,
+            exists: None,
+            contains: Some(serde_json::json!("causal_identification")),
+        };
+        assert!(!condition_met(&absent, &survey, &[]));
     }
 }

@@ -238,6 +238,11 @@ pub enum RunCondition {
         equals: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exists: Option<bool>,
+        /// When set, the pointed-to value must be an array containing this
+        /// exact JSON value. This keeps list-based routing declarative without
+        /// introducing a general expression language.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contains: Option<serde_json::Value>,
     },
 }
 
@@ -359,7 +364,7 @@ pub struct ExtractionConfig {
     /// global). The retired "paddleocr-vl" value is migrated to the Full
     /// Parser when older profiles are deserialized.
     /// The retired "marker" value remains deserializable so users can repair
-    /// profiles created before Pipeline 1.0.1; extraction rejects it.
+    /// profiles created before Pipeline 0.9.0; extraction rejects it.
     #[serde(default, deserialize_with = "deserialize_extraction_method")]
     pub method: String,
     /// Input mode for the workflow: "" or "document" (single file, default),
@@ -403,6 +408,10 @@ pub struct PipelineConfig {
     /// substituted with the extracted paper at runtime.
     #[serde(default)]
     pub orientation_prompt: String,
+    /// Optional JSON-shape contract for the orientation call. When set, the
+    /// survey is validated and retried before any workflow step can use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation_schema: Option<serde_json::Value>,
     /// Per-profile extraction overrides. When unset (default), the global
     /// Settings values are used.
     #[serde(default)]
@@ -434,6 +443,8 @@ pub struct ProfileData {
     pub use_orientation: bool,
     #[serde(default)]
     pub orientation_prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation_schema: Option<serde_json::Value>,
     #[serde(default)]
     pub extraction: ExtractionConfig,
     #[serde(default = "default_parallel_template")]
@@ -452,6 +463,7 @@ impl ProfileData {
             context_cache: ContextCacheConfig::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
             variables: Vec::new(),
@@ -466,6 +478,7 @@ impl ProfileData {
             context_cache: config.context_cache.clone(),
             use_orientation: config.use_orientation,
             orientation_prompt: config.orientation_prompt.clone(),
+            orientation_schema: config.orientation_schema.clone(),
             extraction: config.extraction.clone(),
             parallel_context_template: config.parallel_context_template.clone(),
             variables: config.variables.clone(),
@@ -481,6 +494,7 @@ impl From<ProfileData> for PipelineConfig {
             context_cache: profile.context_cache,
             use_orientation: profile.use_orientation,
             orientation_prompt: profile.orientation_prompt,
+            orientation_schema: profile.orientation_schema,
             extraction: profile.extraction,
             parallel_context_template: profile.parallel_context_template,
             variables: profile.variables,
@@ -572,11 +586,12 @@ pub struct ProfileSummary {
 /// engine; v3 added provider/model policy metadata; v4 adds optional shared
 /// context caching; v5 centralizes parser tuning in global Settings; v6
 /// replaces implicit step inputs with explicit artifact context and order
-/// dependencies. v1
+/// dependencies; v7 adds validated orientation schemas and array-membership
+/// survey conditions. v1
 /// (unversioned) profiles read fine because every added field is
 /// `#[serde(default)]`; exports are tagged so future format changes can
 /// migrate or reject gracefully.
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 7;
 
 fn default_schema_version() -> u32 {
     1
@@ -602,6 +617,8 @@ pub enum ExportEnvelope {
         use_orientation: bool,
         #[serde(default)]
         orientation_prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        orientation_schema: Option<serde_json::Value>,
         #[serde(default)]
         extraction: ExtractionConfig,
         #[serde(default = "default_parallel_template")]
@@ -630,6 +647,8 @@ pub struct ProfileExport {
     pub use_orientation: bool,
     #[serde(default)]
     pub orientation_prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation_schema: Option<serde_json::Value>,
     #[serde(default)]
     pub extraction: ExtractionConfig,
     #[serde(default = "default_parallel_template")]
@@ -648,6 +667,7 @@ impl ProfileExport {
             context_cache: profile.context_cache,
             use_orientation: profile.use_orientation,
             orientation_prompt: profile.orientation_prompt,
+            orientation_schema: profile.orientation_schema,
             extraction: profile.extraction,
             parallel_context_template: profile.parallel_context_template,
             variables: profile.variables,
@@ -662,6 +682,7 @@ impl ProfileExport {
             context_cache: self.context_cache.clone(),
             use_orientation: self.use_orientation,
             orientation_prompt: self.orientation_prompt.clone(),
+            orientation_schema: self.orientation_schema.clone(),
             extraction: self.extraction.clone(),
             parallel_context_template: self.parallel_context_template.clone(),
             variables: self.variables.clone(),
@@ -909,6 +930,18 @@ fn full_review_profile(validate_enabled: bool) -> ProfileData {
     profile
 }
 
+/// Built-in adaptive paper review. The orientation call selects a bounded set
+/// of allowlisted specialist IDs. The saved profile contains only three core
+/// reviewers plus synthesis; selected reviewers are materialized for the run.
+fn auto_review_profile() -> ProfileData {
+    let steps = configure_artifact_flow(crate::auto_review::steps(), "document", &[]);
+    let mut profile = ProfileData::new("Paper Review (Auto)", steps, MergeConfig::default());
+    profile.context_cache.enabled = true;
+    profile.orientation_prompt = crate::auto_review::orientation_prompt();
+    profile.orientation_schema = Some(crate::auto_review::orientation_schema());
+    profile
+}
+
 fn defaults() -> PipelineConfig {
     full_review_profile(false).into()
 }
@@ -916,7 +949,7 @@ fn defaults() -> PipelineConfig {
 /// Profile IDs that cannot be deleted.
 // All are recreated by create_builtin_profiles() on startup, so
 // deleting any of them would silently "undo" itself — block deletion for all.
-const BUILTIN_PROFILES: &[&str] = &["deep-review", "quick-review", "grant-review"];
+const BUILTIN_PROFILES: &[&str] = &["auto-review", "deep-review", "quick-review", "grant-review"];
 
 fn builtin_primary_readers(id: &str) -> &'static [&'static str] {
     match id {
@@ -1067,6 +1100,10 @@ fn write_builtin_if_missing(path: &Path, profile: &ProfileData) -> Result<(), St
 /// Built-in profiles created on first run.
 fn create_builtin_profiles() -> Result<(), String> {
     let profiles = profiles_dir()?;
+
+    // Paper Review (Auto) — one validated orientation/router call, universal
+    // core reviews, and a bounded set of selected method/field specialists.
+    write_builtin_if_missing(&profiles.join("auto-review.json"), &auto_review_profile())?;
 
     // Paper Review (Quick) — fast two-step pass
     write_builtin_if_missing(
@@ -1387,7 +1424,149 @@ fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         })?;
     }
 
+    // Auto Review v1 stored the entire catalog as conditional steps. Replace
+    // only an exact stock profile with the compact runtime-assembled skeleton;
+    // any edit to its prompt, schema, steps, or settings is preserved.
+    let auto_assembly_marker = profiles.join(".builtin-catalog-v11");
+    if !auto_assembly_marker.exists() {
+        let path = profiles.join("auto-review.json");
+        if path.exists() {
+            let content = read_profile_file(&path)
+                .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+            let profile: ProfileData = serde_json::from_str(&content)
+                .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+            validate_profile_data(&profile)?;
+            if matches_prior_stock_auto_review(&profile)? {
+                let replacement = auto_review_profile();
+                validate_profile_data(&replacement)?;
+                let json = serde_json::to_string_pretty(&replacement).map_err(|error| {
+                    format!("Failed to serialize '{}': {error}", path.display())
+                })?;
+                restore_profile_bytes(&path, json.as_bytes())
+                    .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+            }
+        }
+        fs::write(
+            &auto_assembly_marker,
+            b"runtime-assembled-auto-review-specialists\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the Auto Review assembly migration '{}': {error}",
+                auto_assembly_marker.display()
+            )
+        })?;
+    }
+
+    // The earliest development Auto profile used one combined specialist-ID
+    // list and predated `conceptual_argument` (28 rather than 29 steps). The
+    // v11 exact fingerprint deliberately preserved it. Recognize that known
+    // stock shape separately so existing installs receive the compact profile
+    // without touching customized variants.
+    run_auto_review_v1_28_migration(
+        profiles,
+        ".builtin-catalog-v12",
+        b"compact-auto-review-legacy-v1-variants\n",
+        KNOWN_STOCK_AUTO_V1_28_ORIENTATION_PROMPT,
+        KNOWN_STOCK_AUTO_V1_28_PROFILE_SHAPE,
+    )?;
+
+    // v12 was briefly able to record its marker before its historical
+    // fingerprint was complete. Retry once under a new marker so affected
+    // installs compact the still-untouched profile after updating.
+    run_auto_review_v1_28_migration(
+        profiles,
+        ".builtin-catalog-v13",
+        b"retry-corrected-auto-review-v1-28-compaction\n",
+        KNOWN_STOCK_AUTO_V1_28_ORIENTATION_PROMPT,
+        KNOWN_STOCK_AUTO_V1_28_PROFILE_SHAPE,
+    )?;
+
     Ok(())
+}
+
+fn prior_stock_auto_review() -> ProfileData {
+    let steps = configure_artifact_flow(crate::auto_review::legacy_steps(), "document", &[]);
+    let mut profile = ProfileData::new("Paper Review (Auto)", steps, MergeConfig::default());
+    profile.context_cache.enabled = true;
+    profile.orientation_prompt = crate::auto_review::legacy_orientation_prompt();
+    profile.orientation_schema = Some(crate::auto_review::legacy_orientation_schema());
+    profile
+}
+
+fn matches_prior_stock_auto_review(profile: &ProfileData) -> Result<bool, String> {
+    let actual = serde_json::to_value(profile)
+        .map_err(|error| format!("Failed to fingerprint Paper Review (Auto): {error}"))?;
+    let expected = serde_json::to_value(prior_stock_auto_review())
+        .map_err(|error| format!("Failed to fingerprint stock Auto profile: {error}"))?;
+    Ok(actual == expected)
+}
+
+const KNOWN_STOCK_AUTO_V1_28_ORIENTATION_PROMPT: &str =
+    "1825f9041431baf3f6ec55ffc3069a29690a200804bb77da763122096981c570";
+const KNOWN_STOCK_AUTO_V1_28_PROFILE_SHAPE: &str =
+    "c63526e4822bda967a2426f12de339ea87927859407535f0fee330ffc0f8e71c";
+
+fn run_auto_review_v1_28_migration(
+    profiles: &Path,
+    marker_name: &str,
+    marker_contents: &[u8],
+    expected_prompt_digest: &str,
+    expected_profile_shape_digest: &str,
+) -> Result<(), String> {
+    let marker = profiles.join(marker_name);
+    if marker.exists() {
+        return Ok(());
+    }
+    let path = profiles.join("auto-review.json");
+    if path.exists() {
+        let content = read_profile_file(&path)
+            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+        let profile: ProfileData = serde_json::from_str(&content)
+            .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+        validate_profile_data(&profile)?;
+        if matches_stock_auto_review_v1_28_with_digests(
+            &profile,
+            expected_prompt_digest,
+            expected_profile_shape_digest,
+        )? {
+            let replacement = auto_review_profile();
+            validate_profile_data(&replacement)?;
+            let json = serde_json::to_string_pretty(&replacement)
+                .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+            restore_profile_bytes(&path, json.as_bytes())
+                .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+        }
+    }
+    fs::write(&marker, marker_contents).map_err(|error| {
+        format!(
+            "Failed to record the Auto Review legacy migration '{}': {error}",
+            marker.display()
+        )
+    })
+}
+
+fn matches_stock_auto_review_v1_28_with_digests(
+    profile: &ProfileData,
+    expected_prompt_digest: &str,
+    expected_profile_shape_digest: &str,
+) -> Result<bool, String> {
+    if prompt_digest(&profile.orientation_prompt) != expected_prompt_digest {
+        return Ok(false);
+    }
+    Ok(profile_shape_digest_without_orientation_prompt(profile)? == expected_profile_shape_digest)
+}
+
+fn profile_shape_digest_without_orientation_prompt(
+    profile: &ProfileData,
+) -> Result<String, String> {
+    let mut shape = profile.clone();
+    shape.orientation_prompt.clear();
+    let value = serde_json::to_value(shape)
+        .map_err(|error| format!("Failed to fingerprint legacy Paper Review (Auto): {error}"))?;
+    let serialized = serde_json::to_string(&value)
+        .map_err(|error| format!("Failed to serialize legacy Auto fingerprint: {error}"))?;
+    Ok(prompt_digest(&serialized))
 }
 
 fn matches_prior_stock_full_review(profile: &ProfileData) -> Result<bool, String> {
@@ -2016,6 +2195,18 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
             ));
         }
     }
+    if let Some(schema) = &profile.orientation_schema {
+        let bytes = serde_json::to_vec(schema)
+            .map_err(|error| format!("Failed to serialize orientation schema: {error}"))?;
+        if bytes.len() > MAX_OUTPUT_SCHEMA_BYTES {
+            return Err(format!(
+                "Profile orientation schema exceeds the {} MB safety limit",
+                MAX_OUTPUT_SCHEMA_BYTES / 1024 / 1024
+            ));
+        }
+        crate::pipeline::structured::validate_schema(schema)
+            .map_err(|error| format!("Invalid orientation schema: {error}"))?;
+    }
     if profile.merge.agents.len() > 1 {
         return Err("Merge supports at most one selected agent".to_string());
     }
@@ -2121,6 +2312,13 @@ fn validate_profile_data(profile: &ProfileData) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Validate a host-materialized execution config through the same rules used
+/// for saved profiles. This is a defense-in-depth check after deterministic
+/// runtime assembly, not an additional import surface.
+pub(crate) fn validate_runtime_config(config: &PipelineConfig) -> Result<(), String> {
+    validate_profile_data(&ProfileData::from_config("Runtime workflow", config))
 }
 
 impl StepConfig {
@@ -2366,7 +2564,11 @@ pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String>
 
 /// Reset active profile to defaults.
 pub fn reset_defaults() -> PipelineConfig {
-    let d = defaults();
+    let d = if get_active_profile_id() == "auto-review" {
+        auto_review_profile().into()
+    } else {
+        defaults()
+    };
     let _ = save(&d);
     d
 }
@@ -2378,7 +2580,7 @@ pub fn get_active_profile_id() -> String {
 }
 
 pub fn list_profiles() -> Result<Vec<ProfileSummary>, String> {
-    let _ = ensure_migrated();
+    ensure_migrated()?;
     let dir = profiles_dir()?;
     let mut summaries = Vec::new();
     let mut walk = crate::safety::WalkBudget::new("Profile listing");
@@ -2394,8 +2596,9 @@ pub fn list_profiles() -> Result<Vec<ProfileSummary>, String> {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        if let Ok(profile) = load_profile(&id) {
-            summaries.push(profile_summary(id, &profile));
+        match load_profile(&id) {
+            Ok(profile) => summaries.push(profile_summary(id, &profile)),
+            Err(error) => eprintln!("WARNING: skipped invalid profile '{id}': {error}"),
         }
     }
     summaries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -2524,6 +2727,7 @@ pub fn switch_profile(id: &str) -> Result<PipelineConfig, String> {
 // ── Export/Import ───────────────────────────────────────────────────
 
 pub fn export_profile_data(id: &str) -> Result<String, String> {
+    ensure_migrated()?;
     let profile = load_profile(id)?;
     let envelope = ExportEnvelope::Profile {
         schema_version: CURRENT_SCHEMA_VERSION,
@@ -2533,6 +2737,7 @@ pub fn export_profile_data(id: &str) -> Result<String, String> {
         context_cache: profile.context_cache,
         use_orientation: profile.use_orientation,
         orientation_prompt: profile.orientation_prompt,
+        orientation_schema: profile.orientation_schema,
         extraction: profile.extraction,
         parallel_context_template: profile.parallel_context_template,
         variables: profile.variables,
@@ -2611,6 +2816,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
                 context_cache: ContextCacheConfig::default(),
                 use_orientation: true,
                 orientation_prompt: String::new(),
+                orientation_schema: None,
                 extraction: ExtractionConfig::default(),
                 parallel_context_template: default_parallel_template(),
                 variables: Vec::new(),
@@ -2639,6 +2845,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
             context_cache: ContextCacheConfig::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
             variables: Vec::new(),
@@ -2656,6 +2863,7 @@ pub fn import_profile_data(
     context_cache: ContextCacheConfig,
     use_orientation: bool,
     orientation_prompt: String,
+    orientation_schema: Option<serde_json::Value>,
     extraction: ExtractionConfig,
     parallel_context_template: String,
     variables: Vec<VarSpec>,
@@ -2679,6 +2887,7 @@ pub fn import_profile_data(
     profile.context_cache = context_cache;
     profile.use_orientation = use_orientation;
     profile.orientation_prompt = orientation_prompt;
+    profile.orientation_schema = orientation_schema;
     profile.extraction = extraction;
     profile.parallel_context_template = parallel_context_template;
     profile.variables = variables;
@@ -3112,12 +3321,14 @@ mod tests {
             pointer: "metadata/type".into(),
             equals: None,
             exists: Some(true),
+            contains: None,
         });
         assert!(validate_run_conditions(&[step.clone()]).is_err());
         step.run_if = Some(RunCondition::SurveyPath {
             pointer: "/metadata/a~1b".into(),
             equals: None,
             exists: Some(true),
+            contains: None,
         });
         assert!(validate_run_conditions(&[step]).is_ok());
     }
@@ -3131,6 +3342,7 @@ mod tests {
             context_cache: ContextCacheConfig::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: ExtractionConfig::default(),
             parallel_context_template: String::new(),
             variables: Vec::new(),
@@ -3520,7 +3732,7 @@ mod tests {
     fn builtin_catalog_contains_only_current_profiles() {
         assert_eq!(
             BUILTIN_PROFILES,
-            ["deep-review", "quick-review", "grant-review"]
+            ["auto-review", "deep-review", "quick-review", "grant-review"]
         );
         assert_eq!(
             V9_RETIRED_BUILTIN_PROFILES,
@@ -3529,6 +3741,131 @@ mod tests {
                 ("replication-audit", "deep-review"),
             ]
         );
+    }
+
+    #[test]
+    fn auto_review_profile_is_valid_and_compact() {
+        let profile = auto_review_profile();
+        validate_profile_data(&profile).unwrap();
+        assert!(profile.context_cache.enabled);
+        assert!(profile.orientation_schema.is_some());
+        assert_eq!(profile.steps.len(), 4);
+        assert!(profile.steps.iter().all(|step| step.run_if.is_none()));
+        assert_eq!(
+            profile.steps.last().map(|step| step.id.as_str()),
+            Some("auto_synthesis")
+        );
+    }
+
+    #[test]
+    fn auto_review_v1_migration_replaces_only_exact_stock_profile() {
+        let stock_dir = tempfile::tempdir().unwrap();
+        let stock_path = stock_dir.path().join("auto-review.json");
+        fs::write(
+            &stock_path,
+            serde_json::to_vec_pretty(&prior_stock_auto_review()).unwrap(),
+        )
+        .unwrap();
+        migrate_builtin_catalog(stock_dir.path()).unwrap();
+        let migrated: ProfileData =
+            serde_json::from_slice(&fs::read(&stock_path).unwrap()).unwrap();
+        assert_eq!(migrated.steps.len(), 4);
+        assert_eq!(
+            migrated
+                .orientation_schema
+                .as_ref()
+                .and_then(|schema| schema.get("x-pipeline-contract"))
+                .and_then(serde_json::Value::as_str),
+            Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
+        );
+        assert!(stock_dir.path().join(".builtin-catalog-v11").exists());
+
+        let custom_dir = tempfile::tempdir().unwrap();
+        let custom_path = custom_dir.path().join("auto-review.json");
+        let mut customized = prior_stock_auto_review();
+        customized.steps[0].prompt.push_str("\nCustom instruction.");
+        fs::write(
+            &custom_path,
+            serde_json::to_vec_pretty(&customized).unwrap(),
+        )
+        .unwrap();
+        migrate_builtin_catalog(custom_dir.path()).unwrap();
+        let preserved: ProfileData =
+            serde_json::from_slice(&fs::read(&custom_path).unwrap()).unwrap();
+        assert_eq!(preserved.steps.len(), customized.steps.len());
+        assert!(preserved.steps[0].prompt.ends_with("Custom instruction."));
+    }
+
+    #[test]
+    fn auto_review_v1_28_step_migration_recognizes_only_the_stock_variant() {
+        let mut legacy = prior_stock_auto_review();
+        legacy.orientation_prompt = "historical Auto Review prompt fixture".to_string();
+        let fixture_digest = prompt_digest(&legacy.orientation_prompt);
+        let shape_digest = profile_shape_digest_without_orientation_prompt(&legacy).unwrap();
+        assert!(matches_stock_auto_review_v1_28_with_digests(
+            &legacy,
+            &fixture_digest,
+            &shape_digest,
+        )
+        .unwrap());
+
+        let mut customized = legacy.clone();
+        customized.steps[0]
+            .prompt
+            .push_str("\nCustom review guidance.");
+        assert!(!matches_stock_auto_review_v1_28_with_digests(
+            &customized,
+            &fixture_digest,
+            &shape_digest,
+        )
+        .unwrap());
+
+        legacy
+            .orientation_prompt
+            .push_str("\nCustom routing guidance.");
+        assert!(!matches_stock_auto_review_v1_28_with_digests(
+            &legacy,
+            &fixture_digest,
+            &shape_digest,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn auto_review_v13_retries_when_v12_marker_preceded_the_corrected_matcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auto-review.json");
+        let mut legacy = prior_stock_auto_review();
+        legacy.orientation_prompt = "historical Auto Review prompt fixture".to_string();
+        let prompt_digest = prompt_digest(&legacy.orientation_prompt);
+        let shape_digest = profile_shape_digest_without_orientation_prompt(&legacy).unwrap();
+        fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+        fs::write(
+            dir.path().join(".builtin-catalog-v12"),
+            b"premature-marker\n",
+        )
+        .unwrap();
+
+        run_auto_review_v1_28_migration(
+            dir.path(),
+            ".builtin-catalog-v13",
+            b"corrected-retry\n",
+            &prompt_digest,
+            &shape_digest,
+        )
+        .unwrap();
+
+        let migrated: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(migrated.steps.len(), 4);
+        assert_eq!(
+            migrated
+                .orientation_schema
+                .as_ref()
+                .and_then(|schema| schema.get("x-pipeline-contract"))
+                .and_then(serde_json::Value::as_str),
+            Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
+        );
+        assert!(dir.path().join(".builtin-catalog-v13").exists());
     }
 
     #[test]

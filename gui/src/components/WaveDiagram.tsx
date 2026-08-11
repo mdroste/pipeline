@@ -7,7 +7,6 @@
 // "these are the next ready calls". Clicking any node selects the
 // corresponding step in the editor.
 
-import { useState } from "react";
 import { computeWaves } from "../lib/pipelineHelpers";
 import type { StepConfig, MergeConfig } from "../lib/types";
 
@@ -16,20 +15,34 @@ export type WaveSelection =
   | "merge"
   | "pipeline_settings"
   | "extraction"
-  | "orientation";
+  | "orientation"
+  | "auto_subject_slot"
+  | "auto_method_slot";
 
 interface Props {
   steps: StepConfig[];
   merge: MergeConfig;
   useOrientation: boolean;
+  adaptiveReview?: boolean;
   selectedId: WaveSelection | null;
   onSelect: (id: WaveSelection) => void;
 }
 
-export default function WaveDiagram({ steps, merge, useOrientation, selectedId, onSelect }: Props) {
-  const [collapsed, setCollapsed] = useState(false);
+export default function WaveDiagram({ steps, merge, useOrientation, adaptiveReview = false, selectedId, onSelect }: Props) {
   const waves = computeWaves(steps, false);
   const noEnabledSteps = waves.length === 0;
+  const enabledSteps = steps.filter((step) => step.enabled);
+  const stepCalls = enabledSteps.reduce(
+    (total, step) => total + Math.max(1, step.agents?.length ?? 0) * (step.for_each?.max ?? 1),
+    0,
+  );
+  const mergeCalls = merge.enabled
+    ? enabledSteps.reduce(
+        (total, step) => total + ((step.agents?.length ?? 0) > 1 ? step.for_each?.max ?? 1 : 0),
+        0,
+      )
+    : 0;
+  const providerCalls = stepCalls + mergeCalls;
 
   // Build a flat row list so the connector logic stays simple: we render a
   // row, then a connector, then the next row. Pre-processing (extract +
@@ -39,14 +52,16 @@ export default function WaveDiagram({ steps, merge, useOrientation, selectedId, 
   type Row =
     | { kind: "extract" }
     | { kind: "orient" }
-    | { kind: "parallel"; steps: StepConfig[] }
+    | { kind: "parallel"; steps: StepConfig[]; adaptive: boolean }
     | { kind: "sequential"; step: StepConfig }
     | { kind: "merge" };
   const rows: Row[] = [{ kind: "extract" }];
   if (useOrientation) rows.push({ kind: "orient" });
+  let foundParallelWave = false;
   for (const w of waves) {
     if (w.kind === "parallel") {
-      rows.push({ kind: "parallel", steps: w.steps });
+      rows.push({ kind: "parallel", steps: w.steps, adaptive: adaptiveReview && !foundParallelWave });
+      foundParallelWave = true;
       if (w.hasMultiAgent && merge.enabled) rows.push({ kind: "merge" });
     } else {
       rows.push({ kind: "sequential", step: w.step });
@@ -54,70 +69,72 @@ export default function WaveDiagram({ steps, merge, useOrientation, selectedId, 
   }
 
   return (
-    <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-900/30">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[10px] uppercase tracking-wider text-gray-600 dark:text-gray-400 font-medium">
-          Execution shape
-        </span>
-        <button
-          type="button"
-          onClick={() => setCollapsed(!collapsed)}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? "Show execution shape" : "Hide execution shape"}
-          className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-          title={collapsed ? "Show diagram" : "Hide diagram"}
-        >
-          {collapsed ? "▸" : "▾"}
-        </button>
+    <div className="px-4 py-4 bg-gray-50/40 dark:bg-gray-900/30">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+          Workflow overview
+        </h3>
+        <p className="mt-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+          {adaptiveReview
+            ? `${enabledSteps.length} saved steps plus 2–6 auto-selected specialists in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}.`
+            : `${enabledSteps.length} enabled ${enabledSteps.length === 1 ? "step" : "steps"} in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}; up to ${providerCalls} provider ${providerCalls === 1 ? "call" : "calls"} before retries.`}
+        </p>
       </div>
-      {!collapsed && noEnabledSteps && (
+      <div className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400" aria-label="Overview legend">
+        <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-200 dark:bg-blue-800" />Parallel</span>
+        <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-orange-200 dark:bg-orange-800" />Sequential</span>
+        <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-amber-200 dark:bg-amber-800" />Merge</span>
+      </div>
+      {noEnabledSteps && (
         <div className="px-1 pb-2 text-[10px] text-gray-600 dark:text-gray-400 italic">
           No enabled review steps — toggle one on below.
         </div>
       )}
-      {!collapsed && (
-        <div className="flex flex-col items-stretch gap-0">
-          {rows.map((row, i) => (
-            <div key={i} className="flex flex-col items-stretch">
-              {row.kind === "extract" && (
-                <PreprocessRow
-                  label="Extract"
-                  selected={selectedId === "extraction"}
-                  onClick={() => onSelect("extraction")}
-                />
-              )}
-              {row.kind === "orient" && (
-                <PreprocessRow
-                  label="Orient"
-                  selected={selectedId === "orientation"}
-                  onClick={() => onSelect("orientation")}
-                />
-              )}
-              {row.kind === "parallel" && (
-                <ParallelRow
-                  steps={row.steps}
-                  selectedId={selectedId}
-                  onSelect={onSelect}
-                />
-              )}
-              {row.kind === "sequential" && (
-                <SequentialRow
-                  step={row.step}
-                  selected={selectedId === row.step.id}
-                  onClick={() => onSelect(row.step.id)}
-                />
-              )}
-              {row.kind === "merge" && (
-                <MergeRow
-                  selected={selectedId === "merge"}
-                  onClick={() => onSelect("merge")}
-                />
-              )}
-              {i < rows.length - 1 && <Connector />}
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="flex flex-col items-stretch gap-0">
+        {rows.map((row, i) => (
+          <div key={i} className="flex flex-col items-stretch">
+            {row.kind === "extract" && (
+              <PreprocessRow
+                label="Extract"
+                selected={selectedId === "extraction"}
+                onClick={() => onSelect("extraction")}
+              />
+            )}
+            {row.kind === "orient" && (
+              <PreprocessRow
+                label={adaptiveReview ? "Orient + classify" : "Orient"}
+                selected={selectedId === "orientation"}
+                onClick={() => onSelect("orientation")}
+              />
+            )}
+            {row.kind === "parallel" && (
+              <ParallelRow
+                steps={row.steps}
+                adaptive={row.adaptive}
+                selectedId={selectedId}
+                onSelect={onSelect}
+              />
+            )}
+            {row.kind === "sequential" && (
+              <SequentialRow
+                step={row.step}
+                selected={selectedId === row.step.id}
+                onClick={() => onSelect(row.step.id)}
+              />
+            )}
+            {row.kind === "merge" && (
+              <MergeRow
+                selected={selectedId === "merge"}
+                onClick={() => onSelect("merge")}
+              />
+            )}
+            {i < rows.length - 1 && <Connector />}
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-center text-[10px] text-gray-500 dark:text-gray-400">
+        Select a stage to inspect or edit it.
+      </p>
     </div>
   );
 }
@@ -126,16 +143,18 @@ export default function WaveDiagram({ steps, merge, useOrientation, selectedId, 
 
 function ParallelRow({
   steps,
+  adaptive,
   selectedId,
   onSelect,
 }: {
   steps: StepConfig[];
+  adaptive: boolean;
   selectedId: WaveSelection | null;
   onSelect: (id: string) => void;
 }) {
   // A single-step parallel wave isn't actually fan-out; render it like a
   // sequential row so the user isn't misled by visual noise.
-  if (steps.length === 1) {
+  if (steps.length === 1 && !adaptive) {
     const s = steps[0];
     return (
       <SequentialRow
@@ -157,6 +176,22 @@ function ParallelRow({
           onClick={() => onSelect(s.id)}
         />
       ))}
+      {adaptive && (
+        <>
+          <Node
+            label="Subject specialists (1–2)"
+            selected={selectedId === "auto_subject_slot"}
+            variant="adaptive"
+            onClick={() => onSelect("auto_subject_slot")}
+          />
+          <Node
+            label="Method specialists (1–4)"
+            selected={selectedId === "auto_method_slot"}
+            variant="adaptive"
+            onClick={() => onSelect("auto_method_slot")}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -220,7 +255,7 @@ function Node({
 }: {
   label: string;
   selected: boolean;
-  variant: "parallel" | "sequential" | "merge" | "preprocess";
+  variant: "parallel" | "adaptive" | "sequential" | "merge" | "preprocess";
   wide?: boolean;
   onClick: () => void;
 }) {
@@ -237,6 +272,8 @@ function Node({
     switch (variant) {
       case "parallel":
         return "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-950";
+      case "adaptive":
+        return "border-dashed bg-indigo-50 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-950/50";
       case "sequential":
         return "bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-900 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-950";
       case "merge":

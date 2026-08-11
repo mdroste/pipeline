@@ -25,6 +25,14 @@ function setup(inputMode = "document") {
   };
 }
 
+function folderSetup() {
+  return {
+    ...setup("document"),
+    configuredInputMode: "folder",
+    inputInterpretation: "document",
+  };
+}
+
 describe("BatchPanel profile semantics", () => {
   beforeEach(() => {
     invoke.mockReset();
@@ -145,25 +153,45 @@ describe("BatchPanel profile semantics", () => {
       expectedProfileConfigSnapshotId: "config-exact",
       diff: false,
       paperPath: "/papers/second.pdf",
+      inputInterpretation: "document",
     }));
   });
 
-  it.each(["folder", "none"])(
-    "explicitly gates batch processing for %s workflows",
-    async (inputMode) => {
-      invoke.mockImplementation((command: string) => {
-        if (command === "get_batch_status") return Promise.resolve([]);
-        if (command === "get_execution_plan") return Promise.resolve(setup(inputMode));
-        return Promise.reject(new Error(`unexpected command: ${command}`));
-      });
-      render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
+  it("accepts queued documents for a folder-profile batch", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_batch_status") return Promise.resolve([]);
+      if (command === "get_execution_plan") return Promise.resolve(folderSetup());
+      if (command === "start_batch") return Promise.resolve();
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    open
+      .mockResolvedValueOnce("/inputs/rubric.pdf")
+      .mockResolvedValueOnce(["/papers/paper.pdf"]);
+    const user = userEvent.setup();
+    render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
 
-      expect(
-        await screen.findByText("Batch processing requires a document-input workflow."),
-      ).toBeVisible();
-      expect(screen.queryByRole("button", { name: "Add files…" })).not.toBeInTheDocument();
-    },
-  );
+    await screen.findByRole("button", { name: "Add files…" });
+    await user.click(screen.getByRole("button", { name: "Choose…" }));
+    await user.click(screen.getByRole("button", { name: "Add files…" }));
+    await user.click(screen.getByRole("button", { name: "Start batch (1)" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "start_batch",
+      expect.objectContaining({ paths: ["/papers/paper.pdf"] }),
+    ));
+  });
+
+  it("gates batch processing only for workflows with no primary input", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_batch_status") return Promise.resolve([]);
+      if (command === "get_execution_plan") return Promise.resolve(setup("none"));
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
+
+    expect(await screen.findByText("This workflow does not accept batch inputs.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add files…" })).not.toBeInTheDocument();
+  });
 
   it("shows the exact captured profile and snapshot for a batch", async () => {
     invoke.mockImplementation((command: string) => {

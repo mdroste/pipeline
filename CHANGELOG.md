@@ -3,15 +3,47 @@
 This file records user-visible and release-integrity changes. Development before
 the first public release was not maintained as a stable release series.
 
-## Unreleased
+## 0.9.0 — 2026-08-10
 
+- Added Paper Review (Auto), which validates one orientation/router call and
+  selects one or two subject/subfield reviewers plus one to four method
+  reviewers from a host-owned catalog covering 28 disciplines, 191 subject
+  roles, and 32 method roles. Its saved workflow remains a four-step skeleton;
+  Rust assembles only the selected specialists for each six-to-ten-step run.
+  The plan is visible in progress and saved orientation artifacts, and
+  unselected specialists never become workflow steps or consume model calls.
+  The New Run workflow summary links to a searchable catalog browser grouped
+  by discipline, with separate subject and method views. The Workflow Editor
+  now shows one combined Orientation & Classification stage followed by two
+  read-only adaptive slots instead of expanding the specialist catalog into
+  saved steps. Every selected subject and method report is a direct input to
+  synthesis alongside the three universal reviews. Untouched 28- and 29-step
+  Auto Review development profiles migrate to the compact skeleton, including
+  installs where an earlier migration marker was recorded before compaction.
+  The pre-launch execution review now shows the bounded adaptive groups in the
+  timeline and artifact-access table, including their direct inputs to Auto
+  synthesis, without truncating step and count summaries. During a live run,
+  the parallel wave now reserves an Adaptive agents row until orientation
+  resolves it into the selected subject and method specialists.
+- Added Projects for grouping related saved runs and revisions without moving
+  or deleting the underlying run artifacts. Projects now include a persistent,
+  report-neutral issue ledger with conservative cross-run matching, lifecycle
+  decisions and notes, regression tracking, provenance/evidence history,
+  filters, manual duplicate merging, and Markdown export.
+- Added an explicit Run preview before launch, showing the execution timeline,
+  provider and artifact access, declared tools, and bounded model work units.
+- Added evidence references to structured issue cards, with page and artifact
+  links into the run's Sources view and citations in accepted-issue exports.
+- Added a Workflow Gallery with editable templates for revision responses,
+  literature positioning, thesis chapters, and rubric-based review.
+- Modernized the source-build CLI with transient workflow selection, dependency
+  checks for concrete PDF inputs, and managed Paddle bundle status,
+  installation, repair, and confirmed uninstallation commands.
 - Consolidated local OCR extraction on PaddleOCR-VL Full Parser. The former
   direct Q8/fast extractor is no longer offered; saved settings and workflows
   that selected it migrate automatically to Full Parser. Installation and
   dependency status now present the parser and its recognition runtime as one
   managed engine.
-
-## 1.0.1 — 2026-07-27
 
 ### Security and privacy
 

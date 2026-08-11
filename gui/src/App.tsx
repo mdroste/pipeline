@@ -1,10 +1,12 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import PipelineProgress from "./components/PipelineProgress";
 import DepsCheck from "./components/DepsCheck";
 import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
+import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
 import NavRail, { type AppPage } from "./components/NavRail";
 import RunSetupPanel from "./components/RunSetupPanel";
@@ -23,8 +25,10 @@ import type {
   InputSlot,
   PipelineConfig,
   PrimaryInputSelection,
+  BatchJob,
 } from "./lib/types";
 import type { ExecutionPlanStage } from "./lib/pipelineHelpers";
+import type { ArtifactSelectionTarget } from "./components/ArtifactExplorer";
 
 interface RunProfileSnapshot {
   profileId: string;
@@ -53,10 +57,21 @@ interface ExecutionPlanEnvelope {
   stages: ExecutionPlanStage[];
 }
 
+interface PreparedLaunch {
+  snapshot: PendingRun;
+  variables?: Record<string, string>;
+  extraInputs?: Record<string, string>;
+  plan: ExecutionPlanEnvelope;
+  config: PipelineConfig;
+  batchPaths?: string[];
+}
+
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
 const AboutPage = lazy(() => import("./components/AboutPage"));
 const HistoryPage = lazy(() => import("./components/HistoryPage"));
+const ProjectsPage = lazy(() => import("./components/ProjectsPage"));
+const WorkflowGalleryPage = lazy(() => import("./components/WorkflowGalleryPage"));
 const loadBatchPanel = () => import("./components/BatchPanel");
 const BatchPanel = lazy(loadBatchPanel);
 const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
@@ -67,6 +82,10 @@ function plannedInterpretation(selection: PrimaryInputSelection | null): string 
     return selection.interpretation;
   }
   return selection.selectionKind === "folder" ? "source_tree" : "document";
+}
+
+function hasActiveBatch(jobs: BatchJob[]): boolean {
+  return jobs.some((job) => job.status === "pending" || job.status === "running");
 }
 
 function App() {
@@ -82,6 +101,7 @@ function App() {
     runStartedAt,
     passTimes,
     stageHistory,
+    reviewRouting,
   } = usePipeline();
   const [paperPath, setPaperPath] = useState<string | null>(null);
   const [inputSelection, setInputSelection] = useState<PrimaryInputSelection | null>(null);
@@ -90,6 +110,7 @@ function App() {
   const [depsError, setDepsError] = useState<string | null>(null);
   const runPreflightActive = useRef(false);
   const [page, setPage] = useState<AppPage>("main");
+  const [batchActive, setBatchActive] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<
     "llm" | "extraction" | "general"
   >("llm");
@@ -126,12 +147,14 @@ function App() {
   // Variables and extra input slots the active profile declares; both drive
   // the pre-run options modal.
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
+  const [runPreview, setRunPreview] = useState<PreparedLaunch | null>(null);
   const [activeRunPlan, setActiveRunPlan] = useState<ExecutionPlanStage[] | null>(null);
   const launchActive = useRef(false);
   const selectedInputRef = useRef({ inputMode, paperPath, inputSelection });
   selectedInputRef.current = { inputMode, paperPath, inputSelection };
   // A run id to open in History (e.g. from a batch job's "Open" link).
   const [historyRunId, setHistoryRunId] = useState<string | null>(null);
+  const [historySourceSelection, setHistorySourceSelection] = useState<ArtifactSelectionTarget | null>(null);
   const [theme, setTheme] = useState<ThemePreference>(() =>
     readThemePreference(localStorage),
   );
@@ -146,6 +169,49 @@ function App() {
     invoke<boolean>("mark_smoke_ready").catch((error) => {
       console.warn("Startup readiness signal failed:", error);
     });
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    let unlisteners: Array<() => void> = [];
+    Promise.allSettled([
+      listen<BatchJob[]>("batch:progress", (event) => {
+        if (live) setBatchActive(hasActiveBatch(event.payload));
+      }),
+      listen("batch:done", () => {
+        if (live) setBatchActive(false);
+      }),
+    ])
+      .then((registrations) => {
+        const registered = registrations.flatMap((registration) =>
+          registration.status === "fulfilled" ? [registration.value] : [],
+        );
+        const failed = registrations.find(
+          (registration): registration is PromiseRejectedResult =>
+            registration.status === "rejected",
+        );
+        if (failed) {
+          registered.forEach((unlisten) => unlisten());
+          throw failed.reason;
+        }
+        if (!live) {
+          registered.forEach((unlisten) => unlisten());
+          return;
+        }
+        unlisteners = registered;
+        // Register listeners before taking the snapshot so a just-started
+        // batch cannot fall into the gap between the read and subscription.
+        return invoke<BatchJob[]>("get_batch_status").then((jobs) => {
+          if (live) setBatchActive(hasActiveBatch(jobs));
+        });
+      })
+      .catch((error) => {
+        console.warn("Unable to track batch status:", error);
+      });
+    return () => {
+      live = false;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
   }, []);
 
   useEffect(() => {
@@ -297,8 +363,9 @@ function App() {
     setConfigVersion((version) => version + 1);
   }, [inputMode]);
 
-  const isRunning =
+  const foregroundRunActive =
     state.kind !== "idle" && state.kind !== "done" && state.kind !== "error";
+  const isRunning = foregroundRunActive || batchActive;
   const hasCurrentRun = state.kind !== "idle";
   const showRunSetup = page === "main" && state.kind === "idle";
 
@@ -311,6 +378,11 @@ function App() {
     launchActive.current = true;
     setPreparingRun(true);
     try {
+      // Read the editable profile immediately before asking the backend to
+      // bind the immutable execution snapshot. If the active profile changed,
+      // the expected fingerprint below rejects the launch rather than showing
+      // a preview for mixed configurations.
+      const config = await invoke<PipelineConfig>("get_pipeline_config");
       if (snapshot.inputSelection?.interpretation === "batch") {
         let paths = snapshot.inputSelection.paths;
         if (snapshot.inputSelection.selectionKind === "folder") {
@@ -335,13 +407,7 @@ function App() {
           setShowDeps(true);
           return;
         }
-        await invoke("start_batch", {
-          paths,
-          variables: variables ?? null,
-          extraInputs: extraInputs ?? null,
-          expectedProfileConfigSnapshotId: plan.profileConfigSnapshotId,
-        });
-        setPage("batch");
+        setRunPreview({ snapshot, variables, extraInputs, plan, config, batchPaths: paths });
         return;
       }
       const plan = await invoke<ExecutionPlanEnvelope>("get_execution_plan", {
@@ -357,21 +423,50 @@ function App() {
         setShowDeps(true);
         return;
       }
-      setPage("main");
-      setActiveRunPlan(plan.stages);
-      void startPipeline(
-        snapshot.paperPath,
-        snapshot.inputSelection?.interpretation,
-        false,
-        variables,
-        extraInputs,
-        plan.profileSnapshotId,
-      );
+      setRunPreview({ snapshot, variables, extraInputs, plan, config });
     } catch (error) {
       setRunConfigError(
         `The workflow execution plan could not be prepared: ${
           error instanceof Error ? error.message : String(error)
         }`,
+      );
+    } finally {
+      launchActive.current = false;
+      setPreparingRun(false);
+    }
+  };
+
+  const startPreparedLaunch = async () => {
+    const prepared = runPreview;
+    if (!prepared || launchActive.current) return;
+    launchActive.current = true;
+    setRunPreview(null);
+    setPreparingRun(true);
+    try {
+      if (prepared.batchPaths) {
+        await invoke("start_batch", {
+          paths: prepared.batchPaths,
+          variables: prepared.variables ?? null,
+          extraInputs: prepared.extraInputs ?? null,
+          expectedProfileConfigSnapshotId: prepared.plan.profileConfigSnapshotId,
+        });
+        setBatchActive(true);
+        setPage("batch");
+        return;
+      }
+      setPage("main");
+      setActiveRunPlan(prepared.plan.stages);
+      void startPipeline(
+        prepared.snapshot.paperPath,
+        prepared.snapshot.inputSelection?.interpretation,
+        false,
+        prepared.variables,
+        prepared.extraInputs,
+        prepared.plan.profileSnapshotId,
+      );
+    } catch (error) {
+      setRunConfigError(
+        `The run could not be started: ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
       launchActive.current = false;
@@ -445,7 +540,9 @@ function App() {
     reset();
     setPaperPath(null);
     setInputSelection(null);
+    setRunPreview(null);
     setHistoryRunId(null);
+    setHistorySourceSelection(null);
     setPendingRun(null);
     setActiveRunPlan(null);
     setSelectionKey((key) => key + 1);
@@ -460,7 +557,10 @@ function App() {
       setSettingsTargetId(undefined);
       setSettingsNavigationKey((key) => key + 1);
     }
-    if (nextPage === "history") setHistoryRunId(null);
+    if (nextPage === "history") {
+      setHistoryRunId(null);
+      setHistorySourceSelection(null);
+    }
     setPage(nextPage);
   };
 
@@ -505,6 +605,17 @@ function App() {
         />
       )}
 
+      {runPreview && (
+        <RunPreview
+          plan={runPreview.plan}
+          config={runPreview.config}
+          inputPath={runPreview.snapshot.paperPath}
+          batchCount={runPreview.batchPaths?.length ?? 1}
+          onCancel={() => setRunPreview(null)}
+          onRun={() => void startPreparedLaunch()}
+        />
+      )}
+
       {/* Invisible window-wide drag strip along the very top edge (macOS).
           Thin (16px) so it stays above the content panels' own controls,
           which start at 8px padding — grab the top edge anywhere to drag. */}
@@ -535,6 +646,7 @@ function App() {
         <NavRail
           activePage={page}
           hasCurrentRun={hasCurrentRun}
+          hasActiveBatch={batchActive}
           runInProgress={isRunning}
           isMac={isMac}
           dependenciesReady={depsReport?.ready ?? null}
@@ -628,17 +740,32 @@ function App() {
                 onClose={() => setPage("main")}
                 showClose={false}
                 initialRunId={historyRunId}
+                initialSourceSelection={historySourceSelection}
                 onRerun={(runId, onlyFailed) => {
                   setPage("main");
                   setActiveRunPlan(null);
                   rerunPipeline(runId, { onlyFailed });
                 }}
               />
+            ) : page === "projects" ? (
+              <ProjectsPage
+                onOpenRun={(runId, source) => {
+                  setHistoryRunId(runId);
+                  setHistorySourceSelection(source ?? null);
+                  setPage("history");
+                }}
+              />
+            ) : page === "gallery" ? (
+              <WorkflowGalleryPage onInstalled={handleProfileChange} />
             ) : page === "batch" ? (
               <BatchPanel
                 onClose={() => setPage("main")}
                 showClose={false}
-                onOpenRun={(runId) => { setHistoryRunId(runId); setPage("history"); }}
+                onOpenRun={(runId) => {
+                  setHistoryRunId(runId);
+                  setHistorySourceSelection(null);
+                  setPage("history");
+                }}
               />
             ) : state.kind === "done" ? (
               <ReportWorkspace
@@ -697,6 +824,7 @@ function App() {
                     stageHistory={stageHistory}
                     runStartedAt={runStartedAt}
                     passTimes={passTimes}
+                    reviewRouting={reviewRouting}
                   />
                   {state.kind === "error" ? (
                     <div className="mt-6">

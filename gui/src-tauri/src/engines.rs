@@ -19,7 +19,6 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use tauri::{AppHandle, Emitter};
 
 // ── Pinned PaddleOCR-VL native stack ───────────────────────────────
 
@@ -599,6 +598,16 @@ fn symlink_target_bytes(path: &Path) -> Result<Vec<u8>, String> {
     }
 }
 
+fn ignorable_integrity_metadata(path: &Path, metadata: &std::fs::Metadata) -> bool {
+    // Finder may create this inert metadata file after the user opens
+    // ~/.pipeline/ from Settings. It is not part of the executable runtime
+    // closure, so exclude it while continuing to reject every other unlisted
+    // file, symlink, or filesystem object.
+    metadata.is_file()
+        && !metadata.file_type().is_symlink()
+        && path.file_name() == Some(std::ffi::OsStr::new(".DS_Store"))
+}
+
 fn collect_integrity_entries(root: &Path, scopes: &[&str]) -> Result<Vec<IntegrityEntry>, String> {
     let mut stack = scopes
         .iter()
@@ -613,6 +622,9 @@ fn collect_integrity_entries(root: &Path, scopes: &[&str]) -> Result<Vec<Integri
                 path.display()
             )
         })?;
+        if ignorable_integrity_metadata(&path, &metadata) {
+            continue;
+        }
         if metadata.is_dir() {
             let mut children = std::fs::read_dir(&path)
                 .map_err(|error| format!("Failed to inspect managed runtime: {error}"))?
@@ -689,6 +701,9 @@ fn collect_integrity_paths(root: &Path, scopes: &[String]) -> Result<Vec<String>
     while let Some(path) = stack.pop() {
         let metadata = std::fs::symlink_metadata(&path)
             .map_err(|error| format!("Managed runtime integrity inventory changed: {error}"))?;
+        if ignorable_integrity_metadata(&path, &metadata) {
+            continue;
+        }
         if metadata.is_dir() {
             let mut children = std::fs::read_dir(&path)
                 .map_err(|error| format!("Failed to inspect managed runtime: {error}"))?
@@ -757,6 +772,29 @@ fn integrity_metadata_digest(root: &Path, entries: &[IntegrityEntry]) -> Result<
             digest.update(metadata.ino().to_le_bytes());
             digest.update(metadata.ctime().to_le_bytes());
             digest.update(metadata.ctime_nsec().to_le_bytes());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle as _;
+            use windows_sys::Win32::Storage::FileSystem::{
+                GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            };
+
+            let file = std::fs::File::open(&path).map_err(|error| {
+                format!("Failed to open managed runtime file for identity check: {error}")
+            })?;
+            let mut info = BY_HANDLE_FILE_INFORMATION::default();
+            // SAFETY: `file` owns a valid handle for the duration of the call,
+            // and `info` is a writable structure of the required type.
+            if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+                return Err(format!(
+                    "Failed to identify managed runtime file: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            digest.update(info.dwVolumeSerialNumber.to_le_bytes());
+            digest.update(info.nFileIndexHigh.to_le_bytes());
+            digest.update(info.nFileIndexLow.to_le_bytes());
         }
     }
     Ok(format!("{:x}", digest.finalize()))
@@ -2047,16 +2085,16 @@ fn kill_install_child() {
     }
 }
 
-fn log(app: &AppHandle, line: impl Into<String>) {
+fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
     let line = line.into();
     record_install_log(&line);
-    app.emit("engines:log", serde_json::json!({ "line": line }))
+    app.emit_event("engines:log", serde_json::json!({ "line": line }))
         .ok();
 }
 
-fn emit_phase(app: &AppHandle, engine_id: &str, phase: &str, status: &str) {
+fn emit_phase(app: &crate::emit::EventBus, engine_id: &str, phase: &str, status: &str) {
     record_install_phase(engine_id, phase, status);
-    app.emit(
+    app.emit_event(
         "engines:phase",
         serde_json::json!({ "engine": engine_id, "phase": phase, "status": status }),
     )
@@ -2081,7 +2119,7 @@ where
 }
 
 async fn download_verified(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     url: &str,
     destination: &Path,
     expected_sha256: &str,
@@ -2215,6 +2253,7 @@ fn unpack_python_archive(archive_path: &Path, destination: &Path) -> Result<Path
     let mut archive = tar::Archive::new(decoder);
     let mut total = 0u64;
     let mut entries_seen = 0usize;
+    #[cfg(unix)]
     let mut symlinks = Vec::new();
     for entry in archive
         .entries()
@@ -2243,8 +2282,13 @@ fn unpack_python_archive(archive_path: &Path, destination: &Path) -> Result<Path
             if !archive_link_stays_within_root(&relative, &link_name) {
                 return Err("Unsafe symlink target in Python archive".to_string());
             }
-            symlinks.push((target, link_name));
-            continue;
+            #[cfg(unix)]
+            {
+                symlinks.push((target, link_name));
+                continue;
+            }
+            #[cfg(not(unix))]
+            return Err("Unexpected symlink in Windows Python archive".to_string());
         }
         if kind.is_dir() {
             std::fs::create_dir_all(&target)
@@ -2278,6 +2322,7 @@ fn unpack_python_archive(archive_path: &Path, destination: &Path) -> Result<Path
                 .map_err(|error| format!("Failed to set Python permissions: {error}"))?;
         }
     }
+    #[cfg(unix)]
     for (target, link_name) in symlinks {
         if let Some(parent) = target.parent() {
             if path_has_symlink_component(destination, parent) {
@@ -2289,11 +2334,8 @@ fn unpack_python_archive(archive_path: &Path, destination: &Path) -> Result<Path
         if std::fs::symlink_metadata(&target).is_ok() {
             return Err("Python archive contains a duplicate symlink path".to_string());
         }
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&link_name, &target)
             .map_err(|error| format!("Failed to extract Python symlink: {error}"))?;
-        #[cfg(not(unix))]
-        return Err("Unexpected symlink in Windows Python archive".to_string());
     }
     let python = standalone_python(destination);
     if !python.is_file() {
@@ -2456,11 +2498,13 @@ fn unpack_llama_archive(
                         .map_err(|error| format!("Failed to extract llama.cpp: {error}"))?;
                 }
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(&link_name, &target)
-                    .map_err(|error| format!("Failed to extract llama.cpp symlink: {error}"))?;
+                {
+                    std::os::unix::fs::symlink(&link_name, &target)
+                        .map_err(|error| format!("Failed to extract llama.cpp symlink: {error}"))?;
+                    continue;
+                }
                 #[cfg(not(unix))]
                 return Err("Unexpected symlink in llama.cpp archive".to_string());
-                continue;
             }
             if !kind.is_file() && !kind.is_dir() {
                 continue;
@@ -2714,7 +2758,7 @@ fn uv_env() -> Result<Vec<(String, String)>, String> {
     ])
 }
 
-async fn ensure_uv(app: &AppHandle) -> Result<PathBuf, String> {
+async fn ensure_uv(app: &crate::emit::EventBus) -> Result<PathBuf, String> {
     let uv_path = uv_binary_path()?;
     let artifact = uv_artifact()?;
     if uv_path.is_file() {
@@ -2962,7 +3006,7 @@ fn unregister_install_pid(pid: u32) {
 }
 
 async fn run_install_step(
-    app: &AppHandle,
+    app: &crate::emit::EventBus,
     program: &Path,
     args: &[String],
     environment: &[(String, String)],
@@ -3073,7 +3117,10 @@ async fn run_install_step(
     Ok(())
 }
 
-async fn install_paddle_engine(app: &AppHandle, spec: &EngineSpec) -> Result<(), String> {
+async fn install_paddle_engine(
+    app: &crate::emit::EventBus,
+    spec: &EngineSpec,
+) -> Result<(), String> {
     let artifact = llama_artifact()?;
     let native_dir = pipeline_home()?.join("native");
     std::fs::create_dir_all(&native_dir)
@@ -3224,7 +3271,10 @@ async fn install_paddle_engine(app: &AppHandle, spec: &EngineSpec) -> Result<(),
     Ok(())
 }
 
-async fn install_paddle_full_parser(app: &AppHandle, spec: &EngineSpec) -> Result<(), String> {
+async fn install_paddle_full_parser(
+    app: &crate::emit::EventBus,
+    spec: &EngineSpec,
+) -> Result<(), String> {
     full_parser_support()?;
     let python_artifact = python_artifact()?;
 
@@ -3526,7 +3576,7 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
 
 /// Install a registered native engine. Unknown and retired engine IDs are
 /// rejected before any download or subprocess can begin.
-pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
+pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Result<(), String> {
     if engine_id != "paddleocr-vl-parser" {
         return Err(format!("Unknown engine '{engine_id}'"));
     }
@@ -3592,7 +3642,7 @@ pub async fn install_engine(app: &AppHandle, engine_id: &str) -> Result<(), Stri
 
 /// Uninstall a registered native engine. Retired engine IDs are intentionally
 /// rejected; Pipeline never executes their package managers or entry points.
-pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), String> {
+pub async fn uninstall_engine(app: &crate::emit::EventBus, engine_id: &str) -> Result<(), String> {
     if engine_id != "paddleocr-vl-parser" {
         return Err(format!("Unknown engine '{engine_id}'"));
     }
@@ -3616,7 +3666,7 @@ pub async fn uninstall_engine(app: &AppHandle, engine_id: &str) -> Result<(), St
 
 /// Remove only the retired app-managed Marker venv and its known launch
 /// shims. Model/cache directories and every run artifact remain untouched.
-pub async fn remove_retired_marker(app: &AppHandle) -> Result<(), String> {
+pub async fn remove_retired_marker(app: &crate::emit::EventBus) -> Result<(), String> {
     let _guard = acquire_install_guard()?;
     INSTALL_CANCEL.store(false, Ordering::Release);
     let paths = retired_marker_paths()?;
@@ -3719,6 +3769,8 @@ mod tests {
         let native = tempfile::tempdir().unwrap();
         let native_root = native.path();
         let parser_root = native_root.join("paddleocr-parser");
+        let uv_name = exe("uv");
+        let uv_backup_name = format!(".{uv_name}-backup");
         let versions = parser_root.join("versions");
         let current = versions.join(PADDLE_PARSER_RELEASE);
         let current_backup = versions.join(format!(".{PADDLE_PARSER_RELEASE}-backup"));
@@ -3739,8 +3791,8 @@ mod tests {
             std::fs::create_dir_all(&path).unwrap();
             std::fs::write(path.join("fixture"), b"fixture").unwrap();
         }
-        std::fs::write(parser_root.join("runtime/uv"), b"uv").unwrap();
-        std::fs::write(parser_root.join("runtime/.uv-backup"), b"old uv").unwrap();
+        std::fs::write(parser_root.join("runtime").join(&uv_name), b"uv").unwrap();
+        std::fs::write(parser_root.join("runtime").join(&uv_backup_name), b"old uv").unwrap();
         std::fs::create_dir_all(versions.join("notes")).unwrap();
         std::fs::create_dir_all(native_root.join("unrelated-engine-data")).unwrap();
 
@@ -3755,11 +3807,11 @@ mod tests {
         assert!(!parser_root.join("uv-cache").exists());
         assert!(!parser_root.join("python").exists());
         assert!(!parser_root.join("runtime/.uv-staging-abandoned").exists());
-        assert!(!parser_root.join("runtime/.uv-backup").exists());
+        assert!(!parser_root.join("runtime").join(&uv_backup_name).exists());
 
         // Runtime data and names outside the installer's namespaces survive.
         assert!(parser_root.join("models/fixture").is_file());
-        assert!(parser_root.join("runtime/uv").is_file());
+        assert!(parser_root.join("runtime").join(&uv_name).is_file());
         assert!(versions.join("notes").is_dir());
         assert!(native_root.join("unrelated-engine-data").is_dir());
     }
@@ -3768,6 +3820,8 @@ mod tests {
     fn managed_engine_cleanup_recovers_interrupted_swaps() {
         let native = tempfile::tempdir().unwrap();
         let native_root = native.path();
+        let uv_name = exe("uv");
+        let uv_backup_name = format!(".{uv_name}-backup");
         let base_backup = native_root.join(".paddleocr-vl-backup");
         std::fs::create_dir_all(&base_backup).unwrap();
         std::fs::write(base_backup.join("previous"), b"base").unwrap();
@@ -3781,7 +3835,7 @@ mod tests {
         std::fs::create_dir_all(&current_backup).unwrap();
         std::fs::write(current_backup.join("previous"), b"parser").unwrap();
         std::fs::create_dir_all(parser_root.join("runtime")).unwrap();
-        std::fs::write(parser_root.join("runtime/.uv-backup"), b"uv").unwrap();
+        std::fs::write(parser_root.join("runtime").join(&uv_backup_name), b"uv").unwrap();
 
         cleanup_managed_engine_storage_at(native_root, false).unwrap();
 
@@ -3790,8 +3844,8 @@ mod tests {
         assert!(current.join("previous").is_file());
         assert!(!current.join("partial").exists());
         assert!(!current_backup.exists());
-        assert!(parser_root.join("runtime/uv").is_file());
-        assert!(!parser_root.join("runtime/.uv-backup").exists());
+        assert!(parser_root.join("runtime").join(&uv_name).is_file());
+        assert!(!parser_root.join("runtime").join(&uv_backup_name).exists());
         assert_eq!(
             cleanup_managed_engine_storage_at(native_root, true).unwrap(),
             0
@@ -4048,6 +4102,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     fn parser_sidecar_refresh_reuses_only_a_verified_pinned_runtime() {
         let root = tempfile::tempdir().unwrap();
         let version_root = root.path().join("versions").join(PADDLE_PARSER_RELEASE);
@@ -4116,6 +4171,9 @@ mod tests {
         std::fs::create_dir_all(&runtime).unwrap();
         let program = runtime.join("program");
         std::fs::write(&program, b"trusted").unwrap();
+        // Opening ~/.pipeline/ in Finder may add this inert metadata file.
+        // It must neither enter nor invalidate the executable inventory.
+        std::fs::write(runtime.join(".DS_Store"), b"finder metadata").unwrap();
         let expected_file_sha256 = format!("{:x}", Sha256::digest(b"trusted"));
         let manifest_sha256 = write_install_integrity(root.path(), &["runtime"]).unwrap();
         verify_install_integrity(

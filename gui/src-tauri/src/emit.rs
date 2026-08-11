@@ -79,6 +79,22 @@ impl Events for CliEvents {
                 let status = payload.get("status").and_then(|v| v.as_str()).unwrap_or("");
                 eprintln!("  {name}: {status}");
             }
+            "engines:log" => {
+                if let Some(line) = payload.get("line").and_then(|value| value.as_str()) {
+                    eprintln!("{line}");
+                }
+            }
+            "engines:phase" => {
+                let phase = payload
+                    .get("phase")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("engine");
+                let status = payload
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                eprintln!("  {phase}: {status}");
+            }
             _ => {}
         }
         Ok(())

@@ -60,7 +60,7 @@ fn dependency_available(dependency: &DepStatus) -> bool {
     }
 }
 
-pub(crate) fn dependency_ready(dependency: &DepStatus) -> bool {
+pub fn dependency_ready(dependency: &DepStatus) -> bool {
     !dependency.required || dependency_available(dependency)
 }
 
@@ -1016,9 +1016,11 @@ fn check_all_for(
                 "Managed PaddleOCR layout client, recognition runtime, and models are installed."
                     .into()
             } else if pdf_requirements.paddle_full {
-                "Recommended for PDFs: Install from Settings → PDF Extraction.".into()
+                "Install from Settings → PDF Extraction, or run `pipeline-cli engines install paddle` from a source build."
+                    .into()
             } else {
-                "Install PaddleOCR-VL Full Parser for layout-aware local PDF extraction.".into()
+                "Install PaddleOCR-VL Full Parser from Settings, or run `pipeline-cli engines install paddle` from a source build."
+                    .into()
             },
             authenticated: None,
             cli_auth_status: None,
@@ -1032,7 +1034,7 @@ fn check_all_for(
             required: pdf_requirements.extraction,
             hint: match effective_extractor {
                 Some("marker") => {
-                    "Marker is unavailable in Pipeline 1.0.1. Choose LLM, PaddleOCR-VL, or pdftotext extraction."
+                    "Marker is unavailable in Pipeline 0.9.0. Choose LLM, PaddleOCR-VL, or pdftotext extraction."
                         .into()
                 }
                 Some("llm") if settings.preferred_provider == "local" => {
@@ -1245,6 +1247,7 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
             context_cache: Default::default(),
             use_orientation: false,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: crate::pipeline_config::ExtractionConfig {
                 method: "pdftotext".to_string(),
                 ..Default::default()
@@ -1270,6 +1273,7 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
             context_cache: Default::default(),
             use_orientation: false,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: Default::default(),
             parallel_context_template: String::new(),
             variables: Vec::new(),
@@ -1310,6 +1314,7 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
             context_cache: Default::default(),
             use_orientation: false,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: crate::pipeline_config::ExtractionConfig {
                 input_mode: "none".to_string(),
                 extra_inputs: vec![crate::pipeline_config::InputSlot {
@@ -1357,6 +1362,7 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\{pack
             context_cache: Default::default(),
             use_orientation: false,
             orientation_prompt: String::new(),
+            orientation_schema: None,
             extraction: Default::default(),
             parallel_context_template: String::new(),
             variables: Vec::new(),

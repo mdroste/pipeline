@@ -3,12 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import ComparePage from "./ComparePage";
 import ReportWorkspace from "./ReportWorkspace";
 import type { RunSummary, RunsDiskUsage, ToolCallCounts } from "../lib/types";
+import type { ArtifactSelectionTarget } from "./ArtifactExplorer";
 
 interface Props {
   onClose: () => void;
   showClose?: boolean;
   /** When set, open this run's detail view immediately (e.g. from a batch job). */
   initialRunId?: string | null;
+  initialSourceSelection?: ArtifactSelectionTarget | null;
   /** Re-run a past run (reusing cached extraction/orientation and steps). */
   onRerun?: (runId: string, onlyFailed: boolean) => void;
 }
@@ -140,13 +142,22 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${cls}`}>{status || "done"}</span>;
 }
 
-export default function HistoryPage({ onClose, showClose = true, initialRunId, onRerun }: Props) {
+export default function HistoryPage({
+  onClose,
+  showClose = true,
+  initialRunId,
+  initialSourceSelection,
+  onRerun,
+}: Props) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [usage, setUsage] = useState<RunsDiskUsage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [openRunId, setOpenRunId] = useState<string | null>(initialRunId ?? null);
+  const [openSourceSelection, setOpenSourceSelection] = useState<ArtifactSelectionTarget | null>(
+    initialSourceSelection ?? null,
+  );
   // Which run's metadata is being edited inline (title + tags).
   const [editing, setEditing] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -240,7 +251,10 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
     if (!window.confirm(`Delete run "${label}" and all its artifacts? This cannot be undone.`)) return;
     try {
       await invoke("delete_run", { runId: r.run_id });
-      if (openRunId === r.run_id) setOpenRunId(null);
+      if (openRunId === r.run_id) {
+        setOpenRunId(null);
+        setOpenSourceSelection(null);
+      }
       void refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -259,7 +273,11 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
       <ReportWorkspace
         runId={openRunId}
         summary={run}
-        onBack={() => setOpenRunId(null)}
+        onBack={() => {
+          setOpenRunId(null);
+          setOpenSourceSelection(null);
+        }}
+        initialSourceSelection={openSourceSelection}
       />
     );
   }
@@ -391,7 +409,10 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <button
-                          onClick={() => setOpenRunId(r.run_id)}
+                          onClick={() => {
+                            setOpenSourceSelection(null);
+                            setOpenRunId(r.run_id);
+                          }}
                           className="text-sm font-medium text-gray-900 dark:text-gray-100 hover:underline truncate"
                           title="Open this run"
                         >
@@ -452,7 +473,10 @@ export default function HistoryPage({ onClose, showClose = true, initialRunId, o
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => setOpenRunId(r.run_id)}
+                        onClick={() => {
+                          setOpenSourceSelection(null);
+                          setOpenRunId(r.run_id);
+                        }}
                         className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
                       >
                         Open

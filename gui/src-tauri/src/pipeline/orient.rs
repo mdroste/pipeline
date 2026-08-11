@@ -29,11 +29,12 @@ pub fn resolve_survey_template(profile_prompt: &str, input_mode: &str) -> Option
 }
 
 /// Build the survey (orientation map) by calling the LLM and validating that the
-/// output is a JSON object, retrying up to MAX_RETRIES times on parse failure.
+/// output is a JSON object, retrying up to MAX_RETRIES times on parse or schema
+/// failure.
 ///
-/// The result is returned as raw JSON — profiles may use any survey schema, so
-/// no struct validation happens here. The paper-review profiles produce the
-/// paper schema, which callers interpret via `models::paper_view`.
+/// The result is returned as raw JSON — profiles may use any survey shape, so
+/// no Rust struct is imposed here. A profile may supply an optional lightweight
+/// JSON schema; paper-review results are interpreted via `models::paper_view`.
 ///
 /// `prompt_template` is the survey prompt to use; `{input_text}` (and the legacy
 /// alias `{paper_text}`) is substituted with the (possibly truncated) extracted
@@ -43,8 +44,13 @@ pub async fn build_orientation_map(
     app: &crate::emit::EventBus,
     extraction: &ExtractionResult,
     prompt_template: Option<&str>,
+    output_schema: Option<&serde_json::Value>,
     source_read_root: Option<&str>,
 ) -> Result<serde_json::Value, String> {
+    if let Some(schema) = output_schema {
+        crate::pipeline::structured::validate_schema(schema)
+            .map_err(|error| format!("Invalid orientation schema: {error}"))?;
+    }
     let truncated = extraction.text.len() > MAX_PAPER_TEXT;
     let paper_text = if truncated {
         // Find a valid UTF-8 char boundary at or before MAX_PAPER_TEXT
@@ -113,6 +119,27 @@ pub async fn build_orientation_map(
         match serde_json::from_str::<serde_json::Value>(&cleaned) {
             Ok(mut value) if value.is_object() => {
                 append_quality_notes(&mut value, &quality_notes);
+                if let Some(schema) = output_schema {
+                    let validation = crate::pipeline::structured::validate(schema, &value)
+                        .and_then(|()| {
+                            crate::auto_review::validate_contract_for_schema(schema, &value)
+                        });
+                    if let Err(error) = validation {
+                        last_error = format!("orientation did not satisfy its schema: {error}");
+                        if attempt < MAX_RETRIES {
+                            prompt = format!(
+                                "Your previous response was valid JSON but did not satisfy the required orientation schema. Error: {error}\nPlease try again. Return ONLY one complete JSON object with every required field, no markdown fences.\n\n"
+                            );
+                            crate::safety::push_str_limited(
+                                &mut prompt,
+                                &base_prompt,
+                                crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+                                "Orientation retry prompt",
+                            )?;
+                        }
+                        continue;
+                    }
+                }
                 return Ok(value);
             }
             Ok(_) => {

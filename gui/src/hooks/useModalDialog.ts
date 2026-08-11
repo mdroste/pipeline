@@ -19,7 +19,7 @@ const FOCUSABLE = [
 export default function useModalDialog<T extends HTMLElement>(
   onClose: () => void,
   active = true,
-): RefObject<T> {
+): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;

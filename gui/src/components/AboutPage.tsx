@@ -51,16 +51,21 @@ function HelpContent() {
           />
           <StageCard
             number="2"
+            title="Review the run preview"
+            description="Pipeline shows the bound stages, providers, artifact access, tools, and configured work-unit range. Nothing starts until you confirm the preview."
+          />
+          <StageCard
+            number="3"
             title="Prepare the material"
             description="Pipeline extracts document text or inventories a folder. If the workflow uses an orientation map, it also creates a short guide to the material so later steps can find relevant sections, files, tables, and other details."
           />
           <StageCard
-            number="3"
+            number="4"
             title="Run the workflow"
             description="Pipeline starts each step after its prerequisites finish. Steps that do not depend on one another can run at the same time. Each step receives only the input and earlier results allowed by the workflow."
           />
           <StageCard
-            number="4"
+            number="5"
             title="Review the result"
             description="Later steps can combine overlapping findings into one report. When a workflow produces structured issues, you can accept, reject, or annotate them. The Sources tab contains the material saved with the run."
           />
@@ -76,6 +81,10 @@ function HelpContent() {
         </p>
         <div className="grid gap-2">
           <ProfileCard
+            name="Paper Review (Auto)"
+            description="Detects the paper's discipline, subfield, and methods, then assembles one or two subject specialists and one to four method specialists alongside three core reviews. The saved profile stays compact."
+          />
+          <ProfileCard
             name="Paper Review (Full)"
             description="Five focused reviews of a paper, followed by a consolidated report. It also includes an optional validation step."
           />
@@ -89,7 +98,8 @@ function HelpContent() {
           />
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-          You can also create, duplicate, import, and export profiles.
+          You can also create, duplicate, import, and export profiles. Gallery
+          installs curated starting points as ordinary editable profiles.
         </p>
       </Section>
 
@@ -168,7 +178,10 @@ function HelpContent() {
           tabs. You can save the report as Markdown or PDF, or export the whole
           run with its reports, source material, page images, figures, and logs.
           History lets you rename, tag, delete, resume, rerun, and compare saved
-          runs. Automatic revision reconciliation in Settings can add a model-written
+          runs. Evidence references on structured issues open the cited page or
+          saved artifact in Sources. Projects group related runs and revisions
+          and maintain a persistent issue ledger across paper, source-tree, and
+          other structured reports without moving or deleting the runs. Automatic revision reconciliation in Settings can add a model-written
           comparison when Pipeline finds an earlier run for the same document.
         </p>
       </Section>

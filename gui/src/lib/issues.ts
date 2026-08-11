@@ -1,5 +1,16 @@
 import type { PipelineReport } from "./types";
 
+export interface IssueEvidence {
+  page?: number;
+  lineStart?: number;
+  lineEnd?: number;
+  nodeId?: string;
+  assetId?: string;
+  artifactPath?: string;
+  description?: string;
+  quote?: string;
+}
+
 export interface Issue {
   id: string;
   title: string;
@@ -7,6 +18,7 @@ export interface Issue {
   severity: string;
   section: string;
   body: string;
+  evidence?: IssueEvidence[];
 }
 
 /** Yield parseable JSON values in a model reply: whole string, fenced blocks,
@@ -149,6 +161,54 @@ function normalizeSeverity(value: unknown): string {
   return severity;
 }
 
+function boundedString(value: unknown, max = 2_000): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const text = String(value).trim();
+  return text ? text.slice(0, max) : undefined;
+}
+
+function parseEvidence(value: unknown): IssueEvidence[] {
+  if (!Array.isArray(value)) return [];
+  const evidence: IssueEvidence[] = [];
+  for (const candidate of value.slice(0, 50)) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const object = candidate as Record<string, unknown>;
+    const rawPage = Number(object.page);
+    const page = Number.isInteger(rawPage) && rawPage > 0 && rawPage <= 5_000
+      ? rawPage
+      : undefined;
+    const rawLineStart = Number(object.line_start ?? object.lineStart ?? object.line);
+    const lineStart = Number.isInteger(rawLineStart) && rawLineStart > 0 && rawLineStart <= 10_000_000
+      ? rawLineStart
+      : undefined;
+    const rawLineEnd = Number(object.line_end ?? object.lineEnd);
+    const lineEnd = Number.isInteger(rawLineEnd)
+      && rawLineEnd > 0
+      && rawLineEnd <= 10_000_000
+      && (!lineStart || rawLineEnd >= lineStart)
+      ? rawLineEnd
+      : undefined;
+    const nodeId = boundedString(object.node_id ?? object.nodeId, 500);
+    const assetId = boundedString(object.asset_id ?? object.assetId, 500);
+    const rawArtifactPath = boundedString(
+      object.artifact_path ?? object.artifactPath ?? object.rel_path,
+      1_000,
+    );
+    const artifactPath = rawArtifactPath
+      && !rawArtifactPath.startsWith("/")
+      && !rawArtifactPath.includes("..")
+      && !rawArtifactPath.includes("\\")
+      ? rawArtifactPath
+      : undefined;
+    const description = boundedString(object.description ?? object.label);
+    const quote = boundedString(object.quote);
+    if (page || lineStart || lineEnd || nodeId || assetId || artifactPath || description || quote) {
+      evidence.push({ page, lineStart, lineEnd, nodeId, assetId, artifactPath, description, quote });
+    }
+  }
+  return evidence;
+}
+
 function parseIssueCandidate(json: unknown): Issue[] | null {
   const MAX_ISSUES = 1_000;
   let arr: unknown;
@@ -181,6 +241,7 @@ function parseIssueCandidate(json: unknown): Issue[] | null {
       severity: normalizeSeverity(obj.severity),
       section: String(obj.section ?? "").trim(),
       body,
+      evidence: parseEvidence(obj.evidence),
     });
   }
   return issues;

@@ -79,8 +79,9 @@ test("audited override versions stay locked", () => {
     "node_modules/nanoid": "3.3.18",
     "node_modules/serialize-javascript": "7.0.7",
     "node_modules/undici": "7.29.0",
+    "node_modules/@wdio/cli/node_modules/undici": "6.28.0",
+    "node_modules/@wdio/runner/node_modules/undici": "6.28.0",
     "node_modules/webdriver/node_modules/undici": "6.28.0",
-    "node_modules/@wdio/tauri-service/node_modules/undici": "6.28.0",
   };
 
   for (const [packagePath, version] of Object.entries(expected)) {

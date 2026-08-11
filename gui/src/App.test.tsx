@@ -7,11 +7,24 @@ const invoke = vi.hoisted(() => vi.fn());
 const startPipeline = vi.hoisted(() => vi.fn());
 const onCloseRequested = vi.hoisted(() => vi.fn());
 const setWindowTheme = vi.hoisted(() => vi.fn());
+const listen = vi.hoisted(() => vi.fn());
 const workflowInputMode = vi.hoisted(() => ({ value: "document" }));
 let systemIsDark = false;
 let systemThemeListener: ((event: MediaQueryListEvent) => void) | undefined;
 
+const previewConfig = {
+  steps: [],
+  merge: { enabled: false, prompt: "", agents: [] },
+  context_cache: { enabled: false },
+  use_orientation: false,
+  orientation_prompt: "",
+  extraction: { method: "", input_mode: "document", extra_inputs: [] },
+  parallel_context_template: "{step_prompt}",
+  variables: [],
+};
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ onCloseRequested, setTheme: setWindowTheme }),
 }));
@@ -163,6 +176,8 @@ vi.mock("./components/UpdateBanner", () => ({ default: () => null }));
 describe("App run options", () => {
   beforeEach(() => {
     invoke.mockReset();
+    listen.mockReset();
+    listen.mockResolvedValue(vi.fn());
     startPipeline.mockReset();
     onCloseRequested.mockReset();
     onCloseRequested.mockResolvedValue(vi.fn());
@@ -186,6 +201,8 @@ describe("App run options", () => {
     });
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "get_batch_status") return Promise.resolve([]);
+      if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
       if (command === "get_execution_plan") {
         return Promise.resolve({
           profileId: "deep-review",
@@ -217,7 +234,7 @@ describe("App run options", () => {
     });
 
     await user.click(await screen.findByRole("button", { name: "Settings" }));
-    await user.click(screen.getByRole("button", { name: "Use light theme" }));
+    await user.click(await screen.findByRole("button", { name: "Use light theme" }));
     expect(localStorage.getItem("theme")).toBe("light");
     expect(document.documentElement).not.toHaveClass("dark");
     expect(setWindowTheme).toHaveBeenLastCalledWith("light");
@@ -225,7 +242,7 @@ describe("App run options", () => {
     act(() => systemThemeListener?.({ matches: true } as MediaQueryListEvent));
     expect(document.documentElement).not.toHaveClass("dark");
 
-    await user.click(screen.getByRole("button", { name: "Use system theme" }));
+    await user.click(await screen.findByRole("button", { name: "Use system theme" }));
     expect(localStorage.getItem("theme")).toBe("system");
     expect(setWindowTheme).toHaveBeenLastCalledWith(null);
     expect(document.documentElement).toHaveClass("dark");
@@ -244,6 +261,9 @@ describe("App run options", () => {
 
     await user.click(screen.getByRole("button", { name: "Choose test paper" }));
     await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
+    expect(startPipeline).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Start run" }));
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
         variables: null,
@@ -278,6 +298,8 @@ describe("App run options", () => {
 
     await user.click(await screen.findByRole("button", { name: "Choose two papers" }));
     await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByText(/2 documents · document/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Start run" }));
 
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_batch", {
       paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
@@ -286,12 +308,21 @@ describe("App run options", () => {
       expectedProfileConfigSnapshotId: "config-test",
     }));
     expect(await screen.findByText("Batch workspace · no setup")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Current batch/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText("History workspace")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /Current batch/ }));
+    expect(await screen.findByText("Batch workspace · no setup")).toBeVisible();
     expect(startPipeline).not.toHaveBeenCalled();
   });
 
   it("rechecks readiness for DOCX so a conservative extractor failure does not block the run", async () => {
     invoke.mockImplementation((command: string, args?: { paperPath?: string | null }) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "get_batch_status") return Promise.resolve([]);
+      if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
       if (command === "get_execution_plan") {
         const exactInput = args?.paperPath === "/tmp/test-paper.docx";
         return Promise.resolve({
@@ -327,6 +358,8 @@ describe("App run options", () => {
     expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Start run" }));
 
     await waitFor(() => expect(startPipeline).toHaveBeenCalledWith(
       "/tmp/test-paper.docx",
@@ -519,6 +552,8 @@ describe("App run options", () => {
     let checks = 0;
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "get_batch_status") return Promise.resolve([]);
+      if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
       if (command === "get_execution_plan") {
         checks += 1;
         return Promise.resolve({
@@ -562,6 +597,8 @@ describe("App run options", () => {
     let plans = 0;
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "get_batch_status") return Promise.resolve([]);
+      if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
       if (command === "get_execution_plan") {
         plans += 1;
         if (plans > 1) return Promise.reject(new Error("active profile changed"));

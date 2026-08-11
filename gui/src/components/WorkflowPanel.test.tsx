@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WorkflowPanel from "./WorkflowPanel";
-import type { PipelineConfig, ProfileSummary } from "../lib/types";
+import type { AutoReviewCatalog, PipelineConfig, ProfileSummary } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -52,15 +52,50 @@ function makeConfig(): PipelineConfig {
 }
 
 const profiles: ProfileSummary[] = [
+  { id: "auto-review", name: "Paper Review (Auto)", step_count: 4, builtin: true },
   { id: "deep", name: "Paper Review (Full)", step_count: 3, builtin: false },
   { id: "quick", name: "Paper Review (Quick)", step_count: 2, builtin: false },
 ];
 
-function mockLoad(config: PipelineConfig) {
+const catalog: AutoReviewCatalog = {
+  contract: "auto-review-v2",
+  subjectCount: 2,
+  methodCount: 1,
+  disciplines: [{
+    id: "mathematics",
+    label: "Mathematics",
+    roles: [
+      {
+        id: "subject_mathematics_general",
+        label: "Mathematics — General",
+        level: "discipline",
+        description: "Mathematics spanning several subfields.",
+        exclusions: "a listed subfield clearly fits.",
+      },
+      {
+        id: "subject_mathematics_pde",
+        label: "Mathematics — PDE & Calculus of Variations",
+        level: "subfield",
+        description: "Partial differential equations and variational problems.",
+        exclusions: "the paper has no PDE or variational contribution.",
+      },
+    ],
+  }],
+  methods: [{
+    id: "formal_proofs",
+    label: "Method — Formal Proofs",
+    level: "method",
+    description: "Central theorems require proof verification.",
+    exclusions: "proofs are routine and immaterial.",
+  }],
+};
+
+function mockLoad(config: PipelineConfig, active = "deep") {
   invoke.mockImplementation((cmd: string) => {
     if (cmd === "get_pipeline_config") return Promise.resolve(config);
     if (cmd === "list_profiles") return Promise.resolve(profiles);
-    if (cmd === "get_active_profile") return Promise.resolve("deep");
+    if (cmd === "get_active_profile") return Promise.resolve(active);
+    if (cmd === "get_auto_review_catalog") return Promise.resolve(catalog);
     if (cmd === "switch_profile") return Promise.resolve(config);
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   });
@@ -154,5 +189,34 @@ describe("WorkflowPanel", () => {
     const link = await screen.findByRole("button", { name: /edit workflow/i });
     await userEvent.setup().click(link);
     expect(onConfigure).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a searchable catalog modal instead of expanding Auto specialists inline", async () => {
+    const autoConfig = makeConfig();
+    autoConfig.orientation_schema = { "x-pipeline-contract": "auto-review-v2" };
+    autoConfig.steps[0].run_if = {
+      kind: "survey_path",
+      pointer: "/review_plan/method_specialist_ids",
+      contains: "formal_proofs",
+    };
+    mockLoad(autoConfig, "auto-review");
+    renderPanel();
+
+    expect(await screen.findByText(/Orientation assembles 1–2 subject/)).toBeInTheDocument();
+    expect(screen.queryByText(/conditional specialist/i)).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Browse specialist catalog" }));
+    expect(await screen.findByRole("dialog", { name: "Specialist catalog" })).toBeVisible();
+    expect(screen.getByText("1 discipline")).toBeVisible();
+    expect(screen.getByText("PDE & Calculus of Variations")).toBeVisible();
+
+    await user.click(screen.getByRole("tab", { name: "Methods (1)" }));
+    expect(screen.getByText("Formal Proofs")).toBeVisible();
+    await user.type(screen.getByRole("searchbox", { name: "Search specialists" }), "unmatched role");
+    expect(screen.getByText("No specialists match this search.")).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Specialist catalog" })).not.toBeInTheDocument();
   });
 });

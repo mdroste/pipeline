@@ -17,7 +17,9 @@ export interface BatchSetupEnvelope {
   profileId: string;
   profileConfigSnapshotId: string;
   profileSnapshotId: string;
+  configuredInputMode?: string;
   inputMode: string;
+  inputInterpretation?: string;
   variables: VarSpec[];
   inputSlots: InputSlot[];
   readiness: DepsReport;
@@ -63,7 +65,9 @@ export default function BatchPanel({
   const [staged, setStaged] = useState<string[]>([]);
   // Live job list from the backend once a batch is running.
   const [jobs, setJobs] = useState<BatchJob[]>([]);
-  const [inputMode, setInputMode] = useState(preloadedSetup?.inputMode || "document");
+  const [inputMode, setInputMode] = useState(
+    preloadedSetup?.configuredInputMode || preloadedSetup?.inputMode || "document",
+  );
   const [variables, setVariables] = useState<VarSpec[]>(initialSpecs);
   const [variableValues, setVariableValues] = useState<Record<string, string>>(
     Object.fromEntries(initialSpecs.map((spec) => [spec.key, spec.default ?? ""])),
@@ -82,11 +86,11 @@ export default function BatchPanel({
   const profileRequest = useRef(0);
 
   const running = jobs.some((j) => j.status === "running" || j.status === "pending");
-  const documentMode = inputMode === "document";
+  const acceptsBatchInput = inputMode !== "none";
 
   const applySetup = useCallback((setup: BatchSetupEnvelope) => {
     const specs = setup.variables ?? [];
-    setInputMode(setup.inputMode || "document");
+    setInputMode(setup.configuredInputMode || setup.inputMode || "document");
     setVariables(specs);
     setVariableValues(Object.fromEntries(specs.map((spec) => [spec.key, spec.default ?? ""])));
     setInputSlots(setup.inputSlots ?? []);
@@ -185,9 +189,10 @@ export default function BatchPanel({
       expectedProfileConfigSnapshotId: profileConfigSnapshotId,
       diff: false,
       paperPath: paperPath ?? null,
+      inputInterpretation: paperPath ? "document" : null,
     });
-    if (setup.inputMode !== "document") {
-      throw new Error("The active workflow no longer accepts document inputs. Refresh the setup.");
+    if ((setup.configuredInputMode || setup.inputMode) === "none") {
+      throw new Error("The active workflow no longer accepts primary inputs. Refresh the setup.");
     }
     if (!setup.readiness.ready) {
       const missing = setup.readiness.deps
@@ -387,17 +392,16 @@ export default function BatchPanel({
           </p>
         )}
 
-        {!profileLoading && !documentMode && (
+        {!profileLoading && !acceptsBatchInput && (
           <div role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200">
-            <p className="font-medium">Batch processing requires a document-input workflow.</p>
+            <p className="font-medium">This workflow does not accept batch inputs.</p>
             <p className="mt-1 text-xs leading-5">
-              The active workflow uses {inputMode === "none" ? "no primary input" : "a folder input"}.
-              Switch to a document workflow before queuing files.
+              Switch to a workflow with a document or folder primary input before queuing files.
             </p>
           </div>
         )}
 
-        {documentMode && (variables.length > 0 || inputSlots.length > 0) && !running && (
+        {acceptsBatchInput && (variables.length > 0 || inputSlots.length > 0) && !running && (
           <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-2">
             <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
               Shared run options
@@ -462,7 +466,7 @@ export default function BatchPanel({
         )}
 
         {/* Staging area (before start) */}
-        {documentMode && !profileLoading && !running && (
+        {acceptsBatchInput && !profileLoading && !running && (
           <div>
             <div className="flex items-center gap-2 mb-2">
               <button

@@ -291,7 +291,7 @@ export default function EnginesPanel({
             <div>
               <p className="text-sm font-medium">Retired Marker environment found</p>
               <p className="mt-1 text-xs leading-relaxed">
-                Pipeline 1.0.1 does not detect or execute Marker. You can remove its old managed
+                Pipeline 0.9.0 does not detect or execute Marker. You can remove its old managed
                 virtual environment and launch shims
                 {retiredMarker.bytes > 0
                   ? ` (${(retiredMarker.bytes / 1_000_000_000).toFixed(1)} GB)`

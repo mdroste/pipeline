@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ErrorBoundary from "./ErrorBoundary";
 
-function Boom({ fail }: { fail: boolean }): JSX.Element {
+function Boom({ fail }: { fail: boolean }) {
   if (fail) {
     const error = new Error("kaboom\n/private/project/secret.ts");
     error.stack = "Error: kaboom\n    at /private/project/secret.ts:42:7";

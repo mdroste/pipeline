@@ -286,6 +286,69 @@ describe("ReportWorkspace", () => {
     ).toBeVisible();
   });
 
+  it("keeps preserved agent reports reachable when canonical report files are malformed", async () => {
+    const user = userEvent.setup();
+    const responsePath = "artifacts/agent-responses/technical-codex-attempt-01-rejected-envelope.md";
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_run_manifest") {
+        return Promise.resolve({
+          run_id: "broken_run",
+          created: "2026-08-10T12:00:00Z",
+          input_path: "/papers/example.pdf",
+          input_mode: "document",
+          profile_name: "Referee report",
+          provider: "codex",
+          status: "partial",
+          artifacts: [{
+            rel_path: responsePath,
+            label: "Technical · Codex · Attempt 1 · Rejected envelope",
+            kind: "markdown",
+            bytes: 120,
+            sha256: "abcdef1234567890",
+            group: "agent_response",
+          }],
+        });
+      }
+      if (command === "get_run_report") {
+        return Promise.reject(new Error("Invalid report data"));
+      }
+      if (command === "read_artifact" && args?.relPath === "report.md") {
+        return Promise.reject(new Error("Report artifact is malformed"));
+      }
+      if (command === "read_artifact" && args?.relPath === responsePath) {
+        return Promise.resolve({
+          kind: "markdown",
+          bytes: 120,
+          text: "# Useful agent report\n\nThe delimiter was missing, but the analysis survived.",
+          base64: null,
+          truncated: false,
+          abs_path: `/runs/broken_run/${responsePath}`,
+        });
+      }
+      if (command === "read_artifact" && args?.relPath === "context/document.md") {
+        return Promise.reject(new Error("No readable document"));
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    render(<ReportWorkspace runId="broken_run" />);
+
+    expect(await screen.findByText("Canonical report is incomplete.")).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByText("Could not open this report.")).not.toBeInTheDocument();
+    const preserved = await screen.findByRole("button", {
+      name: "Technical · Codex · Attempt 1 · Rejected envelope",
+    });
+    await user.click(preserved);
+    expect(
+      await screen.findByRole("heading", { name: "Useful agent report" }),
+    ).toBeVisible();
+    expect(screen.getByText(/analysis survived/)).toBeVisible();
+  });
+
   it("preloads Sources metadata and the readable document for an open report", async () => {
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_run_manifest") {

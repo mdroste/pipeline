@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ExportControls from "./ExportControls";
-import { detectReportIssues } from "../lib/issues";
+import { detectReportIssues, type IssueEvidence } from "../lib/issues";
 import { renderSurvey } from "../lib/surveyMarkdown";
 import {
   buildRunProvenance,
@@ -19,6 +19,8 @@ import {
 import type {
   ArtifactContent as ExplorerArtifactContent,
   ArtifactExplorerPreload,
+  ArtifactSelectionRequest,
+  ArtifactSelectionTarget,
   RunManifest,
 } from "./ArtifactExplorer";
 
@@ -39,6 +41,8 @@ interface Props {
   summary?: RunSummary | null;
   durationSecs?: number | null;
   onBack?: () => void;
+  /** Open a cited page or artifact when navigating here from a project ledger. */
+  initialSourceSelection?: ArtifactSelectionTarget | null;
 }
 
 type WorkspaceTab = "report" | "provenance" | "issues" | "sources";
@@ -383,19 +387,27 @@ export default function ReportWorkspace({
   summary,
   durationSecs,
   onBack,
+  initialSourceSelection = null,
 }: Props) {
-  const [tab, setTab] = useState<WorkspaceTab>("report");
+  const [tab, setTab] = useState<WorkspaceTab>(initialSourceSelection ? "sources" : "report");
   const [report, setReport] = useState<PipelineReport | null>(initialReport);
   const [markdown, setMarkdown] = useState(initialMarkdown);
   const [loading, setLoading] = useState(Boolean(runId && (!initialReport || !initialMarkdown)));
-  const [error, setError] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [markdownError, setMarkdownError] = useState<string | null>(null);
   const [outputView, setOutputView] = useState<OutputView>("clean");
   const [artifactPreload, setArtifactPreload] = useState<ArtifactExplorerPreload | null>(null);
   const [runManifest, setRunManifest] = useState<RunManifest | null>(null);
+  const [sourceRequest, setSourceRequest] = useState<ArtifactSelectionRequest | null>(
+    initialSourceSelection ? { key: Date.now(), ...initialSourceSelection } : null,
+  );
 
   useEffect(() => {
     setArtifactPreload(null);
     setRunManifest(null);
+    setSourceRequest(initialSourceSelection
+      ? { key: Date.now(), ...initialSourceSelection }
+      : null);
     if (!runId) return;
     let live = true;
 
@@ -423,33 +435,55 @@ export default function ReportWorkspace({
     return () => {
       live = false;
     };
-  }, [runId]);
+  }, [initialSourceSelection, runId]);
 
   useEffect(() => {
     setReport(initialReport);
     setMarkdown(initialMarkdown);
-    setTab("report");
+    setTab(initialSourceSelection ? "sources" : "report");
     setOutputView("clean");
+    setReportError(null);
+    setMarkdownError(null);
     if (!runId || (initialReport && initialMarkdown)) {
       setLoading(false);
-      setError(null);
       return;
     }
 
     let live = true;
     setLoading(true);
-    Promise.all([
-      invoke<PipelineReport>("get_run_report", { runId }),
-      invoke<ArtifactContent>("read_artifact", { runId, relPath: "report.md" }),
+    Promise.allSettled([
+      initialReport
+        ? Promise.resolve(initialReport)
+        : invoke<PipelineReport>("get_run_report", { runId }),
+      initialMarkdown
+        ? Promise.resolve({ text: initialMarkdown } as ArtifactContent)
+        : invoke<ArtifactContent>("read_artifact", { runId, relPath: "report.md" }),
     ])
       .then(([loadedReport, artifact]) => {
         if (!live) return;
-        setReport(loadedReport);
-        setMarkdown(artifact.text ?? "");
-        setError(null);
-      })
-      .catch((caught) => {
-        if (live) setError(caught instanceof Error ? caught.message : String(caught));
+        if (loadedReport.status === "fulfilled") {
+          setReport(loadedReport.value);
+          setReportError(null);
+        } else {
+          setReportError(
+            loadedReport.reason instanceof Error
+              ? loadedReport.reason.message
+              : String(loadedReport.reason),
+          );
+        }
+        if (artifact.status === "fulfilled") {
+          setMarkdown(artifact.value.text ?? "");
+          setMarkdownError(null);
+        } else {
+          setMarkdownError(
+            artifact.reason instanceof Error
+              ? artifact.reason.message
+              : String(artifact.reason),
+          );
+          // The artifact explorer is independent of both canonical report
+          // files, so make the recoverable material the default destination.
+          setTab("sources");
+        }
       })
       .finally(() => {
         if (live) setLoading(false);
@@ -457,12 +491,21 @@ export default function ReportWorkspace({
     return () => {
       live = false;
     };
-  }, [initialMarkdown, initialReport, runId]);
+  }, [initialMarkdown, initialReport, initialSourceSelection, runId]);
 
   const issues = useMemo(
     () => (report ? detectReportIssues(report) : null),
     [report],
   );
+  const openEvidence = (evidence: IssueEvidence) => {
+    if (!runId || (!evidence.page && !evidence.artifactPath)) return;
+    setSourceRequest({
+      key: Date.now(),
+      page: evidence.page,
+      relPath: evidence.artifactPath,
+    });
+    setTab("sources");
+  };
   const paperTitle =
     report && isPaperOrientation(report.orientation)
       ? report.orientation.metadata.title
@@ -483,10 +526,25 @@ export default function ReportWorkspace({
     [durationSecs, report, runId, runManifest, summary],
   );
   const title = reportTitle(report, summary);
-  const status = provenance?.status || (report?.failed_steps?.length ? "partial" : "done");
-  const availableTabs: WorkspaceTab[] = issues && issues.length > 0
-    ? ["report", "provenance", "issues", "sources"]
-    : ["report", "provenance", "sources"];
+  const loadProblem = [reportError, markdownError].filter(Boolean).join(" · ");
+  const status = provenance?.status
+    || runManifest?.status
+    || (report?.failed_steps?.length || loadProblem ? "partial" : "done");
+  const availableTabs: WorkspaceTab[] = [
+    "report",
+    ...(provenance ? ["provenance" as const] : []),
+    ...(issues && issues.length > 0 ? ["issues" as const] : []),
+    "sources",
+  ];
+  const openAgentReports = () => {
+    const first = runManifest?.artifacts.find(
+      (artifact) => artifact.group === "agent_response",
+    );
+    if (first) {
+      setSourceRequest({ key: Date.now(), relPath: first.rel_path });
+    }
+    setTab("sources");
+  };
   const handleTabKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
     currentTab: WorkspaceTab,
@@ -517,12 +575,12 @@ export default function ReportWorkspace({
     );
   }
 
-  if (error || !report || !provenance) {
+  if (!runId && (!report || !provenance)) {
     return (
       <div className="flex h-full items-center justify-center p-8">
         <div role="alert" className="max-w-md rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
           <p className="font-medium">Could not open this report.</p>
-          <p className="mt-1 text-xs">{error || "The structured report is unavailable."}</p>
+          <p className="mt-1 text-xs">The structured report is unavailable.</p>
           {onBack && (
             <button type="button" onClick={onBack} className="mt-3 font-medium underline">
               Back to history
@@ -563,30 +621,63 @@ export default function ReportWorkspace({
               {title}
             </h1>
             <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
-              {provenance.workflow}
-              <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
-              <span title={provenance.provider_summary}>{provenance.provider_summary}</span>
-              <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
-              <span title={provenance.model_summary}>{provenance.model_summary}</span>
-              <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
-              {formatRunDuration(provenance.duration_secs)}
+              {provenance ? (
+                <>
+                  {provenance.workflow}
+                  <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
+                  <span title={provenance.provider_summary}>{provenance.provider_summary}</span>
+                  <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
+                  <span title={provenance.model_summary}>{provenance.model_summary}</span>
+                  <span className="mx-1.5 text-gray-300 dark:text-gray-700">·</span>
+                  {formatRunDuration(provenance.duration_secs)}
+                </>
+              ) : (
+                "Canonical report metadata unavailable · preserved artifacts remain accessible"
+              )}
             </p>
           </div>
-          <ExportControls
-            runId={runId}
-            markdown={markdown}
-            pdfMarkdown={pdfMarkdown}
-            provenanceMarkdown={renderProvenanceMarkdown(provenance)}
-            report={report}
-            extractedText={extractedText}
-          />
+          {report && provenance && (
+            <ExportControls
+              runId={runId}
+              markdown={markdown}
+              pdfMarkdown={pdfMarkdown}
+              provenanceMarkdown={renderProvenanceMarkdown(provenance)}
+              report={report}
+              extractedText={extractedText}
+            />
+          )}
         </div>
       </header>
 
-      {report.failed_steps && report.failed_steps.length > 0 && (
+      {loadProblem && (
+        <div className="flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300">
+          <span className="min-w-0 flex-1 truncate">
+            <span className="font-semibold">Canonical report is incomplete.</span>{" "}
+            {loadProblem} Agent reports and other run artifacts remain available.
+          </span>
+          <button
+            type="button"
+            onClick={openAgentReports}
+            className="shrink-0 rounded border border-amber-300 px-2 py-1 font-medium hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900/40"
+          >
+            View agent reports
+          </button>
+        </div>
+      )}
+
+      {report?.failed_steps && report.failed_steps.length > 0 && (
         <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300">
           <span className="font-semibold">Incomplete report.</span>{" "}
           {report.failed_steps.map((failure) => failure.step_label).join(", ")} did not complete.
+          {runId && (
+            <button
+              type="button"
+              onClick={openAgentReports}
+              className="ml-2 font-semibold underline underline-offset-2"
+            >
+              View agent reports
+            </button>
+          )}
         </div>
       )}
 
@@ -603,14 +694,16 @@ export default function ReportWorkspace({
           onClick={() => setTab("report")}
           onKeyDown={(event) => handleTabKeyDown(event, "report")}
         />
-        <TabButton
-          active={tab === "provenance"}
-          id={TAB_IDS.provenance}
-          label="Provenance"
-          panelId={TAB_PANEL_IDS.provenance}
-          onClick={() => setTab("provenance")}
-          onKeyDown={(event) => handleTabKeyDown(event, "provenance")}
-        />
+        {provenance && (
+          <TabButton
+            active={tab === "provenance"}
+            id={TAB_IDS.provenance}
+            label="Provenance"
+            panelId={TAB_PANEL_IDS.provenance}
+            onClick={() => setTab("provenance")}
+            onKeyDown={(event) => handleTabKeyDown(event, "provenance")}
+          />
+        )}
         {issues && issues.length > 0 && (
           <TabButton
             active={tab === "issues"}
@@ -647,9 +740,13 @@ export default function ReportWorkspace({
               aria-labelledby={TAB_IDS.issues}
               className="h-full overflow-auto"
             >
-              <IssuesTable issues={issues} runId={runId ?? null} />
+              <IssuesTable
+                issues={issues}
+                runId={runId ?? null}
+                onOpenEvidence={runId ? openEvidence : undefined}
+              />
             </div>
-          ) : tab === "provenance" ? (
+          ) : tab === "provenance" && provenance ? (
             <div
               id={TAB_PANEL_IDS.provenance}
               role="tabpanel"
@@ -671,9 +768,14 @@ export default function ReportWorkspace({
                   fallbackMarkdown={markdown}
                   deferInitialArtifact
                   preload={artifactPreload}
+                  selectionRequest={sourceRequest}
                 />
-              ) : (
+              ) : report ? (
                 <LocalSources extractedText={extractedText ?? ""} report={report} />
+              ) : (
+                <div className="flex h-full items-center justify-center p-8 text-sm text-gray-500 dark:text-gray-400">
+                  No local source material is available.
+                </div>
               )}
             </div>
           ) : (
@@ -713,7 +815,29 @@ export default function ReportWorkspace({
                   </div>
                 )}
                 <div className="min-h-0 flex-1 overflow-hidden">
-                  <ReportViewer markdown={visibleMarkdown} />
+                  {markdown ? (
+                    <ReportViewer markdown={visibleMarkdown} />
+                  ) : (
+                    <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                      <div>
+                        <p className="font-medium text-gray-700 dark:text-gray-200">
+                          The canonical rendered report is unavailable.
+                        </p>
+                        <p className="mt-1 max-w-md text-xs">
+                          Open Agent reports to inspect every preserved model response, including rejected attempts.
+                        </p>
+                        {runId && (
+                          <button
+                            type="button"
+                            onClick={openAgentReports}
+                            className="mt-3 rounded border border-gray-300 px-3 py-1.5 text-xs font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+                          >
+                            View agent reports
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

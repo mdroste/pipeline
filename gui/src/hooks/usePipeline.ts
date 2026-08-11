@@ -79,6 +79,17 @@ export interface RuntimeStage {
   status: "active" | "done" | "failed" | "skipped";
 }
 
+export interface ReviewRoutingSummary {
+  primaryDomain: string;
+  subject: string;
+  subjectIds?: string[];
+  subjectLabels?: string[];
+  methodIds?: string[];
+  methodLabels?: string[];
+  specialistIds: string[];
+  specialistLabels: string[];
+}
+
 export interface TokenTotals {
   input: number;
   output: number;
@@ -125,7 +136,7 @@ export type PipelineState =
   | { kind: "error"; message: string; failedAt?: string };
 
 /** Interval (ms) at which buffered log lines are flushed to state. */
-const LOG_FLUSH_INTERVAL = 100;
+const LOG_FLUSH_INTERVAL = 200;
 /** Maximum log entries to keep. */
 const LOG_MAX = 10000;
 /** When truncating, keep this many entries. */
@@ -140,6 +151,7 @@ export function usePipeline() {
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [passTimes, setPassTimes] = useState<Record<string, PassTiming>>({});
   const [stageHistory, setStageHistory] = useState<RuntimeStage[]>([]);
+  const [reviewRouting, setReviewRouting] = useState<ReviewRoutingSummary | null>(null);
   const stageSequence = useRef(0);
 
   // Buffer incoming log lines in a ref to avoid O(n) array copies per event.
@@ -240,6 +252,10 @@ export function usePipeline() {
               ? { ...entry, passes: { ...entry.passes, [name]: status as PassStatus } }
               : entry,
           ));
+        }),
+        listen<ReviewRoutingSummary>("pipeline:routing", (event) => {
+          if (!mounted) return;
+          setReviewRouting(event.payload);
         }),
         listen<{
           line: string;
@@ -441,6 +457,7 @@ export function usePipeline() {
       setUsage(EMPTY_USAGE);
       setRunStartedAt(Date.now());
       setPassTimes({});
+      setReviewRouting(null);
       stageSequence.current = 0;
       setStageHistory([]);
       try {
@@ -484,6 +501,7 @@ export function usePipeline() {
       setUsage(EMPTY_USAGE);
       setRunStartedAt(Date.now());
       setPassTimes({});
+      setReviewRouting(null);
       stageSequence.current = 0;
       setStageHistory([]);
       try {
@@ -529,6 +547,7 @@ export function usePipeline() {
     setState({ kind: "idle" });
     stageSequence.current = 0;
     setStageHistory([]);
+    setReviewRouting(null);
   }, []);
 
   return {
@@ -543,5 +562,6 @@ export function usePipeline() {
     runStartedAt,
     passTimes,
     stageHistory,
+    reviewRouting,
   };
 }

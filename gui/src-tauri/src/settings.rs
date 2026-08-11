@@ -1255,8 +1255,7 @@ fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
     }
 
     let mut key = [0u8; KEY_SIZE];
-    getrandom::getrandom(&mut key)
-        .map_err(|e| format!("Failed to generate encryption key: {e}"))?;
+    getrandom::fill(&mut key).map_err(|e| format!("Failed to generate encryption key: {e}"))?;
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create .pipeline dir: {e}"))?;
@@ -1343,13 +1342,14 @@ fn encrypt_string(plaintext: &str, key: &[u8; KEY_SIZE]) -> Result<String, Strin
     if plaintext.is_empty() {
         return Ok(String::new());
     }
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let key: Key<Aes256Gcm> = (*key).into();
+    let cipher = Aes256Gcm::new(&key);
     let mut nonce_bytes = [0u8; NONCE_SIZE];
-    getrandom::getrandom(&mut nonce_bytes).map_err(|e| format!("RNG failed: {e}"))?;
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    getrandom::fill(&mut nonce_bytes).map_err(|e| format!("RNG failed: {e}"))?;
+    let nonce = nonce_bytes.into();
 
     let ciphertext = cipher
-        .encrypt(nonce, plaintext.as_bytes())
+        .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|e| format!("Encryption failed: {e}"))?;
 
     let mut combined = nonce_bytes.to_vec();
@@ -1377,11 +1377,13 @@ fn decrypt_string(stored: &str, key: &[u8; KEY_SIZE]) -> Result<String, String> 
     }
 
     let (nonce_bytes, ciphertext) = combined.split_at(NONCE_SIZE);
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let key: Key<Aes256Gcm> = (*key).into();
+    let cipher = Aes256Gcm::new(&key);
+    let nonce = Nonce::try_from(nonce_bytes)
+        .map_err(|_| "Encrypted nonce has an invalid length".to_string())?;
 
     let plaintext = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|_| "Decryption failed — keyfile may have been deleted or replaced".to_string())?;
 
     String::from_utf8(plaintext).map_err(|e| format!("Decrypted text is not valid UTF-8: {e}"))
@@ -1525,7 +1527,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let mut key = [0u8; KEY_SIZE];
-        getrandom::getrandom(&mut key).unwrap();
+        getrandom::fill(&mut key).unwrap();
 
         let original = "sk-ant-api03-test-key-12345";
         let encrypted = encrypt_string(original, &key).unwrap();
@@ -1574,8 +1576,8 @@ mod tests {
     fn test_wrong_key_fails() {
         let mut key1 = [0u8; KEY_SIZE];
         let mut key2 = [0u8; KEY_SIZE];
-        getrandom::getrandom(&mut key1).unwrap();
-        getrandom::getrandom(&mut key2).unwrap();
+        getrandom::fill(&mut key1).unwrap();
+        getrandom::fill(&mut key2).unwrap();
 
         let encrypted = encrypt_string("secret", &key1).unwrap();
         assert!(decrypt_string(&encrypted, &key2).is_err());
