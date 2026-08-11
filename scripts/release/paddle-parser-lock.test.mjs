@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -15,6 +16,15 @@ const RESOURCE_DIR = path.join(
 );
 const read = (file) => fs.readFileSync(path.join(RESOURCE_DIR, file), "utf8").replaceAll("\r\n", "\n");
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
+
+test("parser artifact downloads retry CDN rejections without weakening checksums", () => {
+  const result = spawnSync(
+    process.env.PYTHON || "python",
+    [path.join(ROOT, "scripts", "release", "test-qualify-paddle-parser-download.py")],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
 
 test("managed Paddle parser inputs are complete checksum locks", () => {
   const runtime = JSON.parse(read("runtime-lock.json"));
