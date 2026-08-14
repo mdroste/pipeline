@@ -107,10 +107,10 @@ test("parser lock metadata is bound into runtime and separate manual qualificati
     "paddlepaddle==3.2.1",
   ]);
 
-  const engines = fs.readFileSync(
+  const engines = [
     path.join(ROOT, "gui", "src-tauri", "src", "engines.rs"),
-    "utf8",
-  );
+    path.join(ROOT, "gui", "src-tauri", "src", "engines", "paddle_install.rs"),
+  ].map((source) => fs.readFileSync(source, "utf8")).join("\n");
   assert.match(engines, /include_str!\("\.\.\/resources\/paddle-parser\/runtime-lock\.json"\)/);
   assert.match(engines, /"runtime_lock_sha256": runtime_lock_sha256/);
   assert.match(engines, /"layout_ready": true/);
