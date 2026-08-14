@@ -72,7 +72,7 @@ pub(super) fn default_steps() -> Vec<StepConfig> {
 
 /// Stock Paper Review (Full) profile.
 ///
-/// Retired from the built-in catalog (Auto Paper Review covers papers), but
+/// Retired from the built-in catalog (Automatic Paper Review covers papers), but
 /// retained because the v7 shared-context migration fingerprints prior stock
 /// variants byte-for-byte. Its step prompts remain shipped defaults.
 pub(super) fn full_review_profile(validate_enabled: bool) -> ProfileData {
@@ -85,12 +85,12 @@ pub(super) fn full_review_profile(validate_enabled: bool) -> ProfileData {
     profile
 }
 
-/// Built-in adaptive paper review. The orientation call selects a bounded set
-/// of allowlisted specialist IDs. The saved profile contains only three core
-/// reviewers plus synthesis; selected reviewers are materialized for the run.
-pub(super) fn auto_review_profile() -> ProfileData {
-    let mut steps =
-        configure_artifact_flow(crate::auto_review::steps(), "document", &["auto_validate"]);
+fn adaptive_review_profile(
+    name: &str,
+    steps: Vec<StepConfig>,
+    orientation_schema: serde_json::Value,
+) -> ProfileData {
+    let mut steps = configure_artifact_flow(steps, "document", &["auto_validate"]);
     // Validation checks the consolidated report against the paper itself; it
     // deliberately does not re-read the raw parallel reports, so materialized
     // specialist output stays consolidated before it is verified.
@@ -100,11 +100,33 @@ pub(super) fn auto_review_profile() -> ProfileData {
             _ => true,
         });
     }
-    let mut profile = ProfileData::new("Auto Paper Review", steps, MergeConfig::default());
+    let mut profile = ProfileData::new(name, steps, MergeConfig::default());
     profile.context_cache.enabled = true;
     profile.orientation_prompt = crate::auto_review::orientation_prompt();
-    profile.orientation_schema = Some(crate::auto_review::orientation_schema());
+    profile.orientation_schema = Some(orientation_schema);
     profile
+}
+
+/// Built-in adaptive paper review. The orientation call selects a bounded set
+/// of allowlisted specialist IDs. The saved Full profile contains three core
+/// reviewers plus synthesis and validation; selected reviewers are
+/// materialized for the run.
+pub(super) fn auto_review_profile() -> ProfileData {
+    adaptive_review_profile(
+        "Automatic Paper Review (Full)",
+        crate::auto_review::steps(),
+        crate::auto_review::orientation_schema(),
+    )
+}
+
+/// Faster adaptive paper review: two core reviewers, 1–2 subject specialists,
+/// 1–2 method specialists, consolidation, and validation.
+pub(super) fn quick_auto_review_profile() -> ProfileData {
+    adaptive_review_profile(
+        "Automatic Paper Review (Quick)",
+        crate::auto_review::quick_steps(),
+        crate::auto_review::quick_orientation_schema(),
+    )
 }
 
 pub(super) fn defaults() -> PipelineConfig {
@@ -114,11 +136,11 @@ pub(super) fn defaults() -> PipelineConfig {
 /// Profile IDs that cannot be deleted.
 // All are recreated by create_builtin_profiles() on startup, so
 // deleting any of them would silently "undo" itself — block deletion for all.
-pub(super) const BUILTIN_PROFILES: &[&str] = &["auto-review", "grant-review"];
+pub(super) const BUILTIN_PROFILES: &[&str] = &["auto-review", "auto-review-quick", "grant-review"];
 
 pub(super) fn builtin_primary_readers(id: &str) -> &'static [&'static str] {
     match id {
-        "auto-review" => &["auto_validate"],
+        "auto-review" | "auto-review-quick" => &["auto_validate"],
         _ => &[],
     }
 }
@@ -142,14 +164,14 @@ pub(super) const V9_RETIRED_BUILTIN_PROFILES: &[(&str, &str)] = &[
     ("replication-audit", "deep-review"),
 ];
 
-/// Paper Review (Full) and (Quick) retired in favor of Auto Paper Review.
+/// Paper Review (Full) and (Quick) retired in favor of Automatic Paper Review.
 /// Their step prompts remain shipped defaults (`prompts/*.md`), usable from
 /// the editor's insertable defaults and prompt overrides. The replacement
 /// swap must run after the v3/v9 swaps so chains like
 /// `deep-code-review → deep-review → auto-review` resolve fully.
 pub(super) const V15_RETIRED_BUILTIN_PROFILES: &[(&str, &str)] = &[
     ("deep-review", "auto-review"),
-    ("quick-review", "auto-review"),
+    ("quick-review", "auto-review-quick"),
 ];
 
 pub(super) fn profile_summary(id: String, profile: &ProfileData) -> ProfileSummary {
@@ -322,9 +344,13 @@ pub(super) fn grant_review_profile() -> ProfileData {
 pub(super) fn create_builtin_profiles() -> Result<(), String> {
     let profiles = profiles_dir()?;
 
-    // Auto Paper Review — one validated orientation/router call, universal
-    // core reviews, and a bounded set of selected method/field specialists.
+    // Automatic Paper Review — one validated orientation/router call, core
+    // reviews, and a bounded set of selected subject/method specialists.
     write_builtin_if_missing(&profiles.join("auto-review.json"), &auto_review_profile())?;
+    write_builtin_if_missing(
+        &profiles.join("auto-review-quick.json"),
+        &quick_auto_review_profile(),
+    )?;
 
     write_builtin_if_missing(&profiles.join("grant-review.json"), &grant_review_profile())?;
 

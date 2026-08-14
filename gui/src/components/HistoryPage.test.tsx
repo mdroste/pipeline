@@ -38,7 +38,7 @@ describe("HistoryPage", () => {
     invoke.mockReset();
   });
 
-  it("decomposes logical input into fresh, cache-read, and cache-write tokens", async () => {
+  it("decomposes tokens without showing detailed model activity in the run list", async () => {
     const cachedRun = run({
       input_tokens: 50_000,
       output_tokens: 2_000,
@@ -69,15 +69,10 @@ describe("HistoryPage", () => {
     expect(summary.getAttribute("title")).toContain(
       "Cache reads and cache writes are subsets of logical input, not additional tokens.",
     );
-    expect(summary).toHaveTextContent(
-      "7 reported model round trips and 7 reported tool calls",
-    );
-    expect(summary.getAttribute("title")).toContain(
-      "7 reported tool calls (3 text/file, 1 image, 2 web, 1 unknown)",
-    );
-    expect(summary.getAttribute("title")).toContain(
-      "unknown tool kinds remain in the unknown bucket",
-    );
+    expect(summary).not.toHaveTextContent("reported model round trips");
+    expect(summary).not.toHaveTextContent("reported tool calls");
+    expect(summary.getAttribute("title")).not.toContain("model round trips");
+    expect(summary.getAttribute("title")).not.toContain("tool calls");
     expect(summary).toHaveAttribute("tabindex", "0");
   });
 

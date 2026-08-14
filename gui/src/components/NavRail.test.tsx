@@ -44,8 +44,16 @@ describe("NavRail", () => {
     expect(props.onNavigate).toHaveBeenCalledWith("history");
     await user.click(screen.getByRole("button", { name: "Projects" }));
     expect(props.onNavigate).toHaveBeenCalledWith("projects");
-    await user.click(screen.getByRole("button", { name: "Gallery" }));
-    expect(props.onNavigate).toHaveBeenCalledWith("gallery");
+    expect(screen.queryByRole("button", { name: "Gallery" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Workflows active while its gallery is open", () => {
+    renderRail({ activePage: "gallery" });
+
+    expect(screen.getByRole("button", { name: "Workflows" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("adds a current-run destination and locks new runs while executing", () => {

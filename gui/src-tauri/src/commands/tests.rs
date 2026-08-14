@@ -234,6 +234,121 @@ fn runtime_snapshot_identity_is_order_stable_and_value_sensitive() {
 }
 
 #[test]
+fn profile_snapshot_identity_is_stable_across_nested_override_map_order() {
+    let selections = |first: &str, second: &str| {
+        let mut values = std::collections::HashMap::new();
+        for key in [first, second] {
+            values.insert(
+                key.to_string(),
+                crate::settings::ModelSelection::Pinned {
+                    model: format!("{key}-model"),
+                },
+            );
+        }
+        values
+    };
+    let efforts = |entries: [(&str, &str); 2]| {
+        let mut values = std::collections::HashMap::new();
+        for (key, effort) in entries {
+            values.insert(key.to_string(), effort.to_string());
+        }
+        values
+    };
+
+    let mut settings_a = crate::settings::Settings::default();
+    settings_a.default_parallel_model_overrides = selections("claude:cli", "codex:cli");
+    settings_a.default_parallel_effort_overrides =
+        efforts([("claude:cli", "high"), ("codex:cli", "medium")]);
+    let mut settings_b = crate::settings::Settings::default();
+    settings_b.default_parallel_model_overrides = selections("codex:cli", "claude:cli");
+    settings_b.default_parallel_effort_overrides =
+        efforts([("codex:cli", "medium"), ("claude:cli", "high")]);
+
+    let step = |model_overrides, effort_overrides| crate::pipeline_config::StepConfig {
+        id: "parallel".into(),
+        phase: crate::pipeline_config::Phase::Parallel,
+        model_overrides,
+        effort_overrides,
+        ..Default::default()
+    };
+    let mut config_a = empty_test_config();
+    config_a.steps = vec![step(
+        selections("claude:cli", "codex:cli"),
+        efforts([("claude:cli", "high"), ("codex:cli", "medium")]),
+    )];
+    let mut config_b = empty_test_config();
+    config_b.steps = vec![step(
+        selections("codex:cli", "claude:cli"),
+        efforts([("codex:cli", "medium"), ("claude:cli", "high")]),
+    )];
+
+    let first = stable_snapshot_fingerprint(&(settings_a, config_a)).unwrap();
+    let reordered = stable_snapshot_fingerprint(&(settings_b, config_b)).unwrap();
+    assert_eq!(first, reordered);
+}
+
+#[test]
+fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
+    let snapshot = || RunSnapshot {
+        settings: crate::settings::Settings::default(),
+        config: empty_test_config(),
+        profile_name: "test".to_string(),
+        config_fingerprint: "profile-base".to_string(),
+        fingerprint: "profile-base".to_string(),
+    };
+    let overrides = |entries: [(&str, &str, &str); 2]| {
+        let mut model_overrides = std::collections::HashMap::new();
+        let mut effort_overrides = std::collections::HashMap::new();
+        for (key, model, effort) in entries {
+            model_overrides.insert(
+                key.to_string(),
+                crate::settings::ModelSelection::Pinned {
+                    model: model.to_string(),
+                },
+            );
+            effort_overrides.insert(key.to_string(), effort.to_string());
+        }
+        RunParallelOverrides {
+            agents: vec!["claude".into(), "codex".into()],
+            model_overrides,
+            effort_overrides,
+            ..Default::default()
+        }
+    };
+
+    let first = bind_parallel_overrides(
+        snapshot(),
+        Some(&overrides([
+            ("claude:cli", "claude-model", "high"),
+            ("codex:cli", "codex-model", "medium"),
+        ])),
+    )
+    .unwrap()
+    .fingerprint;
+    let reordered = bind_parallel_overrides(
+        snapshot(),
+        Some(&overrides([
+            ("codex:cli", "codex-model", "medium"),
+            ("claude:cli", "claude-model", "high"),
+        ])),
+    )
+    .unwrap()
+    .fingerprint;
+    assert_eq!(first, reordered);
+
+    let changed = bind_parallel_overrides(
+        snapshot(),
+        Some(&overrides([
+            ("claude:cli", "different-model", "high"),
+            ("codex:cli", "codex-model", "medium"),
+        ])),
+    )
+    .unwrap()
+    .fingerprint;
+    assert_ne!(first, changed);
+}
+
+#[test]
 fn snapshot_fingerprint_tracks_secrets_without_exposing_them() {
     let mut settings = crate::settings::Settings {
         openai_api_key: "raw-secret-one".to_string(),
@@ -593,6 +708,7 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
             },
         )]),
         effort_overrides: std::collections::HashMap::from([("codex:cli".into(), "high".into())]),
+        ..Default::default()
     };
 
     let bound = bind_parallel_overrides(snapshot, Some(&overrides)).unwrap();
@@ -610,6 +726,47 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
     assert_eq!(bound.config.steps[2].agents, vec!["antigravity"]);
     assert_ne!(bound.fingerprint, "base");
     assert_eq!(bound.config_fingerprint, "base");
+}
+
+#[test]
+fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
+    let mut config = empty_test_config();
+    config.merge.agents = vec!["antigravity".into()];
+    let snapshot = RunSnapshot {
+        settings: crate::settings::Settings::default(),
+        config,
+        profile_name: "Test".into(),
+        config_fingerprint: "base".into(),
+        fingerprint: "base".into(),
+    };
+    let overrides = RunParallelOverrides {
+        agents: vec!["claude".into(), "codex".into()],
+        merge_agent: Some("codex".into()),
+        merge_model_overrides: std::collections::HashMap::from([(
+            "codex:cli".into(),
+            crate::settings::ModelSelection::Pinned {
+                model: "gpt-merge".into(),
+            },
+        )]),
+        merge_effort_overrides: std::collections::HashMap::from([(
+            "codex:cli".into(),
+            "high".into(),
+        )]),
+        ..Default::default()
+    };
+
+    let bound = bind_parallel_overrides(snapshot, Some(&overrides)).unwrap();
+
+    assert!(bound.config.merge.agents.is_empty());
+    assert_eq!(bound.settings.merge_agent(), "codex");
+    assert_eq!(
+        bound.settings.merge_model_selection("codex"),
+        Some(crate::settings::ModelSelection::Pinned {
+            model: "gpt-merge".into()
+        })
+    );
+    assert_eq!(bound.settings.merge_effort("codex"), "high");
+    assert_ne!(bound.fingerprint, "base");
 }
 
 #[test]

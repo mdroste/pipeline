@@ -205,11 +205,11 @@ describe("usePipeline log buffering", () => {
     await waitFor(() => expect(result.current.listenersReady).toBe(true));
 
     unmount();
-    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(6));
   });
 
   it("cleans partial registrations and fails closed when one listener rejects", async () => {
-    const cleanups = [vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+    const cleanups = [vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn()];
     let registration = 0;
     listenMock.mockImplementation(
       (name: string, cb: (event: { payload: unknown }) => void) => {
@@ -232,6 +232,7 @@ describe("usePipeline log buffering", () => {
     expect(cleanups[2]).toHaveBeenCalledTimes(1);
     expect(cleanups[3]).toHaveBeenCalledTimes(1);
     expect(cleanups[4]).toHaveBeenCalledTimes(1);
+    expect(cleanups[5]).toHaveBeenCalledTimes(1);
 
     unmount();
     consoleError.mockRestore();
@@ -252,6 +253,45 @@ describe("usePipeline log buffering", () => {
       specialistIds: ["subject_economics_macro", "formal_proofs"],
       specialistLabels: ["Economics — Macroeconomics", "Method — Formal Proofs"],
     });
+    unmount();
+  });
+
+  it("surfaces and updates provider usage-limit recovery notices", async () => {
+    const { result, unmount } = renderHook(() => usePipeline());
+    await waitFor(() => expect(result.current.listenersReady).toBe(true));
+
+    act(() => {
+      handlers["pipeline:provider-limit"]({
+        payload: {
+          pass_key: "technical/claude",
+          label: "Step: Technical",
+          provider: "claude",
+          message: "You've hit your limit · resets 3am",
+          status: "fallback_starting",
+          fallback_provider: "codex",
+          fallback_model: null,
+        },
+      });
+    });
+    expect(result.current.providerLimitNotices).toHaveLength(1);
+    expect(result.current.providerLimitNotices[0].status).toBe("fallback_starting");
+
+    act(() => {
+      handlers["pipeline:provider-limit"]({
+        payload: {
+          ...result.current.providerLimitNotices[0],
+          status: "recovered",
+          fallback_model: "gpt-fallback",
+        },
+      });
+    });
+    expect(result.current.providerLimitNotices).toEqual([
+      expect.objectContaining({
+        pass_key: "technical/claude",
+        status: "recovered",
+        fallback_model: "gpt-fallback",
+      }),
+    ]);
     unmount();
   });
 

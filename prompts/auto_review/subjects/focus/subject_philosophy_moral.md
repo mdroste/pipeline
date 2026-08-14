@@ -1,0 +1,1 @@
+Reconstruct the theory of reasons, value, obligation, virtue, responsibility, or moral status; distinguish first-order, metaethical, and psychological claims; and identify the account of demandingness and aggregation. Test cases across persons, time, risk, complicity, and partiality, and check whether intuitions are stable under the distinctions on which the argument relies.

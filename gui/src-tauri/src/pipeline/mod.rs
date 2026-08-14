@@ -15,6 +15,7 @@ pub mod glob;
 pub mod logging;
 pub mod merge;
 pub mod orient;
+pub(crate) mod provider_error;
 pub mod reconcile;
 pub(crate) mod response_journal;
 pub mod structured;

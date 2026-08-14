@@ -97,9 +97,8 @@ describe("AboutPage", () => {
     expect(screen.getByText(/reads only the material its workflow allows/i)).toBeInTheDocument();
     expect(screen.getByText(/plan and data-use terms/i)).toBeInTheDocument();
     expect(screen.getByText("Workflows")).toBeInTheDocument();
-    expect(screen.getByText("Auto Paper Review")).toBeInTheDocument();
-    expect(screen.getByText("Paper Review (Full)")).toBeInTheDocument();
-    expect(screen.getByText("Paper Review (Quick)")).toBeInTheDocument();
+    expect(screen.getByText("Automatic Paper Review (Full)")).toBeInTheDocument();
+    expect(screen.getByText("Automatic Paper Review (Quick)")).toBeInTheDocument();
     expect(screen.getByText("Grant Proposal Review")).toBeInTheDocument();
     expect(screen.queryByText("Codebase Review")).not.toBeInTheDocument();
     expect(screen.queryByText("Replication Package Audit")).not.toBeInTheDocument();

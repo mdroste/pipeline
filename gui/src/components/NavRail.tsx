@@ -18,7 +18,6 @@ type IconName =
   | "runs"
   | "projects"
   | "workflows"
-  | "gallery"
   | "help"
   | "settings";
 
@@ -91,15 +90,6 @@ function Icon({ name }: { name: IconName }) {
           <circle cx="18" cy="12" r="2.25" />
           <circle cx="6" cy="18" r="2.25" />
           <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6h2.25A3.5 3.5 0 0 1 14 9.5v0A2.5 2.5 0 0 0 16.5 12M8.25 18h2.25A3.5 3.5 0 0 0 14 14.5v0A2.5 2.5 0 0 1 16.5 12" />
-        </svg>
-      );
-    case "gallery":
-      return (
-        <svg {...common}>
-          <rect x="3.75" y="4" width="6.5" height="6.5" rx="1.25" />
-          <rect x="13.75" y="4" width="6.5" height="6.5" rx="1.25" />
-          <rect x="3.75" y="13.5" width="6.5" height="6.5" rx="1.25" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M17 13.75v6M14 16.75h6" />
         </svg>
       );
     case "help":
@@ -244,16 +234,10 @@ export default function NavRail({
           onClick={() => onNavigate("projects")}
         />
         <RailButton
-          active={activePage === "pipeline"}
+          active={activePage === "pipeline" || activePage === "gallery"}
           icon="workflows"
           label="Workflows"
           onClick={() => onNavigate("pipeline")}
-        />
-        <RailButton
-          active={activePage === "gallery"}
-          icon="gallery"
-          label="Gallery"
-          onClick={() => onNavigate("gallery")}
         />
       </nav>
 

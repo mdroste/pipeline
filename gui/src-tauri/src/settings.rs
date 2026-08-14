@@ -99,6 +99,16 @@ pub struct Settings {
     #[serde(default)]
     pub default_parallel_effort_overrides: std::collections::HashMap<String, String>,
 
+    /// Provider and policy used to merge outputs from multi-agent Parallel
+    /// steps. Empty preserves the pre-field behavior by inheriting the
+    /// Sequential default and its policies.
+    #[serde(default)]
+    pub default_merge_agent: String,
+    #[serde(default)]
+    pub default_merge_model_overrides: std::collections::HashMap<String, ModelSelection>,
+    #[serde(default)]
+    pub default_merge_effort_overrides: std::collections::HashMap<String, String>,
+
     /// Provider used when a Sequential step leaves `agents` empty. Empty is a
     /// backward-compatible alias for `preferred_provider`.
     #[serde(default)]
@@ -117,6 +127,17 @@ pub struct Settings {
     pub default_orientation_model_overrides: std::collections::HashMap<String, ModelSelection>,
     #[serde(default)]
     pub default_orientation_effort_overrides: std::collections::HashMap<String, String>,
+
+    /// Optional provider/model used once when the active provider reports a
+    /// durable account or subscription usage limit. Empty disables automatic
+    /// fallback. Unlike ordinary role defaults, this applies to every LLM
+    /// call, including orientation and merge calls.
+    #[serde(default)]
+    pub usage_limit_fallback_agent: String,
+    #[serde(default)]
+    pub usage_limit_fallback_model_overrides: std::collections::HashMap<String, ModelSelection>,
+    #[serde(default)]
+    pub usage_limit_fallback_effort_overrides: std::collections::HashMap<String, String>,
 
     /// Max concurrent referee passes (1-20).
     #[serde(default = "default_workers")]
@@ -459,12 +480,18 @@ impl Default for Settings {
             default_parallel_agents: vec!["claude".to_string()],
             default_parallel_model_overrides: std::collections::HashMap::new(),
             default_parallel_effort_overrides: std::collections::HashMap::new(),
+            default_merge_agent: "claude".to_string(),
+            default_merge_model_overrides: std::collections::HashMap::new(),
+            default_merge_effort_overrides: std::collections::HashMap::new(),
             default_sequential_agent: "claude".to_string(),
             default_sequential_model_overrides: std::collections::HashMap::new(),
             default_sequential_effort_overrides: std::collections::HashMap::new(),
             default_orientation_agent: "claude".to_string(),
             default_orientation_model_overrides: std::collections::HashMap::new(),
             default_orientation_effort_overrides: std::collections::HashMap::new(),
+            usage_limit_fallback_agent: String::new(),
+            usage_limit_fallback_model_overrides: std::collections::HashMap::new(),
+            usage_limit_fallback_effort_overrides: std::collections::HashMap::new(),
             max_workers: default_workers(),
             active_profile: "auto-review".to_string(),
             claude_model: String::new(),
@@ -534,8 +561,10 @@ impl Settings {
             .iter()
             .map(String::as_str)
             .chain([
+                self.default_merge_agent.as_str(),
                 self.default_sequential_agent.as_str(),
                 self.default_orientation_agent.as_str(),
+                self.usage_limit_fallback_agent.as_str(),
             ])
             .filter(|provider| !provider.is_empty())
         {
@@ -659,8 +688,10 @@ impl Settings {
         for (key, selection) in self
             .default_parallel_model_overrides
             .iter()
+            .chain(self.default_merge_model_overrides.iter())
             .chain(self.default_sequential_model_overrides.iter())
             .chain(self.default_orientation_model_overrides.iter())
+            .chain(self.usage_limit_fallback_model_overrides.iter())
         {
             let valid_key = ["claude", "codex", "antigravity", "local"]
                 .iter()
@@ -693,12 +724,22 @@ impl Settings {
                 .map(|(key, effort)| (key.as_str(), effort.as_str())),
         )
         .chain(
+            self.default_merge_effort_overrides
+                .iter()
+                .map(|(key, effort)| (key.as_str(), effort.as_str())),
+        )
+        .chain(
             self.default_sequential_effort_overrides
                 .iter()
                 .map(|(key, effort)| (key.as_str(), effort.as_str())),
         )
         .chain(
             self.default_orientation_effort_overrides
+                .iter()
+                .map(|(key, effort)| (key.as_str(), effort.as_str())),
+        )
+        .chain(
+            self.usage_limit_fallback_effort_overrides
                 .iter()
                 .map(|(key, effort)| (key.as_str(), effort.as_str())),
         ) {
@@ -795,6 +836,14 @@ impl Settings {
         }
     }
 
+    pub fn merge_agent(&self) -> &str {
+        if self.default_merge_agent.trim().is_empty() {
+            self.sequential_agent()
+        } else {
+            &self.default_merge_agent
+        }
+    }
+
     pub fn orientation_agent(&self) -> &str {
         if self.default_orientation_agent.trim().is_empty() {
             &self.preferred_provider
@@ -839,6 +888,26 @@ impl Settings {
         self.role_model_selection(&self.default_sequential_model_overrides, provider)
     }
 
+    pub fn merge_model_selection(&self, provider: &str) -> Option<ModelSelection> {
+        self.role_model_selection(&self.default_merge_model_overrides, provider)
+            .or_else(|| {
+                self.default_merge_agent
+                    .trim()
+                    .is_empty()
+                    .then(|| self.sequential_model_selection(provider))
+                    .flatten()
+            })
+    }
+
+    pub fn merge_effort(&self, provider: &str) -> String {
+        let configured = self.role_effort(&self.default_merge_effort_overrides, provider);
+        if configured.is_empty() && self.default_merge_agent.trim().is_empty() {
+            self.sequential_effort(provider)
+        } else {
+            configured
+        }
+    }
+
     pub fn sequential_effort(&self, provider: &str) -> String {
         self.role_effort(&self.default_sequential_effort_overrides, provider)
     }
@@ -849,6 +918,19 @@ impl Settings {
 
     pub fn orientation_effort(&self, provider: &str) -> String {
         self.role_effort(&self.default_orientation_effort_overrides, provider)
+    }
+
+    pub fn usage_limit_fallback_agent(&self) -> Option<&str> {
+        let provider = self.usage_limit_fallback_agent.trim();
+        (!provider.is_empty()).then_some(provider)
+    }
+
+    pub fn usage_limit_fallback_model_selection(&self, provider: &str) -> Option<ModelSelection> {
+        self.role_model_selection(&self.usage_limit_fallback_model_overrides, provider)
+    }
+
+    pub fn usage_limit_fallback_effort(&self, provider: &str) -> String {
+        self.role_effort(&self.usage_limit_fallback_effort_overrides, provider)
     }
 
     /// Preserve old model fields when settings are opened and re-saved. These
@@ -933,8 +1015,14 @@ impl Settings {
         if !self.default_sequential_agent.is_empty() && !known(&self.default_sequential_agent) {
             self.default_sequential_agent = String::new();
         }
+        if !self.default_merge_agent.is_empty() && !known(&self.default_merge_agent) {
+            self.default_merge_agent = String::new();
+        }
         if !self.default_orientation_agent.is_empty() && !known(&self.default_orientation_agent) {
             self.default_orientation_agent = String::new();
+        }
+        if !self.usage_limit_fallback_agent.is_empty() && !known(&self.usage_limit_fallback_agent) {
+            self.usage_limit_fallback_agent = String::new();
         }
         let known_key = |key: &str| {
             KNOWN_PROVIDERS.iter().any(|provider| {
@@ -945,15 +1033,19 @@ impl Settings {
         };
         for overrides in [
             &mut self.default_parallel_model_overrides,
+            &mut self.default_merge_model_overrides,
             &mut self.default_sequential_model_overrides,
             &mut self.default_orientation_model_overrides,
+            &mut self.usage_limit_fallback_model_overrides,
         ] {
             overrides.retain(|key, _| known_key(key));
         }
         for overrides in [
             &mut self.default_parallel_effort_overrides,
+            &mut self.default_merge_effort_overrides,
             &mut self.default_sequential_effort_overrides,
             &mut self.default_orientation_effort_overrides,
+            &mut self.usage_limit_fallback_effort_overrides,
         ] {
             overrides.retain(|key, _| known_key(key));
         }

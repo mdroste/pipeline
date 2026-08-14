@@ -11,7 +11,7 @@ import UpdateBanner from "./components/UpdateBanner";
 import NavRail, { type AppPage } from "./components/NavRail";
 import RunSetupPanel from "./components/RunSetupPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { usePipeline } from "./hooks/usePipeline";
+import { usePipeline, type ProviderLimitNotice } from "./hooks/usePipeline";
 import usePersistentPanelWidth from "./hooks/usePersistentPanelWidth";
 import { isMac } from "./lib/platform";
 import {
@@ -57,6 +57,7 @@ interface ExecutionPlanEnvelope {
   readiness: DepsReport;
   stages: ExecutionPlanStage[];
   parallelAgents?: string[];
+  mergeAgent?: string | null;
 }
 
 interface PreparedLaunch {
@@ -73,9 +74,13 @@ function configForRunPreview(
   config: PipelineConfig,
   agents: string[],
   overrides: RunParallelOverrides | null,
+  mergeAgent?: string | null,
 ): PipelineConfig {
   return {
     ...config,
+    merge: mergeAgent
+      ? { ...config.merge, agents: [mergeAgent] }
+      : config.merge,
     steps: config.steps.map((step) => step.phase === "parallel" && (overrides || step.agents.length === 0)
       ? {
           ...step,
@@ -111,6 +116,64 @@ function hasActiveBatch(jobs: BatchJob[]): boolean {
   return jobs.some((job) => job.status === "pending" || job.status === "running");
 }
 
+function providerName(provider: string | null): string {
+  if (!provider) return "fallback provider";
+  if (provider === "claude") return "Claude";
+  if (provider === "codex") return "ChatGPT";
+  if (provider === "antigravity") return "Antigravity";
+  if (provider === "local") return "Local";
+  return provider;
+}
+
+function ProviderLimitBanner({
+  notices,
+  onOpenSettings,
+}: {
+  notices: ProviderLimitNotice[];
+  onOpenSettings: () => void;
+}) {
+  const blocking = [...notices].reverse().find(
+    (notice) => notice.status === "exhausted" || notice.status === "fallback_failed",
+  );
+  const latest = blocking ?? notices[notices.length - 1];
+  if (!latest) return null;
+  const recovered = notices.filter((notice) => notice.status === "recovered").length;
+  const fallback = latest.fallback_provider
+    ? `${providerName(latest.fallback_provider)}${latest.fallback_model ? ` (${latest.fallback_model})` : ""}`
+    : null;
+  const summary = blocking
+    ? latest.status === "fallback_failed"
+      ? `${providerName(latest.provider)} reached its account usage limit, and ${fallback ?? "the fallback"} also failed.`
+      : `${providerName(latest.provider)} reached its account usage limit. No fallback is configured.`
+    : latest.status === "recovered"
+      ? `${providerName(latest.provider)} reached its account usage limit. Pipeline continued with ${fallback}.`
+      : `${providerName(latest.provider)} reached its account usage limit. Switching this call to ${fallback}.`;
+
+  return (
+    <div
+      role="alert"
+      className={`flex shrink-0 items-center gap-3 border-b px-5 py-2.5 text-xs ${
+        blocking
+          ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/45 dark:text-red-300"
+          : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+      }`}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="font-semibold">Model usage limit reached.</span>{" "}
+        {summary}
+        {recovered > 1 ? ` ${recovered} calls have used the fallback.` : ""}
+      </span>
+      <button
+        type="button"
+        onClick={onOpenSettings}
+        className="shrink-0 rounded border border-current/30 px-2 py-1 font-medium hover:bg-white/50 dark:hover:bg-black/20"
+      >
+        Fallback settings
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const {
     state,
@@ -125,6 +188,7 @@ function App() {
     passTimes,
     stageHistory,
     reviewRouting,
+    providerLimitNotices = [],
   } = usePipeline();
   const [paperPath, setPaperPath] = useState<string | null>(null);
   const [inputSelection, setInputSelection] = useState<PrimaryInputSelection | null>(null);
@@ -450,7 +514,12 @@ function App() {
           variables,
           extraInputs,
           plan,
-          config: configForRunPreview(config, plan.parallelAgents ?? [], parallelOverrides),
+          config: configForRunPreview(
+            config,
+            plan.parallelAgents ?? [],
+            parallelOverrides,
+            plan.mergeAgent,
+          ),
           parallelOverrides,
           batchPaths: paths,
         });
@@ -475,7 +544,12 @@ function App() {
         variables,
         extraInputs,
         plan,
-        config: configForRunPreview(config, plan.parallelAgents ?? [], parallelOverrides),
+        config: configForRunPreview(
+          config,
+          plan.parallelAgents ?? [],
+          parallelOverrides,
+          plan.mergeAgent,
+        ),
         parallelOverrides,
       });
     } catch (error) {
@@ -764,6 +838,18 @@ function App() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           <UpdateBanner />
+          {page === "main" && providerLimitNotices.length > 0 && (
+            <ProviderLimitBanner
+              notices={providerLimitNotices}
+              onOpenSettings={() => {
+                if (!confirmLeaveCurrentPage("settings")) return;
+                setSettingsInitialSection("llm");
+                setSettingsTargetId("usage-limit-fallback");
+                setSettingsNavigationKey((key) => key + 1);
+                setPage("settings");
+              }}
+            />
+          )}
           <div className="flex-1 overflow-auto">
             <Suspense
               fallback={(
@@ -780,6 +866,7 @@ function App() {
                   setConfigVersion((v) => v + 1);
                 }}
                 onDirtyChange={setWorkflowDirty}
+                onOpenGallery={() => handleNavigate("gallery")}
                 onProfileChange={handleProfileChange}
                 showBack={false}
               />

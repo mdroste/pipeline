@@ -128,6 +128,9 @@ pub async fn build_orientation_map(
                 {
                     return Err(error);
                 }
+                if super::provider_error::is_usage_limit_error(&error) {
+                    return Err(format!("Orientation map stopped: {error}"));
+                }
                 last_error = format!("provider call failed: {error}");
                 if attempt < MAX_RETRIES {
                     let _ = app.emit_event(

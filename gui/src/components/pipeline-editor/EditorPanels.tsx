@@ -118,11 +118,11 @@ export const PipelineSettingsEditorPanel = memo(function PipelineSettingsEditorP
                 Reuse shared input context
               </span>
               <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
-                {activeProfile === "auto-review" ? "Auto Review default" : "Optional"}
+                {["auto-review", "auto-review-quick"].includes(activeProfile) ? "Automatic review default" : "Optional"}
               </span>
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              Auto Paper Review enables this by default. It prepares the extracted input
+              Automatic Paper Review enables this by default. It prepares the extracted input
               and orientation map once for all review steps.
               Pipeline automatically uses provider prompt caches for API calls and forked
               base sessions for Claude or Codex CLI. For other profiles, turn it on for

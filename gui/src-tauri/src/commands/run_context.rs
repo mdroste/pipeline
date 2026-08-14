@@ -9,9 +9,10 @@ pub(super) struct RunSnapshot {
     pub(super) fingerprint: String,
 }
 
-/// One-report override for inherited Parallel steps. `None` at the command
-/// boundary means use Settings unchanged; a present value is fingerprinted
-/// into the immutable launch snapshot and never persisted.
+/// One-report override for Parallel steps and, when selected, their Merge
+/// calls. `None` at the command boundary means use Settings and workflow
+/// choices unchanged; a present value is fingerprinted into the immutable
+/// launch snapshot and never persisted.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct RunParallelOverrides {
     pub agents: Vec<String>,
@@ -19,6 +20,12 @@ pub struct RunParallelOverrides {
     pub model_overrides: std::collections::HashMap<String, crate::settings::ModelSelection>,
     #[serde(default)]
     pub effort_overrides: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub merge_agent: Option<String>,
+    #[serde(default)]
+    pub merge_model_overrides: std::collections::HashMap<String, crate::settings::ModelSelection>,
+    #[serde(default)]
+    pub merge_effort_overrides: std::collections::HashMap<String, String>,
 }
 
 pub(super) fn settings_for_snapshot_fingerprint(
@@ -45,6 +52,41 @@ pub(super) fn settings_for_snapshot_fingerprint(
     fingerprint_settings
 }
 
+/// Hash serialized launch state with recursively sorted JSON object keys.
+/// Settings, profiles, and one-run overrides all contain `HashMap` fields;
+/// serializing those maps directly can assign different fingerprints to the
+/// same values on separate plan and launch IPC calls.
+pub(super) fn stable_snapshot_fingerprint<T: serde::Serialize>(
+    value: &T,
+) -> Result<String, serde_json::Error> {
+    use sha2::{Digest as _, Sha256};
+
+    fn sort_object_keys(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                let mut entries = std::mem::take(object).into_iter().collect::<Vec<_>>();
+                entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                for (key, mut child) in entries {
+                    sort_object_keys(&mut child);
+                    object.insert(key, child);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    sort_object_keys(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut canonical = serde_json::to_value(value)?;
+    sort_object_keys(&mut canonical);
+    let encoded = serde_json::to_vec(&canonical)?;
+    let digest = format!("{:x}", Sha256::digest(encoded));
+    Ok(digest[..16].to_string())
+}
+
 pub(super) fn load_run_snapshot() -> Result<RunSnapshot, String> {
     load_run_snapshot_for_profile(None)
 }
@@ -55,8 +97,6 @@ pub(super) fn load_run_snapshot() -> Result<RunSnapshot, String> {
 pub(super) fn load_run_snapshot_for_profile(
     profile_id: Option<&str>,
 ) -> Result<RunSnapshot, String> {
-    use sha2::{Digest as _, Sha256};
-
     let mut settings = crate::settings::load_persisted_required().map_err(|e| {
         format!("Cannot start run because settings could not be loaded safely: {e}")
     })?;
@@ -72,10 +112,8 @@ pub(super) fn load_run_snapshot_for_profile(
     // a one-off CLI run must not rewrite the desktop app's settings.json.
     settings.active_profile = selected_profile;
     let fingerprint_settings = settings_for_snapshot_fingerprint(&settings);
-    let encoded = serde_json::to_vec(&(&fingerprint_settings, &config))
+    let fingerprint = stable_snapshot_fingerprint(&(&fingerprint_settings, &config))
         .map_err(|e| format!("Could not fingerprint run configuration: {e}"))?;
-    let digest = format!("{:x}", Sha256::digest(encoded));
-    let fingerprint = digest[..16].to_string();
     Ok(RunSnapshot {
         settings,
         config,
@@ -90,7 +128,6 @@ pub(super) fn bind_runtime_snapshot(
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
 ) -> Result<RunSnapshot, String> {
-    use sha2::{Digest as _, Sha256};
     let variables = variables
         .iter()
         .collect::<std::collections::BTreeMap<_, _>>();
@@ -98,13 +135,12 @@ pub(super) fn bind_runtime_snapshot(
         .iter()
         .collect::<std::collections::BTreeMap<_, _>>();
     // Chain from the current fingerprint, not config_fingerprint: the
-    // one-run Parallel-agent override has already been folded in by
+    // one-run agent override has already been folded in by
     // bind_parallel_overrides, and rebasing on the config fingerprint would
     // silently drop it from the plan/launch mismatch check.
-    let encoded = serde_json::to_vec(&(snapshot.fingerprint.as_str(), variables, extra_inputs))
-        .map_err(|error| format!("Could not fingerprint runtime options: {error}"))?;
-    let digest = format!("{:x}", Sha256::digest(encoded));
-    snapshot.fingerprint = digest[..16].to_string();
+    snapshot.fingerprint =
+        stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), variables, extra_inputs))
+            .map_err(|error| format!("Could not fingerprint runtime options: {error}"))?;
     Ok(snapshot)
 }
 
@@ -112,7 +148,6 @@ pub(super) fn bind_parallel_overrides(
     mut snapshot: RunSnapshot,
     overrides: Option<&RunParallelOverrides>,
 ) -> Result<RunSnapshot, String> {
-    use sha2::{Digest as _, Sha256};
     let Some(overrides) = overrides else {
         return Ok(snapshot);
     };
@@ -122,7 +157,6 @@ pub(super) fn bind_parallel_overrides(
     snapshot.settings.default_parallel_agents = overrides.agents.clone();
     snapshot.settings.default_parallel_model_overrides = overrides.model_overrides.clone();
     snapshot.settings.default_parallel_effort_overrides = overrides.effort_overrides.clone();
-    snapshot.settings.validate()?;
     for step in snapshot
         .config
         .steps
@@ -135,10 +169,25 @@ pub(super) fn bind_parallel_overrides(
         step.effort.clear();
         step.effort_overrides = overrides.effort_overrides.clone();
     }
-    let encoded = serde_json::to_vec(&(snapshot.fingerprint.as_str(), overrides))
+    if let Some(merge_agent) = overrides.merge_agent.as_deref() {
+        if merge_agent.trim().is_empty() {
+            return Err("Select a Merge agent".to_string());
+        }
+        snapshot.settings.default_merge_agent = merge_agent.to_string();
+        snapshot.settings.default_merge_model_overrides = overrides.merge_model_overrides.clone();
+        snapshot.settings.default_merge_effort_overrides = overrides.merge_effort_overrides.clone();
+        // An explicit workflow Merge provider would otherwise bypass the
+        // transient Settings policies above. Clearing it makes this one-run
+        // selection the inherited, fully configured Merge default.
+        snapshot.config.merge.agents.clear();
+    } else if !overrides.merge_model_overrides.is_empty()
+        || !overrides.merge_effort_overrides.is_empty()
+    {
+        return Err("Merge model or thinking overrides require a Merge agent".to_string());
+    }
+    snapshot.settings.validate()?;
+    snapshot.fingerprint = stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), overrides))
         .map_err(|error| format!("Could not fingerprint Parallel agent options: {error}"))?;
-    let digest = format!("{:x}", Sha256::digest(encoded));
-    snapshot.fingerprint = digest[..16].to_string();
     Ok(snapshot)
 }
 
@@ -148,16 +197,13 @@ pub(super) fn bind_foreground_launch(
     input_interpretation: Option<&str>,
     diff: bool,
 ) -> Result<RunSnapshot, String> {
-    use sha2::{Digest as _, Sha256};
-    let encoded = serde_json::to_vec(&(
+    snapshot.fingerprint = stable_snapshot_fingerprint(&(
         snapshot.fingerprint.as_str(),
         paper_path,
         input_interpretation,
         diff,
     ))
     .map_err(|error| format!("Could not fingerprint launch options: {error}"))?;
-    let digest = format!("{:x}", Sha256::digest(encoded));
-    snapshot.fingerprint = digest[..16].to_string();
     Ok(snapshot)
 }
 
@@ -310,7 +356,7 @@ pub(super) fn validate_primary_input_selection(
             // names and every reviewer would read the inventory as the paper.
             if crate::auto_review::uses_auto_review_contract(config) {
                 return Err(
-                    "Auto Paper Review reviews a document, not a browsable source tree. \
+                    "Automatic Paper Review reviews a document, not a browsable source tree. \
                      Select the folder as a LaTeX project (if it contains the paper's TeX \
                      source), pick the paper file directly, or switch to a folder-oriented \
                      workflow."

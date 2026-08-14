@@ -37,6 +37,7 @@ import {
 } from "./pipeline-editor/AdaptiveReviewEditors";
 import {
   adaptiveAgentCount as getAdaptiveAgentCount,
+  adaptiveAgentRange as getAdaptiveAgentRange,
   isAutoReview,
   withAdaptiveAgentCount,
 } from "../lib/autoReview";
@@ -52,6 +53,7 @@ import { ISSUES_SCHEMA } from "./pipeline-editor/stepTemplates";
 interface Props {
   onClose: () => void;
   onDirtyChange?: (dirty: boolean) => void;
+  onOpenGallery?: () => void;
   onProfileChange?: () => void;
   showBack?: boolean;
 }
@@ -65,6 +67,7 @@ type EditingMode = WaveSelection | null;
 export default function PipelinePage({
   onClose,
   onDirtyChange,
+  onOpenGallery,
   onProfileChange,
   showBack = true,
 }: Props) {
@@ -678,21 +681,6 @@ export default function PipelinePage({
     }
   };
 
-  const handleImportUrl = async () => {
-    const url = window.prompt("Profile URL (a shared profile JSON):");
-    if (!url) return;
-    try {
-      const summary = await invoke<ProfileSummary>("import_profile_from_url", { url: url.trim() });
-      await refreshProfiles();
-      alert(
-        `Imported “${summary.name}” after safety validation. It was not activated. ` +
-        "Select it from the profile list to inspect its prompts, tools, agents, and fan-out settings before running it.",
-      );
-    } catch (e) {
-      alert(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
   const handleImport = async () => {
     try {
       const path = await openDialog({
@@ -957,6 +945,7 @@ export default function PipelinePage({
   const hasMultiAgent = parallelSteps.some((s) => s.agents?.length > 1);
   const autoReview = isAutoReview(config);
   const adaptiveAgentCount = getAdaptiveAgentCount(config);
+  const adaptiveAgentRange = getAdaptiveAgentRange(config);
   const browseSpecialists = (kind: AdaptiveSlotKind) => {
     setCatalogTab(kind === "subject" ? "subjects" : "methods");
   };
@@ -1107,6 +1096,7 @@ export default function PipelinePage({
               merge={config.merge}
               adaptiveReview={autoReview}
               adaptiveAgentCount={adaptiveAgentCount}
+              adaptiveAgentRange={adaptiveAgentRange}
               selectedId={editing}
               onSelect={(id) => setEditing(editing === id ? null : id)}
             />
@@ -1178,6 +1168,7 @@ export default function PipelinePage({
               </div>
               <AdaptiveAgentsRow
                 count={adaptiveAgentCount}
+                range={adaptiveAgentRange}
                 selected={editing === "auto_adaptive_agents"}
                 onSelect={() => setEditing(editing === "auto_adaptive_agents" ? null : "auto_adaptive_agents")}
               />
@@ -1314,14 +1305,16 @@ export default function PipelinePage({
             >
               Import
             </button>
-            <button
-              onClick={handleImportUrl}
-              title="Import a shared profile from a URL"
-              className="flex-1 py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
-                         hover:bg-gray-50 transition-colors"
-            >
-              From URL…
-            </button>
+            {onOpenGallery && (
+              <button
+                onClick={onOpenGallery}
+                title="Browse curated workflow templates"
+                className="flex-1 py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
+                           hover:bg-gray-50 transition-colors"
+              >
+                Gallery
+              </button>
+            )}
           </div>
           {saved && <p className="text-xs text-green-700 dark:text-green-400 text-center">Saved.</p>}
         </div>
@@ -1361,6 +1354,8 @@ export default function PipelinePage({
         ) : editing === "auto_adaptive_agents" ? (
           <AdaptiveAgentsEditorPanel
             count={adaptiveAgentCount}
+            range={adaptiveAgentRange}
+            coreStepLabels={parallelSteps.filter((step) => step.enabled).map((step) => step.label)}
             onCountChange={(count) => {
               setConfig(withAdaptiveAgentCount(config, count));
               setDirty(true);

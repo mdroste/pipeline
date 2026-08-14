@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { ModelCatalog, Settings } from "./types";
 import {
   decodeModelSelection,
+  defaultMergeAgent,
+  defaultMergeEffortOverrides,
+  defaultMergeModelOverrides,
   effortOptions,
   encodeModelSelection,
   providerTransport,
@@ -51,5 +54,23 @@ describe("provider model utilities", () => {
       .toEqual(["low", "high"]);
     expect(effortOptions(undefined, { mode: "automatic" }, ["medium"]))
       .toEqual(["medium"]);
+  });
+
+  it("keeps legacy Merge defaults aligned with Sequential settings", () => {
+    const legacy = settings({
+      preferred_provider: "claude",
+      default_sequential_agent: "codex",
+      default_sequential_model_overrides: {
+        "codex:cli": { mode: "pinned", model: "gpt-merge" },
+      },
+      default_sequential_effort_overrides: { "codex:cli": "high" },
+    });
+    expect(defaultMergeAgent(legacy)).toBe("codex");
+    expect(defaultMergeModelOverrides(legacy)).toEqual(
+      legacy.default_sequential_model_overrides,
+    );
+    expect(defaultMergeEffortOverrides(legacy)).toEqual(
+      legacy.default_sequential_effort_overrides,
+    );
   });
 });

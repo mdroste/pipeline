@@ -8,6 +8,34 @@ fn revision_reconciliation_is_opt_in_for_new_and_existing_settings() {
 }
 
 #[test]
+fn usage_limit_fallback_is_opt_in_and_transport_specific() {
+    let defaults = Settings::default();
+    assert_eq!(defaults.usage_limit_fallback_agent(), None);
+
+    let mut configured = Settings {
+        usage_limit_fallback_agent: "codex".to_string(),
+        ..Default::default()
+    };
+    configured.usage_limit_fallback_model_overrides.insert(
+        "codex:cli".to_string(),
+        ModelSelection::Pinned {
+            model: "fallback-model".to_string(),
+        },
+    );
+    assert_eq!(configured.usage_limit_fallback_agent(), Some("codex"));
+    assert_eq!(
+        configured.usage_limit_fallback_model_selection("codex"),
+        Some(ModelSelection::Pinned {
+            model: "fallback-model".to_string(),
+        })
+    );
+    assert!(configured.validate().is_ok());
+
+    configured.usage_limit_fallback_agent = "unknown".to_string();
+    assert!(configured.validate().is_err());
+}
+
+#[test]
 fn worker_concurrency_defaults_to_sixteen_and_allows_up_to_twenty() {
     let defaults = Settings::default();
     assert_eq!(defaults.max_workers, 16);
@@ -416,13 +444,31 @@ fn legacy_key_presence_migrates_to_explicit_api_mode() {
 
 #[test]
 fn role_defaults_preserve_legacy_fallbacks_and_transport_specific_policies() {
-    let legacy: Settings = serde_json::from_str(r#"{"preferred_provider":"antigravity"}"#).unwrap();
+    let legacy: Settings = serde_json::from_str(
+        r#"{
+            "preferred_provider":"antigravity",
+            "default_sequential_model_overrides": {
+                "antigravity:cli": {"mode":"pinned","model":"legacy-merge-model"}
+            },
+            "default_sequential_effort_overrides": {"antigravity:cli":"high"}
+        }"#,
+    )
+    .unwrap();
     assert_eq!(legacy.parallel_agents(), vec!["antigravity"]);
     assert_eq!(legacy.sequential_agent(), "antigravity");
+    assert_eq!(legacy.merge_agent(), "antigravity");
+    assert_eq!(
+        legacy.merge_model_selection("antigravity"),
+        Some(ModelSelection::Pinned {
+            model: "legacy-merge-model".into()
+        })
+    );
+    assert_eq!(legacy.merge_effort("antigravity"), "high");
     assert_eq!(legacy.orientation_agent(), "antigravity");
 
     let mut settings = Settings {
         default_parallel_agents: vec!["claude".into(), "codex".into()],
+        default_merge_agent: "codex".into(),
         default_sequential_agent: "antigravity".into(),
         default_orientation_agent: "claude".into(),
         ..Default::default()
@@ -433,6 +479,15 @@ fn role_defaults_preserve_legacy_fallbacks_and_transport_specific_policies() {
             model: "gpt-test".into(),
         },
     );
+    settings.default_merge_model_overrides.insert(
+        "codex:cli".into(),
+        ModelSelection::Pinned {
+            model: "gpt-merge".into(),
+        },
+    );
+    settings
+        .default_merge_effort_overrides
+        .insert("codex:cli".into(), "medium".into());
     settings
         .default_orientation_effort_overrides
         .insert("claude:cli".into(), "high".into());
@@ -443,6 +498,14 @@ fn role_defaults_preserve_legacy_fallbacks_and_transport_specific_policies() {
             model: "gpt-test".into()
         })
     );
+    assert_eq!(settings.merge_agent(), "codex");
+    assert_eq!(
+        settings.merge_model_selection("codex"),
+        Some(ModelSelection::Pinned {
+            model: "gpt-merge".into()
+        })
+    );
+    assert_eq!(settings.merge_effort("codex"), "medium");
     assert_eq!(settings.orientation_effort("claude"), "high");
 
     settings.default_parallel_agents.push("claude".into());
@@ -458,12 +521,17 @@ fn normalization_drops_retired_provider_ids_from_saved_settings() {
     let persisted = r#"{
         "preferred_provider": "gemini",
         "default_parallel_agents": ["claude", "gemini"],
+        "default_merge_agent": "gemini",
         "default_sequential_agent": "gemini",
         "default_orientation_agent": "claude",
         "default_parallel_model_overrides": {
             "gemini:cli": {"mode": "pinned", "model": "gemini-2.5-pro"},
             "codex:cli": {"mode": "automatic"}
         },
+        "default_merge_model_overrides": {
+            "gemini:cli": {"mode": "pinned", "model": "gemini-2.5-pro"}
+        },
+        "default_merge_effort_overrides": {"gemini": "medium"},
         "default_sequential_effort_overrides": {"gemini": "high", "claude:cli": "low"}
     }"#;
     let settings = serde_json::from_str::<Settings>(persisted)
@@ -473,6 +541,7 @@ fn normalization_drops_retired_provider_ids_from_saved_settings() {
     assert_eq!(settings.preferred_provider, "claude");
     assert_eq!(settings.default_parallel_agents, vec!["claude"]);
     assert_eq!(settings.sequential_agent(), "claude");
+    assert_eq!(settings.merge_agent(), "claude");
     assert_eq!(settings.orientation_agent(), "claude");
     assert!(!settings
         .default_parallel_model_overrides
@@ -480,6 +549,8 @@ fn normalization_drops_retired_provider_ids_from_saved_settings() {
     assert!(settings
         .default_parallel_model_overrides
         .contains_key("codex:cli"));
+    assert!(settings.default_merge_model_overrides.is_empty());
+    assert!(settings.default_merge_effort_overrides.is_empty());
     assert!(!settings
         .default_sequential_effort_overrides
         .contains_key("gemini"));

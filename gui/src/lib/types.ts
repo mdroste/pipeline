@@ -521,6 +521,10 @@ export interface Settings {
   default_parallel_agents?: string[];
   default_parallel_model_overrides?: Record<string, ModelSelection>;
   default_parallel_effort_overrides?: Record<string, string>;
+  /** Provider and policy used for multi-provider Parallel-output merges. */
+  default_merge_agent?: string;
+  default_merge_model_overrides?: Record<string, ModelSelection>;
+  default_merge_effort_overrides?: Record<string, string>;
   /** Provider inherited by Sequential steps whose workflow agent list is empty. */
   default_sequential_agent?: string;
   default_sequential_model_overrides?: Record<string, ModelSelection>;
@@ -529,6 +533,10 @@ export interface Settings {
   default_orientation_agent?: string;
   default_orientation_model_overrides?: Record<string, ModelSelection>;
   default_orientation_effort_overrides?: Record<string, string>;
+  /** Optional provider/model used once after durable account usage exhaustion. */
+  usage_limit_fallback_agent?: string;
+  usage_limit_fallback_model_overrides?: Record<string, ModelSelection>;
+  usage_limit_fallback_effort_overrides?: Record<string, string>;
   max_workers: number;
   active_profile: string;
   claude_model: string;
@@ -599,6 +607,9 @@ export interface RunParallelOverrides {
   agents: string[];
   model_overrides: Record<string, ModelSelection>;
   effort_overrides: Record<string, string>;
+  merge_agent?: string;
+  merge_model_overrides?: Record<string, ModelSelection>;
+  merge_effort_overrides?: Record<string, string>;
 }
 
 export interface DepStatus {

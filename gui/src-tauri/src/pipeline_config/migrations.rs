@@ -383,6 +383,8 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
                     }
                 };
                 let mut replayed = auto_review_profile();
+                // v16 fingerprints the pre-rename stock profile.
+                replayed.name = "Auto Paper Review".to_string();
                 pin_fingerprint_prompt_defaults(&mut replayed);
                 replayed.steps = configure_artifact_flow(
                     replayed.steps,
@@ -422,6 +424,73 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         })?;
     }
 
+    // Rename the adaptive default and add its Quick companion. The Quick file
+    // is created before migrations run; on older stores, v6 may therefore
+    // replay artifact flow over that newly written file and widen validation's
+    // context. Heal only that exact replayed shape, preserving any customized
+    // profile. Likewise, rename Full only while it still has the prior stock
+    // name so a user-supplied display name remains untouched.
+    let automatic_review_variants_marker = profiles.join(".builtin-catalog-v17");
+    if !automatic_review_variants_marker.exists() {
+        let full_path = profiles.join("auto-review.json");
+        if full_path.exists() {
+            let content = read_profile_file(&full_path)
+                .map_err(|error| format!("Failed to read '{}': {error}", full_path.display()))?;
+            let mut profile: ProfileData = serde_json::from_str(&content)
+                .map_err(|error| format!("Failed to parse '{}': {error}", full_path.display()))?;
+            validate_profile_data(&profile)?;
+            if profile.name == "Auto Paper Review" {
+                profile.name = "Automatic Paper Review (Full)".to_string();
+                let json = serde_json::to_string_pretty(&profile).map_err(|error| {
+                    format!("Failed to serialize '{}': {error}", full_path.display())
+                })?;
+                restore_profile_bytes(&full_path, json.as_bytes()).map_err(|error| {
+                    format!("Failed to update '{}': {error}", full_path.display())
+                })?;
+            }
+        }
+
+        let quick_path = profiles.join("auto-review-quick.json");
+        if quick_path.exists() {
+            let content = read_profile_file(&quick_path)
+                .map_err(|error| format!("Failed to read '{}': {error}", quick_path.display()))?;
+            let profile: ProfileData = serde_json::from_str(&content)
+                .map_err(|error| format!("Failed to parse '{}': {error}", quick_path.display()))?;
+            validate_profile_data(&profile)?;
+            let stock = quick_auto_review_profile();
+            let mut replayed = stock.clone();
+            replayed.steps = configure_artifact_flow(
+                replayed.steps,
+                &replayed.extraction.input_mode,
+                builtin_primary_readers("auto-review-quick"),
+            );
+            let actual = serde_json::to_value(&profile).map_err(|error| {
+                format!("Failed to fingerprint '{}': {error}", quick_path.display())
+            })?;
+            let replayed = serde_json::to_value(&replayed)
+                .map_err(|error| format!("Failed to fingerprint Quick review: {error}"))?;
+            if actual == replayed {
+                let json = serde_json::to_string_pretty(&stock).map_err(|error| {
+                    format!("Failed to serialize '{}': {error}", quick_path.display())
+                })?;
+                restore_profile_bytes(&quick_path, json.as_bytes()).map_err(|error| {
+                    format!("Failed to update '{}': {error}", quick_path.display())
+                })?;
+            }
+        }
+
+        fs::write(
+            &automatic_review_variants_marker,
+            b"automatic-paper-review-full-and-quick\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the Automatic Paper Review variants migration '{}': {error}",
+                automatic_review_variants_marker.display()
+            )
+        })?;
+    }
+
     Ok(())
 }
 
@@ -446,6 +515,7 @@ const CATALOG_MIGRATION_MARKERS: &[&str] = &[
     ".builtin-catalog-v14",
     ".builtin-catalog-v15",
     ".builtin-catalog-v16",
+    ".builtin-catalog-v17",
 ];
 
 pub(super) fn record_fresh_install_markers(profiles: &Path) -> Result<(), String> {

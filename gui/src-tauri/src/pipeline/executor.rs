@@ -1601,6 +1601,8 @@ struct StepCallResult {
     duration_secs: u64,
     usage: crate::pipeline::logging::CallUsage,
     attempt_count: u32,
+    usage_limit_fallbacks: Vec<super::call::UsageLimitFallback>,
+    effective_fallback: Option<super::call::UsageLimitFallback>,
 }
 
 async fn capture_response(
@@ -1670,6 +1672,7 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
     let mut last_error = String::new();
     let mut total_duration_secs = 0u64;
     let mut total_usage = crate::pipeline::logging::CallUsage::default();
+    let mut usage_limit_fallbacks = Vec::new();
 
     for attempt in 0..=max_retries {
         let attempt_number = attempt.saturating_add(1);
@@ -1733,6 +1736,10 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
         .await;
         total_duration_secs = total_duration_secs.saturating_add(call.duration_secs);
         total_usage.add_usage(call.usage);
+        let call_fallback = call.usage_limit_fallback.clone();
+        if let Some(fallback) = call_fallback.clone() {
+            usage_limit_fallbacks.push(fallback);
+        }
 
         let compatibility_file = ingest_report_file(request.write_dir, request.report_rel).await;
         // Preserve provider-returned text before interpreting it. A malformed
@@ -1860,6 +1867,9 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                         }
                     }
                 } else {
+                    if super::provider_error::is_usage_limit_error(&error) {
+                        return Err(error);
+                    }
                     last_error = error;
                     continue;
                 }
@@ -1907,6 +1917,8 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                     .max(u64::from(attempt.saturating_add(1))),
             )
             .unwrap_or(u32::MAX),
+            usage_limit_fallbacks,
+            effective_fallback: call_fallback,
         });
     }
 
@@ -2042,8 +2054,66 @@ fn step_output(
     resolution: &crate::model_catalog::ResolvedModel,
     effort: &str,
 ) -> StepOutput {
-    let call_record = crate::models::StepCallRecord {
-        role: "step".to_string(),
+    let fallback_usage = call.usage_limit_fallbacks.iter().fold(
+        crate::pipeline::logging::CallUsage::default(),
+        |mut total, fallback| {
+            total.add_usage(fallback.fallback_usage);
+            total
+        },
+    );
+    let fallback_duration = call
+        .usage_limit_fallbacks
+        .iter()
+        .fold(0u64, |total, fallback| {
+            total.saturating_add(fallback.fallback_duration_secs)
+        });
+    let subtract = |total: u64, fallback: u64| total.saturating_sub(fallback);
+    let primary_usage = crate::pipeline::logging::CallUsage {
+        input_tokens: subtract(call.usage.input_tokens, fallback_usage.input_tokens),
+        output_tokens: subtract(call.usage.output_tokens, fallback_usage.output_tokens),
+        cached_input_tokens: subtract(
+            call.usage.cached_input_tokens,
+            fallback_usage.cached_input_tokens,
+        ),
+        cache_write_input_tokens: subtract(
+            call.usage.cache_write_input_tokens,
+            fallback_usage.cache_write_input_tokens,
+        ),
+        provider_attempts: subtract(
+            call.usage.provider_attempts,
+            fallback_usage.provider_attempts,
+        ),
+        model_round_trips: subtract(
+            call.usage.model_round_trips,
+            fallback_usage.model_round_trips,
+        ),
+        tool_calls: crate::models::ToolCallCounts {
+            text_file: subtract(
+                call.usage.tool_calls.text_file,
+                fallback_usage.tool_calls.text_file,
+            ),
+            image: subtract(call.usage.tool_calls.image, fallback_usage.tool_calls.image),
+            web: subtract(call.usage.tool_calls.web, fallback_usage.tool_calls.web),
+            shell_or_other: subtract(
+                call.usage.tool_calls.shell_or_other,
+                fallback_usage.tool_calls.shell_or_other,
+            ),
+            unknown: subtract(
+                call.usage.tool_calls.unknown,
+                fallback_usage.tool_calls.unknown,
+            ),
+        },
+    };
+    let effective = call.effective_fallback.as_ref();
+    let effective_provider = effective.map_or(provider, |fallback| fallback.provider.as_str());
+    let effective_agent = effective.map_or(agent, |fallback| fallback.provider.as_str());
+    let effective_resolution = effective.map_or(resolution, |fallback| &fallback.resolution);
+    let mut call_records = vec![crate::models::StepCallRecord {
+        role: if effective.is_some() {
+            "usage_limit_primary".to_string()
+        } else {
+            "step".to_string()
+        },
         provider: provider.to_string(),
         agent: agent.to_string(),
         model: resolution.resolved_model.clone(),
@@ -2056,21 +2126,47 @@ fn step_output(
         } else {
             effort.to_string()
         },
-        duration_secs: call.duration_secs,
-        input_tokens: call.usage.input_tokens,
-        output_tokens: call.usage.output_tokens,
-        cached_input_tokens: call.usage.cached_input_tokens,
-        cache_write_input_tokens: call.usage.cache_write_input_tokens,
-        model_round_trips: call.usage.model_round_trips,
-        tool_calls: call.usage.tool_calls,
-        attempt_count: call.attempt_count,
-    };
+        duration_secs: call.duration_secs.saturating_sub(fallback_duration),
+        input_tokens: primary_usage.input_tokens,
+        output_tokens: primary_usage.output_tokens,
+        cached_input_tokens: primary_usage.cached_input_tokens,
+        cache_write_input_tokens: primary_usage.cache_write_input_tokens,
+        model_round_trips: primary_usage.model_round_trips,
+        tool_calls: primary_usage.tool_calls,
+        attempt_count: u32::try_from(primary_usage.provider_attempts).unwrap_or(u32::MAX),
+    }];
+    call_records.extend(call.usage_limit_fallbacks.iter().map(|fallback| {
+        crate::models::StepCallRecord {
+            role: "usage_limit_fallback".to_string(),
+            provider: fallback.provider.clone(),
+            agent: fallback.provider.clone(),
+            model: fallback.resolution.resolved_model.clone(),
+            model_transport: fallback.resolution.transport.clone(),
+            model_policy: fallback.resolution.selection.label(),
+            model_source: fallback.resolution.source.clone(),
+            model_catalog_updated_at: fallback.resolution.catalog_updated_at.clone(),
+            effort: if fallback.effort.trim().is_empty() {
+                "default".to_string()
+            } else {
+                fallback.effort.clone()
+            },
+            duration_secs: fallback.fallback_duration_secs,
+            input_tokens: fallback.fallback_usage.input_tokens,
+            output_tokens: fallback.fallback_usage.output_tokens,
+            cached_input_tokens: fallback.fallback_usage.cached_input_tokens,
+            cache_write_input_tokens: fallback.fallback_usage.cache_write_input_tokens,
+            model_round_trips: fallback.fallback_usage.model_round_trips,
+            tool_calls: fallback.fallback_usage.tool_calls,
+            attempt_count: u32::try_from(fallback.fallback_usage.provider_attempts)
+                .unwrap_or(u32::MAX),
+        }
+    }));
     StepOutput {
         step_id: step_key.to_string(),
         step_label: display_label.to_string(),
         phase: phase.to_string(),
-        provider: provider.to_string(),
-        agent: agent.to_string(),
+        provider: effective_provider.to_string(),
+        agent: effective_agent.to_string(),
         raw_text: call.text,
         duration_secs: call.duration_secs,
         input_tokens: call.usage.input_tokens,
@@ -2080,12 +2176,12 @@ fn step_output(
         model_round_trips: call.usage.model_round_trips,
         tool_calls: call.usage.tool_calls,
         attempt_count: call.attempt_count,
-        model: resolution.resolved_model.clone(),
-        model_transport: resolution.transport.clone(),
-        model_policy: resolution.selection.label(),
-        model_source: resolution.source.clone(),
-        model_catalog_updated_at: resolution.catalog_updated_at.clone(),
-        calls: vec![call_record],
+        model: effective_resolution.resolved_model.clone(),
+        model_transport: effective_resolution.transport.clone(),
+        model_policy: effective_resolution.selection.label(),
+        model_source: effective_resolution.source.clone(),
+        model_catalog_updated_at: effective_resolution.catalog_updated_at.clone(),
+        calls: call_records,
         ..Default::default()
     }
 }

@@ -133,6 +133,7 @@ pub struct ExecutionPlanResponse {
     pub readiness: crate::deps::DepsReport,
     pub stages: Vec<executor::ExecutionPlanStage>,
     pub parallel_agents: Vec<String>,
+    pub merge_agent: Option<String>,
 }
 
 /// Return the canonical scheduler timeline for one immutable active-profile
@@ -210,6 +211,20 @@ pub async fn get_execution_plan(
     )?;
     let mut planning_config = snapshot.config.clone();
     pipeline_config::apply_agent_defaults(&mut planning_config, &snapshot.settings);
+    let merge_agent = (planning_config.merge.enabled
+        && planning_config.steps.iter().any(|step| {
+            step.enabled
+                && step.phase == crate::pipeline_config::Phase::Parallel
+                && step.agents.len() > 1
+        }))
+    .then(|| {
+        planning_config
+            .merge
+            .agents
+            .first()
+            .cloned()
+            .unwrap_or_else(|| snapshot.settings.merge_agent().to_string())
+    });
     let mut stages = executor::execution_plan(&planning_config)?;
     if let Some(stage) = stages.iter_mut().find(|stage| stage.kind == "extracting") {
         stage.label = executor::input_processing_label(&resolved_interpretation).to_string();
@@ -229,6 +244,7 @@ pub async fn get_execution_plan(
         readiness,
         stages,
         parallel_agents: snapshot.settings.parallel_agents(),
+        merge_agent,
     })
 }
 
@@ -256,7 +272,7 @@ pub async fn get_default_prompt(name: String) -> Result<String, String> {
         .ok_or_else(|| format!("Unknown prompt: {name}"))
 }
 
-/// The Auto Paper Review router prompt is generated from the live catalog,
+/// The Automatic Paper Review router prompt is generated from the live catalog,
 /// not a compiled prompts/*.md file, so the editor needs its own way to
 /// restore it after an accidental overwrite.
 #[tauri::command]

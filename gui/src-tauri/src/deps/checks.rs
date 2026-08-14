@@ -335,6 +335,9 @@ pub(super) fn required_providers(
 ) -> std::collections::HashSet<String> {
     let mut required = std::collections::HashSet::new();
     let preferred = settings.preferred_provider.clone();
+    if let Some(fallback) = settings.usage_limit_fallback_agent() {
+        required.insert(fallback.to_string());
+    }
     let Some(config) = config else {
         required.insert(preferred);
         return required;
@@ -365,7 +368,7 @@ pub(super) fn required_providers(
                 .agents
                 .first()
                 .cloned()
-                .unwrap_or_else(|| settings.sequential_agent().to_string()),
+                .unwrap_or_else(|| settings.merge_agent().to_string()),
         );
     }
     required

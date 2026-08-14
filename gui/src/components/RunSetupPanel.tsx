@@ -111,6 +111,7 @@ export default function RunSetupPanel({
             value={parallelOverrides}
             disabled={configLoading || preparingRun}
             localLlmActive={localLlmActive}
+            refreshKey={configVersion}
             onChange={onParallelOverridesChange}
           />
         </div>

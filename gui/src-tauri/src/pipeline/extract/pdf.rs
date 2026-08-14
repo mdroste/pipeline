@@ -1151,6 +1151,10 @@ pub(super) async fn run_llm_ranges(
                     tasks.abort_all();
                     return Err(error);
                 }
+                if super::super::provider_error::is_usage_limit_error(&error) {
+                    tasks.abort_all();
+                    return Err(error);
+                }
                 extraction_log(app, format!("WARNING: extraction range failed: {error}"));
                 range_errors.push(error);
             }

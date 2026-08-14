@@ -80,7 +80,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         && crate::auto_review::uses_auto_review_contract(&config)
     {
         return Err(
-            "Auto Paper Review reviews a document, not a browsable source tree. Select the \
+            "Automatic Paper Review reviews a document, not a browsable source tree. Select the \
              folder as a LaTeX project (if it contains the paper's TeX source), pick the paper \
              file directly, or switch to a folder-oriented workflow."
                 .to_string(),
@@ -520,7 +520,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     .ok();
     let _orient_tmp = orient_file; // hold tempfile alive through step execution
 
-    // Auto Review stores only its stable five-step skeleton. Once the
+    // Automatic Paper Review stores only its stable Full/Quick skeleton. Once the
     // validated router has selected allowlisted IDs, assemble this run's
     // small concrete workflow before any step scheduling or budget checks.
     let mut execution_config = crate::auto_review::materialize_config(&config, &orientation)?;

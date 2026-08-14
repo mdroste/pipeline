@@ -260,6 +260,46 @@ describe("PipelineProgress", () => {
     expect(screen.queryByText("failed")).not.toBeInTheDocument();
   });
 
+  it("groups adjacent sequential steps under one progress stage", () => {
+    const plan: ExecutionPlanStage[] = [
+      { id: "extract", kind: "extracting", label: "Creating document bundle", stepIds: [] },
+      {
+        id: "consolidate",
+        kind: "synthesizing",
+        label: "Sequential agent wave",
+        stepIds: ["consolidate"],
+        stepLabels: ["Consolidate Feedback"],
+      },
+      {
+        id: "validate",
+        kind: "synthesizing",
+        label: "Sequential agent wave",
+        stepIds: ["validate"],
+        stepLabels: ["Validate Feedback"],
+      },
+      { id: "done", kind: "done", label: "Complete", stepIds: [] },
+    ];
+    render(
+      <PipelineProgress
+        state={{ kind: "synthesizing", passes: { validate: "running" } }}
+        plan={plan}
+        stageHistory={[
+          { id: "extract", kind: "extracting", label: "Creating document bundle", stepIds: [], status: "done", passes: {} },
+          { id: "consolidate", kind: "synthesizing", label: "Sequential agent wave", stepIds: ["consolidate"], stepLabels: ["Consolidate Feedback"], status: "done", passes: { consolidate: "done" } },
+          { id: "validate", kind: "synthesizing", label: "Sequential agent wave", stepIds: ["validate"], stepLabels: ["Validate Feedback"], status: "active", passes: { validate: "running" } },
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByText("Sequential agent wave")).toHaveLength(1);
+    const sequentialStage = screen.getByText("Sequential agent wave").closest("[data-status]");
+    expect(sequentialStage).toHaveAttribute("data-status", "active");
+    expect(sequentialStage).toHaveTextContent("Consolidate Feedback");
+    expect(sequentialStage).toHaveTextContent("Validate Feedback");
+    expect(screen.getByText("Consolidate Feedback").parentElement).toHaveTextContent("done");
+    expect(screen.getByText("Validate Feedback").parentElement).toHaveTextContent("running");
+  });
+
   it("retains completed passes across alternating parallel and sequential waves", () => {
     const plan: ExecutionPlanStage[] = [
       { id: "extract", kind: "extracting", label: "Creating document bundle", stepIds: [] },

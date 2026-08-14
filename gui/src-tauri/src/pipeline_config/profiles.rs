@@ -18,12 +18,12 @@ pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String>
 }
 
 /// Reset active profile to defaults: the matching stock definition for a
-/// built-in, otherwise the default (Auto Paper Review) pipeline.
+/// built-in, otherwise the default Automatic Paper Review (Full) pipeline.
 pub fn reset_defaults() -> PipelineConfig {
-    let d = if get_active_profile_id() == "grant-review" {
-        grant_review_profile().into()
-    } else {
-        defaults()
+    let d = match get_active_profile_id().as_str() {
+        "auto-review-quick" => quick_auto_review_profile().into(),
+        "grant-review" => grant_review_profile().into(),
+        _ => defaults(),
     };
     let _ = save(&d);
     d
@@ -378,6 +378,10 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 imported_settings.default_parallel_model_overrides;
             current.default_parallel_effort_overrides =
                 imported_settings.default_parallel_effort_overrides;
+            current.default_merge_agent = imported_settings.default_merge_agent;
+            current.default_merge_model_overrides = imported_settings.default_merge_model_overrides;
+            current.default_merge_effort_overrides =
+                imported_settings.default_merge_effort_overrides;
             current.default_sequential_agent = imported_settings.default_sequential_agent;
             current.default_sequential_model_overrides =
                 imported_settings.default_sequential_model_overrides;
@@ -388,6 +392,11 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 imported_settings.default_orientation_model_overrides;
             current.default_orientation_effort_overrides =
                 imported_settings.default_orientation_effort_overrides;
+            current.usage_limit_fallback_agent = imported_settings.usage_limit_fallback_agent;
+            current.usage_limit_fallback_model_overrides =
+                imported_settings.usage_limit_fallback_model_overrides;
+            current.usage_limit_fallback_effort_overrides =
+                imported_settings.usage_limit_fallback_effort_overrides;
             current.max_workers = imported_settings.max_workers;
             current.claude_model = imported_settings.claude_model;
             current.claude_cli_model_selection = imported_settings.claude_cli_model_selection;

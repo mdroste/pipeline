@@ -42,6 +42,18 @@ function makeConfig(): PipelineConfig {
           include: [{ kind: "step", step: "contribution", parts: ["report"] }],
         },
       },
+      {
+        id: "validate",
+        label: "Validate Feedback",
+        prompt: "",
+        enabled: true,
+        phase: "sequential",
+        tools: [],
+        agents: ["claude"],
+        context: {
+          include: [{ kind: "step", step: "consolidate", parts: ["report"] }],
+        },
+      },
     ],
     merge: { enabled: true, prompt: "", agents: ["claude"] },
     use_orientation: true,
@@ -52,7 +64,8 @@ function makeConfig(): PipelineConfig {
 }
 
 const profiles: ProfileSummary[] = [
-  { id: "auto-review", name: "Auto Paper Review", step_count: 4, builtin: true },
+  { id: "auto-review", name: "Automatic Paper Review (Full)", step_count: 5, builtin: true },
+  { id: "auto-review-quick", name: "Automatic Paper Review (Quick)", step_count: 4, builtin: true },
   { id: "deep", name: "Paper Review (Full)", step_count: 3, builtin: false },
   { id: "quick", name: "Paper Review (Quick)", step_count: 2, builtin: false },
 ];
@@ -139,8 +152,9 @@ describe("WorkflowPanel", () => {
 
     expect(await screen.findByText("Contribution")).toBeInTheDocument();
     expect(screen.getByText("Consolidate Issues")).toBeInTheDocument();
+    expect(screen.getByText("Validate Feedback")).toBeInTheDocument();
     expect(screen.getByText("Parallel")).toBeInTheDocument();
-    expect(screen.getByText("Sequential")).toBeInTheDocument();
+    expect(screen.getAllByText("Sequential")).toHaveLength(1);
     // Disabled steps are summarized, not listed
     expect(screen.queryByText("Technical")).not.toBeInTheDocument();
     expect(screen.getByText("+1 disabled step")).toBeInTheDocument();
@@ -209,7 +223,7 @@ describe("WorkflowPanel", () => {
     expect(await screen.findByText("Adaptive agents")).toHaveClass("text-blue-700");
     expect(
       await screen.findByText(
-        "Adaptive agents: 2-6 additional topic and methodology-specific review agents tailored for each document.",
+        "Adaptive agents: 2–6 additional subject and method reviewers tailored to each document.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/conditional specialist/i)).not.toBeInTheDocument();
@@ -227,5 +241,25 @@ describe("WorkflowPanel", () => {
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Specialist catalog" })).not.toBeInTheDocument();
+  });
+
+  it("shows the Quick profile's narrower adaptive range", async () => {
+    const quickConfig = makeConfig();
+    quickConfig.orientation_schema = {
+      "x-pipeline-contract": "auto-review-v2",
+      properties: {
+        review_plan: {
+          properties: {
+            subject_specialist_ids: { minItems: 1, maxItems: 2 },
+            method_specialist_ids: { minItems: 1, maxItems: 2 },
+          },
+        },
+      },
+    };
+    mockLoad(quickConfig, "auto-review-quick");
+    renderPanel();
+
+    expect(await screen.findByText("2–4")).toBeInTheDocument();
+    expect(screen.getByText(/Adaptive agents: 2–4 additional subject and method reviewers/)).toBeInTheDocument();
   });
 });

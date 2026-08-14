@@ -190,16 +190,12 @@ function HelpContent({
           </p>
           <div className="space-y-1.5">
             <BuiltinRow
-              name="Auto Paper Review"
-              description="Classifies the paper's field and methods, then assembles 2–6 matching specialist reviewers alongside three core reviews."
+              name="Automatic Paper Review (Full)"
+              description="Assembles 2–6 subject and method specialists alongside contribution, consistency, and exposition reviews."
             />
             <BuiltinRow
-              name="Paper Review (Full)"
-              description="Five focused reviews, a consolidated report, and an optional validation pass."
-            />
-            <BuiltinRow
-              name="Paper Review (Quick)"
-              description="Two broad review passes and a consolidated report."
+              name="Automatic Paper Review (Quick)"
+              description="Assembles 2–4 subject and method specialists alongside consistency and exposition reviews, omitting the contribution and literature pass."
             />
             <BuiltinRow
               name="Grant Proposal Review"

@@ -30,6 +30,63 @@ pub const ADAPTIVE_AGENT_COUNT_KEY: &str = "x-pipeline-adaptive-agent-count";
 pub const MIN_ADAPTIVE_AGENTS: usize = 2;
 pub const MAX_ADAPTIVE_AGENTS: usize = 6;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdaptiveAgentBounds {
+    pub subject_min: usize,
+    pub subject_max: usize,
+    pub method_min: usize,
+    pub method_max: usize,
+}
+
+impl AdaptiveAgentBounds {
+    pub fn total_min(self) -> usize {
+        self.subject_min + self.method_min
+    }
+
+    pub fn total_max(self) -> usize {
+        self.subject_max + self.method_max
+    }
+}
+
+fn schema_array_bound(
+    schema: &serde_json::Value,
+    property: &str,
+    keyword: &str,
+    default: usize,
+) -> Result<usize, String> {
+    let Some(value) = schema.pointer(&format!(
+        "/properties/review_plan/properties/{property}/{keyword}"
+    )) else {
+        return Ok(default);
+    };
+    value
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| format!("review_plan.{property}.{keyword} must be a nonnegative integer"))
+}
+
+pub fn adaptive_agent_bounds(schema: &serde_json::Value) -> Result<AdaptiveAgentBounds, String> {
+    let bounds = AdaptiveAgentBounds {
+        subject_min: schema_array_bound(schema, "subject_specialist_ids", "minItems", 1)?,
+        subject_max: schema_array_bound(schema, "subject_specialist_ids", "maxItems", 2)?,
+        method_min: schema_array_bound(schema, "method_specialist_ids", "minItems", 1)?,
+        method_max: schema_array_bound(schema, "method_specialist_ids", "maxItems", 4)?,
+    };
+    if !(1..=2).contains(&bounds.subject_min)
+        || !(1..=2).contains(&bounds.subject_max)
+        || bounds.subject_min > bounds.subject_max
+    {
+        return Err("subject specialist bounds must stay within one to two agents".to_string());
+    }
+    if !(1..=4).contains(&bounds.method_min)
+        || !(1..=4).contains(&bounds.method_max)
+        || bounds.method_min > bounds.method_max
+    {
+        return Err("method specialist bounds must stay within one to four agents".to_string());
+    }
+    Ok(bounds)
+}
+
 pub fn configured_agent_count(schema: &serde_json::Value) -> Result<Option<usize>, String> {
     if schema
         .get("x-pipeline-contract")
@@ -41,21 +98,44 @@ pub fn configured_agent_count(schema: &serde_json::Value) -> Result<Option<usize
     let Some(value) = schema.get(ADAPTIVE_AGENT_COUNT_KEY) else {
         return Ok(None);
     };
+    let bounds = adaptive_agent_bounds(schema)?;
     let count = value.as_u64().ok_or_else(|| {
         format!(
-            "{ADAPTIVE_AGENT_COUNT_KEY} must be an integer from {MIN_ADAPTIVE_AGENTS} to {MAX_ADAPTIVE_AGENTS}"
+            "{ADAPTIVE_AGENT_COUNT_KEY} must be an integer from {} to {}",
+            bounds.total_min(),
+            bounds.total_max()
         )
     })? as usize;
-    if !(MIN_ADAPTIVE_AGENTS..=MAX_ADAPTIVE_AGENTS).contains(&count) {
+    if !(bounds.total_min()..=bounds.total_max()).contains(&count) {
         return Err(format!(
-            "{ADAPTIVE_AGENT_COUNT_KEY} must be from {MIN_ADAPTIVE_AGENTS} to {MAX_ADAPTIVE_AGENTS}, got {count}"
+            "{ADAPTIVE_AGENT_COUNT_KEY} must be from {} to {}, got {count}",
+            bounds.total_min(),
+            bounds.total_max()
         ));
     }
     Ok(Some(count))
 }
 
 pub fn validate_schema_settings(schema: &serde_json::Value) -> Result<(), String> {
+    if schema
+        .get("x-pipeline-contract")
+        .and_then(serde_json::Value::as_str)
+        == Some(AUTO_REVIEW_CONTRACT)
+    {
+        adaptive_agent_bounds(schema)?;
+    }
     configured_agent_count(schema).map(|_| ())
+}
+
+fn agent_range_phrase(minimum: usize, maximum: usize, singular: &str, plural: &str) -> String {
+    if minimum == maximum {
+        format!(
+            "exactly {minimum} {}",
+            if minimum == 1 { singular } else { plural }
+        )
+    } else {
+        format!("{minimum}–{maximum} {plural}")
+    }
 }
 
 /// Add the user-selected specialist count to the router prompt without
@@ -64,12 +144,42 @@ pub fn apply_agent_count_instruction(
     mut prompt: String,
     schema: Option<&serde_json::Value>,
 ) -> Result<String, String> {
-    let Some(count) = schema.map(configured_agent_count).transpose()?.flatten() else {
+    let Some(schema) = schema.filter(|schema| {
+        schema
+            .get("x-pipeline-contract")
+            .and_then(serde_json::Value::as_str)
+            == Some(AUTO_REVIEW_CONTRACT)
+    }) else {
         return Ok(prompt);
     };
-    let instruction = format!(
-        "CONFIGURED ADAPTIVE-AGENT COUNT\n\nSelect exactly {count} total specialists across `subject_specialist_ids` and `method_specialist_ids`. Keep the required one or two subject specialists and one to four method specialists, and include exactly one `selection_notes` entry for each of the {count} selected IDs. This fixed user setting takes precedence over instructions to choose the smallest possible set; fill the requested slots with the closest materially relevant, nonduplicative roles.\n\n"
+    let bounds = adaptive_agent_bounds(schema)?;
+    let subject_range = agent_range_phrase(
+        bounds.subject_min,
+        bounds.subject_max,
+        "subject specialist",
+        "subject specialists",
     );
+    let method_range = agent_range_phrase(
+        bounds.method_min,
+        bounds.method_max,
+        "method specialist",
+        "method specialists",
+    );
+    let instruction = if let Some(count) = configured_agent_count(schema)? {
+        format!(
+            "CONFIGURED ADAPTIVE-AGENT COUNT\n\nSelect exactly {count} total specialists across `subject_specialist_ids` and `method_specialist_ids`. Keep the required {subject_range} and {method_range}, and include exactly one `selection_notes` entry for each of the {count} selected IDs. This fixed user setting takes precedence over instructions to choose the smallest possible set; fill the requested slots with the closest materially relevant, nonduplicative roles.\n\n"
+        )
+    } else if bounds.total_min() != MIN_ADAPTIVE_AGENTS
+        || bounds.total_max() != MAX_ADAPTIVE_AGENTS
+        || bounds.method_max != 4
+    {
+        format!(
+            "PROFILE ADAPTIVE-AGENT BOUNDS\n\nSelect {} total specialists across `subject_specialist_ids` and `method_specialist_ids`, consisting of {subject_range} and {method_range}. Include exactly one `selection_notes` entry for every selected ID. These profile bounds take precedence over broader count ranges stated later in the routing instructions.\n\n",
+            agent_range_phrase(bounds.total_min(), bounds.total_max(), "specialist", "specialists")
+        )
+    } else {
+        return Ok(prompt);
+    };
     if prompt.len().saturating_add(instruction.len()) > crate::safety::MAX_EXPANDED_PROMPT_BYTES {
         return Err(
             "Orientation prompt exceeds its safety limit after adding the adaptive-agent count"
@@ -324,7 +434,7 @@ fn base_step(id: &str, label: &str, prompt: String, tools: &[&str]) -> StepConfi
     }
 }
 
-/// The saved Auto profile is deliberately only a stable five-step skeleton.
+/// The saved Full profile is deliberately only a stable five-step skeleton.
 /// Selected specialist steps are materialized from the allowlist after the
 /// orientation call, so a profile never contains the whole catalog.
 pub fn steps() -> Vec<StepConfig> {
@@ -365,6 +475,15 @@ pub fn steps() -> Vec<StepConfig> {
     validate.phase = Phase::Sequential;
     steps.push(validate);
     steps
+}
+
+/// Quick keeps the Full workflow's consistency, exposition, consolidation,
+/// and validation passes while omitting the contribution/literature pass.
+pub fn quick_steps() -> Vec<StepConfig> {
+    steps()
+        .into_iter()
+        .filter(|step| step.id != "auto_contribution")
+        .collect()
 }
 
 fn current_specialist_step(id: &str) -> Option<StepConfig> {
@@ -433,9 +552,10 @@ pub fn validate_auto_review_preflight(config: &PipelineConfig) -> Result<(), Str
     }
 }
 
-/// Expand the five-step Auto profile into one run-specific workflow after the
-/// combined orientation/classification call has returned. The model supplies IDs only; every executable
-/// property comes from the host-owned catalog.
+/// Expand an Automatic Paper Review skeleton into one run-specific workflow
+/// after the combined orientation/classification call has returned. The model
+/// supplies IDs only; every executable property comes from the host-owned
+/// catalog.
 pub fn materialize_config(
     config: &PipelineConfig,
     orientation: &serde_json::Value,
@@ -734,6 +854,18 @@ pub fn orientation_schema() -> serde_json::Value {
     })
 }
 
+/// Quick uses the same allowlisted router and subject range as Full, but caps
+/// methods at two. Together these schema bounds allow 2–4 adaptive agents:
+/// 1–2 subject specialists plus 1–2 method specialists.
+pub fn quick_orientation_schema() -> serde_json::Value {
+    let mut schema = orientation_schema();
+    schema["properties"]["review_plan"]["properties"]["method_specialist_ids"]["maxItems"] =
+        serde_json::json!(2);
+    schema["properties"]["review_plan"]["properties"]["selection_notes"]["maxItems"] =
+        serde_json::json!(4);
+    schema
+}
+
 /// Apply the small semantic checks that ordinary JSON shape validation cannot
 /// express. The schema marker makes the extension explicit and profile-local.
 pub fn validate_contract_for_schema(
@@ -1010,7 +1142,7 @@ mod tests {
 
     #[test]
     fn catalog_ids_prompts_and_fallbacks_are_complete() {
-        assert_eq!(SUBJECTS.len(), 257);
+        assert_eq!(SUBJECTS.len(), 287);
         assert_eq!(METHODS.len(), 115);
         let mut ids = std::collections::HashSet::new();
         let mut disciplines = std::collections::HashMap::<&str, bool>::new();
@@ -1169,6 +1301,45 @@ mod tests {
             assert!(prompt.contains(&format!("`{}`", specialist.id)));
         }
         crate::pipeline::structured::validate_schema(&orientation_schema()).unwrap();
+        crate::pipeline::structured::validate_schema(&quick_orientation_schema()).unwrap();
+    }
+
+    #[test]
+    fn quick_schema_limits_methods_and_total_agents() {
+        let schema = quick_orientation_schema();
+        let bounds = adaptive_agent_bounds(&schema).unwrap();
+        assert_eq!(
+            bounds,
+            AdaptiveAgentBounds {
+                subject_min: 1,
+                subject_max: 2,
+                method_min: 1,
+                method_max: 2,
+            }
+        );
+        let prompt =
+            apply_agent_count_instruction("Router instructions".to_string(), Some(&schema))
+                .unwrap();
+        assert!(prompt.contains("2–4 specialists"));
+        assert!(prompt.contains("1–2 method specialists"));
+
+        let mut too_many_methods = valid_orientation();
+        too_many_methods["review_plan"]["method_specialist_ids"] = serde_json::json!([
+            "formal_proofs",
+            "simulation_numerics",
+            "reproducibility_software"
+        ]);
+        too_many_methods["review_plan"]["selection_notes"] = serde_json::json!([
+            {"id": "subject_mathematics_pde", "reason": "The main result concerns a nonlinear PDE."},
+            {"id": "formal_proofs", "reason": "The theorem and proof carry the contribution."},
+            {"id": "simulation_numerics", "reason": "Numerical evidence supports the claim."},
+            {"id": "reproducibility_software", "reason": "Software behavior is central."}
+        ]);
+        assert!(crate::pipeline::structured::validate(&schema, &too_many_methods).is_err());
+
+        let mut fixed = schema;
+        fixed[ADAPTIVE_AGENT_COUNT_KEY] = serde_json::json!(5);
+        assert!(validate_schema_settings(&fixed).is_err());
     }
 
     #[test]

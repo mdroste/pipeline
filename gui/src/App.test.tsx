@@ -141,10 +141,12 @@ vi.mock("./components/PipelinePage", () => ({
   default: ({
     onClose,
     onDirtyChange,
+    onOpenGallery,
     onProfileChange,
   }: {
     onClose: () => void;
     onDirtyChange?: (dirty: boolean) => void;
+    onOpenGallery?: () => void;
     onProfileChange?: (config?: {
       extraction: { input_mode: string };
     }) => void;
@@ -168,9 +170,13 @@ vi.mock("./components/PipelinePage", () => ({
       >
         Switch to folder workflow
       </button>
+      <button onClick={onOpenGallery}>Gallery</button>
       <button onClick={onClose}>Close workflow editor</button>
     </div>
   ),
+}));
+vi.mock("./components/WorkflowGalleryPage", () => ({
+  default: () => <div>Gallery workspace</div>,
 }));
 vi.mock("./components/SettingsPage", () => ({
   default: ({
@@ -321,6 +327,23 @@ describe("App run options", () => {
 
     await screen.findByRole("button", { name: "Review report" });
     expect(screen.queryByRole("button", { name: "Batch" })).not.toBeInTheDocument();
+  });
+
+  it("opens Gallery from Workflows instead of the primary navigation", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("button", { name: "Review report" });
+    expect(screen.queryByRole("button", { name: "Gallery" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Workflows" }));
+    await user.click(await screen.findByRole("button", { name: "Gallery" }));
+
+    expect(await screen.findByText("Gallery workspace")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Workflows" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("does not rebuild the execution plan when per-report agents change", async () => {

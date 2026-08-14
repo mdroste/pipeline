@@ -136,6 +136,47 @@ fn active_profile_explicit_agents_are_required() {
 }
 
 #[test]
+fn configured_usage_limit_fallback_is_required_at_preflight() {
+    let settings = crate::settings::Settings {
+        preferred_provider: "claude".to_string(),
+        usage_limit_fallback_agent: "codex".to_string(),
+        ..Default::default()
+    };
+    let required = required_providers(&settings, None, false, None, None);
+    assert!(required.contains("claude"));
+    assert!(required.contains("codex"));
+}
+
+#[test]
+fn inherited_merge_default_is_required_for_multi_provider_steps() {
+    let settings = crate::settings::Settings {
+        default_merge_agent: "codex".to_string(),
+        ..Default::default()
+    };
+    let config = crate::pipeline_config::PipelineConfig {
+        steps: vec![crate::pipeline_config::StepConfig {
+            id: "multi-provider-review".to_string(),
+            agents: vec!["claude".to_string(), "antigravity".to_string()],
+            ..Default::default()
+        }],
+        merge: Default::default(),
+        context_cache: Default::default(),
+        use_orientation: true,
+        orientation_prompt: String::new(),
+        orientation_schema: None,
+        extraction: crate::pipeline_config::ExtractionConfig {
+            method: "pdftotext".to_string(),
+            ..Default::default()
+        },
+        parallel_context_template: String::new(),
+        variables: Vec::new(),
+    };
+
+    let required = required_providers(&settings, Some(&config), false, None, None);
+    assert!(required.contains("codex"));
+}
+
+#[test]
 fn llm_extraction_requires_a_provider_only_for_a_possible_pdf_input() {
     let settings = crate::settings::Settings {
         preferred_provider: "claude".to_string(),

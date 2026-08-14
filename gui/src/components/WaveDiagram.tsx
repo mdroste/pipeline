@@ -10,6 +10,7 @@
 import { computeWaves } from "../lib/pipelineHelpers";
 import type { StepConfig, MergeConfig } from "../lib/types";
 import { adaptiveAgentCountLabel } from "../lib/autoReview";
+import type { AdaptiveAgentRange } from "../lib/autoReview";
 
 export type WaveSelection =
   | string
@@ -24,11 +25,12 @@ interface Props {
   merge: MergeConfig;
   adaptiveReview?: boolean;
   adaptiveAgentCount?: number | null;
+  adaptiveAgentRange?: AdaptiveAgentRange;
   selectedId: WaveSelection | null;
   onSelect: (id: WaveSelection) => void;
 }
 
-export default function WaveDiagram({ steps, merge, adaptiveReview = false, adaptiveAgentCount = null, selectedId, onSelect }: Props) {
+export default function WaveDiagram({ steps, merge, adaptiveReview = false, adaptiveAgentCount = null, adaptiveAgentRange, selectedId, onSelect }: Props) {
   const waves = computeWaves(steps, false);
   const noEnabledSteps = waves.length === 0;
   const enabledSteps = steps.filter((step) => step.enabled);
@@ -75,7 +77,7 @@ export default function WaveDiagram({ steps, merge, adaptiveReview = false, adap
         </h3>
         <p className="mt-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
           {adaptiveReview
-            ? `${enabledSteps.length} saved steps plus ${adaptiveAgentCountLabel(adaptiveAgentCount)} auto-selected specialists in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}.`
+            ? `${enabledSteps.length} saved steps plus ${adaptiveAgentCountLabel(adaptiveAgentCount, adaptiveAgentRange)} auto-selected specialists in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}.`
             : `${enabledSteps.length} enabled ${enabledSteps.length === 1 ? "step" : "steps"} in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}; up to ${providerCalls} provider ${providerCalls === 1 ? "call" : "calls"} before retries.`}
         </p>
       </div>
@@ -111,6 +113,7 @@ export default function WaveDiagram({ steps, merge, adaptiveReview = false, adap
                 steps={row.steps}
                 adaptive={row.adaptive}
                 adaptiveAgentCount={adaptiveAgentCount}
+                adaptiveAgentRange={adaptiveAgentRange}
                 selectedId={selectedId}
                 onSelect={onSelect}
               />
@@ -145,12 +148,14 @@ function ParallelRow({
   steps,
   adaptive,
   adaptiveAgentCount,
+  adaptiveAgentRange,
   selectedId,
   onSelect,
 }: {
   steps: StepConfig[];
   adaptive: boolean;
   adaptiveAgentCount: number | null;
+  adaptiveAgentRange?: AdaptiveAgentRange;
   selectedId: WaveSelection | null;
   onSelect: (id: string) => void;
 }) {
@@ -180,7 +185,7 @@ function ParallelRow({
       ))}
       {adaptive && (
         <Node
-          label={`Adaptive agents (${adaptiveAgentCountLabel(adaptiveAgentCount)})`}
+          label={`Adaptive agents (${adaptiveAgentCountLabel(adaptiveAgentCount, adaptiveAgentRange)})`}
           selected={selectedId === "auto_adaptive_agents"}
           variant="adaptive"
           onClick={() => onSelect("auto_adaptive_agents")}

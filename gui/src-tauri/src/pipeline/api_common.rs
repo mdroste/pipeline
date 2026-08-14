@@ -2576,6 +2576,9 @@ fn format_api_error(provider: &str, status: u16, body: &str) -> String {
 
     match status {
         401 => format!("{provider}: Invalid API key. Check your key in Settings."),
+        429 if super::provider_error::is_usage_limit_error(&detail) => {
+            format!("{provider}: Usage limit reached: {detail}")
+        }
         429 => format!("{provider}: Rate limited. Wait a moment and try again."),
         529 | 503 => format!("{provider}: Service overloaded. Try again in a few minutes."),
         _ => format!("{provider} API error (HTTP {status}): {detail}"),
@@ -2637,6 +2640,23 @@ mod tests {
         assert!(transient_api_status(529));
         assert!(!transient_api_status(400));
         assert!(!transient_api_status(500));
+    }
+
+    #[test]
+    fn exhausted_api_quota_survives_429_formatting() {
+        let error = format_api_error(
+            "OpenAI",
+            429,
+            r#"{"error":{"message":"insufficient_quota: credit balance is too low"}}"#,
+        );
+        assert!(error.contains("insufficient_quota"));
+        assert!(super::super::provider_error::is_usage_limit_error(&error));
+
+        let transient = format_api_error("Anthropic", 429, r#"{"error":{"message":"slow down"}}"#);
+        assert_eq!(
+            transient,
+            "Anthropic: Rate limited. Wait a moment and try again."
+        );
     }
 
     #[test]

@@ -693,7 +693,10 @@ fn step_model_policy_is_provider_and_transport_specific() {
 
 #[test]
 fn builtin_catalog_contains_only_current_profiles() {
-    assert_eq!(BUILTIN_PROFILES, ["auto-review", "grant-review"]);
+    assert_eq!(
+        BUILTIN_PROFILES,
+        ["auto-review", "auto-review-quick", "grant-review"]
+    );
     assert_eq!(
         V9_RETIRED_BUILTIN_PROFILES,
         [
@@ -702,12 +705,12 @@ fn builtin_catalog_contains_only_current_profiles() {
         ]
     );
     // v15 completes the v3/v9 chains: everything that previously fell back
-    // to Paper Review (Full) now lands on Auto Paper Review.
+    // to Paper Review (Full) now lands on Automatic Paper Review (Full).
     assert_eq!(
         V15_RETIRED_BUILTIN_PROFILES,
         [
             ("deep-review", "auto-review"),
-            ("quick-review", "auto-review"),
+            ("quick-review", "auto-review-quick"),
         ]
     );
 }
@@ -716,7 +719,7 @@ fn builtin_catalog_contains_only_current_profiles() {
 fn auto_review_profile_is_valid_and_compact() {
     let profile = auto_review_profile();
     validate_profile_data(&profile).unwrap();
-    assert_eq!(profile.name, "Auto Paper Review");
+    assert_eq!(profile.name, "Automatic Paper Review (Full)");
     assert!(profile.context_cache.enabled);
     assert!(profile.orientation_schema.is_some());
     assert_eq!(profile.steps.len(), 5);
@@ -747,6 +750,44 @@ fn auto_review_profile_is_valid_and_compact() {
 }
 
 #[test]
+fn quick_auto_review_is_bounded_and_omits_contribution() {
+    let profile = quick_auto_review_profile();
+    validate_profile_data(&profile).unwrap();
+    assert_eq!(profile.name, "Automatic Paper Review (Quick)");
+    assert!(profile.context_cache.enabled);
+    assert_eq!(profile.steps.len(), 4);
+    assert!(!profile
+        .steps
+        .iter()
+        .any(|step| step.id == "auto_contribution"));
+    assert_eq!(
+        profile
+            .orientation_schema
+            .as_ref()
+            .and_then(|schema| schema
+                .pointer("/properties/review_plan/properties/method_specialist_ids/maxItems"))
+            .and_then(serde_json::Value::as_u64),
+        Some(2)
+    );
+    let bounds =
+        crate::auto_review::adaptive_agent_bounds(profile.orientation_schema.as_ref().unwrap())
+            .unwrap();
+    assert_eq!((bounds.total_min(), bounds.total_max()), (2, 4));
+
+    let validate = profile.steps.last().unwrap();
+    let report_inputs = validate
+        .context
+        .include
+        .iter()
+        .filter_map(|selector| match selector {
+            ArtifactSelector::Step { step, .. } => Some(step.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(report_inputs, ["auto_synthesis"]);
+}
+
+#[test]
 fn auto_review_v1_migration_replaces_only_exact_stock_profile() {
     let stock_dir = tempfile::tempdir().unwrap();
     let stock_path = stock_dir.path().join("auto-review.json");
@@ -757,7 +798,7 @@ fn auto_review_v1_migration_replaces_only_exact_stock_profile() {
     .unwrap();
     migrate_builtin_catalog(stock_dir.path()).unwrap();
     let migrated: ProfileData = serde_json::from_slice(&fs::read(&stock_path).unwrap()).unwrap();
-    assert_eq!(migrated.name, "Auto Paper Review");
+    assert_eq!(migrated.name, "Automatic Paper Review (Full)");
     assert_eq!(migrated.steps.len(), 5);
     assert_eq!(
         migrated
@@ -1237,6 +1278,7 @@ fn v16_restores_auto_validate_isolation_after_replayed_artifact_flow() {
     super::migrations::record_fresh_install_markers(dir.path()).unwrap();
     std::fs::remove_file(dir.path().join(".builtin-catalog-v16")).unwrap();
     let mut replayed = auto_review_profile();
+    replayed.name = "Auto Paper Review".to_string();
     replayed.steps = configure_artifact_flow(
         replayed.steps,
         &replayed.extraction.input_mode,
@@ -1275,6 +1317,49 @@ fn v16_restores_auto_validate_isolation_after_replayed_artifact_flow() {
 }
 
 #[test]
+fn v17_renames_full_and_heals_the_new_quick_builtin() {
+    let dir = tempfile::tempdir().unwrap();
+    super::migrations::record_fresh_install_markers(dir.path()).unwrap();
+    std::fs::remove_file(dir.path().join(".builtin-catalog-v17")).unwrap();
+
+    let mut full = auto_review_profile();
+    full.name = "Auto Paper Review".to_string();
+    std::fs::write(
+        dir.path().join("auto-review.json"),
+        serde_json::to_string_pretty(&full).unwrap(),
+    )
+    .unwrap();
+
+    let mut replayed_quick = quick_auto_review_profile();
+    replayed_quick.steps = configure_artifact_flow(
+        replayed_quick.steps,
+        &replayed_quick.extraction.input_mode,
+        builtin_primary_readers("auto-review-quick"),
+    );
+    std::fs::write(
+        dir.path().join("auto-review-quick.json"),
+        serde_json::to_string_pretty(&replayed_quick).unwrap(),
+    )
+    .unwrap();
+
+    migrate_builtin_catalog(dir.path()).unwrap();
+
+    let renamed: ProfileData = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("auto-review.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(renamed.name, "Automatic Paper Review (Full)");
+    let healed_quick: ProfileData = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("auto-review-quick.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(healed_quick).unwrap(),
+        serde_json::to_value(quick_auto_review_profile()).unwrap()
+    );
+}
+
+#[test]
 fn fresh_installs_record_every_catalog_marker() {
     let dir = tempfile::tempdir().unwrap();
     super::migrations::record_fresh_install_markers(dir.path()).unwrap();
@@ -1283,4 +1368,5 @@ fn fresh_installs_record_every_catalog_marker() {
     assert!(dir.path().join(".builtin-catalog-v6").exists());
     assert!(dir.path().join(".builtin-catalog-v15").exists());
     assert!(dir.path().join(".builtin-catalog-v16").exists());
+    assert!(dir.path().join(".builtin-catalog-v17").exists());
 }

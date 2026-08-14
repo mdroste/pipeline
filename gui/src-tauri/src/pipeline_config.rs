@@ -338,7 +338,7 @@ pub struct MergeConfig {
     ///   {topic}          — step label (e.g., "Contribution")
     ///   {agent_reports}  — all agent analyses for this step, as markdown
     pub prompt: String,
-    /// Which provider runs the merge calls. Empty = global setting.
+    /// Which provider runs the merge calls. Empty = Merge default in Settings.
     #[serde(default)]
     pub agents: Vec<String>,
 }
@@ -840,8 +840,8 @@ pub use validation::{
 use builtins::{
     auto_review_profile, builtin_primary_readers, configure_artifact_flow, create_builtin_profiles,
     defaults, full_review_profile, generic_profile, grant_review_profile, profile_summary,
-    BUILTIN_PROFILES, RETIRED_BUILTIN_PROFILES, V15_RETIRED_BUILTIN_PROFILES,
-    V9_RETIRED_BUILTIN_PROFILES,
+    quick_auto_review_profile, BUILTIN_PROFILES, RETIRED_BUILTIN_PROFILES,
+    V15_RETIRED_BUILTIN_PROFILES, V9_RETIRED_BUILTIN_PROFILES,
 };
 use migrations::ensure_migrated;
 use persistence::save_profile_unlocked;

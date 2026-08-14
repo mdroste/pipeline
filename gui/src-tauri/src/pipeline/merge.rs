@@ -250,10 +250,10 @@ pub async fn merge_step_outputs(
             let inherited_agent = agent_override.is_none();
             let provider = agent_override
                 .as_deref()
-                .unwrap_or_else(|| run_settings.sequential_agent())
+                .unwrap_or_else(|| run_settings.merge_agent())
                 .to_string();
             let selection = inherited_agent
-                .then(|| run_settings.sequential_model_selection(&provider))
+                .then(|| run_settings.merge_model_selection(&provider))
                 .flatten();
             let resolution = crate::commands::await_or_cancel(
                 crate::model_catalog::resolve(&provider, &run_settings, selection.as_ref()),
@@ -270,7 +270,7 @@ pub async fn merge_step_outputs(
                 return Err(early_error(error));
             }
             let effort = if inherited_agent {
-                run_settings.sequential_effort(&provider)
+                run_settings.merge_effort(&provider)
             } else {
                 run_settings.model_effort(&provider).to_string()
             };
@@ -294,6 +294,11 @@ pub async fn merge_step_outputs(
                 shared_context: None,
             })
             .await;
+            let fallback = call.usage_limit_fallback.as_ref();
+            let primary_usage = fallback.map_or(call.usage, |value| value.primary_usage);
+            let primary_duration = fallback.map_or(call.duration_secs, |value| {
+                value.primary_duration_secs
+            });
             let mut response_capture = match call.output.as_ref() {
                 Ok(raw_text) => match super::response_journal::capture(
                     response_root.as_deref(),
@@ -318,7 +323,11 @@ pub async fn merge_step_outputs(
                 Err(_) => None,
             };
             let merge_call = StepCallRecord {
-                role: "merge".to_string(),
+                role: if fallback.is_some() {
+                    "usage_limit_primary_merge".to_string()
+                } else {
+                    "merge".to_string()
+                },
                 provider: provider.clone(),
                 agent: provider.clone(),
                 model: resolution.resolved_model.clone(),
@@ -331,15 +340,39 @@ pub async fn merge_step_outputs(
                 } else {
                     effort.clone()
                 },
-                duration_secs: call.duration_secs,
-                input_tokens: call.usage.input_tokens,
-                output_tokens: call.usage.output_tokens,
-                cached_input_tokens: call.usage.cached_input_tokens,
-                cache_write_input_tokens: call.usage.cache_write_input_tokens,
-                model_round_trips: call.usage.model_round_trips,
-                tool_calls: call.usage.tool_calls,
-                attempt_count: 1,
+                duration_secs: primary_duration,
+                input_tokens: primary_usage.input_tokens,
+                output_tokens: primary_usage.output_tokens,
+                cached_input_tokens: primary_usage.cached_input_tokens,
+                cache_write_input_tokens: primary_usage.cache_write_input_tokens,
+                model_round_trips: primary_usage.model_round_trips,
+                tool_calls: primary_usage.tool_calls,
+                attempt_count: u32::try_from(primary_usage.provider_attempts).unwrap_or(u32::MAX),
             };
+            let fallback_merge_call = fallback.map(|fallback| StepCallRecord {
+                role: "usage_limit_fallback_merge".to_string(),
+                provider: fallback.provider.clone(),
+                agent: fallback.provider.clone(),
+                model: fallback.resolution.resolved_model.clone(),
+                model_transport: fallback.resolution.transport.clone(),
+                model_policy: fallback.resolution.selection.label(),
+                model_source: fallback.resolution.source.clone(),
+                model_catalog_updated_at: fallback.resolution.catalog_updated_at.clone(),
+                effort: if fallback.effort.trim().is_empty() {
+                    "default".to_string()
+                } else {
+                    fallback.effort.clone()
+                },
+                duration_secs: fallback.fallback_duration_secs,
+                input_tokens: fallback.fallback_usage.input_tokens,
+                output_tokens: fallback.fallback_usage.output_tokens,
+                cached_input_tokens: fallback.fallback_usage.cached_input_tokens,
+                cache_write_input_tokens: fallback.fallback_usage.cache_write_input_tokens,
+                model_round_trips: fallback.fallback_usage.model_round_trips,
+                tool_calls: fallback.fallback_usage.tool_calls,
+                attempt_count: u32::try_from(fallback.fallback_usage.provider_attempts)
+                    .unwrap_or(u32::MAX),
+            });
             if let Some(error) = cancellation_error() {
                 if let Some(capture) = response_capture.take() {
                     if let Err(journal_error) = capture
@@ -432,6 +465,13 @@ pub async fn merge_step_outputs(
                     );
                     let mut calls = original_calls;
                     calls.push(merge_call);
+                    calls.extend(fallback_merge_call);
+                    let effective_provider = fallback
+                        .map(|value| value.provider.clone())
+                        .unwrap_or_else(|| provider.clone());
+                    let effective_resolution = fallback
+                        .map(|value| value.resolution.clone())
+                        .unwrap_or_else(|| resolution.clone());
                     Ok((
                         idx,
                         StepOutput {
@@ -439,7 +479,7 @@ pub async fn merge_step_outputs(
                             step_label: topic,
                             fan_out_item,
                             phase: "parallel".to_string(),
-                            provider,
+                            provider: effective_provider,
                             agent: agents_joined,
                             raw_text: normalize_math_delimiters(&report),
                             duration_secs: original_duration.saturating_add(call.duration_secs),
@@ -457,11 +497,11 @@ pub async fn merge_step_outputs(
                                 total
                             },
                             attempt_count: original_attempts.saturating_add(1),
-                            model: resolution.resolved_model,
-                            model_transport: resolution.transport,
-                            model_policy: resolution.selection.label(),
-                            model_source: resolution.source,
-                            model_catalog_updated_at: resolution.catalog_updated_at,
+                            model: effective_resolution.resolved_model,
+                            model_transport: effective_resolution.transport,
+                            model_policy: effective_resolution.selection.label(),
+                            model_source: effective_resolution.source,
+                            model_catalog_updated_at: effective_resolution.catalog_updated_at,
                             calls,
                             ..Default::default()
                         },

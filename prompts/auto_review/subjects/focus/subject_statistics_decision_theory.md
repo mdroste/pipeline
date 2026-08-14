@@ -1,0 +1,1 @@
+Assess the statistical experiment, action space, loss, risk comparison, parameter class, information restriction, and role of randomization or prior structure. Check lower bounds, admissibility or optimality claims, least-favorable configurations, asymptotic versus finite-sample scope, and whether the proposed rule attains the stated criterion uniformly in the claimed regime.

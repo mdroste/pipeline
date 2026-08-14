@@ -738,18 +738,34 @@ export default function ReportWorkspace({
       )}
 
       {report?.failed_steps && report.failed_steps.length > 0 && (
-        <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300">
-          <span className="font-semibold">Incomplete report.</span>{" "}
-          {report.failed_steps.map((failure) => failure.step_label).join(", ")} did not complete.
-          {runId && (
-            <button
-              type="button"
-              onClick={openAgentReports}
-              className="ml-2 font-semibold underline underline-offset-2"
-            >
-              View agent reports
-            </button>
-          )}
+        <div
+          role="alert"
+          className="shrink-0 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300"
+        >
+          <div>
+            <span className="font-semibold">Incomplete report.</span>{" "}
+            {report.failed_steps.map((failure) => failure.step_label).join(", ")} did not complete.
+            {runId && (
+              <button
+                type="button"
+                onClick={openAgentReports}
+                className="ml-2 font-semibold underline underline-offset-2"
+              >
+                View agent reports
+              </button>
+            )}
+          </div>
+          <details className="mt-1">
+            <summary className="cursor-pointer font-medium">Show failure details</summary>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              {report.failed_steps.map((failure) => (
+                <li key={`${failure.step_id}-${failure.step_label}`}>
+                  <span className="font-medium">{failure.step_label}:</span>{" "}
+                  <span className="break-words">{failure.error}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
         </div>
       )}
 

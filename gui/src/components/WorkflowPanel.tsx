@@ -5,6 +5,7 @@ import { computeWaves } from "../lib/pipelineHelpers";
 import {
   adaptiveAgentCount,
   adaptiveAgentCountLabel,
+  adaptiveAgentRange,
   isAutoReview,
 } from "../lib/autoReview";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
@@ -99,13 +100,24 @@ export default function WorkflowPanel({
   const enabledSteps = config.steps.filter((s) => s.enabled);
   const disabledCount = config.steps.length - enabledSteps.length;
   const autoAssembled = isAutoReview(config);
-  const autoReview = autoAssembled || activeId === "auto-review";
+  const autoReview = autoAssembled || ["auto-review", "auto-review-quick"].includes(activeId);
   const configuredAdaptiveCount = adaptiveAgentCount(config);
+  const configuredAdaptiveRange = adaptiveAgentRange(config);
 
-  const groups: { phase: StepConfig["phase"]; steps: StepConfig[] }[] = computeWaves(config.steps)
-    .map((wave) => wave.kind === "parallel"
+  const groups = computeWaves(config.steps).reduce<
+    { phase: StepConfig["phase"]; steps: StepConfig[] }[]
+  >((result, wave) => {
+    const group = wave.kind === "parallel"
       ? { phase: "parallel" as const, steps: wave.steps }
-      : { phase: "sequential" as const, steps: [wave.step] });
+      : { phase: "sequential" as const, steps: [wave.step] };
+    const previous = result[result.length - 1];
+    if (group.phase === "sequential" && previous?.phase === "sequential") {
+      previous.steps.push(...group.steps);
+    } else {
+      result.push(group);
+    }
+    return result;
+  }, []);
 
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
@@ -168,7 +180,7 @@ export default function WorkflowPanel({
                   Adaptive agents
                 </span>
                 <span className="ml-auto shrink-0 text-[10px] text-blue-600/80 dark:text-blue-300/80">
-                  {adaptiveAgentCountLabel(configuredAdaptiveCount)}
+                  {adaptiveAgentCountLabel(configuredAdaptiveCount, configuredAdaptiveRange)}
                 </span>
               </button>
             )}
@@ -203,7 +215,7 @@ export default function WorkflowPanel({
         {autoReview && (
           <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 dark:border-blue-900/70 dark:bg-blue-950/25">
             <p className="text-[11px] leading-4 text-blue-900 dark:text-blue-200">
-              Adaptive agents: 2-6 additional topic and methodology-specific review agents tailored for each document.
+              Adaptive agents: {adaptiveAgentCountLabel(configuredAdaptiveCount, configuredAdaptiveRange)} additional subject and method reviewers tailored to each document.
             </p>
             <button
               type="button"

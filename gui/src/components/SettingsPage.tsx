@@ -8,6 +8,9 @@ import type {
   Settings,
 } from "../lib/types";
 import {
+  defaultMergeAgent,
+  defaultMergeEffortOverrides,
+  defaultMergeModelOverrides,
   defaultOrientationAgent,
   defaultParallelAgents,
   defaultSequentialAgent,
@@ -536,8 +539,10 @@ function LLMSection({
 }) {
   const localCatalog = catalogBlocked.local ? undefined : catalogs.local;
   const parallelAgents = defaultParallelAgents(settings);
+  const mergeAgent = defaultMergeAgent(settings);
   const sequentialAgent = defaultSequentialAgent(settings);
   const orientationAgent = defaultOrientationAgent(settings);
+  const usageLimitFallbackAgent = settings.usage_limit_fallback_agent || "";
   const [externalLinkError, setExternalLinkError] = useState<string | null>(null);
 
   const openOllamaSite = async () => {
@@ -567,6 +572,24 @@ function LLMSection({
           <div className="divide-y divide-gray-200 dark:divide-neutral-800">
             <div className="pb-5">
               <AgentDefaultsControl
+                agents={[orientationAgent]}
+                modelOverrides={settings.default_orientation_model_overrides}
+                effortOverrides={settings.default_orientation_effort_overrides}
+                settings={settings}
+                catalogs={catalogs}
+                providers={PROVIDERS}
+                label="Orientation map"
+                help="Select one default model to use for processing inputs and classifying adaptive workflow steps."
+                onChange={(next) => setSettings({
+                  ...settings,
+                  default_orientation_agent: next.agents[0],
+                  default_orientation_model_overrides: next.modelOverrides,
+                  default_orientation_effort_overrides: next.effortOverrides,
+                })}
+              />
+            </div>
+            <div className="py-5">
+              <AgentDefaultsControl
                 agents={parallelAgents}
                 modelOverrides={settings.default_parallel_model_overrides}
                 effortOverrides={settings.default_parallel_effort_overrides}
@@ -586,6 +609,24 @@ function LLMSection({
                   default_parallel_agents: next.agents,
                   default_parallel_model_overrides: next.modelOverrides,
                   default_parallel_effort_overrides: next.effortOverrides,
+                })}
+              />
+            </div>
+            <div className="py-5">
+              <AgentDefaultsControl
+                agents={[mergeAgent]}
+                modelOverrides={defaultMergeModelOverrides(settings)}
+                effortOverrides={defaultMergeEffortOverrides(settings)}
+                settings={settings}
+                catalogs={catalogs}
+                providers={PROVIDERS}
+                label="Merge"
+                help="Select one default model to combine outputs when a Parallel step runs with multiple providers."
+                onChange={(next) => setSettings({
+                  ...settings,
+                  default_merge_agent: next.agents[0],
+                  default_merge_model_overrides: next.modelOverrides,
+                  default_merge_effort_overrides: next.effortOverrides,
                 })}
               />
             </div>
@@ -612,23 +653,51 @@ function LLMSection({
                 })}
               />
             </div>
-            <div className="py-5">
-              <AgentDefaultsControl
-                agents={[orientationAgent]}
-                modelOverrides={settings.default_orientation_model_overrides}
-                effortOverrides={settings.default_orientation_effort_overrides}
-                settings={settings}
-                catalogs={catalogs}
-                providers={PROVIDERS}
-                label="Orientation map"
-                help="Select one default model to use for processing inputs and classifying adaptive workflow steps."
-                onChange={(next) => setSettings({
-                  ...settings,
-                  default_orientation_agent: next.agents[0],
-                  default_orientation_model_overrides: next.modelOverrides,
-                  default_orientation_effort_overrides: next.effortOverrides,
-                })}
-              />
+            <div id="usage-limit-fallback" className="scroll-mt-4 py-5">
+              <label className="flex items-start gap-2.5 text-sm text-gray-800 dark:text-neutral-200">
+                <input
+                  aria-label="Enable usage-limit fallback"
+                  type="checkbox"
+                  checked={Boolean(usageLimitFallbackAgent)}
+                  onChange={(event) => {
+                    const fallback = PROVIDERS.find(
+                      (provider) => provider !== (settings.preferred_provider || "claude"),
+                    ) || "codex";
+                    setSettings({
+                      ...settings,
+                      usage_limit_fallback_agent: event.target.checked ? fallback : "",
+                    });
+                  }}
+                  className="mt-0.5 rounded border-gray-300 accent-gray-900 dark:border-neutral-700 dark:accent-neutral-200"
+                />
+                <span>
+                  <span className="font-medium">Continue after an account usage limit</span>
+                  <span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-neutral-400">
+                    If a subscription window, API quota, or credit balance is exhausted, try one
+                    configured fallback provider. Temporary throttling keeps its normal retry policy.
+                  </span>
+                </span>
+              </label>
+              {usageLimitFallbackAgent && (
+                <div className="mt-4 pl-6">
+                  <AgentDefaultsControl
+                    agents={[usageLimitFallbackAgent]}
+                    modelOverrides={settings.usage_limit_fallback_model_overrides ?? {}}
+                    effortOverrides={settings.usage_limit_fallback_effort_overrides ?? {}}
+                    settings={settings}
+                    catalogs={catalogs}
+                    providers={PROVIDERS}
+                    label="Fallback agent"
+                    help="Used once for the affected call, including orientation, workflow, and merge calls."
+                    onChange={(next) => setSettings({
+                      ...settings,
+                      usage_limit_fallback_agent: next.agents[0],
+                      usage_limit_fallback_model_overrides: next.modelOverrides,
+                      usage_limit_fallback_effort_overrides: next.effortOverrides,
+                    })}
+                  />
+                </div>
+              )}
             </div>
             <div className="pt-5">
               <Field

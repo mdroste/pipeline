@@ -132,6 +132,27 @@ pub struct Result {
     pub output: std::result::Result<String, String>,
     pub usage: super::logging::CallUsage,
     pub duration_secs: u64,
+    /// Present when a durable provider usage limit caused one configured
+    /// cross-provider fallback call. Step outputs use this to retain accurate
+    /// provider/model provenance for both calls.
+    pub usage_limit_fallback: Option<UsageLimitFallback>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UsageLimitFallback {
+    pub provider: String,
+    pub resolution: crate::model_catalog::ResolvedModel,
+    pub effort: String,
+    pub primary_usage: super::logging::CallUsage,
+    pub primary_duration_secs: u64,
+    pub fallback_usage: super::logging::CallUsage,
+    pub fallback_duration_secs: u64,
+}
+
+struct ProviderCallResult {
+    output: std::result::Result<String, String>,
+    usage: super::logging::CallUsage,
+    duration_secs: u64,
 }
 
 /// A call task must never detach: dropping its waiter kills registered
@@ -188,6 +209,7 @@ impl CallTask {
                     }),
                     usage: super::logging::CallUsage::default(),
                     duration_secs: self.started.elapsed().as_secs(),
+                    usage_limit_fallback: None,
                 }
             }
         }
@@ -233,22 +255,15 @@ fn sanitize_model_request(request: &mut OwnedRequest) {
     }
 }
 
-async fn execute_inner(request: OwnedRequest) -> Result {
+async fn execute_provider_once(
+    request: &OwnedRequest,
+    overrides: &LlmOverrides<'_>,
+    provider: Option<&str>,
+    label: &str,
+    timeout_secs: u64,
+) -> ProviderCallResult {
     let tool_refs: Vec<&str> = request.tools.iter().map(String::as_str).collect();
     let read_dirs: Vec<&str> = request.read_dirs.iter().map(String::as_str).collect();
-    let mut overrides = LlmOverrides::from_step_strings(
-        request.command_model.as_deref().unwrap_or(""),
-        request.effort.as_deref().unwrap_or(""),
-    );
-    overrides.model_display = request.display_model.as_deref();
-    overrides.model_policy = request.model_policy.as_deref();
-    overrides.model_resolved = request.model_resolved;
-    overrides.pdf_attachment = request.pdf_attachment.as_deref();
-    overrides.max_output_tokens = request.max_output_tokens;
-    overrides.write_dir = request.write_dir.as_deref();
-    overrides.settings = Some(request.settings.as_ref());
-    overrides.shared_context = request.shared_context;
-
     let started = Instant::now();
     let bounded: BoxCallFuture<'_> = Box::pin(async {
         // Heap-pin the cross-provider state machine. In debug builds, placing
@@ -260,15 +275,15 @@ async fn execute_inner(request: OwnedRequest) -> Result {
             &tool_refs,
             request.system_prompt.as_deref(),
             &request.output_format,
-            request.timeout_secs,
-            &request.log_label,
-            request.agent.as_deref(),
+            timeout_secs,
+            label,
+            provider,
             request.cwd.as_deref(),
             &read_dirs,
-            &overrides,
+            overrides,
         ));
         match tokio::time::timeout(
-            Duration::from_secs(request.timeout_secs),
+            Duration::from_secs(timeout_secs),
             crate::commands::await_or_cancel(call.as_mut(), Some(&request.pass_key)),
         )
         .await
@@ -287,7 +302,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                 let _ = tokio::time::timeout(Duration::from_secs(5), call.as_mut()).await;
                 Err(format!(
                     "{} timed out after {}s (including context preparation and fallbacks)",
-                    request.log_label, request.timeout_secs
+                    label, timeout_secs
                 ))
             }
         }
@@ -295,18 +310,241 @@ async fn execute_inner(request: OwnedRequest) -> Result {
     // Type-erase before entering each generic task-local scope. Otherwise the
     // generated TaskLocalFuture states duplicate the entire concrete call
     // future and grow rapidly in debug builds.
-    let measured = Box::pin(super::logging::measure_usage(bounded));
-    let scoped = Box::pin(super::logging::with_pass(
-        request.pass_key.clone(),
-        measured,
-    ));
-    let (output, usage) = scoped.await;
+    let (output, usage) = super::logging::measure_usage(bounded).await;
 
-    Result {
+    ProviderCallResult {
         output,
         usage,
         duration_secs: started.elapsed().as_secs(),
     }
+}
+
+fn emit_usage_limit_event(
+    request: &OwnedRequest,
+    provider: &str,
+    error: &str,
+    status: &str,
+    fallback_provider: Option<&str>,
+    fallback_model: Option<&str>,
+) {
+    let _ = request.app.emit_event(
+        "pipeline:provider-limit",
+        serde_json::json!({
+            "pass_key": request.pass_key,
+            "label": request.log_label,
+            "provider": provider,
+            "message": error,
+            "status": status,
+            "fallback_provider": fallback_provider,
+            "fallback_model": fallback_model,
+        }),
+    );
+}
+
+async fn execute_inner(request: OwnedRequest) -> Result {
+    let mut primary_overrides = LlmOverrides::from_step_strings(
+        request.command_model.as_deref().unwrap_or(""),
+        request.effort.as_deref().unwrap_or(""),
+    );
+    primary_overrides.model_display = request.display_model.as_deref();
+    primary_overrides.model_policy = request.model_policy.as_deref();
+    primary_overrides.model_resolved = request.model_resolved;
+    primary_overrides.pdf_attachment = request.pdf_attachment.as_deref();
+    primary_overrides.max_output_tokens = request.max_output_tokens;
+    primary_overrides.write_dir = request.write_dir.as_deref();
+    primary_overrides.settings = Some(request.settings.as_ref());
+    primary_overrides.shared_context = request.shared_context.clone();
+
+    let total_started = Instant::now();
+    let pass_key = request.pass_key.clone();
+    super::logging::with_pass(pass_key, async {
+        let primary_provider = request
+            .agent
+            .as_deref()
+            .unwrap_or(&request.settings.preferred_provider);
+        let primary_provider = if primary_provider.trim().is_empty() {
+            "claude"
+        } else {
+            primary_provider
+        };
+        let primary = execute_provider_once(
+            &request,
+            &primary_overrides,
+            request.agent.as_deref(),
+            &request.log_label,
+            request.timeout_secs,
+        )
+        .await;
+        let primary_error = match &primary.output {
+            Err(error) => error.clone(),
+            Ok(_) => {
+                return Result {
+                    output: primary.output,
+                    usage: primary.usage,
+                    duration_secs: total_started.elapsed().as_secs(),
+                    usage_limit_fallback: None,
+                };
+            }
+        };
+        if !super::provider_error::is_usage_limit_error(&primary_error) {
+            return Result {
+                output: primary.output,
+                usage: primary.usage,
+                duration_secs: total_started.elapsed().as_secs(),
+                usage_limit_fallback: None,
+            };
+        }
+
+        let fallback_provider = request.settings.usage_limit_fallback_agent();
+        super::logging::emit(
+            &request.app,
+            format!(
+                "ERROR: {} reached an account usage limit during {}: {}",
+                primary_provider, request.log_label, primary_error
+            ),
+        );
+        emit_usage_limit_event(
+            &request,
+            primary_provider,
+            &primary_error,
+            if fallback_provider.is_some() {
+                "fallback_starting"
+            } else {
+                "exhausted"
+            },
+            fallback_provider,
+            None,
+        );
+
+        let Some(fallback_provider) = fallback_provider else {
+            return Result {
+                output: primary.output,
+                usage: primary.usage,
+                duration_secs: total_started.elapsed().as_secs(),
+                usage_limit_fallback: None,
+            };
+        };
+
+        if request.pdf_attachment.is_some() && fallback_provider == "local" {
+            let fallback_error = "the Local fallback cannot receive the PDF attachment required by this call";
+            emit_usage_limit_event(
+                &request,
+                primary_provider,
+                &primary_error,
+                "fallback_failed",
+                Some(fallback_provider),
+                None,
+            );
+            return Result {
+                output: Err(format!(
+                    "{primary_error}; usage-limit fallback was not run because {fallback_error}"
+                )),
+                usage: primary.usage,
+                duration_secs: total_started.elapsed().as_secs(),
+                usage_limit_fallback: None,
+            };
+        }
+
+        let selection = request
+            .settings
+            .usage_limit_fallback_model_selection(fallback_provider);
+        let resolution = match crate::commands::await_or_cancel(
+            crate::model_catalog::resolve(
+                fallback_provider,
+                request.settings.as_ref(),
+                selection.as_ref(),
+            ),
+            Some(&request.pass_key),
+        )
+        .await
+        {
+            Ok(Ok(resolution)) => resolution,
+            Ok(Err(error)) | Err(error) => {
+                emit_usage_limit_event(
+                    &request,
+                    primary_provider,
+                    &primary_error,
+                    "fallback_failed",
+                    Some(fallback_provider),
+                    None,
+                );
+                return Result {
+                    output: Err(format!(
+                        "{primary_error}; could not resolve usage-limit fallback provider '{fallback_provider}': {error}"
+                    )),
+                    usage: primary.usage,
+                    duration_secs: total_started.elapsed().as_secs(),
+                    usage_limit_fallback: None,
+                };
+            }
+        };
+        let effort = request
+            .settings
+            .usage_limit_fallback_effort(fallback_provider);
+        let model_policy = resolution.selection.label();
+        let mut fallback_overrides = primary_overrides.clone();
+        fallback_overrides.model = resolution.command_model.as_deref();
+        fallback_overrides.model_display = Some(&resolution.resolved_model);
+        fallback_overrides.model_policy = Some(&model_policy);
+        fallback_overrides.model_resolved = true;
+        fallback_overrides.effort = (!effort.trim().is_empty()).then_some(effort.as_str());
+
+        let elapsed = total_started.elapsed().as_secs();
+        let remaining = request.timeout_secs.saturating_sub(elapsed).max(1);
+        let fallback_label = format!("{} · usage-limit fallback", request.log_label);
+        super::logging::emit(
+            &request.app,
+            format!(
+                "WARNING: {}: continuing with usage-limit fallback {} / {}",
+                request.log_label, fallback_provider, resolution.resolved_model
+            ),
+        );
+        let fallback = execute_provider_once(
+            &request,
+            &fallback_overrides,
+            Some(fallback_provider),
+            &fallback_label,
+            remaining,
+        )
+        .await;
+        let mut total_usage = primary.usage;
+        total_usage.add_usage(fallback.usage);
+        let status = if fallback.output.is_ok() {
+            "recovered"
+        } else {
+            "fallback_failed"
+        };
+        emit_usage_limit_event(
+            &request,
+            primary_provider,
+            &primary_error,
+            status,
+            Some(fallback_provider),
+            Some(&resolution.resolved_model),
+        );
+        let output = fallback.output.map_err(|fallback_error| {
+            format!(
+                "{primary_error}; usage-limit fallback {fallback_provider} / {} also failed: {fallback_error}",
+                resolution.resolved_model
+            )
+        });
+
+        Result {
+            output,
+            usage: total_usage,
+            duration_secs: total_started.elapsed().as_secs(),
+            usage_limit_fallback: Some(UsageLimitFallback {
+                provider: fallback_provider.to_string(),
+                resolution,
+                effort,
+                primary_usage: primary.usage,
+                primary_duration_secs: primary.duration_secs,
+                fallback_usage: fallback.usage,
+                fallback_duration_secs: fallback.duration_secs,
+            }),
+        }
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -319,6 +557,7 @@ mod tests {
             output: Ok(String::new()),
             usage: super::super::logging::CallUsage::default(),
             duration_secs: 0,
+            usage_limit_fallback: None,
         }
     }
 

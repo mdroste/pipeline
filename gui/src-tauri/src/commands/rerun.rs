@@ -151,7 +151,7 @@ pub(super) async fn rerun_run_inner(
         || (parent.input_interpretation.is_empty() && parent.input_mode == "folder");
     if parent_is_source_tree && crate::auto_review::uses_auto_review_contract(&config) {
         return Err(
-            "Auto Paper Review reviews a document, not a browsable source tree. Re-run this \
+            "Automatic Paper Review reviews a document, not a browsable source tree. Re-run this \
              folder input with a folder-oriented workflow, or start a new run on the paper \
              file itself."
                 .to_string(),

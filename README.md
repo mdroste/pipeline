@@ -110,9 +110,9 @@ table of contents, and export controls.
 
 ## Included workflows
 
-Pipeline installs two workflows:
+Pipeline installs three workflows:
 
-- **Auto Paper Review** (the default): Uses the paper orientation call to
+- **Automatic Paper Review (Full)** (the default): Uses the paper orientation call to
   detect the subject, subfield, and central methods, validates that routing
   against a host-owned catalog, and assembles only the selected reviewers for
   that run. The saved workflow stays at five steps — three universal reviews, a
@@ -120,15 +120,20 @@ Pipeline installs two workflows:
   consolidated comment against the paper; a run adds one or two subject
   specialists and one to four method specialists, for seven to eleven steps
   total. Web search is available to every step.
-  The catalog covers 28 disciplines, 239 subject roles, and 62 method roles.
   Pure theory and mathematics papers therefore do not spend a pass on
   empirical identification unless they actually contain that component.
+
+- **Automatic Paper Review (Quick):** Uses the same validated routing and
+  specialist catalog, but selects one or two subject specialists and one or
+  two method specialists. It keeps the consistency, exposition, consolidation,
+  and validation steps while omitting Contribution & Literature, for six to
+  eight steps total.
 
 - **Grant Proposal Review:** Separate passes on aims, feasibility, panel
   readability, and internal consistency followed by consolidated feedback.
 
-Earlier releases also installed Paper Review (Full) and Paper Review (Quick);
-Auto Paper Review replaces both. Their step prompts (contribution, technical
+Earlier releases also installed fixed Paper Review (Full) and Paper Review
+(Quick) workflows; the automatic reviews replace both. Their step prompts (contribution, technical
 correctness, empirical strategy, internal consistency, exposition,
 consolidation, validation) remain shipped defaults available from the workflow
 editor. An existing installation keeps any customized copy under
@@ -207,7 +212,7 @@ desktop app, but it is not included in the desktop installers.
 cd gui/src-tauri
 cargo run --locked --bin pipeline-cli -- profiles
 cargo run --locked --bin pipeline-cli -- check \
-  --profile auto-review \
+  --profile auto-review-quick \
   --input /path/to/paper.pdf
 cargo run --locked --bin pipeline-cli -- run \
   --profile auto-review \

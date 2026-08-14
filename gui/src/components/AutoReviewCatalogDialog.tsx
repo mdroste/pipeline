@@ -168,7 +168,7 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
           <div className="flex items-start gap-4">
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:text-blue-300">
-                Auto Paper Review
+                Automatic Paper Review
               </p>
               <h2 id="auto-review-catalog-title" className="mt-1 text-xl font-semibold text-gray-950 dark:text-gray-50">
                 Specialist catalog

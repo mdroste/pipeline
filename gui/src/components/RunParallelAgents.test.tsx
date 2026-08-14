@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalog, RunParallelOverrides, Settings } from "../lib/types";
@@ -57,6 +57,9 @@ describe("RunParallelAgents", () => {
     const user = userEvent.setup();
     invoke.mockImplementation((command: string, args?: { provider?: string }) => {
       if (command === "get_settings") return Promise.resolve({ settings, warnings: [] });
+      if (command === "get_pipeline_config") {
+        return Promise.resolve({ merge: { enabled: true, prompt: "", agents: [] } });
+      }
       if (command === "get_model_catalog") return Promise.resolve(catalog(args?.provider ?? "claude"));
       return Promise.reject(new Error(`Unexpected command ${command}`));
     });
@@ -75,6 +78,13 @@ describe("RunParallelAgents", () => {
 
     expect(model).toHaveValue("pinned:gpt-exact");
     expect(screen.getByText("Claude + ChatGPT")).toBeVisible();
+    expect(screen.getByText("Merge · Claude · Settings default")).toBeVisible();
+    expect(screen.getByLabelText("Merge for this report Claude model")).toBeVisible();
+    const mergeProviders = screen.getByRole("group", {
+      name: "Merge for this report providers",
+    });
+    await user.click(within(mergeProviders).getByRole("button", { name: "ChatGPT" }));
+    expect(screen.getByText("Merge · ChatGPT · This report")).toBeVisible();
     expect(screen.getByRole("button", { name: "Reset" })).toBeVisible();
   });
 });

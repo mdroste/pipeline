@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPage from "./SettingsPage";
 import type { EngineStatus, ModelCatalog, Settings } from "../lib/types";
@@ -130,11 +130,39 @@ describe("SettingsPage", () => {
       "Select one default model to use for sequential workflow steps.",
     );
     expect(screen.getByText(
+      "Select one default model to combine outputs when a Parallel step runs with multiple providers.",
+    )).toBeVisible();
+    expect(screen.getByText(
       "Select one default model to use for processing inputs and classifying adaptive workflow steps.",
     )).toBeVisible();
+    const orientationDefaults = screen.getByRole("group", { name: "Orientation map providers" });
+    const parallelDefaults = screen.getByRole("group", { name: "Parallel steps providers" });
+    expect(
+      orientationDefaults.compareDocumentPosition(parallelDefaults)
+      & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: "API Keys" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Workflow" })).toBeVisible();
     expect(invoke).toHaveBeenCalledWith("get_settings");
+  });
+
+  it("saves a dedicated Merge provider default", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
+
+    await screen.findByText("Preferred Provider");
+    const mergeProviders = screen.getByRole("group", { name: "Merge providers" });
+    await user.click(within(mergeProviders).getByRole("button", { name: "ChatGPT" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
+      settings: {
+        ...makeSettings(),
+        default_merge_agent: "codex",
+        default_merge_model_overrides: {},
+        default_merge_effort_overrides: {},
+      },
+    }));
   });
 
   it("keeps API credentials on their own page with explicit connection modes", async () => {
@@ -278,7 +306,7 @@ describe("SettingsPage", () => {
     expect(await screen.findByRole("option", {
       name: "Claude Live · Parallel steps",
     })).toBeInTheDocument();
-    expect(screen.getAllByRole("group", { name: "Exact model" })).toHaveLength(3);
+    expect(screen.getAllByRole("group", { name: "Exact model" })).toHaveLength(4);
     expect(screen.queryByRole("group", { name: "Stable roles" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Balanced/ })).not.toBeInTheDocument();
   });

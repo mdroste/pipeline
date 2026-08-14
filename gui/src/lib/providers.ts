@@ -20,6 +20,24 @@ export function defaultSequentialAgent(settings: Settings): string {
   return settings.default_sequential_agent || settings.preferred_provider || "claude";
 }
 
+export function defaultMergeAgent(settings: Settings): string {
+  return settings.default_merge_agent || defaultSequentialAgent(settings);
+}
+
+export function defaultMergeModelOverrides(
+  settings: Settings,
+): Record<string, ModelSelection> {
+  return settings.default_merge_agent
+    ? settings.default_merge_model_overrides ?? {}
+    : settings.default_sequential_model_overrides ?? {};
+}
+
+export function defaultMergeEffortOverrides(settings: Settings): Record<string, string> {
+  return settings.default_merge_agent
+    ? settings.default_merge_effort_overrides ?? {}
+    : settings.default_sequential_effort_overrides ?? {};
+}
+
 export function defaultOrientationAgent(settings: Settings): string {
   return settings.default_orientation_agent || settings.preferred_provider || "claude";
 }

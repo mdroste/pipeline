@@ -78,13 +78,28 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     ),
     subject!(
         "subject_physics_particle_nuclear", "Physics — Particle & Nuclear", "physics", "Physics", Subfield,
-        "Particle, high-energy, nuclear, hadronic, accelerator, or fundamental-interaction research.",
-        "astrophysical use of particle models is central but laboratory or nuclear physics is not.", PHYSICS
+        "Particle, high-energy, nuclear, hadronic, accelerator, or fundamental-interaction research spanning the narrower specialties in this catalog.",
+        "astrophysical use of particle models is central but laboratory or nuclear physics is not, or a listed high-energy-particle or nuclear-hadronic specialist clearly carries the contribution.", PHYSICS
+    ),
+    subject!(
+        "subject_physics_high_energy_particle", "Physics — High-Energy & Particle", "physics", "Physics", Subfield,
+        "High-energy theory or experiment, quantum field theory with particle content, collider phenomenology, particle detectors, or tests of fundamental interactions.",
+        "nuclear structure, reactions, or dense hadronic matter rather than elementary particles and fundamental interactions carries the contribution.", PHYSICS
+    ),
+    subject!(
+        "subject_physics_nuclear_hadronic", "Physics — Nuclear & Hadronic", "physics", "Physics", Subfield,
+        "Nuclear structure and reactions, hadron physics, heavy-ion collisions, nuclear astrophysics, or dense strongly interacting matter.",
+        "elementary-particle phenomenology, collider searches, or formal field theory without a material nuclear or hadronic object carries the contribution.", PHYSICS
     ),
     subject!(
         "subject_physics_condensed_materials", "Physics — Condensed Matter & Materials", "physics", "Physics", Subfield,
-        "Condensed-matter, soft-matter, mesoscopic, many-body, or materials-physics research.",
-        "the primary contribution is materials synthesis or engineering performance rather than physical mechanism.", PHYSICS
+        "Condensed-matter, soft-matter, mesoscopic, many-body, or materials-physics research spanning several regimes or outside the narrower listed specialties.",
+        "the primary contribution is materials synthesis or engineering performance rather than physical mechanism, or quantum many-body theory clearly carries the contribution.", PHYSICS
+    ),
+    subject!(
+        "subject_physics_quantum_matter_many_body", "Physics — Quantum Matter & Many-Body", "physics", "Physics", Subfield,
+        "Quantum many-body systems, strongly correlated matter, topological phases, superconductivity, quantum magnetism, or nonequilibrium quantum matter.",
+        "the work is principally classical soft matter, materials characterization, or a quantum-information protocol without a many-body phase or collective phenomenon.", PHYSICS
     ),
     subject!(
         "subject_physics_amo_quantum", "Physics — AMO & Quantum Optics", "physics", "Physics", Subfield,
@@ -155,13 +170,28 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     ),
     subject!(
         "subject_mathematics_algebra_number", "Mathematics — Algebra & Number Theory", "mathematics", "Mathematics", Subfield,
-        "Algebra, representation theory, algebraic geometry, arithmetic geometry, or number theory.",
-        "the central result is geometric or analytic without material algebraic or arithmetic structure.", MATHEMATICS
+        "Algebra, representation theory, algebraic geometry, arithmetic geometry, or number theory spanning several of these areas or outside the narrower listed specialties.",
+        "the central result is geometric or analytic without material algebraic or arithmetic structure, or a listed algebraic-geometry or number-theory specialist clearly carries the contribution.", MATHEMATICS
+    ),
+    subject!(
+        "subject_mathematics_number_arithmetic", "Mathematics — Number Theory & Arithmetic Geometry", "mathematics", "Mathematics", Subfield,
+        "Analytic, algebraic, or arithmetic number theory; Diophantine geometry; automorphic forms; arithmetic statistics; or Galois representations.",
+        "algebraic geometry or representation theory carries the result without a material arithmetic question, or number theory is only an application of a broader analytic method.", MATHEMATICS
     ),
     subject!(
         "subject_mathematics_geometry_topology", "Mathematics — Geometry & Topology", "mathematics", "Mathematics", Subfield,
-        "Differential, algebraic, symplectic, metric, or discrete geometry and algebraic or geometric topology.",
-        "geometric language is merely a representation of an analytic or applied problem.", MATHEMATICS
+        "Geometry or topology spanning several traditions or outside the listed differential-geometric and topological specialties.",
+        "geometric language is merely a representation of an analytic or applied problem, or a listed differential-geometry or topology specialist clearly carries the theorem.", MATHEMATICS
+    ),
+    subject!(
+        "subject_mathematics_differential_geometry", "Mathematics — Differential Geometry & Geometric Analysis", "mathematics", "Mathematics", Subfield,
+        "Riemannian, pseudo-Riemannian, symplectic, or complex differential geometry; geometric analysis; curvature; or geometric flows.",
+        "the central result is topological or algebraic without differential-geometric structure, or a PDE is studied without a material geometric invariant or conclusion.", MATHEMATICS
+    ),
+    subject!(
+        "subject_mathematics_topology_homotopy", "Mathematics — Topology & Homotopy Theory", "mathematics", "Mathematics", Subfield,
+        "Algebraic, geometric, or differential topology; homotopy theory; manifolds; knots; cobordism; or topological invariants.",
+        "topological language is incidental to an algebraic or geometric theorem and no invariant, classification, or homotopical structure carries the contribution.", MATHEMATICS
     ),
     subject!(
         "subject_mathematics_analysis", "Mathematics — Analysis", "mathematics", "Mathematics", Subfield,
@@ -222,8 +252,13 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     ),
     subject!(
         "subject_statistics_theory", "Statistics — Theory & Asymptotics", "statistics", "Statistics", Subfield,
-        "Decision theory, minimax analysis, asymptotic theory, nonparametrics, or foundational statistical methodology.",
-        "the paper primarily applies established theory to one empirical domain.", STATISTICS
+        "Asymptotic theory or foundational statistical methodology spanning several narrower theoretical areas or outside the listed specialties.",
+        "the paper primarily applies established theory to one empirical domain, or statistical decision theory clearly carries the contribution.", STATISTICS
+    ),
+    subject!(
+        "subject_statistics_decision_theory", "Statistics — Decision Theory", "statistics", "Statistics", Subfield,
+        "Statistical decision theory, minimax and Bayes risk, admissibility, compound decisions, shrinkage, regret, or optimal procedures under explicit loss.",
+        "decision theory is purely economic or philosophical without a statistical experiment, information structure, and inferential risk comparison.", STATISTICS
     ),
     subject!(
         "subject_statistics_bayesian", "Statistics — Bayesian", "statistics", "Statistics", Subfield,
@@ -274,6 +309,16 @@ pub const SUBJECTS: &[SubjectSpec] = &[
         "subject_statistics_multivariate_functional", "Statistics — Multivariate & Functional Data", "statistics", "Statistics", Subfield,
         "Multivariate analysis, covariance and precision estimation, dimension reduction, functional data, tensor data, compositional data, or repeated high-structure measurements.",
         "the main contribution is generic machine-learning prediction or a low-dimensional regression with several outcomes.", STATISTICS
+    ),
+    subject!(
+        "subject_statistics_genetics_genomics", "Statistics — Statistical Genetics & Genomics", "statistics", "Statistics", Subfield,
+        "Statistical genetics, genomics, genetic association, heritability, fine mapping, polygenic prediction, population structure, or multi-omic inference.",
+        "the main contribution is molecular biology or a bioinformatics pipeline using standard statistical machinery without a genetics-specific inferential advance.", STATISTICS
+    ),
+    subject!(
+        "subject_statistics_networks_graphical", "Statistics — Networks & Graphical Models", "statistics", "Statistics", Subfield,
+        "Statistical network models, graphical models, network dependence, community inference, relational sampling, or uncertainty for graph-structured data.",
+        "the graph is principally an algorithmic data structure, a physical network, or a descriptive visualization without a statistical network model or inferential claim.", STATISTICS
     ),
     subject!(
         "subject_statistics_experimental_design", "Statistics — Experimental Design & Adaptive Trials", "statistics", "Statistics", Subfield,
@@ -510,8 +555,18 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     ),
     subject!(
         "subject_chemistry_organic_biological", "Chemistry — Organic & Chemical Biology", "chemistry", "Chemistry", Subfield,
-        "Organic synthesis, reaction methodology, catalysis, medicinal chemistry, or chemical biology.",
-        "the main result is a biological mechanism with standard chemical probes or an industrial process scale-up.", CHEMISTRY
+        "Organic synthesis, reaction methodology, catalysis, medicinal chemistry, or chemical biology spanning the narrower specialties in this catalog.",
+        "the main result is a biological mechanism with standard chemical probes or an industrial process scale-up, or a listed synthesis-catalysis or chemical-biology specialist clearly carries the contribution.", CHEMISTRY
+    ),
+    subject!(
+        "subject_chemistry_synthesis_catalysis", "Chemistry — Organic Synthesis & Catalysis", "chemistry", "Chemistry", Subfield,
+        "Organic synthesis, reaction development, total synthesis, homogeneous or heterogeneous catalysis, organocatalysis, or stereoselective methodology.",
+        "the molecule is chiefly a biological probe or therapeutic candidate and the synthetic transformation itself is routine.", CHEMISTRY
+    ),
+    subject!(
+        "subject_chemistry_chemical_biology_medicinal", "Chemistry — Chemical Biology & Medicinal", "chemistry", "Chemistry", Subfield,
+        "Chemical biology, medicinal chemistry, probe development, structure-activity relationships, chemical proteomics, or molecular therapeutic design.",
+        "the contribution is a biological mechanism studied with standard compounds, or a synthetic method without a material biological target or pharmacological claim.", CHEMISTRY
     ),
     subject!(
         "subject_chemistry_inorganic_materials", "Chemistry — Inorganic & Materials", "chemistry", "Chemistry", Subfield,
@@ -526,7 +581,12 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     subject!(
         "subject_chemistry_analytical_environmental", "Chemistry — Analytical & Environmental", "chemistry", "Chemistry", Subfield,
         "Analytical chemistry, separations, sensors, mass spectrometry, electrochemistry, or environmental chemistry.",
-        "measurement is routine and the substantive contribution lies entirely in another scientific field.", CHEMISTRY
+        "measurement is routine and the substantive contribution lies entirely in another scientific field, or electrochemical conversion or storage rather than measurement clearly carries the contribution.", CHEMISTRY
+    ),
+    subject!(
+        "subject_chemistry_electrochemistry_energy", "Chemistry — Electrochemistry & Energy", "chemistry", "Chemistry", Subfield,
+        "Electrochemical mechanisms, batteries, fuel cells, electrocatalysis, photoelectrochemistry, redox-flow systems, or molecular and interfacial energy conversion.",
+        "electrochemistry is used only as an analytical measurement, or device engineering dominates without a material chemical mechanism, composition, or degradation claim.", CHEMISTRY
     ),
 
     // Earth and environmental sciences
@@ -842,8 +902,38 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     ),
     subject!(
         "subject_economics_micro_theory", "Economics — Microeconomic Theory", "economics", "Economics", Subfield,
-        "Microeconomic theory, games, information, contracts, mechanism design, matching, networks, or market design.",
-        "the formal result is mathematical but has no material economic incentives, allocation, or welfare content.", ECONOMICS
+        "Microeconomic theory spanning several strategic or allocative mechanisms or lying outside the listed game-theory, mechanism-design, market-design, contract, decision, and political-economy specialties.",
+        "the formal result is mathematical but has no material economic incentives, allocation, or welfare content, or a listed microeconomic specialty clearly carries the contribution.", ECONOMICS
+    ),
+    subject!(
+        "subject_economics_game_information", "Economics — Game Theory & Information Economics", "economics", "Economics", Subfield,
+        "Noncooperative or cooperative games, repeated and dynamic games, signaling, screening, communication, global games, reputation, or strategic information transmission.",
+        "a designer chooses an allocation rule and implementability is central, a concrete matching or allocation institution is being designed, or strategic interaction is only ancillary to another economic field.", ECONOMICS
+    ),
+    subject!(
+        "subject_economics_mechanism_design", "Economics — Mechanism Design", "economics", "Economics", Subfield,
+        "Implementation, revelation, incentive compatibility, optimal mechanisms, auctions or procurement as design problems, information elicitation, or robust mechanism design.",
+        "the rules are fixed and the paper only analyzes equilibrium behavior, or the main contribution concerns operation and performance of a concrete matching or allocation institution rather than implementability.", ECONOMICS
+    ),
+    subject!(
+        "subject_economics_market_design", "Economics — Market Design & Matching", "economics", "Economics", Subfield,
+        "Matching and assignment markets, school choice, organ exchange, centralized clearing, auction-market rules, platform allocation, or the design and evaluation of real allocation institutions.",
+        "the contribution is an abstract implementation theorem without a material institution, or it is conventional industrial organization with market rules taken as given.", ECONOMICS
+    ),
+    subject!(
+        "subject_economics_contract_organizations", "Economics — Contract Theory & Organizational Economics", "economics", "Economics", Subfield,
+        "Principal-agent problems, moral hazard, adverse selection, incomplete contracts, relational contracts, property rights, authority, delegation, or firm boundaries.",
+        "the paper studies general strategic information without a contractual or organizational relationship, or workplace evidence has no contract-theoretic or organizational-design mechanism.", ECONOMICS
+    ),
+    subject!(
+        "subject_economics_decision_social_choice", "Economics — Decision Theory & Social Choice", "economics", "Economics", Subfield,
+        "Choice under risk or ambiguity, revealed preference, intertemporal or stochastic choice, welfare aggregation, voting rules, social choice, or axiomatic allocation criteria.",
+        "the main contribution is empirical behavioral evidence without a decision-theoretic or axiomatic result, or voting and institutions are studied without an economic aggregation or welfare object.", ECONOMICS
+    ),
+    subject!(
+        "subject_economics_political_economy", "Economics — Political Economy", "economics", "Economics", Subfield,
+        "Endogenous policy, voting and elections, accountability, lobbying, conflict, state capacity, institutions, collective action, or political selection studied through economic incentives and allocation.",
+        "the contribution is political description or causal political science without an economic model of incentives, allocation, or welfare, or collective choice is purely axiomatic.", ECONOMICS
     ),
     subject!(
         "subject_economics_econometrics", "Economics — Econometrics", "economics", "Economics", Subfield,
@@ -1061,18 +1151,38 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     ),
     subject!(
         "subject_philosophy_metaphysics_mind", "Philosophy — Metaphysics & Mind", "philosophy", "Philosophy", Subfield,
-        "Metaphysics, ontology, modality, causation, time, personal identity, consciousness, or philosophy of mind.",
-        "the contribution is empirical neuroscience or psychology without a substantive metaphysical or philosophy-of-mind argument.", PHILOSOPHY
+        "Metaphysics, ontology, modality, causation, time, personal identity, consciousness, or philosophy of mind spanning these areas.",
+        "the contribution is empirical neuroscience or psychology without a substantive metaphysical or philosophy-of-mind argument, or philosophy of mind clearly carries the central argument.", PHILOSOPHY
+    ),
+    subject!(
+        "subject_philosophy_mind", "Philosophy — Mind", "philosophy", "Philosophy", Subfield,
+        "Consciousness, intentionality, mental representation, perception, action, emotion, personal identity, embodied cognition, or the relation between mind and brain.",
+        "the paper is empirical psychology or neuroscience without a substantive conceptual or metaphysical argument about mind.", PHILOSOPHY
     ),
     subject!(
         "subject_philosophy_ethics_political", "Philosophy — Ethics & Political", "philosophy", "Philosophy", Subfield,
-        "Normative ethics, metaethics, applied ethics, political philosophy, justice, rights, or responsibility.",
-        "the central contribution is empirical policy analysis or political theory grounded primarily in historical interpretation.", PHILOSOPHY
+        "Normative, metaethical, applied, political, or legal philosophy spanning several of these areas.",
+        "the central contribution is empirical policy analysis or political theory grounded primarily in historical interpretation, or a listed moral or political-legal specialty clearly carries the argument.", PHILOSOPHY
+    ),
+    subject!(
+        "subject_philosophy_moral", "Philosophy — Moral", "philosophy", "Philosophy", Subfield,
+        "Normative ethics, metaethics, moral psychology, responsibility, reasons, value theory, population ethics, or applied moral philosophy.",
+        "the argument centrally concerns justice, legitimacy, political authority, or law rather than moral theory, or the work is empirical ethics without a philosophical argument.", PHILOSOPHY
+    ),
+    subject!(
+        "subject_philosophy_political_legal", "Philosophy — Political & Legal", "philosophy", "Philosophy", Subfield,
+        "Justice, equality, liberty, rights, legitimacy, authority, democracy, punishment, jurisprudence, or the moral foundations of public institutions and law.",
+        "the paper is doctrinal law, positive political science, or policy evaluation without a normative or conceptual argument about political or legal authority.", PHILOSOPHY
     ),
     subject!(
         "subject_philosophy_science_history", "Philosophy — Science & History of Philosophy", "philosophy", "Philosophy", Subfield,
-        "Philosophy of science, biology, physics, social science, medicine, or historically grounded philosophy.",
-        "the paper is history of science without a philosophical claim or science without conceptual analysis.", PHILOSOPHY
+        "Philosophy of science or historically grounded philosophy spanning several scientific domains or historical traditions.",
+        "the paper is history of science without a philosophical claim or science without conceptual analysis, or philosophy of science clearly carries the central argument.", PHILOSOPHY
+    ),
+    subject!(
+        "subject_philosophy_science", "Philosophy — Science", "philosophy", "Philosophy", Subfield,
+        "Scientific explanation, confirmation, causation, models, measurement, laws, realism, values in science, or the foundations of particular sciences.",
+        "the contribution is scientific methodology or history of science without a substantive philosophical claim about knowledge, explanation, representation, or scientific practice.", PHILOSOPHY
     ),
 
     // Linguistics
@@ -1132,8 +1242,28 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     ),
     subject!(
         "subject_law_private_criminal", "Law — Private & Criminal", "law", "Law", Subfield,
-        "Contracts, torts, property, corporations, commercial, family, criminal law, procedure, or punishment.",
-        "the central contribution is public regulation or empirical crime analysis without doctrinal private or criminal law.", LAW
+        "Private, commercial, corporate, family, or criminal law spanning several domains or outside the narrower listed specialties.",
+        "the central contribution is public regulation or empirical crime analysis without doctrinal private or criminal law, or a listed corporate, criminal, intellectual-property, or tax specialist clearly carries the claim.", LAW
+    ),
+    subject!(
+        "subject_law_corporate_securities_bankruptcy", "Law — Corporate, Securities & Bankruptcy", "law", "Law", Subfield,
+        "Corporate law, securities regulation, mergers, fiduciary duties, shareholder and creditor governance, insolvency, bankruptcy, or business associations.",
+        "the contribution is corporate finance or accounting without a material legal-authority, doctrinal, institutional, or enforcement claim.", LAW
+    ),
+    subject!(
+        "subject_law_criminal_procedure", "Law — Criminal Law & Procedure", "law", "Law", Subfield,
+        "Substantive criminal law, policing, investigation, adjudication, evidence, sentencing, punishment, incarceration, or constitutional criminal procedure.",
+        "crime is studied only as an empirical social outcome and no criminal doctrine, legal process, institutional authority, or remedy carries the contribution.", LAW
+    ),
+    subject!(
+        "subject_law_ip_technology", "Law — Intellectual Property & Technology", "law", "Law", Subfield,
+        "Patent, copyright, trademark, trade-secret, privacy, data, cyber, platform, artificial-intelligence, or telecommunications law.",
+        "technology is only the application setting and the contribution contains no material claim about legal rights, governance, liability, jurisdiction, or enforcement.", LAW
+    ),
+    subject!(
+        "subject_law_tax", "Law — Tax", "law", "Law", Subfield,
+        "Individual, corporate, partnership, international, estate, consumption, or administrative tax law and the legal design of fiscal rules.",
+        "the contribution is public-finance incidence or optimal taxation without a material doctrinal, statutory, administrative, or compliance question.", LAW
     ),
     subject!(
         "subject_law_international", "Law — International & Comparative", "law", "Law", Subfield,
@@ -1154,18 +1284,38 @@ pub const SUBJECTS: &[SubjectSpec] = &[
     ),
     subject!(
         "subject_business_strategy_organization", "Business — Strategy, Organization & Entrepreneurship", "business", "Business & Management", Subfield,
-        "Strategy, organization theory, organizational behavior, entrepreneurship, innovation, or human resources.",
-        "the contribution is industrial organization economics or sociology without a managerial or firm-strategy object.", BUSINESS
+        "Strategy, organization theory, organizational behavior, entrepreneurship, innovation, or human resources spanning several management areas.",
+        "the contribution is industrial organization economics or sociology without a managerial or firm-strategy object, or a listed strategic-management specialty clearly carries the contribution.", BUSINESS
+    ),
+    subject!(
+        "subject_business_strategy", "Business — Strategic Management", "business", "Business & Management", Subfield,
+        "Competitive strategy, corporate strategy, diversification, alliances, capabilities, industry evolution, business models, or value creation and capture.",
+        "the contribution is industrial-organization economics without a managerial choice or capability claim, or entrepreneurship and innovation processes rather than established-firm strategy are central.", BUSINESS
     ),
     subject!(
         "subject_business_operations_information", "Business — Operations & Information Systems", "business", "Business & Management", Subfield,
-        "Operations management, supply chains, service systems, analytics, information systems, or digital operations.",
-        "the central contribution is an engineering or computer-science system without an organizational operating decision.", BUSINESS
+        "Operations management, supply chains, service systems, analytics, information systems, or digital operations spanning these areas.",
+        "the central contribution is an engineering or computer-science system without an organizational operating decision, or a listed information-systems or supply-chain specialist clearly carries the contribution.", BUSINESS
+    ),
+    subject!(
+        "subject_business_information_systems", "Business — Information Systems & Digital Strategy", "business", "Business & Management", Subfield,
+        "Information systems, digital platforms, enterprise technology, IT governance, digital transformation, human-technology interaction, or organizational use of data and AI.",
+        "the main contribution is a computer-science artifact or algorithm without an organizational adoption, governance, process, or competitive-strategy question.", BUSINESS
     ),
     subject!(
         "subject_business_accounting_finance", "Business — Accounting & Corporate Finance", "business", "Business & Management", Subfield,
-        "Accounting, auditing, disclosure, governance, corporate finance, capital markets, or taxation in firms.",
-        "the primary contribution is asset-pricing or public-finance economics without a firm reporting or governance question.", BUSINESS
+        "Accounting, auditing, disclosure, governance, corporate finance, capital markets, or taxation in firms spanning accounting and finance.",
+        "the primary contribution is asset-pricing or public-finance economics without a firm reporting or governance question, or a listed accounting-auditing or corporate-finance specialist clearly carries the contribution.", BUSINESS
+    ),
+    subject!(
+        "subject_business_accounting_auditing", "Business — Accounting & Auditing", "business", "Business & Management", Subfield,
+        "Financial or managerial accounting, auditing, disclosure, reporting standards, tax accounting, internal controls, assurance, or information intermediaries.",
+        "financial statements are used only as data and no reporting, disclosure, audit, control, or accounting-incentive question carries the contribution.", BUSINESS
+    ),
+    subject!(
+        "subject_business_corporate_finance_governance", "Business — Corporate Finance & Governance", "business", "Business & Management", Subfield,
+        "Financing, investment, payout, ownership, boards, executive incentives, takeovers, restructuring, venture finance, or governance of firms.",
+        "the contribution is asset pricing or banking without a material corporate decision or governance mechanism, or it is legal doctrine without a managerial or valuation claim.", BUSINESS
     ),
     subject!(
         "subject_business_marketing", "Business — Marketing & Consumer", "business", "Business & Management", Subfield,

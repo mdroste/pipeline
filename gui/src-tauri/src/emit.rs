@@ -78,6 +78,21 @@ impl Events for CliEvents {
                 let status = payload.get("status").and_then(|v| v.as_str()).unwrap_or("");
                 eprintln!("  {name}: {status}");
             }
+            "pipeline:provider-limit" => {
+                let provider = payload
+                    .get("provider")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("provider");
+                let status = payload
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("exhausted");
+                let message = payload
+                    .get("message")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("account usage limit reached");
+                eprintln!("ERROR: {provider} usage limit ({status}): {message}");
+            }
             "engines:log" => {
                 if let Some(line) = payload.get("line").and_then(|value| value.as_str()) {
                     eprintln!("{line}");

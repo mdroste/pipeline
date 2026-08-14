@@ -114,6 +114,7 @@ What is the most important remaining issue?]"#
         let raw = match execute_text(request).await {
             Ok(raw) => raw,
             Err(error) if error.to_ascii_lowercase().contains("cancel") => return Err(error),
+            Err(error) if super::provider_error::is_usage_limit_error(&error) => return Err(error),
             Err(error) => {
                 last_error = error;
                 continue;

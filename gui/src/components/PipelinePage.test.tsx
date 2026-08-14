@@ -148,6 +148,20 @@ describe("PipelinePage", () => {
     expect(invoke).toHaveBeenCalledWith("list_profiles");
   });
 
+  it("opens the workflow gallery from the former URL-import position", async () => {
+    const user = userEvent.setup();
+    const onOpenGallery = vi.fn();
+    mockLoad(makeConfig());
+    render(
+      <PipelinePage onClose={() => {}} onOpenGallery={onOpenGallery} />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Gallery" }));
+
+    expect(onOpenGallery).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "From URL…" })).not.toBeInTheDocument();
+  });
+
   it("surfaces import and export dialog plugin failures", async () => {
     const user = userEvent.setup();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
@@ -262,7 +276,7 @@ describe("PipelinePage", () => {
       finishDelete = resolve;
     });
     const remaining: ProfileSummary[] = [
-      { id: "auto-review", name: "Auto Paper Review", step_count: 5, builtin: true },
+      { id: "auto-review", name: "Automatic Paper Review (Full)", step_count: 5, builtin: true },
     ];
     const customProfiles: ProfileSummary[] = [
       ...remaining,
@@ -724,7 +738,7 @@ describe("PipelinePage", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("shows shared context reuse as the Auto Paper Review default", async () => {
+  it("shows shared context reuse as the Automatic Paper Review default", async () => {
     const user = userEvent.setup();
     mockLoad(
       {
@@ -739,8 +753,8 @@ describe("PipelinePage", () => {
     await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
     const toggle = screen.getByRole("switch", { name: "Reuse shared input context" });
     expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByText("Auto Review default")).toBeInTheDocument();
-    expect(screen.getByText(/Auto Paper Review enables this by default/)).toBeInTheDocument();
+    expect(screen.getByText("Automatic review default")).toBeInTheDocument();
+    expect(screen.getByText(/Automatic Paper Review enables this by default/)).toBeInTheDocument();
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "false");
 
@@ -829,5 +843,43 @@ describe("PipelinePage", () => {
         "x-pipeline-adaptive-agent-count": 4,
       });
     });
+  });
+
+  it("uses the Quick adaptive range and omits contribution from synthesis", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.orientation_schema = {
+      "x-pipeline-contract": "auto-review-v2",
+      properties: {
+        review_plan: {
+          properties: {
+            subject_specialist_ids: { minItems: 1, maxItems: 2 },
+            method_specialist_ids: { minItems: 1, maxItems: 2 },
+          },
+        },
+      },
+    };
+    config.steps = [
+      { ...config.steps[0], id: "auto_consistency", label: "Claims & Consistency" },
+      { ...config.steps[0], id: "auto_exposition", label: "Exposition & Architecture" },
+      { ...config.steps[1], id: "auto_synthesis", label: "Consolidate Feedback" },
+    ];
+    mockLoad(config, { get_active_profile: "auto-review-quick" });
+    render(<PipelinePage onClose={() => {}} />);
+
+    const adaptive = await screen.findByRole("button", {
+      name: "Adaptive agents — Automatic, 2–4 agents",
+    });
+    await user.click(adaptive);
+
+    const count = screen.getByRole("combobox", { name: "Number of adaptive agents" });
+    expect(screen.getByRole("option", { name: "Automatic (2–4)" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "5" })).not.toBeInTheDocument();
+    expect(screen.getByText(/1 to 2 method reviewers/)).toBeInTheDocument();
+    expect(screen.getByText(/alongside Claims & Consistency, Exposition & Architecture/)).toBeInTheDocument();
+    expect(screen.queryByText(/Contribution & Literature/)).not.toBeInTheDocument();
+
+    await user.selectOptions(count, "4");
+    expect(screen.getByRole("button", { name: "Adaptive agents — 4 agents" })).toBeInTheDocument();
   });
 });

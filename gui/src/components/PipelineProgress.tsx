@@ -177,6 +177,33 @@ function combinedProcessingStatus(stages: DisplayStage[]): DisplayStatus {
   return "pending";
 }
 
+function combinedSequentialStatus(stages: DisplayStage[]): DisplayStatus {
+  if (stages.some((stage) => stage.status === "failed")) return "failed";
+  if (stages.some((stage) => stage.status === "active")) return "active";
+  if (stages.every((stage) => stage.status === "skipped")) return "skipped";
+  if (stages.every((stage) => stage.status === "done" || stage.status === "skipped")) {
+    return "done";
+  }
+  if (stages.some((stage) => stage.status === "done" || stage.status === "skipped")) {
+    return "active";
+  }
+  return "pending";
+}
+
+function groupAdjacentSequentialStages(stages: DisplayStage[]): DisplayStage[] {
+  const grouped: DisplayStage[] = [];
+  for (const stage of stages) {
+    const previous = grouped[grouped.length - 1];
+    if (stage.kind === "synthesizing" && previous?.kind === "synthesizing") {
+      previous.status = combinedSequentialStatus([previous, stage]);
+      previous.subitems.push(...stage.subitems);
+    } else {
+      grouped.push({ ...stage, subitems: [...stage.subitems] });
+    }
+  }
+  return grouped;
+}
+
 function StatusDot({ status }: { status: DisplayStatus }) {
   if (status === "done") {
     return (
@@ -442,6 +469,7 @@ export default function PipelineProgress({
     );
     stages.splice(processingIndex, 0, processingStage);
   }
+  stages = groupAdjacentSequentialStages(stages);
 
   return (
     <div className="space-y-1">

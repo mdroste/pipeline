@@ -105,7 +105,7 @@ pub fn validate_run_budget(
         ));
     }
     let attempts_per_step = u64::from(settings.max_retries).saturating_add(1);
-    let attempts = units
+    let mut attempts = units
         .checked_mul(attempts_per_step)
         // Shared slots normally warm only once. A timed-out warm-up can leave
         // its slot unprepared, however, so the safe upper bound is one warm-up
@@ -123,6 +123,13 @@ pub fn validate_run_budget(
         // Reserve a few calls for extraction, orientation, and reconciliation.
         .and_then(|value| value.checked_add(4))
         .ok_or_else(|| "Provider attempt count overflow".to_string())?;
+    // Any logical call can make one additional provider call after a durable
+    // usage-limit failure when the user enables the cross-provider fallback.
+    if settings.usage_limit_fallback_agent().is_some() {
+        attempts = attempts
+            .checked_mul(2)
+            .ok_or_else(|| "Provider attempt count overflow".to_string())?;
+    }
     if attempts > MAX_RUN_PROVIDER_ATTEMPTS {
         return Err(format!(
             "Profile can make up to {attempts} provider attempts; the safety limit is {MAX_RUN_PROVIDER_ATTEMPTS}"

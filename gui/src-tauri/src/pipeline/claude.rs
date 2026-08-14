@@ -440,7 +440,9 @@ fn is_cli_session_capability_error(error: &str) -> bool {
 /// clock; every other failure of a fork whose warm-up already succeeded is
 /// worth one self-contained attempt rather than failing the step.
 fn fork_failure_uses_fallback(error: &str) -> bool {
-    !error.to_ascii_lowercase().contains("cancelled") && !error.contains("timed out after")
+    !error.to_ascii_lowercase().contains("cancelled")
+        && !error.contains("timed out after")
+        && !super::provider_error::is_usage_limit_error(error)
 }
 
 const SESSION_UNAVAILABLE_PREFIX: &str = "unavailable:";
@@ -610,6 +612,9 @@ pub async fn call_claude(
         }
         Err(error) => {
             if error.to_ascii_lowercase().contains("cancelled") {
+                return Err(error);
+            }
+            if super::provider_error::is_usage_limit_error(&error) {
                 return Err(error);
             }
             log(
@@ -896,7 +901,20 @@ async fn call_claude_inner(
     let parsed_result = parse_claude_result(&raw_stdout);
     let (text, claude_usage) = match parsed_result {
         Ok(result) => result,
-        Err(_) if !status.success() => (raw_stdout.trim().to_string(), None),
+        Err(error) if !status.success() => (
+            error
+                .strip_prefix("provider error: ")
+                .unwrap_or_else(|| raw_stdout.trim())
+                .to_string(),
+            None,
+        ),
+        Err(error) if error.starts_with("provider error: ") => {
+            emit_stderr_tail(app, &stderr_tail);
+            let detail = error.trim_start_matches("provider error: ");
+            let msg = format!("Claude call failed: {detail}");
+            log(app, format!("ERROR: {msg}"));
+            return Err(msg);
+        }
         Err(error) => {
             emit_stderr_tail(app, &stderr_tail);
             let msg = format!("Claude returned an invalid JSON result envelope: {error}");
@@ -985,11 +1003,15 @@ fn parse_claude_result(
         return Err("missing `type: result`".to_string());
     }
     if v.get("is_error").and_then(|value| value.as_bool()) == Some(true) {
-        return Err("Claude marked the result as an error".to_string());
+        let detail = claude_result_error_detail(&v)
+            .unwrap_or_else(|| "Claude marked the result as an error".to_string());
+        return Err(format!("provider error: {detail}"));
     }
     if let Some(subtype) = v.get("subtype").and_then(|value| value.as_str()) {
         if subtype != "success" {
-            return Err(format!("non-success result subtype `{subtype}`"));
+            let detail = claude_result_error_detail(&v)
+                .unwrap_or_else(|| format!("non-success result subtype `{subtype}`"));
+            return Err(format!("provider error: {detail}"));
         }
     }
     let text = v
@@ -1039,6 +1061,23 @@ fn parse_claude_result(
         )
     });
     Ok((text, usage))
+}
+
+fn claude_result_error_detail(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("result")
+        .and_then(|item| item.as_str())
+        .or_else(|| value.get("message").and_then(|item| item.as_str()))
+        .or_else(|| {
+            value.get("error").and_then(|error| {
+                error
+                    .as_str()
+                    .or_else(|| error.get("message").and_then(|item| item.as_str()))
+            })
+        })
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty())
+        .map(str::to_string)
 }
 
 /// Extract a user-facing error hint from CLI output.
@@ -1723,7 +1762,7 @@ mod tests {
     }
 
     #[test]
-    fn fork_failures_fall_back_except_cancellation_and_timeout() {
+    fn fork_failures_fall_back_except_cancellation_timeout_and_usage_exhaustion() {
         assert!(fork_failure_uses_fallback(
             "Claude call failed (exit 1): No conversation found with session ID: abc"
         ));
@@ -1737,6 +1776,9 @@ mod tests {
         assert!(!fork_failure_uses_fallback(
             "claude call timed out after 900s"
         ));
+        assert!(!fork_failure_uses_fallback(
+            "Claude call failed: You've hit your limit · resets 3am"
+        ));
     }
 
     #[test]
@@ -1744,6 +1786,17 @@ mod tests {
         let (text, usage) = parse_claude_result(r#"{"type":"result","result":"ok"}"#).unwrap();
         assert_eq!(text, "ok");
         assert_eq!(usage, None);
+    }
+
+    #[test]
+    fn error_envelope_preserves_subscription_limit_detail() {
+        let error = parse_claude_result(
+            r#"{"type":"result","subtype":"error_during_execution","is_error":true,
+                "result":"You've hit your limit · resets 3am (America/Los_Angeles)"}"#,
+        )
+        .unwrap_err();
+        assert!(error.contains("You've hit your limit"));
+        assert!(super::super::provider_error::is_usage_limit_error(&error));
     }
 
     #[test]

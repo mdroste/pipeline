@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ComparePage from "./ComparePage";
 import ErrorBoundary from "./ErrorBoundary";
 import ReportWorkspace from "./ReportWorkspace";
-import type { RunSummary, RunsDiskUsage, ToolCallCounts } from "../lib/types";
+import type { RunSummary, RunsDiskUsage } from "../lib/types";
 import type { ArtifactSelectionTarget } from "./ArtifactExplorer";
 
 interface Props {
@@ -40,73 +40,17 @@ function freshInputTokens(run: RunSummary): number {
   );
 }
 
-function runToolCalls(run: RunSummary): ToolCallCounts {
-  return run.tool_calls ?? {
-    text_file: 0,
-    image: 0,
-    web: 0,
-    shell_or_other: 0,
-    unknown: 0,
-  };
-}
-
-function toolCallTotal(counts: ToolCallCounts): number {
-  return (
-    counts.text_file +
-    counts.image +
-    counts.web +
-    counts.shell_or_other +
-    counts.unknown
-  );
-}
-
-function toolCallBreakdown(counts: ToolCallCounts): string {
-  return [
-    counts.text_file > 0 ? `${counts.text_file.toLocaleString()} text/file` : "",
-    counts.image > 0 ? `${counts.image.toLocaleString()} image` : "",
-    counts.web > 0 ? `${counts.web.toLocaleString()} web` : "",
-    counts.shell_or_other > 0
-      ? `${counts.shell_or_other.toLocaleString()} shell/other`
-      : "",
-    counts.unknown > 0 ? `${counts.unknown.toLocaleString()} unknown` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
-}
-
-function reportedActivity(run: RunSummary): string {
-  const counts = runToolCalls(run);
-  const tools = toolCallTotal(counts);
-  return [
-    (run.model_round_trips ?? 0) > 0
-      ? `${(run.model_round_trips ?? 0).toLocaleString()} reported model round trips`
-      : "",
-    tools > 0
-      ? `${tools.toLocaleString()} reported tool calls (${toolCallBreakdown(counts)})`
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" and ");
-}
-
 function hasReportedUsage(run: RunSummary): boolean {
-  return (
-    run.input_tokens + run.output_tokens > 0 ||
-    (run.model_round_trips ?? 0) > 0 ||
-    toolCallTotal(runToolCalls(run)) > 0
-  );
+  return run.input_tokens + run.output_tokens > 0;
 }
 
 function usageDescription(run: RunSummary): string {
   const cacheRead = run.cached_input_tokens ?? 0;
   const cacheWrite = run.cache_write_input_tokens ?? 0;
-  const activity = reportedActivity(run);
   return [
     `Token usage: ${run.input_tokens.toLocaleString()} logical input tokens equals ${freshInputTokens(run).toLocaleString()} fresh input tokens plus ${cacheRead.toLocaleString()} cache-read tokens plus ${cacheWrite.toLocaleString()} cache-write tokens; ${run.output_tokens.toLocaleString()} output tokens.`,
-    activity ? `Model activity: ${activity}.` : "",
     "Cache reads and cache writes are subsets of logical input, not additional tokens.",
     "Fresh input equals logical input minus cache reads minus cache writes.",
-    "Model round trips and tool calls are shown only when the provider or CLI reports them; unknown tool kinds remain in the unknown bucket.",
     "The completed report's summary prices these categories separately for a labelled API-equivalent estimate when the model is recognized.",
     "Only providers that report usage are included.",
   ]
@@ -463,12 +407,6 @@ export default function HistoryPage({
                             )}
                             {" · "}
                             {fmtTokens(r.output_tokens)} output
-                            {reportedActivity(r) && (
-                              <span className="text-violet-600 dark:text-violet-400">
-                                {" · "}
-                                {reportedActivity(r)}
-                              </span>
-                            )}
                           </span>
                         )}
                         {r.failed_steps.length > 0 && (

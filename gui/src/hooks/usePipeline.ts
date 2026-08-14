@@ -94,6 +94,16 @@ export interface ReviewRoutingSummary {
   specialistLabels: string[];
 }
 
+export interface ProviderLimitNotice {
+  pass_key: string;
+  label: string;
+  provider: string;
+  message: string;
+  status: "fallback_starting" | "recovered" | "fallback_failed" | "exhausted";
+  fallback_provider: string | null;
+  fallback_model: string | null;
+}
+
 export interface TokenTotals {
   input: number;
   output: number;
@@ -156,6 +166,7 @@ export function usePipeline() {
   const [passTimes, setPassTimes] = useState<Record<string, PassTiming>>({});
   const [stageHistory, setStageHistory] = useState<RuntimeStage[]>([]);
   const [reviewRouting, setReviewRouting] = useState<ReviewRoutingSummary | null>(null);
+  const [providerLimitNotices, setProviderLimitNotices] = useState<ProviderLimitNotice[]>([]);
   const stageSequence = useRef(0);
 
   // Buffer incoming log lines in a ref to avoid O(n) array copies per event.
@@ -274,6 +285,14 @@ export function usePipeline() {
         listen<ReviewRoutingSummary>("pipeline:routing", (event) => {
           if (!mounted) return;
           setReviewRouting(event.payload);
+        }),
+        listen<ProviderLimitNotice>("pipeline:provider-limit", (event) => {
+          if (!mounted) return;
+          setProviderLimitNotices((previous) => {
+            const next = previous.filter((notice) => notice.pass_key !== event.payload.pass_key);
+            next.push(event.payload);
+            return next.slice(-20);
+          });
         }),
         listen<{
           line: string;
@@ -480,6 +499,7 @@ export function usePipeline() {
       setRunStartedAt(Date.now());
       setPassTimes({});
       setReviewRouting(null);
+      setProviderLimitNotices([]);
       stageSequence.current = 0;
       setStageHistory([]);
       try {
@@ -528,6 +548,7 @@ export function usePipeline() {
       setRunStartedAt(Date.now());
       setPassTimes({});
       setReviewRouting(null);
+      setProviderLimitNotices([]);
       stageSequence.current = 0;
       setStageHistory([]);
       try {
@@ -574,6 +595,7 @@ export function usePipeline() {
     stageSequence.current = 0;
     setStageHistory([]);
     setReviewRouting(null);
+    setProviderLimitNotices([]);
   }, []);
 
   return {
@@ -589,5 +611,6 @@ export function usePipeline() {
     passTimes,
     stageHistory,
     reviewRouting,
+    providerLimitNotices,
   };
 }

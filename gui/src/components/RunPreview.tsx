@@ -5,6 +5,7 @@ import useModalDialog from "../hooks/useModalDialog";
 import {
   adaptiveAgentCount as getAdaptiveAgentCount,
   adaptiveAgentCountLabel,
+  adaptiveAgentRange as getAdaptiveAgentRange,
   isAutoReview,
 } from "../lib/autoReview";
 
@@ -97,7 +98,8 @@ export default function RunPreview({
   const conditionalSteps = steps.filter((step) => !!step.run_if).length;
   const autoAssembled = isAutoReview(config);
   const adaptiveCount = getAdaptiveAgentCount(config);
-  const adaptiveCountLabel = adaptiveAgentCountLabel(adaptiveCount);
+  const adaptiveRange = getAdaptiveAgentRange(config);
+  const adaptiveCountLabel = adaptiveAgentCountLabel(adaptiveCount, adaptiveRange);
   const adaptiveTimelineStages = useMemo(() => {
     let inserted = false;
     return plan.stages.map((stage) => {
@@ -156,8 +158,8 @@ export default function RunPreview({
     }
     if (autoAssembled) {
       providers.add("default provider");
-      minimumUnits += adaptiveCount ?? 2;
-      maximumUnits += adaptiveCount ?? 6;
+      minimumUnits += adaptiveCount ?? adaptiveRange.totalMin;
+      maximumUnits += adaptiveCount ?? adaptiveRange.totalMax;
     }
     providers.add("default provider");
     if (config.merge.enabled) {
@@ -175,7 +177,7 @@ export default function RunPreview({
       minimumUnits: perDocumentMinimum * batchCount,
       maximumUnits: perDocumentMaximum * batchCount,
     };
-  }, [adaptiveCount, autoAssembled, batchCount, config.merge.agents, config.merge.enabled, steps]);
+  }, [adaptiveCount, adaptiveRange.totalMax, adaptiveRange.totalMin, autoAssembled, batchCount, config.merge.agents, config.merge.enabled, steps]);
   const remoteIsPossible = summary.providers.includes("default provider")
     || summary.providers.some((provider) => provider !== "local");
   const workLabel = summary.minimumUnits === summary.maximumUnits

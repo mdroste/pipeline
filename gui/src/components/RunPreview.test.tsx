@@ -190,4 +190,57 @@ describe("RunPreview", () => {
     expect(screen.getAllByText("Exposition & Architecture")[0]).not.toHaveClass("truncate");
     expect(screen.getByText("4 fixed")).not.toHaveClass("truncate");
   });
+
+  it("uses the Quick schema range in work estimates and routing details", () => {
+    const parallel = {
+      ...config.steps[0],
+      agents: [],
+      for_each: undefined,
+      tools: [],
+    };
+    const quickConfig: PipelineConfig = {
+      ...config,
+      orientation_schema: {
+        "x-pipeline-contract": "auto-review-v2",
+        properties: {
+          review_plan: {
+            properties: {
+              subject_specialist_ids: { minItems: 1, maxItems: 2 },
+              method_specialist_ids: { minItems: 1, maxItems: 2 },
+            },
+          },
+        },
+      },
+      steps: [
+        { ...parallel, id: "auto_consistency", label: "Claims & Consistency" },
+        { ...parallel, id: "auto_exposition", label: "Exposition & Architecture" },
+        { ...config.steps[1], id: "auto_synthesis", label: "Consolidate Feedback" },
+      ],
+    };
+    render(
+      <RunPreview
+        config={quickConfig}
+        inputPath="/papers/draft.pdf"
+        plan={{
+          profileId: "auto-review-quick",
+          inputMode: "document",
+          inputInterpretation: "document",
+          stages: [{
+            id: "parallel",
+            kind: "dispatching",
+            label: "Parallel agent wave",
+            stepIds: ["auto_consistency", "auto_exposition"],
+            stepLabels: ["Claims & Consistency", "Exposition & Architecture"],
+          }],
+        }}
+        onCancel={() => {}}
+        onRun={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("+ 2–4 adaptive agents per report")).toBeVisible();
+    expect(screen.getByTitle("6–8")).toBeVisible();
+    expect(screen.getByText(/assembles 2–4 subject and method specialists/)).toBeVisible();
+    expect(screen.getByText("Adaptive agents (2–4, auto-selected)")).toBeVisible();
+  });
 });
