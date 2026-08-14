@@ -126,53 +126,49 @@ pub struct Settings {
     #[serde(default = "default_profile")]
     pub active_profile: String,
 
-    /// Claude model to use. Empty = Claude Code default.
-    /// Examples: "sonnet", "opus", "haiku", or a full model ID.
+    /// Legacy provider-level model field retained for settings-file and bundle
+    /// compatibility. New runs use role/pass overrides or provider automatic.
     #[serde(default)]
     pub claude_model: String,
 
-    /// Claude Code CLI selection. Separate from the API selection because
-    /// subscription entitlements and accepted IDs can differ.
+    /// Legacy transport-specific selection retained for wire compatibility.
     #[serde(default)]
     pub claude_cli_model_selection: ModelSelection,
 
-    /// Anthropic API selection.
+    /// Legacy transport-specific selection retained for wire compatibility.
     #[serde(default)]
     pub claude_api_model_selection: ModelSelection,
 
-    /// Thinking effort level. Empty = Claude Code default.
-    /// Options: "low", "medium", "high", "max".
+    /// Legacy provider-level effort retained for wire compatibility.
     #[serde(default)]
     pub claude_effort: String,
 
-    /// Codex model to use. Empty = Codex default.
-    /// Examples: "gpt-5.6-terra", "o3", "gpt-4.1", or a full model ID.
+    /// Legacy provider-level model field retained for settings-file and bundle
+    /// compatibility. New runs use role/pass overrides or provider automatic.
     #[serde(default)]
     pub codex_model: String,
 
-    /// Codex CLI selection (ChatGPT subscription transport).
+    /// Legacy transport-specific selection retained for wire compatibility.
     #[serde(default)]
     pub codex_cli_model_selection: ModelSelection,
 
-    /// OpenAI API selection.
+    /// Legacy transport-specific selection retained for wire compatibility.
     #[serde(default)]
     pub codex_api_model_selection: ModelSelection,
 
-    /// Codex reasoning effort level. Empty = Codex default.
-    /// Options: "low", "medium", "high".
+    /// Legacy provider-level effort retained for wire compatibility.
     #[serde(default)]
     pub codex_effort: String,
 
-    /// Antigravity CLI (agy) selection, Google's subscription transport.
+    /// Legacy transport-specific selection retained for wire compatibility.
     #[serde(default)]
     pub antigravity_cli_model_selection: ModelSelection,
 
-    /// Google Gemini API selection.
+    /// Legacy transport-specific selection retained for wire compatibility.
     #[serde(default)]
     pub antigravity_api_model_selection: ModelSelection,
 
-    /// Antigravity reasoning effort (agy CLI transport only). Empty = agy
-    /// default. Options: "low", "medium", "high".
+    /// Legacy provider-level effort retained for wire compatibility.
     #[serde(default)]
     pub antigravity_effort: String,
 
@@ -280,15 +276,28 @@ pub struct Settings {
     #[serde(default = "default_max_saved_run_bytes")]
     pub max_saved_run_bytes: u64,
 
-    /// Anthropic API key. When set, bypasses Claude CLI for direct API calls.
+    /// Connection mode for each cloud provider. Older settings files omitted
+    /// these fields and selected the API transport implicitly whenever a key
+    /// was present; `normalize_access_modes` preserves that behavior once and
+    /// then saves an explicit choice.
+    #[serde(default)]
+    pub claude_access_mode: String,
+
+    #[serde(default)]
+    pub codex_access_mode: String,
+
+    #[serde(default)]
+    pub antigravity_access_mode: String,
+
+    /// Anthropic API key, used only when Claude is in API mode.
     #[serde(default)]
     pub anthropic_api_key: String,
 
-    /// OpenAI API key. When set, bypasses Codex CLI for direct API calls.
+    /// OpenAI API key, used only when ChatGPT is in API mode.
     #[serde(default)]
     pub openai_api_key: String,
 
-    /// Google AI API key. When set, bypasses Antigravity CLI for direct API calls.
+    /// Google AI API key, used only when Antigravity is in API mode.
     #[serde(default)]
     pub google_api_key: String,
 
@@ -493,6 +502,9 @@ impl Default for Settings {
             auto_revision_reconciliation: false,
             max_saved_runs: 0,
             max_saved_run_bytes: default_max_saved_run_bytes(),
+            claude_access_mode: "subscription".to_string(),
+            codex_access_mode: "subscription".to_string(),
+            antigravity_access_mode: "subscription".to_string(),
             anthropic_api_key: String::new(),
             openai_api_key: String::new(),
             google_api_key: String::new(),
@@ -549,6 +561,17 @@ impl Settings {
         }
         if self.max_saved_run_bytes > 1_000_000_000_000 {
             return Err("Run-history byte limit cannot exceed 1 TB".to_string());
+        }
+        for (provider, mode) in [
+            ("Claude", self.claude_access_mode.as_str()),
+            ("ChatGPT", self.codex_access_mode.as_str()),
+            ("Antigravity", self.antigravity_access_mode.as_str()),
+        ] {
+            if !matches!(mode, "" | "subscription" | "api") {
+                return Err(format!(
+                    "Invalid {provider} access mode '{mode}'; choose subscription or api"
+                ));
+            }
         }
         if !matches!(
             self.pdf_extractor.as_str(),
@@ -694,10 +717,28 @@ impl Settings {
     /// direct HTTP/local providers.
     pub fn model_transport(&self, provider: &str) -> &'static str {
         match provider {
-            "claude" | "" if self.anthropic_api_key.trim().is_empty() => "cli",
-            "codex" if self.openai_api_key.trim().is_empty() => "cli",
-            "antigravity" if self.google_api_key.trim().is_empty() => "cli",
-            _ => "api",
+            "local" => "api",
+            "codex" if self.codex_access_mode == "api" => "api",
+            "codex"
+                if self.codex_access_mode.is_empty() && !self.openai_api_key.trim().is_empty() =>
+            {
+                "api"
+            }
+            "antigravity" if self.antigravity_access_mode == "api" => "api",
+            "antigravity"
+                if self.antigravity_access_mode.is_empty()
+                    && !self.google_api_key.trim().is_empty() =>
+            {
+                "api"
+            }
+            "claude" | "" if self.claude_access_mode == "api" => "api",
+            "claude" | ""
+                if self.claude_access_mode.is_empty()
+                    && !self.anthropic_api_key.trim().is_empty() =>
+            {
+                "api"
+            }
+            _ => "cli",
         }
     }
 
@@ -714,12 +755,8 @@ impl Settings {
     }
 
     pub fn model_selection(&self, provider: &str) -> ModelSelection {
-        match (provider, self.model_transport(provider)) {
-            ("codex", "cli") => self.codex_cli_model_selection.clone(),
-            ("codex", _) => self.codex_api_model_selection.clone(),
-            ("antigravity", "cli") => self.antigravity_cli_model_selection.clone(),
-            ("antigravity", _) => self.antigravity_api_model_selection.clone(),
-            ("local", _) => {
+        match provider {
+            "local" => {
                 if self.local_model.trim().is_empty() {
                     ModelSelection::Automatic
                 } else {
@@ -728,18 +765,18 @@ impl Settings {
                     }
                 }
             }
-            (_, "cli") => self.claude_cli_model_selection.clone(),
-            _ => self.claude_api_model_selection.clone(),
+            // Provider-level model boxes were retired. A missing role or
+            // workflow override now delegates directly to the active
+            // provider/transport instead of inheriting an invisible setting.
+            _ => ModelSelection::Automatic,
         }
     }
 
-    pub fn model_effort(&self, provider: &str) -> &str {
-        match provider {
-            "codex" => &self.codex_effort,
-            "antigravity" => &self.antigravity_effort,
-            "claude" | "" => &self.claude_effort,
-            _ => "",
-        }
+    pub fn model_effort(&self, _provider: &str) -> &str {
+        // As with model selection, absent role/workflow effort now means the
+        // provider's own default. The legacy provider effort fields remain in
+        // the wire format only so older settings and bundles still deserialize.
+        ""
     }
 
     pub fn parallel_agents(&self) -> Vec<String> {
@@ -787,7 +824,7 @@ impl Settings {
             .or_else(|| overrides.get(provider))
             .filter(|effort| !effort.trim().is_empty())
             .cloned()
-            .unwrap_or_else(|| self.model_effort(provider).to_string())
+            .unwrap_or_default()
     }
 
     pub fn parallel_model_selection(&self, provider: &str) -> Option<ModelSelection> {
@@ -814,8 +851,8 @@ impl Settings {
         self.role_effort(&self.default_orientation_effort_overrides, provider)
     }
 
-    /// Import the three legacy free-text model fields once. New fields win if
-    /// either transport already contains an explicit selection.
+    /// Preserve old model fields when settings are opened and re-saved. These
+    /// selections are no longer provider-level runtime defaults.
     fn migrate_legacy_model_fields(&mut self) {
         if self.claude_cli_model_selection == ModelSelection::Automatic
             && self.claude_api_model_selection == ModelSelection::Automatic
@@ -835,9 +872,8 @@ impl Settings {
         }
     }
 
-    /// Keep old Pipeline builds and exported settings usable. The legacy field
-    /// mirrors whichever transport is active; the transport-specific fields
-    /// remain the source of truth for this build.
+    /// Keep old Pipeline builds and exported settings usable while clearing the
+    /// retired provider-level default from newly saved settings.
     fn sync_legacy_model_fields(&mut self) {
         self.claude_model = self.model_selection("claude").legacy_value();
         self.codex_model = self.model_selection("codex").legacy_value();
@@ -845,8 +881,39 @@ impl Settings {
 
     pub fn normalized(mut self) -> Self {
         self.migrate_legacy_model_fields();
+        self.normalize_access_modes();
         self.drop_unknown_providers();
         self
+    }
+
+    /// Migrate the pre-mode behavior exactly once. An absent mode follows the
+    /// old rule (stored key => API, otherwise subscription); an explicit mode
+    /// is never changed merely because a credential is entered or cleared.
+    fn normalize_access_modes(&mut self) {
+        if self.claude_access_mode.trim().is_empty() {
+            self.claude_access_mode = if self.anthropic_api_key.trim().is_empty() {
+                "subscription"
+            } else {
+                "api"
+            }
+            .to_string();
+        }
+        if self.codex_access_mode.trim().is_empty() {
+            self.codex_access_mode = if self.openai_api_key.trim().is_empty() {
+                "subscription"
+            } else {
+                "api"
+            }
+            .to_string();
+        }
+        if self.antigravity_access_mode.trim().is_empty() {
+            self.antigravity_access_mode = if self.google_api_key.trim().is_empty() {
+                "subscription"
+            } else {
+                "api"
+            }
+            .to_string();
+        }
     }
 
     /// Drop provider ids this build does not support from the surviving
@@ -957,6 +1024,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
     };
 
     settings.migrate_legacy_model_fields();
+    settings.normalize_access_modes();
     settings.drop_unknown_providers();
 
     // Decrypt API keys (plaintext values pass through for backward compat)
@@ -1143,6 +1211,7 @@ fn load_raw_settings_required(path: &std::path::Path) -> Result<Settings, String
     let mut settings: Settings = serde_json::from_str(&content)
         .map_err(|e| format!("Settings file is invalid JSON: {e}"))?;
     settings.migrate_legacy_model_fields();
+    settings.normalize_access_modes();
     // Settings written by earlier builds may name retired providers (e.g.
     // "gemini"); validate() on the run-launch path rejects them and the UI
     // cannot repair them, so they must be normalized away on every load.
@@ -1253,6 +1322,7 @@ fn save_unlocked(path: &std::path::Path, settings: &Settings) -> Result<(), Stri
     // Encrypt API keys before writing to disk
     let mut to_save = settings.clone();
     to_save.migrate_legacy_model_fields();
+    to_save.normalize_access_modes();
     to_save.sync_legacy_model_fields();
     to_save.anthropic_api_key = encrypt_string(&settings.anthropic_api_key, &key)?;
     to_save.openai_api_key = encrypt_string(&settings.openai_api_key, &key)?;
@@ -1268,6 +1338,7 @@ fn save_raw_unlocked(path: &std::path::Path, settings: &Settings) -> Result<(), 
     settings.validate()?;
     let mut to_save = settings.clone();
     to_save.migrate_legacy_model_fields();
+    to_save.normalize_access_modes();
     to_save.sync_legacy_model_fields();
     let json =
         serde_json::to_string_pretty(&to_save).map_err(|e| format!("Failed to serialize: {e}"))?;
@@ -1312,6 +1383,7 @@ fn save_unlocked_preserving_raw_secrets(
     let key = load_or_create_key();
     let mut to_save = settings.clone();
     to_save.migrate_legacy_model_fields();
+    to_save.normalize_access_modes();
     to_save.sync_legacy_model_fields();
 
     to_save.anthropic_api_key = prepare_secret_for_save(

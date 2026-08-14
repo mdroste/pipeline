@@ -5,12 +5,12 @@ use super::claude::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 
-/// Map settings model shorthand to full Anthropic model ID.
-/// `override_model` (when non-empty) takes precedence over the global setting.
-fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
+/// Map a resolved model shorthand to a full Anthropic model ID. An empty
+/// override uses the provider's automatic model.
+fn resolve_model(_settings: &Settings, override_model: Option<&str>) -> String {
     let raw = override_model
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or(settings.claude_model.as_str());
+        .unwrap_or("");
     // Dateless aliases track the current model in each tier; dated snapshots
     // get retired (the 20250514 snapshots died 2026-06-15 and broke this path).
     // These tiers don't emit thinking blocks when `thinking` is omitted, which
@@ -192,7 +192,7 @@ pub async fn call_anthropic_api(
     let effort = overrides
         .effort
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or(settings.claude_effort.as_str());
+        .unwrap_or("");
     let output_config = effort_config(&model, effort.trim());
     log(
         app,

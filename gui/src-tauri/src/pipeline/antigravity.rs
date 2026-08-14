@@ -225,16 +225,8 @@ pub async fn call_antigravity(
         return Err("Antigravity write mode requires an absolute artifact directory".to_string());
     }
 
-    let settings = overrides
-        .settings
-        .cloned()
-        .unwrap_or_else(crate::settings::load);
     let model = crate::settings::sanitize_cli_arg(overrides.model.unwrap_or(""));
-    let effort = crate::settings::sanitize_cli_arg(
-        overrides
-            .effort
-            .unwrap_or(settings.antigravity_effort.as_str()),
-    );
+    let effort = crate::settings::sanitize_cli_arg(overrides.effort.unwrap_or(""));
     let cmd_args = build_antigravity_args(
         &workspace,
         needs_write,

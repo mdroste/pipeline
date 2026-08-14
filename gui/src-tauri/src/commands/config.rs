@@ -80,6 +80,35 @@ pub async fn get_auto_review_catalog() -> crate::auto_review::AutoReviewCatalog 
     crate::auto_review::catalog()
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunSetupResponse {
+    pub profile_id: String,
+    pub profile_config_snapshot_id: String,
+    pub input_mode: String,
+    pub variables: Vec<crate::pipeline_config::VarSpec>,
+    pub input_slots: Vec<crate::pipeline_config::InputSlot>,
+}
+
+/// Return the inexpensive profile metadata needed to render New Run. This
+/// deliberately skips path validation, dependency probes, runtime binding, and
+/// scheduler planning; `get_execution_plan` performs those checks once the user
+/// asks to review the report.
+#[tauri::command]
+pub async fn get_run_setup() -> Result<RunSetupResponse, String> {
+    let snapshot = load_run_snapshot()?;
+    Ok(RunSetupResponse {
+        profile_id: snapshot.settings.active_profile.clone(),
+        profile_config_snapshot_id: snapshot.config_fingerprint,
+        input_mode: match snapshot.config.extraction.input_mode.trim() {
+            "" => "document".to_string(),
+            mode => mode.to_string(),
+        },
+        variables: snapshot.config.variables,
+        input_slots: snapshot.config.extraction.extra_inputs,
+    })
+}
+
 /// Copy one host-owned adaptive specialist into an ordinary editable step.
 /// The returned StepConfig owns its prompt and has no durable template link.
 #[tauri::command]

@@ -23,6 +23,19 @@ const previewConfig = {
   variables: [],
 };
 
+function runSetup(
+  profileId = "deep-review",
+  profileConfigSnapshotId = "config-test",
+) {
+  return {
+    profileId,
+    profileConfigSnapshotId,
+    inputMode: workflowInputMode.value,
+    variables: [],
+    inputSlots: [],
+  };
+}
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("@tauri-apps/api/window", () => ({
@@ -92,6 +105,23 @@ vi.mock("./components/PaperSelector", () => ({
 }));
 vi.mock("./components/WorkflowPanel", () => ({
   default: () => <div>Test workflow</div>,
+}));
+vi.mock("./components/RunParallelAgents", () => ({
+  default: ({ onChange }: {
+    onChange: (value: {
+      agents: string[];
+      model_overrides: Record<string, never>;
+      effort_overrides: Record<string, never>;
+    }) => void;
+  }) => (
+    <button onClick={() => onChange({
+      agents: ["codex"],
+      model_overrides: {},
+      effort_overrides: {},
+    })}>
+      Change report agents
+    </button>
+  ),
 }));
 vi.mock("./components/HistoryPage", () => ({
   default: () => <div>History workspace</div>,
@@ -203,6 +233,7 @@ describe("App run options", () => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_batch_status") return Promise.resolve([]);
       if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
+      if (command === "get_run_setup") return Promise.resolve(runSetup());
       if (command === "get_execution_plan") {
         return Promise.resolve({
           profileId: "deep-review",
@@ -292,6 +323,26 @@ describe("App run options", () => {
     expect(screen.queryByRole("button", { name: "Batch" })).not.toBeInTheDocument();
   });
 
+  it("does not rebuild the execution plan when per-report agents change", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: "Review report" }),
+    ).toBeEnabled());
+    await waitFor(() => expect(invoke.mock.calls.filter(
+      ([command]) => command === "get_execution_plan",
+    )).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: "Change report agents" }));
+
+    expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Loading workflow…" })).not.toBeInTheDocument();
+    expect(invoke.mock.calls.filter(
+      ([command]) => command === "get_execution_plan",
+    )).toHaveLength(1);
+  });
+
   it("launches several selected documents as a batch from New run", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -318,11 +369,14 @@ describe("App run options", () => {
     expect(startPipeline).not.toHaveBeenCalled();
   });
 
-  it("rechecks readiness for DOCX so a conservative extractor failure does not block the run", async () => {
+  it("defers exact DOCX readiness checks until the user reviews the report", async () => {
     invoke.mockImplementation((command: string, args?: { paperPath?: string | null }) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_batch_status") return Promise.resolve([]);
       if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
+      if (command === "get_run_setup") {
+        return Promise.resolve(runSetup("document-review", "doc-config"));
+      }
       if (command === "get_execution_plan") {
         const exactInput = args?.paperPath === "/tmp/test-paper.docx";
         return Promise.resolve({
@@ -355,8 +409,13 @@ describe("App run options", () => {
 
     await user.click(await screen.findByRole("button", { name: "Choose DOCX" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled());
+    expect(invoke.mock.calls.filter(
+      ([command, args]) =>
+        command === "get_execution_plan" &&
+        (args as { paperPath?: string } | undefined)?.paperPath === "/tmp/test-paper.docx",
+    )).toHaveLength(0);
     expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
     await user.click(screen.getByRole("button", { name: "Review report" }));
     expect(await screen.findByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Generate report" }));
@@ -373,10 +432,10 @@ describe("App run options", () => {
       ([command, args]) =>
         command === "get_execution_plan" &&
         (args as { paperPath?: string } | undefined)?.paperPath === "/tmp/test-paper.docx",
-    ).length).toBeGreaterThanOrEqual(2);
+    )).toHaveLength(1);
   });
 
-  it("retains an exact DOCX readiness check after a same-mode workflow save", async () => {
+  it("does not rerun workflow preflight after a same-mode workflow save", async () => {
     const user = userEvent.setup();
     render(<App />);
 
@@ -389,16 +448,12 @@ describe("App run options", () => {
       name: "Close workflow editor",
     }));
 
-    await waitFor(() => {
-      const exactChecks = invoke.mock.calls.filter(
-        ([command, args]) =>
-          command === "get_execution_plan" &&
-          (args as { paperPath?: string } | undefined)?.paperPath ===
-            "/tmp/test-paper.docx",
-      );
-      expect(exactChecks.length).toBeGreaterThanOrEqual(2);
-      expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled();
-    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled());
+    expect(invoke.mock.calls.filter(
+      ([command, args]) =>
+        command === "get_execution_plan" &&
+        (args as { paperPath?: string } | undefined)?.paperPath === "/tmp/test-paper.docx",
+    )).toHaveLength(0);
   });
 
   it("clears an incompatible primary selection when the workflow input mode changes", async () => {
@@ -416,10 +471,12 @@ describe("App run options", () => {
 
     expect(await screen.findByText("Primary mode: folder")).toBeVisible();
     expect(screen.getByRole("button", { name: "Review report" })).toBeDisabled();
-    expect(invoke).toHaveBeenLastCalledWith("get_execution_plan", expect.objectContaining({
-      expectedProfileConfigSnapshotId: null,
-      paperPath: null,
-    }));
+    expect(invoke).toHaveBeenCalledWith("get_run_setup");
+    expect(invoke.mock.calls.filter(
+      ([command, args]) =>
+        command === "get_execution_plan" &&
+        (args as { paperPath?: string } | undefined)?.paperPath !== null,
+    )).toHaveLength(0);
   });
 
   it("reloads the new settings snapshot without comparing it to the old fingerprint", async () => {
@@ -433,7 +490,7 @@ describe("App run options", () => {
     }));
 
     await waitFor(() =>
-      expect(invoke).toHaveBeenLastCalledWith("get_execution_plan", {
+      expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
         variables: null,
         extraInputs: null,
         expectedProfileConfigSnapshotId: null,
@@ -467,6 +524,9 @@ describe("App run options", () => {
     }) => void;
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "get_run_setup") {
+        return Promise.resolve(runSetup("missing-provider", "missing-config"));
+      }
       if (command === "get_execution_plan") {
         return new Promise((resolve) => {
           resolvePlan = resolve;
@@ -511,6 +571,9 @@ describe("App run options", () => {
   it("opens PDF Extraction settings from a missing PaddleOCR dependency", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "get_run_setup") {
+        return Promise.resolve(runSetup("local-pdf", "local-pdf-config"));
+      }
       if (command === "get_execution_plan") {
         return Promise.resolve({
           profileId: "local-pdf",
@@ -554,6 +617,9 @@ describe("App run options", () => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_batch_status") return Promise.resolve([]);
       if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
+      if (command === "get_run_setup") {
+        return Promise.resolve(runSetup("mixed-providers", "mixed-config"));
+      }
       if (command === "get_execution_plan") {
         checks += 1;
         return Promise.resolve({
@@ -599,6 +665,9 @@ describe("App run options", () => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_batch_status") return Promise.resolve([]);
       if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
+      if (command === "get_run_setup") {
+        return Promise.resolve(runSetup("first", "first-config"));
+      }
       if (command === "get_execution_plan") {
         plans += 1;
         if (plans > 1) return Promise.reject(new Error("active profile changed"));
@@ -621,7 +690,7 @@ describe("App run options", () => {
     await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
     await user.click(screen.getByRole("button", { name: "Review report" }));
 
-    expect((await screen.findAllByText("active profile changed")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/active profile changed/)).length).toBeGreaterThan(0);
     expect(startPipeline).not.toHaveBeenCalled();
   });
 

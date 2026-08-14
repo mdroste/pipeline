@@ -38,7 +38,6 @@ interface RunProfileSnapshot {
   inputMode: string;
   variables: VarSpec[];
   inputSlots: InputSlot[];
-  readiness: DepsReport;
 }
 
 interface PendingRun extends RunProfileSnapshot {
@@ -132,11 +131,10 @@ function App() {
   const [depsReport, setDepsReport] = useState<DepsReport | null>(null);
   const [depsLoading, setDepsLoading] = useState(true);
   const [depsError, setDepsError] = useState<string | null>(null);
-  const runPreflightActive = useRef(false);
   const [page, setPage] = useState<AppPage>("main");
   const [batchActive, setBatchActive] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<
-    "llm" | "extraction" | "general"
+    "llm" | "api-keys" | "workflow" | "extraction" | "general"
   >("llm");
   const [settingsTargetId, setSettingsTargetId] = useState<string | undefined>();
   const [settingsNavigationKey, setSettingsNavigationKey] = useState(0);
@@ -178,6 +176,8 @@ function App() {
   const launchActive = useRef(false);
   const selectedInputRef = useRef({ inputMode, paperPath, inputSelection });
   selectedInputRef.current = { inputMode, paperPath, inputSelection };
+  const parallelOverridesRef = useRef(parallelOverrides);
+  parallelOverridesRef.current = parallelOverrides;
   // A run id to open in History (e.g. from a batch job's "Open" link).
   const [historyRunId, setHistoryRunId] = useState<string | null>(null);
   const [historySourceSelection, setHistorySourceSelection] = useState<ArtifactSelectionTarget | null>(null);
@@ -301,76 +301,81 @@ function App() {
   }, [theme]);
 
   const runConfigRequest = useRef(0);
-  const applyRunProfile = useCallback((plan: ExecutionPlanEnvelope): RunProfileSnapshot => {
+  const dependencyRequest = useRef(0);
+  const applyRunProfile = useCallback((setup: RunProfileSnapshot): RunProfileSnapshot => {
     const snapshot = {
-      profileId: plan.profileId,
-      profileConfigSnapshotId: plan.profileConfigSnapshotId,
-      inputMode: plan.configuredInputMode || plan.inputMode || "document",
-      variables: plan.variables ?? [],
-      inputSlots: plan.inputSlots ?? [],
-      readiness: plan.readiness,
+      ...setup,
+      inputMode: setup.inputMode || "document",
+      variables: setup.variables ?? [],
+      inputSlots: setup.inputSlots ?? [],
     };
     setInputMode(snapshot.inputMode);
     setRunProfileConfigSnapshotId(snapshot.profileConfigSnapshotId);
     return snapshot;
   }, []);
 
-  const loadRunConfig = useCallback(async (
-    expectedProfileConfigSnapshotId?: string | null,
-    selectedPaperPath?: string | null,
-    selectedInterpretation?: string | null,
+  const loadRunSetup = useCallback(async (
   ): Promise<RunProfileSnapshot | null> => {
     const request = ++runConfigRequest.current;
     setRunConfigLoading(true);
     setRunConfigError(null);
+    try {
+      const setup = await invoke<RunProfileSnapshot>("get_run_setup");
+      if (request !== runConfigRequest.current) return null;
+      return applyRunProfile(setup);
+    } catch (error) {
+      if (request !== runConfigRequest.current) return null;
+      const message = error instanceof Error ? error.message : String(error);
+      setRunConfigError(message);
+      return null;
+    } finally {
+      if (request === runConfigRequest.current) {
+        setRunConfigLoading(false);
+      }
+    }
+  }, [applyRunProfile]);
+
+  const checkDependencies = useCallback(async (): Promise<DepsReport | null> => {
+    const request = ++dependencyRequest.current;
+    const selected = selectedInputRef.current;
     setDepsLoading(true);
     setDepsError(null);
     try {
       const plan = await invoke<ExecutionPlanEnvelope>("get_execution_plan", {
         variables: null,
         extraInputs: null,
-        expectedProfileConfigSnapshotId: expectedProfileConfigSnapshotId ?? null,
+        expectedProfileConfigSnapshotId: null,
         diff: false,
-        paperPath: selectedPaperPath ?? null,
-        inputInterpretation: selectedInterpretation ?? null,
-        ...(parallelOverrides ? { runParallelOverrides: parallelOverrides } : {}),
+        paperPath: selected.inputMode === "none" ? "" : selected.paperPath,
+        inputInterpretation: plannedInterpretation(selected.inputSelection),
+        ...(parallelOverridesRef.current
+          ? { runParallelOverrides: parallelOverridesRef.current }
+          : {}),
       });
-      if (request !== runConfigRequest.current) return null;
-      const snapshot = applyRunProfile(plan);
+      if (request !== dependencyRequest.current) return null;
       setDepsReport(plan.readiness);
-      return snapshot;
+      return plan.readiness;
     } catch (error) {
-      if (request !== runConfigRequest.current) return null;
+      if (request !== dependencyRequest.current) return null;
       const message = error instanceof Error ? error.message : String(error);
-      setRunConfigError(message);
       setDepsReport(null);
       setDepsError(message);
       return null;
     } finally {
-      if (request === runConfigRequest.current) {
-        setRunConfigLoading(false);
-        setDepsLoading(false);
-      }
+      if (request === dependencyRequest.current) setDepsLoading(false);
     }
-  }, [applyRunProfile, parallelOverrides]);
-
-  const checkDependencies = useCallback(async (): Promise<DepsReport | null> => {
-    const snapshot = await loadRunConfig(
-      null,
-      inputMode === "none" ? "" : paperPath,
-      plannedInterpretation(inputSelection),
-    );
-    return snapshot?.readiness ?? null;
-  }, [inputMode, inputSelection, loadRunConfig, paperPath]);
+  }, []);
 
   useEffect(() => {
-    const selected = selectedInputRef.current;
-    void loadRunConfig(
-      null,
-      selected.inputMode === "none" ? "" : selected.paperPath,
-      plannedInterpretation(selected.inputSelection),
-    );
-  }, [configVersion, loadRunConfig]);
+    void loadRunSetup();
+  }, [configVersion, loadRunSetup]);
+
+  const startupDependencyCheckStarted = useRef(false);
+  useEffect(() => {
+    if (startupDependencyCheckStarted.current) return;
+    startupDependencyCheckStarted.current = true;
+    void checkDependencies();
+  }, [checkDependencies]);
 
   const handleProfileChange = useCallback((config?: PipelineConfig) => {
     const nextInputMode = config?.extraction.input_mode?.trim() || "document";
@@ -387,6 +392,10 @@ function App() {
     }
     setRunProfileConfigSnapshotId(null);
     setParallelOverrides(null);
+    dependencyRequest.current += 1;
+    setDepsReport(null);
+    setDepsLoading(false);
+    setDepsError(null);
     setRunConfigLoading(true);
     setConfigVersion((version) => version + 1);
   }, [inputMode]);
@@ -528,37 +537,27 @@ function App() {
   };
 
   const handleGenerate = async () => {
-    if (
-      runPreflightActive.current ||
-      preparingRun ||
-      depsLoading ||
-      depsReport?.ready !== true
-    ) return;
-    runPreflightActive.current = true;
+    if (preparingRun || runConfigLoading || !runProfileConfigSnapshotId) return;
     setPreparingRun(true);
     try {
-      // Re-read immediately before launch. The workflow switcher and editor
-      // both change the active profile asynchronously, so the values shown
-      // during setup are not authoritative enough for a run snapshot.
-      const snapshot = await loadRunConfig(
-        runProfileConfigSnapshotId,
-        inputMode === "none" ? "" : paperPath,
-        plannedInterpretation(inputSelection),
-      );
-      if (!snapshot) return;
-      if (!snapshot.readiness.ready) {
-        setShowDeps(true);
-        return;
-      }
-      const selectedPath = snapshot.inputMode === "none" ? "" : (paperPath ?? "");
-      if (snapshot.inputMode !== "none" && !selectedPath) {
+      const expectedProfileConfigSnapshotId = runProfileConfigSnapshotId;
+      const selectedPath = inputMode === "none" ? "" : (paperPath ?? "");
+      if (inputMode !== "none" && !selectedPath) {
         setRunConfigError(
           "The active workflow requires an input. Select it again before running.",
         );
         return;
       }
-      if (snapshot.inputMode !== "none" && !inputSelection) {
+      if (inputMode !== "none" && !inputSelection) {
         setRunConfigError("Select an input and declare how Pipeline should use it.");
+        return;
+      }
+      const snapshot = await loadRunSetup();
+      if (!snapshot) return;
+      if (snapshot.profileConfigSnapshotId !== expectedProfileConfigSnapshotId) {
+        setRunConfigError(
+          "The active profile or settings changed while run inputs were being collected. Review the updated setup and try again.",
+        );
         return;
       }
       const pending = { ...snapshot, paperPath: selectedPath, inputSelection };
@@ -568,7 +567,6 @@ function App() {
       }
       await launch(pending);
     } finally {
-      runPreflightActive.current = false;
       setPreparingRun(false);
     }
   };
@@ -731,8 +729,6 @@ function App() {
             configError={runConfigError}
             configLoading={runConfigLoading}
             dependenciesError={depsError}
-            dependenciesLoading={depsLoading}
-            dependenciesReady={depsReport?.ready === true}
             inputMode={inputMode}
             listenersReady={listenersReady}
             localLlmActive={depsReport?.deps.some((dependency) =>
@@ -753,11 +749,6 @@ function App() {
               setInputSelection(selection);
               setPaperPath(selection?.paths[0] ?? null);
               if (selection) setRunConfigError(null);
-              void loadRunConfig(
-                runProfileConfigSnapshotId,
-                inputMode === "none" ? "" : selection?.paths[0] ?? null,
-                plannedInterpretation(selection),
-              );
             }}
             onPrivacyDetails={() => {
               setHelpInitialSection("privacy");
@@ -765,7 +756,7 @@ function App() {
             }}
             onParallelOverridesChange={setParallelOverrides}
             onProfileChange={handleProfileChange}
-            onRetryConfig={() => void checkDependencies()}
+            onRetryConfig={() => void loadRunSetup()}
             onRetryDependencies={() => void checkDependencies()}
             onResize={setRunSetupWidth}
           />
@@ -807,7 +798,10 @@ function App() {
                 showBack={false}
                 theme={theme}
                 onThemeChange={handleThemeChange}
-                onSystemChange={() => void checkDependencies()}
+                onSystemChange={() => {
+                  setConfigVersion((version) => version + 1);
+                  void checkDependencies();
+                }}
                 initialSection={settingsInitialSection}
                 targetId={settingsTargetId}
                 navigationKey={settingsNavigationKey}

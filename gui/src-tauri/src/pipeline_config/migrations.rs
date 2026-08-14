@@ -376,8 +376,7 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
                         profile.orientation_schema.as_ref(),
                         target.orientation_schema.as_mut(),
                     ) {
-                        if let Some(count) =
-                            from.get(crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY)
+                        if let Some(count) = from.get(crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY)
                         {
                             to[crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY] = count.clone();
                         }

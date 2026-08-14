@@ -5,7 +5,6 @@ import {
   effortOptions,
   encodeModelSelection,
   PROVIDER_LABELS,
-  providerSelection,
   providerTransport,
   type Provider,
 } from "../lib/providers";
@@ -30,10 +29,7 @@ interface Props {
 
 function inheritedModelLabel(settings: Settings, provider: Provider): string {
   if (provider === "local") return settings.local_model || "not selected";
-  const selection = providerSelection(settings, provider);
-  if (selection.mode === "automatic") return "automatic";
-  if (selection.mode === "role") return selection.role;
-  return selection.model;
+  return "automatic";
 }
 
 export default function AgentDefaultsControl({
@@ -109,9 +105,11 @@ export default function AgentDefaultsControl({
           const transport = providerTransport(settings, provider);
           const key = `${provider}:${transport}`;
           const selection = modelOverrides[key] ?? modelOverrides[provider];
-          const value = encodeModelSelection(selection);
+          const value = selection?.mode === "automatic"
+            ? "inherit"
+            : encodeModelSelection(selection);
           const catalog = catalogs[provider];
-          const known = value === "inherit" || value === "automatic"
+          const known = value === "inherit"
             || catalog?.models.some((model) => value === `pinned:${model.id}`);
           const efforts = provider === "claude"
             ? effortOptions(catalog, selection, ["low", "medium", "high", "max"])
@@ -137,7 +135,6 @@ export default function AgentDefaultsControl({
                   className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                 >
                   <option value="inherit">Provider default · {inheritedModelLabel(settings, provider)}</option>
-                  <option value="automatic">Automatic</option>
                   {!!catalog?.models.length && (
                     <optgroup label="Exact model">
                       {catalog.models.map((model) => (
@@ -157,7 +154,7 @@ export default function AgentDefaultsControl({
                     onChange={(event) => updateEffort(key, event.target.value)}
                     className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                   >
-                    <option value="">Default thinking</option>
+                    <option value="">Provider default thinking</option>
                     {efforts.map((effort) => (
                       <option key={effort} value={effort}>{effort.charAt(0).toUpperCase() + effort.slice(1)}</option>
                     ))}

@@ -2657,8 +2657,11 @@ mod tests {
         assert!(matches!(accepted, ToolResult::ImageBase64 { .. }));
         assert_eq!(budget.encoded_media_bytes, 8);
 
-        let rejected =
-            enforce_media_budget(ToolResult::PdfBase64("123".to_string()), &mut budget, &policy);
+        let rejected = enforce_media_budget(
+            ToolResult::PdfBase64("123".to_string()),
+            &mut budget,
+            &policy,
+        );
         let ToolResult::Error(message) = rejected else {
             panic!("expected budget error")
         };

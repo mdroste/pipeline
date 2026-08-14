@@ -57,13 +57,7 @@ pub fn model_price(model: &str) -> Option<(f64, f64)> {
 /// subscription CLI. Both transports receive a labelled API-list-price
 /// estimate, but only the direct API amount approximates token-metered spend.
 pub(super) fn provider_in_api_mode(settings: &Settings, provider: &str) -> bool {
-    match provider {
-        "codex" => !settings.openai_api_key.trim().is_empty(),
-        "antigravity" => !settings.google_api_key.trim().is_empty(),
-        "local" => true,
-        // "claude" and the empty/default provider both map to Anthropic.
-        _ => !settings.anthropic_api_key.trim().is_empty(),
-    }
+    settings.model_transport(provider) == "api"
 }
 
 /// Cache-token list prices when Pipeline can identify the provider family.

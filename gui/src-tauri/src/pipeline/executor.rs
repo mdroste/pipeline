@@ -1055,12 +1055,7 @@ pub async fn execute_steps(
                     .await
                     {
                         Ok(mut merged) => {
-                            enforce_merge_output_schemas(
-                                app,
-                                &to_run,
-                                &wave_outputs,
-                                &mut merged,
-                            );
+                            enforce_merge_output_schemas(app, &to_run, &wave_outputs, &mut merged);
                             // `merged` holds clones of already-reserved
                             // pass-through outputs plus newly synthesized
                             // per-group merge reports; only the latter are new
@@ -3426,7 +3421,11 @@ mod tests {
         )
         .unwrap();
 
-        let staged_root = resolved._view.path().join("steps").join(step_slug("producer"));
+        let staged_root = resolved
+            ._view
+            .path()
+            .join("steps")
+            .join(step_slug("producer"));
         let staged_a = staged_root.join(&unit_a).join("files").join("table.csv");
         let staged_b = staged_root.join(&unit_b).join("files").join("table.csv");
         assert_eq!(std::fs::read_to_string(&staged_a).unwrap(), "from claude");
@@ -4267,7 +4266,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            result.matches("quotes {step:analysis}, {paper_path}, and {last_output}").count(),
+            result
+                .matches("quotes {step:analysis}, {paper_path}, and {last_output}")
+                .count(),
             2, // once via {prior_outputs}, once via the explicit {step:analysis}
         );
         assert!(result.contains("PATH=/paper.txt"));

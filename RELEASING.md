@@ -26,9 +26,9 @@ unless the `Verify complete draft release` job and the human checks below pass.
 The workflow deliberately fails rather than emitting an unsigned Windows
 release when any Windows signing value is missing, invalid, expired, or not
 valid for code signing. Never commit certificate material or a thumbprint. The
-Windows package embeds Microsoft WebView2's offline installer, trading roughly
-127 MB of additional size for a first install that does not depend on a
-WebView download.
+Windows package embeds Microsoft's small WebView2 bootstrapper. This keeps the
+package compact, but a machine without a current Evergreen WebView2 runtime
+needs internet access during installation so the bootstrapper can download it.
 
 ## Prepare a release candidate
 
@@ -130,8 +130,8 @@ Before publishing the draft, a reviewer should independently:
 - install on representative clean machines, complete a synthetic end-to-end
   run, render math, and export a report;
 - on a clean, currently serviced Windows 11 x86-64 VM with no Evergreen
-  WebView2 runtime, disconnect the network before installation and first
-  launch to verify that the embedded offline installer is sufficient;
+  WebView2 runtime and a working network connection, verify that installation
+  provisions WebView2 and that Pipeline launches afterward;
 - run a compatibility installation on Windows 10 22H2 x86-64 when that system
   remains in the supported matrix, using a device that still receives
   Microsoft security updates;

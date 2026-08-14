@@ -19,9 +19,15 @@ const PROVIDER_DEPENDENCIES = new Set([
   "Antigravity CLI",
 ]);
 
+const BUNDLED_PDF_DEPENDENCIES = new Set([
+  "pdftoppm",
+  "pdftotext",
+]);
+
 const HIDDEN_DEPENDENCIES = new Set([
   "Local LLM server",
   "PDF extractor configuration",
+  ...BUNDLED_PDF_DEPENDENCIES,
 ]);
 
 const TONE_STYLES: Record<StatusTone, { row: string; icon: string; badge: string }> = {
@@ -249,15 +255,23 @@ export default function DepsCheck({
   const modelAccessReady = providerDeps.length === 0 || providerDeps.some(dependencyAvailable) || (
     localProvider !== undefined && dependencyAvailable(localProvider)
   );
-  const pdfReady = pdfDeps.every((dep) => !dep.required || dependencyAvailable(dep));
+  const bundledPdfUnavailable = report.deps.some(
+    (dep) => BUNDLED_PDF_DEPENDENCIES.has(dep.name)
+      && dep.required
+      && !dependencyAvailable(dep),
+  );
+  const pdfReady = !bundledPdfUnavailable
+    && pdfDeps.every((dep) => !dep.required || dependencyAvailable(dep));
   const hasBlockers = !report.ready;
   const blockerMessage = !modelAccessReady && !pdfReady
     ? "Model access and PDF parsing need attention."
     : !modelAccessReady
       ? "Set up at least one model provider or add an API key in Settings."
-      : !pdfReady
-        ? "Required PDF parsing tools are missing."
-        : "Workflow dependencies are not ready.";
+      : bundledPdfUnavailable
+        ? "Bundled PDF tools are unavailable. Reinstall Pipeline."
+        : !pdfReady
+          ? "Required PDF parsing tools are missing."
+          : "Workflow dependencies are not ready.";
 
   return (
     <div data-testid="dependencies-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

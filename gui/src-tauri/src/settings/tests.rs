@@ -384,7 +384,7 @@ fn legacy_models_migrate_to_roles_or_pins() {
 }
 
 #[test]
-fn api_key_switches_to_independent_api_selection() {
+fn access_mode_controls_transport_and_provider_defaults_are_automatic() {
     let mut settings = Settings {
         codex_cli_model_selection: ModelSelection::Role {
             role: "balanced".into(),
@@ -395,10 +395,23 @@ fn api_key_switches_to_independent_api_selection() {
         ..Default::default()
     };
     assert_eq!(settings.model_transport("codex"), "cli");
-    assert_eq!(settings.model_selection("codex").label(), "balanced role");
+    assert_eq!(settings.model_selection("codex").label(), "Automatic");
     settings.openai_api_key = "secret".into();
+    assert_eq!(settings.model_transport("codex"), "cli");
+    settings.codex_access_mode = "api".into();
     assert_eq!(settings.model_transport("codex"), "api");
-    assert_eq!(settings.model_selection("codex").label(), "gpt-api-only");
+    assert_eq!(settings.model_selection("codex").label(), "Automatic");
+}
+
+#[test]
+fn legacy_key_presence_migrates_to_explicit_api_mode() {
+    let legacy: Settings = serde_json::from_str(r#"{"openai_api_key":"secret"}"#).unwrap();
+    assert!(legacy.codex_access_mode.is_empty());
+    assert_eq!(legacy.model_transport("codex"), "api");
+
+    let normalized = legacy.normalized();
+    assert_eq!(normalized.codex_access_mode, "api");
+    assert_eq!(normalized.model_transport("codex"), "api");
 }
 
 #[test]

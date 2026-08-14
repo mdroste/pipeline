@@ -36,7 +36,7 @@ function fixture(overrides = {}) {
         windows: {
           allowDowngrades: overrides.allowDowngrades ?? false,
           webviewInstallMode: overrides.webviewInstallMode ?? {
-            type: "offlineInstaller",
+            type: "embedBootstrapper",
             silent: true,
           },
         },
@@ -156,13 +156,13 @@ test("blocks Windows installer downgrades", () => {
   );
 });
 
-test("requires the self-contained Windows WebView2 installer", () => {
+test("requires the embedded Windows WebView2 bootstrapper", () => {
   const root = fixture({
-    webviewInstallMode: { type: "downloadBootstrapper", silent: true },
+    webviewInstallMode: { type: "offlineInstaller", silent: true },
   });
   assert.throws(
     () => validateReleaseIdentity({ rootDir: root }),
-    /WebView2 offlineInstaller/,
+    /WebView2 bootstrapper/,
   );
 });
 

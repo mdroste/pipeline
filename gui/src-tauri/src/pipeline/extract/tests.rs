@@ -34,23 +34,29 @@ fn full_parser_cache_identity_uses_verified_content_digests() {
 }
 
 #[test]
-fn direct_pdf_attachment_requires_the_matching_cloud_api_key() {
+fn direct_pdf_attachment_follows_the_matching_cloud_access_mode() {
     let mut settings = crate::settings::Settings {
         preferred_provider: "claude".to_string(),
         ..Default::default()
     };
     assert!(!provider_uses_direct_api(&settings));
     settings.anthropic_api_key = "configured".to_string();
+    assert!(!provider_uses_direct_api(&settings));
+    settings.claude_access_mode = "api".to_string();
     assert!(provider_uses_direct_api(&settings));
 
     settings.preferred_provider = "codex".to_string();
     assert!(!provider_uses_direct_api(&settings));
     settings.openai_api_key = "configured".to_string();
+    assert!(!provider_uses_direct_api(&settings));
+    settings.codex_access_mode = "api".to_string();
     assert!(provider_uses_direct_api(&settings));
 
     settings.preferred_provider = "antigravity".to_string();
     assert!(!provider_uses_direct_api(&settings));
     settings.google_api_key = "configured".to_string();
+    assert!(!provider_uses_direct_api(&settings));
+    settings.antigravity_access_mode = "api".to_string();
     assert!(provider_uses_direct_api(&settings));
 
     settings.preferred_provider = "local".to_string();
@@ -249,8 +255,16 @@ fn latex_extraction_blocks_distant_or_untyped_external_references() {
 #[test]
 fn latex_extraction_skips_circular_includes_precisely() {
     let project = tempfile::tempdir().unwrap();
-    fs::write(project.path().join("a.tex"), "A begins\n\\input{b}\nA ends\n").unwrap();
-    fs::write(project.path().join("b.tex"), "B begins\n\\input{a}\nB ends\n").unwrap();
+    fs::write(
+        project.path().join("a.tex"),
+        "A begins\n\\input{b}\nA ends\n",
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("b.tex"),
+        "B begins\n\\input{a}\nB ends\n",
+    )
+    .unwrap();
 
     let mut warnings = Vec::new();
     let root = project.path().canonicalize().unwrap();
@@ -294,7 +308,11 @@ fn latex_extraction_notes_unreadable_includes() {
     )
     .unwrap();
     // Invalid UTF-8 makes the include unreadable without being missing.
-    fs::write(project.path().join("chapter.tex"), [0xFFu8, 0xFE, 0x00, 0x41]).unwrap();
+    fs::write(
+        project.path().join("chapter.tex"),
+        [0xFFu8, 0xFE, 0x00, 0x41],
+    )
+    .unwrap();
 
     let mut warnings = Vec::new();
     let root = project.path().canonicalize().unwrap();

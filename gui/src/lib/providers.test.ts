@@ -4,13 +4,14 @@ import {
   decodeModelSelection,
   effortOptions,
   encodeModelSelection,
-  providerSelection,
   providerTransport,
-  withProviderSelection,
 } from "./providers";
 
 function settings(overrides: Partial<Settings> = {}): Settings {
   return {
+    claude_access_mode: "subscription",
+    codex_access_mode: "subscription",
+    antigravity_access_mode: "subscription",
     anthropic_api_key: "",
     openai_api_key: "",
     google_api_key: "",
@@ -22,19 +23,15 @@ function settings(overrides: Partial<Settings> = {}): Settings {
 }
 
 describe("provider model utilities", () => {
-  it("keeps CLI and API selections independent", () => {
-    const cli = settings({
-      claude_cli_model_selection: { mode: "role", role: "balanced" },
-      claude_api_model_selection: { mode: "pinned", model: "api-model" },
-    });
+  it("keeps transport mode explicit even when a key is stored", () => {
+    const cli = settings();
     expect(providerTransport(cli, "claude")).toBe("cli");
-    expect(providerSelection(cli, "claude")).toEqual({ mode: "role", role: "balanced" });
 
-    const api = { ...cli, anthropic_api_key: "configured" };
+    const storedKey = { ...cli, anthropic_api_key: "configured" };
+    expect(providerTransport(storedKey, "claude")).toBe("cli");
+
+    const api = { ...storedKey, claude_access_mode: "api" as const };
     expect(providerTransport(api, "claude")).toBe("api");
-    expect(providerSelection(api, "claude")).toEqual({ mode: "pinned", model: "api-model" });
-    expect(withProviderSelection(api, "claude", { mode: "automatic" }))
-      .toMatchObject({ claude_api_model_selection: { mode: "automatic" }, claude_model: "" });
   });
 
   it("round-trips select values and preserves inherit", () => {

@@ -5,21 +5,14 @@ import type {
   DepsReport,
   EngineStatus,
   ModelCatalog,
-  ModelSelection,
   Settings,
 } from "../lib/types";
 import {
-  decodeModelSelection,
   defaultOrientationAgent,
   defaultParallelAgents,
   defaultSequentialAgent,
-  effortOptions,
-  encodeModelSelection,
-  type CloudProvider,
-  providerSelection,
   providerTransport,
   PROVIDERS,
-  withProviderSelection,
 } from "../lib/providers";
 import EnginesPanel from "./EnginesPanel";
 import AgentDefaultsControl from "./AgentDefaultsControl";
@@ -41,64 +34,15 @@ interface Props {
   dependencies?: DepsReport | null;
 }
 
-type Section = "llm" | "extraction" | "general";
+type Section = "llm" | "api-keys" | "workflow" | "extraction" | "general";
 
-interface ProviderAccessIssue {
-  summary: string;
-  detail: string;
-}
-
-const CLI_DEPENDENCY_NAMES: Record<CloudProvider, string> = {
-  claude: "Claude CLI",
-  codex: "Codex CLI",
-  antigravity: "Antigravity CLI",
-};
-
-function providerAccessIssue(
-  provider: CloudProvider,
-  settings: Settings,
-  dependencies?: DepsReport | null,
-): ProviderAccessIssue | null {
-  if (providerTransport(settings, provider) !== "cli") return null;
-  const dependency = dependencies?.deps.find(
-    (candidate) => candidate.name === CLI_DEPENDENCY_NAMES[provider],
-  );
-  if (!dependency) return null;
-
-  const cliInstalled = dependency.cli_auth_status !== undefined
-    || (dependency.found && dependency.version !== "direct API");
-  if (!cliInstalled) {
-    return {
-      summary: `${dependency.name} could not be found on this system.`,
-      detail: dependency.hint,
-    };
-  }
-  if (!dependency.found) {
-    return {
-      summary: `${dependency.name} cannot be used by Pipeline.`,
-      detail: dependency.hint,
-    };
-  }
-  if (dependency.cli_auth_status === "signed_out" || dependency.authenticated === false) {
-    return {
-      summary: `${dependency.name} is installed but not logged in.`,
-      detail: dependency.hint,
-    };
-  }
-  if (dependency.cli_auth_status === "unknown") {
-    return {
-      summary: `${dependency.name} is installed, but its login status could not be verified.`,
-      detail: dependency.hint,
-    };
-  }
-  return null;
-}
+const AUTOSAVE_DELAY_MS = 400;
 
 function catalogDiscoveryInputs(settings: Settings): Record<string, string> {
   return {
-    claude: settings.anthropic_api_key,
-    codex: settings.openai_api_key,
-    antigravity: settings.google_api_key,
+    claude: `${settings.claude_access_mode}\u0000${settings.anthropic_api_key}`,
+    codex: `${settings.codex_access_mode}\u0000${settings.openai_api_key}`,
+    antigravity: `${settings.antigravity_access_mode}\u0000${settings.google_api_key}`,
     local: `${settings.local_base_url}\u0000${settings.local_api_key}`,
   };
 }
@@ -113,13 +57,13 @@ export default function SettingsPage({
   initialSection = "llm",
   targetId,
   navigationKey = 0,
-  dependencies,
 }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [section, setSection] = useState<Section>(initialSection);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -134,17 +78,23 @@ export default function SettingsPage({
     320,
   );
   const settingsRef = useRef<Settings | null>(settings);
+  const savedCatalogInputsRef = useRef<Record<string, string> | null>(savedCatalogInputs);
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const latestQueuedSnapshotRef = useRef<string | null>(null);
+  const latestSaveSequenceRef = useRef(0);
   const catalogRequestsRef = useRef<Record<string, number>>({});
   const previousDraftDiscoveryInputsRef = useRef<Record<string, string> | null>(null);
   const initialCatalogDiscoveryStartedRef = useRef(false);
   settingsRef.current = settings;
+  savedCatalogInputsRef.current = savedCatalogInputs;
   const dirty = settings !== null &&
     savedSettingsSnapshot !== null &&
     JSON.stringify(settings) !== savedSettingsSnapshot;
+  const savePending = dirty || saving;
 
   useEffect(() => {
-    onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
+    onDirtyChange?.(savePending);
+  }, [onDirtyChange, savePending]);
 
   useEffect(() => {
     setSection(initialSection);
@@ -176,7 +126,9 @@ export default function SettingsPage({
         previousDraftDiscoveryInputsRef.current = discoveryInputs;
         setSavedCatalogInputs(discoveryInputs);
         setSettings(resp.settings);
-        setSavedSettingsSnapshot(JSON.stringify(resp.settings));
+        const snapshot = JSON.stringify(resp.settings);
+        latestQueuedSnapshotRef.current = snapshot;
+        setSavedSettingsSnapshot(snapshot);
         setWarnings(resp.warnings);
         setLoading(false);
       })
@@ -227,8 +179,8 @@ export default function SettingsPage({
     }
   };
 
-  // Load catalogs once from settings that are already persisted. Draft
-  // credentials never trigger automatic authenticated discovery.
+  // Load catalogs once from settings that are already persisted. Edited
+  // credentials trigger authenticated discovery only after autosave succeeds.
   useEffect(() => {
     if (!settings || !savedCatalogInputs || initialCatalogDiscoveryStartedRef.current) return;
     initialCatalogDiscoveryStartedRef.current = true;
@@ -238,8 +190,8 @@ export default function SettingsPage({
   }, [savedCatalogInputs, settings]);
 
   // Invalidate both visible data and in-flight requests as soon as a discovery
-  // input changes. The user must Save or explicitly Refresh before models for
-  // the draft credential/server become available.
+  // input changes. Autosave or an explicit Refresh must complete before models
+  // for the draft credential/server become available.
   useEffect(() => {
     if (!settings) return;
     const current = catalogDiscoveryInputs(settings);
@@ -269,6 +221,9 @@ export default function SettingsPage({
       ...Object.fromEntries(changed.map((provider) => [provider, false])),
     }));
   }, [
+    settings?.claude_access_mode,
+    settings?.codex_access_mode,
+    settings?.antigravity_access_mode,
     settings?.anthropic_api_key,
     settings?.openai_api_key,
     settings?.google_api_key,
@@ -276,45 +231,78 @@ export default function SettingsPage({
     settings?.local_api_key,
   ]);
 
-  const handleSave = async () => {
-    if (!settings) return;
-    const settingsToSave = settings;
+  const enqueueSave = (settingsToSave: Settings, force = false) => {
     const savedSnapshot = JSON.stringify(settingsToSave);
+    if (!force && latestQueuedSnapshotRef.current === savedSnapshot) return;
+    latestQueuedSnapshotRef.current = savedSnapshot;
+    const saveSequence = latestSaveSequenceRef.current + 1;
+    latestSaveSequenceRef.current = saveSequence;
     setSaving(true);
     setSaved(false);
-    try {
-      await invoke("save_settings", { settings: settingsToSave });
-      const nextCatalogInputs = catalogDiscoveryInputs(settingsToSave);
-      const previousCatalogInputs =
-        savedCatalogInputs ?? nextCatalogInputs;
-      const changedProviders = PROVIDERS.filter(
-        (provider) =>
-          previousCatalogInputs[provider] !== nextCatalogInputs[provider],
-      );
-      setSavedSettingsSnapshot(savedSnapshot);
-      setSavedCatalogInputs(nextCatalogInputs);
-      setWarnings([]); // Clear warnings after successful save
-      setSaved(JSON.stringify(settingsRef.current) === savedSnapshot);
-      for (const provider of changedProviders) {
-        // Cloud catalog caches do not include account identity, so a changed
-        // saved credential must bypass them. Local discovery is uncached.
-        void loadCatalog(
-          provider,
-          settingsToSave,
-          provider !== "local",
-        );
-      }
-      onSystemChange?.();
-    } catch (e) {
-      console.error("Failed to save settings:", e);
-      alert(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setSaving(false);
-    }
+    setSaveError(null);
+
+    // Serialize saves so a slower, older request can never overwrite a newer
+    // edit. Each queued request still captures an immutable settings snapshot.
+    saveChainRef.current = saveChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await invoke("save_settings", { settings: settingsToSave });
+          const nextCatalogInputs = catalogDiscoveryInputs(settingsToSave);
+          const previousCatalogInputs =
+            savedCatalogInputsRef.current ?? nextCatalogInputs;
+          const changedProviders = PROVIDERS.filter(
+            (provider) =>
+              previousCatalogInputs[provider] !== nextCatalogInputs[provider],
+          );
+          savedCatalogInputsRef.current = nextCatalogInputs;
+          setSavedSettingsSnapshot(savedSnapshot);
+          setSavedCatalogInputs(nextCatalogInputs);
+          setWarnings([]);
+          setSaved(JSON.stringify(settingsRef.current) === savedSnapshot);
+          for (const provider of changedProviders) {
+            // Cloud catalog caches do not include account identity, so a
+            // changed saved credential must bypass them. Local discovery is
+            // uncached.
+            void loadCatalog(
+              provider,
+              settingsToSave,
+              provider !== "local",
+            );
+          }
+          onSystemChange?.();
+        } catch (e) {
+          console.error("Failed to save settings:", e);
+          if (latestSaveSequenceRef.current === saveSequence) {
+            setSaveError(e instanceof Error ? e.message : String(e));
+          }
+        } finally {
+          if (latestSaveSequenceRef.current === saveSequence) {
+            setSaving(false);
+          }
+        }
+      });
+  };
+
+  useEffect(() => {
+    if (!settings || !dirty) return;
+    setSaved(false);
+    setSaveError(null);
+    const snapshot = JSON.stringify(settings);
+    if (latestQueuedSnapshotRef.current === snapshot) return;
+    const timer = window.setTimeout(
+      () => enqueueSave(settings),
+      AUTOSAVE_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [dirty, settings]);
+
+  const retrySave = () => {
+    if (settings) enqueueSave(settings, true);
   };
 
   const handleClose = () => {
-    if (dirty && !window.confirm("You have unsaved settings changes. Leave and discard them?")) {
+    if (savePending && !window.confirm("Settings changes have not finished saving. Leave anyway?")) {
       return;
     }
     onClose();
@@ -363,6 +351,24 @@ export default function SettingsPage({
       icon: (
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
+        </svg>
+      ),
+    },
+    {
+      id: "api-keys",
+      label: "API Keys",
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM12 9v12m-3-3h6" />
+        </svg>
+      ),
+    },
+    {
+      id: "workflow",
+      label: "Workflow",
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12m0 0a3 3 0 100 6 3 3 0 000-6zm12-12v4m0 0a3 3 0 100 6 3 3 0 000-6zm0 6v10M6 9h12" />
         </svg>
       ),
     },
@@ -442,7 +448,7 @@ export default function SettingsPage({
               <p key={i}>{w}</p>
             ))}
             <p className="mt-1 text-amber-700 dark:text-amber-300 text-xs">
-              Saving will overwrite the current file with these values.
+              Changing a setting will overwrite the current file with these values.
             </p>
           </div>
         )}
@@ -456,9 +462,13 @@ export default function SettingsPage({
               catalogLoading={catalogLoading}
               discoveryInputChanged={discoveryInputChanged}
               loadCatalog={loadCatalog}
-              dependencies={dependencies}
-              onDependenciesRefresh={onSystemChange}
             />
+          )}
+          {section === "api-keys" && (
+            <ApiKeysSection settings={settings} setSettings={setSettings} />
+          )}
+          {section === "workflow" && (
+            <WorkflowSection settings={settings} setSettings={setSettings} />
           )}
           {section === "extraction" && (
             <ExtractionSection
@@ -476,18 +486,27 @@ export default function SettingsPage({
             />
           )}
 
-          {/* Save bar */}
-          <div className="mt-10 pt-6 border-t border-gray-200 dark:border-neutral-700 flex items-center gap-3">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="py-2 px-6 bg-gray-900 dark:bg-neutral-100 text-white dark:text-neutral-900 rounded-lg text-sm font-medium
-                         hover:bg-gray-800 dark:hover:bg-neutral-200 disabled:bg-gray-400 dark:disabled:bg-neutral-700 transition-colors"
-            >
-              {saving ? "Saving..." : "Save"}
-            </button>
-            {saved && (
-              <span className="text-sm text-green-700 dark:text-green-400">Settings saved.</span>
+          <div
+            className="mt-10 border-t border-gray-200 pt-6 text-sm dark:border-neutral-700"
+            aria-live="polite"
+          >
+            {saveError ? (
+              <div role="alert" className="flex items-center gap-3 text-red-700 dark:text-red-400">
+                <span>Could not save settings: {saveError}</span>
+                <button
+                  type="button"
+                  onClick={retrySave}
+                  className="font-medium underline underline-offset-2"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : saving || dirty ? (
+              <span className="text-gray-500 dark:text-neutral-400">Saving changes…</span>
+            ) : saved ? (
+              <span className="text-green-700 dark:text-green-400">All changes saved.</span>
+            ) : (
+              <span className="text-gray-500 dark:text-neutral-400">Changes save automatically.</span>
             )}
           </div>
         </div>
@@ -498,40 +517,6 @@ export default function SettingsPage({
 
 /* ── Section Components ──────────────────────────────────────────── */
 
-function ProviderGroup({
-  title,
-  active,
-  hasApiKey,
-  help,
-  children,
-}: {
-  title: string;
-  active: boolean;
-  hasApiKey?: boolean;
-  help?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-5 border-t border-gray-200 py-6 dark:border-neutral-800">
-      <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-gray-900 dark:text-neutral-100">{title}</span>
-        {help && <InfoButton label={title}>{help}</InfoButton>}
-        {active && (
-          <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-gray-900 text-white dark:bg-neutral-200 dark:text-neutral-900">
-            default
-          </span>
-        )}
-        {hasApiKey && (
-          <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-green-700 text-white dark:bg-green-600">
-            api
-          </span>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
 function LLMSection({
   settings,
   setSettings,
@@ -540,8 +525,6 @@ function LLMSection({
   catalogLoading,
   discoveryInputChanged,
   loadCatalog,
-  dependencies,
-  onDependenciesRefresh,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
@@ -550,31 +533,12 @@ function LLMSection({
   catalogLoading: Record<string, boolean>;
   discoveryInputChanged: Record<string, boolean>;
   loadCatalog: (provider: string, settings: Settings, refresh?: boolean) => Promise<void>;
-  dependencies?: DepsReport | null;
-  onDependenciesRefresh?: () => void;
 }) {
   const localCatalog = catalogBlocked.local ? undefined : catalogs.local;
   const parallelAgents = defaultParallelAgents(settings);
   const sequentialAgent = defaultSequentialAgent(settings);
   const orientationAgent = defaultOrientationAgent(settings);
-  const defaultProviders = new Set([
-    ...parallelAgents,
-    sequentialAgent,
-    orientationAgent,
-    settings.preferred_provider,
-  ]);
-  const accessIssues = Object.fromEntries(
-    (["claude", "codex", "antigravity"] as const).map((provider) => [
-      provider,
-      providerAccessIssue(provider, settings, dependencies),
-    ]),
-  ) as Record<CloudProvider, ProviderAccessIssue | null>;
   const [externalLinkError, setExternalLinkError] = useState<string | null>(null);
-
-  const refreshProvider = (provider: CloudProvider) => {
-    void loadCatalog(provider, settings, true);
-    onDependenciesRefresh?.();
-  };
 
   const openOllamaSite = async () => {
     setExternalLinkError(null);
@@ -589,7 +553,7 @@ function LLMSection({
     <>
       <SectionHeader
         title="Models"
-        help="Set role-level defaults for inherited workflow steps, then configure each provider's connection and baseline model policy."
+        help="Set role-level provider, model, and thinking defaults for workflow steps that remain at Default."
       />
 
       <div className="space-y-0">
@@ -690,205 +654,13 @@ function LLMSection({
           </div>
         </section>
 
-        <div className="border-t border-gray-200 pb-5 pt-8 dark:border-neutral-800">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Provider configuration</h3>
-          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
-            Configure each provider's connection, baseline model, and thinking policy.
-          </p>
-        </div>
-
-        {/* Claude */}
-        <ProviderGroup title="Claude (Anthropic)" active={defaultProviders.has("claude")} hasApiKey={!!settings.anthropic_api_key}>
-          <Field
-            label="API Key"
-            help="Bypasses Claude CLI for faster calls. Leave empty to use the CLI with your subscription."
-          >
-            <input
-              aria-label="Claude API Key"
-              type="password"
-              value={settings.anthropic_api_key}
-              onChange={(e) =>
-                setSettings({ ...settings, anthropic_api_key: e.target.value })
-              }
-              placeholder="sk-ant-... (optional, enables direct API)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-            />
-          </Field>
-          <div
-            role="group"
-            aria-label="Claude model configuration"
-            className="grid grid-cols-2 gap-4"
-          >
-            <Field label="Model">
-              <ModelPicker
-                provider="claude"
-                settings={settings}
-                catalog={catalogBlocked.claude ? undefined : catalogs.claude}
-                blocked={catalogBlocked.claude}
-                accessIssue={accessIssues.claude}
-                allowSavedUnknown={!discoveryInputChanged.claude}
-                loading={catalogLoading.claude}
-                onChange={(selection) => setSettings(withProviderSelection(settings, "claude", selection))}
-                onRefresh={() => refreshProvider("claude")}
-              />
-            </Field>
-            <Field label="Thinking Effort">
-              <select
-                aria-label="Claude Thinking Effort"
-                aria-describedby={accessIssues.claude ? "claude-model-access-note" : undefined}
-                value={settings.claude_effort}
-                disabled={catalogBlocked.claude || Boolean(accessIssues.claude)}
-                onChange={(e) =>
-                  setSettings({ ...settings, claude_effort: e.target.value })
-                }
-                className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                <option value="">Default</option>
-                {effortOptions(
-                  catalogBlocked.claude ? undefined : catalogs.claude,
-                  providerSelection(settings, "claude"),
-                  ["low", "medium", "high", "max"],
-                ).map((effort) => (
-                  <option key={effort} value={effort}>{effortLabel(effort)}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        </ProviderGroup>
-
-        {/* ChatGPT / OpenAI */}
-        <ProviderGroup title="ChatGPT (OpenAI)" active={defaultProviders.has("codex")} hasApiKey={!!settings.openai_api_key}>
-          <Field
-            label="API Key"
-            help="Bypasses Codex CLI for faster calls. Leave empty to use the CLI."
-          >
-            <input
-              aria-label="OpenAI API Key"
-              type="password"
-              value={settings.openai_api_key}
-              onChange={(e) =>
-                setSettings({ ...settings, openai_api_key: e.target.value })
-              }
-              placeholder="sk-... (optional, enables direct API)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-            />
-          </Field>
-          <div
-            role="group"
-            aria-label="ChatGPT model configuration"
-            className="grid grid-cols-2 gap-4"
-          >
-            <Field label="Model">
-              <ModelPicker
-                provider="codex"
-                settings={settings}
-                catalog={catalogBlocked.codex ? undefined : catalogs.codex}
-                blocked={catalogBlocked.codex}
-                accessIssue={accessIssues.codex}
-                allowSavedUnknown={!discoveryInputChanged.codex}
-                loading={catalogLoading.codex}
-                onChange={(selection) => setSettings(withProviderSelection(settings, "codex", selection))}
-                onRefresh={() => refreshProvider("codex")}
-              />
-            </Field>
-            <Field label="Reasoning Effort">
-              <select
-                aria-label="OpenAI Reasoning Effort"
-                aria-describedby={accessIssues.codex ? "codex-model-access-note" : undefined}
-                value={settings.codex_effort}
-                disabled={catalogBlocked.codex || Boolean(accessIssues.codex)}
-                onChange={(e) =>
-                  setSettings({ ...settings, codex_effort: e.target.value })
-                }
-                className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                <option value="">Default</option>
-                {effortOptions(
-                  catalogBlocked.codex ? undefined : catalogs.codex,
-                  providerSelection(settings, "codex"),
-                  ["low", "medium", "high"],
-                ).map((effort) => (
-                  <option key={effort} value={effort}>{effortLabel(effort)}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        </ProviderGroup>
-
-        {/* Antigravity / Google */}
-        <ProviderGroup title="Antigravity (Google)" active={defaultProviders.has("antigravity")} hasApiKey={!!settings.google_api_key}>
-          <Field
-            label="Gemini API Key"
-            help="Bypasses Antigravity CLI for faster calls. Leave empty to use the CLI."
-          >
-            <input
-              aria-label="Gemini API Key"
-              type="password"
-              value={settings.google_api_key}
-              onChange={(e) =>
-                setSettings({ ...settings, google_api_key: e.target.value })
-              }
-              placeholder="AI... (optional, enables direct API)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-            />
-          </Field>
-          <div
-            role="group"
-            aria-label="Antigravity model configuration"
-            className="grid grid-cols-2 gap-4"
-          >
-            <Field label="Model">
-              <ModelPicker
-                provider="antigravity"
-                settings={settings}
-                catalog={catalogBlocked.antigravity ? undefined : catalogs.antigravity}
-                blocked={catalogBlocked.antigravity}
-                accessIssue={accessIssues.antigravity}
-                allowSavedUnknown={!discoveryInputChanged.antigravity}
-                loading={catalogLoading.antigravity}
-                onChange={(selection) => setSettings(withProviderSelection(settings, "antigravity", selection))}
-                onRefresh={() => refreshProvider("antigravity")}
-              />
-            </Field>
-            <Field
-              label="Reasoning Effort"
-              help="Sent only on the Antigravity CLI transport; the Gemini API has no effort control."
-            >
-              <select
-                aria-label="Antigravity Reasoning Effort"
-                aria-describedby={accessIssues.antigravity ? "antigravity-model-access-note" : undefined}
-                value={settings.antigravity_effort}
-                disabled={
-                  catalogBlocked.antigravity
-                  || Boolean(accessIssues.antigravity)
-                  || providerTransport(settings, "antigravity") === "api"
-                }
-                onChange={(e) =>
-                  setSettings({ ...settings, antigravity_effort: e.target.value })
-                }
-                className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                <option value="">Default</option>
-                {effortOptions(
-                  catalogBlocked.antigravity ? undefined : catalogs.antigravity,
-                  providerSelection(settings, "antigravity"),
-                  ["low", "medium", "high"],
-                ).map((effort) => (
-                  <option key={effort} value={effort}>{effortLabel(effort)}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-        </ProviderGroup>
-
         {/* Local (Ollama / OpenAI-compatible) */}
-        <ProviderGroup
-          title="Local (Ollama)"
-          active={defaultProviders.has("local")}
-          help={<>Runs against any local OpenAI-compatible server. With{" "}
+        <section className="space-y-5 border-t border-gray-200 pt-8 dark:border-neutral-800">
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
+              Local server
+            </h3>
+            <InfoButton label="Local server">Runs against any local OpenAI-compatible server. With{" "}
             <a
               href="https://ollama.com"
               onClick={(e) => {
@@ -901,8 +673,8 @@ function LLMSection({
             </a>{" "}
             installed, run <span className="font-mono">ollama pull llama3.3</span>, then select
             the model below. LM Studio, llama.cpp, and vLLM work by changing the URL. Local
-            models may be less capable than cloud models and may lack file-reading support.</>}
-        >
+            models may be less capable than cloud models and may lack file-reading support.</InfoButton>
+          </div>
           {externalLinkError && (
             <p role="alert" className="text-xs text-red-700 dark:text-red-300">
               Could not open ollama.com: {externalLinkError}
@@ -947,101 +719,272 @@ function LLMSection({
               onRefresh={() => loadCatalog("local", settings, true)}
             />
           </Field>
+        </section>
+
+      </div>
+    </>
+  );
+}
+
+type AccessMode = "subscription" | "api";
+
+function AccessModeSelector({
+  provider,
+  value,
+  onChange,
+}: {
+  provider: string;
+  value: AccessMode;
+  onChange: (mode: AccessMode) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 text-sm font-medium text-gray-700 dark:text-neutral-300">
+        Connection mode
+      </div>
+      <div
+        role="radiogroup"
+        aria-label={`${provider} connection mode`}
+        className="inline-flex rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-neutral-600 dark:bg-neutral-900"
+      >
+        {(["subscription", "api"] as const).map((mode) => (
+          <label
+            key={mode}
+            className={`cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              value === mode
+                ? "bg-white text-gray-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100"
+                : "text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-200"
+            }`}
+          >
+            <input
+              type="radio"
+              name={`${provider.toLowerCase().replaceAll(" ", "-")}-access-mode`}
+              value={mode}
+              checked={value === mode}
+              onChange={() => onChange(mode)}
+              className="sr-only"
+            />
+            {mode === "subscription" ? "Subscription" : "API"}
+          </label>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11px] leading-4 text-gray-500 dark:text-neutral-400">
+        {value === "subscription"
+          ? "Uses the provider CLI and its signed-in subscription. The saved API key is not used."
+          : "Uses direct, token-metered API calls with the key below. The provider CLI is not required."}
+      </p>
+    </div>
+  );
+}
+
+function ApiKeysSection({
+  settings,
+  setSettings,
+}: {
+  settings: Settings;
+  setSettings: (s: Settings) => void;
+}) {
+  return (
+    <>
+      <SectionHeader
+        title="API Keys"
+        description="Store provider credentials and choose explicitly between direct API calls and subscription-backed CLIs."
+      />
+
+      <div className="divide-y divide-gray-200 dark:divide-neutral-800">
+        <section className="space-y-4 pb-6">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
+            Claude (Anthropic)
+          </h3>
+          <AccessModeSelector
+            provider="Claude"
+            value={settings.claude_access_mode}
+            onChange={(mode) => setSettings({ ...settings, claude_access_mode: mode })}
+          />
+          <Field
+            label="API Key"
+            help="Stored encrypted and used only when Claude is in API mode."
+          >
+            <input
+              aria-label="Claude API Key"
+              type="password"
+              value={settings.anthropic_api_key}
+              onChange={(e) => setSettings({ ...settings, anthropic_api_key: e.target.value })}
+              placeholder="sk-ant-... (optional, enables direct API)"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+            />
+          </Field>
+          {settings.claude_access_mode === "api" && !settings.anthropic_api_key.trim() && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              Enter an Anthropic API key before running Claude in API mode.
+            </p>
+          )}
+        </section>
+
+        <section className="space-y-4 py-6">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
+            ChatGPT (OpenAI)
+          </h3>
+          <AccessModeSelector
+            provider="ChatGPT"
+            value={settings.codex_access_mode}
+            onChange={(mode) => setSettings({ ...settings, codex_access_mode: mode })}
+          />
+          <Field
+            label="API Key"
+            help="Stored encrypted and used only when ChatGPT is in API mode."
+          >
+            <input
+              aria-label="OpenAI API Key"
+              type="password"
+              value={settings.openai_api_key}
+              onChange={(e) => setSettings({ ...settings, openai_api_key: e.target.value })}
+              placeholder="sk-... (optional, enables direct API)"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+            />
+          </Field>
+          {settings.codex_access_mode === "api" && !settings.openai_api_key.trim() && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              Enter an OpenAI API key before running ChatGPT in API mode.
+            </p>
+          )}
+        </section>
+
+        <section className="space-y-4 py-6">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
+            Antigravity (Google)
+          </h3>
+          <AccessModeSelector
+            provider="Antigravity"
+            value={settings.antigravity_access_mode}
+            onChange={(mode) => setSettings({ ...settings, antigravity_access_mode: mode })}
+          />
+          <Field
+            label="Gemini API Key"
+            help="Stored encrypted and used only when Antigravity is in API mode."
+          >
+            <input
+              aria-label="Gemini API Key"
+              type="password"
+              value={settings.google_api_key}
+              onChange={(e) => setSettings({ ...settings, google_api_key: e.target.value })}
+              placeholder="AI... (optional, enables direct API)"
+              className={`${inputClass} font-mono`}
+              autoComplete="off"
+            />
+          </Field>
+          {settings.antigravity_access_mode === "api" && !settings.google_api_key.trim() && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              Enter a Google AI API key before running Antigravity in API mode.
+            </p>
+          )}
+        </section>
+
+        <section className="space-y-4 pt-6">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
+              Local server
+            </h3>
+            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
+              Optional bearer token for the OpenAI-compatible endpoint configured under Models.
+            </p>
+          </div>
           <Field label="API Key">
             <input
               aria-label="Local API Key"
               type="password"
               value={settings.local_api_key}
-              onChange={(e) =>
-                setSettings({ ...settings, local_api_key: e.target.value })
-              }
+              onChange={(e) => setSettings({ ...settings, local_api_key: e.target.value })}
               placeholder="usually empty for local servers"
               className={`${inputClass} font-mono`}
               autoComplete="off"
             />
           </Field>
-        </ProviderGroup>
-
-        <section className="space-y-5 border-t border-gray-200 pt-8 dark:border-neutral-800">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Execution</h3>
-            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
-              Control concurrency, time limits, and retry behavior across model calls.
-            </p>
-          </div>
-
-          <Field label="Maximum Concurrent Agents">
-            <div className="flex items-center gap-3">
-              <input
-                aria-label="Maximum Concurrent Agents"
-                type="range"
-                min={1}
-                max={20}
-                value={settings.max_workers}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    max_workers: parseInt(e.target.value, 10),
-                  })
-                }
-                className="flex-1 accent-gray-900 dark:accent-gray-300"
-              />
-              <span className="text-sm font-mono text-gray-700 dark:text-neutral-300 w-6 text-center">
-                {settings.max_workers}
-              </span>
-            </div>
-          </Field>
-
-          <Field
-            label="Step Timeout"
-            help="Maximum time for each LLM call. Orientation and extraction calls use half this value."
-          >
-            <div className="flex items-center gap-3">
-              <select
-                aria-label="Step Timeout"
-                value={settings.step_timeout_secs}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    step_timeout_secs: parseInt(e.target.value, 10),
-                  })
-                }
-                className={selectClass}
-              >
-                <option value={600}>10 minutes</option>
-                <option value={1200}>20 minutes (default)</option>
-                <option value={1800}>30 minutes</option>
-                <option value={2700}>45 minutes</option>
-                <option value={3600}>60 minutes</option>
-              </select>
-            </div>
-          </Field>
-
-          <Field
-            label="Step Retries"
-            help="Number of times to retry a failed step before giving up. Set to 0 for no retries."
-          >
-            <div className="flex items-center gap-3">
-              <input
-                aria-label="Step Retries"
-                type="range"
-                min={0}
-                max={5}
-                value={settings.max_retries}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    max_retries: parseInt(e.target.value, 10),
-                  })
-                }
-                className="flex-1 accent-gray-900 dark:accent-gray-300"
-              />
-              <span className="text-sm font-mono text-gray-700 dark:text-neutral-300 w-6 text-center">
-                {settings.max_retries}
-              </span>
-            </div>
-          </Field>
         </section>
+      </div>
+    </>
+  );
+}
+
+function WorkflowSection({
+  settings,
+  setSettings,
+}: {
+  settings: Settings;
+  setSettings: (s: Settings) => void;
+}) {
+  return (
+    <>
+      <SectionHeader
+        title="Workflow"
+        description="Control concurrency, time limits, and retry behavior across model calls."
+      />
+      <div className="space-y-5">
+        <Field label="Maximum Concurrent Agents">
+          <div className="flex items-center gap-3">
+            <input
+              aria-label="Maximum Concurrent Agents"
+              type="range"
+              min={1}
+              max={20}
+              value={settings.max_workers}
+              onChange={(e) => setSettings({
+                ...settings,
+                max_workers: parseInt(e.target.value, 10),
+              })}
+              className="flex-1 accent-gray-900 dark:accent-gray-300"
+            />
+            <span className="w-6 text-center font-mono text-sm text-gray-700 dark:text-neutral-300">
+              {settings.max_workers}
+            </span>
+          </div>
+        </Field>
+
+        <Field
+          label="Step Timeout"
+          help="Maximum time for each LLM call. Orientation and extraction calls use half this value."
+        >
+          <select
+            aria-label="Step Timeout"
+            value={settings.step_timeout_secs}
+            onChange={(e) => setSettings({
+              ...settings,
+              step_timeout_secs: parseInt(e.target.value, 10),
+            })}
+            className={selectClass}
+          >
+            <option value={600}>10 minutes</option>
+            <option value={1200}>20 minutes (default)</option>
+            <option value={1800}>30 minutes</option>
+            <option value={2700}>45 minutes</option>
+            <option value={3600}>60 minutes</option>
+          </select>
+        </Field>
+
+        <Field
+          label="Step Retries"
+          help="Number of times to retry a failed step before giving up. Set to 0 for no retries."
+        >
+          <div className="flex items-center gap-3">
+            <input
+              aria-label="Step Retries"
+              type="range"
+              min={0}
+              max={5}
+              value={settings.max_retries}
+              onChange={(e) => setSettings({
+                ...settings,
+                max_retries: parseInt(e.target.value, 10),
+              })}
+              className="flex-1 accent-gray-900 dark:accent-gray-300"
+            />
+            <span className="w-6 text-center font-mono text-sm text-gray-700 dark:text-neutral-300">
+              {settings.max_retries}
+            </span>
+          </div>
+        </Field>
       </div>
     </>
   );
@@ -1668,114 +1611,26 @@ function RunRetention({
 
 /* ── Shared UI Components ────────────────────────────────────────── */
 
-function effortLabel(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function ModelPicker({
-  provider,
-  settings,
-  catalog,
-  blocked,
-  accessIssue,
-  allowSavedUnknown,
-  loading,
-  onChange,
-  onRefresh,
-}: {
-  provider: CloudProvider;
-  settings: Settings;
-  catalog?: ModelCatalog;
-  blocked: boolean;
-  accessIssue?: ProviderAccessIssue | null;
-  allowSavedUnknown: boolean;
-  loading?: boolean;
-  onChange: (selection: ModelSelection) => void;
-  onRefresh: () => void;
-}) {
-  const selection = providerSelection(settings, provider);
-  const value = encodeModelSelection(selection);
-  const known = value === "automatic"
-    || catalog?.models.some((model) => value === `pinned:${model.id}`);
-  const selectValue = known || allowSavedUnknown ? value : "automatic";
-  return (
-    <>
-      <select
-        aria-label={`${provider} model`}
-        aria-describedby={accessIssue ? `${provider}-model-access-note` : undefined}
-        value={selectValue}
-        disabled={blocked || Boolean(accessIssue)}
-        onChange={(event) => onChange(decodeModelSelection(event.target.value)!)}
-        className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
-      >
-        <option value="automatic">
-          Automatic — {catalog?.transport === "api" ? "recommended available model" : "installed CLI default"}
-        </option>
-        {!!catalog?.models.length && (
-          <optgroup label="Available models">
-            {catalog.models.map((model) => (
-              <option key={model.id} value={`pinned:${model.id}`} disabled={model.deprecated}>
-                {model.display_name || model.id}{model.is_default ? " (default)" : ""}{model.deprecated ? " (deprecated)" : ""}
-              </option>
-            ))}
-          </optgroup>
-        )}
-        {!known && allowSavedUnknown && (
-          <option value={value}>
-            {selection.mode === "role"
-              ? `${effortLabel(selection.role)} (saved role; choose a model)`
-              : selection.mode === "pinned"
-                ? `${selection.model} (saved; not currently listed)`
-                : "Automatic"}
-          </option>
-        )}
-      </select>
-      <CatalogStatus
-        blocked={blocked}
-        catalog={catalog}
-        accessIssue={accessIssue}
-        accessNoteId={`${provider}-model-access-note`}
-        loading={loading}
-        onRefresh={onRefresh}
-      />
-    </>
-  );
-}
-
 function CatalogStatus({
   blocked = false,
   catalog,
-  accessIssue,
-  accessNoteId,
   loading,
   onRefresh,
 }: {
   blocked?: boolean;
   catalog?: ModelCatalog;
-  accessIssue?: ProviderAccessIssue | null;
-  accessNoteId?: string;
   loading?: boolean;
   onRefresh: () => void;
 }) {
   return (
     <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-gray-500 dark:text-neutral-400">
       <span>
-        {accessIssue ? (
-          <span
-            id={accessNoteId}
-            className="block text-amber-700 dark:text-amber-300"
-          >
-            <span className="block font-medium">{accessIssue.summary}</span>
-            {accessIssue.detail && accessIssue.detail !== accessIssue.summary && (
-              <span className="block">{accessIssue.detail}</span>
-            )}
-          </span>
-        ) : loading ? "Discovering models…" : blocked
-          ? "Save settings or Refresh to discover models for these values"
+        {loading ? "Discovering models…" : blocked
+          ? "Waiting for autosave; Refresh to discover these values now"
           : catalog
           ? `${catalog.transport.toUpperCase()} · ${catalog.source_version || catalog.source}${catalog.stale ? " · stale" : ""}`
           : "Catalog not loaded"}
-        {!accessIssue && catalog?.warning && (
+        {catalog?.warning && (
           <span className="block text-amber-700 dark:text-amber-300">{catalog.warning}</span>
         )}
       </span>

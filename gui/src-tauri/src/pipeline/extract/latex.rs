@@ -403,7 +403,7 @@ pub(super) fn stage_latex_project(
         }
         let destination = match source.strip_prefix(&project_root) {
             Ok(relative) => destination_root.join(relative),
-            Err(_) => external_staging_destination(&source, &project_root, &destination_root)?,
+            Err(_) => external_staging_destination(&source, &project_root, destination_root)?,
         };
         copy_scoped_source_file(
             &source,
@@ -564,7 +564,10 @@ fn extract_latex_inner(
     stack: &mut Vec<PathBuf>,
 ) -> Result<String, String> {
     if stack.len() > 10 {
-        push_warning(warnings, "LaTeX \\input{} nesting exceeds 10 levels. Output may be incomplete.".to_string());
+        push_warning(
+            warnings,
+            "LaTeX \\input{} nesting exceeds 10 levels. Output may be incomplete.".to_string(),
+        );
         return Ok(String::new());
     }
 

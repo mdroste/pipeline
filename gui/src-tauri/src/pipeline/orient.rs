@@ -353,7 +353,8 @@ mod tests {
             r#"{"metadata": {"title": "T"}, "sections": []}"#
         );
         // Same when the junk object trails the real one.
-        let input = "{\"metadata\": {\"title\": \"T\"}, \"sections\": []}\nAs requested: {\"ok\": 1}";
+        let input =
+            "{\"metadata\": {\"title\": \"T\"}, \"sections\": []}\nAs requested: {\"ok\": 1}";
         assert_eq!(
             strip_json_fences(input),
             r#"{"metadata": {"title": "T"}, "sections": []}"#

@@ -232,11 +232,13 @@ fn format_cost_precision() {
 }
 
 #[test]
-fn provider_api_mode_follows_keys() {
+fn provider_api_mode_follows_explicit_access_modes() {
     let mut s = Settings::default();
     assert!(!provider_in_api_mode(&s, "claude"));
     assert!(provider_in_api_mode(&s, "local"));
     s.anthropic_api_key = "sk-x".into();
+    assert!(!provider_in_api_mode(&s, "claude"));
+    s.claude_access_mode = "api".into();
     assert!(provider_in_api_mode(&s, "claude"));
     assert!(provider_in_api_mode(&s, "")); // empty provider = Anthropic
     assert!(!provider_in_api_mode(&s, "antigravity"));
@@ -325,6 +327,7 @@ fn run_summary_labels_api_and_cli_cost_estimates() {
     // API mode: cost estimated (0.5*15 + 0.1*75 = 7.5 + 7.5 = 15.00).
     let s = Settings {
         anthropic_api_key: "sk-x".into(),
+        claude_access_mode: "api".into(),
         ..Default::default()
     };
     let api = render_run_summary(&report, &s).unwrap();

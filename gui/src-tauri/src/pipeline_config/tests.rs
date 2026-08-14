@@ -682,6 +682,7 @@ fn step_model_policy_is_provider_and_transport_specific() {
         "fast role"
     );
     settings.openai_api_key = "secret".into();
+    settings.codex_access_mode = "api".into();
     assert_eq!(
         step.model_selection_for(&settings, "codex")
             .unwrap()

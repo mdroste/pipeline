@@ -167,16 +167,8 @@ pub async fn call_codex(
         .map(|result| result.text);
     };
 
-    let settings = overrides
-        .settings
-        .cloned()
-        .unwrap_or_else(crate::settings::load);
-    let model = if overrides.model_resolved {
-        overrides.model.unwrap_or("")
-    } else {
-        overrides.model.unwrap_or(settings.codex_model.as_str())
-    };
-    let effort = overrides.effort.unwrap_or(settings.codex_effort.as_str());
+    let model = overrides.model.unwrap_or("");
+    let effort = overrides.effort.unwrap_or("");
     let session_key =
         context.compatibility_key("codex-cli", [model, effort, system_prompt.unwrap_or("")]);
     let slot = context.slot(session_key).await;
@@ -563,21 +555,13 @@ async fn call_codex_inner(
     }
 
     // Apply Codex settings (model, reasoning effort) with optional per-step overrides.
-    let settings = overrides
-        .settings
-        .cloned()
-        .unwrap_or_else(crate::settings::load);
-    let model_src = if overrides.model_resolved {
-        overrides.model.unwrap_or("")
-    } else {
-        overrides.model.unwrap_or(settings.codex_model.as_str())
-    };
+    let model_src = overrides.model.unwrap_or("");
     let model = crate::settings::sanitize_cli_arg(model_src);
     if !model.is_empty() {
         cmd_args.push("--model".to_string());
         cmd_args.push(model);
     }
-    let effort_src = overrides.effort.unwrap_or(settings.codex_effort.as_str());
+    let effort_src = overrides.effort.unwrap_or("");
     let effort = crate::settings::sanitize_cli_arg(effort_src);
     if !effort.is_empty() {
         cmd_args.push("-c".to_string());

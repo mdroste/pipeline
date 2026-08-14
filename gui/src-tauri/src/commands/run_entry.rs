@@ -76,6 +76,9 @@ pub(super) fn complete_run(
     })
 }
 
+// Tauri exposes these launch fields as separate command arguments to keep the
+// frontend IPC contract explicit and backwards-compatible.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn run_pipeline(
     app: AppHandle,

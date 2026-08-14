@@ -124,11 +124,11 @@ export function validateReleaseIdentity({ rootDir = REPO_ROOT, tag, existingTags
     throw new Error("Tauri release config must set bundle.windows.allowDowngrades to false");
   }
   if (
-    tauriConfig.bundle?.windows?.webviewInstallMode?.type !== "offlineInstaller"
+    tauriConfig.bundle?.windows?.webviewInstallMode?.type !== "embedBootstrapper"
     || tauriConfig.bundle?.windows?.webviewInstallMode?.silent !== true
   ) {
     throw new Error(
-      "Tauri release config must embed the silent Windows WebView2 offlineInstaller",
+      "Tauri release config must embed the silent Windows WebView2 bootstrapper",
     );
   }
   for (const resource of [

@@ -41,8 +41,10 @@ Pipeline run use a supported subscription without a separate API key.
   with `curl -fsSL https://antigravity.google/cli/install.sh | bash`
   (PowerShell installer on Windows), then run `agy` once to sign in.
 
-You can instead enter Anthropic, OpenAI, or Google API keys in Settings. API
-keys are encrypted before they are written to disk. Settings also accepts a
+You can instead enter Anthropic, OpenAI, or Google API keys under Settings →
+API Keys and explicitly select API mode for that provider. A stored key is
+ignored while Subscription mode is selected. API keys are encrypted before
+they are written to disk. Settings also accepts a
 local OpenAI-compatible endpoint; Ollama is the default, and LM Studio,
 llama.cpp, and vLLM can be used by changing the URL.
 

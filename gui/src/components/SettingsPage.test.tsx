@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPage from "./SettingsPage";
-import type { DepsReport, EngineStatus, ModelCatalog, Settings } from "../lib/types";
+import type { EngineStatus, ModelCatalog, Settings } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());
@@ -46,6 +46,9 @@ function makeSettings(): Settings {
     auto_revision_reconciliation: false,
     max_saved_runs: 0,
     max_saved_run_bytes: 5_000_000_000,
+    claude_access_mode: "subscription",
+    codex_access_mode: "subscription",
+    antigravity_access_mode: "subscription",
     anthropic_api_key: "",
     openai_api_key: "",
     google_api_key: "",
@@ -110,24 +113,16 @@ describe("SettingsPage", () => {
     openUrl.mockResolvedValue(undefined);
   });
 
-  it("loads settings and renders the LLM provider section", async () => {
+  it("keeps role defaults on Models and removes provider configuration boxes", async () => {
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     expect(await screen.findByText("Preferred Provider")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Claude (Anthropic)" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "ChatGPT (OpenAI)" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Preferred Provider" })).toBeVisible();
-    expect(screen.getByLabelText("Claude API Key")).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "claude model" })).toBeVisible();
-    expect(
-      screen.getByRole("group", { name: "Claude model configuration" }),
-    ).toHaveClass("grid-cols-2");
-    expect(
-      screen.getByRole("group", { name: "ChatGPT model configuration" }),
-    ).toHaveClass("grid-cols-2");
-    expect(
-      screen.getByRole("group", { name: "Antigravity model configuration" }),
-    ).toHaveClass("grid-cols-2");
+    expect(screen.queryByText("Provider configuration")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Claude API Key")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Maximum Concurrent Agents")).not.toBeInTheDocument();
     expect(screen.getByText("or more", { selector: "strong" }).closest("p")).toHaveTextContent(
       "Select one or more default model to use for parallel workflow steps.",
     );
@@ -137,100 +132,46 @@ describe("SettingsPage", () => {
     expect(screen.getByText(
       "Select one default model to use for processing inputs and classifying adaptive workflow steps.",
     )).toBeVisible();
-    const maxConcurrentAgents = screen.getByLabelText("Maximum Concurrent Agents");
-    expect(maxConcurrentAgents).toBeVisible();
-    expect(maxConcurrentAgents).toHaveValue("16");
-    expect(maxConcurrentAgents).toHaveAttribute("max", "20");
+    expect(screen.getByRole("button", { name: "API Keys" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Workflow" })).toBeVisible();
     expect(invoke).toHaveBeenCalledWith("get_settings");
   });
 
-  it("disables CLI model and effort controls with the dependency diagnosis", async () => {
-    const dependencies: DepsReport = {
-      ready: false,
-      deps: [
-        {
-          name: "Claude CLI",
-          found: false,
-          version: "",
-          path: "",
-          required: true,
-          hint: "Install Claude Code using the official instructions.",
-        },
-        {
-          name: "Codex CLI",
-          found: true,
-          version: "codex-cli 1.2.3",
-          path: "/usr/local/bin/codex",
-          required: true,
-          hint: "Run `codex login` to authenticate.",
-          authenticated: false,
-          cli_auth_status: "signed_out",
-        },
-        {
-          name: "Antigravity CLI",
-          found: true,
-          version: "1.1.12",
-          path: "/Users/mike/.local/bin/agy",
-          required: false,
-          hint: "Run `agy` in a terminal to sign in, then refresh this check.",
-          cli_auth_status: "unknown",
-        },
-      ],
-    };
+  it("keeps API credentials on their own page with explicit connection modes", async () => {
+    const user = userEvent.setup();
     mockLoad(makeSettings());
-    render(
-      <SettingsPage
-        onClose={() => {}}
-        theme="light"
-        onThemeChange={() => {}}
-        dependencies={dependencies}
-      />,
-    );
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    expect(await screen.findByRole("combobox", { name: "claude model" })).toBeDisabled();
-    expect(screen.getByLabelText("Claude Thinking Effort")).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "codex model" })).toBeDisabled();
-    expect(screen.getByLabelText("OpenAI Reasoning Effort")).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "antigravity model" })).toBeDisabled();
-    expect(screen.getByLabelText("Antigravity Reasoning Effort")).toBeDisabled();
-    expect(screen.getByText("Claude CLI could not be found on this system.")).toBeVisible();
-    expect(screen.getByText("Codex CLI is installed but not logged in.")).toBeVisible();
-    expect(
-      screen.getByText("Antigravity CLI is installed, but its login status could not be verified."),
-    ).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "API Keys" }));
+    expect(screen.getByRole("heading", { name: "API Keys" })).toBeVisible();
+    expect(screen.getByLabelText("Claude API Key")).toBeVisible();
+    expect(screen.getByLabelText("OpenAI API Key")).toBeVisible();
+    expect(screen.getByLabelText("Gemini API Key")).toBeVisible();
+    expect(screen.getByLabelText("Local API Key")).toBeVisible();
+    expect(screen.getAllByRole("radio", { name: "Subscription" })[0]).toBeChecked();
+
+    const claudeModes = screen.getByRole("radiogroup", { name: "Claude connection mode" });
+    const api = claudeModes.querySelector<HTMLInputElement>('input[value="api"]');
+    expect(api).not.toBeNull();
+    await user.click(api!);
+    expect(api).toBeChecked();
+    expect(screen.getByText(/Enter an Anthropic API key/)).toBeVisible();
   });
 
-  it("keeps API model and effort controls available when the CLI is absent", async () => {
-    const settings = { ...makeSettings(), openai_api_key: "sk-api-key" };
-    const dependencies: DepsReport = {
-      ready: true,
-      deps: [
-        {
-          name: "Codex CLI",
-          found: true,
-          version: "direct API",
-          path: "",
-          required: true,
-          hint: "API key configured — CLI not required.",
-          authenticated: true,
-        },
-      ],
-    };
-    mockLoad(settings);
-    render(
-      <SettingsPage
-        onClose={() => {}}
-        theme="light"
-        onThemeChange={() => {}}
-        dependencies={dependencies}
-      />,
-    );
+  it("moves execution controls to Workflow", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "codex model" })).toBeEnabled(),
-    );
-    expect(screen.getByLabelText("OpenAI Reasoning Effort")).toBeEnabled();
-    expect(screen.queryByText(/Codex CLI could not be found/)).not.toBeInTheDocument();
+    await screen.findByText("Preferred Provider");
+    expect(screen.queryByLabelText("Maximum Concurrent Agents")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Workflow" }));
+
+    const maxConcurrentAgents = screen.getByLabelText("Maximum Concurrent Agents");
+    expect(maxConcurrentAgents).toHaveValue("16");
+    expect(maxConcurrentAgents).toHaveAttribute("max", "20");
+    expect(screen.getByLabelText("Step Timeout")).toHaveValue("1200");
+    expect(screen.getByLabelText("Step Retries")).toHaveValue("1");
   });
 
   it("opens directly to a requested settings section", async () => {
@@ -334,8 +275,10 @@ describe("SettingsPage", () => {
 
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    expect(await screen.findByRole("option", { name: "Claude Live" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Available models" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", {
+      name: "Claude Live · Parallel steps",
+    })).toBeInTheDocument();
+    expect(screen.getAllByRole("group", { name: "Exact model" })).toHaveLength(3);
     expect(screen.queryByRole("group", { name: "Stable roles" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Balanced/ })).not.toBeInTheDocument();
   });
@@ -347,7 +290,7 @@ describe("SettingsPage", () => {
 
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", {
-      name: "More information about Local (Ollama)",
+      name: "More information about Local server",
     }));
     await user.click(screen.getByRole("link", { name: "ollama.com" }));
 
@@ -490,7 +433,6 @@ describe("SettingsPage", () => {
     ).toBeVisible();
 
     await user.click(screen.getByRole("radio", { name: /^LLM/ }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
         settings: { ...makeSettings(), pdf_extractor: "llm" },
@@ -529,7 +471,6 @@ describe("SettingsPage", () => {
       screen.getByLabelText("PaddleOCR-VL page retries"),
       "2",
     );
-    await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
@@ -566,7 +507,6 @@ describe("SettingsPage", () => {
     );
     await user.click(screen.getByRole("switch", { name: "Merge tables across pages" }));
     await user.click(screen.getByRole("switch", { name: "Retain formula numbers" }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
@@ -592,33 +532,74 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("saves settings and shows the saved indicator", async () => {
+  it("automatically saves changes and shows the saved indicator", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await screen.findByText("Preferred Provider");
 
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(screen.getByText("Changes save automatically.")).toBeVisible();
+    await user.selectOptions(screen.getByLabelText("Preferred Provider"), "codex");
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
-        settings: makeSettings(),
+        settings: { ...makeSettings(), preferred_provider: "codex" },
       }),
     );
-    expect(await screen.findByText("Settings saved.")).toBeInTheDocument();
+    expect(await screen.findByText("All changes saved.")).toBeInTheDocument();
   });
 
-  it("keeps edits made during a save dirty", async () => {
+  it("shows an inline autosave error and retries the current settings", async () => {
     const user = userEvent.setup();
-    let finishSave!: () => void;
-    const pendingSave = new Promise<void>((resolve) => {
-      finishSave = resolve;
+    let saveAttempts = 0;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    invoke.mockImplementation((cmd: string, args?: { provider?: string }) => {
+      if (cmd === "get_settings") {
+        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+      }
+      if (cmd === "get_model_catalog") {
+        return Promise.resolve(catalog(args?.provider ?? "local", "cli", "current"));
+      }
+      if (cmd === "save_settings") {
+        saveAttempts += 1;
+        return saveAttempts === 1
+          ? Promise.reject(new Error("settings file is locked"))
+          : Promise.resolve();
+      }
+      return Promise.resolve();
     });
+
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
+    await user.selectOptions(
+      await screen.findByLabelText("Preferred Provider"),
+      "codex",
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not save settings: settings file is locked",
+    );
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(saveAttempts).toBe(2));
+    expect(await screen.findByText("All changes saved.")).toBeInTheDocument();
+    consoleError.mockRestore();
+  });
+
+  it("serializes an edit made during an autosave and persists the latest value", async () => {
+    const user = userEvent.setup();
+    let finishFirstSave!: () => void;
+    const firstSave = new Promise<void>((resolve) => {
+      finishFirstSave = resolve;
+    });
+    let saveCalls = 0;
     invoke.mockImplementation((cmd: string) => {
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
-      if (cmd === "save_settings") return pendingSave;
+      if (cmd === "save_settings") {
+        saveCalls += 1;
+        return saveCalls === 1 ? firstSave : Promise.resolve();
+      }
       if (cmd === "list_engines") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
@@ -638,15 +619,20 @@ describe("SettingsPage", () => {
     });
     await user.click(reconciliation);
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
+      settings: { ...makeSettings(), auto_revision_reconciliation: true },
+    }));
     await user.click(reconciliation);
-    await act(async () => finishSave());
+    await act(async () => finishFirstSave());
 
-    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
-    expect(screen.queryByText("Settings saved.")).not.toBeInTheDocument();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
+      settings: makeSettings(),
+    }));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
+    expect(await screen.findByText("All changes saved.")).toBeInTheDocument();
   });
 
-  it("does not discover a partial unsaved credential and disables its stale catalog", async () => {
+  it("does not discover a partial credential before debounced autosave", async () => {
     let claudeRequests = 0;
     invoke.mockImplementation((cmd: string, args?: { provider?: string }) => {
       if (cmd === "get_settings") {
@@ -664,17 +650,12 @@ describe("SettingsPage", () => {
     const user = userEvent.setup();
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    expect(await screen.findByText("CLI · saved-account")).toBeVisible();
-    expect(claudeRequests).toBe(1);
+    await waitFor(() => expect(claudeRequests).toBe(1));
     invoke.mockClear();
 
+    await user.click(screen.getByRole("button", { name: "API Keys" }));
     await user.type(screen.getByLabelText("Claude API Key"), "s");
-    const model = screen.getByRole("combobox", { name: "claude model" });
-    await waitFor(() => expect(model).toBeDisabled());
-    expect(screen.queryByText("CLI · saved-account")).not.toBeInTheDocument();
-    expect(
-      screen.getByText("Save settings or Refresh to discover models for these values"),
-    ).toBeVisible();
+    expect(invoke.mock.calls.some(([command]) => command === "save_settings")).toBe(false);
     expect(
       invoke.mock.calls.filter(
         ([command, args]) =>
@@ -684,7 +665,7 @@ describe("SettingsPage", () => {
     ).toHaveLength(0);
   });
 
-  it("forces a cloud catalog refresh only after the changed credential is saved", async () => {
+  it("refreshes a cloud catalog after an API mode and credential change is saved", async () => {
     let claudeRequests = 0;
     invoke.mockImplementation((cmd: string, args?: {
       provider?: string;
@@ -713,73 +694,22 @@ describe("SettingsPage", () => {
     const user = userEvent.setup();
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    expect(await screen.findByText("CLI · saved-account")).toBeVisible();
-    await user.type(screen.getByLabelText("Claude API Key"), "sk-complete-key");
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "claude model" })).toBeDisabled(),
-    );
-    expect(claudeRequests).toBe(1);
-
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("API · new-account")).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "claude model" })).toBeEnabled();
-    expect(claudeRequests).toBe(2);
-    expect(invoke).toHaveBeenCalledWith("get_model_catalog", expect.objectContaining({
-      provider: "claude",
-      refresh: true,
-      settings: expect.objectContaining({ anthropic_api_key: "sk-complete-key" }),
-    }));
-  });
-
-  it("ignores an in-flight saved-account response after a draft key is saved", async () => {
-    let resolveOld!: (value: ModelCatalog) => void;
-    const oldCatalog = new Promise<ModelCatalog>((resolve) => {
-      resolveOld = resolve;
-    });
-    let claudeRequests = 0;
-    invoke.mockImplementation((cmd: string, args?: {
-      provider?: string;
-      refresh?: boolean;
-      settings?: Settings;
-    }) => {
-      if (cmd === "get_settings") {
-        return Promise.resolve({ settings: makeSettings(), warnings: [] });
-      }
-      if (cmd === "get_model_catalog") {
-        if (args?.provider === "claude") {
-          claudeRequests += 1;
-          return claudeRequests === 1
-            ? oldCatalog
-            : Promise.resolve(catalog("claude", "api", "api-new"));
-        }
-        return Promise.resolve(catalog(args?.provider ?? "local", "cli", "current"));
-      }
-      if (cmd === "list_engines") return Promise.resolve([]);
-      if (cmd === "save_settings") return Promise.resolve();
-      return Promise.resolve();
-    });
-    const user = userEvent.setup();
-    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
-
-    const key = await screen.findByPlaceholderText("sk-ant-... (optional, enables direct API)");
     await waitFor(() => expect(claudeRequests).toBe(1));
-    await user.type(key, "sk-complete-key");
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "claude model" })).toBeDisabled(),
-    );
+    await user.click(screen.getByRole("button", { name: "API Keys" }));
+    const claudeModes = screen.getByRole("radiogroup", { name: "Claude connection mode" });
+    await user.click(claudeModes.querySelector<HTMLInputElement>('input[value="api"]')!);
+    await user.type(screen.getByLabelText("Claude API Key"), "sk-complete-key");
     expect(claudeRequests).toBe(1);
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("API · api-new")).toBeVisible();
-    expect(claudeRequests).toBe(2);
+
+    await waitFor(() => expect(claudeRequests).toBe(2));
     expect(invoke).toHaveBeenCalledWith("get_model_catalog", expect.objectContaining({
       provider: "claude",
       refresh: true,
-      settings: expect.objectContaining({ anthropic_api_key: "sk-complete-key" }),
+      settings: expect.objectContaining({
+        anthropic_api_key: "sk-complete-key",
+        claude_access_mode: "api",
+      }),
     }));
-
-    await act(async () => resolveOld(catalog("claude", "cli", "cli-old")));
-    expect(screen.getByText("API · api-new")).toBeVisible();
-    expect(screen.queryByText("CLI · cli-old")).not.toBeInTheDocument();
   });
 
   it("keeps automatic revision reconciliation off by default and persists opt-in", async () => {
@@ -795,7 +725,6 @@ describe("SettingsPage", () => {
 
     await user.click(reconciliation);
     expect(reconciliation).toHaveAttribute("aria-checked", "true");
-    await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {

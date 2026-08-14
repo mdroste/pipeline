@@ -71,10 +71,13 @@ fn cached_base_path() -> String {
     if let Some(cached) = FULL_PATH.read().ok().and_then(|guard| guard.clone()) {
         return cached;
     }
-    // Single-flight: if another call is already probing (or the mutex is
-    // poisoned), use the inherited PATH now rather than queueing up to 5 s
-    // behind the in-flight probe.
-    let Ok(mut failed_at) = PROBE_FAILED_AT.try_lock() else {
+    // Single-flight: concurrent callers must wait for the first probe. This
+    // matters at startup because dependency checks run in parallel: returning
+    // the inherited Finder PATH to lock losers would make every probe except
+    // the winner miss user-installed CLIs. The wait is bounded by the probe's
+    // 5 s timeout, and a recorded failure makes subsequent callers return
+    // immediately until the retry interval elapses.
+    let Ok(mut failed_at) = PROBE_FAILED_AT.lock() else {
         return std::env::var("PATH").unwrap_or_default();
     };
     // The probe that held the lock may have just succeeded.
@@ -153,12 +156,9 @@ fn probe_login_shell_path(shell: &str) -> Option<String> {
         "nu" | "nushell" => command.args(["-l", "-c", "printenv PATH"]),
         _ => command.args(["-i", "-l", "-c", "printenv PATH"]),
     };
-    let output = crate::process::run_bounded(
-        &mut command,
-        std::time::Duration::from_secs(5),
-        64 * 1024,
-    )
-    .ok()?;
+    let output =
+        crate::process::run_bounded(&mut command, std::time::Duration::from_secs(5), 64 * 1024)
+            .ok()?;
     if !output.status.success() || output.stdout_truncated || output.stderr_truncated {
         return None;
     }
@@ -208,7 +208,9 @@ mod tests {
             Some("/opt/homebrew/bin:/usr/bin:/bin".to_string())
         );
         assert_eq!(
-            parse_probe_stdout("nvm: using node v22\n\n/Users/x/.nvm/versions/node/v22/bin:/usr/bin\n\n"),
+            parse_probe_stdout(
+                "nvm: using node v22\n\n/Users/x/.nvm/versions/node/v22/bin:/usr/bin\n\n"
+            ),
             Some("/Users/x/.nvm/versions/node/v22/bin:/usr/bin".to_string())
         );
     }
@@ -222,10 +224,7 @@ mod tests {
 
     #[test]
     fn merge_keeps_primary_order_and_appends_unknown_fallback_entries() {
-        assert_eq!(
-            merge_paths("/a:/b", "/b:/c:"),
-            "/a:/b:/c".to_string()
-        );
+        assert_eq!(merge_paths("/a:/b", "/b:/c:"), "/a:/b:/c".to_string());
     }
 
     #[test]
@@ -242,5 +241,65 @@ mod tests {
                 entry.display()
             )));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_first_use_shares_login_shell_path() {
+        const CHILD_MARKER: &str = "PIPELINE_PATH_RACE_CHILD";
+        const PROBED_PATH: &str = "/pipeline-test/bin:/usr/bin:/bin";
+
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let callers = 8;
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(callers));
+            let handles: Vec<_> = (0..callers)
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        full_path()
+                    })
+                })
+                .collect();
+            let results: Vec<String> = handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect();
+
+            assert!(results.iter().all(|path| path.starts_with(PROBED_PATH)));
+            return;
+        }
+
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let shell = fixture.path().join("path-probe-shell");
+        std::fs::write(
+            &shell,
+            format!("#!/bin/sh\n/bin/sleep 0.2\n/bin/echo '{PROBED_PATH}'\n"),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&shell).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&shell, permissions).unwrap();
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "env::tests::concurrent_first_use_shares_login_shell_path",
+                "--nocapture",
+            ])
+            .env(CHILD_MARKER, "1")
+            .env("PATH", "/usr/bin:/bin")
+            .env("SHELL", &shell)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "child test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

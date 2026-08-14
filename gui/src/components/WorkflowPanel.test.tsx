@@ -209,7 +209,7 @@ describe("WorkflowPanel", () => {
     expect(await screen.findByText("Adaptive agents")).toHaveClass("text-blue-700");
     expect(
       await screen.findByText(
-        "Automatic: selects 2-6 additional field/methodology-specific review agents tailored for each document.",
+        "Adaptive agents: 2-6 additional topic and methodology-specific review agents tailored for each document.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/conditional specialist/i)).not.toBeInTheDocument();

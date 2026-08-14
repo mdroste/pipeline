@@ -26,29 +26,7 @@ pub fn render_markdown(
     let model = settings
         .model_selection(&settings.preferred_provider)
         .label();
-    let effort = match settings.preferred_provider.as_str() {
-        "codex" => {
-            if settings.codex_effort.is_empty() {
-                "default".to_string()
-            } else {
-                settings.codex_effort.clone()
-            }
-        }
-        "antigravity" => {
-            if settings.antigravity_effort.is_empty() {
-                "default".to_string()
-            } else {
-                settings.antigravity_effort.clone()
-            }
-        }
-        _ => {
-            if settings.claude_effort.is_empty() {
-                "default".to_string()
-            } else {
-                settings.claude_effort.clone()
-            }
-        }
-    };
+    let effort = "default".to_string();
 
     let type_prefix = meta
         .as_ref()

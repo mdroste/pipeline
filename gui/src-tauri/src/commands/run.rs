@@ -1,5 +1,8 @@
 use super::*;
 
+// This orchestration boundary carries the immutable launch snapshot together
+// with the user-supplied input maps and cancellation generation.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_pipeline_inner_with_snapshot(
     app: &crate::emit::EventBus,
     paper_path: &str,

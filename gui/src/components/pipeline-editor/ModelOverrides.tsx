@@ -67,15 +67,17 @@ function ModelOverrides({
       {open && (
         <div className="mt-2 space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
           <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
-            Each provider can inherit its global policy, follow its own current
-            default, use a stable role, or pin an exact discovered model.
+            A missing override follows the active provider's current default.
+            You can instead use a stable role or pin an exact discovered model.
           </p>
           {providers.map((provider) => {
             const key = `${provider}:${transportFor(provider)}`;
             const catalog = catalogs[provider];
             const selection = step.model_overrides?.[key];
-            const value = encodeModelSelection(selection);
-            const known = value === "inherit" || value === "automatic"
+            const value = selection?.mode === "automatic"
+              ? "inherit"
+              : encodeModelSelection(selection);
+            const known = value === "inherit"
               || catalog?.roles.some((role) => value === `role:${role.id}`)
               || catalog?.models.some((model) => value === `pinned:${model.id}`);
             const efforts = effortOptions(
@@ -97,8 +99,7 @@ function ModelOverrides({
                   onChange={(event) => updateModel(key, event.target.value)}
                   className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                 >
-                  <option value="inherit">Inherit global policy</option>
-                  <option value="automatic">Automatic — provider default</option>
+                  <option value="inherit">Provider default (automatic)</option>
                   {!!catalog?.roles.length && <optgroup label="Stable roles">
                     {catalog.roles.map((role) => <option key={role.id} value={`role:${role.id}`}>{role.label} — {role.model}</option>)}
                   </optgroup>}
@@ -114,7 +115,7 @@ function ModelOverrides({
                     onChange={(event) => updateEffort(key, event.target.value)}
                     className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                   >
-                    <option value="">Inherit effort</option>
+                    <option value="">Provider default thinking</option>
                     {efforts.map((effort) => <option key={effort} value={effort}>{effort.charAt(0).toUpperCase() + effort.slice(1)}</option>)}
                   </select>
                 )}

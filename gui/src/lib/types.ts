@@ -579,6 +579,10 @@ export interface Settings {
   /** Max past runs to keep on disk; 0 = keep all. */
   max_saved_runs: number;
   max_saved_run_bytes: number;
+  /** Explicit cloud connection mode; subscription uses the provider CLI. */
+  claude_access_mode: "subscription" | "api";
+  codex_access_mode: "subscription" | "api";
+  antigravity_access_mode: "subscription" | "api";
   anthropic_api_key: string;
   openai_api_key: string;
   google_api_key: string;

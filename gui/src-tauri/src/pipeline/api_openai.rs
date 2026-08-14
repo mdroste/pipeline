@@ -5,12 +5,12 @@ use super::claude::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 
-/// Map settings model shorthand to OpenAI model ID.
-/// `override_model` (when non-empty) takes precedence over the global setting.
-fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
+/// Map a resolved model shorthand to an OpenAI model ID. An empty override
+/// uses the provider's automatic model.
+fn resolve_model(_settings: &Settings, override_model: Option<&str>) -> String {
     let raw = override_model
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or(settings.codex_model.as_str());
+        .unwrap_or("");
     match raw {
         "" => "gpt-5.6-terra".to_string(),
         other => other.to_string(),
@@ -177,7 +177,7 @@ pub async fn call_openai_api(
     let effort_src = overrides
         .effort
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or(settings.codex_effort.as_str());
+        .unwrap_or("");
     let reasoning_effort = if effort_src.is_empty() {
         None
     } else {

@@ -478,12 +478,8 @@ pub async fn call_claude(
         .await;
     };
 
-    let settings = overrides
-        .settings
-        .cloned()
-        .unwrap_or_else(crate::settings::load);
-    let model = overrides.model.unwrap_or(settings.claude_model.as_str());
-    let effort = overrides.effort.unwrap_or(settings.claude_effort.as_str());
+    let model = overrides.model.unwrap_or("");
+    let effort = overrides.effort.unwrap_or("");
     let session_key =
         context.compatibility_key("claude-cli", [model, effort, system_prompt.unwrap_or("")]);
     let slot = context.slot(session_key).await;
@@ -819,21 +815,13 @@ async fn call_claude_inner(
     cmd_args.push("json".to_string());
 
     // Apply Claude Code settings (model, effort) with optional per-step overrides.
-    let settings = overrides
-        .settings
-        .cloned()
-        .unwrap_or_else(crate::settings::load);
-    let model_src = if overrides.model_resolved {
-        overrides.model.unwrap_or("")
-    } else {
-        overrides.model.unwrap_or(settings.claude_model.as_str())
-    };
+    let model_src = overrides.model.unwrap_or("");
     let model = crate::settings::sanitize_cli_arg(model_src);
     if !model.is_empty() {
         cmd_args.push("--model".to_string());
         cmd_args.push(model);
     }
-    let effort_src = overrides.effort.unwrap_or(settings.claude_effort.as_str());
+    let effort_src = overrides.effort.unwrap_or("");
     let effort = crate::settings::sanitize_cli_arg(effort_src);
     if !effort.is_empty() {
         cmd_args.push("--effort".to_string());
@@ -1128,23 +1116,13 @@ fn request_effort(
     provider: &str,
     transport: &str,
     model: &str,
-    settings: &crate::settings::Settings,
+    _settings: &crate::settings::Settings,
     overrides: &LlmOverrides<'_>,
 ) -> String {
     let configured = match provider {
-        "claude" => overrides
-            .effort
-            .unwrap_or(settings.claude_effort.as_str())
-            .trim(),
-        "codex" => overrides
-            .effort
-            .unwrap_or(settings.codex_effort.as_str())
-            .trim(),
+        "claude" | "codex" => overrides.effort.unwrap_or("").trim(),
         // Effort is an agy flag; the direct Gemini API has no equivalent.
-        "antigravity" if transport != "api" => overrides
-            .effort
-            .unwrap_or(settings.antigravity_effort.as_str())
-            .trim(),
+        "antigravity" if transport != "api" => overrides.effort.unwrap_or("").trim(),
         _ => return "Not configurable".to_string(),
     };
     if configured.is_empty() {
@@ -1316,9 +1294,14 @@ pub async fn call_llm(
             }),
         );
 
-        // Direct API path: bypass CLI subprocess when an API key is configured
+        // Direct API path is an explicit credential-mode choice. A saved key
+        // may remain available while subscription mode is active, and must
+        // not silently change the transport.
         match provider {
-            "claude" if !settings.anthropic_api_key.is_empty() => {
+            "claude" if transport == "api" => {
+                if settings.anthropic_api_key.trim().is_empty() {
+                    return Err("Claude API mode is selected, but no Anthropic API key is configured. Add the key in Settings → API Keys or switch Claude to Subscription mode.".to_string());
+                }
                 return super::api_anthropic::call_anthropic_api(
                     app,
                     prompt,
@@ -1332,7 +1315,10 @@ pub async fn call_llm(
                 )
                 .await;
             }
-            "codex" if !settings.openai_api_key.is_empty() => {
+            "codex" if transport == "api" => {
+                if settings.openai_api_key.trim().is_empty() {
+                    return Err("ChatGPT API mode is selected, but no OpenAI API key is configured. Add the key in Settings → API Keys or switch ChatGPT to Subscription mode.".to_string());
+                }
                 return super::api_openai::call_openai_api(
                     app,
                     prompt,
@@ -1346,7 +1332,10 @@ pub async fn call_llm(
                 )
                 .await;
             }
-            "antigravity" if !settings.google_api_key.is_empty() => {
+            "antigravity" if transport == "api" => {
+                if settings.google_api_key.trim().is_empty() {
+                    return Err("Antigravity API mode is selected, but no Google AI API key is configured. Add the key in Settings → API Keys or switch Antigravity to Subscription mode.".to_string());
+                }
                 return super::api_google::call_google_api(
                     app,
                     prompt,
@@ -1617,23 +1606,35 @@ mod tests {
 
         assert_eq!(
             request_effort("claude", "api", "claude-sonnet-4-6", &settings, &overrides),
-            "high"
+            "Provider default"
         );
+        let claude_high = LlmOverrides {
+            effort: Some("high"),
+            ..Default::default()
+        };
         assert_eq!(
-            request_effort("claude", "api", "claude-haiku-4-5", &settings, &overrides),
+            request_effort("claude", "api", "claude-haiku-4-5", &settings, &claude_high),
             "Not sent (unsupported by model)"
         );
+        let codex_medium = LlmOverrides {
+            effort: Some("medium"),
+            ..Default::default()
+        };
         assert_eq!(
-            request_effort("codex", "cli", "gpt-5.6", &settings, &overrides),
+            request_effort("codex", "cli", "gpt-5.6", &settings, &codex_medium),
             "medium"
         );
+        let antigravity_low = LlmOverrides {
+            effort: Some("low"),
+            ..Default::default()
+        };
         assert_eq!(
             request_effort(
                 "antigravity",
                 "cli",
                 "gemini-3.6-flash",
                 &settings,
-                &overrides
+                &antigravity_low
             ),
             "low"
         );
@@ -1730,7 +1731,9 @@ mod tests {
             "Claude call failed (exit 1): service overloaded"
         ));
         assert!(!fork_failure_uses_fallback("Pipeline cancelled"));
-        assert!(!fork_failure_uses_fallback("Pass 'technical/claude' cancelled"));
+        assert!(!fork_failure_uses_fallback(
+            "Pass 'technical/claude' cancelled"
+        ));
         assert!(!fork_failure_uses_fallback(
             "claude call timed out after 900s"
         ));

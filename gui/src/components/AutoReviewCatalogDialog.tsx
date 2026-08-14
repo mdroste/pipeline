@@ -16,7 +16,7 @@ type CatalogTab = "subjects" | "methods";
 
 function matches(role: AutoReviewCatalogRole, query: string): boolean {
   if (!query) return true;
-  const searchable = `${role.label} ${role.description} ${role.exclusions}`.toLowerCase();
+  const searchable = `${role.label} ${role.description}`.toLowerCase();
   return searchable.includes(query);
 }
 
@@ -43,10 +43,6 @@ function RoleCard({ role, group }: { role: AutoReviewCatalogRole; group?: string
         )}
       </div>
       <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-300">{role.description}</p>
-      <p className="mt-2 text-[11px] leading-4 text-gray-500 dark:text-gray-400">
-        <span className="font-medium text-gray-600 dark:text-gray-300">Not selected for:</span>{" "}
-        {role.exclusions}
-      </p>
     </article>
   );
 }
@@ -62,7 +58,7 @@ function GroupedTab({
   navLabel: string;
   selectedGroup: string;
   onSelectGroup: (id: string) => void;
-  hint: string;
+  hint?: string;
 }) {
   const active = groups.find((group) => group.id === selectedGroup) ?? groups[0];
   if (!active) return null;
@@ -84,7 +80,7 @@ function GroupedTab({
       <section aria-label={active.label}>
         <div className="mb-3">
           <h3 className="text-base font-semibold text-gray-950 dark:text-gray-100">{active.label}</h3>
-          <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">{hint}</p>
+          {hint && <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">{hint}</p>}
         </div>
         <div className="grid gap-2 xl:grid-cols-2">
           {active.roles.map((role) => (
@@ -178,7 +174,7 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
                 Specialist catalog
               </h2>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">
-                The orientation pass selects one primary subject specialist, an optional second subject specialist for genuinely interdisciplinary work, and one to four method specialists. Only those reviewers are assembled for the report; it also classifies the document's genre, which every reviewer receives as shared context.
+                Automatic paper review selects 1-2 primary subject agents and 1-4 methodology agents from this catalog.
               </p>
             </div>
             <button
@@ -233,7 +229,6 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
               navLabel="Academic disciplines"
               selectedGroup={selectedDiscipline}
               onSelectGroup={setSelectedDiscipline}
-              hint="The broad role is used only when no listed subfield fits."
             />
           )}
           {catalog && tab === "subjects" && normalizedQuery && (

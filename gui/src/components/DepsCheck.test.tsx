@@ -164,19 +164,38 @@ describe("DepsCheck", () => {
     expect(screen.getByText(/Set up at least one model provider/)).toBeInTheDocument();
   });
 
-  it("does not show local LLM or PDF extractor configuration cards", () => {
+  it("hides internal and bundled dependency cards", () => {
     const report: DepsReport = {
       ready: true,
       deps: [
         dep({ name: "Claude CLI", authenticated: true }),
         dep({ name: "Local LLM server", required: false }),
         dep({ name: "PDF extractor configuration", required: false }),
+        dep({ name: "pdftoppm", required: false }),
+        dep({ name: "pdftotext", required: false }),
       ],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     expect(screen.getByText("Claude CLI")).toBeInTheDocument();
     expect(screen.queryByText("Local LLM server")).not.toBeInTheDocument();
     expect(screen.queryByText("PDF extractor configuration")).not.toBeInTheDocument();
+    expect(screen.queryByText("pdftoppm")).not.toBeInTheDocument();
+    expect(screen.queryByText("pdftotext")).not.toBeInTheDocument();
+  });
+
+  it("reports a missing required bundled PDF tool without exposing its executable", () => {
+    const report: DepsReport = {
+      ready: false,
+      deps: [
+        dep({ name: "Claude CLI", authenticated: true }),
+        dep({ name: "pdftotext", found: false, required: true, version: "", path: "" }),
+      ],
+    };
+    render(<DepsCheck report={report} onDismiss={() => {}} />);
+    expect(screen.queryByText("pdftotext")).not.toBeInTheDocument();
+    expect(screen.getByText("Bundled PDF tools are unavailable. Reinstall Pipeline.")).toBeInTheDocument();
+    const pdfSection = screen.getByRole("region", { name: "PDF parsing" });
+    expect(within(pdfSection).getByText("Needs attention")).toBeInTheDocument();
   });
 
   it("shows a configured API key as ready even when the CLI is signed out", () => {
@@ -197,7 +216,13 @@ describe("DepsCheck", () => {
   it("treats missing optional PDF tools as non-blocking", () => {
     const report: DepsReport = {
       ready: true,
-      deps: [dep({ name: "pdftoppm", found: false, required: false, version: "", path: "" })],
+      deps: [dep({
+        name: "PaddleOCR-VL Full Parser",
+        found: false,
+        required: false,
+        version: "",
+        path: "",
+      })],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     expect(screen.getByText("optional")).toBeInTheDocument();

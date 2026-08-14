@@ -273,17 +273,8 @@ pub(super) fn llm_extraction_cache_path(
         "engine": "llm-pdf-bounded-v2",
         "provider": settings.preferred_provider,
         "transport": if provider_uses_direct_api(settings) { "api" } else { "cli" },
-        "claude_model": settings.claude_model,
-        "claude_cli_selection": settings.claude_cli_model_selection,
-        "claude_api_selection": settings.claude_api_model_selection,
-        "claude_effort": settings.claude_effort,
-        "codex_model": settings.codex_model,
-        "codex_cli_selection": settings.codex_cli_model_selection,
-        "codex_api_selection": settings.codex_api_model_selection,
-        "codex_effort": settings.codex_effort,
-        "antigravity_cli_selection": settings.antigravity_cli_model_selection,
-        "antigravity_api_selection": settings.antigravity_api_model_selection,
-        "antigravity_effort": settings.antigravity_effort,
+        "model_policy": "automatic",
+        "effort_policy": "provider_default",
         "chunk_pages": LLM_CHUNK_MAX_PAGES,
         "chunk_chars": LLM_CHUNK_TARGET_BASELINE_CHARS,
         "max_output_tokens": EXTRACTION_MAX_OUTPUT_TOKENS,
@@ -802,9 +793,9 @@ pub(super) const SUSPECT_BASELINE_MIN_CHARS: usize = 200;
 /// the Read tool.
 pub(super) fn provider_uses_direct_api(settings: &crate::settings::Settings) -> bool {
     match settings.preferred_provider.as_str() {
-        "claude" => !settings.anthropic_api_key.is_empty(),
-        "codex" => !settings.openai_api_key.is_empty(),
-        "antigravity" => !settings.google_api_key.is_empty(),
+        "claude" | "codex" | "antigravity" => {
+            settings.model_transport(&settings.preferred_provider) == "api"
+        }
         // Local OpenAI-compatible servers intentionally reject the file-part
         // attachment used by the verified LLM extraction path.
         "local" => false,
@@ -818,8 +809,8 @@ pub(super) fn provider_uses_direct_api(settings: &crate::settings::Settings) -> 
 /// or truncated output — so callers can surface it instead of a generic
 /// "could not build the page map".
 pub(super) fn pdftotext_page_baseline(path: &Path) -> Result<Vec<usize>, String> {
-    let bin =
-        find_command("pdftotext").ok_or_else(|| "pdftotext is not available on PATH".to_string())?;
+    let bin = find_command("pdftotext")
+        .ok_or_else(|| "pdftotext is not available on PATH".to_string())?;
     let path_str = path
         .to_str()
         .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;

@@ -203,7 +203,7 @@ export default function WorkflowPanel({
         {autoReview && (
           <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 dark:border-blue-900/70 dark:bg-blue-950/25">
             <p className="text-[11px] leading-4 text-blue-900 dark:text-blue-200">
-              Automatic: selects 2-6 additional field/methodology-specific review agents tailored for each document.
+              Adaptive agents: 2-6 additional topic and methodology-specific review agents tailored for each document.
             </p>
             <button
               type="button"

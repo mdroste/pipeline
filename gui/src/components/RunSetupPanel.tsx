@@ -12,8 +12,6 @@ interface Props {
   configError: string | null;
   configLoading: boolean;
   dependenciesError: string | null;
-  dependenciesLoading: boolean;
-  dependenciesReady: boolean;
   inputMode: string;
   listenersReady: boolean;
   localLlmActive: boolean;
@@ -39,8 +37,6 @@ export default function RunSetupPanel({
   configError,
   configLoading,
   dependenciesError,
-  dependenciesLoading,
-  dependenciesReady,
   inputMode,
   listenersReady,
   localLlmActive,
@@ -71,8 +67,6 @@ export default function RunSetupPanel({
     (paperPath !== null || inputMode === "none") &&
     !configLoading &&
     !configError &&
-    !dependenciesLoading &&
-    dependenciesReady &&
     listenersReady &&
     !preparingRun;
 
@@ -192,12 +186,10 @@ export default function RunSetupPanel({
               ? "Preparing report…"
               : configLoading
                 ? "Loading workflow…"
-                : dependenciesLoading
-                  ? "Checking dependencies…"
-                  : !listenersReady
-                    ? "Preparing event stream…"
-                    : "Review report"}
-            {!dependenciesLoading && !configLoading && !preparingRun && listenersReady && (
+                : !listenersReady
+                  ? "Preparing event stream…"
+                  : "Review report"}
+            {!configLoading && !preparingRun && listenersReady && (
               <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="m9 5 7 7-7 7" />
               </svg>

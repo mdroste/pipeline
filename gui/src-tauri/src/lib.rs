@@ -119,6 +119,7 @@ pub fn run() {
             commands::config::save_settings,
             commands::config::get_model_catalog,
             commands::config::get_pipeline_config,
+            commands::config::get_run_setup,
             commands::config::get_auto_review_catalog,
             commands::config::get_auto_review_specialist_step,
             commands::config::get_execution_plan,

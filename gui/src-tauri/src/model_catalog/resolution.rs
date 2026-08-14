@@ -108,6 +108,20 @@ pub async fn resolve(
         provider
     };
     let transport = settings.model_transport(provider).to_string();
+    if transport == "api" {
+        let key_present = match provider {
+            "claude" => !settings.anthropic_api_key.trim().is_empty(),
+            "codex" => !settings.openai_api_key.trim().is_empty(),
+            "antigravity" => !settings.google_api_key.trim().is_empty(),
+            "local" => true,
+            _ => false,
+        };
+        if !key_present {
+            return Err(format!(
+                "{provider} API mode is selected, but its API key is missing. Add the key in Settings → API Keys or switch to Subscription mode."
+            ));
+        }
+    }
     let selection = step_selection
         .cloned()
         .unwrap_or_else(|| settings.model_selection(provider));

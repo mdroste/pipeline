@@ -372,8 +372,8 @@ pub(super) fn required_providers(
 }
 
 /// Run all dependency checks against one already-loaded settings/profile
-/// snapshot. Provider CLIs are still probed when a direct-API key is
-/// configured so their own sign-in state can be reported separately.
+/// snapshot. Provider CLIs are still probed in API mode so their own sign-in
+/// state can be reported separately if the user later switches transports.
 fn check_all_for(
     settings: &crate::settings::Settings,
     config: Option<&crate::pipeline_config::PipelineConfig>,
@@ -384,9 +384,12 @@ fn check_all_for(
     let required_providers = required_providers(settings, config, diff, input_path, extra_inputs);
     let pdf_requirements = pdf_dependency_requirements(settings, config, input_path, extra_inputs);
     let effective_extractor = config.map(|config| effective_pdf_extractor(settings, config));
-    let has_anthropic_key = !settings.anthropic_api_key.is_empty();
-    let has_openai_key = !settings.openai_api_key.is_empty();
-    let has_google_key = !settings.google_api_key.is_empty();
+    let has_anthropic_key = !settings.anthropic_api_key.trim().is_empty();
+    let has_openai_key = !settings.openai_api_key.trim().is_empty();
+    let has_google_key = !settings.google_api_key.trim().is_empty();
+    let claude_api_mode = settings.model_transport("claude") == "api";
+    let codex_api_mode = settings.model_transport("codex") == "api";
+    let antigravity_api_mode = settings.model_transport("antigravity") == "api";
     let local_base_url = settings.local_base_url.clone();
     let local_api_key = settings.local_api_key.clone();
 
@@ -455,8 +458,14 @@ fn check_all_for(
             false,
             cfg!(target_os = "windows"),
         );
-        let (claude_hint, claude_help_url) = if has_anthropic_key {
+        let (claude_hint, claude_help_url) = if claude_api_mode && has_anthropic_key {
             ("API key configured — CLI not required.".to_string(), None)
+        } else if claude_api_mode {
+            (
+                "Claude API mode is selected, but no Anthropic API key is configured. Add one in Settings → API Keys or switch to Subscription mode."
+                    .to_string(),
+                None,
+            )
         } else if found && claude_auth == Some(false) {
             (
                 "Claude CLI is installed but not signed in. Run `claude auth login` to authenticate."
@@ -474,8 +483,12 @@ fn check_all_for(
         };
         let claude = DepStatus {
             name: "Claude CLI".into(),
-            found: found || has_anthropic_key,
-            version: if has_anthropic_key && !found {
+            found: if claude_api_mode {
+                has_anthropic_key
+            } else {
+                found
+            },
+            version: if claude_api_mode {
                 "direct API".into()
             } else {
                 ver
@@ -484,8 +497,8 @@ fn check_all_for(
             required: required_providers.contains("claude"),
             hint: claude_hint,
             help_url: claude_help_url,
-            authenticated: if has_anthropic_key {
-                Some(true)
+            authenticated: if claude_api_mode {
+                Some(has_anthropic_key)
             } else {
                 claude_auth
             },
@@ -501,8 +514,14 @@ fn check_all_for(
             false,
             cfg!(target_os = "windows"),
         );
-        let (codex_hint, codex_help_url) = if has_openai_key {
+        let (codex_hint, codex_help_url) = if codex_api_mode && has_openai_key {
             ("API key configured — CLI not required.".to_string(), None)
+        } else if codex_api_mode {
+            (
+                "ChatGPT API mode is selected, but no OpenAI API key is configured. Add one in Settings → API Keys or switch to Subscription mode."
+                    .to_string(),
+                None,
+            )
         } else if found && codex_auth == Some(false) {
             (
                 "Codex CLI is installed but not authenticated. Run `codex login` or set OPENAI_API_KEY."
@@ -520,8 +539,12 @@ fn check_all_for(
         };
         let codex = DepStatus {
             name: "Codex CLI".into(),
-            found: found || has_openai_key,
-            version: if has_openai_key && !found {
+            found: if codex_api_mode {
+                has_openai_key
+            } else {
+                found
+            },
+            version: if codex_api_mode {
                 "direct API".into()
             } else {
                 ver
@@ -530,8 +553,8 @@ fn check_all_for(
             required: required_providers.contains("codex"),
             hint: codex_hint,
             help_url: codex_help_url,
-            authenticated: if has_openai_key {
-                Some(true)
+            authenticated: if codex_api_mode {
+                Some(has_openai_key)
             } else {
                 codex_auth
             },
@@ -548,8 +571,14 @@ fn check_all_for(
             false,
             cfg!(target_os = "windows"),
         );
-        let (antigravity_hint, antigravity_help_url) = if has_google_key {
+        let (antigravity_hint, antigravity_help_url) = if antigravity_api_mode && has_google_key {
             ("API key configured — CLI not required.".to_string(), None)
+        } else if antigravity_api_mode {
+            (
+                "Antigravity API mode is selected, but no Google AI API key is configured. Add one in Settings → API Keys or switch to Subscription mode."
+                    .to_string(),
+                None,
+            )
         } else if found && antigravity_version_ok == Some(false) {
             (
                 "The installed Antigravity CLI predates the required 1.1.12 release. Run `agy update`, then run the dependency check again."
@@ -587,8 +616,12 @@ fn check_all_for(
         };
         let antigravity = DepStatus {
             name: "Antigravity CLI".into(),
-            found: antigravity_cli_usable || has_google_key,
-            version: if has_google_key && !found {
+            found: if antigravity_api_mode {
+                has_google_key
+            } else {
+                antigravity_cli_usable
+            },
+            version: if antigravity_api_mode {
                 "direct API".into()
             } else {
                 ver
@@ -597,8 +630,8 @@ fn check_all_for(
             required: required_providers.contains("antigravity"),
             hint: antigravity_hint,
             help_url: antigravity_help_url,
-            authenticated: if has_google_key {
-                Some(true)
+            authenticated: if antigravity_api_mode {
+                Some(has_google_key)
             } else {
                 antigravity_auth
             },
