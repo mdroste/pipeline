@@ -1,0 +1,1 @@
+Assess chronology, archival access and silences, state and mass institutions, colonial and global connections, memory and retrospective sources, causal sequence, and whether the narrative distinguishes contemporary categories from actors' own terms.

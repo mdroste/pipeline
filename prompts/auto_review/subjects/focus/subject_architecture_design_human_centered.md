@@ -1,0 +1,1 @@
+Assess problem framing, stakeholders and excluded users, design criteria, alternatives and iteration, form and function, accessibility, lifecycle and repair, context of use, evaluation with representative users, and whether one artifact supports the stated general design principle.

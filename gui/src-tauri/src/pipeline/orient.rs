@@ -81,26 +81,22 @@ pub async fn build_orientation_map(
             template_owned.as_str()
         }
     };
-    let base_prompt = crate::safety::replace_all_limited(
-        template,
-        "{input_text}",
-        paper_text,
-        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
-        "Orientation prompt",
-    )?;
-    let base_prompt = crate::safety::replace_all_limited(
-        &base_prompt,
-        "{paper_text}",
-        paper_text,
-        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
-        "Orientation prompt",
-    )?;
+    let base_prompt = substitute_input_text(template, paper_text)?;
+    let base_prompt =
+        crate::auto_review::apply_agent_count_instruction(base_prompt, output_schema)?;
 
     let mut prompt = base_prompt.clone();
     let mut last_error = String::new();
+    let settings = crate::settings::load();
+    let provider = settings.orientation_agent().to_string();
+    let selection = settings.orientation_model_selection(&provider);
+    let resolution = crate::model_catalog::resolve(&provider, &settings, selection.as_ref())
+        .await
+        .map_err(|error| format!("Could not resolve the orientation model: {error}"))?;
+    let effort = settings.orientation_effort(&provider);
+    let timeout = (settings.step_timeout_secs / 2).max(60);
 
     for attempt in 0..=MAX_RETRIES {
-        let timeout = (crate::settings::load().step_timeout_secs / 2).max(60);
         let mut request = OwnedRequest::new(
             app,
             "orientation",
@@ -108,12 +104,42 @@ pub async fn build_orientation_map(
             prompt.clone(),
             timeout,
         );
+        request.agent = Some(provider.clone());
+        request.command_model = resolution.command_model.clone();
+        request.display_model = Some(resolution.resolved_model.clone());
+        request.model_policy = Some(resolution.selection.label());
+        request.effort = (!effort.trim().is_empty()).then(|| effort.clone());
+        request.model_resolved = true;
+        request.settings = std::sync::Arc::new(settings.clone());
         if let Some(root) = source_read_root {
             request.tools = vec!["Read".to_string()];
             request.cwd = Some(root.to_string());
             request.read_dirs = vec![root.to_string()];
         }
-        let raw = execute_text(request).await?;
+        let raw = match execute_text(request).await {
+            Ok(raw) => raw,
+            Err(error) => {
+                // Cancellation aborts immediately, but a transient provider or
+                // transport failure on this single required call must not
+                // discard the (possibly long) extraction that preceded it —
+                // retry the identical prompt like any step call would.
+                if crate::commands::is_cancelled()
+                    || crate::commands::is_pass_cancelled("orientation")
+                {
+                    return Err(error);
+                }
+                last_error = format!("provider call failed: {error}");
+                if attempt < MAX_RETRIES {
+                    let _ = app.emit_event(
+                        "pipeline:log",
+                        serde_json::json!({
+                            "line": format!("WARNING: orientation call failed ({error}); retrying")
+                        }),
+                    );
+                }
+                continue;
+            }
+        };
         let cleaned = strip_json_fences(&raw);
 
         match serde_json::from_str::<serde_json::Value>(&cleaned) {
@@ -202,22 +228,71 @@ fn append_quality_notes(survey: &mut serde_json::Value, notes: &[String]) {
 
 /// Extract a JSON object from LLM output that may contain preamble text or markdown fences.
 /// Uses serde_json's streaming deserializer to find valid JSON — no hand-rolled parsing.
+///
+/// Prose around the survey may itself contain a small balanced object (an
+/// echoed `{}`, a schema fragment), so of all valid top-level objects the
+/// largest non-empty one wins — the real survey always contains any object
+/// nested inside it, and an empty object is never an acceptable survey.
 fn strip_json_fences(raw: &str) -> String {
     let trimmed = raw.trim();
 
     // Try each '{' as a candidate JSON start. The streaming deserializer
     // handles all string escapes, unicode, nested structures, etc. correctly.
+    // Braces inside an already-accepted candidate are skipped: any object
+    // there is strictly smaller than the candidate that contains it.
+    let mut best: Option<&str> = None;
+    let mut skip_until = 0usize;
     for (i, _) in trimmed.match_indices('{') {
+        if i < skip_until {
+            continue;
+        }
         let candidate = &trimmed[i..];
         let mut stream =
             serde_json::Deserializer::from_str(candidate).into_iter::<serde_json::Value>();
-        if let Some(Ok(_)) = stream.next() {
+        if let Some(Ok(value)) = stream.next() {
             let end = stream.byte_offset();
-            return candidate[..end].trim_end().to_string();
+            skip_until = i + end;
+            if !value.as_object().is_some_and(|object| !object.is_empty()) {
+                continue;
+            }
+            let span = candidate[..end].trim_end();
+            if best.is_none_or(|current| span.len() > current.len()) {
+                best = Some(span);
+            }
         }
+    }
+    if let Some(span) = best {
+        return span.to_string();
     }
 
     trimmed.to_string()
+}
+
+/// Substitute `{input_text}` (and its legacy alias `{paper_text}`) in ONE
+/// pass over the template only. The extracted document may itself contain a
+/// literal placeholder token (e.g. a paper about prompt templates); rescanning
+/// the first substitution's output would expand it a second time, duplicating
+/// the document until the prompt byte cap aborts orientation.
+fn substitute_input_text(template: &str, paper_text: &str) -> Result<String, String> {
+    let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
+    let mut out = String::with_capacity(template.len() + paper_text.len());
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        crate::safety::push_str_limited(&mut out, &rest[..start], limit, "Orientation prompt")?;
+        let candidate = &rest[start..];
+        if let Some(after) = candidate
+            .strip_prefix("{input_text}")
+            .or_else(|| candidate.strip_prefix("{paper_text}"))
+        {
+            crate::safety::push_str_limited(&mut out, paper_text, limit, "Orientation prompt")?;
+            rest = after;
+        } else {
+            crate::safety::push_str_limited(&mut out, "{", limit, "Orientation prompt")?;
+            rest = &candidate[1..];
+        }
+    }
+    crate::safety::push_str_limited(&mut out, rest, limit, "Orientation prompt")?;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -267,6 +342,30 @@ mod tests {
     fn strip_json_fences_trailing_text() {
         let input = "{\"key\": 1}\n\nSome trailing commentary.";
         assert_eq!(strip_json_fences(input), r#"{"key": 1}"#);
+    }
+
+    #[test]
+    fn strip_json_fences_prefers_the_survey_over_a_preamble_object() {
+        // A small balanced object echoed in prose must not hijack the survey.
+        let input = "I return {} when unsure. Actual survey:\n{\"metadata\": {\"title\": \"T\"}, \"sections\": []}";
+        assert_eq!(
+            strip_json_fences(input),
+            r#"{"metadata": {"title": "T"}, "sections": []}"#
+        );
+        // Same when the junk object trails the real one.
+        let input = "{\"metadata\": {\"title\": \"T\"}, \"sections\": []}\nAs requested: {\"ok\": 1}";
+        assert_eq!(
+            strip_json_fences(input),
+            r#"{"metadata": {"title": "T"}, "sections": []}"#
+        );
+    }
+
+    #[test]
+    fn strip_json_fences_rejects_an_empty_object_as_the_survey() {
+        // An empty object is not a survey; returning the raw text makes the
+        // caller's parse fail and triggers the retry with the error appended.
+        let input = "The result is {} — nothing else.";
+        assert_eq!(strip_json_fences(input), input.trim());
     }
 
     #[test]
@@ -357,5 +456,15 @@ mod tests {
             resolve_survey_template(custom, "document").as_deref(),
             Some(custom)
         );
+    }
+
+    #[test]
+    fn document_text_containing_placeholder_tokens_is_not_rescanned() {
+        let paper = "This paper studies {paper_text} and {input_text} as literals.";
+        let prompt = substitute_input_text("Survey:\n{input_text}\nEnd.", paper).unwrap();
+        assert_eq!(prompt, format!("Survey:\n{paper}\nEnd."));
+        // Both aliases resolve, each exactly once, from the template only.
+        let both = substitute_input_text("A {input_text} B {paper_text} C", "X").unwrap();
+        assert_eq!(both, "A X B X C");
     }
 }

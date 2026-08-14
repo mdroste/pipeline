@@ -1,0 +1,1 @@
+Focus on demographic rates and their standardization, cohort versus period effects, decomposition methods, projection assumptions, and data quality in vital registration, censuses, and surveys. Check that compositional explanations are tested against behavioral ones and that projection uncertainty is carried into the substantive conclusions built on it.

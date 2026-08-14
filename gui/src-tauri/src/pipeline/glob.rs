@@ -28,8 +28,14 @@ pub struct ExpandResult {
 
 /// Translate a glob into an anchored regex string.
 pub fn glob_to_regex(pattern: &str) -> String {
+    // Backslash has no escape semantics here (it would only be escaped into a
+    // regex literal below), and matched relative paths are always normalized
+    // to forward slashes — so a literal `\` could never match anything.
+    // Treat it as a path separator so Windows-style fan-out patterns like
+    // `tables\*.csv` match.
+    let pattern = pattern.replace('\\', "/");
     let mut re = String::from("^");
-    let mut rest = pattern;
+    let mut rest = pattern.as_str();
     while !rest.is_empty() {
         if let Some(tail) = rest.strip_prefix("**/") {
             re.push_str("(?:.*/)?");
@@ -192,6 +198,13 @@ mod tests {
         assert!(glob_match("a.b", "a.b"));
         assert!(!glob_match("a.b", "axb")); // '.' is literal, not "any char"
         assert!(glob_match("data (1).csv", "data (1).csv"));
+    }
+
+    #[test]
+    fn backslash_separators_normalize_to_forward_slashes() {
+        assert!(glob_match("tables\\*.csv", "tables/x.csv"));
+        assert!(!glob_match("tables\\*.csv", "tables/sub/x.csv"));
+        assert!(glob_match("a\\**\\*.md", "a/b/c.md"));
     }
 
     #[test]

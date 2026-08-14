@@ -1,0 +1,1 @@
+Review system boundaries, observability and controllability, disturbances, scheduling and capacity, human operations, process variation, quality, reliability, maintainability, and deployment constraints. Check whether optimization or control improvements persist under realistic uncertainty and failure.

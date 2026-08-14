@@ -1,0 +1,1 @@
+Review filtrations and measurability, existence and uniqueness, martingale and stopping arguments, regularity and integrability, limiting regimes, dependence and path properties, no-arbitrage or control interpretation where relevant, and whether the theorem's probabilistic object matches the stated application rather than a more convenient surrogate.

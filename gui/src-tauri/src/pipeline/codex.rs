@@ -223,7 +223,12 @@ pub async fn call_codex(
                     }
                 },
                 Err(error) => {
-                    *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                    // A cancelled warm-up says nothing about the CLI's
+                    // session support; leave the slot empty so a later unit
+                    // can warm the shared session again.
+                    if !error.to_ascii_lowercase().contains("cancelled") {
+                        *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                    }
                     Err(error)
                 }
             }
@@ -308,6 +313,12 @@ pub async fn call_codex(
             }
         }
         Err(error) => {
+            // A cancelled warm-up or fork must not disable caching for the
+            // remaining units, and dispatching a fallback call mid-cancel
+            // would spawn a fresh Codex process; propagate it instead.
+            if error.to_ascii_lowercase().contains("cancelled") {
+                return Err(error);
+            }
             let mut base = slot.lock().await;
             *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
             drop(base);
@@ -843,9 +854,11 @@ async fn call_codex_inner(
     );
 
     if !status.success() {
-        if crate::commands::is_cancelled() || exit_code == 143 || status.code().is_none() {
-            log(app, format!("{label} cancelled"));
-            return Err("Pipeline cancelled".into());
+        if let Some(terminated) =
+            super::claude::classify_terminated_exit("Codex", &status, exit_code)
+        {
+            log(app, format!("{label}: {terminated}"));
+            return Err(terminated);
         }
         emit_stderr_tail(app, &stderr_tail);
         let hint =

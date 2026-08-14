@@ -1,0 +1,1 @@
+Assess oral condition and diagnostic criteria, tooth and patient levels, operator and site effects, procedure and comparator, material and biological outcomes, follow-up and restoration survival, prevention and adherence, access, and whether evidence supports the intended dental population and practice.

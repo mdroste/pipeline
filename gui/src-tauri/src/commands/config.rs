@@ -34,29 +34,7 @@ pub async fn open_pipeline_dir() -> Result<(), String> {
     Ok(())
 }
 
-// --- History / Settings ---
-
-#[derive(serde::Serialize)]
-pub struct HistoryResponse {
-    pub reports: Vec<ReportSummary>,
-    pub warnings: Vec<String>,
-}
-
-#[tauri::command]
-pub async fn list_history() -> Result<HistoryResponse, String> {
-    let result = storage::list_reports()?;
-    Ok(HistoryResponse {
-        reports: result.summaries,
-        warnings: result.warnings,
-    })
-}
-
-#[tauri::command]
-pub async fn check_deps() -> Result<crate::deps::DepsReport, String> {
-    tokio::task::spawn_blocking(crate::deps::check_all)
-        .await
-        .map_err(|e| format!("Dependency check failed: {e}"))
-}
+// --- Settings ---
 
 #[derive(serde::Serialize)]
 pub struct SettingsResponse {
@@ -125,6 +103,7 @@ pub struct ExecutionPlanResponse {
     pub input_slots: Vec<crate::pipeline_config::InputSlot>,
     pub readiness: crate::deps::DepsReport,
     pub stages: Vec<executor::ExecutionPlanStage>,
+    pub parallel_agents: Vec<String>,
 }
 
 /// Return the canonical scheduler timeline for one immutable active-profile
@@ -137,6 +116,7 @@ pub async fn get_execution_plan(
     diff: Option<bool>,
     paper_path: Option<String>,
     input_interpretation: Option<String>,
+    run_parallel_overrides: Option<RunParallelOverrides>,
 ) -> Result<ExecutionPlanResponse, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
@@ -153,6 +133,7 @@ pub async fn get_execution_plan(
                 .to_string(),
         );
     }
+    let snapshot = bind_parallel_overrides(snapshot, run_parallel_overrides.as_ref())?;
     validate_primary_input_selection(
         &snapshot.config,
         paper_path.as_deref(),
@@ -198,12 +179,14 @@ pub async fn get_execution_plan(
         input_interpretation.as_deref(),
         diff,
     )?;
-    let mut stages = executor::execution_plan(&snapshot.config)?;
+    let mut planning_config = snapshot.config.clone();
+    pipeline_config::apply_agent_defaults(&mut planning_config, &snapshot.settings);
+    let mut stages = executor::execution_plan(&planning_config)?;
     if let Some(stage) = stages.iter_mut().find(|stage| stage.kind == "extracting") {
         stage.label = executor::input_processing_label(&resolved_interpretation).to_string();
     }
     Ok(ExecutionPlanResponse {
-        profile_id: snapshot.settings.active_profile,
+        profile_id: snapshot.settings.active_profile.clone(),
         profile_config_snapshot_id,
         profile_snapshot_id: snapshot.fingerprint,
         configured_input_mode: match snapshot.config.extraction.input_mode.trim() {
@@ -216,6 +199,7 @@ pub async fn get_execution_plan(
         input_slots,
         readiness,
         stages,
+        parallel_agents: snapshot.settings.parallel_agents(),
     })
 }
 
@@ -241,6 +225,35 @@ pub async fn get_default_prompt(name: String) -> Result<String, String> {
     crate::prompts::compiled_default(&name)
         .map(|s| s.to_string())
         .ok_or_else(|| format!("Unknown prompt: {name}"))
+}
+
+/// The Auto Paper Review router prompt is generated from the live catalog,
+/// not a compiled prompts/*.md file, so the editor needs its own way to
+/// restore it after an accidental overwrite.
+#[tauri::command]
+pub async fn get_auto_review_orientation_prompt() -> Result<String, String> {
+    Ok(crate::auto_review::orientation_prompt())
+}
+
+/// Current-catalog router prompt and its matching orientation schema.
+#[derive(serde::Serialize)]
+pub struct AutoReviewOrientationDefaults {
+    pub prompt: String,
+    pub schema: serde_json::Value,
+}
+
+/// The router prompt lists the live catalog's subjects, methods, and genres;
+/// a profile restored to that prompt must also adopt the matching
+/// orientation schema, or the model's newer picks fail enum validation.
+/// The editor's restore action applies both together.
+/// (`get_auto_review_orientation_prompt` above remains for compatibility.)
+#[tauri::command]
+pub async fn get_auto_review_orientation_defaults() -> Result<AutoReviewOrientationDefaults, String>
+{
+    Ok(AutoReviewOrientationDefaults {
+        prompt: crate::auto_review::orientation_prompt(),
+        schema: crate::auto_review::orientation_schema(),
+    })
 }
 
 #[tauri::command]
@@ -289,8 +302,13 @@ pub async fn switch_profile(id: String) -> Result<PipelineConfig, String> {
 }
 
 #[tauri::command]
-pub async fn export_item(path: String, json: String) -> Result<(), String> {
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write: {e}"))
+pub async fn export_item(
+    app: AppHandle,
+    json: String,
+    suggested_name: Option<String>,
+) -> Result<Option<String>, String> {
+    let name = suggested_name.as_deref().unwrap_or("pipeline-export.json");
+    save_via_dialog(&app, name, "JSON", "json", json.into_bytes()).await
 }
 
 #[tauri::command]
@@ -301,9 +319,14 @@ pub async fn import_item(path: String) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub async fn export_profile(id: String, path: String) -> Result<(), String> {
+pub async fn export_profile(
+    app: AppHandle,
+    id: String,
+    suggested_name: Option<String>,
+) -> Result<Option<String>, String> {
     let json = pipeline_config::export_profile_data(&id)?;
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write: {e}"))
+    let name = suggested_name.as_deref().unwrap_or("pipeline-profile.json");
+    save_via_dialog(&app, name, "JSON", "json", json.into_bytes()).await
 }
 
 /// Import a profile from a parsed envelope, checking the schema version.
@@ -352,9 +375,15 @@ pub async fn import_profile(path: String) -> Result<ProfileSummary, String> {
 }
 
 #[tauri::command]
-pub async fn export_bundle(path: String) -> Result<(), String> {
+pub async fn export_bundle(
+    app: AppHandle,
+    suggested_name: Option<String>,
+) -> Result<Option<String>, String> {
     let json = pipeline_config::export_bundle()?;
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write: {e}"))
+    let name = suggested_name
+        .as_deref()
+        .unwrap_or("pipeline-settings-backup.json");
+    save_via_dialog(&app, name, "JSON", "json", json.into_bytes()).await
 }
 
 #[tauri::command]
@@ -366,104 +395,6 @@ pub async fn import_bundle(path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn check_for_update() -> Result<crate::updates::UpdateInfo, String> {
     crate::updates::check().await
-}
-
-// ── Preprocessing artifact cache ────────────────────────────────────
-//
-// The extracted paper text is cached at ~/.pipeline/cache/papers/{hash}.txt
-// so users can inspect the exact text the LLMs received, even after the
-// pipeline run completes and the temp files are gone. Inspecting helps
-// catch extraction failures (garbled equations, missing pages) before they
-// confuse the referees.
-
-pub(super) fn paper_cache_dir() -> Result<std::path::PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let dir = home.join(".pipeline").join("cache").join("papers");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create cache dir {}: {e}", dir.display()))?;
-    Ok(dir)
-}
-
-pub(super) fn validate_paper_hash(hash: &str) -> Result<(), String> {
-    if hash.is_empty() {
-        return Err("Empty paper hash".into());
-    }
-    if !hash.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err("Invalid paper hash".into());
-    }
-    Ok(())
-}
-
-/// Write the extracted text to ~/.pipeline/cache/papers/{hash}.txt and return
-/// the absolute path. Best-effort: callers should not abort on failure.
-pub(super) fn cache_paper_text(paper_hash: &str, text: &str) -> Result<String, String> {
-    validate_paper_hash(paper_hash)?;
-    let dir = paper_cache_dir()?;
-    let path = dir.join(format!("{paper_hash}.txt"));
-    std::fs::write(&path, text).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
-    // The canonical copy also lives in each retained run. Bound this
-    // convenience cache by count and aggregate bytes.
-    const MAX_CACHE_FILES: usize = 100;
-    const MAX_CACHE_BYTES: u64 = 500_000_000;
-    let mut entries: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> =
-        std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|entry| {
-                let meta = entry.metadata().ok()?;
-                if !meta.is_file() {
-                    return None;
-                }
-                Some((
-                    meta.modified().unwrap_or(std::time::UNIX_EPOCH),
-                    meta.len(),
-                    entry.path(),
-                ))
-            })
-            .collect();
-    entries.sort_by_key(|entry| entry.0);
-    let mut total: u64 = entries.iter().map(|entry| entry.1).sum();
-    let mut count = entries.len();
-    for (_, bytes, old_path) in entries {
-        if count <= MAX_CACHE_FILES && total <= MAX_CACHE_BYTES {
-            break;
-        }
-        if old_path != path && std::fs::remove_file(old_path).is_ok() {
-            count -= 1;
-            total = total.saturating_sub(bytes);
-        }
-    }
-    Ok(path.to_string_lossy().replace('\\', "/"))
-}
-
-/// Read the cached extracted text for a given paper hash. Returns an empty
-/// result with `cached: false` when the cache miss is expected (no prior run).
-#[tauri::command]
-pub async fn read_cached_paper_text(paper_hash: String) -> Result<serde_json::Value, String> {
-    validate_paper_hash(&paper_hash)?;
-    let dir = paper_cache_dir()?;
-    let path = dir.join(format!("{paper_hash}.txt"));
-    if !path.exists() {
-        return Ok(serde_json::json!({ "cached": false, "text": "" }));
-    }
-    let file = crate::safety::open_regular_file(&path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    let mut bytes = Vec::with_capacity(64 * 1024);
-    file.take(MAX_RUN_CONTEXT_SIZE + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    let truncated = bytes.len() as u64 > MAX_RUN_CONTEXT_SIZE;
-    if truncated {
-        bytes.truncate(MAX_RUN_CONTEXT_SIZE as usize);
-    }
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    Ok(serde_json::json!({
-        "cached": true,
-        "text": text,
-        "truncated": truncated,
-        "path": path.to_string_lossy()
-    }))
 }
 
 // --- Managed local engines ---
@@ -487,19 +418,6 @@ pub async fn install_engine(app: AppHandle, engine_id: String) -> Result<(), Str
 pub async fn uninstall_engine(app: AppHandle, engine_id: String) -> Result<(), String> {
     let bus = crate::emit::from_app(app);
     crate::engines::uninstall_engine(&bus, &engine_id).await
-}
-
-#[tauri::command]
-pub async fn retired_marker_status() -> Result<crate::engines::RetiredMarkerStatus, String> {
-    tokio::task::spawn_blocking(crate::engines::retired_marker_status)
-        .await
-        .map_err(|e| format!("Retired Marker status task failed: {e}"))
-}
-
-#[tauri::command]
-pub async fn remove_retired_marker(app: AppHandle) -> Result<(), String> {
-    let bus = crate::emit::from_app(app);
-    crate::engines::remove_retired_marker(&bus).await
 }
 
 #[tauri::command]

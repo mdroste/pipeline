@@ -4,10 +4,9 @@ import userEvent from "@testing-library/user-event";
 import ExportControls from "./ExportControls";
 import type { PipelineReport } from "../lib/types";
 
-const save = vi.hoisted(() => vi.fn());
 const openDialog = vi.hoisted(() => vi.fn());
 const invoke = vi.hoisted(() => vi.fn());
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save, open: openDialog }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: openDialog }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 const fakeReport: PipelineReport = {
@@ -36,7 +35,6 @@ const fakeReport: PipelineReport = {
 
 describe("ExportControls", () => {
   beforeEach(() => {
-    save.mockReset();
     openDialog.mockReset();
     invoke.mockReset();
   });
@@ -67,31 +65,35 @@ describe("ExportControls", () => {
         extractedText="text"
       />,
     );
-    expect(screen.getByRole("button", { name: "Export complete run" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export complete report" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Export core files" })).not.toBeInTheDocument();
   });
 
-  it("invokes save_report_md with the chosen path and markdown", async () => {
-    save.mockResolvedValueOnce("/tmp/out.md");
-    invoke.mockResolvedValueOnce(undefined);
+  it("invokes save_report_md with the markdown and a suggested name (no webview path)", async () => {
+    invoke.mockResolvedValueOnce("/tmp/out.md");
 
     render(<ExportControls markdown="# report" />);
     await userEvent.setup().click(screen.getByRole("button", { name: "Save MD" }));
 
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(invoke).toHaveBeenCalledWith("save_report_md", {
-      path: "/tmp/out.md",
-      markdown: "# report",
-    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const [command, args] = invoke.mock.calls[0];
+    expect(command).toBe("save_report_md");
+    expect(args.markdown).toBe("# report");
+    expect(args.suggestedName).toMatch(/^PIPELINE_REPORT_.*\.md$/);
+    // The webview must not pass a filesystem path — the backend owns the dialog.
+    expect(args).not.toHaveProperty("path");
   });
 
-  it("does not invoke the backend when the save dialog is cancelled", async () => {
-    save.mockResolvedValueOnce(null);
+  it("treats a cancelled save (backend returns null) without error", async () => {
+    invoke.mockResolvedValueOnce(null);
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
 
     render(<ExportControls markdown="# report" />);
     await userEvent.setup().click(screen.getByRole("button", { name: "Save MD" }));
 
-    expect(invoke).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(alertSpy).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
   });
 
   it("invokes print_report_html when 'Save PDF' is clicked", async () => {
@@ -125,7 +127,6 @@ describe("ExportControls", () => {
   });
 
   it("alerts with the backend error message on save failure", async () => {
-    save.mockResolvedValueOnce("/tmp/out.md");
     invoke.mockRejectedValueOnce(new Error("disk full"));
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
 
@@ -133,20 +134,6 @@ describe("ExportControls", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Save MD" }));
 
     expect(alertSpy).toHaveBeenCalledWith("Failed to save: disk full");
-    alertSpy.mockRestore();
-  });
-
-  it("surfaces save-dialog plugin failures", async () => {
-    save.mockRejectedValueOnce(new Error("dialog plugin unavailable"));
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ExportControls markdown="# report" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save MD" }));
-
-    expect(alertSpy).toHaveBeenCalledWith(
-      "Failed to save: dialog plugin unavailable",
-    );
-    expect(invoke).not.toHaveBeenCalled();
     alertSpy.mockRestore();
   });
 
@@ -167,6 +154,8 @@ describe("ExportControls", () => {
     expect(confirmSpy.mock.calls[0][0]).toContain(
       "Existing files and earlier exports will not be replaced.",
     );
+    expect(confirmSpy.mock.calls[0][0]).toContain("document.md");
+    expect(confirmSpy.mock.calls[0][0]).not.toContain("extracted_text.md");
     expect(invoke).toHaveBeenCalledWith("save_all_artifacts", {
       dir: "/tmp/artifacts",
       markdown: "# r",
@@ -216,20 +205,20 @@ describe("ExportControls", () => {
 
     render(<ExportControls runId="saved-run" markdown="# r" />);
     await userEvent.setup().click(
-      screen.getByRole("button", { name: "Export complete run" }),
+      screen.getByRole("button", { name: "Export complete report" }),
     );
 
     expect(openDialog).toHaveBeenCalledWith({
       directory: true,
       multiple: false,
-      title: "Choose parent folder for complete run export",
+      title: "Choose parent folder for complete report export",
     });
     expect(invoke).toHaveBeenCalledWith("export_run_artifacts", {
       runId: "saved-run",
       destination: "/tmp/exports",
     });
     expect(alertSpy).toHaveBeenCalledWith(
-      "Complete run exported to /tmp/exports/pipeline-run-saved-run (24 files, 1.5 MB).",
+      "Complete report exported to /tmp/exports/pipeline-run-saved-run (24 files, 1.5 MB).",
     );
     alertSpy.mockRestore();
   });
@@ -239,7 +228,7 @@ describe("ExportControls", () => {
 
     render(<ExportControls runId="saved-run" markdown="# r" />);
     await userEvent.setup().click(
-      screen.getByRole("button", { name: "Export complete run" }),
+      screen.getByRole("button", { name: "Export complete report" }),
     );
 
     expect(invoke).not.toHaveBeenCalled();

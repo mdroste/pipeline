@@ -48,7 +48,7 @@ fn direct_pdf_attachment_requires_the_matching_cloud_api_key() {
     settings.openai_api_key = "configured".to_string();
     assert!(provider_uses_direct_api(&settings));
 
-    settings.preferred_provider = "gemini".to_string();
+    settings.preferred_provider = "antigravity".to_string();
     assert!(!provider_uses_direct_api(&settings));
     settings.google_api_key = "configured".to_string();
     assert!(provider_uses_direct_api(&settings));
@@ -71,6 +71,44 @@ fn selected_file_is_staged_without_its_siblings() {
     assert_eq!(fs::read(&staged).unwrap(), b"selected");
     assert_eq!(scoped.read_root.as_deref(), staged.parent());
     assert!(!private.path().join("source/private-notes.txt").exists());
+}
+
+#[test]
+fn oversized_primary_document_is_staged_under_the_pdf_budget() {
+    let selected_dir = tempfile::tempdir().unwrap();
+    let selected = selected_dir.path().join("scanned.pdf");
+    // Above the 32 MiB LaTeX-closure per-file cap; well below the 256 MiB
+    // PDF staging budget.
+    fs::write(&selected, vec![0u8; 33 * 1024 * 1024]).unwrap();
+    let private = tempfile::tempdir().unwrap();
+
+    let scoped = stage_selected_source(&selected, "document", private.path()).unwrap();
+    let staged = scoped.source_path.unwrap();
+    assert_eq!(
+        fs::metadata(&staged).unwrap().len(),
+        33 * 1024 * 1024,
+        "primary document must stage completely"
+    );
+}
+
+#[test]
+fn oversized_referenced_source_file_is_skipped_with_a_staging_note() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("main.tex"),
+        "\\documentclass{article}\n\\includegraphics{big.png}\n",
+    )
+    .unwrap();
+    fs::write(project.path().join("big.png"), vec![0u8; 33 * 1024 * 1024]).unwrap();
+    let private = tempfile::tempdir().unwrap();
+
+    let scoped = stage_selected_source(project.path(), "document", private.path()).unwrap();
+    let staged_root = scoped.source_path.unwrap();
+    assert!(staged_root.join("main.tex").is_file());
+    assert!(!staged_root.join("big.png").exists());
+    let notes = fs::read_to_string(staged_root.join(super::latex::STAGING_NOTES_FILE)).unwrap();
+    assert!(notes.contains("big.png"));
+    assert!(notes.contains("32 MB per-file staging limit"));
 }
 
 #[test]
@@ -116,7 +154,8 @@ fn latex_source_staging_copies_only_the_bounded_dependency_closure() {
     fs::write(project.join("refs.bib"), "@article{x}").unwrap();
     fs::write(project.join("localclass.cls"), "\\ProvidesClass{x}").unwrap();
     fs::write(project.join("unused.tex"), "not selected").unwrap();
-    fs::write(parent.path().join("secret.tex"), "outside").unwrap();
+    fs::write(parent.path().join("secret.tex"), "referenced sibling").unwrap();
+    fs::write(parent.path().join("unreferenced.tex"), "never referenced").unwrap();
     let private = tempfile::tempdir().unwrap();
 
     let scoped = stage_selected_source(&project, "document", private.path()).unwrap();
@@ -136,211 +175,137 @@ fn latex_source_staging_copies_only_the_bounded_dependency_closure() {
         );
     }
     assert!(!staged_root.join("unused.tex").exists());
-    assert!(!private.path().join("secret.tex").exists());
+    // An explicitly referenced nearby external file is staged into the
+    // private view under _external; unreferenced siblings never are.
+    assert_eq!(
+        fs::read(staged_root.join("_external/up1/secret.tex")).unwrap(),
+        b"referenced sibling"
+    );
+    assert!(!staged_root.join("secret.tex").exists());
+    assert!(!staged_root.join("_external/up1/unreferenced.tex").exists());
     assert_eq!(scoped.read_root.as_deref(), Some(staged_root.as_path()));
 }
 
 #[test]
-fn retired_marker_fails_before_file_or_command_resolution() {
-    let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    let missing = tempfile::tempdir()
-        .unwrap()
-        .path()
-        .join("does-not-exist.pdf");
-    let error = extract_pdf_native(&app, &missing, "marker").unwrap_err();
-    assert_eq!(error, MARKER_DISABLED_MESSAGE);
-}
+fn latex_extraction_inlines_explicitly_referenced_nearby_external_files() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().join("draft").join("dev");
+    let output = workspace.path().join("draft").join("output");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&output).unwrap();
+    fs::write(
+        root.join("main.tex"),
+        "Intro\n\\input{../output/numbers}\nAfter\n\\input{../output/numbers}\n",
+    )
+    .unwrap();
+    fs::write(output.join("numbers.tex"), "External numbers.").unwrap();
 
-fn marker_page(id: &str, children: Vec<serde_json::Value>) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
-        "block_type": "Page",
-        "html": children.iter().filter_map(|child| {
-            child.get("id").and_then(|value| value.as_str())
-        }).map(|child_id| {
-            format!("<content-ref src='{child_id}'></content-ref>")
-        }).collect::<String>(),
-        "polygon": [[0.0, 0.0], [612.0, 0.0], [612.0, 792.0], [0.0, 792.0]],
-        "bbox": [0.0, 0.0, 612.0, 792.0],
-        "children": children,
-        "images": {}
-    })
-}
-
-fn marker_block(id: &str, block_type: &str, html: &str, bbox: [f64; 4]) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
-        "block_type": block_type,
-        "html": html,
-        "polygon": [
-            [bbox[0], bbox[1]],
-            [bbox[2], bbox[1]],
-            [bbox[2], bbox[3]],
-            [bbox[0], bbox[3]]
-        ],
-        "bbox": bbox,
-        "children": null,
-        "images": null
-    })
+    let mut warnings = Vec::new();
+    let canonical_root = root.canonicalize().unwrap();
+    let text = extract_latex(&root.join("main.tex"), &canonical_root, &mut warnings).unwrap();
+    assert!(text.contains("External numbers."));
+    assert!(!text.contains("\\input{../output/numbers}"));
+    // The quality note is recorded once even though the file is included twice.
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|note| note.contains("read from outside the selected directory"))
+            .count(),
+        1,
+        "expected one deduplicated external-read note: {warnings:?}"
+    );
 }
 
 #[test]
-fn marker_normalization_separates_footnotes_pages_and_repeated_margins() {
-    let first_page = marker_page(
-        "/page/0/Page/0",
-        vec![
-            marker_block(
-                "/page/0/PageHeader/0",
-                "PageHeader",
-                "<p>Running title</p>",
-                [72.0, 20.0, 540.0, 40.0],
-            ),
-            marker_block(
-                "/page/0/Text/1",
-                "Text",
-                "<p>The main argument continues.<sup>1</sup></p>",
-                [72.0, 120.0, 540.0, 220.0],
-            ),
-            marker_block(
-                "/page/0/Text/2",
-                "Text",
-                "<p>1 This qualification belongs in a footnote.</p>",
-                [72.0, 680.0, 540.0, 720.0],
-            ),
-            marker_block(
-                "/page/0/Footnote/3",
-                "Footnote",
-                "<p><sup>2</sup> Marker recognized this note.</p>",
-                [72.0, 725.0, 540.0, 750.0],
-            ),
-            marker_block(
-                "/page/0/PageFooter/4",
-                "PageFooter",
-                "<p>7</p>",
-                [300.0, 770.0, 312.0, 785.0],
-            ),
-        ],
-    );
-    let second_page = marker_page(
-        "/page/1/Page/0",
-        vec![marker_block(
-            "/page/1/Text/0",
-            "Text",
-            "<p>The main argument resumes on the next page.</p>",
-            [72.0, 80.0, 540.0, 140.0],
-        )],
-    );
-    let raw = serde_json::json!({
-        "block_type": "Document",
-        "children": [first_page, second_page]
-    })
-    .to_string();
-    let output_dir = tempfile::tempdir().unwrap();
-    let normalized = normalize_marker_json(&raw, output_dir.path()).unwrap();
+fn latex_extraction_blocks_distant_or_untyped_external_references() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().join("l1/l2/l3/l4");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(workspace.path().join("far.tex"), "Too far.").unwrap();
+    fs::write(workspace.path().join("l1/l2/l3/data.txt"), "not tex").unwrap();
+    fs::write(
+        root.join("main.tex"),
+        "\\input{../../../../far}\n\\input{../data.txt}\n\\input{../data.txt}\n",
+    )
+    .unwrap();
 
-    assert!(normalized.text.contains("<!-- PAGE 1 -->"));
-    assert!(normalized.text.contains("<!-- PAGE 2 -->"));
-    assert!(!normalized.text.contains("Running title"));
-    assert!(!normalized.text.contains("<p>7</p>"));
-    assert!(normalized.text.contains("BEGIN POSSIBLE_FOOTNOTE page=1"));
-    assert!(normalized.text.contains("BEGIN FOOTNOTES page=1"));
+    let mut warnings = Vec::new();
+    let canonical_root = root.canonicalize().unwrap();
+    let text = extract_latex(&root.join("main.tex"), &canonical_root, &mut warnings).unwrap();
+    assert!(text.contains("\\input{../../../../far}"));
+    assert!(text.contains("\\input{../data.txt}"));
+    assert!(!text.contains("Too far."));
+    assert!(!text.contains("not tex"));
+    let blocked = warnings
+        .iter()
+        .filter(|note| note.contains("blocked"))
+        .count();
+    assert_eq!(
+        blocked, 2,
+        "expected one deduplicated note per blocked target: {warnings:?}"
+    );
+}
+
+#[test]
+fn latex_extraction_skips_circular_includes_precisely() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(project.path().join("a.tex"), "A begins\n\\input{b}\nA ends\n").unwrap();
+    fs::write(project.path().join("b.tex"), "B begins\n\\input{a}\nB ends\n").unwrap();
+
+    let mut warnings = Vec::new();
+    let root = project.path().canonicalize().unwrap();
+    let text = extract_latex(&project.path().join("a.tex"), &root, &mut warnings).unwrap();
+    assert!(text.contains("A begins"));
+    assert!(text.contains("B begins"));
+    assert!(text.contains("B ends"));
+    assert!(text.contains("A ends"));
+    assert_eq!(
+        warnings,
+        vec!["\\input{a} — circular include skipped.".to_string()]
+    );
+}
+
+#[test]
+fn latex_extraction_ignores_commented_out_includes() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("main.tex"),
+        "Current text\n% \\input{old_draft}\nEscaped percent \\% then \\input{real}\n",
+    )
+    .unwrap();
+    fs::write(project.path().join("old_draft.tex"), "STALE DRAFT\n").unwrap();
+    fs::write(project.path().join("real.tex"), "REAL SECTION\n").unwrap();
+
+    let mut warnings = Vec::new();
+    let root = project.path().canonicalize().unwrap();
+    let text = extract_latex(&project.path().join("main.tex"), &root, &mut warnings).unwrap();
+    assert!(!text.contains("STALE DRAFT"));
+    assert!(text.contains("% \\input{old_draft}"));
+    assert!(text.contains("REAL SECTION"));
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+}
+
+#[test]
+fn latex_extraction_notes_unreadable_includes() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("main.tex"),
+        "Before\n\\input{chapter}\nAfter\n",
+    )
+    .unwrap();
+    // Invalid UTF-8 makes the include unreadable without being missing.
+    fs::write(project.path().join("chapter.tex"), [0xFFu8, 0xFE, 0x00, 0x41]).unwrap();
+
+    let mut warnings = Vec::new();
+    let root = project.path().canonicalize().unwrap();
+    let text = extract_latex(&project.path().join("main.tex"), &root, &mut warnings).unwrap();
+    assert!(text.contains("\\input{chapter}"));
     assert!(
-        normalized.text.find("BEGIN FOOTNOTES page=1").unwrap()
-            < normalized.text.find("<!-- PAGE 2 -->").unwrap()
+        warnings
+            .iter()
+            .any(|note| note.contains("\\input{chapter}") && note.contains("could not be read")),
+        "expected an unreadable-include note: {warnings:?}"
     );
-    assert!(normalized
-        .quality_notes
-        .iter()
-        .any(|note| note.contains("possible footnotes")));
-
-    let structure = read_utf8_capped(
-        &output_dir.path().join(MARKER_STRUCTURE_FILE),
-        super::super::claude::MAX_STDOUT_BYTES,
-    )
-    .unwrap();
-    let structure: MarkerStructure = serde_json::from_str(&structure).unwrap();
-    assert_eq!(structure.pages.len(), 2);
-    assert!(structure.pages[0]
-        .blocks
-        .iter()
-        .any(|block| block.role == "possible_footnote"));
-    assert!(structure.pages[0]
-        .blocks
-        .iter()
-        .any(|block| block.role == "footnote"));
-    assert!(structure.pages[0]
-        .blocks
-        .iter()
-        .any(|block| block.role == "page_header"));
-}
-
-#[test]
-fn marker_bottom_text_without_matching_superscript_remains_body_text() {
-    let page = marker_page(
-        "/page/0/Page/0",
-        vec![
-            marker_block(
-                "/page/0/Text/0",
-                "Text",
-                "<p>Ordinary body text.</p>",
-                [72.0, 120.0, 540.0, 220.0],
-            ),
-            marker_block(
-                "/page/0/Text/1",
-                "Text",
-                "<p>1 A numbered body paragraph near the page bottom.</p>",
-                [72.0, 680.0, 540.0, 720.0],
-            ),
-        ],
-    );
-    let raw = serde_json::json!({
-        "block_type": "Document",
-        "children": [page]
-    })
-    .to_string();
-    let output_dir = tempfile::tempdir().unwrap();
-    normalize_marker_json(&raw, output_dir.path()).unwrap();
-    let structure = serde_json::from_str::<MarkerStructure>(
-        &read_utf8_capped(
-            &output_dir.path().join(MARKER_STRUCTURE_FILE),
-            super::super::claude::MAX_STDOUT_BYTES,
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(structure.pages[0].blocks[1].role, "body");
-}
-
-#[test]
-fn marker_json_images_are_externalized_and_linked() {
-    let mut figure = marker_block(
-        "/page/0/Figure/0",
-        "Figure",
-        "<figure></figure>",
-        [72.0, 120.0, 540.0, 420.0],
-    );
-    figure["images"] = serde_json::json!({
-        "/page/0/Figure/0": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-    });
-    let raw = serde_json::json!({
-        "block_type": "Document",
-        "children": [marker_page("/page/0/Page/0", vec![figure])]
-    })
-    .to_string();
-    let output_dir = tempfile::tempdir().unwrap();
-    normalize_marker_json(&raw, output_dir.path()).unwrap();
-    let structure = serde_json::from_str::<MarkerStructure>(
-        &read_utf8_capped(
-            &output_dir.path().join(MARKER_STRUCTURE_FILE),
-            super::super::claude::MAX_STDOUT_BYTES,
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let image_files = &structure.pages[0].blocks[0].image_files;
-    assert_eq!(image_files.len(), 1);
-    assert!(image_files[0].ends_with(".png"));
-    assert!(output_dir.path().join(&image_files[0]).is_file());
 }
 
 #[test]
@@ -768,7 +733,7 @@ fn parse_sections_splits_preamble_and_pages() {
     assert_eq!(preamble, "intro");
     assert_eq!(sections.len(), 2);
     assert!(sections[&1].contains("first page"));
-    // Marker matching is case-insensitive.
+    // Page-delimiter matching is case-insensitive.
     assert!(sections[&2].contains("second page"));
 }
 

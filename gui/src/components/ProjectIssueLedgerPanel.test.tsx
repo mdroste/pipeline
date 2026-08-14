@@ -4,9 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
 
 const invoke = vi.hoisted(() => vi.fn());
-const save = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 
 const project = {
   schema_version: 1,
@@ -93,7 +92,6 @@ const ledger = {
 describe("ProjectIssueLedgerPanel", () => {
   beforeEach(() => {
     invoke.mockReset();
-    save.mockReset();
     invoke.mockImplementation((command: string, args?: { status?: string; note?: string }) => {
       if (command === "sync_project_issue_ledger") return Promise.resolve(ledger);
       if (command === "update_project_issue") {
@@ -139,7 +137,7 @@ describe("ProjectIssueLedgerPanel", () => {
     expect(screen.getByText("Retry loop has no bound")).toBeVisible();
     expect(screen.queryByText("Identification assumption is unstated")).not.toBeInTheDocument();
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Issue run filter" }), "run_paper");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Issue report filter" }), "run_paper");
     expect(screen.getByText("No issues match these filters.")).toBeVisible();
   });
 });

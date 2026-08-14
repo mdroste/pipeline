@@ -5,7 +5,7 @@ fn empty_test_config() -> PipelineConfig {
         steps: Vec::new(),
         merge: Default::default(),
         context_cache: Default::default(),
-        use_orientation: false,
+        use_orientation: true,
         orientation_prompt: String::new(),
         orientation_schema: None,
         extraction: Default::default(),
@@ -295,6 +295,7 @@ fn print_html_is_self_contained_and_waits_for_fonts() {
     assert!(html.contains("counter(page) \" / \" counter(pages)"));
     assert!(html.contains("padding: 0.72in 0.82in 0.7in"));
     assert!(html.contains("box-decoration-break: clone"));
+    assert!(html.contains(".report-body p { text-align: justify; hyphens: auto; }"));
     assert!(html.contains("Remote figure"));
     assert!(!html.contains("https://example.invalid/pixel.png"));
     assert!(!html.contains("url(fonts/"));
@@ -306,13 +307,18 @@ fn print_html_is_self_contained_and_waits_for_fonts() {
 #[test]
 fn print_html_preserves_latex_until_katex_rendering() {
     let html = build_print_report_html(
-            "Inline $x_t^* = \\frac{a_b}{c^2}$ and display:\n\n$$\\sum_{i=1}^n \\beta_i x_i$$\n\n`$code_with_underscore$`",
+            "Inline $x_t^* = \\frac{a_b}{c^2}$ and display:\n\n$$\\sum_{i=1}^n \\beta_i x_i$$\n\nTariffs rose from $5 to $8 per unit.\n\n`$code_with_underscore$`",
             Some("# Referee report\n\n## Run provenance\n\n| Provider | Model | Input | Output | Cached input |\n| --- | --- | ---: | ---: | ---: |\n| Codex | gpt-5.6-sol | 100 | 20 | 80 |"),
         )
         .unwrap();
 
-    assert!(html.contains("$x_t^* = \\frac{a_b}{c^2}$"));
-    assert!(html.contains("$$\\sum_{i=1}^n \\beta_i x_i$$"));
+    // Protected math is restored with backslash delimiters so the client-side
+    // KaTeX pass does not scan for `$`, leaving currency amounts as prose.
+    assert!(html.contains("\\(x_t^* = \\frac{a_b}{c^2}\\)"));
+    assert!(html.contains("\\[\\sum_{i=1}^n \\beta_i x_i\\]"));
+    assert!(html.contains("$5 to $8 per unit"));
+    assert!(!html.contains("{left:'$'"));
+    assert!(!html.contains("{left:'$$'"));
     assert!(html.contains("<code>$code_with_underscore$</code>"));
     assert!(!html.contains("x<em>t"));
     assert!(!html.contains("PIPELINEMATHPLACEHOLDER"));
@@ -348,6 +354,38 @@ fn directory_export_is_complete_and_does_not_replace_existing_output() {
 }
 
 #[test]
+fn core_export_writes_only_the_canonical_document_name() {
+    let destination = tempfile::tempdir().unwrap();
+    let report = PipelineReport {
+        orientation: serde_json::Value::Null,
+        step_outputs: Vec::new(),
+        failed_steps: Vec::new(),
+        referee_reports: Vec::new(),
+        editor: None,
+        report_date: chrono::Local::now().date_naive(),
+        paper_hash: "test".into(),
+    };
+
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(save_all_artifacts(
+            destination.path().to_string_lossy().into_owned(),
+            "# Report".into(),
+            "exact document".into(),
+            report,
+        ))
+        .unwrap();
+
+    let exported = destination.path().join("pipeline-core-export");
+    assert_eq!(
+        std::fs::read_to_string(exported.join("document.md")).unwrap(),
+        "exact document"
+    );
+    assert!(!exported.join("extracted_text.md").exists());
+}
+
+#[test]
 fn rerun_cache_preserves_every_output_for_a_base_step() {
     let outputs = vec![
         crate::models::StepOutput {
@@ -356,7 +394,7 @@ fn rerun_cache_preserves_every_output_for_a_base_step() {
             ..Default::default()
         },
         crate::models::StepOutput {
-            step_id: "review/gemini".into(),
+            step_id: "review/antigravity".into(),
             raw_text: "two".into(),
             ..Default::default()
         },
@@ -368,8 +406,9 @@ fn rerun_cache_preserves_every_output_for_a_base_step() {
 #[test]
 fn composite_failure_ids_normalize_to_the_base_step() {
     let failures = vec![crate::models::StepFailure {
-        step_id: "review/gemini".into(),
-        step_label: "Review (Gemini)".into(),
+        step_id: "review/antigravity".into(),
+        step_label: "Review (Antigravity)".into(),
+        phase: "parallel".into(),
         error: "failed".into(),
     }];
     let seeds = failed_base_ids(&failures);
@@ -388,6 +427,7 @@ fn resume_starts_at_the_first_missing_step_after_recovery() {
         failed_steps: vec![crate::models::StepFailure {
             step_id: "__run_cancelled__".into(),
             step_label: "Run cancelled".into(),
+            phase: String::new(),
             error: "cancelled".into(),
         }],
         referee_reports: Vec::new(),
@@ -512,4 +552,85 @@ fn batch_helpers_update_and_cancel_jobs() {
     assert_eq!(jobs[1].status, "done"); // set_job ran before cancel; already terminal
     assert_eq!(jobs[1].run_id.as_deref(), Some("r1"));
     assert_eq!(jobs[2].status, "cancelled"); // pending → cancelled
+}
+
+#[test]
+fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
+    let mut config = empty_test_config();
+    config.steps = vec![
+        crate::pipeline_config::StepConfig {
+            id: "explicit".into(),
+            phase: crate::pipeline_config::Phase::Parallel,
+            agents: vec!["claude".into()],
+            model: "old-model".into(),
+            ..Default::default()
+        },
+        crate::pipeline_config::StepConfig {
+            id: "inherited".into(),
+            phase: crate::pipeline_config::Phase::Parallel,
+            ..Default::default()
+        },
+        crate::pipeline_config::StepConfig {
+            id: "sequential".into(),
+            phase: crate::pipeline_config::Phase::Sequential,
+            agents: vec!["antigravity".into()],
+            ..Default::default()
+        },
+    ];
+    let snapshot = RunSnapshot {
+        settings: crate::settings::Settings::default(),
+        config,
+        profile_name: "Test".into(),
+        config_fingerprint: "base".into(),
+        fingerprint: "base".into(),
+    };
+    let overrides = RunParallelOverrides {
+        agents: vec!["codex".into(), "antigravity".into()],
+        model_overrides: std::collections::HashMap::from([(
+            "codex:cli".into(),
+            crate::settings::ModelSelection::Pinned {
+                model: "gpt-exact".into(),
+            },
+        )]),
+        effort_overrides: std::collections::HashMap::from([("codex:cli".into(), "high".into())]),
+    };
+
+    let bound = bind_parallel_overrides(snapshot, Some(&overrides)).unwrap();
+
+    for step in &bound.config.steps[..2] {
+        assert_eq!(step.agents, vec!["codex", "antigravity"]);
+        assert!(step.model.is_empty());
+        assert_eq!(
+            step.model_overrides["codex:cli"],
+            crate::settings::ModelSelection::Pinned {
+                model: "gpt-exact".into()
+            }
+        );
+    }
+    assert_eq!(bound.config.steps[2].agents, vec!["antigravity"]);
+    assert_ne!(bound.fingerprint, "base");
+    assert_eq!(bound.config_fingerprint, "base");
+}
+
+#[test]
+fn engine_installer_children_are_not_in_the_run_scoped_kill_list() {
+    // A managed-engine install runs outside any pipeline run: ending or
+    // cancelling a run (`kill_all_children`) must not see the installer's
+    // subprocess. PIDs above i32::MAX are never signalled, so registration
+    // bookkeeping can be exercised without touching a real process.
+    let engine_pid = u32::MAX - 1;
+    let run_pid = u32::MAX - 2;
+    register_engine_child_pid(engine_pid);
+    assert!(!lifecycle::CHILD_PIDS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&engine_pid));
+    unregister_engine_child_pid(engine_pid);
+
+    register_child_pid(run_pid);
+    assert!(lifecycle::CHILD_PIDS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&run_pid));
+    unregister_child_pid(run_pid);
 }

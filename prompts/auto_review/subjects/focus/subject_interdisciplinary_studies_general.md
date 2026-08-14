@@ -1,0 +1,1 @@
+Evaluate why the paper combines its fields, whether their concepts and standards are translated rather than merely juxtaposed, where evidence from one domain bears on claims in another, and whether the integrated conclusion is stronger than parallel disciplinary observations. Use this fallback only when no narrower subject role fits.

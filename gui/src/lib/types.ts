@@ -126,7 +126,7 @@ export interface PrimaryInputSelection {
 
 /** Per-profile extraction configuration. Parser tuning lives in global Settings. */
 export interface ExtractionConfig {
-  /** "" | "auto" | "llm" | "paddleocr-vl-full" | "pdftotext". "marker" is legacy/unavailable. */
+  /** "" | "auto" | "llm" | "paddleocr-vl-full" | "pdftotext". */
   method: string;
   /** "" or "document" | "folder" | "none". Empty = document. */
   input_mode?: string;
@@ -154,6 +154,7 @@ export interface PipelineConfig {
   merge: MergeConfig;
   /** Missing on older profiles/backends and therefore treated as disabled. */
   context_cache?: ContextCacheConfig;
+  /** Compatibility field; the backend and editor normalize this to true. */
   use_orientation: boolean;
   /** Custom orientation-map prompt. Empty = use the default (prompts/orientation.md). */
   orientation_prompt: string;
@@ -234,6 +235,8 @@ export interface StepCallRecord {
 export interface StepFailure {
   step_id: string;
   step_label: string;
+  /** Execution phase; absent on reports saved before phase-aware failures. */
+  phase?: string;
   error: string;
 }
 
@@ -254,7 +257,10 @@ export interface PipelineReport {
 }
 
 export interface OrientationMap {
-  metadata: PaperMetadata;
+  // The backend stores the survey as raw JSON and validates it only as an
+  // object for schema-less profiles, so even a paper-shaped survey can omit
+  // any of these fields; treat every access as optional.
+  metadata?: PaperMetadata;
   sections: SectionEntry[];
   formal_results: FormalResult[];
   tables_figures: TableFigure[];
@@ -279,6 +285,9 @@ export interface ReviewPlan {
   /** Legacy Auto Review v1 field selection retained for saved reports. */
   field_specialist_id?: string;
   method_specialist_ids: string[];
+  /** Document-genre classification shared with every reviewer as context;
+   *  absent on pre-genre saved reports and "research_article" by default. */
+  genre?: string;
   selection_notes: ReviewSelectionNote[];
   routing_uncertainty: string[];
 }
@@ -286,12 +295,14 @@ export interface ReviewPlan {
 export interface AutoReviewCatalogRole {
   id: string;
   label: string;
-  level: "discipline" | "subfield" | "method";
+  /** "discipline" and "family" mark a group's broad fallback role. */
+  level: "discipline" | "subfield" | "family" | "method";
   description: string;
   exclusions: string;
 }
 
-export interface AutoReviewCatalogDiscipline {
+/** A discipline of subject roles or a family of method roles. */
+export interface AutoReviewCatalogGroup {
   id: string;
   label: string;
   roles: AutoReviewCatalogRole[];
@@ -301,8 +312,8 @@ export interface AutoReviewCatalog {
   contract: string;
   subjectCount: number;
   methodCount: number;
-  disciplines: AutoReviewCatalogDiscipline[];
-  methods: AutoReviewCatalogRole[];
+  disciplines: AutoReviewCatalogGroup[];
+  methodFamilies: AutoReviewCatalogGroup[];
 }
 
 /** True when a survey JSON has the paper-review orientation shape. */
@@ -318,8 +329,8 @@ export function isPaperOrientation(o: unknown): o is OrientationMap {
 }
 
 export interface PaperMetadata {
-  title: string;
-  authors: string[];
+  title?: string;
+  authors?: string[];
   date: string | null;
   paper_type: "theory" | "empirical" | "mixed";
   page_count: number | null;
@@ -373,13 +384,6 @@ export interface RefereeReport {
 
 export interface EditorSynthesis {
   overall_assessment: string;
-}
-
-export interface ReportSummary {
-  paper_hash: string;
-  title: string;
-  report_date: string;
-  file_path: string;
 }
 
 /** Mirrors runs::RunSummary — one row in the run-history list. */
@@ -478,6 +482,9 @@ export interface ProjectIssue {
   updated: string;
   decision_updated: string;
   occurrences: ProjectIssueOccurrence[];
+  /** True when the issue was not observed in any readable run at the last
+   * refresh; the decision and last-known occurrences are retained. */
+  archived?: boolean;
 }
 
 export interface ProjectIssueLedger {
@@ -510,6 +517,18 @@ export interface PipelineResult {
 
 export interface Settings {
   preferred_provider: string;
+  /** Providers inherited by Parallel steps whose workflow agent list is empty. */
+  default_parallel_agents?: string[];
+  default_parallel_model_overrides?: Record<string, ModelSelection>;
+  default_parallel_effort_overrides?: Record<string, string>;
+  /** Provider inherited by Sequential steps whose workflow agent list is empty. */
+  default_sequential_agent?: string;
+  default_sequential_model_overrides?: Record<string, ModelSelection>;
+  default_sequential_effort_overrides?: Record<string, string>;
+  /** Provider and policy used to build the orientation map. */
+  default_orientation_agent?: string;
+  default_orientation_model_overrides?: Record<string, ModelSelection>;
+  default_orientation_effort_overrides?: Record<string, string>;
   max_workers: number;
   active_profile: string;
   claude_model: string;
@@ -520,20 +539,12 @@ export interface Settings {
   codex_cli_model_selection?: ModelSelection;
   codex_api_model_selection?: ModelSelection;
   codex_effort: string;
-  gemini_model: string;
-  gemini_cli_model_selection?: ModelSelection;
-  gemini_api_model_selection?: ModelSelection;
-  /** "llm" | "auto" | "paddleocr-vl-full" | "pdftotext"; "marker" is legacy/unavailable. */
+  antigravity_cli_model_selection?: ModelSelection;
+  antigravity_api_model_selection?: ModelSelection;
+  /** agy CLI reasoning effort: "" (default) | "low" | "medium" | "high". */
+  antigravity_effort: string;
+  /** "llm" | "auto" | "paddleocr-vl-full" | "pdftotext". */
   pdf_extractor: string;
-  /** Retired Marker fields remain in the wire format for old settings files. */
-  marker_disable_ocr: boolean;
-  marker_force_ocr: boolean;
-  marker_disable_images: boolean;
-  marker_lowres_dpi: number;
-  marker_highres_dpi: number;
-  marker_pdftext_workers: number;
-  marker_layout_batch_size: number;
-  marker_recognition_batch_size: number;
   /** PaddleOCR-VL page slots; 0 = platform-aware automatic selection. */
   paddle_page_concurrency: number;
   /** llama.cpp multimodal encoder batch size; 0 = automatic. */
@@ -544,8 +555,6 @@ export interface Settings {
   paddle_max_output_tokens: number;
   /** Retries for a failed or suspicious OCR page. */
   paddle_page_retries: number;
-  /** Retired direct-Q8 render setting retained for wire compatibility. */
-  paddle_render_dpi: number;
   /** Official full-parser layout and document-restructuring controls. */
   paddle_full_layout_detection: boolean;
   paddle_full_layout_threshold: number;
@@ -581,6 +590,13 @@ export interface Settings {
   local_api_key: string;
 }
 
+/** Transient New report override; never persisted to Settings. */
+export interface RunParallelOverrides {
+  agents: string[];
+  model_overrides: Record<string, ModelSelection>;
+  effort_overrides: Record<string, string>;
+}
+
 export interface DepStatus {
   name: string;
   found: boolean;
@@ -588,6 +604,8 @@ export interface DepStatus {
   path: string;
   required: boolean;
   hint: string;
+  /** Official platform setup documentation, when the dependency check recommends it. */
+  help_url?: string;
   authenticated?: boolean;
   /** The installed CLI's own session, independent of direct-API readiness. */
   cli_auth_status?: "signed_in" | "signed_out" | "unknown";
@@ -667,9 +685,4 @@ export interface EngineStatus {
   install_progress?: EngineInstallProgress | null;
   available?: boolean;
   unavailable_reason?: string;
-}
-
-export interface RetiredMarkerStatus {
-  present: boolean;
-  bytes: number;
 }

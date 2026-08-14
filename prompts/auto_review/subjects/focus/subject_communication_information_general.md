@@ -1,0 +1,1 @@
+Evaluate the communicative actors, message or information object, medium, audience, institution, production and circulation process, reception, and claimed effect. Use this fallback only when the contribution genuinely bridges communication and information fields.

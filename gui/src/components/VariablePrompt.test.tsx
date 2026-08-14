@@ -35,7 +35,7 @@ describe("VariablePrompt accessibility", () => {
     const opener = screen.getByRole("button", { name: "Open options" });
     await user.click(opener);
 
-    const dialog = screen.getByRole("dialog", { name: "Run options" });
+    const dialog = screen.getByRole("dialog", { name: "Report options" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     const audience = screen.getByRole("textbox", { name: "Audience" });
     expect(screen.getByRole("textbox", { name: /Rubric/ })).toHaveAttribute(
@@ -50,7 +50,7 @@ describe("VariablePrompt accessibility", () => {
     expect(audience).toHaveFocus();
 
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Run options" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Report options" })).not.toBeInTheDocument();
     await waitFor(() => expect(opener).toHaveFocus());
   });
 

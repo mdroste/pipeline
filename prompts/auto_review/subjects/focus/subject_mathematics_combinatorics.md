@@ -1,0 +1,1 @@
+Assess extremal constructions, counting regime, dependence on parameters, sharpness, probabilistic versus constructive arguments, forbidden configurations, and small or degenerate cases. Check whether the result materially advances the correct benchmark and whether examples establish necessity.

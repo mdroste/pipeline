@@ -1,0 +1,1 @@
+Assess the learning construct and progression, prior knowledge, instructional design, teacher enactment, classroom context, engagement, fidelity, near and far transfer, assessment alignment, and whether observed performance reflects durable understanding.

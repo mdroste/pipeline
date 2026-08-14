@@ -1,0 +1,1 @@
+Focus on censoring and truncation, competing events, time-varying risk, estimand definition, missingness, multiplicity, calibration, and clinical interpretability. Check whether endpoint construction and follow-up support the claimed patient-level inference.

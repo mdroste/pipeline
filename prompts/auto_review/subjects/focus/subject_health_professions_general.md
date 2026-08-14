@@ -1,0 +1,1 @@
+Evaluate the person and care setting, professional practice, intervention or assessment, scope of practice, team and workflow, patient-important outcome, implementation and equity, and whether evidence supports adoption in the named service context. Keep professional-process claims distinct from biological efficacy alone.

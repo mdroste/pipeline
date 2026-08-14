@@ -1,0 +1,1 @@
+Evaluate the computational problem, abstraction, novelty, correctness criterion, resource model, baseline, and evidence connecting implementation to the claimed general result. Use this fallback only for genuinely cross-cutting computer-science contributions.

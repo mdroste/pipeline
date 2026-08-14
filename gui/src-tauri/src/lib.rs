@@ -16,7 +16,6 @@ pub mod prompts;
 pub mod runs;
 pub mod safety;
 pub mod settings;
-pub mod storage;
 pub mod updates;
 
 /// Probe a few candidate paths under the resource dir for the bundled
@@ -81,7 +80,6 @@ pub fn run() {
             commands::export::save_all_artifacts,
             commands::export::export_run_artifacts,
             commands::export::print_report_html,
-            commands::config::list_history,
             commands::artifacts::cancel_pipeline,
             commands::lifecycle::cancel_pass,
             commands::artifacts::get_run_manifest,
@@ -117,7 +115,6 @@ pub fn run() {
             projects::ledger::sync_project_issue_ledger,
             projects::ledger::update_project_issue,
             projects::ledger::merge_project_issues,
-            commands::config::check_deps,
             commands::config::get_settings,
             commands::config::save_settings,
             commands::config::get_model_catalog,
@@ -128,6 +125,8 @@ pub fn run() {
             commands::config::save_pipeline_config,
             commands::config::get_default_parallel_template,
             commands::config::get_default_prompt,
+            commands::config::get_auto_review_orientation_prompt,
+            commands::config::get_auto_review_orientation_defaults,
             commands::config::reset_pipeline_config,
             // Profile management
             commands::config::list_profiles,
@@ -147,15 +146,11 @@ pub fn run() {
             commands::config::import_bundle,
             // Update check
             commands::config::check_for_update,
-            // Preprocessing artifact inspection
-            commands::config::read_cached_paper_text,
             commands::config::open_pipeline_dir,
             // Managed local engines
             commands::config::list_engines,
             commands::config::install_engine,
             commands::config::uninstall_engine,
-            commands::config::retired_marker_status,
-            commands::config::remove_retired_marker,
             commands::config::cancel_engine_install,
             mark_smoke_ready,
         ])

@@ -1,0 +1,1 @@
+Assess the ontology and modal commitments, grounding or dependence relation, identity conditions, conceivability and explanatory arguments, relation to science, thought experiments, and whether the view resolves rather than relocates the target problem.

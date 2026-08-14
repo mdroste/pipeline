@@ -1,0 +1,1 @@
+Review the normative principle, moral standing and agency, distribution and institutions, demandingness, feasibility, aggregation, conflicts of value, treatment of cases and objections, and whether recommendations follow at the claimed practical level.

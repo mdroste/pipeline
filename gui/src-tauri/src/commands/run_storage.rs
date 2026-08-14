@@ -189,16 +189,21 @@ pub(super) fn finalize_run(
             );
         }
     }
-    if let Err(e) = w.add_text("report.md", "Report", "report", markdown) {
+    if let Err(e) = w
+        .add_text("report.md", "Report", "report", markdown)
+        .and_then(|()| crate::runs::sync_run_file(&w.dir().join("report.md")))
+    {
         let _ = app.emit_event(
             "pipeline:log",
             serde_json::json!({ "line": format!("WARNING: {e}") }),
         );
     }
-    // Structured report, so a re-run can reload prior step outputs.
+    // Structured report, so a re-run can reload prior step outputs. It must be
+    // fsynced before the checkpoint directory below is removed.
     let report_json_durable = serde_json::to_string_pretty(report)
         .map_err(|error| format!("Failed to serialize report data: {error}"))
         .and_then(|json| w.add_text("report.json", "Report data", "context", &json))
+        .and_then(|()| crate::runs::sync_run_file(&w.dir().join("report.json")))
         .map_err(|error| {
             let _ = app.emit_event(
                 "pipeline:log",
@@ -276,14 +281,22 @@ pub(super) fn enforce_retention(app: &crate::emit::EventBus, keep: usize, max_by
     if keep == 0 && max_bytes == 0 {
         return;
     }
-    if let Ok(n) = crate::runs::purge_runs_with_limits(keep, max_bytes) {
-        if n > 0 {
+    match crate::runs::purge_runs_with_limits(keep, max_bytes) {
+        Ok(n) if n > 0 => {
             let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({
                     "line": format!("Removed {n} old run(s) to satisfy history retention limits")
                 }),
             );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            // A swallowed failure here means the retention caps silently stop
+            // being enforced. Surface it everywhere reachable.
+            let line = format!("WARNING: run-history retention could not be enforced: {error}");
+            eprintln!("{line}");
+            crate::pipeline::logging::emit(app, line);
         }
     }
 }

@@ -57,8 +57,7 @@ pub fn background(inner: &EventBus) -> EventBus {
 }
 
 /// A headless sink that prints progress to stderr, for the CLI. Log lines and
-/// stage/pass transitions are shown; token-usage and preprocess events are
-/// summarized elsewhere.
+/// stage/pass transitions are shown; token usage is summarized elsewhere.
 pub struct CliEvents;
 
 impl Events for CliEvents {

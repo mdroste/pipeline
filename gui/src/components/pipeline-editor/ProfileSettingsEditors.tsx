@@ -53,7 +53,16 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
       {error && <p className="text-xs text-red-600 dark:text-red-400 mt-1.5">{error}</p>}
 
       {draft && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setDraft(null)}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onMouseDown={(event) => {
+            // Close only on a press that starts on the backdrop itself — a
+            // click handler would also fire when a text-selection drag that
+            // began in the textarea is released over the backdrop, discarding
+            // the draft.
+            if (event.target === event.currentTarget) setDraft(null);
+          }}
+        >
           <div
             ref={dialogRef}
             role="dialog"
@@ -62,7 +71,6 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
             aria-describedby={descriptionId}
             tabIndex={-1}
             className="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl p-5"
-            onClick={(e) => e.stopPropagation()}
           >
             <h3 id={titleId} className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Calibration draft</h3>
             <p id={descriptionId} className="text-xs text-gray-500 dark:text-gray-400 mb-3">
@@ -131,7 +139,7 @@ function ExtraInputsEditor({
         Extra inputs
       </label>
       <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
-        Additional files/folders the Run action asks for. A step can select the extracted text,
+        Additional files/folders the Generate report action asks for. A step can select the extracted text,
         original source, or both; selected text is available as{" "}
         <code className="font-mono">{"{input:key}"}</code>. Useful for a response letter, rubric,
         or prior report alongside the main input.
@@ -218,7 +226,7 @@ function VariablesEditor({
     <div>
       <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Variables</label>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
-        Values the Run action asks for, substituted into prompts as{" "}
+        Values the Generate report action asks for, substituted into prompts as{" "}
         <code className="font-mono">{"{var:key}"}</code>.
       </p>
       <div className="space-y-2">

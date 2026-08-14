@@ -1,0 +1,1 @@
+Review flight or mission envelope, aerodynamic and structural coupling, propulsion assumptions, guidance and control, mass and energy budgets, environmental extremes, qualification, and system margins. Check whether tests or simulations represent the relevant scale and operating conditions.

@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { DepsReport } from "../lib/types";
 import useModalDialog from "../hooks/useModalDialog";
 
@@ -15,7 +16,7 @@ type StatusTone = "success" | "warning" | "danger" | "neutral";
 const PROVIDER_DEPENDENCIES = new Set([
   "Claude CLI",
   "Codex CLI",
-  "Gemini CLI",
+  "Antigravity CLI",
 ]);
 
 const HIDDEN_DEPENDENCIES = new Set([
@@ -65,6 +66,13 @@ const hasAuthWarning = (dep: Dependency) =>
   (dep.cli_auth_status === "signed_out" || dep.cli_auth_status === "unknown");
 
 const shouldShowHint = (dep: Dependency) => Boolean(dep.hint);
+
+const openSetupGuide = (event: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+  event.preventDefault();
+  void openUrl(url).catch((error) => {
+    console.warn("Unable to open dependency setup guide:", error);
+  });
+};
 
 const missingDependencyLabel = (dep: Dependency) => {
   if (dep.required && /paddleocr-vl/i.test(dep.name)) {
@@ -188,6 +196,19 @@ function DependencyRow({
                 {dep.hint.slice(pdfSettingsIndex + pdfSettingsLabel.length)}
               </>
             ) : dep.hint}
+            {dep.help_url && (
+              <>
+                {" "}
+                <a
+                  href={dep.help_url}
+                  onClick={(event) => openSetupGuide(event, dep.help_url!)}
+                  className="font-medium underline underline-offset-2 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-100"
+                >
+                  Official installation guide
+                </a>
+                .
+              </>
+            )}
           </p>
         )}
         {dep.found && dep.path && (
@@ -266,7 +287,7 @@ export default function DepsCheck({
                   Model access
                 </h3>
                 <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Use at least one: GPT (Codex), Claude, or Gemini CLI — or configure a provider API key in Settings.
+                  Use at least one: GPT (Codex), Claude, or Antigravity CLI (agy) — or configure a provider API key in Settings.
                 </p>
               </div>
               <SectionStatus ready={modelAccessReady} />

@@ -1,0 +1,1 @@
+Review signal and noise models, circuit or architecture constraints, power, bandwidth, timing, quantization, channel conditions, hardware-software interfaces, fabrication assumptions, and comparisons at matched operating points. Check whether component results support system-level claims.

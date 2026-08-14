@@ -1,0 +1,1 @@
+Review disease and phenotype definition, baseline risk and comorbidity, organ-system interaction, biomarkers and surrogate endpoints, medication and procedure pathways, competing events, adherence and adverse effects, clinically meaningful absolute benefit, subgroup and sex differences, follow-up, and whether evidence supports the claimed prevention or treatment decision.

@@ -1,5 +1,9 @@
 import { useState, useCallback, useEffect, useRef, type RefObject } from "react";
 
+/** Highlighting is DOM work proportional to the match count; cap it so a
+ *  short query over a huge report cannot freeze the UI. */
+export const MAX_FIND_MARKS = 1000;
+
 /** Remove every `<mark class="search-hit">` inside `container`, restoring the
  *  original text so a fresh search starts clean. Exported for testing. */
 export function clearHighlights(container: HTMLElement): void {
@@ -12,12 +16,18 @@ export function clearHighlights(container: HTMLElement): void {
   });
 }
 
-/** Wrap every case-insensitive occurrence of `query` in `container` in a
- *  `<mark class="search-hit">`, skipping script/style and already-marked nodes.
- *  Returns the marks in document order. Exported for testing. */
-export function applyHighlights(container: HTMLElement, query: string): HTMLElement[] {
+/** Wrap case-insensitive occurrences of `query` in `container` in a
+ *  `<mark class="search-hit">`, skipping script/style, KaTeX's visually hidden
+ *  MathML source, and already-marked nodes. At most `limit` occurrences are
+ *  marked; `capped` reports whether any were left unmarked. Marks are in
+ *  document order. Exported for testing. */
+export function applyHighlights(
+  container: HTMLElement,
+  query: string,
+  limit: number = MAX_FIND_MARKS,
+): { marks: HTMLElement[]; capped: boolean } {
   const q = query.toLowerCase();
-  if (!q) return [];
+  if (!q) return { marks: [], capped: false };
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) => {
       const text = node.textContent;
@@ -26,6 +36,9 @@ export function applyHighlights(container: HTMLElement, query: string): HTMLElem
       if (parent && (parent.tagName === "SCRIPT" || parent.tagName === "STYLE")) {
         return NodeFilter.FILTER_REJECT;
       }
+      // KaTeX renders a hidden MathML copy of the raw LaTeX; matches inside it
+      // are invisible, so counting or jumping to them strands the user.
+      if (parent?.closest(".katex-mathml")) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
   });
@@ -34,7 +47,12 @@ export function applyHighlights(container: HTMLElement, query: string): HTMLElem
   while ((n = walker.nextNode())) textNodes.push(n as Text);
 
   const marks: HTMLElement[] = [];
+  let capped = false;
   for (const textNode of textNodes) {
+    if (marks.length >= limit) {
+      capped = true;
+      break;
+    }
     const text = textNode.textContent || "";
     const lower = text.toLowerCase();
     const frag = document.createDocumentFragment();
@@ -42,6 +60,10 @@ export function applyHighlights(container: HTMLElement, query: string): HTMLElem
     let idx = lower.indexOf(q, from);
     if (idx === -1) continue;
     while (idx !== -1) {
+      if (marks.length >= limit) {
+        capped = true;
+        break;
+      }
       if (idx > from) frag.appendChild(document.createTextNode(text.slice(from, idx)));
       const mark = document.createElement("mark");
       mark.className = "search-hit";
@@ -54,7 +76,7 @@ export function applyHighlights(container: HTMLElement, query: string): HTMLElem
     if (from < text.length) frag.appendChild(document.createTextNode(text.slice(from)));
     textNode.parentNode?.replaceChild(frag, textNode);
   }
-  return marks;
+  return { marks, capped };
 }
 
 /** Find-bar state and behavior over a scrollable content container.
@@ -63,6 +85,7 @@ export function useFindBar(containerRef: RefObject<HTMLElement | null>, resetKey
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [count, setCount] = useState(0);
+  const [capped, setCapped] = useState(false);
   const [current, setCurrent] = useState(0);
   const marksRef = useRef<HTMLElement[]>([]);
 
@@ -84,12 +107,14 @@ export function useFindBar(containerRef: RefObject<HTMLElement | null>, resetKey
     if (!open || !query) {
       marksRef.current = [];
       setCount(0);
+      setCapped(false);
       setCurrent(0);
       return;
     }
-    const marks = applyHighlights(container, query);
+    const { marks, capped: hitCap } = applyHighlights(container, query);
     marksRef.current = marks;
     setCount(marks.length);
+    setCapped(hitCap);
     setCurrent(marks.length > 0 ? 0 : 0);
     if (marks.length > 0) focusMark(0);
     return () => clearHighlights(container);
@@ -131,5 +156,5 @@ export function useFindBar(containerRef: RefObject<HTMLElement | null>, resetKey
     return () => window.removeEventListener("keydown", handler);
   }, [containerRef]);
 
-  return { open, setOpen, query, setQuery, count, current, next, prev, close };
+  return { open, setOpen, query, setQuery, count, capped, current, next, prev, close };
 }

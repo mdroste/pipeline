@@ -1,0 +1,1 @@
+Assess localization and network claims, temporal resolution, task and contrast logic, reverse inference, preprocessing and multiplicity, lesion or perturbation evidence, behavior-brain linkage, and whether neural measures add explanatory content beyond correlated activation.

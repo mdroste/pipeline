@@ -1,5 +1,5 @@
 import React, { memo, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -357,6 +357,88 @@ export function stripInternalReportMarkers(markdown: string): string {
   );
 }
 
+/** Hoisted so the memoized markdown subtree receives a stable reference. */
+const MARKDOWN_COMPONENTS: Components = {
+  a: SafeMarkdownLink,
+  table: ({ node: _node, ...props }) => (
+    <div className="max-w-full overflow-x-auto">
+      <table {...props} />
+    </div>
+  ),
+  // Detect comment headers: a paragraph whose only child is
+  // <strong>#N. Title</strong>  →  render as a styled card.
+  p: ({ children, node: _node, ...props }) => {
+    const childArray = React.Children.toArray(children);
+    if (childArray.length === 1 && React.isValidElement(childArray[0])) {
+      const child = childArray[0] as React.ReactElement<{
+        children?: React.ReactNode;
+      }>;
+      const split = splitCommentPrefix(child.props?.children);
+      if (split) {
+        return (
+          <div {...props} className="comment-header">
+            <span className="comment-num">{split.num}</span>
+            <span className="comment-title">{split.rest}</span>
+          </div>
+        );
+      }
+    }
+    return <p {...props}>{children}</p>;
+  },
+};
+
+/**
+ * The parsed-and-rendered report body. Memoized on the normalized markdown
+ * string (plus the stable navigation plugin derived from it) so find-bar
+ * keystrokes in the parent never re-run the markdown/KaTeX pipeline — on
+ * large math-heavy reports that re-parse takes seconds per keystroke.
+ */
+const ReportMarkdown = memo(function ReportMarkdown({
+  markdown,
+  remarkNavigationIds,
+}: {
+  markdown: string;
+  remarkNavigationIds: ReturnType<typeof navigationIdPlugin>;
+}) {
+  return (
+    <MathErrorBoundary resetKey={markdown}>
+      {(fallback) => (
+        <>
+          {fallback && (
+            <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+              Some math in this report could not be rendered — formulas
+              are shown as raw LaTeX notation.
+            </div>
+          )}
+          <ReactMarkdown
+            remarkPlugins={
+              fallback
+                ? [remarkGfm, remarkNavigationIds]
+                : [
+                    remarkGfm,
+                    remarkMath,
+                    remarkRepairMath,
+                    remarkNavigationIds,
+                  ]
+            }
+            rehypePlugins={
+              fallback
+                ? []
+                : [
+                    rehypeValidateMath,
+                    [rehypeKatex, REPORT_KATEX_OPTIONS],
+                  ]
+            }
+            components={MARKDOWN_COMPONENTS}
+          >
+            {markdown}
+          </ReactMarkdown>
+        </>
+      )}
+    </MathErrorBoundary>
+  );
+});
+
 function ReportViewerContent({ markdown }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentsOpen, setContentsOpen] = useState(true);
@@ -421,7 +503,9 @@ function ReportViewerContent({ markdown }: Props) {
             className="w-44 py-0.5 px-1.5 text-sm bg-transparent text-gray-900 dark:text-gray-100 focus:outline-none"
           />
           <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums min-w-[3rem] text-right">
-            {find.count > 0 ? `${find.current + 1}/${find.count}` : "0/0"}
+            {find.count > 0
+              ? `${find.current + 1}/${find.count}${find.capped ? "+" : ""}`
+              : "0/0"}
           </span>
           <button aria-label="Previous match" onClick={find.prev} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Previous (Shift+Enter)">↑</button>
           <button aria-label="Next match" onClick={find.next} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Next (Enter)">↓</button>
@@ -495,74 +579,20 @@ function ReportViewerContent({ markdown }: Props) {
 
       {/* Report content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="report-content" ref={contentRef}>
+        {/* Key on the content so a change fully remounts this subtree. The
+            find bar mutates these DOM nodes (wrapping matches in <mark>); a
+            remount lets React discard the mutated tree wholesale instead of
+            diffing against it, which otherwise throws or shows stale text. */}
+        <div key={normalizedMarkdown} className="report-content" ref={contentRef}>
           {previewTruncated && (
             <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
               This unusually large response is truncated in the interactive preview. The saved artifact remains unchanged.
             </div>
           )}
-          <MathErrorBoundary resetKey={normalizedMarkdown}>
-            {(fallback) => (
-              <>
-                {fallback && (
-                  <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-                    Some math in this report could not be rendered — formulas
-                    are shown as raw LaTeX notation.
-                  </div>
-                )}
-                <ReactMarkdown
-                  remarkPlugins={
-                    fallback
-                      ? [remarkGfm, remarkNavigationIds]
-                      : [
-                          remarkGfm,
-                          remarkMath,
-                          remarkRepairMath,
-                          remarkNavigationIds,
-                        ]
-                  }
-                  rehypePlugins={
-                    fallback
-                      ? []
-                      : [
-                          rehypeValidateMath,
-                          [rehypeKatex, REPORT_KATEX_OPTIONS],
-                        ]
-                  }
-                  components={{
-                    a: SafeMarkdownLink,
-                    table: ({ node: _node, ...props }) => (
-                      <div className="max-w-full overflow-x-auto">
-                        <table {...props} />
-                      </div>
-                    ),
-                    // Detect comment headers: a paragraph whose only child is
-                    // <strong>#N. Title</strong>  →  render as a styled card.
-                    p: ({ children, node, ...props }) => {
-                      const childArray = React.Children.toArray(children);
-                      if (childArray.length === 1 && React.isValidElement(childArray[0])) {
-                        const child = childArray[0] as React.ReactElement<{
-                          children?: React.ReactNode;
-                        }>;
-                        const split = splitCommentPrefix(child.props?.children);
-                        if (split) {
-                          return (
-                            <div {...props} className="comment-header">
-                              <span className="comment-num">{split.num}</span>
-                              <span className="comment-title">{split.rest}</span>
-                            </div>
-                          );
-                        }
-                      }
-                      return <p {...props}>{children}</p>;
-                    },
-                  }}
-                >
-                  {normalizedMarkdown}
-                </ReactMarkdown>
-              </>
-            )}
-          </MathErrorBoundary>
+          <ReportMarkdown
+            markdown={normalizedMarkdown}
+            remarkNavigationIds={remarkNavigationIds}
+          />
         </div>
       </div>
     </div>

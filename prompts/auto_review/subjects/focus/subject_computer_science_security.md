@@ -1,0 +1,1 @@
+Assess the threat and trust model, attacker capabilities, security definition, attack surface, leakage, composition, deployment assumptions, adaptive behavior, and evaluation against realistic attacks. Check whether privacy or robustness guarantees cover the actual release and workflow.

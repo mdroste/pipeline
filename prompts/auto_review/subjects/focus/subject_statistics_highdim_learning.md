@@ -1,0 +1,1 @@
+Assess dimension and sample regimes, structural assumptions, complexity control, regularization, tuning, uncertainty after selection, distribution shift, and the gap between predictive risk and inferential claims. Compare guarantees and experiments to appropriate statistical baselines.

@@ -1,0 +1,1 @@
+Review genotype, cultivar, soil and nutrient conditions, pest and disease pressure, weather and season, plot and farm design, management interactions, yield and quality measures, carryover effects, and whether controlled or site-specific evidence supports performance across the target production environment.

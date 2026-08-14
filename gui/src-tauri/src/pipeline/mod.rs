@@ -1,3 +1,4 @@
+pub mod antigravity;
 pub mod api_anthropic;
 pub mod api_common;
 pub mod api_google;
@@ -10,7 +11,6 @@ pub mod conditions;
 pub mod context_cache;
 pub mod executor;
 pub mod extract;
-pub mod gemini;
 pub mod glob;
 pub mod logging;
 pub mod merge;

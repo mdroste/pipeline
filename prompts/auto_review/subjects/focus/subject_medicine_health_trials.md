@@ -1,0 +1,1 @@
+Review trial phase and estimand, randomization and masking, comparator, adherence and crossover, endpoint hierarchy, multiplicity, stopping, safety, clinical versus statistical significance, follow-up, and whether efficacy evidence supports the proposed use.

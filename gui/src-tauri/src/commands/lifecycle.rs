@@ -21,7 +21,7 @@ impl Drop for RunStateGuard {
     }
 }
 
-/// PIDs of active child processes (claude/gemini/codex subprocesses).
+/// PIDs of active child processes (claude/codex/agy subprocesses).
 /// Populated by `register_child_pid`, cleared by `unregister_child_pid`.
 pub(super) static CHILD_PIDS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
 
@@ -280,6 +280,14 @@ pub(super) fn signal_cancellation() {
     cancellation_signal().send_replace(epoch);
 }
 
+/// Snapshot of the cancellation epoch, captured at run-command entry and
+/// compared after `begin_run_state` so a cancel that lands during the launch
+/// command's preflight (dependency probes, resumable-run recovery) is
+/// re-asserted instead of being erased by the flag reset.
+pub(super) fn current_cancel_epoch() -> u64 {
+    CANCEL_EPOCH.load(std::sync::atomic::Ordering::Acquire)
+}
+
 /// Resolve when the current run or the supplied pass is cancelled. A watch
 /// channel avoids lost wakeups if cancellation races with request dispatch.
 pub async fn wait_for_cancellation(pass_key: Option<&str>) {
@@ -356,6 +364,23 @@ pub fn unregister_child_pid(pid: u32) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .retain(|(_, p)| *p != pid);
+    unregister_process_job(pid);
+}
+
+/// Register a managed-engine installer child for Windows job-object tracking
+/// only. Installs run outside any pipeline run and own their kill path
+/// (`engines::cancel_install`); they must never enter `CHILD_PIDS`, where the
+/// end or cancellation of an unrelated run would SIGKILL a half-finished
+/// multi-gigabyte install mid-download.
+pub(crate) fn register_engine_child_pid(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    register_process_job(pid);
+}
+
+/// Counterpart to `register_engine_child_pid` once the installer child exits.
+pub(crate) fn unregister_engine_child_pid(pid: u32) {
     unregister_process_job(pid);
 }
 

@@ -1,0 +1,1 @@
+Assess acoustic or articulatory measurement, segmentation, lexical and prosodic context, speaker and dialect variation, phonological representation, alternations, typology, and whether evidence separates categorical structure from gradient production or perception.

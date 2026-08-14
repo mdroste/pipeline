@@ -1,0 +1,1 @@
+Review the production and accumulation structure, sources of productivity, technology diffusion, demographic and human-capital channels, transition path, balanced-growth restrictions, cross-country comparability, decomposition versus mechanism, and whether the model or evidence distinguishes permanent growth effects from level and reallocation effects.

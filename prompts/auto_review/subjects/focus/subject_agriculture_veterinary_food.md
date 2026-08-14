@@ -1,0 +1,1 @@
+Review raw-material variation, formulation and processing conditions, microbial or chemical hazards, sampling, shelf life, sensory design, analytical validation, storage and distribution, scale-up, comparator products, and whether laboratory quality or safety measures support the claimed consumer and production setting.

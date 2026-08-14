@@ -1,0 +1,1 @@
+Review the student, family, teacher, and institution margins; assignment and choice rules; peer and equilibrium effects; skill and attainment measures; dynamic selection; costs and financing; distributional incidence; and whether estimated effects identify learning, credentials, access, or later labor-market returns as claimed.

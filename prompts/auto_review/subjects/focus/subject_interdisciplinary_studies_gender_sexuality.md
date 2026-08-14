@@ -1,0 +1,1 @@
+Assess how categories are defined historically and socially, whose experience and evidence are represented, interactions with race, class, disability, nation and other structures, institutional and cultural mechanisms, positionality, counterexamples, and whether claims travel across populations or periods without erasing relevant variation.

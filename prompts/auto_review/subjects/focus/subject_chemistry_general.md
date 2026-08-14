@@ -1,0 +1,1 @@
+Evaluate molecular identity, mechanism, thermodynamics and kinetics, purity, characterization, controls, reproducibility, and whether the observed property follows from the claimed chemical structure or process.

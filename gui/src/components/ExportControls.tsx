@@ -1,4 +1,4 @@
-import { save, open } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 import type { PipelineReport } from "../lib/types";
@@ -38,13 +38,10 @@ export default function ExportControls({
 
   const handleSaveMd = async () => {
     try {
-      const path = await save({
-        defaultPath: `PIPELINE_REPORT_${new Date().toISOString().slice(0, 10)}.md`,
-        filters: [{ name: "Markdown", extensions: ["md"] }],
-      });
-      if (path) {
-        await invoke("save_report_md", { path, markdown });
-      }
+      // The backend opens the native save dialog and writes only to the
+      // user-chosen path; the webview never supplies a filesystem path.
+      const suggestedName = `PIPELINE_REPORT_${new Date().toISOString().slice(0, 10)}.md`;
+      await invoke("save_report_md", { markdown, suggestedName });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       alert(`Failed to save: ${msg}`);
@@ -77,7 +74,7 @@ export default function ExportControls({
         `Export a core report package under "${dir}"?\n\n` +
         "Pipeline will create a new unique pipeline-core-export folder atomically. " +
         "Existing files and earlier exports will not be replaced.\n\n" +
-        "The package includes report.md, extracted_text.md, orientation.json, and step reports. " +
+        "The package includes report.md, document.md, orientation.json, and step reports. " +
         "Saved-run source files, page images, figures, and logs are not included.",
       );
       if (!confirmed) return;
@@ -105,7 +102,7 @@ export default function ExportControls({
       const destination = await open({
         directory: true,
         multiple: false,
-        title: "Choose parent folder for complete run export",
+        title: "Choose parent folder for complete report export",
       });
       if (!destination) return;
       const result = await invoke<ExportRunArtifactsResult>("export_run_artifacts", {
@@ -113,13 +110,13 @@ export default function ExportControls({
         destination,
       });
       alert(
-        `Complete run exported to ${result.exportedPath} ` +
+        `Complete report exported to ${result.exportedPath} ` +
         `(${result.fileCount.toLocaleString()} file${result.fileCount === 1 ? "" : "s"}, ` +
         `${formatBytes(result.bytes)}).`,
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      alert(`Failed to export complete run: ${msg}`);
+      alert(`Failed to export complete report: ${msg}`);
     } finally {
       setExportingRun(false);
     }
@@ -145,18 +142,18 @@ export default function ExportControls({
         <button
           onClick={handleExportRun}
           disabled={exportingRun}
-          title="Exports the complete durable run, including its manifest, source artifacts, page images, figures, reports, and logs."
+          title="Exports the complete durable report package, including its manifest, source artifacts, page images, figures, reports, and logs."
           className="py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
                      text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors
                      disabled:cursor-wait disabled:opacity-50"
         >
-          {exportingRun ? "Exporting…" : "Export complete run"}
+          {exportingRun ? "Exporting…" : "Export complete report"}
         </button>
       ) : report && extractedText !== undefined ? (
         <button
           onClick={handleExportCoreFiles}
           disabled={exportingCoreFiles}
-          title="Exports the report, extracted text, orientation, and step reports. It does not copy the complete saved run."
+          title="Exports the report, extracted text, orientation, and step reports. It does not copy the complete saved report package."
           className="py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
                      text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors
                      disabled:cursor-wait disabled:opacity-50"

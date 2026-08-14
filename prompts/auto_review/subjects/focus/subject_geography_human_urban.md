@@ -1,0 +1,1 @@
+Review production of place and scale, spatial division and mobility, networks and territory, uneven development, mapping and representation, local history, actor power, and whether comparisons preserve the geographic context of the mechanism.

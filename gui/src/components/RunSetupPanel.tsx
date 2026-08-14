@@ -2,7 +2,8 @@ import { useState } from "react";
 import PaperSelector from "./PaperSelector";
 import ResizeHandle from "./ResizeHandle";
 import WorkflowPanel from "./WorkflowPanel";
-import type { PipelineConfig, PrimaryInputSelection } from "../lib/types";
+import RunParallelAgents from "./RunParallelAgents";
+import type { PipelineConfig, PrimaryInputSelection, RunParallelOverrides } from "../lib/types";
 
 const PRIVACY_NOTICE_KEY = "pipeline.privacyNoticeAcknowledged.v1";
 
@@ -15,8 +16,10 @@ interface Props {
   dependenciesReady: boolean;
   inputMode: string;
   listenersReady: boolean;
+  localLlmActive: boolean;
   paperPath: string | null;
   preparingRun: boolean;
+  parallelOverrides: RunParallelOverrides | null;
   selectionKey: number;
   width: number;
   onConfigureWorkflow: () => void;
@@ -24,6 +27,7 @@ interface Props {
   onPaperPathChange: (path: string | null) => void;
   onInputSelectionChange: (selection: PrimaryInputSelection | null) => void;
   onPrivacyDetails: () => void;
+  onParallelOverridesChange: (overrides: RunParallelOverrides | null) => void;
   onProfileChange: (config?: PipelineConfig) => void;
   onRetryConfig: () => void;
   onRetryDependencies: () => void;
@@ -39,8 +43,10 @@ export default function RunSetupPanel({
   dependenciesReady,
   inputMode,
   listenersReady,
+  localLlmActive,
   paperPath,
   preparingRun,
+  parallelOverrides,
   selectionKey,
   width,
   onConfigureWorkflow,
@@ -48,6 +54,7 @@ export default function RunSetupPanel({
   onPaperPathChange,
   onInputSelectionChange,
   onPrivacyDetails,
+  onParallelOverridesChange,
   onProfileChange,
   onRetryConfig,
   onRetryDependencies,
@@ -78,15 +85,9 @@ export default function RunSetupPanel({
     >
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-6">
         <header className="mb-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
-            Workspace
-          </p>
-          <h1 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-50">
-            New run
+          <h1 className="text-xl font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-50">
+            New report
           </h1>
-          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Choose inputs, say how Pipeline should use them, and select a workflow.
-          </p>
         </header>
 
         <div className="space-y-5">
@@ -110,6 +111,13 @@ export default function RunSetupPanel({
             onConfigure={onConfigureWorkflow}
             onProfileChange={onProfileChange}
             refreshKey={configVersion}
+          />
+
+          <RunParallelAgents
+            value={parallelOverrides}
+            disabled={configLoading || preparingRun}
+            localLlmActive={localLlmActive}
+            onChange={onParallelOverridesChange}
           />
         </div>
 
@@ -142,7 +150,7 @@ export default function RunSetupPanel({
               <p>
                 Your selected source and the context granted to a step may be sent to its
                 configured model provider. WebSearch steps also send queries to an external
-                search service. Run records and artifacts persist locally until removed.
+                search service. Report records and artifacts persist locally until removed.
               </p>
               <div className="mt-2 flex items-center gap-3">
                 <button
@@ -181,14 +189,14 @@ export default function RunSetupPanel({
                        dark:disabled:bg-gray-700 dark:disabled:text-gray-400"
           >
             {preparingRun
-              ? "Preparing run…"
+              ? "Preparing report…"
               : configLoading
                 ? "Loading workflow…"
                 : dependenciesLoading
                   ? "Checking dependencies…"
                   : !listenersReady
                     ? "Preparing event stream…"
-                    : "Run"}
+                    : "Review report"}
             {!dependenciesLoading && !configLoading && !preparingRun && listenersReady && (
               <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="m9 5 7 7-7 7" />
@@ -200,7 +208,7 @@ export default function RunSetupPanel({
       <ResizeHandle
         currentWidth={width}
         defaultWidth={288}
-        label="Resize run setup"
+        label="Resize report setup"
         min={240}
         max={440}
         onResize={onResize}

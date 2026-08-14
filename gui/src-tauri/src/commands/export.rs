@@ -3,9 +3,14 @@ use super::*;
 // --- File I/O ---
 
 #[tauri::command]
-pub async fn save_report_md(path: String, markdown: String) -> Result<(), String> {
+pub async fn save_report_md(
+    app: AppHandle,
+    markdown: String,
+    suggested_name: Option<String>,
+) -> Result<Option<String>, String> {
     let clean = output::normalize_math_delimiters(&output::clean_export_markdown(&markdown));
-    std::fs::write(&path, clean).map_err(|e| format!("Failed to write file: {e}"))
+    let name = suggested_name.as_deref().unwrap_or("report.md");
+    save_via_dialog(&app, name, "Markdown", "md", clean.into_bytes()).await
 }
 
 pub(super) const MAX_RUN_EXPORT_FILES: usize = 20_000;
@@ -231,9 +236,10 @@ pub async fn save_all_artifacts(
     std::fs::write(base.join("report.md"), &clean_markdown)
         .map_err(|e| format!("Failed to write report.md: {e}"))?;
 
-    // Extracted text
-    std::fs::write(base.join("extracted_text.md"), &extracted_text)
-        .map_err(|e| format!("Failed to write extracted_text.md: {e}"))?;
+    // Canonical readable document. The argument name remains stable for older
+    // frontend builds that still invoke this compatibility command.
+    std::fs::write(base.join("document.md"), &extracted_text)
+        .map_err(|e| format!("Failed to write document.md: {e}"))?;
 
     // Orientation map
     let orient_json = serde_json::to_string_pretty(&report.orientation)
@@ -501,9 +507,16 @@ pub(super) fn protect_math_chunk(
             let content_start = index + delimiter_len;
             if let Some(close) = math_close(source, content_start, delimiter_len) {
                 let latex = &source[content_start..close];
+                // Inline `$…$` must have non-whitespace ends and stay on one
+                // line without crossing a code span: math_close scans raw
+                // bytes, so "from $5 to $8 … `$x$`" would otherwise pair a
+                // currency `$` with a later paragraph's or code span's `$`
+                // and swallow the prose in between as an equation.
                 let valid_inline_spacing = delimiter_len == 2
                     || (!latex.chars().next().is_some_and(char::is_whitespace)
-                        && !latex.chars().next_back().is_some_and(char::is_whitespace));
+                        && !latex.chars().next_back().is_some_and(char::is_whitespace)
+                        && !latex.contains('\n')
+                        && !latex.contains('`'));
                 if !latex.trim().is_empty() && valid_inline_spacing {
                     let token = format!("{token_base}{}END", protected.len());
                     protected.push(ProtectedPrintMath {
@@ -584,8 +597,15 @@ pub(super) fn escape_html_text(text: &str) -> String {
 
 pub(super) fn restore_print_math(mut html: String, protected: &[ProtectedPrintMath]) -> String {
     for item in protected {
-        let delimiter = if item.display { "$$" } else { "$" };
-        let expression = format!("{delimiter}{}{delimiter}", escape_html_text(&item.latex));
+        // Restore with backslash delimiters: the client-side renderMathInElement
+        // pass deliberately does not scan for `$`, so unprotected currency
+        // amounts in prose ("tariffs rose from $5 to $8") stay literal text
+        // instead of being typeset as an equation in the printed report.
+        let expression = if item.display {
+            format!("\\[{}\\]", escape_html_text(&item.latex))
+        } else {
+            format!("\\({}\\)", escape_html_text(&item.latex))
+        };
         if item.display {
             let paragraph = format!("<p>{}</p>", item.token);
             if html.contains(&paragraph) {
@@ -736,6 +756,7 @@ pub(super) fn build_print_report_html(
         "  .comment-header { margin-top: 1.55rem; padding-top: 0.65rem; }\n",
         "  .comment-num { width: 1.42rem; height: 1.42rem; font-size: 6.8pt; }\n",
         "  .comment-title { font-size: 10.2pt; }\n",
+        "  .report-body p { text-align: justify; hyphens: auto; }\n",
         "  a { color: inherit; text-decoration: none; }\n",
         "  pre, blockquote { break-inside: avoid; }\n",
         "}\n",
@@ -755,9 +776,10 @@ pub(super) fn build_print_report_html(
     // font set before the final paint and print dialog.
     html_doc.push_str(concat!(
         "\n<script>",
+        // No `$`/`$$` delimiters here: all legitimate dollar-delimited math was
+        // already tokenized server-side by protect_print_math and restored as
+        // \( \) / \[ \]; a bare `$` reaching this pass is prose currency.
         "renderMathInElement(document.body,{delimiters:[",
-        "{left:'$$',right:'$$',display:true},",
-        "{left:'$',right:'$',display:false},",
         "{left:'\\\\(',right:'\\\\)',display:false},",
         "{left:'\\\\[',right:'\\\\]',display:true}",
         "],throwOnError:false,strict:'ignore',trust:false,macros:{",

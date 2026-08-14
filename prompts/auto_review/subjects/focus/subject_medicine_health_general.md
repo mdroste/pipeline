@@ -1,0 +1,1 @@
+Evaluate the patient or population, clinical problem, comparator, endpoint, harms, follow-up, applicability, and whether the evidence changes diagnosis, prognosis, prevention, or care. Keep biological mechanism distinct from demonstrated patient benefit.

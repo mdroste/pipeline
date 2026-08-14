@@ -1,0 +1,1 @@
+Review how expertise and categories are produced and authorized, field and organizational boundaries, professional jurisdiction, evaluation and status, material and institutional infrastructure, networks and diffusion, conflicts of interest, public legitimacy, and whether evidence links local knowledge practices to the wider authority or inequality claimed.

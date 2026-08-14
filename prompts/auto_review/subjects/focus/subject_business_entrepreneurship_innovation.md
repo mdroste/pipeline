@@ -1,0 +1,1 @@
+Assess venture and founder selection, opportunity and capability measures, financing and ownership, ecosystem and institutional setting, innovation stage, survival and scaling, strategic adaptation, counterfactual comparison, ex post success bias, and whether observed high-performing ventures identify a transferable entrepreneurial mechanism.

@@ -1,10 +1,18 @@
 use super::*;
 
-/// Extract text from PDF using pdftotext.
+/// Extract text from PDF using pdftotext. The child reads a staged private
+/// copy, never the original path (macOS TCC: helper children reading the
+/// user's Documents/Desktop need their own folder permission; the in-process
+/// staging copy is covered by the file-picker grant).
 pub(super) fn extract_pdftotext(path: &Path) -> Result<String, String> {
-    let path_str = path
+    let staging = tempfile::Builder::new()
+        .prefix("pipeline_pdf_text_input_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create private PDF input directory: {error}"))?;
+    let staged = stage_pdf_input(path, staging.path())?;
+    let path_str = staged
         .to_str()
-        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", staged.display()))?;
     let pdftotext_bin = find_command("pdftotext").ok_or("pdftotext not found on PATH")?;
     let mut command = pdftotext_bin.command(["-layout", path_str, "-"]);
     command.env("PATH", env::full_path());
@@ -273,9 +281,9 @@ pub(super) fn llm_extraction_cache_path(
         "codex_cli_selection": settings.codex_cli_model_selection,
         "codex_api_selection": settings.codex_api_model_selection,
         "codex_effort": settings.codex_effort,
-        "gemini_model": settings.gemini_model,
-        "gemini_cli_selection": settings.gemini_cli_model_selection,
-        "gemini_api_selection": settings.gemini_api_model_selection,
+        "antigravity_cli_selection": settings.antigravity_cli_model_selection,
+        "antigravity_api_selection": settings.antigravity_api_model_selection,
+        "antigravity_effort": settings.antigravity_effort,
         "chunk_pages": LLM_CHUNK_MAX_PAGES,
         "chunk_chars": LLM_CHUNK_TARGET_BASELINE_CHARS,
         "max_output_tokens": EXTRACTION_MAX_OUTPUT_TOKENS,
@@ -560,21 +568,53 @@ pub(super) async fn extract_paddle_full(
 ) -> Result<ExtractionResult, String> {
     let started = std::time::Instant::now();
     let total_timeout = std::time::Duration::from_secs(settings.pdf_extraction_timeout_secs);
-    let paths = crate::engines::paddle_full_parser_paths()?;
+    // The first resolution each session content-hashes the multi-gigabyte
+    // managed runtime: announce it, keep it off the async workers, and let
+    // cancellation return immediately (the detached hash finishes in the
+    // background and populates the session verification cache harmlessly).
+    extraction_log(
+        app,
+        "Verifying the PaddleOCR-VL runtime (the first use each session may take a while)…",
+    );
+    let paths = crate::commands::await_or_cancel(
+        tokio::task::spawn_blocking(crate::engines::paddle_full_parser_paths),
+        None,
+    )
+    .await?
+    .map_err(|error| format!("PaddleOCR-VL runtime verification task failed: {error}"))??;
+    // Stage the PDF first: the pdftotext baseline and the parser sidecar read
+    // the private copy, never the original path — a child reading the
+    // original can be silently denied on macOS (TCC).
+    let staging_input = tempfile::Builder::new()
+        .prefix("pipeline_pdf_parser_input_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create private PDF input directory: {error}"))?;
+    let source = path.to_path_buf();
+    let input_root = staging_input.path().to_path_buf();
+    let staged_pdf = tokio::task::spawn_blocking(move || stage_pdf_input(&source, &input_root))
+        .await
+        .map_err(|error| format!("PDF staging task failed: {error}"))??;
+    // The baseline both verifies parser completeness and enforces the page
+    // cap, so it is required: without it a corrupt or encrypted PDF could
+    // enter the sidecar unbounded and unverified.
     let baseline = {
-        let pdf = path.to_path_buf();
+        let pdf = staged_pdf.clone();
         tokio::task::spawn_blocking(move || pdftotext_page_baseline(&pdf))
             .await
-            .unwrap_or(None)
-    };
-    if baseline
-        .as_ref()
-        .is_some_and(|pages| pages.len() > MAX_RENDERED_PDF_PAGES as usize)
-    {
+            .map_err(|error| format!("pdftotext baseline task failed: {error}"))?
+    }
+    .map_err(|error| {
+        format!(
+            "PaddleOCR-VL extraction needs the local pdftotext page map to bound and verify \
+             parsing, but it could not be built: {error}"
+        )
+    })?;
+    if baseline.len() > MAX_RENDERED_PDF_PAGES as usize {
         return Err(format!(
             "PaddleOCR-VL Full Parser is limited to {MAX_RENDERED_PDF_PAGES} pages per PDF"
         ));
     }
+    let baseline = Some(baseline);
     let root = paddle_full_cache_root(hash)
         .ok_or_else(|| "Could not create PaddleOCR-VL full-parser cache path".to_string())?;
     fs::create_dir_all(&root)
@@ -588,7 +628,13 @@ pub(super) async fn extract_paddle_full(
             if let Ok(extraction) =
                 full_parser_extraction_from_structure(&structure, path, hash, baseline.as_deref())
             {
-                activate_paddle_full_cache(&root, &fingerprint)?;
+                // Cache bookkeeping must never fail a successful extraction.
+                if let Err(error) = activate_paddle_full_cache(&root, &fingerprint) {
+                    extraction_log(
+                        app,
+                        format!("WARNING: could not record the active parser cache: {error}"),
+                    );
+                }
                 extraction_log(
                     app,
                     "PaddleOCR-VL Full Parser: reused a schema-validated structured cache",
@@ -623,7 +669,7 @@ pub(super) async fn extract_paddle_full(
     let staged_assets = staging.path().join("assets");
     let parser_paths = paths.clone();
     let parser_settings = settings.clone();
-    let input = path.to_path_buf();
+    let input = staged_pdf.clone();
     let output = staged_structure.clone();
     let assets = staged_assets.clone();
     let base_url = format!("{}/v1", server.base_url);
@@ -706,7 +752,13 @@ pub(super) async fn extract_paddle_full(
         }
         return Err(format!("Failed to activate full-parser cache: {error}"));
     }
-    activate_paddle_full_cache(&root, &fingerprint)?;
+    // Cache bookkeeping must never fail a successful extraction.
+    if let Err(error) = activate_paddle_full_cache(&root, &fingerprint) {
+        extraction_log(
+            app,
+            format!("WARNING: could not record the active parser cache: {error}"),
+        );
+    }
     if backup.exists() {
         let _ = fs::remove_dir_all(&backup);
     }
@@ -752,7 +804,7 @@ pub(super) fn provider_uses_direct_api(settings: &crate::settings::Settings) -> 
     match settings.preferred_provider.as_str() {
         "claude" => !settings.anthropic_api_key.is_empty(),
         "codex" => !settings.openai_api_key.is_empty(),
-        "gemini" => !settings.google_api_key.is_empty(),
+        "antigravity" => !settings.google_api_key.is_empty(),
         // Local OpenAI-compatible servers intentionally reject the file-part
         // attachment used by the verified LLM extraction path.
         "local" => false,
@@ -761,11 +813,17 @@ pub(super) fn provider_uses_direct_api(settings: &crate::settings::Settings) -> 
 }
 
 /// Per-page character counts from pdftotext output (pages are separated by
-/// form feeds). None when pdftotext is missing or fails — verification is
-/// then skipped, not the extraction.
-pub(super) fn pdftotext_page_baseline(path: &Path) -> Option<Vec<usize>> {
-    let bin = find_command("pdftotext")?;
-    let mut command = bin.command(["-layout", path.to_str()?, "-"]);
+/// form feeds). An error names the actual cause — missing binary, non-zero
+/// exit with its stderr (an encrypted PDF says "Incorrect password" here),
+/// or truncated output — so callers can surface it instead of a generic
+/// "could not build the page map".
+pub(super) fn pdftotext_page_baseline(path: &Path) -> Result<Vec<usize>, String> {
+    let bin =
+        find_command("pdftotext").ok_or_else(|| "pdftotext is not available on PATH".to_string())?;
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", path.display()))?;
+    let mut command = bin.command(["-layout", path_str, "-"]);
     command.env("PATH", env::full_path());
     let output = run_bounded_output(
         command,
@@ -773,17 +831,24 @@ pub(super) fn pdftotext_page_baseline(path: &Path) -> Option<Vec<usize>> {
         std::time::Duration::from_secs(120),
         crate::pipeline::claude::MAX_STDOUT_BYTES,
         None,
-    )
-    .ok()?;
-    if !output.status.success() || output.stdout_truncated {
-        return None;
+    )?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "pdftotext failed ({}): {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+    if output.stdout_truncated {
+        return Err("pdftotext baseline output exceeded the 50 MB safety limit".to_string());
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let pages = baseline_page_lengths(&text);
     if pages.is_empty() {
-        None
+        Err("pdftotext reported no pages".to_string())
     } else {
-        Some(pages)
+        Ok(pages)
     }
 }
 
@@ -1049,6 +1114,10 @@ pub(super) async fn request_llm_pages(
         .collect())
 }
 
+/// Run the chunked extraction calls. A failed range does not abort the pass:
+/// its error is collected and its pages stay absent from the returned map,
+/// which makes them suspects for the caller's targeted retry. Only
+/// cancellation aborts outright.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_llm_ranges(
     app: &crate::emit::EventBus,
@@ -1059,10 +1128,11 @@ pub(super) async fn run_llm_ranges(
     timeout_secs: u64,
     read_dirs: &[String],
     settings: std::sync::Arc<crate::settings::Settings>,
-) -> Result<std::collections::BTreeMap<u32, String>, String> {
+) -> Result<(std::collections::BTreeMap<u32, String>, Vec<String>), String> {
     let mut tasks = tokio::task::JoinSet::new();
     let mut next = 0usize;
     let mut sections = std::collections::BTreeMap::new();
+    let mut range_errors = Vec::new();
     while next < ranges.len() && tasks.len() < LLM_EXTRACTION_CONCURRENCY {
         let (start, end) = ranges[next];
         tasks.spawn(request_llm_pages(
@@ -1083,9 +1153,22 @@ pub(super) async fn run_llm_ranges(
             tasks.abort_all();
             return Err("Pipeline cancelled".to_string());
         }
-        let range_sections =
-            result.map_err(|error| format!("LLM extraction task failed: {error}"))??;
-        sections.extend(range_sections);
+        match result {
+            Ok(Ok(range_sections)) => sections.extend(range_sections),
+            Ok(Err(error)) => {
+                if error.to_ascii_lowercase().contains("cancelled") {
+                    tasks.abort_all();
+                    return Err(error);
+                }
+                extraction_log(app, format!("WARNING: extraction range failed: {error}"));
+                range_errors.push(error);
+            }
+            Err(join_error) => {
+                let error = format!("LLM extraction task failed: {join_error}");
+                extraction_log(app, format!("WARNING: {error}"));
+                range_errors.push(error);
+            }
+        }
         if next < ranges.len() {
             let (start, end) = ranges[next];
             tasks.spawn(request_llm_pages(
@@ -1102,10 +1185,10 @@ pub(super) async fn run_llm_ranges(
             next += 1;
         }
     }
-    Ok(sections)
+    Ok((sections, range_errors))
 }
 
-/// Extract from a PDF using an LLM (Claude, Codex, or Gemini).
+/// Extract from a PDF using an LLM (Claude, Codex, or Antigravity).
 ///
 /// Direct-API providers get the PDF attached to the request; CLI providers
 /// read it with their multimodal Read tool. The output is verified against
@@ -1134,22 +1217,35 @@ pub(super) async fn extract_llm(
     let timeout = (settings.step_timeout_secs / 2).clamp(60, 600);
     let settings = std::sync::Arc::new(settings);
 
-    // Completeness baseline (best-effort; poppler is bundled so this is
-    // normally available).
+    // Stage the PDF first: every helper child (pdftotext for the baseline,
+    // provider CLIs) reads the private copy, never the original path. The
+    // in-process copy is covered by the user's file-picker grant, while a
+    // child reading the original can be silently denied on macOS (TCC).
+    let provider_input = tempfile::Builder::new()
+        .prefix("pipeline_pdf_provider_input_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create private PDF input directory: {error}"))?;
+    let source = path.to_path_buf();
+    let input_root = provider_input.path().to_path_buf();
+    let staged_path = tokio::task::spawn_blocking(move || stage_pdf_input(&source, &input_root))
+        .await
+        .map_err(|error| format!("PDF staging task failed: {error}"))??;
+
+    // Completeness baseline (poppler is bundled so this is normally
+    // available; the error carries pdftotext's own diagnosis, e.g. an
+    // encrypted PDF's "Incorrect password").
     let baseline = {
-        let p = path.to_path_buf();
+        let p = staged_path.clone();
         tokio::task::spawn_blocking(move || pdftotext_page_baseline(&p))
             .await
-            .unwrap_or(None)
+            .map_err(|error| format!("pdftotext baseline task failed: {error}"))?
     }
-    .ok_or_else(|| {
-        "LLM extraction could not build the local page-completeness map; \
-         refusing to run an unverified whole-document transcription"
-            .to_string()
+    .map_err(|error| {
+        format!(
+            "LLM extraction could not build the local page-completeness map ({error}); \
+             refusing to run an unverified whole-document transcription"
+        )
     })?;
-    if baseline.is_empty() {
-        return Err("LLM extraction found no PDF pages".to_string());
-    }
     let cache_path = settings
         .reuse_pdf_extraction_cache
         .then(|| llm_extraction_cache_path(hash, &settings))
@@ -1179,16 +1275,29 @@ pub(super) async fn extract_llm(
         }
     }
 
-    let provider_input = tempfile::Builder::new()
-        .prefix("pipeline_pdf_provider_input_")
-        .tempdir()
-        .map_err(|error| format!("Failed to create private PDF input directory: {error}"))?;
-    let source = path.to_path_buf();
-    let input_root = provider_input.path().to_path_buf();
-    let staged_path =
-        tokio::task::spawn_blocking(move || stage_provider_input(&source, &input_root))
-            .await
-            .map_err(|error| format!("PDF staging task failed: {error}"))??;
+    // Anthropic and OpenAI cap PDF inputs at 100 pages per request, and the
+    // attach path sends the whole file with every chunk call; base64 also
+    // inflates the body by 4/3, so bound the raw size well under their 32 MB
+    // request limit. Fail before the first model call with the actual
+    // constraint instead of a raw provider HTTP error mid-run.
+    if attach && matches!(settings.preferred_provider.as_str(), "claude" | "codex") {
+        const MAX_ATTACH_PAGES: usize = 100;
+        const MAX_ATTACH_RAW_BYTES: u64 = 24 * 1024 * 1024;
+        let bytes = std::fs::metadata(&staged_path)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        if baseline.len() > MAX_ATTACH_PAGES || bytes > MAX_ATTACH_RAW_BYTES {
+            return Err(format!(
+                "This PDF ({} pages, {} MB) is over the direct-API attachment limits for LLM \
+                 extraction ({MAX_ATTACH_PAGES} pages, {} MB). Use a CLI provider, or \
+                 PaddleOCR-VL / pdftotext extraction instead.",
+                baseline.len(),
+                bytes / 1024 / 1024,
+                MAX_ATTACH_RAW_BYTES / 1024 / 1024
+            ));
+        }
+    }
+
     let prompt_path = staged_path.to_string_lossy().replace('\\', "/");
     // Direct APIs receive the selected PDF as an attachment and need no file
     // tool. CLI transports receive exactly one private read root.
@@ -1207,7 +1316,7 @@ pub(super) async fn extract_llm(
             LLM_EXTRACTION_CONCURRENCY
         ),
     );
-    let mut sections = run_llm_ranges(
+    let (mut sections, mut range_errors) = run_llm_ranges(
         app,
         &staged_path,
         &prompt_path,
@@ -1219,6 +1328,9 @@ pub(super) async fn extract_llm(
     )
     .await?;
 
+    // Failed ranges left their pages out of `sections`, so they surface here
+    // as suspects alongside implausibly short pages, and the targeted retry
+    // pass re-requests both in smaller ranges.
     let suspects = find_suspect_pages(&sections, &baseline);
     if !suspects.is_empty() {
         let retry_ranges = split_ranges(&group_into_ranges(&suspects), 2);
@@ -1230,25 +1342,29 @@ pub(super) async fn extract_llm(
                 retry_ranges.len()
             ),
         );
-        sections.extend(
-            run_llm_ranges(
-                app,
-                &staged_path,
-                &prompt_path,
-                &retry_ranges,
-                attach,
-                timeout,
-                &read_dirs,
-                settings,
-            )
-            .await?,
-        );
+        let (retried, retry_errors) = run_llm_ranges(
+            app,
+            &staged_path,
+            &prompt_path,
+            &retry_ranges,
+            attach,
+            timeout,
+            &read_dirs,
+            settings,
+        )
+        .await?;
+        sections.extend(retried);
+        range_errors.extend(retry_errors);
     }
 
     let still_suspect = find_suspect_pages(&sections, &baseline);
     if !still_suspect.is_empty() {
+        let detail = range_errors
+            .last()
+            .map(|error| format!(" (last range error: {error})"))
+            .unwrap_or_default();
         return Err(format!(
-            "LLM extraction remained incomplete after targeted retry on page(s): {}",
+            "LLM extraction remained incomplete after targeted retry on page(s): {}{detail}",
             still_suspect
                 .iter()
                 .map(u32::to_string)

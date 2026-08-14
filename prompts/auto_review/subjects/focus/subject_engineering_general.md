@@ -1,0 +1,1 @@
+Evaluate requirements, design choices, governing constraints, verification, manufacturability, reliability, scale, and whether measured performance answers the stated engineering problem. Use this fallback only for genuinely cross-disciplinary engineered systems.

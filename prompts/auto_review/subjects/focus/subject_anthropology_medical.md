@@ -1,0 +1,1 @@
+Review local categories of body, illness and personhood, therapeutic practice and pluralism, patient and healer relations, institutions and political economy, embodiment and lived experience, translation, field access and positionality, variation within communities, and whether situated evidence supports claims across health systems or populations.

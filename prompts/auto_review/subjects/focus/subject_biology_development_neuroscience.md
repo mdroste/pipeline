@@ -1,0 +1,1 @@
+Examine lineage or circuit identity, developmental timing, spatial organization, perturbation specificity, plasticity, behavioral linkage, model-organism correspondence, and whether cross-sectional or endpoint evidence supports the claimed developmental or neural process.

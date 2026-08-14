@@ -1,0 +1,1 @@
+Review textual version and language, genre and form, close-reading evidence, historical and intertextual context, translation, corpus selection, relation between local passages and broad interpretation, and whether plausible counterreadings are answered.

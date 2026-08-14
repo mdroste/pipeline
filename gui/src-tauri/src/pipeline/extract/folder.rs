@@ -146,39 +146,63 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         ));
     }
 
+    // Fingerprint the listing. Name, size, and mtime always contribute;
+    // content contributes up to a small per-file budget. A file that cannot
+    // be opened or read (permissions, cloud placeholder, deleted since the
+    // listing) is fingerprinted by metadata alone and counted in a quality
+    // note — the listing pass above already tolerates unreadable entries,
+    // and one such file must not abort the run.
     let mut hasher = Sha256::new();
     let mut chunk = [0u8; 64 * 1024];
-    let mut hashed_bytes = 0u64;
+    let mut skipped_unreadable = 0usize;
     for (rel, size, path) in &files {
-        if hashed_bytes.saturating_add(*size) > MAX_INVENTORY_HASH_BYTES {
-            return Err(format!(
-                "Input folder exceeds the {} GB hashing safety limit",
-                MAX_INVENTORY_HASH_BYTES / 1024 / 1024 / 1024
-            ));
+        if crate::commands::is_cancelled() {
+            return Err("Pipeline cancelled".to_string());
         }
         hasher.update(rel.as_bytes());
         hasher.update([0]);
         hasher.update(size.to_le_bytes());
-        let mut file = open_regular_file(path)
-            .map_err(|e| format!("Failed to hash {}: {e}", path.display()))?;
-        loop {
+        let mtime_nanos: u128 = fs::symlink_metadata(path)
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        hasher.update(mtime_nanos.to_le_bytes());
+        let mut file = match open_regular_file(path) {
+            Ok(file) => file,
+            Err(_) => {
+                skipped_unreadable += 1;
+                continue;
+            }
+        };
+        let mut remaining = MAX_INVENTORY_HASH_BYTES_PER_FILE;
+        while remaining > 0 {
             if crate::commands::is_cancelled() {
                 return Err("Pipeline cancelled".to_string());
             }
-            let count = std::io::Read::read(&mut file, &mut chunk)
-                .map_err(|e| format!("Failed to hash {}: {e}", path.display()))?;
+            let want = chunk.len().min(remaining as usize);
+            let count = match std::io::Read::read(&mut file, &mut chunk[..want]) {
+                Ok(count) => count,
+                Err(_) => {
+                    skipped_unreadable += 1;
+                    break;
+                }
+            };
             if count == 0 {
                 break;
             }
-            hashed_bytes = hashed_bytes.saturating_add(count as u64);
-            if hashed_bytes > MAX_INVENTORY_HASH_BYTES {
-                return Err(format!(
-                    "Input folder exceeds the {} GB hashing safety limit",
-                    MAX_INVENTORY_HASH_BYTES / 1024 / 1024 / 1024
-                ));
-            }
+            remaining -= count as u64;
             hasher.update(&chunk[..count]);
         }
+    }
+    let mut quality_notes = Vec::new();
+    if skipped_unreadable > 0 {
+        let note = format!(
+            "{skipped_unreadable} file(s) in the folder could not be read (permissions, cloud placeholder, or removed mid-scan) and were fingerprinted by name and size only.",
+        );
+        text.push_str(&format!("\n> {note}\n"));
+        quality_notes.push(note);
     }
     let hash = format!("{:x}", hasher.finalize())[..16].to_string();
     Ok(ExtractionResult {
@@ -186,7 +210,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         method: "folder".to_string(),
         source_path: root.to_string(),
         paper_hash: hash,
-        quality_notes: vec![],
+        quality_notes,
     })
 }
 
@@ -287,6 +311,44 @@ mod ingest_tests {
         assert!(result
             .text
             .contains("Skipped 1 non-regular filesystem entry"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn folder_with_unreadable_file_still_ingests_with_a_quality_note() {
+        use std::os::unix::fs::PermissionsExt as _;
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root reads everything; the permission trick is moot
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("readable.txt"), "fine").unwrap();
+        let blocked = dir.path().join("blocked.txt");
+        fs::write(&blocked, "secret").unwrap();
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = ingest_folder(dir.path().to_str().unwrap()).unwrap();
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(result.text.contains("readable.txt"));
+        assert!(result.text.contains("blocked.txt"));
+        assert!(result
+            .quality_notes
+            .iter()
+            .any(|note| note.contains("could not be read")));
+        assert_eq!(result.paper_hash.len(), 16);
+    }
+
+    #[test]
+    fn large_files_are_fingerprinted_without_a_full_read() {
+        let dir = tempfile::tempdir().unwrap();
+        // Larger than the per-file content budget; ingest must stay cheap and
+        // must not fail on any total-size limit.
+        let big = vec![7u8; (MAX_INVENTORY_HASH_BYTES_PER_FILE + 4096) as usize];
+        fs::write(dir.path().join("data.bin"), &big).unwrap();
+        let result = ingest_folder(dir.path().to_str().unwrap()).unwrap();
+        assert!(result.text.contains("data.bin"));
+        assert!(result.quality_notes.is_empty());
     }
 
     #[test]

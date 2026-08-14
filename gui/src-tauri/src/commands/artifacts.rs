@@ -127,10 +127,18 @@ pub async fn purge_runs(keep: u32, max_bytes: u64, preview_token: String) -> Res
     crate::runs::purge_runs_with_expected_preview(keep as usize, max_bytes, &preview_token)
 }
 
-/// Write arbitrary text to a path (used by "Save console to file").
+/// Write text to a user-chosen file via a native save dialog. The webview
+/// supplies only the contents and a suggested name — never the path — so it
+/// cannot write to arbitrary locations. Returns the saved path, or `None` if
+/// the dialog was cancelled.
 #[tauri::command]
-pub async fn save_text_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| format!("Failed to write file: {e}"))
+pub async fn save_text_file(
+    app: AppHandle,
+    content: String,
+    suggested_name: Option<String>,
+) -> Result<Option<String>, String> {
+    let name = suggested_name.as_deref().unwrap_or("export.md");
+    save_via_dialog(&app, name, "Markdown", "md", content.into_bytes()).await
 }
 
 /// Read a run's per-issue annotations (JSON string, "{}" if none).

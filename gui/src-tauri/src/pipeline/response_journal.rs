@@ -18,6 +18,7 @@ static JOURNAL_BYTES: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new()
 pub enum AttemptStatus {
     Accepted,
     RejectedEnvelope,
+    RejectedContent,
     RejectedSchema,
     Ignored,
 }
@@ -27,6 +28,7 @@ impl AttemptStatus {
         match self {
             Self::Accepted => "accepted",
             Self::RejectedEnvelope => "rejected-envelope",
+            Self::RejectedContent => "rejected-content",
             Self::RejectedSchema => "rejected-schema",
             Self::Ignored => "ignored",
         }
@@ -36,6 +38,7 @@ impl AttemptStatus {
         match self {
             Self::Accepted => "Accepted",
             Self::RejectedEnvelope => "Rejected: invalid report boundaries",
+            Self::RejectedContent => "Rejected: unusable report content",
             Self::RejectedSchema => "Rejected: output schema mismatch",
             Self::Ignored => "Not selected",
         }
@@ -304,6 +307,15 @@ mod tests {
                 assert!(saved.contains("Rejected: invalid report boundaries"));
                 assert!(saved.contains("# Useful report without markers"));
             });
+    }
+
+    #[test]
+    fn content_rejection_has_a_distinct_durable_status() {
+        assert_eq!(AttemptStatus::RejectedContent.slug(), "rejected-content");
+        assert_eq!(
+            AttemptStatus::RejectedContent.label(),
+            "Rejected: unusable report content"
+        );
     }
 
     #[test]

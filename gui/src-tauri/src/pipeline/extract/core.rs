@@ -10,22 +10,16 @@ pub(super) const MAX_SCOPED_SOURCE_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// cap and a small number of huge files cannot monopolize a run indefinitely.
 pub(super) const MAX_INVENTORY_ENTRIES: usize = 100_000;
 pub(super) const MAX_INVENTORY_DIRS: usize = 10_000;
-pub(super) const MAX_INVENTORY_HASH_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// The inventory fingerprint is a run id, not an integrity proof: hash at
+/// most this much of each file's content (name, size, and mtime always
+/// contribute), so replication folders with multi-gigabyte datasets neither
+/// fail the run nor get fully re-read on every launch.
+pub(super) const MAX_INVENTORY_HASH_BYTES_PER_FILE: u64 = 1024 * 1024;
 /// Page images are useful artifacts but can consume substantial disk space.
 /// Keep this aligned with the documented run-artifact contract.
 pub const MAX_RENDERED_PDF_PAGES: u32 = 300;
 pub(super) const PADDLE_REGION_WARNING_PREFIX: &str =
     "PaddleOCR-VL warning: this visual region remained degenerate";
-#[cfg(test)]
-pub(super) const MAX_MARKER_IMAGE_BYTES: usize = 25 * 1024 * 1024;
-#[cfg(test)]
-pub(super) const MAX_MARKER_IMAGE_TOTAL_BYTES: usize = 150 * 1024 * 1024;
-#[cfg(test)]
-pub(super) const MAX_MARKER_IMAGES: usize = 500;
-pub(super) const MARKER_STRUCTURE_SCHEMA: u32 = 1;
-pub(super) const MARKER_STRUCTURE_FILE: &str = "pipeline-marker-structure.json";
-#[cfg(test)]
-pub(super) const MARKER_DOCUMENT_FILE: &str = "pipeline-document.md";
 pub(super) const PADDLE_STRUCTURE_SCHEMA: u32 = 2;
 pub(super) const PADDLE_STRUCTURE_FILE: &str = "pipeline-paddle-structure.json";
 pub(super) const PADDLE_FULL_STRUCTURE_FILE: &str = "pipeline-paddle-full-structure.json";
@@ -38,28 +32,6 @@ pub(super) static PADDLE_NUMBERED_CAPTION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(fig(?:ure)?\.?|table)\s+([a-z]?(?:[.-]?\d+)+(?:[a-z])?)\b")
         .expect("Paddle caption regex must compile")
 });
-
-pub(crate) const MARKER_DISABLED_MESSAGE: &str =
-    "Marker PDF extraction is unavailable in Pipeline 0.9.0 because its compatible \
-     Python dependency closure contains known security vulnerabilities. Choose \
-     PaddleOCR-VL, LLM extraction, or pdftotext in the workflow or Settings.";
-
-pub(super) fn reject_retired_pdf_extractor(method: &str) -> Result<(), String> {
-    if method == "marker" {
-        Err(MARKER_DISABLED_MESSAGE.to_string())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-pub(super) fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de> + Default,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
-}
 
 pub(super) fn extraction_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     crate::pipeline::logging::emit(app, line.into());
@@ -361,17 +333,51 @@ pub(super) fn content_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))[..16].to_string()
 }
 
-/// Put one selected document in a private, single-purpose directory before a
-/// provider CLI receives filesystem access. Granting the original parent would
-/// also expose every unrelated sibling in locations such as Downloads.
-pub(super) fn stage_provider_input(source: &Path, root: &Path) -> Result<PathBuf, String> {
+/// PDFs get their own staging budget and message — the LaTeX source-closure
+/// per-file cap does not apply to them (scanned documents routinely exceed
+/// 32 MB), and the error must name the actual constraint.
+pub(super) const MAX_STAGED_PDF_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Put the selected PDF in a private, single-purpose directory before any
+/// helper child (pdftotext, pdftoppm, the Paddle sidecar, provider CLIs)
+/// touches it. Granting the original parent would expose every unrelated
+/// sibling in locations such as Downloads, and on macOS the in-process copy
+/// is covered by the user's file-picker grant while a child reading the
+/// original path needs its own TCC folder permission and can be silently
+/// denied.
+pub(super) fn stage_pdf_input(source: &Path, root: &Path) -> Result<PathBuf, String> {
+    let mut file = open_regular_file(source)?;
+    let len = file
+        .metadata()
+        .map_err(|error| format!("Failed to inspect {}: {error}", source.display()))?
+        .len();
+    if len > MAX_STAGED_PDF_BYTES {
+        // Every extraction method (pdftotext included) stages through this
+        // cap, so the message must not recommend one as a way around it.
+        return Err(format!(
+            "PDF is {} MB; PDFs above {} MB are not supported. Reduce the file size (e.g. split the PDF or downsample scanned pages) and retry",
+            len / 1024 / 1024,
+            MAX_STAGED_PDF_BYTES / 1024 / 1024
+        ));
+    }
     let name = source
         .file_name()
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| std::ffi::OsStr::new("document.pdf"));
     let destination = root.join(name);
-    let mut total_bytes = 0;
-    copy_scoped_source_file(source, &destination, &mut total_bytes)?;
+    let mut out = fs::File::create(&destination)
+        .map_err(|error| format!("Failed to stage {}: {error}", destination.display()))?;
+    let copied = std::io::copy(
+        &mut std::io::Read::take(&mut file, MAX_STAGED_PDF_BYTES + 1),
+        &mut out,
+    )
+    .map_err(|error| format!("Failed to stage {}: {error}", source.display()))?;
+    if copied > MAX_STAGED_PDF_BYTES {
+        return Err(format!(
+            "PDF grew past the {} MB staging limit while being copied",
+            MAX_STAGED_PDF_BYTES / 1024 / 1024
+        ));
+    }
     Ok(destination)
 }
 

@@ -1,0 +1,1 @@
+Evaluate chronology, context, source base, historiographic intervention, contingency, continuity and change, and the scale at which the claim is made. Use this fallback only when the contribution genuinely crosses periods and thematic literatures.

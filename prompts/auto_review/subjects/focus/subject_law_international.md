@@ -1,0 +1,1 @@
+Review sources and hierarchy of law, jurisdiction and choice of law, treaty interpretation, state practice, institutional authority, compliance and enforcement, comparative functional equivalence, and whether legal conclusions travel across the systems named.

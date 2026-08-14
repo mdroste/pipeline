@@ -1,0 +1,1 @@
+Assess elements and defenses, rights and duties, causation and fault, procedural posture, remedies and sanctions, party incentives, interactions across doctrines, administrability, and whether hard cases expose instability in the proposed rule.

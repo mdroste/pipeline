@@ -1,0 +1,1 @@
+Assess processing-structure-property links, composition and microstructure control, defects, anisotropy, aging, environmental stability, mechanical or functional testing, comparators, and manufacturability. Check whether reported properties persist at relevant dimensions and cycling conditions.

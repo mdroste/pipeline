@@ -1,0 +1,1 @@
+Evaluate the social units, institutions, mechanisms, historical and cultural setting, comparison, evidence, and scope of generalization. Use this fallback only when the argument genuinely spans several sociological traditions.

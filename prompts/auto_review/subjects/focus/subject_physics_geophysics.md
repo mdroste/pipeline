@@ -1,0 +1,1 @@
+Assess the physical Earth model, constitutive assumptions, inverse-problem resolution, source and propagation model, spatial scale, and compatibility with independent geophysical constraints. Distinguish what the data identify from what enters through regularization or prior structure.

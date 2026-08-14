@@ -264,15 +264,20 @@ export function buildRunProvenance({
   const resolvedDuration =
     summary?.duration_secs || manifest?.duration_secs || durationSecs || null;
 
+  // A paper-shaped survey may still omit metadata entirely (schema-less
+  // profiles validate it only as a JSON object), so every sub-field access
+  // must be guarded — one missing field must not crash the report view.
   return {
     subject:
-      paper?.metadata.title?.trim() ||
+      paper?.metadata?.title?.trim() ||
       summary?.title?.trim() ||
       manifest?.title?.trim() ||
       summary?.input_name?.trim() ||
       manifest?.input_path?.split(/[\\/]/).pop() ||
       "Pipeline report",
-    authors: paper?.metadata.authors.filter(Boolean) ?? [],
+    authors: Array.isArray(paper?.metadata?.authors)
+      ? paper.metadata.authors.filter(Boolean)
+      : [],
     workflow:
       summary?.profile_name ||
       manifest?.profile_name ||

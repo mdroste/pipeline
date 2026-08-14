@@ -32,7 +32,16 @@ pub fn render_pdf_pages(
     out_dir: &Path,
     max_pages: u32,
 ) -> Result<RenderedPdfPages, String> {
-    render_pdf_pages_with_profile(pdf, out_dir, max_pages)
+    // pdftoppm reads a staged private copy, never the user's original path —
+    // a child reading the original can be silently denied on macOS (TCC).
+    // (The page-preview entry point renders app-owned run copies and needs
+    // no staging.)
+    let staging = tempfile::Builder::new()
+        .prefix("pipeline_pdf_render_input_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create private PDF input directory: {error}"))?;
+    let staged = stage_pdf_input(pdf, staging.path())?;
+    render_pdf_pages_with_profile(&staged, out_dir, max_pages)
 }
 
 pub fn render_pdf_page_preview(

@@ -1,6 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Issue, IssueEvidence } from "../lib/issues";
@@ -221,8 +220,9 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
         })
         .join("\n\n");
     try {
-      const path = await save({ defaultPath: "accepted-issues.md", filters: [{ name: "Markdown", extensions: ["md"] }] });
-      if (path) await invoke("save_text_file", { path, content: md });
+      // The backend runs the native save dialog and writes only to the
+      // user-chosen path; the webview never supplies a filesystem path.
+      await invoke("save_text_file", { content: md, suggestedName: "accepted-issues.md" });
     } catch (error) {
       setPersistenceError({
         operation: "export",
@@ -445,7 +445,7 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
         {visible.length === 0 && <p className="text-sm text-gray-500 dark:text-gray-400 px-2">No issues at this severity.</p>}
       </div>
       {!runId && (
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-4">Annotations aren't saved for this view (no run directory).</p>
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-4">Annotations aren't saved for this view (no saved report).</p>
       )}
     </div>
   );

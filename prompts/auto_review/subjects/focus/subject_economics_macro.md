@@ -1,0 +1,1 @@
+Examine the aggregate mechanism, equilibrium closure, expectations, aggregation, transition versus steady state, policy experiment, calibration targets, incidence, and whether the claimed general-equilibrium channel is separated from accounting effects. Use this role for genuinely cross-field macroeconomics rather than as a substitute for a narrower listed field.

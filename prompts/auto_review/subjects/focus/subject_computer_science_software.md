@@ -1,0 +1,1 @@
+Review the software population, defect or maintenance construct, tool assumptions, benchmark leakage, oracle quality, developer workflow, ecological validity, and comparison to realistic baselines. Check whether repository evidence supports claims about general software practice.

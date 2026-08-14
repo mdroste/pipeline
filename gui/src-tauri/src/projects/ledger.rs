@@ -93,6 +93,12 @@ pub struct ProjectIssue {
     /// the user made an explicit project-level decision.
     #[serde(default)]
     pub decision_updated: String,
+    /// True when the issue was not observed in any readable run during the
+    /// last refresh (its runs were purged, unreadable, or removed from the
+    /// project). The last-known occurrences are retained as history so the
+    /// user's decision and notes survive run retention.
+    #[serde(default)]
+    pub archived: bool,
     #[serde(default)]
     pub occurrences: Vec<ProjectIssueOccurrence>,
 }
@@ -321,22 +327,31 @@ fn read_run_report(run_id: &str) -> Result<crate::models::PipelineReport, String
     serde_json::from_slice(&bytes).map_err(|error| format!("Invalid report.json: {error}"))
 }
 
-fn scan_project(project: &super::Project) -> (Vec<ProjectIssueOccurrence>, Vec<String>) {
+fn scan_project(
+    project: &super::Project,
+) -> (Vec<ProjectIssueOccurrence>, Vec<String>, HashSet<String>) {
     let mut warnings = Vec::new();
+    // Runs that were not actually re-scanned (purged, unreadable, or beyond
+    // the scan caps). Their prior ledger occurrences are retained rather than
+    // treated as no-longer-observed.
+    let mut skipped_runs = HashSet::new();
     let mut manifests = Vec::new();
     for run_id in &project.run_ids {
         match crate::runs::load_manifest(run_id) {
             Ok(manifest) => manifests.push(manifest),
-            Err(error) => push_warning(
-                &mut warnings,
-                format!("Run {run_id} was skipped while refreshing the ledger: {error}"),
-            ),
+            Err(error) => {
+                skipped_runs.insert(run_id.clone());
+                push_warning(
+                    &mut warnings,
+                    format!("Run {run_id} was skipped while refreshing the ledger: {error}"),
+                );
+            }
         }
     }
     manifests.sort_by(|left, right| left.created.cmp(&right.created));
     if manifests.len() > MAX_SCANNED_RUNS {
         let skipped = manifests.len() - MAX_SCANNED_RUNS;
-        manifests.drain(..skipped);
+        skipped_runs.extend(manifests.drain(..skipped).map(|manifest| manifest.run_id));
         push_warning(
             &mut warnings,
             format!(
@@ -346,12 +361,15 @@ fn scan_project(project: &super::Project) -> (Vec<ProjectIssueOccurrence>, Vec<S
     }
 
     let mut occurrences = Vec::new();
-    for manifest in manifests {
+    let mut manifests = std::collections::VecDeque::from(manifests);
+    while let Some(manifest) = manifests.pop_front() {
         if occurrences.len() >= MAX_LEDGER_OCCURRENCES {
             push_warning(
                 &mut warnings,
                 format!("Ledger refresh stopped at {MAX_LEDGER_OCCURRENCES} issue occurrences."),
             );
+            skipped_runs.insert(manifest.run_id);
+            skipped_runs.extend(manifests.drain(..).map(|manifest| manifest.run_id));
             break;
         }
         let report = match read_run_report(&manifest.run_id) {
@@ -364,6 +382,7 @@ fn scan_project(project: &super::Project) -> (Vec<ProjectIssueOccurrence>, Vec<S
                         manifest.run_id
                     ),
                 );
+                skipped_runs.insert(manifest.run_id.clone());
                 continue;
             }
         };
@@ -375,7 +394,7 @@ fn scan_project(project: &super::Project) -> (Vec<ProjectIssueOccurrence>, Vec<S
                 .take(remaining),
         );
     }
-    (occurrences, warnings)
+    (occurrences, warnings, skipped_runs)
 }
 
 type AnnotationMap = HashMap<String, (String, String)>;
@@ -937,6 +956,7 @@ fn sync_ledger(
     project_id: &str,
     occurrences: Vec<ProjectIssueOccurrence>,
     warnings: Vec<String>,
+    skipped_runs: &HashSet<String>,
 ) -> ProjectIssueLedger {
     let mut available = occurrences
         .into_iter()
@@ -945,15 +965,32 @@ fn sync_ledger(
     let mut issues = Vec::new();
     for mut issue in ledger.issues.drain(..) {
         let previous = issue.occurrences.clone();
+        let mut observed = false;
         issue.occurrences = previous
             .iter()
-            .filter_map(|occurrence| available.remove(&occurrence.key))
+            .filter_map(|occurrence| match available.remove(&occurrence.key) {
+                Some(fresh) => {
+                    observed = true;
+                    Some(fresh)
+                }
+                // A run that was not actually re-scanned keeps its last-known
+                // occurrences: absence of evidence from an unread run is not a
+                // re-scan result.
+                None if skipped_runs.contains(&occurrence.run_id) => Some(occurrence.clone()),
+                None => None,
+            })
             .collect();
-        if !issue.occurrences.is_empty() {
-            let changed = issue.occurrences != previous;
-            refresh_issue(&mut issue, changed);
-            issues.push(issue);
+        if issue.occurrences.is_empty() {
+            // Every occurrence run is gone (purged or removed from the
+            // project). Retain the last-known history instead of silently
+            // dropping the user's status, decision, and note.
+            issue.occurrences = previous.clone();
         }
+        let archived = !observed;
+        let changed = issue.occurrences != previous || issue.archived != archived;
+        issue.archived = archived;
+        refresh_issue(&mut issue, changed);
+        issues.push(issue);
     }
 
     let mut pending = available.into_values().collect::<Vec<_>>();
@@ -969,6 +1006,8 @@ fn sync_ledger(
     for occurrence in pending {
         if let Some(index) = matching_issue_index(&issues, &occurrence) {
             issues[index].occurrences.push(occurrence);
+            // A fresh observation reactivates an archived issue.
+            issues[index].archived = false;
             refresh_issue(&mut issues[index], true);
             continue;
         }
@@ -985,6 +1024,7 @@ fn sync_ledger(
             created: created.clone(),
             updated: created,
             decision_updated: String::new(),
+            archived: false,
             occurrences: vec![occurrence],
         };
         refresh_issue(&mut issue, false);
@@ -1022,7 +1062,7 @@ fn sync_project_issue_ledger_in(
     project_id: &str,
 ) -> Result<ProjectIssueLedger, String> {
     let snapshot = super::load_project_from(projects_dir, project_id)?;
-    let (occurrences, warnings) = scan_project(&snapshot);
+    let (occurrences, warnings, skipped_runs) = scan_project(&snapshot);
     let _lock = super::lock_projects(projects_dir)?;
     let current = super::load_project_from(projects_dir, project_id)?;
     if current.run_ids != snapshot.run_ids {
@@ -1035,6 +1075,7 @@ fn sync_project_issue_ledger_in(
         project_id,
         occurrences,
         warnings,
+        &skipped_runs,
     );
     write_ledger_to(projects_dir, &ledger)?;
     Ok(ledger)
@@ -1194,6 +1235,7 @@ mod tests {
             "project",
             vec![first, second],
             Vec::new(),
+            &HashSet::new(),
         );
         assert_eq!(ledger.issues.len(), 1);
         assert_eq!(ledger.issues[0].occurrences.len(), 2);
@@ -1211,10 +1253,58 @@ mod tests {
                 "folder",
             )],
             Vec::new(),
+            &HashSet::new(),
         );
         assert_eq!(refreshed.issues.len(), 1);
         assert_eq!(refreshed.issues[0].status, "dismissed");
         assert_eq!(refreshed.issues[0].occurrences.len(), 1);
+    }
+
+    #[test]
+    fn decisions_survive_purged_and_unreadable_runs() {
+        let first = occurrence(
+            "occ-aaaaaaaa",
+            "run_1",
+            "Unbounded retry loop",
+            "worker.rs",
+            "document",
+        );
+        let mut ledger = sync_ledger(
+            empty_ledger("project"),
+            "project",
+            vec![first.clone()],
+            Vec::new(),
+            &HashSet::new(),
+        );
+        ledger.issues[0].status = "dismissed".to_string();
+        ledger.issues[0].decision_updated = "2026-08-10T00:00:00Z".to_string();
+        ledger.issues[0].note = "Intentional design".to_string();
+
+        // run_1 could not be re-scanned (unreadable report): retained, not dropped.
+        let warned = sync_ledger(
+            ledger,
+            "project",
+            Vec::new(),
+            Vec::new(),
+            &HashSet::from(["run_1".to_string()]),
+        );
+        assert_eq!(warned.issues.len(), 1);
+        assert!(warned.issues[0].archived);
+        assert_eq!(warned.issues[0].occurrences.len(), 1);
+
+        // run_1 was purged from the project entirely: the decision, note, and
+        // last-known occurrences survive as an archived issue.
+        let purged = sync_ledger(warned, "project", Vec::new(), Vec::new(), &HashSet::new());
+        assert_eq!(purged.issues.len(), 1);
+        assert!(purged.issues[0].archived);
+        assert_eq!(purged.issues[0].status, "dismissed");
+        assert_eq!(purged.issues[0].note, "Intentional design");
+        assert_eq!(purged.issues[0].occurrences.len(), 1);
+
+        // A fresh observation of the same occurrence reactivates the issue.
+        let reobserved = sync_ledger(purged, "project", vec![first], Vec::new(), &HashSet::new());
+        assert!(!reobserved.issues[0].archived);
+        assert_eq!(reobserved.issues[0].status, "dismissed");
     }
 
     #[test]
@@ -1228,6 +1318,7 @@ mod tests {
             "project",
             vec![first, second],
             Vec::new(),
+            &HashSet::new(),
         );
         assert_eq!(ledger.issues.len(), 2);
     }
@@ -1255,6 +1346,7 @@ mod tests {
             "project",
             vec![first, second],
             Vec::new(),
+            &HashSet::new(),
         );
         assert_eq!(ledger.issues.len(), 2);
     }
@@ -1281,6 +1373,7 @@ mod tests {
             "project",
             vec![first, second],
             Vec::new(),
+            &HashSet::new(),
         );
         assert_eq!(ledger.issues[0].status, "regressed");
     }

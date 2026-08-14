@@ -1,0 +1,1 @@
+Assess the institutional and market setting, household and firm constraints, informal margins, implementation and take-up, prices and spillovers, risk and seasonality, state capacity, distribution, equilibrium effects, external validity across places, and whether the proposed intervention or mechanism survives the constraints that define the development setting.

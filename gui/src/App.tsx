@@ -10,6 +10,7 @@ import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
 import NavRail, { type AppPage } from "./components/NavRail";
 import RunSetupPanel from "./components/RunSetupPanel";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { usePipeline } from "./hooks/usePipeline";
 import usePersistentPanelWidth from "./hooks/usePersistentPanelWidth";
 import { isMac } from "./lib/platform";
@@ -25,6 +26,7 @@ import type {
   InputSlot,
   PipelineConfig,
   PrimaryInputSelection,
+  RunParallelOverrides,
   BatchJob,
 } from "./lib/types";
 import type { ExecutionPlanStage } from "./lib/pipelineHelpers";
@@ -55,6 +57,7 @@ interface ExecutionPlanEnvelope {
   inputSlots: InputSlot[];
   readiness: DepsReport;
   stages: ExecutionPlanStage[];
+  parallelAgents?: string[];
 }
 
 interface PreparedLaunch {
@@ -63,7 +66,28 @@ interface PreparedLaunch {
   extraInputs?: Record<string, string>;
   plan: ExecutionPlanEnvelope;
   config: PipelineConfig;
+  parallelOverrides: RunParallelOverrides | null;
   batchPaths?: string[];
+}
+
+function configForRunPreview(
+  config: PipelineConfig,
+  agents: string[],
+  overrides: RunParallelOverrides | null,
+): PipelineConfig {
+  return {
+    ...config,
+    steps: config.steps.map((step) => step.phase === "parallel" && (overrides || step.agents.length === 0)
+      ? {
+          ...step,
+          agents,
+          model: overrides ? "" : step.model,
+          model_overrides: overrides?.model_overrides ?? step.model_overrides,
+          effort: overrides ? "" : step.effort,
+          effort_overrides: overrides?.effort_overrides ?? step.effort_overrides,
+        }
+      : step),
+  };
 }
 
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
@@ -116,6 +140,7 @@ function App() {
   >("llm");
   const [settingsTargetId, setSettingsTargetId] = useState<string | undefined>();
   const [settingsNavigationKey, setSettingsNavigationKey] = useState(0);
+  const [helpInitialSection, setHelpInitialSection] = useState<"privacy" | undefined>();
   const [configVersion, setConfigVersion] = useState(0);
   const [selectionKey, setSelectionKey] = useState(0);
   const [workflowDirty, setWorkflowDirty] = useState(false);
@@ -144,6 +169,7 @@ function App() {
   const [runConfigLoading, setRunConfigLoading] = useState(true);
   const [runConfigError, setRunConfigError] = useState<string | null>(null);
   const [preparingRun, setPreparingRun] = useState(false);
+  const [parallelOverrides, setParallelOverrides] = useState<RunParallelOverrides | null>(null);
   // Variables and extra input slots the active profile declares; both drive
   // the pre-run options modal.
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
@@ -307,6 +333,7 @@ function App() {
         diff: false,
         paperPath: selectedPaperPath ?? null,
         inputInterpretation: selectedInterpretation ?? null,
+        ...(parallelOverrides ? { runParallelOverrides: parallelOverrides } : {}),
       });
       if (request !== runConfigRequest.current) return null;
       const snapshot = applyRunProfile(plan);
@@ -325,7 +352,7 @@ function App() {
         setDepsLoading(false);
       }
     }
-  }, [applyRunProfile]);
+  }, [applyRunProfile, parallelOverrides]);
 
   const checkDependencies = useCallback(async (): Promise<DepsReport | null> => {
     const snapshot = await loadRunConfig(
@@ -359,6 +386,7 @@ function App() {
       setSelectionKey((key) => key + 1);
     }
     setRunProfileConfigSnapshotId(null);
+    setParallelOverrides(null);
     setRunConfigLoading(true);
     setConfigVersion((version) => version + 1);
   }, [inputMode]);
@@ -401,13 +429,22 @@ function App() {
           diff: false,
           paperPath: representativePath,
           inputInterpretation: "document",
+          ...(parallelOverrides ? { runParallelOverrides: parallelOverrides } : {}),
         });
         setDepsReport(plan.readiness);
         if (!plan.readiness.ready) {
           setShowDeps(true);
           return;
         }
-        setRunPreview({ snapshot, variables, extraInputs, plan, config, batchPaths: paths });
+        setRunPreview({
+          snapshot,
+          variables,
+          extraInputs,
+          plan,
+          config: configForRunPreview(config, plan.parallelAgents ?? [], parallelOverrides),
+          parallelOverrides,
+          batchPaths: paths,
+        });
         return;
       }
       const plan = await invoke<ExecutionPlanEnvelope>("get_execution_plan", {
@@ -417,13 +454,21 @@ function App() {
         diff: false,
         paperPath: snapshot.paperPath,
         inputInterpretation: snapshot.inputSelection?.interpretation ?? null,
+        ...(parallelOverrides ? { runParallelOverrides: parallelOverrides } : {}),
       });
       setDepsReport(plan.readiness);
       if (!plan.readiness.ready) {
         setShowDeps(true);
         return;
       }
-      setRunPreview({ snapshot, variables, extraInputs, plan, config });
+      setRunPreview({
+        snapshot,
+        variables,
+        extraInputs,
+        plan,
+        config: configForRunPreview(config, plan.parallelAgents ?? [], parallelOverrides),
+        parallelOverrides,
+      });
     } catch (error) {
       setRunConfigError(
         `The workflow execution plan could not be prepared: ${
@@ -449,6 +494,9 @@ function App() {
           variables: prepared.variables ?? null,
           extraInputs: prepared.extraInputs ?? null,
           expectedProfileConfigSnapshotId: prepared.plan.profileConfigSnapshotId,
+          ...(prepared.parallelOverrides
+            ? { runParallelOverrides: prepared.parallelOverrides }
+            : {}),
         });
         setBatchActive(true);
         setPage("batch");
@@ -456,17 +504,22 @@ function App() {
       }
       setPage("main");
       setActiveRunPlan(prepared.plan.stages);
-      void startPipeline(
+      const launchArgs = [
         prepared.snapshot.paperPath,
         prepared.snapshot.inputSelection?.interpretation,
         false,
         prepared.variables,
         prepared.extraInputs,
         prepared.plan.profileSnapshotId,
-      );
+      ] as const;
+      if (prepared.parallelOverrides) {
+        void startPipeline(...launchArgs, prepared.parallelOverrides);
+      } else {
+        void startPipeline(...launchArgs);
+      }
     } catch (error) {
       setRunConfigError(
-        `The run could not be started: ${error instanceof Error ? error.message : String(error)}`,
+        `The report could not be started: ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
       launchActive.current = false;
@@ -544,6 +597,7 @@ function App() {
     setHistoryRunId(null);
     setHistorySourceSelection(null);
     setPendingRun(null);
+    setParallelOverrides(null);
     setActiveRunPlan(null);
     setSelectionKey((key) => key + 1);
     setPage("main");
@@ -561,7 +615,16 @@ function App() {
       setHistoryRunId(null);
       setHistorySourceSelection(null);
     }
+    if (nextPage === "help") setHelpInitialSection(undefined);
     setPage(nextPage);
+  };
+
+  const openPaddleInstallSettings = () => {
+    if (!confirmLeaveCurrentPage("settings")) return;
+    setSettingsInitialSection("extraction");
+    setSettingsTargetId("paddleocr-local-engine");
+    setSettingsNavigationKey((key) => key + 1);
+    setPage("settings");
   };
 
   const [showDeps, setShowDeps] = useState(false);
@@ -576,7 +639,7 @@ function App() {
   }, [depsReport, page]);
 
   return (
-    <div data-testid="app-shell" className="flex h-screen flex-col overflow-hidden bg-gray-50 dark:bg-gray-950">
+    <div data-testid="app-shell" className="flex h-screen flex-col overflow-hidden bg-gray-50 dark:bg-[#101010]">
       {showDeps && depsReport && (
         <DepsCheck
           report={depsReport}
@@ -672,8 +735,12 @@ function App() {
             dependenciesReady={depsReport?.ready === true}
             inputMode={inputMode}
             listenersReady={listenersReady}
+            localLlmActive={depsReport?.deps.some((dependency) =>
+              dependency.name === "Local LLM server" && dependency.found
+            ) ?? false}
             paperPath={paperPath}
             preparingRun={preparingRun}
+            parallelOverrides={parallelOverrides}
             selectionKey={selectionKey}
             width={runSetupWidth}
             onConfigureWorkflow={() => setPage("pipeline")}
@@ -692,7 +759,11 @@ function App() {
                 plannedInterpretation(selection),
               );
             }}
-            onPrivacyDetails={() => setPage("help")}
+            onPrivacyDetails={() => {
+              setHelpInitialSection("privacy");
+              setPage("help");
+            }}
+            onParallelOverridesChange={setParallelOverrides}
             onProfileChange={handleProfileChange}
             onRetryConfig={() => void checkDependencies()}
             onRetryDependencies={() => void checkDependencies()}
@@ -722,7 +793,13 @@ function App() {
                 showBack={false}
               />
             ) : page === "help" ? (
-              <AboutPage onClose={() => setPage("main")} showBack={false} />
+              <AboutPage
+                onClose={() => setPage("main")}
+                showBack={false}
+                onNavigate={handleNavigate}
+                onOpenPdfSettings={openPaddleInstallSettings}
+                initialSection={helpInitialSection}
+              />
             ) : page === "settings" ? (
               <SettingsPage
                 onClose={() => setPage("main")}
@@ -734,6 +811,7 @@ function App() {
                 initialSection={settingsInitialSection}
                 targetId={settingsTargetId}
                 navigationKey={settingsNavigationKey}
+                dependencies={depsReport}
               />
             ) : page === "history" ? (
               <HistoryPage
@@ -741,7 +819,17 @@ function App() {
                 showClose={false}
                 initialRunId={historyRunId}
                 initialSourceSelection={historySourceSelection}
+                runInProgress={isRunning}
                 onRerun={(runId, onlyFailed) => {
+                  if (isRunning) {
+                    // rerunPipeline resets the live progress/log state before
+                    // the backend guard rejects the second run, so starting it
+                    // here would trash the active run's UI.
+                    window.alert(
+                      "A report is already being generated. Wait for it to finish or cancel it first.",
+                    );
+                    return;
+                  }
                   setPage("main");
                   setActiveRunPlan(null);
                   rerunPipeline(runId, { onlyFailed });
@@ -768,47 +856,47 @@ function App() {
                 }}
               />
             ) : state.kind === "done" ? (
-              <ReportWorkspace
-                runId={state.runId}
-                markdown={state.markdown}
-                report={state.report}
-                extractedText={state.extractedText}
-                durationSecs={runStartedAt ? (Date.now() - runStartedAt) / 1000 : null}
-              />
+              // A rendering defect in the finished-run view must not take
+              // down the whole app shell with it.
+              <ErrorBoundary>
+                <ReportWorkspace
+                  runId={state.runId}
+                  markdown={state.markdown}
+                  report={state.report}
+                  extractedText={state.extractedText}
+                  durationSecs={runStartedAt ? (Date.now() - runStartedAt) / 1000 : null}
+                />
+              </ErrorBoundary>
             ) : state.kind === "idle" ? (
               <div className="flex items-center justify-center min-h-full px-8 py-16">
                 <div className="w-full max-w-3xl">
-                  <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">
-                    Pipeline
-                  </h1>
-
-                  <ol className="mt-8 grid grid-cols-1 border-y border-gray-200 dark:border-gray-800 sm:grid-cols-3">
+                  <ol className="grid grid-cols-1 border-y border-gray-200 dark:border-neutral-800 sm:grid-cols-3">
                     <li className="py-5 sm:pr-5">
-                      <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">01</span>
-                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                      <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-neutral-400">01</span>
+                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-neutral-200">
                         {inputMode === "none" ? "Start" : "Choose an input"}
                       </p>
-                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
+                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-neutral-400">
                         {inputMode === "none"
                           ? "No source file is required for this workflow."
                           : "Select a document or folder."}
                       </p>
                     </li>
-                    <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:px-5 dark:border-gray-800">
-                      <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">02</span>
-                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
-                        Run a workflow
+                    <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:px-5 dark:border-neutral-800">
+                      <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-neutral-400">02</span>
+                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-neutral-200">
+                        Select a workflow
                       </p>
-                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
-                        Workflow steps run either in parallel or sequentially.
+                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-neutral-400">
+                        Choose from built-in workflows or customize your own.
                       </p>
                     </li>
-                    <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:pl-5 dark:border-gray-800">
-                      <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-gray-400">03</span>
-                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-gray-200">
+                    <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:pl-5 dark:border-neutral-800">
+                      <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-neutral-400">03</span>
+                      <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-neutral-200">
                         Review
                       </p>
-                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
+                      <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-neutral-400">
                         Read and save report(s).
                       </p>
                     </li>
@@ -840,14 +928,14 @@ function App() {
                         onClick={handleNewRun}
                         className="mt-3 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700
                                    transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2
-                                   focus-visible:ring-gray-400 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+                                   focus-visible:ring-gray-400 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
                       >
-                        Start a new run
+                        Start a new report
                       </button>
                     </div>
                   ) : (
                     <>
-                      <p className="mt-6 text-center text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                      <p className="mt-6 text-center text-xs leading-relaxed text-gray-500 dark:text-neutral-400">
                         This may take 15–60 minutes depending on<br />
                         paper length, number of agents, and LLM load.
                       </p>
@@ -856,9 +944,9 @@ function App() {
                         onClick={cancel}
                         className="mx-auto mt-4 block rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors
                                    hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2
-                                   focus-visible:ring-red-300 dark:text-gray-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                                   focus-visible:ring-red-300 dark:text-neutral-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                       >
-                        Cancel run
+                        Cancel report
                       </button>
                     </>
                   )}

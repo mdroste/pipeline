@@ -181,9 +181,9 @@ function AddStepDialog({
   const listedRoles = useMemo<ListedRole[]>(() => {
     if (!catalog) return [];
     if (catalogTab === "methods") {
-      return catalog.methods
+      return catalog.methodFamilies.flatMap((family) => family.roles
         .filter((role) => roleMatches(role, normalizedQuery))
-        .map((role) => ({ role, group: "Method" }));
+        .map((role) => ({ role, group: family.label })));
     }
     const disciplines = normalizedQuery
       ? catalog.disciplines
@@ -195,7 +195,9 @@ function AddStepDialog({
 
   const selectedRole = useMemo(() => {
     if (!catalog || !selectedRoleId) return null;
-    return catalog.methods.find((role) => role.id === selectedRoleId)
+    return catalog.methodFamilies
+      .flatMap((family) => family.roles)
+      .find((role) => role.id === selectedRoleId)
       ?? catalog.disciplines
         .flatMap((discipline) => discipline.roles)
         .find((role) => role.id === selectedRoleId)
@@ -234,7 +236,15 @@ function AddStepDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-5" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-5"
+      onMouseDown={(event) => {
+        // Close only on a press that starts on the backdrop itself — a click
+        // handler would also fire when a text-selection drag that began inside
+        // the dialog is released over the backdrop, discarding the draft.
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
       <div
         ref={dialogRef}
         role="dialog"
@@ -243,12 +253,11 @@ function AddStepDialog({
         aria-describedby={descriptionId}
         tabIndex={-1}
         className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900"
-        onClick={(event) => event.stopPropagation()}
       >
         <div className="border-b border-gray-200 px-6 pt-5 dark:border-gray-700">
           <h2 id={titleId} className="text-base font-semibold text-gray-900 dark:text-gray-100">Add workflow step</h2>
           <p id={descriptionId} className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Design a new step or copy a specialist from the adaptive review suite.
+            Design a new step or add a configurable agent from the adaptive review suite.
           </p>
           <div role="tablist" aria-label="Add step method" className="mt-4 flex gap-5">
             <button
@@ -267,7 +276,7 @@ function AddStepDialog({
               onClick={() => setMode("adaptive")}
               className={`border-b-2 pb-2 text-xs font-medium ${mode === "adaptive" ? "border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-300" : "border-transparent text-gray-500"}`}
             >
-              From templates
+              Adaptive agent
             </button>
             <button
               type="button"
@@ -285,9 +294,9 @@ function AddStepDialog({
           {mode === "adaptive" ? (
             <div className="space-y-4">
               <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/30">
-                <p className="text-xs font-medium text-blue-950 dark:text-blue-100">Add one fixed specialist</p>
+                <p className="text-xs font-medium text-blue-950 dark:text-blue-100">Choose an adaptive agent</p>
                 <p className="mt-1 text-[11px] leading-4 text-blue-800 dark:text-blue-200">
-                  Choose a subject or method reviewer. Its complete prompt and execution profile are copied into this workflow and open for editing.
+                  Choose a subject or method specialist. Its complete prompt and execution settings are copied into this workflow, where you can configure them like any other step.
                 </p>
               </div>
 
@@ -520,7 +529,7 @@ function AddStepDialog({
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] text-gray-500 dark:text-gray-400">
               {mode === "adaptive"
-                ? "This copies a snapshot. Workflow edits never change the adaptive suite default."
+                ? "This adds an editable snapshot. Workflow changes never alter the adaptive suite default."
                 : "All choices remain editable after creation."}
             </p>
             <div className="flex shrink-0 gap-2">

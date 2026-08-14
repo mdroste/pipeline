@@ -47,6 +47,13 @@ interface Props {
 
 type WorkspaceTab = "report" | "provenance" | "issues" | "sources";
 type OutputView = "clean" | "raw";
+type CanonicalReportProblem =
+  | "failed-final-step"
+  | "missing-content"
+  | "no-step-output"
+  | "apparent-refusal";
+
+const APPARENT_REFUSAL_RE = /\bi(?:\s+(?:cannot|can't|am\s+unable\s+to|must\s+refuse\s+to|will\s+not|won't)|'m\s+unable\s+to)\s+(?:comply(?:\s+with\s+(?:this|the)\s+request)?|(?:provide|produce|write|generate|complete)\s+(?:(?:this|the|a)\s+)?(?:requested\s+)?(?:report|review|task|request)|(?:help|assist)\s+with\s+(?:this|that|the\s+request)|follow\s+(?:these|the)\s+instructions)\b/i;
 
 const TAB_IDS: Record<WorkspaceTab, string> = {
   report: "report-workspace-tab-report",
@@ -155,6 +162,57 @@ export function reportBodyForPdf(markdown: string): string {
     .trim();
 }
 
+/**
+ * Keep the reading surface conservative at the last boundary. The backend
+ * rejects these cases for new runs; this also protects old or partially
+ * recovered artifacts that predate the report contract.
+ */
+export function canonicalReportProblem(
+  report: PipelineReport | null,
+  markdown: string,
+): CanonicalReportProblem | null {
+  const visible = markdown.trim();
+  if (!visible) return "missing-content";
+
+  if (visible.length <= 4_000) {
+    const prefix = visible.slice(0, 1_200).replace(/[’‘]/g, "'");
+    if (APPARENT_REFUSAL_RE.test(prefix)) return "apparent-refusal";
+  }
+
+  if (!report) return null;
+  const usableOutputs = (report.step_outputs ?? []).filter(
+    (output) => !output.skipped && output.raw_text.trim().length > 0,
+  );
+  const hasSequentialOutput = usableOutputs.some(
+    (output) => output.phase === "sequential",
+  );
+  const hasFailedFinalStep = (report.failed_steps ?? []).some((failure) => {
+    if (failure.phase === "sequential") return true;
+    if (failure.phase) return false;
+    // Old reports did not persist phase. Restrict the compatibility heuristic
+    // to conventional final-step names rather than guessing from every error.
+    return /\b(?:synthesi[sz]|consolidat|editor|validat)\w*\b/i.test(
+      `${failure.step_id} ${failure.step_label}`,
+    );
+  });
+  if (!hasSequentialOutput && hasFailedFinalStep) return "failed-final-step";
+  if (usableOutputs.length === 0) return "no-step-output";
+  return null;
+}
+
+function canonicalProblemMessage(problem: CanonicalReportProblem): string {
+  switch (problem) {
+    case "failed-final-step":
+      return "The final report step did not return usable content. Pipeline did not substitute an individual agent analysis for the missing final report.";
+    case "apparent-refusal":
+      return "The model returned an apparent refusal instead of report content. The response was preserved for inspection but is not presented as a completed report.";
+    case "no-step-output":
+      return "No completed step returned usable report content. Any captured attempts remain available for inspection.";
+    case "missing-content":
+      return "The canonical report artifact is empty or unavailable. Other run artifacts may still contain useful diagnostic material.";
+  }
+}
+
 function TabButton({
   active,
   count,
@@ -209,7 +267,7 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
     ["Workflow", provenance.workflow],
     ["Completed", formatRunDate(provenance.completed)],
     ["Duration", formatRunDuration(provenance.duration_secs)],
-    ["Run", provenance.run_id || "Unsaved"],
+    ["Report", provenance.run_id || "Unsaved"],
     ["Provider", provenance.provider_summary],
     ["Model", provenance.model_summary],
   ];
@@ -217,14 +275,14 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <section aria-label="Run provenance" className="mx-auto max-w-5xl px-8 py-10">
+      <section aria-label="Report provenance" className="mx-auto max-w-5xl px-8 py-10">
         <div className="flex items-start justify-between gap-6">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
-              Completed run
+              Completed report
             </p>
             <h2 className="mt-1 text-2xl font-semibold tracking-[-0.025em] text-gray-950 dark:text-gray-50">
-              Run provenance
+              Report provenance
             </h2>
             <p className="mt-2 max-w-2xl text-sm text-gray-600 dark:text-gray-300">
               Reproducibility details and provider-reported token accounting for this report.
@@ -323,7 +381,7 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
           </div>
           {!provenance.usage_matches_total && (
             <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-              Run totals may also include extraction, orientation, setup calls, or reused step provenance that is not attributable to one saved provider/model row.
+              Report totals may also include extraction, orientation, setup calls, or reused step provenance that is not attributable to one saved provider/model row.
             </p>
           )}
         </div>
@@ -508,28 +566,42 @@ export default function ReportWorkspace({
   };
   const paperTitle =
     report && isPaperOrientation(report.orientation)
-      ? report.orientation.metadata.title
+      ? (report.orientation.metadata?.title ?? "")
       : "";
   const presentation = useMemo(
     () => splitUnexpectedPreamble(markdown, paperTitle),
     [markdown, paperTitle],
   );
   const visibleMarkdown = outputView === "clean" ? presentation.clean : markdown;
+  const reportProblem = useMemo(
+    () => canonicalReportProblem(report, presentation.clean),
+    [presentation.clean, report],
+  );
   const pdfMarkdown = useMemo(
     () => reportBodyForPdf(presentation.clean),
     [presentation.clean],
   );
-  const provenance = useMemo(
-    () => report
-      ? buildRunProvenance({ report, summary, manifest: runManifest, runId, durationSecs })
-      : null,
-    [durationSecs, report, runId, runManifest, summary],
-  );
+  const provenance = useMemo(() => {
+    if (!report) return null;
+    const built = buildRunProvenance({
+      report,
+      summary,
+      manifest: runManifest,
+      runId,
+      durationSecs,
+    });
+    return reportProblem && built.status === "done"
+      ? { ...built, status: "partial" }
+      : built;
+  }, [durationSecs, report, reportProblem, runId, runManifest, summary]);
   const title = reportTitle(report, summary);
   const loadProblem = [reportError, markdownError].filter(Boolean).join(" · ");
-  const status = provenance?.status
+  const reportedStatus = provenance?.status
     || runManifest?.status
     || (report?.failed_steps?.length || loadProblem ? "partial" : "done");
+  const status = reportProblem && reportedStatus === "done"
+    ? "partial"
+    : reportedStatus;
   const availableTabs: WorkspaceTab[] = [
     "report",
     ...(provenance ? ["provenance" as const] : []),
@@ -653,7 +725,7 @@ export default function ReportWorkspace({
         <div className="flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300">
           <span className="min-w-0 flex-1 truncate">
             <span className="font-semibold">Canonical report is incomplete.</span>{" "}
-            {loadProblem} Agent reports and other run artifacts remain available.
+            {loadProblem} Agent reports and other report artifacts remain available.
           </span>
           <button
             type="button"
@@ -815,7 +887,30 @@ export default function ReportWorkspace({
                   </div>
                 )}
                 <div className="min-h-0 flex-1 overflow-hidden">
-                  {markdown ? (
+                  {reportProblem ? (
+                    <div className="flex h-full items-center justify-center p-8 text-center">
+                      <div role="alert" className="max-w-lg">
+                        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                          <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.3 3.6 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z" />
+                          </svg>
+                        </div>
+                        <p className="mt-3 font-medium text-gray-800 dark:text-gray-100">
+                          No final report was produced.
+                        </p>
+                        <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                          {canonicalProblemMessage(reportProblem)}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={openAgentReports}
+                          className="mt-4 rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                        >
+                          Inspect preserved outputs
+                        </button>
+                      </div>
+                    </div>
+                  ) : markdown.trim() ? (
                     <ReportViewer markdown={visibleMarkdown} />
                   ) : (
                     <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">

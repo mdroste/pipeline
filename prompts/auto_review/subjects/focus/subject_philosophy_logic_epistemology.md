@@ -1,0 +1,1 @@
+Review the account of knowledge, evidence, justification, rationality, consequence, or meaning; formal-to-informal interpretation; skeptical and higher-order cases; counterexamples; and whether the conclusion follows under the epistemic norms stated.

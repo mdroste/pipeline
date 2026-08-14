@@ -1,0 +1,1 @@
+Assess the naturality of the geometric or representation-theoretic objects, hypotheses on base fields and finiteness, functoriality and descent, singular and derived behavior, equivalences and invariants, use of standard classification results, and whether examples and edge cases support the claimed level of generality.

@@ -1,0 +1,1 @@
+Review homeostasis, organ-system interaction, dose and temporal response, compensatory mechanisms, sex and life-stage variation, model-organism limits, and whether measured proxies establish the claimed physiological function.

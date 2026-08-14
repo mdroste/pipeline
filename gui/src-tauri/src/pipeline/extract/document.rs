@@ -9,10 +9,6 @@ pub(super) fn extract_pdf_native(
     path: &Path,
     method: &str,
 ) -> Result<ExtractionResult, String> {
-    // This guard intentionally precedes hashing and command resolution. A
-    // legacy Marker setting must never inspect or invoke a Marker executable,
-    // whether it remains in ~/.pipeline or appears on PATH.
-    reject_retired_pdf_extractor(method)?;
     let hash = compute_hash(path)?;
 
     let try_pdftotext = method == "pdftotext";

@@ -1,0 +1,1 @@
+Review eligibility, disease definition and severity, treatment pathways, clinical comparators, confounding by indication, endpoint importance, follow-up, competing care, adverse events, and whether results apply to the patients named in the conclusion.

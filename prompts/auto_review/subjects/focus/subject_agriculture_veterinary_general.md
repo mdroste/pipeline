@@ -1,0 +1,1 @@
+Evaluate the managed biological system, production objective, environment, inputs, biological and economic constraints, intervention, yield or welfare outcome, season and scale, and whether evidence supports transfer from the studied conditions to the claimed agricultural system. Use this fallback only for genuinely cross-system work.

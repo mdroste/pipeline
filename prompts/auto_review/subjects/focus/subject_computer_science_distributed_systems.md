@@ -1,0 +1,1 @@
+Assess the system and failure model, synchrony and timing assumptions, consistency and availability guarantees, membership and recovery, concurrency, geo-distribution, workload and fault injection, tail latency, cost and resource accounting, operational complexity, and whether evaluation reaches the scale and adverse conditions required by the claimed guarantee.

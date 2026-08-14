@@ -1,0 +1,1 @@
+Assess actors, territorial and resource stakes, violence measurement, conflict onset and duration, selection into exposure, intervention and enforcement, post-conflict institutions, environmental distribution, and whether evidence supports the proposed political pathway.

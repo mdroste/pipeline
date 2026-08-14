@@ -1,0 +1,1 @@
+Review case and regime comparability, institutional variation, state and party organization, historical sequence, actor incentives, selection of cases, alternative political explanations, and whether the comparison supports the claimed general political mechanism.

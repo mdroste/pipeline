@@ -1,0 +1,1 @@
+Review state preparation, coherence and decoherence, level structure, light-matter interaction, control sequence, readout, and experimentally accessible parameter regimes. Check whether idealized quantum dynamics survive the noise, loss, and calibration structure of the claimed platform.

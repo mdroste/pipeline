@@ -1,0 +1,1 @@
+Assess stock or stand definition, age and species structure, recruitment and mortality, harvest or production regime, habitat and climate variation, monitoring and detectability, spatial spillovers, ecological feedback, and whether short-run or local evidence supports sustainable management at the claimed scale.

@@ -117,7 +117,7 @@ pub async fn extract(
                     format!("Failed to canonicalize project dir {}: {e}", path.display())
                 })?;
                 let mut warnings = Vec::new();
-                let text = extract_latex(&tex_path, 0, &root_dir, &mut warnings)?;
+                let text = extract_latex(&tex_path, &root_dir, &mut warnings)?;
                 if text.trim().is_empty() {
                     return Err("LaTeX extraction produced empty output".to_string());
                 }
@@ -157,7 +157,7 @@ pub async fn extract(
                 )
             })?;
             let mut warnings = Vec::new();
-            let text = extract_latex(&path, 0, &root_dir, &mut warnings)?;
+            let text = extract_latex(&path, &root_dir, &mut warnings)?;
             if text.trim().is_empty() {
                 return Err("LaTeX extraction produced empty output".to_string());
             }

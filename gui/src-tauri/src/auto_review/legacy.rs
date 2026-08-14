@@ -3,11 +3,27 @@
 //! This module exists only to recognize and migrate an untouched development
 //! profile. New runs never execute this catalog-wide conditional workflow.
 
-use super::{base_step, CORE_CONSISTENCY, CORE_CONTRIBUTION, CORE_EXPOSITION, SYNTHESIS};
+use super::{base_step, CORE_CONSISTENCY, CORE_CONTRIBUTION, CORE_EXPOSITION};
 use crate::pipeline_config::{Phase, RunCondition, StepConfig};
 
 const ORIENTATION_TEMPLATE: &str =
     include_str!("../../../../prompts/auto_review/orientation_v1.md");
+// The synthesis text that shipped with the v1 catalog profile and the v2
+// four-step skeleton. Migration fingerprints depend on these exact bytes, so
+// this stays pinned while the live prompt evolves.
+const SYNTHESIS_V1: &str = include_str!("../../../../prompts/auto_review/synthesis_v1.md");
+// The orientation prompt and schema exactly as the 0.9.0 releases rendered
+// them from their 191-subject, 32-method catalog. Migration fingerprints
+// must match the bytes those installs wrote to disk, so these stay pinned
+// while the live catalog gains roles, families, and genres.
+pub(super) const ORIENTATION_V2_PROMPT: &str =
+    include_str!("../../../../prompts/auto_review/orientation_v2.md");
+const ORIENTATION_V2_SCHEMA: &str =
+    include_str!("../../../../prompts/auto_review/orientation_v2_schema.json");
+
+pub(super) fn orientation_v2_schema() -> serde_json::Value {
+    serde_json::from_str(ORIENTATION_V2_SCHEMA).expect("pinned v2 orientation schema is valid JSON")
+}
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -166,8 +182,10 @@ pub(super) fn selected_ids(orientation: &serde_json::Value) -> Result<Vec<&str>,
     Ok(selected)
 }
 
-pub(super) fn steps() -> Vec<StepConfig> {
-    let mut steps = vec![
+/// The three universal reviewers exactly as they shipped in the v1 catalog
+/// profile and the v2 four-step skeleton (web search on contribution only).
+fn prior_core_steps() -> Vec<StepConfig> {
+    vec![
         base_step(
             "auto_contribution",
             "Contribution & Literature",
@@ -186,7 +204,27 @@ pub(super) fn steps() -> Vec<StepConfig> {
             CORE_EXPOSITION.to_string(),
             &[],
         ),
-    ];
+    ]
+}
+
+/// Exact steps of the v2 stock profile: the runtime-assembled four-step
+/// skeleton before consolidation was renamed and validation was added. Used
+/// only to fingerprint untouched installs for migration.
+pub(super) fn v2_steps() -> Vec<StepConfig> {
+    let mut steps = prior_core_steps();
+    let mut synthesis = base_step(
+        "auto_synthesis",
+        "Consolidate",
+        SYNTHESIS_V1.to_string(),
+        &[],
+    );
+    synthesis.phase = Phase::Sequential;
+    steps.push(synthesis);
+    steps
+}
+
+pub(super) fn steps() -> Vec<StepConfig> {
+    let mut steps = prior_core_steps();
     for specialist in SPECIALISTS {
         let mut step = base_step(
             specialist.id,
@@ -213,7 +251,7 @@ pub(super) fn steps() -> Vec<StepConfig> {
     let mut synthesis = base_step(
         "auto_synthesis",
         "Consolidate Auto Review",
-        SYNTHESIS.to_string(),
+        SYNTHESIS_V1.to_string(),
         &[],
     );
     synthesis.phase = Phase::Sequential;

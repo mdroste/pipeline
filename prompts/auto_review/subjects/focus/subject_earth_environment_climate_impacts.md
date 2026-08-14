@@ -1,0 +1,1 @@
+Assess the exposure–response linkage, downscaling and bias-correction choices, scenario and ensemble treatment, and compounding-risk logic. Check that projected impacts carry both climate-model and impact-model uncertainty rather than a single deterministic chain, and that adaptation conclusions follow from the impact evidence rather than accompanying it.

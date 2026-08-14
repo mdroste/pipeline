@@ -1,0 +1,1 @@
+Assess organizational boundaries, authority and status, networks and fields, institutional pressures, workplace process, actor meaning, market construction, and whether evidence connects micro practices to the claimed organizational or economic outcome.

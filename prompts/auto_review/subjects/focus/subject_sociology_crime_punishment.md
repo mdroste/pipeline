@@ -1,0 +1,1 @@
+Assess definitions and measurement of crime or deviance, exposure to institutions, enforcement and reporting, selection and discretion, organizational practice, neighborhood and network context, race and class stratification, stigma and collateral consequences, temporal ordering, and whether official records represent behavior or institutional response.

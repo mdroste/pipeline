@@ -1,0 +1,1 @@
+Review stratigraphic and spatial context, chronology, preservation and alteration, proxy calibration, sampling, geochemical mass balance, tectonic interpretation, and whether the record uniquely supports the proposed Earth history.

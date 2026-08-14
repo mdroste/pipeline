@@ -1,0 +1,1 @@
+Review substrate scope, selectivity, yields and mass balance, catalyst loading, mechanistic evidence, stereochemistry, compound identity and purity, comparator routes, biological probe specificity, and whether the reaction or molecule works under the claimed conditions.

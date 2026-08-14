@@ -1,0 +1,1 @@
+Review dietary or activity assessment, energy balance and dose, adherence and substitution, baseline status, training and recovery, body-composition and performance measures, confounding lifestyle changes, clinically meaningful outcomes, safety, and whether short controlled exposure supports sustained real-world benefit.

@@ -1,0 +1,1 @@
+Assess population and case definition, surveillance and ascertainment, exposure timing, transmission or risk model, selection, competing risks, transport across populations, absolute burden, intervention reach, and whether associations support the public-health recommendation.

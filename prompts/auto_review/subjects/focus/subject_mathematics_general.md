@@ -1,0 +1,1 @@
+Evaluate the naturality of definitions and assumptions, strength and sharpness of the main results, illuminating examples and counterexamples, and the relation between the chosen formulation and the underlying mathematical structure. Use the general lens only when no narrower area dominates.

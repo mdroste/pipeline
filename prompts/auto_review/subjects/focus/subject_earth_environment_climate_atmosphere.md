@@ -1,0 +1,1 @@
+Assess forcing and feedback, energy and moisture budgets, circulation, model resolution and tuning, internal variability, observational coverage, attribution, scenario interpretation, and whether projected or reconstructed changes exceed uncertainty and structural dependence.

@@ -1,0 +1,1 @@
+Evaluate the neural question, level of analysis, preparation, and the linkage between measured signals, manipulations, and the claimed neural or behavioral conclusion. Use this fallback only when the contribution spans several neuroscience areas or is genuinely outside the more specific lenses below.

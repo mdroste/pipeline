@@ -1,0 +1,1 @@
+Review community and corpus sampling, register and interaction, annotation, reconstruction and contact, chronology, language ideology, change mechanism, computational representation, and whether patterns support the claimed linguistic rather than demographic or technological explanation.

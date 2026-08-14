@@ -1,0 +1,1 @@
+Focus on well-posedness, weak versus strong solutions, boundary and initial conditions, regularity, blow-up, coercivity, compactness, conservation, variational structure, and dependence on dimension or domain. Check whether the claimed solution concept is appropriate to the application and theorem.

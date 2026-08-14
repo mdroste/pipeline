@@ -14,7 +14,7 @@ function formatDate(value: string): string {
 }
 
 function runLabel(run: RunSummary): string {
-  return run.title || run.input_name || "Untitled run";
+  return run.title || run.input_name || "Untitled report";
 }
 
 export default function ProjectsPage({ onOpenRun }: Props) {
@@ -168,7 +168,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
 
   const deleteSelected = async () => {
     if (!selected || pending) return;
-    if (!window.confirm(`Delete the project “${selected.name}”? Its runs will be kept.`)) return;
+    if (!window.confirm(`Delete the project “${selected.name}”? Its reports will be kept.`)) return;
     setPending(true);
     setError(null);
     try {
@@ -189,7 +189,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
         <div className="flex items-center gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-semibold text-gray-950 dark:text-gray-50">Projects</h1>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Track runs and findings over time.</p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Track reports and findings over time.</p>
           </div>
           <button
             type="button"
@@ -250,7 +250,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
           ))}
           {!loading && projects.length === 0 && (
             <p className="px-3 py-8 text-center text-xs leading-5 text-gray-500 dark:text-gray-400">
-              Create a project, then add runs from your saved history.
+              Create a project, then add reports from your saved history.
             </p>
           )}
         </div>
@@ -311,8 +311,8 @@ export default function ProjectsPage({ onOpenRun }: Props) {
             <section className="mt-10 border-t border-gray-200 pt-8 dark:border-gray-800">
               <div className="flex items-center gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Runs</h2>
-                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Runs remain immutable and may belong to more than one project.</p>
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Reports</h2>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Reports remain immutable and may belong to more than one project.</p>
                 </div>
                 <div className="ml-auto flex items-center gap-2">
                   {projectRuns.some(({ run }) => run) && (
@@ -322,16 +322,16 @@ export default function ProjectsPage({ onOpenRun }: Props) {
                       onClick={() => void addRelatedRuns()}
                       className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-600 disabled:opacity-40 dark:border-gray-700 dark:text-gray-400"
                     >
-                      Add runs for same input
+                      Add reports for same input
                     </button>
                   )}
                   <select
-                    aria-label="Run to add"
+                    aria-label="Report to add"
                     value={addRunId}
                     onChange={(event) => setAddRunId(event.target.value)}
                     className="max-w-xs rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-900"
                   >
-                    <option value="">Add an existing run…</option>
+                    <option value="">Add an existing report…</option>
                     {availableRuns.map((run) => (
                       <option key={run.run_id} value={run.run_id}>{runLabel(run)} · {formatDate(run.created)}</option>
                     ))}
@@ -353,7 +353,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{run ? runLabel(run) : runId}</p>
                       <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
-                        {run ? `${run.profile_name} · ${formatDate(run.created)} · ${run.status}` : "Run no longer exists"}
+                        {run ? `${run.profile_name} · ${formatDate(run.created)} · ${run.status}` : "Report no longer exists"}
                       </p>
                     </div>
                     {run && (
@@ -363,7 +363,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
                   </div>
                 ))}
                 {projectRuns.length === 0 && (
-                  <p className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">No runs have been added yet.</p>
+                  <p className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">No reports have been added yet.</p>
                 )}
               </div>
             </section>

@@ -1,0 +1,1 @@
+Assess interaction and relationship context, message and channel, conversational sequence, power and role structure, self-report versus observed communication, cultural and organizational setting, privacy and mediation, and whether communicative evidence supports the claimed relational or institutional outcome.

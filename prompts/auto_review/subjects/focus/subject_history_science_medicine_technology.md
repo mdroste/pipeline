@@ -1,0 +1,1 @@
+Review actors' categories of knowledge and evidence, instruments and material practices, institutions and professions, circulation and standardization, relations among science, state, industry and publics, anachronism, source asymmetries, and whether later scientific outcomes are used improperly to judge historical uncertainty and contingency.

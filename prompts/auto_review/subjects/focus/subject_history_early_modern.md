@@ -1,0 +1,1 @@
+Review the paper's period boundary, imperial and confessional setting, print and knowledge networks, commercial and state institutions, source geography, and whether the evidence supports claimed transitions rather than assuming modernization.

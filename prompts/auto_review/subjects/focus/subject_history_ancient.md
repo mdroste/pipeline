@@ -1,0 +1,1 @@
+Review chronology and geography, linguistic and archaeological evidence, textual transmission, anachronism, institutional categories, source survival, and whether fragmentary evidence supports the breadth and precision of the ancient-historical claim.

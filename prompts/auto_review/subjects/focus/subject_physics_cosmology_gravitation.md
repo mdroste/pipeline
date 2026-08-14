@@ -1,0 +1,1 @@
+Assess likelihood construction and covariances, systematics budgets, degeneracy structure among cosmological parameters, tension claims between datasets, and the model dependence of constraints on dark components or modified gravity. Check that detection and exclusion statements state their priors, calibration assumptions, and sensitivity to analysis choices.

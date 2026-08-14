@@ -2,8 +2,6 @@
 
 use crate::env;
 use crate::models::ExtractionResult;
-#[cfg(test)]
-use base64::Engine as _;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -31,20 +29,17 @@ use rendering::rendered_page_limit;
 use structured::*;
 
 pub use core::MAX_RENDERED_PDF_PAGES;
+pub(crate) use core::{find_main_tex, ScopedSourceContext};
 pub use dispatch::extract;
 pub use folder::{effective_input_mode, ingest_folder, ingest_folder_async, ingest_none};
+pub(crate) use latex::stage_selected_source;
 pub use rendering::{
     render_pdf_page_preview, render_pdf_pages, RenderedPdfPagePreview, RenderedPdfPages,
 };
-pub use structured::{marker_image_files, marker_output_dir};
-
-pub(crate) use core::{find_main_tex, ScopedSourceContext};
-pub(crate) use latex::stage_selected_source;
 #[allow(unused_imports)]
 pub(crate) use structured::{
-    paddle_full_image_inventory, read_marker_structure, read_marker_structure_json,
-    read_paddle_structure_for_method, read_paddle_structure_json_for_method, MarkerStructure,
-    MarkerStructuredBlock, MarkerStructuredPage, PaddleStructure, PaddleStructuredBlock,
+    paddle_full_image_inventory, read_paddle_structure_for_method,
+    read_paddle_structure_json_for_method, PaddleStructure, PaddleStructuredBlock,
     PaddleStructuredPage,
 };
 

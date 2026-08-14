@@ -1,0 +1,1 @@
+Assess actors and levels of analysis, strategic interaction, information and commitment, threat and capability measures, alliance or institutional constraints, conflict selection, temporal sequence, and whether evidence distinguishes the proposed international mechanism.

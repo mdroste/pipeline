@@ -1,0 +1,1 @@
+Evaluate the central question, concepts, premises, argumentative validity, dialectical targets, counterexamples, objections, and the exact strength and modality of the conclusion. Use this fallback only for genuinely cross-area philosophy.

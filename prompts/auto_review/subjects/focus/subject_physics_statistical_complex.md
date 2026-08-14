@@ -1,0 +1,1 @@
+Focus on ensembles, thermodynamic or large-system limits, universality, phase transitions, ergodicity, fluctuations, scaling, and sensitivity to microscopic dynamics. Determine whether evidence actually distinguishes collective behavior from finite-size or fitting artifacts.

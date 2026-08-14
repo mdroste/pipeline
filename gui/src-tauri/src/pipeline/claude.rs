@@ -54,13 +54,21 @@ fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
     let mut bytes = 0u64;
     let mut walk = crate::safety::WalkBudget::new_cancellable("Artifact directory scan");
     while let Some(directory) = stack.pop() {
-        let entries = std::fs::read_dir(&directory)
-            .map_err(|e| format!("Cannot inspect artifact directory: {e}"))?;
+        // The scan races the provider's own file churn: an entry deleted or
+        // renamed between listing and stat is not a quota violation, and
+        // treating it as one would permanently cancel the pass.
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("Cannot inspect artifact directory: {e}")),
+        };
         for entry in entries.flatten() {
             walk.entry()?;
-            let file_type = entry
-                .file_type()
-                .map_err(|e| format!("Cannot inspect artifact entry: {e}"))?;
+            let file_type = match entry.file_type() {
+                Ok(kind) => kind,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(format!("Cannot inspect artifact entry: {e}")),
+            };
             if file_type.is_symlink() {
                 continue;
             }
@@ -72,10 +80,11 @@ fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
             if !file_type.is_file() {
                 return Err("Artifact directory contains a non-regular file".to_string());
             }
-            let length = entry
-                .metadata()
-                .map_err(|e| format!("Cannot inspect artifact size: {e}"))?
-                .len();
+            let length = match entry.metadata() {
+                Ok(metadata) => metadata.len(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(format!("Cannot inspect artifact size: {e}")),
+            };
             files += 1;
             bytes = bytes.saturating_add(length);
             if files > MAX_LIVE_ARTIFACT_FILES
@@ -402,7 +411,7 @@ impl<'a> LlmOverrides<'a> {
 #[derive(Clone, Copy)]
 enum ClaudeSessionMode<'a> {
     Start(&'a str),
-    ResumeFork(&'a str),
+    ResumeFork { id: &'a str, workspace: &'a str },
 }
 
 fn is_cli_session_capability_error(error: &str) -> bool {
@@ -414,9 +423,24 @@ fn is_cli_session_capability_error(error: &str) -> bool {
         "session not found",
         "cannot resume",
         "failed to resume",
+        // Claude CLI resolves `--resume` against a session store scoped by
+        // working directory; a session it cannot see fails with
+        // "No conversation found with session ID: <uuid>".
+        "no conversation found",
+        "conversation not found",
+        "no such session",
     ]
     .iter()
     .any(|needle| error.contains(needle))
+}
+
+/// Whether a failed forked call should be retried as a self-contained call.
+/// Cancellation (run- or pass-level, matching `is_cancellation_error` in the
+/// executor) must propagate, and a timeout would only double the step's wall
+/// clock; every other failure of a fork whose warm-up already succeeded is
+/// worth one self-contained attempt rather than failing the step.
+fn fork_failure_uses_fallback(error: &str) -> bool {
+    !error.to_ascii_lowercase().contains("cancelled") && !error.contains("timed out after")
 }
 
 const SESSION_UNAVAILABLE_PREFIX: &str = "unavailable:";
@@ -504,7 +528,12 @@ pub async fn call_claude(
                             Ok(id)
                         }
                         Err(error) => {
-                            *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                            // A cancelled warm-up says nothing about the CLI's
+                            // session support; leave the slot empty so a later
+                            // unit can warm the shared session again.
+                            if !error.to_ascii_lowercase().contains("cancelled") {
+                                *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                            }
                             Err(error)
                         }
                     }
@@ -530,20 +559,38 @@ pub async fn call_claude(
                 cwd,
                 extra_read_dirs,
                 overrides,
-                Some(ClaudeSessionMode::ResumeFork(&base_id)),
+                Some(ClaudeSessionMode::ResumeFork {
+                    id: &base_id,
+                    workspace: context.workspace_dir(),
+                }),
             )
             .await;
             if let Err(error) = &result {
-                if is_cli_session_capability_error(error) {
-                    let mut state = slot.lock().await;
-                    *state = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
-                    drop(state);
-                    log(
-                        app,
-                        format!(
-                            "WARNING: {label}: installed Claude CLI cannot fork the warmed session ({error}); using a self-contained call"
-                        ),
-                    );
+                if fork_failure_uses_fallback(error) {
+                    if is_cli_session_capability_error(error) {
+                        // The base session is unusable for forking (for
+                        // example, this CLI resolves `--resume` against a
+                        // different per-directory session store than the one
+                        // the warm-up wrote to). Record that so every sibling
+                        // unit and retry goes straight to a self-contained
+                        // call instead of re-forking the same dead session.
+                        let mut state = slot.lock().await;
+                        *state = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
+                        drop(state);
+                        log(
+                            app,
+                            format!(
+                                "WARNING: {label}: installed Claude CLI cannot fork the warmed session ({error}); using a self-contained call"
+                            ),
+                        );
+                    } else {
+                        log(
+                            app,
+                            format!(
+                                "WARNING: {label}: forked Claude call failed ({error}); retrying as a self-contained call"
+                            ),
+                        );
+                    }
                     let fallback = context.prefixed_prompt(prompt)?;
                     let mut fallback_overrides = overrides.clone();
                     fallback_overrides.shared_context = None;
@@ -566,6 +613,9 @@ pub async fn call_claude(
             result
         }
         Err(error) => {
+            if error.to_ascii_lowercase().contains("cancelled") {
+                return Err(error);
+            }
             log(
                 app,
                 format!(
@@ -591,6 +641,45 @@ pub async fn call_claude(
             .await
         }
     }
+}
+
+/// Compute the `--disallowedTools` deny rules for a Claude CLI call.
+///
+/// `--allowedTools` governs auto-approval, not availability: a tool omitted
+/// from it can still be inherited from the user's own Claude Code configuration
+/// and, under `--permission-mode acceptEdits`, silently auto-approved. So
+/// anything that must never run has to be denied explicitly. Deny rules outrank
+/// both allow rules and the permission mode.
+fn cli_disallowed_tools(
+    allowed_tools: &[&str],
+    read_dirs: &[String],
+    write_enabled: bool,
+) -> Vec<String> {
+    let mut denies = Vec::new();
+    if !allowed_tools.contains(&"WebSearch") {
+        // A non-search review must not inherit search from the user's config.
+        denies.push("WebSearch".to_string());
+    }
+    if write_enabled {
+        // Writing is scoped to the producer-owned write root (the cwd). Deny
+        // edits in the selected read roots so writes cannot leak there. An
+        // Edit(path) rule governs the Write, Edit, and NotebookEdit tools
+        // together.
+        denies.extend(
+            read_dirs
+                .iter()
+                .map(|d| format!("Edit({}/**)", absolute_rule_path(d))),
+        );
+    } else {
+        // Read-only call: there is no producer write root, so the model must
+        // not edit anything. Its cwd can be the user's real source folder (the
+        // folder survey runs there), where acceptEdits would otherwise
+        // auto-approve a prompt-injected write into the user's own files.
+        denies.push("Edit".to_string());
+        denies.push("Write".to_string());
+        denies.push("NotebookEdit".to_string());
+    }
+    denies
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -633,25 +722,40 @@ async fn call_claude_inner(
             format!("Wrote {} chars to temp file: {path}", prompt.len()),
         );
     }
-    let workspace = plan_cli_workspace(
-        cwd,
-        extra_read_dirs,
-        prepared_prompt.read_root.as_deref(),
-        overrides.write_dir,
-    )?;
+    // A forked call must run from the warm-up workspace: the CLI resolves
+    // `--resume` against a per-directory session store, so any other cwd
+    // cannot see the warmed session and every unit would pay a full
+    // self-contained fallback. The task's own cwd and write root are granted
+    // as additional directories instead.
+    let workspace = if let Some(ClaudeSessionMode::ResumeFork { workspace, .. }) = &session_mode {
+        let mut fork_read_dirs: Vec<&str> = extra_read_dirs.to_vec();
+        fork_read_dirs.extend(cwd);
+        fork_read_dirs.extend(overrides.write_dir);
+        plan_cli_workspace(
+            Some(workspace),
+            &fork_read_dirs,
+            prepared_prompt.read_root.as_deref(),
+            None,
+        )?
+    } else {
+        plan_cli_workspace(
+            cwd,
+            extra_read_dirs,
+            prepared_prompt.read_root.as_deref(),
+            overrides.write_dir,
+        )?
+    };
 
     // When file writes are enabled, scope them: replace any bare Write/Edit
     // with an Edit rule confined to the artifact dir. An Edit(path) rule
     // governs the Write, Edit, and NotebookEdit tools together, and `//`
     // anchors an absolute path in Claude Code's gitignore-style permission
-    // syntax (a single `/` would be project-root-relative).
-    if let Some(wd) = workspace
-        .cwd
-        .as_deref()
-        .filter(|_| overrides.write_dir.is_some())
-    {
+    // syntax (a single `/` would be project-root-relative). The rule is
+    // derived from the write root itself, not the effective cwd — a forked
+    // call's cwd is the session workspace, never its write root.
+    if let Some(write_dir) = overrides.write_dir.and_then(normalize_cli_root) {
         tools.retain(|t| t != "Write" && t != "Edit");
-        tools.push(format!("Edit({}/**)", absolute_rule_path(wd)));
+        tools.push(format!("Edit({}/**)", absolute_rule_path(&write_dir)));
     }
     cmd_args.push(prepared_prompt.argument.clone());
 
@@ -660,7 +764,7 @@ async fn call_claude_inner(
             cmd_args.push("--session-id".to_string());
             cmd_args.push(id.to_string());
         }
-        Some(ClaudeSessionMode::ResumeFork(id)) => {
+        Some(ClaudeSessionMode::ResumeFork { id, .. }) => {
             cmd_args.push("--resume".to_string());
             cmd_args.push(id.to_string());
             cmd_args.push("--fork-session".to_string());
@@ -696,25 +800,11 @@ async fn call_claude_inner(
         cmd_args.push(dir.clone());
     }
 
-    // Writes must not leak into the read directories: acceptEdits
-    // auto-approves file edits in the cwd and --add-dir directories, so
-    // when writing is enabled, explicitly deny edits there. Deny rules
-    // outrank both allow rules and the permission mode.
-    let mut denies = Vec::new();
-    if !allowed_tools.contains(&"WebSearch") {
-        // --allowedTools controls auto-approval rather than availability.
-        // Explicitly deny search so a non-search review cannot inherit it
-        // from the user's Claude Code configuration.
-        denies.push("WebSearch".to_string());
-    }
-    if overrides.write_dir.is_some() && !workspace.read_dirs.is_empty() {
-        denies.extend(
-            workspace
-                .read_dirs
-                .iter()
-                .map(|d| format!("Edit({}/**)", absolute_rule_path(d))),
-        );
-    }
+    let denies = cli_disallowed_tools(
+        allowed_tools,
+        &workspace.read_dirs,
+        overrides.write_dir.is_some(),
+    );
     if !denies.is_empty() {
         cmd_args.push("--disallowedTools".to_string());
         cmd_args.push(denies.join(","));
@@ -849,9 +939,9 @@ async fn call_claude_inner(
     }
 
     if !status.success() {
-        if crate::commands::is_cancelled() || exit_code == 143 || status.code().is_none() {
-            log(app, format!("{label} cancelled"));
-            return Err("Pipeline cancelled".into());
+        if let Some(terminated) = classify_terminated_exit("Claude", &status, exit_code) {
+            log(app, format!("{label}: {terminated}"));
+            return Err(terminated);
         }
         emit_stderr_tail(app, &stderr_tail);
         let hint = extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
@@ -965,6 +1055,31 @@ fn parse_claude_result(
 
 /// Extract a user-facing error hint from CLI output.
 /// Looks for common auth/config error patterns in stdout/stderr.
+/// Classify an unsuccessful CLI exit. Returns the cancellation error when
+/// Pipeline itself stopped the call (global cancel or this call's pass), and
+/// a retryable signal-death error when the child was killed by something
+/// else — the OOM killer, a crash, or an external kill. SIGTERM's
+/// conventional 143 exit is grouped with signal deaths because Pipeline's
+/// own kills also surface that way; the cancellation flags distinguish them.
+pub fn classify_terminated_exit(
+    provider: &str,
+    status: &std::process::ExitStatus,
+    exit_code: i32,
+) -> Option<String> {
+    let pass_cancelled = super::logging::current_pass()
+        .is_some_and(|pass| crate::commands::is_pass_cancelled(&pass));
+    if crate::commands::is_cancelled() || pass_cancelled {
+        return Some("Pipeline cancelled".to_string());
+    }
+    if exit_code == 143 || status.code().is_none() {
+        return Some(format!(
+            "{provider} CLI terminated by a signal ({status}) that Pipeline did not send — \
+             possibly killed by the system (out of memory) or crashed; retrying"
+        ));
+    }
+    None
+}
+
 pub fn extract_error_hint(output: &str) -> Option<String> {
     let lower = output.to_lowercase();
     if lower.contains("not logged in")
@@ -989,8 +1104,8 @@ pub fn extract_error_hint(output: &str) -> Option<String> {
     }
 }
 
-/// Dispatch an LLM call to the configured provider (Claude, Codex, Gemini, or
-/// a local OpenAI-compatible server).
+/// Dispatch an LLM call to the configured provider (Claude, Codex,
+/// Antigravity, or a local OpenAI-compatible server).
 /// All pipeline code should call this instead of provider-specific functions directly.
 ///
 /// `cwd`: optional working directory for the subprocess. Pass the paper's source
@@ -1002,8 +1117,8 @@ fn request_provider_label(provider: &str, transport: &str) -> &'static str {
         ("claude", _) => "Claude Code",
         ("codex", "api") => "OpenAI",
         ("codex", _) => "Codex",
-        ("gemini", "api") => "Google",
-        ("gemini", _) => "Gemini",
+        ("antigravity", "api") => "Google",
+        ("antigravity", _) => "Antigravity",
         ("local", _) => "Local server",
         _ => "Unknown provider",
     }
@@ -1025,10 +1140,18 @@ fn request_effort(
             .effort
             .unwrap_or(settings.codex_effort.as_str())
             .trim(),
+        // Effort is an agy flag; the direct Gemini API has no equivalent.
+        "antigravity" if transport != "api" => overrides
+            .effort
+            .unwrap_or(settings.antigravity_effort.as_str())
+            .trim(),
         _ => return "Not configurable".to_string(),
     };
     if configured.is_empty() {
         return "Provider default".to_string();
+    }
+    if provider == "antigravity" && !matches!(configured, "low" | "medium" | "high") {
+        return "Not sent (unsupported value)".to_string();
     }
     if provider == "claude" && transport == "api" {
         if model.starts_with("claude-haiku") {
@@ -1151,7 +1274,7 @@ pub async fn call_llm(
             None
         } else {
             match provider {
-                "claude" | "gemini" => Some(overrides.max_output_tokens.unwrap_or(16_384)),
+                "claude" | "antigravity" => Some(overrides.max_output_tokens.unwrap_or(16_384)),
                 "codex" | "local" => overrides.max_output_tokens,
                 _ => overrides.max_output_tokens,
             }
@@ -1223,7 +1346,7 @@ pub async fn call_llm(
                 )
                 .await;
             }
-            "gemini" if !settings.google_api_key.is_empty() => {
+            "antigravity" if !settings.google_api_key.is_empty() => {
                 return super::api_google::call_google_api(
                     app,
                     prompt,
@@ -1256,11 +1379,11 @@ pub async fn call_llm(
             _ => {}
         }
 
-        // Subprocess fallback. Claude uses --add-dir and Gemini uses
-        // --include-directories for the same explicit read-root set. Codex's
-        // sandbox restricts writes, not reads, so it needs no equivalent flag.
+        // Subprocess fallback. Claude and Antigravity grant the same explicit
+        // read-root set with repeated --add-dir flags. Codex's sandbox
+        // restricts writes, not reads, so it needs no equivalent flag.
         let fallback_prompt;
-        let cli_prompt = if provider == "gemini" {
+        let cli_prompt = if provider == "antigravity" {
             if let Some(context) = overrides.shared_context.as_ref() {
                 fallback_prompt = context.prefixed_prompt(prompt)?;
                 fallback_prompt.as_str()
@@ -1292,8 +1415,8 @@ pub async fn call_llm(
                     )
                     .await
                 }
-                "gemini" => {
-                    super::gemini::call_gemini(
+                "antigravity" => {
+                    super::antigravity::call_antigravity(
                         app,
                         cli_prompt,
                         allowed_tools,
@@ -1420,6 +1543,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn read_only_calls_deny_every_write_tool() {
+        // A read-only call (no producer write root) runs with acceptEdits and a
+        // cwd that may be the user's real source folder. Edit/Write/NotebookEdit
+        // must be denied outright so an injected instruction cannot write there.
+        let denies = cli_disallowed_tools(&["Read"], &["/Users/x/Paper".to_string()], false);
+        assert!(denies.contains(&"Edit".to_string()));
+        assert!(denies.contains(&"Write".to_string()));
+        assert!(denies.contains(&"NotebookEdit".to_string()));
+        assert!(denies.contains(&"WebSearch".to_string()));
+    }
+
+    #[test]
+    fn write_enabled_calls_scope_edits_to_read_roots_only() {
+        // With a write root, writes are allowed in the cwd but must not leak
+        // into selected read roots; Edit is not denied wholesale.
+        let denies = cli_disallowed_tools(
+            &["Read"],
+            &["/Users/x/src".to_string(), "/Users/x/data".to_string()],
+            true,
+        );
+        assert!(denies
+            .iter()
+            .any(|d| d.starts_with("Edit(") && d.contains("/Users/x/src")));
+        assert!(denies
+            .iter()
+            .any(|d| d.starts_with("Edit(") && d.contains("/Users/x/data")));
+        assert!(!denies.iter().any(|d| d == "Edit"));
+        assert!(!denies.iter().any(|d| d == "Write"));
+    }
+
+    #[test]
+    fn allowed_websearch_is_not_denied() {
+        let denies = cli_disallowed_tools(&["Read", "WebSearch"], &[], false);
+        assert!(!denies.contains(&"WebSearch".to_string()));
+        // Read-only still denies writes even when no read roots are present.
+        assert!(denies.contains(&"Write".to_string()));
+    }
+
+    #[test]
     fn webview_request_previews_are_utf8_safe_and_bounded() {
         let short = event_text_preview("short request");
         assert_eq!(short.text, "short request");
@@ -1437,10 +1599,10 @@ mod tests {
     fn request_provider_labels_do_not_repeat_the_transport() {
         assert_eq!(request_provider_label("claude", "cli"), "Claude Code");
         assert_eq!(request_provider_label("codex", "cli"), "Codex");
-        assert_eq!(request_provider_label("gemini", "cli"), "Gemini");
+        assert_eq!(request_provider_label("antigravity", "cli"), "Antigravity");
         assert_eq!(request_provider_label("claude", "api"), "Anthropic");
         assert_eq!(request_provider_label("codex", "api"), "OpenAI");
-        assert_eq!(request_provider_label("gemini", "api"), "Google");
+        assert_eq!(request_provider_label("antigravity", "api"), "Google");
     }
 
     #[test]
@@ -1448,6 +1610,7 @@ mod tests {
         let settings = crate::settings::Settings {
             claude_effort: "high".to_string(),
             codex_effort: "medium".to_string(),
+            antigravity_effort: "low".to_string(),
             ..Default::default()
         };
         let overrides = LlmOverrides::default();
@@ -1465,8 +1628,37 @@ mod tests {
             "medium"
         );
         assert_eq!(
-            request_effort("gemini", "api", "gemini-3.6-flash", &settings, &overrides),
+            request_effort(
+                "antigravity",
+                "cli",
+                "gemini-3.6-flash",
+                &settings,
+                &overrides
+            ),
+            "low"
+        );
+        assert_eq!(
+            request_effort(
+                "antigravity",
+                "api",
+                "gemini-3.6-flash",
+                &settings,
+                &overrides
+            ),
             "Not configurable"
+        );
+        assert_eq!(
+            request_effort(
+                "antigravity",
+                "cli",
+                "gemini-3.6-flash",
+                &settings,
+                &LlmOverrides {
+                    effort: Some("max"),
+                    ..Default::default()
+                }
+            ),
+            "Not sent (unsupported value)"
         );
     }
 
@@ -1518,8 +1710,29 @@ mod tests {
         assert!(is_cli_session_capability_error(
             "failed to resume: session not found"
         ));
+        // The exact shape the CLI emits when --resume cannot see the warmed
+        // session (observed killing all parallel steps of a run).
+        assert!(is_cli_session_capability_error(
+            "Claude call failed (exit 1): No conversation found with session ID: \
+             9b2ab2be-13d2-435c-8ea4-4710684fee5c"
+        ));
         assert!(!is_cli_session_capability_error(
             "service overloaded; try again"
+        ));
+    }
+
+    #[test]
+    fn fork_failures_fall_back_except_cancellation_and_timeout() {
+        assert!(fork_failure_uses_fallback(
+            "Claude call failed (exit 1): No conversation found with session ID: abc"
+        ));
+        assert!(fork_failure_uses_fallback(
+            "Claude call failed (exit 1): service overloaded"
+        ));
+        assert!(!fork_failure_uses_fallback("Pipeline cancelled"));
+        assert!(!fork_failure_uses_fallback("Pass 'technical/claude' cancelled"));
+        assert!(!fork_failure_uses_fallback(
+            "claude call timed out after 900s"
         ));
     }
 

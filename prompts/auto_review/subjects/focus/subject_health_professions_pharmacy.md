@@ -1,0 +1,1 @@
+Review medication exposure and indication, dispensing and adherence, dose and switching, interactions, confounding by disease severity, safety ascertainment, surveillance and reporting, pharmacist intervention, care setting, and whether observed use supports benefit, harm, or implementation claims.

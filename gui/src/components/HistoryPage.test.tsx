@@ -110,6 +110,34 @@ describe("HistoryPage", () => {
     expect(onRerun).toHaveBeenCalledWith("cancelled_run", true);
   });
 
+  it("disables Resume and Regenerate while a run is already in progress", async () => {
+    const resumable = run({
+      run_id: "cancelled_run",
+      status: "cancelled",
+      failed_steps: ["Run cancelled"],
+      resumable: true,
+    });
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs") return Promise.resolve([resumable]);
+      if (command === "runs_disk_usage") return Promise.resolve({ count: 1, bytes: 1024 });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const onRerun = vi.fn();
+    render(<HistoryPage onClose={vi.fn()} onRerun={onRerun} runInProgress />);
+
+    const resume = await screen.findByRole("button", { name: "Resume" });
+    const regenerate = screen.getByRole("button", { name: "Regenerate" });
+    expect(resume).toBeDisabled();
+    expect(regenerate).toBeDisabled();
+    expect(resume).toHaveAttribute("title", "A report is already being generated");
+    expect(regenerate).toHaveAttribute("title", "A report is already being generated");
+
+    const user = userEvent.setup();
+    await user.click(resume);
+    await user.click(regenerate);
+    expect(onRerun).not.toHaveBeenCalled();
+  });
+
   it("orders selected comparisons chronologically, regardless of click order", async () => {
     const newer = run({
       run_id: "newer",

@@ -1,0 +1,1 @@
+Review the data and query model, correctness semantics, transaction or consistency guarantees, indexing and optimization, skew and scale, update behavior, workload representativeness, and system comparison. Check whether claimed generality survives heterogeneous data and operational constraints.

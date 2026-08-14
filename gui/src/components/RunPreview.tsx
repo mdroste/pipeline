@@ -2,6 +2,11 @@ import { useMemo } from "react";
 import type { PipelineConfig, StepConfig } from "../lib/types";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import useModalDialog from "../hooks/useModalDialog";
+import {
+  adaptiveAgentCount as getAdaptiveAgentCount,
+  adaptiveAgentCountLabel,
+  isAutoReview,
+} from "../lib/autoReview";
 
 export interface RunPreviewPlan {
   profileId: string;
@@ -90,7 +95,9 @@ export default function RunPreview({
   const dialogRef = useModalDialog<HTMLDivElement>(onCancel);
   const steps = config.steps.filter((step) => step.enabled);
   const conditionalSteps = steps.filter((step) => !!step.run_if).length;
-  const autoAssembled = config.orientation_schema?.["x-pipeline-contract"] === "auto-review-v2";
+  const autoAssembled = isAutoReview(config);
+  const adaptiveCount = getAdaptiveAgentCount(config);
+  const adaptiveCountLabel = adaptiveAgentCountLabel(adaptiveCount);
   const adaptiveTimelineStages = useMemo(() => {
     let inserted = false;
     return plan.stages.map((stage) => {
@@ -100,12 +107,11 @@ export default function RunPreview({
         ...stage,
         stepLabels: [
           ...(stage.stepLabels ?? []),
-          "Subject specialists (1–2, auto-selected)",
-          "Method specialists (1–4, auto-selected)",
+          `Adaptive agents (${adaptiveCountLabel}, auto-selected)`,
         ],
       };
     });
-  }, [autoAssembled, plan.stages]);
+  }, [adaptiveCountLabel, autoAssembled, plan.stages]);
   const accessRows = useMemo(() => {
     const rows: AccessRow[] = [];
     const specialistContext = steps.find((step) => step.phase === "parallel")?.context.include ?? [];
@@ -113,41 +119,29 @@ export default function RunPreview({
     const insertAdaptiveRows = () => {
       if (!autoAssembled || inserted) return;
       inserted = true;
-      rows.push(
-        {
-          id: "auto_subject_slot",
-          label: "Subject specialists",
-          providers: ["default provider"],
-          unitLabel: "1–2 units",
-          selectors: specialistContext,
-          tools: [],
-          adaptive: true,
-        },
-        {
-          id: "auto_method_slot",
-          label: "Method specialists",
-          providers: ["default provider"],
-          unitLabel: "1–4 units",
-          selectors: specialistContext,
-          tools: [],
-          adaptive: true,
-        },
-      );
+      rows.push({
+        id: "auto_adaptive_agents",
+        label: "Adaptive agents",
+        providers: ["default provider"],
+        unitLabel: `${adaptiveCountLabel} units`,
+        selectors: specialistContext,
+        tools: [],
+        adaptive: true,
+      });
     };
     for (const step of steps) {
       if (step.id === "auto_synthesis" || step.phase === "sequential") insertAdaptiveRows();
       const row = fixedAccessRow(step);
       if (autoAssembled && step.id === "auto_synthesis") {
         row.additionalInputs = [
-          "Reports: selected subject specialists (1–2)",
-          "Reports: selected method specialists (1–4)",
+          `Reports: selected adaptive agents (${adaptiveCountLabel})`,
         ];
       }
       rows.push(row);
     }
     insertAdaptiveRows();
     return rows;
-  }, [autoAssembled, steps]);
+  }, [adaptiveCountLabel, autoAssembled, steps]);
   const summary = useMemo(() => {
     const providers = new Set<string>();
     const tools = new Set<string>();
@@ -162,10 +156,10 @@ export default function RunPreview({
     }
     if (autoAssembled) {
       providers.add("default provider");
-      minimumUnits += 2;
-      maximumUnits += 6;
+      minimumUnits += adaptiveCount ?? 2;
+      maximumUnits += adaptiveCount ?? 6;
     }
-    if (config.use_orientation) providers.add("default provider");
+    providers.add("default provider");
     if (config.merge.enabled) {
       for (const step of steps.filter((candidate) => candidate.agents.length > 1)) {
         providers.add(config.merge.agents[0] || "default provider");
@@ -173,15 +167,15 @@ export default function RunPreview({
         maximumUnits += step.for_each ? Math.max(step.for_each.max, 1) : 1;
       }
     }
-    const perDocumentMinimum = minimumUnits + (config.use_orientation ? 1 : 0);
-    const perDocumentMaximum = maximumUnits + (config.use_orientation ? 1 : 0);
+    const perDocumentMinimum = minimumUnits + 1;
+    const perDocumentMaximum = maximumUnits + 1;
     return {
       providers: [...providers],
       tools: [...tools],
       minimumUnits: perDocumentMinimum * batchCount,
       maximumUnits: perDocumentMaximum * batchCount,
     };
-  }, [autoAssembled, batchCount, config.merge.agents, config.merge.enabled, config.use_orientation, steps]);
+  }, [adaptiveCount, autoAssembled, batchCount, config.merge.agents, config.merge.enabled, steps]);
   const remoteIsPossible = summary.providers.includes("default provider")
     || summary.providers.some((provider) => provider !== "local");
   const workLabel = summary.minimumUnits === summary.maximumUnits
@@ -201,13 +195,13 @@ export default function RunPreview({
       >
         <header className="flex items-start gap-4 border-b border-gray-200 px-6 py-5 dark:border-gray-800">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">Run preview</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">Report preview</p>
             <h1 id="run-preview-title" className="mt-1 text-xl font-semibold text-gray-950 dark:text-gray-50">Review the execution plan</h1>
             <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
               {batchCount > 1 ? `${batchCount} documents` : basename(inputPath)} · {inputInterpretation.replaceAll("_", " ")}
             </p>
           </div>
-          <button type="button" aria-label="Close run preview" onClick={onCancel} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-800 dark:hover:text-gray-100">✕</button>
+          <button type="button" aria-label="Close report preview" onClick={onCancel} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-800 dark:hover:text-gray-100">✕</button>
         </header>
 
         <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
@@ -218,7 +212,7 @@ export default function RunPreview({
               value={autoAssembled ? `${steps.length} fixed` : conditionalSteps > 0
                 ? `${steps.length - conditionalSteps} fixed + ${conditionalSteps} conditional`
                 : String(steps.length)}
-              detail={autoAssembled ? "+ 2–6 adaptive at run time" : undefined}
+              detail={autoAssembled ? `+ ${adaptiveCountLabel} adaptive agents per report` : undefined}
             />
             <SummaryCard label="Model work units" value={workLabel} />
             <SummaryCard label="Providers" value={summary.providers.join(", ") || "None"} />
@@ -241,7 +235,7 @@ export default function RunPreview({
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Execution timeline</h2>
             {autoAssembled && (
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Orientation assembles 1–2 subject and 1–4 method specialists from the built-in catalog before execution.
+                Orientation assembles {adaptiveCountLabel} subject and method specialists from the built-in catalog before execution.
               </p>
             )}
             <ol className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -317,7 +311,7 @@ export default function RunPreview({
           <p className="text-[11px] text-gray-500 dark:text-gray-400">Extraction and actual fan-out determine final duration and usage.</p>
           <div className="flex gap-2">
             <button type="button" onClick={onCancel} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Back</button>
-            <button data-autofocus type="button" onClick={onRun} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white dark:bg-gray-100 dark:text-gray-900">Start run</button>
+            <button data-autofocus type="button" onClick={onRun} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white dark:bg-gray-100 dark:text-gray-900">Generate report</button>
           </div>
         </footer>
       </div>

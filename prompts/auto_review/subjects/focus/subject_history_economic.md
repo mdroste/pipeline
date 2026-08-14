@@ -1,0 +1,1 @@
+Review historical measurement and comparability, institutional and technological context, firm and labor records, price or monetary units, selection in surviving sources, periodization, and whether quantitative patterns sustain the claimed historical mechanism.

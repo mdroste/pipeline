@@ -1,0 +1,1 @@
+Evaluate the economic object, agents and constraints, equilibrium or empirical margin, incidence, welfare, and connection from evidence to the claimed mechanism. Use this fallback only for genuinely cross-field economic research.

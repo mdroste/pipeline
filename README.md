@@ -13,7 +13,7 @@ outputs feed later steps. Pipeline handles extraction, scheduling, validation,
 and storage; the models handle the review itself.
 
 Pipeline runs on macOS, Windows, and Linux. It can use the Claude Code, Codex,
-or Gemini CLI with an existing subscription; the Anthropic, OpenAI, or Google
+or Antigravity CLI with an existing subscription; the Anthropic, OpenAI, or Google
 API; or a local OpenAI-compatible server such as Ollama. Pipeline does not run
 a hosted service.
 
@@ -37,8 +37,9 @@ Pipeline run use a supported subscription without a separate API key.
   with `npm install -g @anthropic-ai/claude-code`, then sign in.
 - **OpenAI:** Install the [Codex CLI](https://github.com/openai/codex) with
   `npm install -g @openai/codex`, then sign in.
-- **Google:** Install the [Gemini CLI](https://github.com/google/gemini-cli)
-  with `npm install -g @google/gemini-cli@latest`, then sign in.
+- **Google:** Install the [Antigravity CLI](https://antigravity.google/docs/cli)
+  with `curl -fsSL https://antigravity.google/cli/install.sh | bash`
+  (PowerShell installer on Windows), then run `agy` once to sign in.
 
 You can instead enter Anthropic, OpenAI, or Google API keys in Settings. API
 keys are encrypted before they are written to disk. Settings also accepts a
@@ -77,11 +78,6 @@ silently. LaTeX is read directly, with a companion PDF used for page images
 when available. DOCX extraction reads OOXML tables, equations, and embedded
 images.
 
-Marker is not installed or executed by current builds because the compatible
-Python dependency set contains known security vulnerabilities. Existing
-Marker runs remain readable, and Settings can remove an old Pipeline-managed
-Marker environment after an upgrade.
-
 Bundled Poppler is licensed under the GPL. Its source hashes, package notices,
 and software bills of materials are recorded in
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) and included with each
@@ -98,7 +94,8 @@ release.
    Ready Parallel steps run concurrently. Sequential steps run alone and may
    read only the upstream reports and artifacts selected in their access lists.
    A step can use one provider or ask several providers independently and merge
-   their reports.
+   their reports. Every workflow must include at least one enabled Sequential
+   step so it can produce a final report.
 3. **Save the evidence.** Each run is stored under `~/.pipeline/runs/` with its
    report, structured metadata, extracted document context, page and figure
    assets, intermediate responses, supporting files, provenance, usage, and
@@ -111,25 +108,29 @@ table of contents, and export controls.
 
 ## Included workflows
 
-Pipeline installs four workflows:
+Pipeline installs two workflows:
 
-- **Paper Review (Auto):** Uses the paper orientation call to detect the
-  subject, subfield, and central methods, validates that routing against a
-  host-owned catalog, and assembles only the selected reviewers for that run.
-  The saved workflow stays at four steps; a run adds one or two subject
-  specialists and one to four method specialists, for six to ten steps total.
-  The catalog covers 28 disciplines, 191 subject roles, and 32 method roles.
+- **Auto Paper Review** (the default): Uses the paper orientation call to
+  detect the subject, subfield, and central methods, validates that routing
+  against a host-owned catalog, and assembles only the selected reviewers for
+  that run. The saved workflow stays at five steps — three universal reviews, a
+  Consolidate Feedback step, and a Validate Feedback step that re-checks every
+  consolidated comment against the paper; a run adds one or two subject
+  specialists and one to four method specialists, for seven to eleven steps
+  total. Web search is available to every step.
+  The catalog covers 28 disciplines, 239 subject roles, and 62 method roles.
   Pure theory and mathematics papers therefore do not spend a pass on
   empirical identification unless they actually contain that component.
 
-- **Paper Review (Full):** Five independent passes on contribution, technical
-  correctness, empirical strategy, internal consistency, and exposition,
-  followed by issue consolidation. A separate feedback-validation step is
-  available in the workflow and may be enabled or disabled.
-- **Paper Review (Quick):** Contribution and consistency passes followed by
-  issue consolidation.
 - **Grant Proposal Review:** Separate passes on aims, feasibility, panel
   readability, and internal consistency followed by consolidated feedback.
+
+Earlier releases also installed Paper Review (Full) and Paper Review (Quick);
+Auto Paper Review replaces both. Their step prompts (contribution, technical
+correctness, empirical strategy, internal consistency, exposition,
+consolidation, validation) remain shipped defaults available from the workflow
+editor. An existing installation keeps any customized copy under
+`~/.pipeline/profiles/.retired-builtins/`.
 
 The Workflow Gallery contains four additional starting points: Revision
 Response Check, Literature Positioning Scan, Thesis Chapter Review, and
@@ -204,10 +205,10 @@ desktop app, but it is not included in the desktop installers.
 cd gui/src-tauri
 cargo run --locked --bin pipeline-cli -- profiles
 cargo run --locked --bin pipeline-cli -- check \
-  --profile quick-review \
+  --profile auto-review \
   --input /path/to/paper.pdf
 cargo run --locked --bin pipeline-cli -- run \
-  --profile quick-review \
+  --profile auto-review \
   --input /path/to/paper.pdf \
   --out /path/to/report.md
 ```

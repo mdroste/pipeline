@@ -354,9 +354,9 @@ export default function BatchPanel({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Batch run</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Batch reports</h2>
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          Runs the active profile over each input, one at a time.
+          Generates one report per input, one at a time, using the active workflow.
         </span>
         {showClose && (
           <button
@@ -404,7 +404,7 @@ export default function BatchPanel({
         {acceptsBatchInput && (variables.length > 0 || inputSlots.length > 0) && !running && (
           <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-2">
             <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Shared run options
+              Shared report options
             </h3>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               These values are captured once and supplied to every batch job.

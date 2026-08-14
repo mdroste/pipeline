@@ -1,0 +1,1 @@
+Review molecular identity and purity, binding and kinetic model, stoichiometry, conformational state, structural resolution, biochemical controls, in-cell relevance, and whether the structure or assay distinguishes the proposed mechanism from alternatives.

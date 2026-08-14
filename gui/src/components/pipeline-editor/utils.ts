@@ -163,6 +163,9 @@ export function outputSchemaError(schema: unknown, path = "$", depth = 0): strin
 export function normalizeConfig(config: PipelineConfig): PipelineConfig {
   return {
     ...config,
+    // The field remains in the wire format for compatibility with existing
+    // profiles, but orientation is now a required workflow stage.
+    use_orientation: true,
     steps: (config.steps ?? []).map((step) => ({
       ...step,
       after: step.after ?? [],

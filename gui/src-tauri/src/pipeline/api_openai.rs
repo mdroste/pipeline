@@ -74,6 +74,21 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     tools
 }
 
+/// Chat Completions accepts only these `reasoning_effort` values. The codex
+/// CLI additionally understands "xhigh", which maps to the API's nearest
+/// tier; anything else is dropped rather than sent so a CLI-tuned setting
+/// cannot 400 the whole step.
+fn sanitize_reasoning_effort(effort: &str) -> Option<&'static str> {
+    match effort {
+        "minimal" => Some("minimal"),
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" => Some("high"),
+        _ => None,
+    }
+}
+
 /// Build the system + user messages shared by the OpenAI and local providers.
 /// With a PDF attachment, the user message is [file, text] content parts;
 /// otherwise a plain string.
@@ -163,10 +178,27 @@ pub async fn call_openai_api(
         .effort
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(settings.codex_effort.as_str());
-    let reasoning_effort = if !effort_src.is_empty() {
-        Some(effort_src.to_string())
-    } else {
+    let reasoning_effort = if effort_src.is_empty() {
         None
+    } else {
+        match sanitize_reasoning_effort(effort_src.trim()) {
+            Some(value) => {
+                if value != effort_src.trim() {
+                    log(
+                        app,
+                        format!("{label}: mapping reasoning effort '{effort_src}' to '{value}' for the OpenAI API"),
+                    );
+                }
+                Some(value.to_string())
+            }
+            None => {
+                log(
+                    app,
+                    format!("{label}: reasoning effort '{effort_src}' is not supported by the OpenAI API; sending none"),
+                );
+                None
+            }
+        }
     };
     let tools_key = serde_json::to_string(&tools).unwrap_or_default();
     let attachment_key = overrides
@@ -392,6 +424,18 @@ pub async fn call_local_api(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_effort_is_whitelisted_for_chat_completions() {
+        for value in ["minimal", "low", "medium", "high"] {
+            assert_eq!(sanitize_reasoning_effort(value), Some(value));
+        }
+        // codex-CLI's extra tier maps to the API's nearest value.
+        assert_eq!(sanitize_reasoning_effort("xhigh"), Some("high"));
+        // Unknown values are dropped rather than sent.
+        assert_eq!(sanitize_reasoning_effort("max"), None);
+        assert_eq!(sanitize_reasoning_effort(""), None);
+    }
 
     #[test]
     fn shared_context_is_a_stable_prefix_before_the_task() {

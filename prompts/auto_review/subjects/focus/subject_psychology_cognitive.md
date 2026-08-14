@@ -1,0 +1,1 @@
+Review the cognitive process and task decomposition, stimulus control, speed-accuracy tradeoffs, learning and strategy, model identifiability, individual variation, and whether behavioral signatures distinguish the proposed representation or process.

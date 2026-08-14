@@ -1,0 +1,1 @@
+Examine function spaces, modes of convergence, boundedness and compactness, measure-theoretic conditions, operator domains, sharp constants, and endpoint cases. Check that the topology and regularity used in conclusions match those established by the arguments.

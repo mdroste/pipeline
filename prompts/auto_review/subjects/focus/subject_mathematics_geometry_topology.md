@@ -1,0 +1,1 @@
+Review the geometric objects, regularity and compactness conditions, invariance, global versus local claims, singularities, moduli, and topological obstructions. Check whether constructions are intrinsic and whether examples cover the relevant geometric regimes.

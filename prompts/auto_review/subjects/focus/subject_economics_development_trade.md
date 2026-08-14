@@ -1,0 +1,1 @@
+Review institutions and market context, selection across locations, prices and quantities, household and firm margins, spillovers and equilibrium, external validity, trade or migration incidence, and whether policy conclusions respect implementation capacity. Use this combined role only for genuinely cross-field contributions.

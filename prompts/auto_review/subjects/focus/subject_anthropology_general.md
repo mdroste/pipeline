@@ -1,0 +1,1 @@
+Evaluate the cultural or material setting, researcher position, categories in local terms, comparison, historical depth, evidence, and movement between situated observation and broader anthropological claim.

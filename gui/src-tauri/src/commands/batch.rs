@@ -13,6 +13,7 @@ pub async fn start_batch(
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_config_snapshot_id: Option<String>,
+    run_parallel_overrides: Option<RunParallelOverrides>,
 ) -> Result<(), String> {
     let paths: Vec<String> = paths.into_iter().filter(|p| !p.trim().is_empty()).collect();
     if paths.is_empty() {
@@ -31,6 +32,7 @@ pub async fn start_batch(
                 .to_string(),
         );
     }
+    let snapshot = bind_parallel_overrides(snapshot, run_parallel_overrides.as_ref())?;
     if snapshot.config.extraction.input_mode.trim() == "none" {
         return Err("Batch processing requires a workflow that accepts input".to_string());
     }
@@ -96,6 +98,16 @@ pub async fn start_batch(
     tauri::async_runtime::spawn(async move {
         // RAII guard clears PIPELINE_RUNNING and per-run state even on panic.
         let _guard = guard;
+        // Clear the batch-stop flag on every exit path (normal, error, panic)
+        // so it can never leak into a later foreground run, whose
+        // begin_run_state now honors it to close the batch-cancel start race.
+        struct BatchCancelReset;
+        impl Drop for BatchCancelReset {
+            fn drop(&mut self) {
+                BATCH_CANCEL.store(false, std::sync::atomic::Ordering::Release);
+            }
+        }
+        let _batch_cancel_reset = BatchCancelReset;
         for (i, path) in paths.iter().enumerate() {
             if BATCH_CANCEL.load(std::sync::atomic::Ordering::Acquire) {
                 mark_remaining_cancelled(i);
@@ -113,6 +125,10 @@ pub async fn start_batch(
                 vars.clone(),
                 inputs.clone(),
                 Some(snapshot.clone()),
+                // Batch cancellation is covered by the BATCH_CANCEL re-assert
+                // inside the run; capture the epoch at dispatch so the
+                // foreground-cancel check stays inert for batch jobs.
+                current_cancel_epoch(),
             )
             .await;
             let secs = started.elapsed().as_secs();

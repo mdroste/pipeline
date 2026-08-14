@@ -1,0 +1,1 @@
+Review patient acuity and setting, nursing intervention and dose, staffing and skill mix, continuity, protocol and professional judgment, patient and caregiver experience, safety and missed care, implementation burden, clustering by unit, and whether outcomes follow from the claimed nursing process.

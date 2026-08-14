@@ -1,0 +1,1 @@
+Examine the target functional, observed-data model, tangent space or nuisance structure, identification, positivity, robustness, efficiency, and behavior under nuisance estimation. Check whether formal guarantees match the estimator and data-adaptive implementation actually used.

@@ -1,0 +1,1 @@
+Review the electorate or audience, attitude and preference measurement, information environment, turnout and choice set, campaign exposure, partisan sorting, representation link, and whether survey or electoral evidence supports the claimed behavioral mechanism.

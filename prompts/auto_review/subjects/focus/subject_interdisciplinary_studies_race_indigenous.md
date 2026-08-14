@@ -1,0 +1,1 @@
+Review category and community specificity, historical and territorial context, colonial and state institutions, migration and diaspora, language and source authority, community knowledge and data governance, researcher position, internal heterogeneity, and whether comparison preserves rather than flattens distinct histories and political relationships.

@@ -1,0 +1,1 @@
+Review spatial and temporal scale, sampling of populations and environments, phylogenetic dependence, demographic process, selection versus drift, species interactions, detectability, alternative histories, and whether short-run observations support evolutionary or ecosystem claims.

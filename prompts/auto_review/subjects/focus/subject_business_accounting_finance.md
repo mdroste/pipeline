@@ -1,0 +1,1 @@
+Review reporting and institutional rules, measurement of disclosure or governance, contracting and information channels, selection, market response, managerial incentives, real effects, audit or enforcement context, and whether findings imply the claimed corporate decision.

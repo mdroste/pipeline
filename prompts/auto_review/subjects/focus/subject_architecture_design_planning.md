@@ -1,0 +1,1 @@
+Assess planning authority and process, spatial scale, land and infrastructure constraints, affected populations, participation, implementation and enforcement, displacement and distribution, scenario assumptions, temporal horizon, and whether the proposal remains feasible under political and market response.

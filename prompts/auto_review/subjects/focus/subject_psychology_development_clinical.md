@@ -1,0 +1,1 @@
+Review age and developmental timing, cohort and caregiver context, diagnostic and symptom definition, comorbidity, impairment, measurement invariance, attrition, normative comparison, and whether trajectories or interventions establish the claimed developmental or clinical mechanism.

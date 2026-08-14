@@ -9,6 +9,18 @@ pub(super) struct RunSnapshot {
     pub(super) fingerprint: String,
 }
 
+/// One-report override for inherited Parallel steps. `None` at the command
+/// boundary means use Settings unchanged; a present value is fingerprinted
+/// into the immutable launch snapshot and never persisted.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct RunParallelOverrides {
+    pub agents: Vec<String>,
+    #[serde(default)]
+    pub model_overrides: std::collections::HashMap<String, crate::settings::ModelSelection>,
+    #[serde(default)]
+    pub effort_overrides: std::collections::HashMap<String, String>,
+}
+
 pub(super) fn settings_for_snapshot_fingerprint(
     settings: &crate::settings::Settings,
 ) -> crate::settings::Settings {
@@ -54,6 +66,8 @@ pub(super) fn load_run_snapshot_for_profile(
         .map(str::to_string)
         .unwrap_or_else(|| settings.active_profile.clone());
     let (config, profile_name) = pipeline_config::load_required_profile_for(&selected_profile)?;
+    pipeline_config::validate_enabled_sequential_step(&config.steps)?;
+    crate::auto_review::validate_auto_review_preflight(&config)?;
     // The snapshot and run manifest should identify the selected profile, but
     // a one-off CLI run must not rewrite the desktop app's settings.json.
     settings.active_profile = selected_profile;
@@ -83,12 +97,46 @@ pub(super) fn bind_runtime_snapshot(
     let extra_inputs = extra_inputs
         .iter()
         .collect::<std::collections::BTreeMap<_, _>>();
-    let encoded = serde_json::to_vec(&(
-        snapshot.config_fingerprint.as_str(),
-        variables,
-        extra_inputs,
-    ))
-    .map_err(|error| format!("Could not fingerprint runtime options: {error}"))?;
+    // Chain from the current fingerprint, not config_fingerprint: the
+    // one-run Parallel-agent override has already been folded in by
+    // bind_parallel_overrides, and rebasing on the config fingerprint would
+    // silently drop it from the plan/launch mismatch check.
+    let encoded = serde_json::to_vec(&(snapshot.fingerprint.as_str(), variables, extra_inputs))
+        .map_err(|error| format!("Could not fingerprint runtime options: {error}"))?;
+    let digest = format!("{:x}", Sha256::digest(encoded));
+    snapshot.fingerprint = digest[..16].to_string();
+    Ok(snapshot)
+}
+
+pub(super) fn bind_parallel_overrides(
+    mut snapshot: RunSnapshot,
+    overrides: Option<&RunParallelOverrides>,
+) -> Result<RunSnapshot, String> {
+    use sha2::{Digest as _, Sha256};
+    let Some(overrides) = overrides else {
+        return Ok(snapshot);
+    };
+    if overrides.agents.is_empty() {
+        return Err("Select at least one Parallel agent".to_string());
+    }
+    snapshot.settings.default_parallel_agents = overrides.agents.clone();
+    snapshot.settings.default_parallel_model_overrides = overrides.model_overrides.clone();
+    snapshot.settings.default_parallel_effort_overrides = overrides.effort_overrides.clone();
+    snapshot.settings.validate()?;
+    for step in snapshot
+        .config
+        .steps
+        .iter_mut()
+        .filter(|step| step.phase == crate::pipeline_config::Phase::Parallel)
+    {
+        step.agents = overrides.agents.clone();
+        step.model.clear();
+        step.model_overrides = overrides.model_overrides.clone();
+        step.effort.clear();
+        step.effort_overrides = overrides.effort_overrides.clone();
+    }
+    let encoded = serde_json::to_vec(&(snapshot.fingerprint.as_str(), overrides))
+        .map_err(|error| format!("Could not fingerprint Parallel agent options: {error}"))?;
     let digest = format!("{:x}", Sha256::digest(encoded));
     snapshot.fingerprint = digest[..16].to_string();
     Ok(snapshot)
@@ -120,7 +168,8 @@ pub(super) async fn check_snapshot_dependencies(
     extra_inputs: &std::collections::HashMap<String, String>,
 ) -> Result<crate::deps::DepsReport, String> {
     let settings = snapshot.settings.clone();
-    let config = snapshot.config.clone();
+    let mut config = snapshot.config.clone();
+    pipeline_config::apply_agent_defaults(&mut config, &settings);
     let input_path = input_path.map(str::to_string);
     let extra_inputs = extra_inputs.clone();
     tokio::task::spawn_blocking(move || {
@@ -253,6 +302,20 @@ pub(super) fn validate_primary_input_selection(
         "source_tree" => {
             if !metadata.is_dir() {
                 return Err("A browsable source-tree input must be a folder".to_string());
+            }
+            // The adaptive router prompt is used verbatim (it is not a stock
+            // survey, so the folder-survey swap never applies) and wraps the
+            // primary text as `<paper>…</paper>`. A source tree supplies only
+            // a file inventory there, so routing would classify from file
+            // names and every reviewer would read the inventory as the paper.
+            if crate::auto_review::uses_auto_review_contract(config) {
+                return Err(
+                    "Auto Paper Review reviews a document, not a browsable source tree. \
+                     Select the folder as a LaTeX project (if it contains the paper's TeX \
+                     source), pick the paper file directly, or switch to a folder-oriented \
+                     workflow."
+                        .to_string(),
+                );
             }
         }
         "batch" => {

@@ -125,7 +125,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
         <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100">
           ← Back
         </button>
-        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Compare runs</span>
+        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Compare reports</span>
         <button
           onClick={runReconcile}
           disabled={reconciling || loading}
@@ -143,12 +143,12 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
           </div>
         )}
         {loading ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">Loading both runs…</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">Loading both reports…</p>
         ) : (
           <>
             <div className="text-xs text-gray-500 dark:text-gray-400 px-1">
-              <span className="text-red-700 dark:text-red-400">− older run</span> vs <span className="text-green-700 dark:text-green-400">+ newer run</span>{" "}
-              (per step; deletions from the first run, additions in the second)
+              <span className="text-red-700 dark:text-red-400">− older report</span> vs <span className="text-green-700 dark:text-green-400">+ newer report</span>{" "}
+              (per step; deletions from the first report, additions in the second)
             </div>
 
             {reconcile && (

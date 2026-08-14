@@ -1,0 +1,1 @@
+Examine the external budget constraint, exchange-rate and price-setting regime, asset-market completeness, currency denomination, sovereign or intermediary frictions, global equilibrium closure, valuation effects, policy spillovers, and whether data or counterfactuals identify the international transmission channel rather than a domestic aggregate response.

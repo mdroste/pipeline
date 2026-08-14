@@ -1,0 +1,1 @@
+Review the retrieval task and relevance construct, corpus and interaction logs, candidate generation and ranking, exposure and feedback loops, negative sampling, temporal and user splits, offline metrics versus user value, cold-start and long-tail behavior, bias and diversity, baselines, and whether evaluation avoids leakage from future or repeated interactions.

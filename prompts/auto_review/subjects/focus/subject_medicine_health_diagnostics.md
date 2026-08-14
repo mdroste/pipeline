@@ -1,0 +1,1 @@
+Assess reference standard, spectrum and verification bias, threshold selection, calibration, incremental value, prevalence dependence, reader or site variation, workflow, consequences of false decisions, and external validation in the intended clinical setting.

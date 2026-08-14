@@ -1,0 +1,1 @@
+Review risk and information, pricing kernel or corporate objective, financing and intermediary constraints, selection, equilibrium and no-arbitrage discipline, horizon, return measurement, institutional detail, and whether evidence distinguishes the proposed financial channel.

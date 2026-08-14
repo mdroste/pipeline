@@ -69,7 +69,7 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage onOpenRun={onOpenRun} />);
 
     expect(await screen.findByText("Paper revision")).toBeVisible();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Run to add" }), run.run_id);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Report to add" }), run.run_id);
     await user.click(screen.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_project_run", {
       projectId: "paper",

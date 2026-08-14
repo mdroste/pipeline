@@ -1,0 +1,1 @@
+Review outlet and platform selection, production routines, gatekeeping, source and message construction, audience exposure, media-system context, ownership and incentives, trust, reception, and whether content or audience evidence supports the claimed public-communication effect.

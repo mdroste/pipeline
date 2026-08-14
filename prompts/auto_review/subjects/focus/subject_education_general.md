@@ -1,0 +1,1 @@
+Evaluate learners and educators, setting, learning objective, instructional or institutional mechanism, implementation, outcome meaning, equity, and whether evidence supports transfer beyond the observed educational context.

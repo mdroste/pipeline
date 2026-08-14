@@ -17,7 +17,7 @@ function makeConfig(): PipelineConfig {
         enabled: true,
         phase: "parallel",
         tools: [],
-        agents: ["claude", "gemini"],
+        agents: ["claude", "antigravity"],
         context: { include: [{ kind: "primary", parts: ["text", "source"] }] },
       },
       {
@@ -52,7 +52,7 @@ function makeConfig(): PipelineConfig {
 }
 
 const profiles: ProfileSummary[] = [
-  { id: "auto-review", name: "Paper Review (Auto)", step_count: 4, builtin: true },
+  { id: "auto-review", name: "Auto Paper Review", step_count: 4, builtin: true },
   { id: "deep", name: "Paper Review (Full)", step_count: 3, builtin: false },
   { id: "quick", name: "Paper Review (Quick)", step_count: 2, builtin: false },
 ];
@@ -81,12 +81,16 @@ const catalog: AutoReviewCatalog = {
       },
     ],
   }],
-  methods: [{
+  methodFamilies: [{
+    id: "formal_conceptual",
+    label: "Formal Theory & Conceptual Analysis",
+    roles: [{
     id: "formal_proofs",
     label: "Method — Formal Proofs",
     level: "method",
     description: "Central theorems require proof verification.",
     exclusions: "proofs are routine and immaterial.",
+    }],
   }],
 };
 
@@ -145,7 +149,7 @@ describe("WorkflowPanel", () => {
   it("renders concatenated agent initials next to multi-agent steps", async () => {
     mockLoad(makeConfig());
     renderPanel();
-    expect(await screen.findByText("C+G")).toBeInTheDocument();
+    expect(await screen.findByText("C+A")).toBeInTheDocument();
   });
 
   it("has no per-step toggles", async () => {
@@ -202,7 +206,12 @@ describe("WorkflowPanel", () => {
     mockLoad(autoConfig, "auto-review");
     renderPanel();
 
-    expect(await screen.findByText(/Orientation assembles 1–2 subject/)).toBeInTheDocument();
+    expect(await screen.findByText("Adaptive agents")).toHaveClass("text-blue-700");
+    expect(
+      await screen.findByText(
+        "Automatic: selects 2-6 additional field/methodology-specific review agents tailored for each document.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/conditional specialist/i)).not.toBeInTheDocument();
 
     const user = userEvent.setup();

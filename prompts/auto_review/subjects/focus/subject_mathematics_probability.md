@@ -1,0 +1,1 @@
+Review probability spaces, filtrations, dependence, stopping or integrability conditions, asymptotic regime, tightness, modes of convergence, rare-event behavior, and stochastic regularity. Ask whether examples distinguish the claimed phenomenon from a standard limit theorem.

@@ -1,0 +1,1 @@
+Assess process and demand assumptions, capacity and inventory, network and supplier constraints, service levels, digital adoption, human workflow, disruption and resilience, implementation costs, and whether optimization gains survive operational uncertainty.

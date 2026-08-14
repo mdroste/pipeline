@@ -1,0 +1,1 @@
+Assess composition, oxidation and coordination state, phase purity, defects, synthesis reproducibility, structure-property connection, stability, cycling, surface versus bulk behavior, and whether characterization rules out plausible alternative phases.

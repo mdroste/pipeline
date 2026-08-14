@@ -1,0 +1,1 @@
+Review the workload and threat model, architecture, consistency and failure assumptions, concurrency, scalability, tail behavior, resource accounting, deployability, and comparison to production-relevant baselines. Check whether microbenchmarks support end-to-end claims.

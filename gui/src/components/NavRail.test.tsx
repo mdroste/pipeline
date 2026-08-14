@@ -31,7 +31,7 @@ describe("NavRail", () => {
     const user = userEvent.setup();
     const props = renderRail();
 
-    expect(screen.getByRole("button", { name: "New run" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "New report" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -54,9 +54,9 @@ describe("NavRail", () => {
       runInProgress: true,
     });
 
-    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New report" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: /Current run/ }),
+      screen.getByRole("button", { name: /Current report/ }),
     ).toHaveAttribute("aria-current", "page");
   });
 
@@ -68,7 +68,7 @@ describe("NavRail", () => {
       runInProgress: true,
     });
 
-    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New report" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: /Current batch/ }));
     expect(props.onNavigate).toHaveBeenCalledWith("batch");
   });

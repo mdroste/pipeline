@@ -1,9 +1,18 @@
 import { useCallback, useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import type { EngineStatus, ModelCatalog, ModelSelection, Settings } from "../lib/types";
+import type {
+  DepsReport,
+  EngineStatus,
+  ModelCatalog,
+  ModelSelection,
+  Settings,
+} from "../lib/types";
 import {
   decodeModelSelection,
+  defaultOrientationAgent,
+  defaultParallelAgents,
+  defaultSequentialAgent,
   effortOptions,
   encodeModelSelection,
   type CloudProvider,
@@ -13,6 +22,7 @@ import {
   withProviderSelection,
 } from "../lib/providers";
 import EnginesPanel from "./EnginesPanel";
+import AgentDefaultsControl from "./AgentDefaultsControl";
 import InfoButton from "./InfoButton";
 import ResizeHandle from "./ResizeHandle";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
@@ -28,15 +38,67 @@ interface Props {
   initialSection?: Section;
   targetId?: string;
   navigationKey?: number;
+  dependencies?: DepsReport | null;
 }
 
 type Section = "llm" | "extraction" | "general";
+
+interface ProviderAccessIssue {
+  summary: string;
+  detail: string;
+}
+
+const CLI_DEPENDENCY_NAMES: Record<CloudProvider, string> = {
+  claude: "Claude CLI",
+  codex: "Codex CLI",
+  antigravity: "Antigravity CLI",
+};
+
+function providerAccessIssue(
+  provider: CloudProvider,
+  settings: Settings,
+  dependencies?: DepsReport | null,
+): ProviderAccessIssue | null {
+  if (providerTransport(settings, provider) !== "cli") return null;
+  const dependency = dependencies?.deps.find(
+    (candidate) => candidate.name === CLI_DEPENDENCY_NAMES[provider],
+  );
+  if (!dependency) return null;
+
+  const cliInstalled = dependency.cli_auth_status !== undefined
+    || (dependency.found && dependency.version !== "direct API");
+  if (!cliInstalled) {
+    return {
+      summary: `${dependency.name} could not be found on this system.`,
+      detail: dependency.hint,
+    };
+  }
+  if (!dependency.found) {
+    return {
+      summary: `${dependency.name} cannot be used by Pipeline.`,
+      detail: dependency.hint,
+    };
+  }
+  if (dependency.cli_auth_status === "signed_out" || dependency.authenticated === false) {
+    return {
+      summary: `${dependency.name} is installed but not logged in.`,
+      detail: dependency.hint,
+    };
+  }
+  if (dependency.cli_auth_status === "unknown") {
+    return {
+      summary: `${dependency.name} is installed, but its login status could not be verified.`,
+      detail: dependency.hint,
+    };
+  }
+  return null;
+}
 
 function catalogDiscoveryInputs(settings: Settings): Record<string, string> {
   return {
     claude: settings.anthropic_api_key,
     codex: settings.openai_api_key,
-    gemini: settings.google_api_key,
+    antigravity: settings.google_api_key,
     local: `${settings.local_base_url}\u0000${settings.local_api_key}`,
   };
 }
@@ -51,6 +113,7 @@ export default function SettingsPage({
   initialSection = "llm",
   targetId,
   navigationKey = 0,
+  dependencies,
 }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [savedSettingsSnapshot, setSavedSettingsSnapshot] = useState<string | null>(null);
@@ -267,11 +330,11 @@ export default function SettingsPage({
 
   if (loadError || !settings) {
     return (
-      <div className="p-8 flex flex-col items-center justify-center h-full gap-4 text-gray-500 dark:text-gray-400">
+      <div className="p-8 flex flex-col items-center justify-center h-full gap-4 text-gray-500 dark:text-neutral-400">
         <p className="text-sm">Failed to load settings{loadError ? `: ${loadError}` : "."}</p>
         <button
           onClick={handleClose}
-          className="text-sm text-gray-600 dark:text-gray-300 hover:underline"
+          className="text-sm text-gray-600 dark:text-neutral-300 hover:underline"
         >
           Go back
         </button>
@@ -329,9 +392,9 @@ export default function SettingsPage({
       {/* Sidebar nav */}
       <div
         style={{ width: navWidth }}
-        className="relative flex shrink-0 flex-col border-r border-gray-200 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-gray-900/50"
+        className="relative flex shrink-0 flex-col border-r border-gray-200 bg-gray-50/50 p-4 dark:border-neutral-700 dark:bg-neutral-900/50"
       >
-        <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 px-2">
+        <h2 className="text-sm font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-4 px-2">
           Settings
         </h2>
         <nav className="space-y-1 flex-1">
@@ -341,8 +404,8 @@ export default function SettingsPage({
               onClick={() => setSection(item.id)}
               className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${
                 section === item.id
-                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                  : "text-gray-600 dark:text-gray-400 hover:bg-gray-200/60 dark:hover:bg-gray-800/60"
+                  ? "bg-gray-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+                  : "text-gray-600 dark:text-neutral-400 hover:bg-gray-200/60 dark:hover:bg-neutral-800/60"
               }`}
             >
               {item.icon}
@@ -353,7 +416,7 @@ export default function SettingsPage({
         {showBack && (
           <button
             onClick={handleClose}
-            className="flex items-center gap-2 px-2.5 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+            className="flex items-center gap-2 px-2.5 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
@@ -383,7 +446,7 @@ export default function SettingsPage({
             </p>
           </div>
         )}
-        <div className="p-8 max-w-xl">
+        <div className="p-8 max-w-2xl">
           {section === "llm" && (
             <LLMSection
               settings={settings}
@@ -393,6 +456,8 @@ export default function SettingsPage({
               catalogLoading={catalogLoading}
               discoveryInputChanged={discoveryInputChanged}
               loadCatalog={loadCatalog}
+              dependencies={dependencies}
+              onDependenciesRefresh={onSystemChange}
             />
           )}
           {section === "extraction" && (
@@ -412,12 +477,12 @@ export default function SettingsPage({
           )}
 
           {/* Save bar */}
-          <div className="mt-10 pt-6 border-t border-gray-200 dark:border-gray-700 flex items-center gap-3">
+          <div className="mt-10 pt-6 border-t border-gray-200 dark:border-neutral-700 flex items-center gap-3">
             <button
               onClick={handleSave}
               disabled={saving}
-              className="py-2 px-6 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg text-sm font-medium
-                         hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-400 dark:disabled:bg-gray-700 transition-colors"
+              className="py-2 px-6 bg-gray-900 dark:bg-neutral-100 text-white dark:text-neutral-900 rounded-lg text-sm font-medium
+                         hover:bg-gray-800 dark:hover:bg-neutral-200 disabled:bg-gray-400 dark:disabled:bg-neutral-700 transition-colors"
             >
               {saving ? "Saving..." : "Save"}
             </button>
@@ -447,17 +512,13 @@ function ProviderGroup({
   children: React.ReactNode;
 }) {
   return (
-    <div className={`rounded-lg border p-4 space-y-4 ${
-      active
-        ? "border-gray-900 dark:border-gray-300 bg-gray-50/50 dark:bg-gray-800/30"
-        : "border-gray-200 dark:border-gray-700"
-    }`}>
+    <section className="space-y-5 border-t border-gray-200 py-6 dark:border-neutral-800">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</span>
+        <span className="text-sm font-semibold text-gray-900 dark:text-neutral-100">{title}</span>
         {help && <InfoButton label={title}>{help}</InfoButton>}
         {active && (
-          <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900">
-            preferred
+          <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-gray-900 text-white dark:bg-neutral-200 dark:text-neutral-900">
+            default
           </span>
         )}
         {hasApiKey && (
@@ -467,7 +528,7 @@ function ProviderGroup({
         )}
       </div>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -479,6 +540,8 @@ function LLMSection({
   catalogLoading,
   discoveryInputChanged,
   loadCatalog,
+  dependencies,
+  onDependenciesRefresh,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
@@ -487,9 +550,31 @@ function LLMSection({
   catalogLoading: Record<string, boolean>;
   discoveryInputChanged: Record<string, boolean>;
   loadCatalog: (provider: string, settings: Settings, refresh?: boolean) => Promise<void>;
+  dependencies?: DepsReport | null;
+  onDependenciesRefresh?: () => void;
 }) {
   const localCatalog = catalogBlocked.local ? undefined : catalogs.local;
+  const parallelAgents = defaultParallelAgents(settings);
+  const sequentialAgent = defaultSequentialAgent(settings);
+  const orientationAgent = defaultOrientationAgent(settings);
+  const defaultProviders = new Set([
+    ...parallelAgents,
+    sequentialAgent,
+    orientationAgent,
+    settings.preferred_provider,
+  ]);
+  const accessIssues = Object.fromEntries(
+    (["claude", "codex", "antigravity"] as const).map((provider) => [
+      provider,
+      providerAccessIssue(provider, settings, dependencies),
+    ]),
+  ) as Record<CloudProvider, ProviderAccessIssue | null>;
   const [externalLinkError, setExternalLinkError] = useState<string | null>(null);
+
+  const refreshProvider = (provider: CloudProvider) => {
+    void loadCatalog(provider, settings, true);
+    onDependenciesRefresh?.();
+  };
 
   const openOllamaSite = async () => {
     setExternalLinkError(null);
@@ -504,31 +589,116 @@ function LLMSection({
     <>
       <SectionHeader
         title="Models"
-        help="Configure models for each provider. The preferred provider is used for steps that do not specify an agent."
+        help="Set role-level defaults for inherited workflow steps, then configure each provider's connection and baseline model policy."
       />
 
-      <div className="space-y-5">
-        <Field
-          label="Preferred Provider"
-          help="Provider used when workflow does not specify explicit agent(s)."
-        >
-          <select
-            aria-label="Preferred Provider"
-            value={settings.preferred_provider}
-            onChange={(e) =>
-              setSettings({ ...settings, preferred_provider: e.target.value })
-            }
-            className={selectClass}
-          >
-            <option value="claude">Claude (Anthropic)</option>
-            <option value="codex">ChatGPT (OpenAI)</option>
-            <option value="gemini">Gemini (Google)</option>
-            <option value="local">Local (Ollama / OpenAI-compatible)</option>
-          </select>
-        </Field>
+      <div className="space-y-0">
+        <section className="space-y-5 pb-8">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Default agents</h3>
+            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
+              Workflows can name their own agents. These choices fill only the steps left at Default.
+            </p>
+          </div>
+          <div className="divide-y divide-gray-200 dark:divide-neutral-800">
+            <div className="pb-5">
+              <AgentDefaultsControl
+                agents={parallelAgents}
+                modelOverrides={settings.default_parallel_model_overrides}
+                effortOverrides={settings.default_parallel_effort_overrides}
+                settings={settings}
+                catalogs={catalogs}
+                providers={PROVIDERS}
+                multi
+                label="Parallel steps"
+                help={
+                  <>
+                    Select one <strong className="font-semibold">or more</strong> default model to use
+                    for parallel workflow steps.
+                  </>
+                }
+                onChange={(next) => setSettings({
+                  ...settings,
+                  default_parallel_agents: next.agents,
+                  default_parallel_model_overrides: next.modelOverrides,
+                  default_parallel_effort_overrides: next.effortOverrides,
+                })}
+              />
+            </div>
+            <div className="py-5">
+              <AgentDefaultsControl
+                agents={[sequentialAgent]}
+                modelOverrides={settings.default_sequential_model_overrides}
+                effortOverrides={settings.default_sequential_effort_overrides}
+                settings={settings}
+                catalogs={catalogs}
+                providers={PROVIDERS}
+                label="Sequential steps"
+                help={
+                  <>
+                    Select <strong className="font-semibold">one</strong> default model to use for
+                    sequential workflow steps.
+                  </>
+                }
+                onChange={(next) => setSettings({
+                  ...settings,
+                  default_sequential_agent: next.agents[0],
+                  default_sequential_model_overrides: next.modelOverrides,
+                  default_sequential_effort_overrides: next.effortOverrides,
+                })}
+              />
+            </div>
+            <div className="py-5">
+              <AgentDefaultsControl
+                agents={[orientationAgent]}
+                modelOverrides={settings.default_orientation_model_overrides}
+                effortOverrides={settings.default_orientation_effort_overrides}
+                settings={settings}
+                catalogs={catalogs}
+                providers={PROVIDERS}
+                label="Orientation map"
+                help="Select one default model to use for processing inputs and classifying adaptive workflow steps."
+                onChange={(next) => setSettings({
+                  ...settings,
+                  default_orientation_agent: next.agents[0],
+                  default_orientation_model_overrides: next.modelOverrides,
+                  default_orientation_effort_overrides: next.effortOverrides,
+                })}
+              />
+            </div>
+            <div className="pt-5">
+              <Field
+                label="Preferred Provider"
+                help="Provider used when workflow does not specify explicit agent(s). It also remains the fallback for PDF extraction and revision comparison."
+              >
+                <select
+                  aria-label="Preferred Provider"
+                  value={settings.preferred_provider}
+                  onChange={(event) => setSettings({
+                    ...settings,
+                    preferred_provider: event.target.value,
+                  })}
+                  className={selectClass}
+                >
+                  <option value="claude">Claude (Anthropic)</option>
+                  <option value="codex">ChatGPT (OpenAI)</option>
+                  <option value="antigravity">Antigravity (Google)</option>
+                  <option value="local">Local (Ollama / OpenAI-compatible)</option>
+                </select>
+              </Field>
+            </div>
+          </div>
+        </section>
+
+        <div className="border-t border-gray-200 pb-5 pt-8 dark:border-neutral-800">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Provider configuration</h3>
+          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
+            Configure each provider's connection, baseline model, and thinking policy.
+          </p>
+        </div>
 
         {/* Claude */}
-        <ProviderGroup title="Claude (Anthropic)" active={settings.preferred_provider === "claude"} hasApiKey={!!settings.anthropic_api_key}>
+        <ProviderGroup title="Claude (Anthropic)" active={defaultProviders.has("claude")} hasApiKey={!!settings.anthropic_api_key}>
           <Field
             label="API Key"
             help="Bypasses Claude CLI for faster calls. Leave empty to use the CLI with your subscription."
@@ -545,41 +715,50 @@ function LLMSection({
               autoComplete="off"
             />
           </Field>
-          <Field label="Model">
-            <ModelPicker
-              provider="claude"
-              settings={settings}
-              catalog={catalogBlocked.claude ? undefined : catalogs.claude}
-              blocked={catalogBlocked.claude}
-              allowSavedUnknown={!discoveryInputChanged.claude}
-              loading={catalogLoading.claude}
-              onChange={(selection) => setSettings(withProviderSelection(settings, "claude", selection))}
-              onRefresh={() => loadCatalog("claude", settings, true)}
-            />
-          </Field>
-          <Field label="Thinking Effort">
-            <select
-              aria-label="Claude Thinking Effort"
-              value={settings.claude_effort}
-              onChange={(e) =>
-                setSettings({ ...settings, claude_effort: e.target.value })
-              }
-              className={selectClass}
-            >
-              <option value="">Default</option>
-              {effortOptions(
-                catalogBlocked.claude ? undefined : catalogs.claude,
-                providerSelection(settings, "claude"),
-                ["low", "medium", "high", "max"],
-              ).map((effort) => (
-                <option key={effort} value={effort}>{effortLabel(effort)}</option>
-              ))}
-            </select>
-          </Field>
+          <div
+            role="group"
+            aria-label="Claude model configuration"
+            className="grid grid-cols-2 gap-4"
+          >
+            <Field label="Model">
+              <ModelPicker
+                provider="claude"
+                settings={settings}
+                catalog={catalogBlocked.claude ? undefined : catalogs.claude}
+                blocked={catalogBlocked.claude}
+                accessIssue={accessIssues.claude}
+                allowSavedUnknown={!discoveryInputChanged.claude}
+                loading={catalogLoading.claude}
+                onChange={(selection) => setSettings(withProviderSelection(settings, "claude", selection))}
+                onRefresh={() => refreshProvider("claude")}
+              />
+            </Field>
+            <Field label="Thinking Effort">
+              <select
+                aria-label="Claude Thinking Effort"
+                aria-describedby={accessIssues.claude ? "claude-model-access-note" : undefined}
+                value={settings.claude_effort}
+                disabled={catalogBlocked.claude || Boolean(accessIssues.claude)}
+                onChange={(e) =>
+                  setSettings({ ...settings, claude_effort: e.target.value })
+                }
+                className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                <option value="">Default</option>
+                {effortOptions(
+                  catalogBlocked.claude ? undefined : catalogs.claude,
+                  providerSelection(settings, "claude"),
+                  ["low", "medium", "high", "max"],
+                ).map((effort) => (
+                  <option key={effort} value={effort}>{effortLabel(effort)}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
         </ProviderGroup>
 
         {/* ChatGPT / OpenAI */}
-        <ProviderGroup title="ChatGPT (OpenAI)" active={settings.preferred_provider === "codex"} hasApiKey={!!settings.openai_api_key}>
+        <ProviderGroup title="ChatGPT (OpenAI)" active={defaultProviders.has("codex")} hasApiKey={!!settings.openai_api_key}>
           <Field
             label="API Key"
             help="Bypasses Codex CLI for faster calls. Leave empty to use the CLI."
@@ -596,44 +775,53 @@ function LLMSection({
               autoComplete="off"
             />
           </Field>
-          <Field label="Model">
-            <ModelPicker
-              provider="codex"
-              settings={settings}
-              catalog={catalogBlocked.codex ? undefined : catalogs.codex}
-              blocked={catalogBlocked.codex}
-              allowSavedUnknown={!discoveryInputChanged.codex}
-              loading={catalogLoading.codex}
-              onChange={(selection) => setSettings(withProviderSelection(settings, "codex", selection))}
-              onRefresh={() => loadCatalog("codex", settings, true)}
-            />
-          </Field>
-          <Field label="Reasoning Effort">
-            <select
-              aria-label="OpenAI Reasoning Effort"
-              value={settings.codex_effort}
-              onChange={(e) =>
-                setSettings({ ...settings, codex_effort: e.target.value })
-              }
-              className={selectClass}
-            >
-              <option value="">Default</option>
-              {effortOptions(
-                catalogBlocked.codex ? undefined : catalogs.codex,
-                providerSelection(settings, "codex"),
-                ["low", "medium", "high"],
-              ).map((effort) => (
-                <option key={effort} value={effort}>{effortLabel(effort)}</option>
-              ))}
-            </select>
-          </Field>
+          <div
+            role="group"
+            aria-label="ChatGPT model configuration"
+            className="grid grid-cols-2 gap-4"
+          >
+            <Field label="Model">
+              <ModelPicker
+                provider="codex"
+                settings={settings}
+                catalog={catalogBlocked.codex ? undefined : catalogs.codex}
+                blocked={catalogBlocked.codex}
+                accessIssue={accessIssues.codex}
+                allowSavedUnknown={!discoveryInputChanged.codex}
+                loading={catalogLoading.codex}
+                onChange={(selection) => setSettings(withProviderSelection(settings, "codex", selection))}
+                onRefresh={() => refreshProvider("codex")}
+              />
+            </Field>
+            <Field label="Reasoning Effort">
+              <select
+                aria-label="OpenAI Reasoning Effort"
+                aria-describedby={accessIssues.codex ? "codex-model-access-note" : undefined}
+                value={settings.codex_effort}
+                disabled={catalogBlocked.codex || Boolean(accessIssues.codex)}
+                onChange={(e) =>
+                  setSettings({ ...settings, codex_effort: e.target.value })
+                }
+                className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                <option value="">Default</option>
+                {effortOptions(
+                  catalogBlocked.codex ? undefined : catalogs.codex,
+                  providerSelection(settings, "codex"),
+                  ["low", "medium", "high"],
+                ).map((effort) => (
+                  <option key={effort} value={effort}>{effortLabel(effort)}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
         </ProviderGroup>
 
-        {/* Gemini */}
-        <ProviderGroup title="Gemini (Google)" active={settings.preferred_provider === "gemini"} hasApiKey={!!settings.google_api_key}>
+        {/* Antigravity / Google */}
+        <ProviderGroup title="Antigravity (Google)" active={defaultProviders.has("antigravity")} hasApiKey={!!settings.google_api_key}>
           <Field
-            label="API Key"
-            help="Bypasses Gemini CLI for faster calls. Leave empty to use the CLI."
+            label="Gemini API Key"
+            help="Bypasses Antigravity CLI for faster calls. Leave empty to use the CLI."
           >
             <input
               aria-label="Gemini API Key"
@@ -647,24 +835,59 @@ function LLMSection({
               autoComplete="off"
             />
           </Field>
-          <Field label="Model">
-            <ModelPicker
-              provider="gemini"
-              settings={settings}
-              catalog={catalogBlocked.gemini ? undefined : catalogs.gemini}
-              blocked={catalogBlocked.gemini}
-              allowSavedUnknown={!discoveryInputChanged.gemini}
-              loading={catalogLoading.gemini}
-              onChange={(selection) => setSettings(withProviderSelection(settings, "gemini", selection))}
-              onRefresh={() => loadCatalog("gemini", settings, true)}
-            />
-          </Field>
+          <div
+            role="group"
+            aria-label="Antigravity model configuration"
+            className="grid grid-cols-2 gap-4"
+          >
+            <Field label="Model">
+              <ModelPicker
+                provider="antigravity"
+                settings={settings}
+                catalog={catalogBlocked.antigravity ? undefined : catalogs.antigravity}
+                blocked={catalogBlocked.antigravity}
+                accessIssue={accessIssues.antigravity}
+                allowSavedUnknown={!discoveryInputChanged.antigravity}
+                loading={catalogLoading.antigravity}
+                onChange={(selection) => setSettings(withProviderSelection(settings, "antigravity", selection))}
+                onRefresh={() => refreshProvider("antigravity")}
+              />
+            </Field>
+            <Field
+              label="Reasoning Effort"
+              help="Sent only on the Antigravity CLI transport; the Gemini API has no effort control."
+            >
+              <select
+                aria-label="Antigravity Reasoning Effort"
+                aria-describedby={accessIssues.antigravity ? "antigravity-model-access-note" : undefined}
+                value={settings.antigravity_effort}
+                disabled={
+                  catalogBlocked.antigravity
+                  || Boolean(accessIssues.antigravity)
+                  || providerTransport(settings, "antigravity") === "api"
+                }
+                onChange={(e) =>
+                  setSettings({ ...settings, antigravity_effort: e.target.value })
+                }
+                className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                <option value="">Default</option>
+                {effortOptions(
+                  catalogBlocked.antigravity ? undefined : catalogs.antigravity,
+                  providerSelection(settings, "antigravity"),
+                  ["low", "medium", "high"],
+                ).map((effort) => (
+                  <option key={effort} value={effort}>{effortLabel(effort)}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
         </ProviderGroup>
 
         {/* Local (Ollama / OpenAI-compatible) */}
         <ProviderGroup
           title="Local (Ollama)"
-          active={settings.preferred_provider === "local"}
+          active={defaultProviders.has("local")}
           help={<>Runs against any local OpenAI-compatible server. With{" "}
             <a
               href="https://ollama.com"
@@ -672,7 +895,7 @@ function LLMSection({
                 e.preventDefault();
                 void openOllamaSite();
               }}
-              className="underline cursor-pointer hover:text-gray-700 dark:hover:text-gray-300"
+              className="underline cursor-pointer hover:text-gray-700 dark:hover:text-neutral-300"
             >
               ollama.com
             </a>{" "}
@@ -739,77 +962,86 @@ function LLMSection({
           </Field>
         </ProviderGroup>
 
-        <Field label="Max Concurrent Referee Passes">
-          <div className="flex items-center gap-3">
-            <input
-              aria-label="Max Concurrent Referee Passes"
-              type="range"
-              min={1}
-              max={10}
-              value={settings.max_workers}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  max_workers: parseInt(e.target.value, 10),
-                })
-              }
-              className="flex-1 accent-gray-900 dark:accent-gray-300"
-            />
-            <span className="text-sm font-mono text-gray-700 dark:text-gray-300 w-6 text-center">
-              {settings.max_workers}
-            </span>
+        <section className="space-y-5 border-t border-gray-200 pt-8 dark:border-neutral-800">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Execution</h3>
+            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
+              Control concurrency, time limits, and retry behavior across model calls.
+            </p>
           </div>
-        </Field>
 
-        <Field
-          label="Step Timeout"
-          help="Maximum time for each LLM call. Orientation and extraction calls use half this value."
-        >
-          <div className="flex items-center gap-3">
-            <select
-              aria-label="Step Timeout"
-              value={settings.step_timeout_secs}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  step_timeout_secs: parseInt(e.target.value, 10),
-                })
-              }
-              className={selectClass}
-            >
-              <option value={600}>10 minutes</option>
-              <option value={1200}>20 minutes (default)</option>
-              <option value={1800}>30 minutes</option>
-              <option value={2700}>45 minutes</option>
-              <option value={3600}>60 minutes</option>
-            </select>
-          </div>
-        </Field>
+          <Field label="Maximum Concurrent Agents">
+            <div className="flex items-center gap-3">
+              <input
+                aria-label="Maximum Concurrent Agents"
+                type="range"
+                min={1}
+                max={20}
+                value={settings.max_workers}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    max_workers: parseInt(e.target.value, 10),
+                  })
+                }
+                className="flex-1 accent-gray-900 dark:accent-gray-300"
+              />
+              <span className="text-sm font-mono text-gray-700 dark:text-neutral-300 w-6 text-center">
+                {settings.max_workers}
+              </span>
+            </div>
+          </Field>
 
-        <Field
-          label="Step Retries"
-          help="Number of times to retry a failed step before giving up. Set to 0 for no retries."
-        >
-          <div className="flex items-center gap-3">
-            <input
-              aria-label="Step Retries"
-              type="range"
-              min={0}
-              max={5}
-              value={settings.max_retries}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  max_retries: parseInt(e.target.value, 10),
-                })
-              }
-              className="flex-1 accent-gray-900 dark:accent-gray-300"
-            />
-            <span className="text-sm font-mono text-gray-700 dark:text-gray-300 w-6 text-center">
-              {settings.max_retries}
-            </span>
-          </div>
-        </Field>
+          <Field
+            label="Step Timeout"
+            help="Maximum time for each LLM call. Orientation and extraction calls use half this value."
+          >
+            <div className="flex items-center gap-3">
+              <select
+                aria-label="Step Timeout"
+                value={settings.step_timeout_secs}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    step_timeout_secs: parseInt(e.target.value, 10),
+                  })
+                }
+                className={selectClass}
+              >
+                <option value={600}>10 minutes</option>
+                <option value={1200}>20 minutes (default)</option>
+                <option value={1800}>30 minutes</option>
+                <option value={2700}>45 minutes</option>
+                <option value={3600}>60 minutes</option>
+              </select>
+            </div>
+          </Field>
+
+          <Field
+            label="Step Retries"
+            help="Number of times to retry a failed step before giving up. Set to 0 for no retries."
+          >
+            <div className="flex items-center gap-3">
+              <input
+                aria-label="Step Retries"
+                type="range"
+                min={0}
+                max={5}
+                value={settings.max_retries}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    max_retries: parseInt(e.target.value, 10),
+                  })
+                }
+                className="flex-1 accent-gray-900 dark:accent-gray-300"
+              />
+              <span className="text-sm font-mono text-gray-700 dark:text-neutral-300 w-6 text-center">
+                {settings.max_retries}
+              </span>
+            </div>
+          </Field>
+        </section>
       </div>
     </>
   );
@@ -832,6 +1064,38 @@ function ExtractionSection({
       ),
     );
   }, []);
+  const automaticDescription = paddleInstalled
+    ? "PaddleOCR-VL Full Parser is installed, so Pipeline will use it. If the parser is later removed, Pipeline will use LLM extraction."
+    : "Uses PaddleOCR-VL Full Parser when it is installed; otherwise uses LLM extraction.";
+  const manualMethods = [
+    {
+      value: "paddleocr-vl-full",
+      label: "Local engine: PaddleOCR-VL 1.6 Full Parser",
+      quality: "Best quality",
+      qualityClass:
+        "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300",
+      description:
+        "Highest expected fidelity. Layout-aware extraction preserves reading order, structured blocks, title hierarchy, formula metadata, and cross-page tables.",
+    },
+    {
+      value: "llm",
+      label: "LLM",
+      quality: "High quality",
+      qualityClass:
+        "bg-blue-100 text-blue-700 dark:bg-blue-950/70 dark:text-blue-300",
+      description:
+        "Slightly less faithful than PaddleOCR-VL. Your configured provider reads the PDF in bounded page ranges; extraction can be slower and may add model cost.",
+    },
+    {
+      value: "pdftotext",
+      label: "pdftotext",
+      quality: "Basic quality",
+      qualityClass:
+        "bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-300",
+      description:
+        "Fastest option, but layout is flattened and equations are typically lost.",
+    },
+  ] as const;
 
   return (
     <>
@@ -842,58 +1106,92 @@ function ExtractionSection({
 
       <div className="space-y-4">
         <Field label="PDF Extraction Method">
-          <div className="space-y-1.5">
-            {settings.pdf_extractor === "marker" && (
-              <div
-                role="alert"
-                className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-              >
-                <div className="font-medium">Marker is unavailable in Pipeline 0.9.0</div>
-                <p className="mt-1 text-xs leading-relaxed">
-                  Its compatible Python dependency closure contains known security vulnerabilities.
-                  Choose PaddleOCR-VL, LLM extraction, or pdftotext below, then save Settings.
-                  Pipeline will not run a previously installed Marker executable.
-                </p>
-              </div>
-            )}
-            {(
-              [
-                ["auto", "Automatic", paddleInstalled
-                  ? "PaddleOCR-VL Full Parser is installed, so Pipeline will use it. If the parser is later removed, Pipeline will use LLM extraction."
-                  : "Uses PaddleOCR-VL Full Parser when it is installed; otherwise uses LLM extraction."],
-                ["llm", "LLM", "Your configured provider reads the PDF and extracts it to Markdown in bounded page ranges. Most faithful, but slower and potentially costly."],
-                ["paddleocr-vl-full", "Local engine: PaddleOCR-VL 1.6 Full Parser", "Layout-aware extraction with reading order, structured blocks, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses the managed Q8 model."],
-                ["pdftotext", "pdftotext (basic)", "Fast, but equations are lost."],
-              ] as const
-            ).map(([value, label, desc]) => (
-              <label
-                key={value}
-                className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
-                  settings.pdf_extractor === value
-                    ? "border-gray-900 dark:border-gray-300 bg-gray-50 dark:bg-gray-800/50"
-                    : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="pdf_extractor"
-                  value={value}
-                  checked={settings.pdf_extractor === value}
-                  onChange={(e) =>
-                    setSettings({ ...settings, pdf_extractor: e.target.value })
-                  }
-                  className="mt-0.5 accent-gray-900 dark:accent-gray-300"
-                />
-                <div>
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    {label}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    {desc}
-                  </div>
+          <div>
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
+                settings.pdf_extractor === "auto"
+                  ? "border-gray-900 bg-gray-50 dark:border-neutral-300 dark:bg-neutral-800/50"
+                  : "border-gray-200 hover:border-gray-300 dark:border-neutral-700 dark:hover:border-neutral-600"
+              }`}
+            >
+              <input
+                type="radio"
+                name="pdf_extractor"
+                value="auto"
+                aria-label="Automatic — Recommended"
+                checked={settings.pdf_extractor === "auto"}
+                onChange={(e) =>
+                  setSettings({ ...settings, pdf_extractor: e.target.value })
+                }
+                className="mt-0.5 accent-gray-900 dark:accent-gray-300"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">
+                    Automatic
+                  </span>
+                  <span className="rounded bg-gray-900 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-neutral-200 dark:text-neutral-900">
+                    Recommended
+                  </span>
                 </div>
-              </label>
-            ))}
+                <div className="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">
+                  {automaticDescription}
+                </div>
+              </div>
+            </label>
+
+            <div className="mb-1.5 mt-3 flex items-center justify-between gap-3 px-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
+                Manual methods
+              </span>
+              <span className="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-neutral-400">
+                Best to basic ↓
+              </span>
+            </div>
+
+            <div className="relative space-y-1.5 pl-4">
+              <div
+                aria-hidden="true"
+                className="absolute bottom-3 left-[3px] top-3 w-0.5 rounded-full bg-gradient-to-b from-emerald-500 via-blue-400 to-gray-300 dark:from-emerald-400 dark:via-blue-500 dark:to-neutral-600"
+              />
+              {manualMethods.map(({ value, label, quality, qualityClass, description }) => (
+                <label
+                  key={value}
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
+                    settings.pdf_extractor === value
+                      ? "border-gray-900 bg-gray-50 dark:border-neutral-300 dark:bg-neutral-800/50"
+                      : "border-gray-200 dark:border-neutral-700 hover:border-gray-300 dark:hover:border-neutral-600"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="pdf_extractor"
+                    value={value}
+                    aria-label={`${label} — ${quality}`}
+                    checked={settings.pdf_extractor === value}
+                    onChange={(e) =>
+                      setSettings({ ...settings, pdf_extractor: e.target.value })
+                    }
+                    className="mt-0.5 accent-gray-900 dark:accent-gray-300"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                      <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">
+                        {label}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${qualityClass}`}
+                      >
+                        {quality}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">
+                      {description}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
         </Field>
 
@@ -910,7 +1208,7 @@ function ExtractionSection({
 
         {paddleInstalled && (
           <>
-            <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
+            <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
             <SubsectionHeader
               label="PaddleOCR-VL recognition server"
               help="The Full Parser uses Pipeline's managed llama.cpp server for recognition; no separate llama.cpp installation is needed."
@@ -1025,7 +1323,7 @@ function ExtractionSection({
             </div>
             </div>
 
-            <div className="pl-1 border-l-2 border-gray-200 dark:border-gray-700 ml-1">
+            <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
               <SubsectionHeader
                 label="Full parser structure"
                 help="These options are included in the Full Parser cache fingerprint, so changing one creates a distinct cached result."
@@ -1193,7 +1491,7 @@ function GeneralSection({
         />
         <Toggle
           label="Automatic revision reconciliation"
-          description="When a matching completed run exists, add an AI comparison of addressed, remaining, and new concerns. This adds an LLM call to the run."
+          description="When a matching completed report exists, add an AI comparison of addressed, remaining, and new concerns. This adds an LLM call to the report."
           checked={settings.auto_revision_reconciliation}
           onChange={(v) =>
             setSettings({ ...settings, auto_revision_reconciliation: v })
@@ -1252,18 +1550,18 @@ function RunRetention({
         maxBytes: settings.max_saved_run_bytes,
       });
       if (preview.delete_count === 0) {
-        setPurgeResult("No completed runs were beyond the configured limits.");
+        setPurgeResult("No completed reports were beyond the configured limits.");
         await loadUsage();
         return;
       }
       const confirmed = window.confirm(
-        "Purge run history?\n\n" +
-        `This will permanently delete ${preview.delete_count} completed run${
+        "Purge report history?\n\n" +
+        `This will permanently delete ${preview.delete_count} completed report${
           preview.delete_count === 1 ? "" : "s"
         } (${fmtBytes(preview.delete_bytes)}). ` +
-        `${preview.remaining_count} run${preview.remaining_count === 1 ? "" : "s"} ` +
+        `${preview.remaining_count} report${preview.remaining_count === 1 ? "" : "s"} ` +
         `(${fmtBytes(preview.remaining_bytes)}) will remain.\n\n` +
-        "Deleted run artifacts cannot be recovered.",
+        "Deleted report artifacts cannot be recovered.",
       );
       if (!confirmed) return;
 
@@ -1275,15 +1573,15 @@ function RunRetention({
       });
       setPurgeResult(
         removed === 0
-          ? "No completed runs were beyond the configured limits."
-          : `Removed ${removed} completed run${removed === 1 ? "" : "s"}.`,
+          ? "No completed reports were beyond the configured limits."
+          : `Removed ${removed} completed report${removed === 1 ? "" : "s"}.`,
       );
       await loadUsage();
     } catch (error) {
       setPurgeError(
         `${purgeStarted
-          ? "Run history could not be purged"
-          : "The purge preview could not be loaded; no runs were deleted"}: ${
+          ? "Report history could not be purged"
+          : "The purge preview could not be loaded; no reports were deleted"}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -1295,34 +1593,34 @@ function RunRetention({
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-1.5">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Run history retention
+        <span className="text-sm font-medium text-gray-700 dark:text-neutral-300">
+          Report history retention
         </span>
-        <InfoButton label="Run history retention">
-          Past runs and their artifacts are stored under <code>~/.pipeline/runs/</code>. After
-          each run, Pipeline removes the oldest completed runs until both limits hold. Set a
+        <InfoButton label="Report history retention">
+          Past reports and their artifacts are stored under <code>~/.pipeline/runs/</code>. After
+          each report, Pipeline removes the oldest completed reports until both limits hold. Set a
           limit to 0 to disable it.
         </InfoButton>
         {usage && (
-          <span className="ml-auto text-xs font-normal text-gray-500 dark:text-gray-400">
-            {usage.count} run{usage.count === 1 ? "" : "s"} · {fmtBytes(usage.bytes)}
+          <span className="ml-auto text-xs font-normal text-gray-500 dark:text-neutral-400">
+            {usage.count} report{usage.count === 1 ? "" : "s"} · {fmtBytes(usage.bytes)}
           </span>
         )}
       </div>
       <div className="flex items-center gap-2">
         <input
-          aria-label="Maximum saved runs"
+          aria-label="Maximum saved reports"
           type="number"
           min={0}
           value={settings.max_saved_runs}
           onChange={(e) =>
             setSettings({ ...settings, max_saved_runs: Math.max(0, parseInt(e.target.value, 10) || 0) })
           }
-          className="w-24 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
+          className="w-24 py-2 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
         />
-        <span className="text-xs text-gray-500">runs and</span>
+        <span className="text-xs text-gray-500">reports and</span>
         <input
-          aria-label="Run history size limit in GB"
+          aria-label="Report history size limit in GB"
           type="number"
           min={0}
           max={1000}
@@ -1335,7 +1633,7 @@ function RunRetention({
                 Math.max(0, parseInt(e.target.value, 10) || 0) * 1_000_000_000,
             })
           }
-          className="w-24 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
+          className="w-24 py-2 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
         />
         <span className="text-xs text-gray-500">GB</span>
         <button
@@ -1344,11 +1642,11 @@ function RunRetention({
             purging ||
             (settings.max_saved_runs === 0 && settings.max_saved_run_bytes === 0)
           }
-          className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-neutral-600 text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           title={
             settings.max_saved_runs === 0 && settings.max_saved_run_bytes === 0
               ? "Set a limit above 0 to purge"
-              : "Delete runs beyond the limits now"
+              : "Delete reports beyond the limits now"
           }
         >
           {purging ? "Purging…" : "Purge now"}
@@ -1379,6 +1677,7 @@ function ModelPicker({
   settings,
   catalog,
   blocked,
+  accessIssue,
   allowSavedUnknown,
   loading,
   onChange,
@@ -1388,6 +1687,7 @@ function ModelPicker({
   settings: Settings;
   catalog?: ModelCatalog;
   blocked: boolean;
+  accessIssue?: ProviderAccessIssue | null;
   allowSavedUnknown: boolean;
   loading?: boolean;
   onChange: (selection: ModelSelection) => void;
@@ -1402,8 +1702,9 @@ function ModelPicker({
     <>
       <select
         aria-label={`${provider} model`}
+        aria-describedby={accessIssue ? `${provider}-model-access-note` : undefined}
         value={selectValue}
-        disabled={blocked}
+        disabled={blocked || Boolean(accessIssue)}
         onChange={(event) => onChange(decodeModelSelection(event.target.value)!)}
         className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-50`}
       >
@@ -1432,6 +1733,8 @@ function ModelPicker({
       <CatalogStatus
         blocked={blocked}
         catalog={catalog}
+        accessIssue={accessIssue}
+        accessNoteId={`${provider}-model-access-note`}
         loading={loading}
         onRefresh={onRefresh}
       />
@@ -1442,23 +1745,39 @@ function ModelPicker({
 function CatalogStatus({
   blocked = false,
   catalog,
+  accessIssue,
+  accessNoteId,
   loading,
   onRefresh,
 }: {
   blocked?: boolean;
   catalog?: ModelCatalog;
+  accessIssue?: ProviderAccessIssue | null;
+  accessNoteId?: string;
   loading?: boolean;
   onRefresh: () => void;
 }) {
   return (
-    <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+    <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-gray-500 dark:text-neutral-400">
       <span>
-        {loading ? "Discovering models…" : blocked
+        {accessIssue ? (
+          <span
+            id={accessNoteId}
+            className="block text-amber-700 dark:text-amber-300"
+          >
+            <span className="block font-medium">{accessIssue.summary}</span>
+            {accessIssue.detail && accessIssue.detail !== accessIssue.summary && (
+              <span className="block">{accessIssue.detail}</span>
+            )}
+          </span>
+        ) : loading ? "Discovering models…" : blocked
           ? "Save settings or Refresh to discover models for these values"
           : catalog
           ? `${catalog.transport.toUpperCase()} · ${catalog.source_version || catalog.source}${catalog.stale ? " · stale" : ""}`
           : "Catalog not loaded"}
-        {catalog?.warning && <span className="block text-amber-700 dark:text-amber-300">{catalog.warning}</span>}
+        {!accessIssue && catalog?.warning && (
+          <span className="block text-amber-700 dark:text-amber-300">{catalog.warning}</span>
+        )}
       </span>
       <button type="button" onClick={onRefresh} disabled={loading} className="shrink-0 underline disabled:opacity-40">
         Refresh
@@ -1468,10 +1787,10 @@ function CatalogStatus({
 }
 
 const selectClass =
-  "w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-gray-100/20 transition-[box-shadow,color,background-color,border-color]";
+  "w-full py-2 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-neutral-100/20 transition-[box-shadow,color,background-color,border-color]";
 
 const inputClass =
-  "w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-gray-100/20 transition-[box-shadow,color,background-color,border-color]";
+  "w-full py-2 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-neutral-100/20 transition-[box-shadow,color,background-color,border-color]";
 
 function SectionHeader({
   title,
@@ -1485,13 +1804,13 @@ function SectionHeader({
   return (
     <div className="mb-6">
       <div className="flex items-center gap-1.5">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-neutral-100">
           {title}
         </h3>
         {help && <InfoButton label={title}>{help}</InfoButton>}
       </div>
       {description && (
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        <p className="text-sm text-gray-500 dark:text-neutral-400 mt-1">
           {description}
         </p>
       )}
@@ -1510,7 +1829,7 @@ function Field({
 }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+      <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-neutral-300">
         <span>{label}</span>
         {help && <InfoButton label={label}>{help}</InfoButton>}
       </div>
@@ -1527,7 +1846,7 @@ function SubsectionHeader({
   help?: React.ReactNode;
 }) {
   return (
-    <div className="mb-3 flex items-center gap-1.5 pl-4 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+    <div className="mb-3 flex items-center gap-1.5 pl-4 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-neutral-400">
       <span>{label}</span>
       {help && <InfoButton label={label}>{help}</InfoButton>}
     </div>
@@ -1548,7 +1867,7 @@ function Toggle({
   return (
     <div
       onClick={() => onChange(!checked)}
-      className="flex cursor-pointer items-start gap-3 rounded-lg p-3 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/40"
+      className="flex cursor-pointer items-start gap-3 rounded-lg p-3 transition-colors hover:bg-gray-50 dark:hover:bg-neutral-800/40"
     >
       <button
         type="button"
@@ -1561,18 +1880,18 @@ function Toggle({
         }}
         className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors mt-0.5 ${
           checked
-            ? "bg-gray-900 dark:bg-gray-200"
-            : "bg-gray-300 dark:bg-gray-600"
+            ? "bg-gray-900 dark:bg-neutral-200"
+            : "bg-gray-300 dark:bg-neutral-600"
         }`}
       >
         <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white dark:bg-gray-900 transition-transform ${
+          className={`inline-block h-3.5 w-3.5 rounded-full bg-white dark:bg-neutral-900 transition-transform ${
             checked ? "translate-x-[18px]" : "translate-x-[3px]"
           }`}
         />
       </button>
       <div className="flex-1">
-        <div className="flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-gray-100">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-neutral-100">
           <span>{label}</span>
           <InfoButton label={label}>{description}</InfoButton>
         </div>

@@ -1,0 +1,1 @@
+Evaluate the people and place served, design problem, site and institutional context, program and constraints, artifact or plan, performance and experience, implementation, and evidence connecting design choices to the claimed outcome. Use this fallback only for genuinely cross-disciplinary design work.

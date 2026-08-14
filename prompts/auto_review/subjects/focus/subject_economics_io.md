@@ -1,0 +1,1 @@
+Assess market definition, demand and substitution, firm information and conduct, entry and dynamics, equilibrium, identification of markups or primitives, counterfactual policy, pass-through, and welfare allocation across consumers and firms.

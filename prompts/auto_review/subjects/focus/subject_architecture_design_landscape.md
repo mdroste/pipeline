@@ -1,0 +1,1 @@
+Review site history and ecology, hydrology and climate, soils and vegetation, circulation and access, maintenance and succession, human use, seasonal performance, representation and construction, and whether site evidence supports ecological and social outcomes over the claimed time horizon.

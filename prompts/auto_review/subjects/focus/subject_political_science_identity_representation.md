@@ -1,0 +1,1 @@
+Review group and citizenship categories, historical and institutional context, descriptive and substantive representation, mobilization and participation, discrimination and exclusion, intersectionality, elite and mass linkages, measurement equivalence, within-group heterogeneity, and whether political outcomes follow from identity, institutions, or correlated social position.

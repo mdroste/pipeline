@@ -1,0 +1,1 @@
+Assess the normative problem, conceptual distinctions, institutional setting, argumentative premises, treatment of objections, feasibility and idealization, relation to canonical positions, and whether prescriptions follow at the level of political authority claimed.

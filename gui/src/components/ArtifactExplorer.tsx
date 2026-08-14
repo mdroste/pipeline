@@ -29,6 +29,7 @@ interface PageArtifactIndex {
 }
 
 export interface RunManifest {
+  artifact_schema_version?: number;
   run_id: string;
   created: string;
   input_path: string;
@@ -681,7 +682,7 @@ function DocumentBundleView({
                     {asset.media_type}
                   </div>
                   <div className="mt-1 truncate font-mono text-[10px] text-gray-600 dark:text-gray-400">{asset.rel_path}</div>
-                  {!canOpen && <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">Asset missing from this run</div>}
+                  {!canOpen && <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">Asset missing from this report</div>}
                 </button>
               );
             })}
@@ -914,7 +915,7 @@ const Viewer = memo(function Viewer({
   }
 });
 
-const GROUPS: { id: string; label: string }[] = [
+const GROUPS: { id: string; label: string; description?: string }[] = [
   { id: "report", label: "Report" },
   { id: "document", label: "Document" },
   { id: "pages", label: "Pages" },
@@ -922,8 +923,16 @@ const GROUPS: { id: string; label: string }[] = [
   { id: "tables", label: "Tables" },
   { id: "equations", label: "Equations" },
   { id: "context", label: "Context" },
-  { id: "agent_response", label: "Agent reports" },
-  { id: "step", label: "Steps" },
+  {
+    id: "agent_response",
+    label: "Agent reports",
+    description: "Provider responses, including retries and merge calls.",
+  },
+  {
+    id: "step",
+    label: "Step outputs",
+    description: "One finalized result per workflow step, after agent merging.",
+  },
   { id: "files", label: "Files" },
 ];
 
@@ -1127,6 +1136,135 @@ const ArtifactList = memo(function ArtifactList({
         </button>
       )}
     </>
+  );
+});
+
+interface AgentReportGroup {
+  key: string;
+  label: string;
+  order: number;
+  items: ArtifactEntry[];
+}
+
+function artifactStem(entry: ArtifactEntry): string {
+  return entry.rel_path
+    .split("/")
+    .pop()
+    ?.replace(/\.[^.]+$/, "") ?? "";
+}
+
+function comparableProducer(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function stepOutputIdentity(entry: ArtifactEntry, fallbackOrder: number) {
+  const stem = artifactStem(entry);
+  const match = stem.match(/^(\d+)_([^]*)$/);
+  const order = match ? Number(match[1]) : fallbackOrder;
+  const key = comparableProducer(match?.[2] ?? stem);
+  // Multi-agent outputs used to retain a synthetic "[Agent]" suffix even
+  // after the reports had been merged. It identifies a provider call, not a
+  // separate workflow step, so omit it from the group heading.
+  const label = entry.label.replace(/\s+\[[^\]]+\]\s*$/, "").trim() || entry.label;
+  return { key, label, order };
+}
+
+function agentResponseProducer(entry: ArtifactEntry): { key: string; merge: boolean } {
+  const stem = artifactStem(entry);
+  const producer = stem.split(/--[a-f0-9]{12}--attempt-/i, 1)[0] ?? stem;
+  const merge = producer.startsWith("merge-");
+  return {
+    key: comparableProducer(merge ? producer.slice("merge-".length) : producer),
+    merge,
+  };
+}
+
+/**
+ * Agent-response filenames contain a producer-derived key. Finalized
+ * step-output filenames contain the corresponding key and a leading output
+ * number, so they provide a durable step order without loading report.json
+ * (Sources remains manifest-only until an item is read).
+ */
+function groupAgentReports(
+  items: ArtifactEntry[],
+  stepOutputs: ArtifactEntry[],
+): AgentReportGroup[] {
+  const steps = stepOutputs.map(stepOutputIdentity);
+  const groups = new Map<string, AgentReportGroup>();
+
+  items.forEach((item, itemIndex) => {
+    const producer = agentResponseProducer(item);
+    // Prefer the longest match when one step id prefixes another (for example,
+    // "technical" and "technical-appendix"). A suffix denotes an agent or a
+    // fan-out unit belonging to that logical step.
+    const step = steps
+      .filter(({ key }) => producer.key === key || producer.key.startsWith(`${key}-`))
+      .sort((a, b) => b.key.length - a.key.length)[0];
+    const key = step?.key ?? `unmatched:${producer.key}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(item);
+      return;
+    }
+    groups.set(key, {
+      key,
+      label: step?.label ?? item.label.split(" · Attempt", 1)[0] ?? item.label,
+      order: step?.order ?? Number.MAX_SAFE_INTEGER - items.length + itemIndex,
+      items: [item],
+    });
+  });
+
+  return [...groups.values()]
+    .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort((a, b) => {
+        const producerA = agentResponseProducer(a);
+        const producerB = agentResponseProducer(b);
+        // Individual agent responses precede the cross-agent merge report.
+        if (producerA.merge !== producerB.merge) return producerA.merge ? 1 : -1;
+        return a.rel_path.localeCompare(b.rel_path, undefined, { numeric: true });
+      }),
+    }));
+}
+
+const AgentReportList = memo(function AgentReportList({
+  items,
+  stepOutputs,
+  onSelect,
+  selected,
+}: {
+  items: ArtifactEntry[];
+  stepOutputs: ArtifactEntry[];
+  onSelect: (path: string) => void;
+  selected: string;
+}) {
+  const groups = useMemo(
+    () => groupAgentReports(items, stepOutputs),
+    [items, stepOutputs],
+  );
+
+  return (
+    <div className="space-y-2.5">
+      {groups.map((group) => (
+        <section key={group.key}>
+          <h5
+            className="mb-1 truncate px-2 text-[11px] font-medium text-gray-700 dark:text-gray-300"
+            title={group.label}
+          >
+            {group.label}
+          </h5>
+          <ArtifactList
+            items={group.items}
+            selected={selected}
+            onSelect={onSelect}
+          />
+        </section>
+      ))}
+    </div>
   );
 });
 
@@ -1362,10 +1500,22 @@ export default function ArtifactExplorer({
                   <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
                     {g.label}
                   </h4>
+                  {g.description && (
+                    <p className="mb-1.5 px-0.5 text-[10px] leading-snug text-gray-500 dark:text-gray-500">
+                      {g.description}
+                    </p>
+                  )}
                   {g.id === "pages" ? (
                     <PageBrowser
                       items={items}
                       index={compactPages}
+                      selected={selected}
+                      onSelect={selectArtifact}
+                    />
+                  ) : g.id === "agent_response" ? (
+                    <AgentReportList
+                      items={items}
+                      stepOutputs={artifactsByGroup.get("step") ?? []}
                       selected={selected}
                       onSelect={selectArtifact}
                     />

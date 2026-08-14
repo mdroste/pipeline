@@ -1,0 +1,1 @@
+Review the electronic or molecular model, potential-energy landscape, spectroscopic assignment, kinetic regime, solvent and temperature effects, approximation hierarchy, calibration, and connection between calculated quantities and experimental observables.

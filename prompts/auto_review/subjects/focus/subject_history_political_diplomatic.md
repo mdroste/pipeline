@@ -1,0 +1,1 @@
+Assess state and nonstate actors, decision sequence, institutional authority, diplomatic and military sources, strategic retrospective bias, contingency, multiple theaters or levels, and whether elite archives are sufficient for the broader political claim.

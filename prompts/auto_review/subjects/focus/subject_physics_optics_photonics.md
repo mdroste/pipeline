@@ -1,0 +1,1 @@
+Review the electromagnetic and wave regime, source coherence and stability, material dispersion and loss, mode and polarization structure, resolution and calibration, nonlinear thresholds, detector response, noise, fabrication tolerances, and whether measured optical performance establishes the claimed propagation or light-matter mechanism.

@@ -1,222 +1,371 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
+import FlappyBirdGame from "./FlappyBirdGame";
+import type { AppPage } from "./NavRail";
 
 interface Props {
   onClose: () => void;
   showBack?: boolean;
+  /** Lets Help sections jump to the page they describe; links are hidden without it. */
+  onNavigate?: (page: AppPage) => void;
+  /** Jumps to the PaddleOCR-VL install card in Settings → PDF Extraction. */
+  onOpenPdfSettings?: () => void;
+  /** Opens and scrolls to a section on arrival (used by the run-setup privacy link). */
+  initialSection?: "privacy";
 }
 
-export default function AboutPage({ onClose, showBack = true }: Props) {
-  return (
-    <div className="p-8 max-w-3xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-          Help
-        </h2>
-        {showBack && (
-          <button
-            onClick={onClose}
-            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-          >
-            Back
-          </button>
-        )}
-      </div>
+const KONAMI_CODE = [
+  "ArrowUp",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowLeft",
+  "ArrowRight",
+  "b",
+  "a",
+  "Enter",
+] as const;
 
-      <HelpContent />
-      <AboutFooter />
-    </div>
+function useKonamiCode(onComplete: () => void) {
+  const callbackRef = useRef(onComplete);
+  callbackRef.current = onComplete;
+
+  useEffect(() => {
+    let position = 0;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+      const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      if (key === KONAMI_CODE[position]) {
+        position += 1;
+        if (position === KONAMI_CODE.length) {
+          event.preventDefault();
+          position = 0;
+          callbackRef.current();
+        }
+        return;
+      }
+      position = key === KONAMI_CODE[0] ? 1 : 0;
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+}
+
+export default function AboutPage({
+  onClose,
+  showBack = true,
+  onNavigate,
+  onOpenPdfSettings,
+  initialSection,
+}: Props) {
+  const [gameOpen, setGameOpen] = useState(false);
+  useKonamiCode(() => setGameOpen(true));
+
+  return (
+    <>
+      <div className="p-8 max-w-3xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+            Help
+          </h2>
+          {showBack && (
+            <button
+              onClick={onClose}
+              className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            >
+              Back
+            </button>
+          )}
+        </div>
+
+        <HelpContent
+          onNavigate={onNavigate}
+          onOpenPdfSettings={onOpenPdfSettings}
+          initialSection={initialSection}
+        />
+        <AboutFooter />
+      </div>
+      {gameOpen && <FlappyBirdGame onClose={() => setGameOpen(false)} />}
+    </>
   );
 }
 
-function HelpContent() {
+function HelpContent({
+  onNavigate,
+  onOpenPdfSettings,
+  initialSection,
+}: {
+  onNavigate?: (page: AppPage) => void;
+  onOpenPdfSettings?: () => void;
+  initialSection?: "privacy";
+}) {
+  const privacyRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (initialSection === "privacy") {
+      privacyRef.current?.scrollIntoView?.({ block: "start" });
+    }
+  }, [initialSection]);
+
   return (
     <div className="space-y-8">
       {/* Overview */}
       <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-        Pipeline runs a set of AI-assisted steps as a workflow. A step can
-        examine part of an input, check a specific kind of problem, or combine
-        earlier findings. You can use a built-in workflow or create one for a
-        document, a folder of files, or a task that needs no input.
+        Pipeline runs a workflow of AI review steps over a paper, grant
+        proposal, or folder of files and combines the findings into one report.
       </p>
 
-      {/* Pipeline stages */}
-      <Section title="How a run works">
+      {/* Setup */}
+      <Section title="Before your first report">
+        <div className="space-y-2">
+          <BadgeRow
+            badge="Required"
+            badgeColor="text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/30"
+            title="An AI provider"
+          >
+            Sign in with the Claude Code, Codex, or Antigravity CLI; add an
+            Anthropic, OpenAI, or Google API key in Settings; or connect a
+            local OpenAI-compatible server. A CLI subscription works without
+            an API key. The status button in the lower-left corner shows what
+            Pipeline found.
+            <NavLink
+              onClick={onNavigate && (() => onNavigate("settings"))}
+              label="Open Settings"
+            />
+          </BadgeRow>
+          <BadgeRow
+            badge="Included"
+            badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+            title="PDF tools"
+          >
+            The tools that render PDF pages, check extraction completeness,
+            and run pdftotext are bundled. Nothing else is required.
+          </BadgeRow>
+          <BadgeRow
+            badge="Highly recommended"
+            badgeColor="text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-900/30"
+            title="PaddleOCR-VL Full Parser"
+          >
+            A local PDF parser that recovers reading order, headings,
+            formulas, and tables, with no extra model calls. Install it once
+            under Settings → PDF Extraction.
+            <NavLink onClick={onOpenPdfSettings} label="Install in Settings" />
+          </BadgeRow>
+        </div>
+      </Section>
+
+      {/* Quick start */}
+      <Section title="Quick start">
         <div className="grid gap-3">
           <StageCard
             number="1"
             title="Choose a workflow and input"
-            description="On New run, select one or more files or a folder, then say whether Pipeline should treat the selection as one document, one LaTeX project, a browsable source tree, or independent batch jobs."
+            description="On New report, pick a workflow, then select files or a folder and say how Pipeline should treat the selection — one document, a LaTeX project, a browsable folder, or a batch."
           />
           <StageCard
             number="2"
-            title="Review the run preview"
-            description="Pipeline shows the bound stages, providers, artifact access, tools, and configured work-unit range. Nothing starts until you confirm the preview."
+            title="Confirm the preview"
+            description="Pipeline shows which steps will run, which provider they will use, and what they may read. Nothing starts until you confirm."
           />
           <StageCard
             number="3"
-            title="Prepare the material"
-            description="Pipeline extracts document text or inventories a folder. If the workflow uses an orientation map, it also creates a short guide to the material so later steps can find relevant sections, files, tables, and other details."
-          />
-          <StageCard
-            number="4"
-            title="Run the workflow"
-            description="Pipeline starts each step after its prerequisites finish. Steps that do not depend on one another can run at the same time. Each step receives only the input and earlier results allowed by the workflow."
-          />
-          <StageCard
-            number="5"
-            title="Review the result"
-            description="Later steps can combine overlapping findings into one report. When a workflow produces structured issues, you can accept, reject, or annotate them. The Sources tab contains the material saved with the run."
+            title="Read the report"
+            description="Pipeline extracts the text, builds a short survey of the material so each step knows where things are, runs the steps, and opens the finished report."
           />
         </div>
       </Section>
 
-      {/* Profiles */}
-      <Section title="Profiles">
-        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
-          A profile saves a complete workflow: its steps, prompts, and settings.
-          Choose a profile on the New run screen. Pipeline includes these
-          profiles:
-        </p>
-        <div className="grid gap-2">
-          <ProfileCard
-            name="Paper Review (Auto)"
-            description="Detects the paper's discipline, subfield, and methods, then assembles one or two subject specialists and one to four method specialists alongside three core reviews. The saved profile stays compact."
-          />
-          <ProfileCard
-            name="Paper Review (Full)"
-            description="Five focused reviews of a paper, followed by a consolidated report. It also includes an optional validation step."
-          />
-          <ProfileCard
-            name="Paper Review (Quick)"
-            description="Two broad review passes followed by a consolidated report."
-          />
-          <ProfileCard
-            name="Grant Proposal Review"
-            description="Reviews a proposal's aims and novelty, feasibility, readability, and internal consistency. The aims step can search the web."
-          />
-        </div>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-          You can also create, duplicate, import, and export profiles. Gallery
-          installs curated starting points as ordinary editable profiles.
-        </p>
-      </Section>
+      {/* Reference sections, collapsed by default */}
+      <div className="border-t border-gray-200 dark:border-gray-800">
+        <Collapsible title="Workflows">
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            A workflow is a saved recipe: its steps, prompts, and settings.
+            Pick one on New report; edit the active one on the Workflows page.
+            Steps run as soon as their prerequisites finish, and independent
+            steps run at the same time.
+          </p>
+          <div className="space-y-1.5">
+            <BuiltinRow
+              name="Auto Paper Review"
+              description="Classifies the paper's field and methods, then assembles 2–6 matching specialist reviewers alongside three core reviews."
+            />
+            <BuiltinRow
+              name="Paper Review (Full)"
+              description="Five focused reviews, a consolidated report, and an optional validation pass."
+            />
+            <BuiltinRow
+              name="Paper Review (Quick)"
+              description="Two broad review passes and a consolidated report."
+            />
+            <BuiltinRow
+              name="Grant Proposal Review"
+              description="Reviews aims and novelty, feasibility, readability, and internal consistency."
+            />
+          </div>
+          <div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-2">
+              On the Workflows page you can:
+            </p>
+            <ul className="space-y-1.5">
+              <CheckItem text="Add, remove, reorder, or rewrite steps, and choose what each step may read" />
+              <CheckItem text="Pick a provider and model per step, or run one step with several providers and merge the results" />
+              <CheckItem text="Allow web search, add run conditions, repeat a step over matching files, or collect values before a report starts" />
+              <CheckItem text="Import and export a step, a workflow, or all workflows and settings" />
+            </ul>
+          </div>
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            The Gallery installs curated workflows as ordinary editable copies.
+          </p>
+          <div className="flex gap-4">
+            <NavLink
+              onClick={onNavigate && (() => onNavigate("pipeline"))}
+              label="Open Workflows"
+            />
+            <NavLink
+              onClick={onNavigate && (() => onNavigate("gallery"))}
+              label="Open Gallery"
+            />
+          </div>
+        </Collapsible>
 
-      {/* Customization */}
-      <Section title="Customize a workflow">
-        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
-          Open <span className="font-medium text-gray-700 dark:text-gray-300">Workflows</span> from
-          the left navigation to edit the active profile. You can:
-        </p>
-        <ul className="space-y-1.5">
-          <CheckItem text="Add, remove, reorder, or rewrite steps" />
-          <CheckItem text="Choose which steps must finish first and which earlier results a step may use" />
-          <CheckItem text="Choose a provider and model, or run the same step with several providers" />
-          <CheckItem text="Allow web search on supported providers" />
-          <CheckItem text="Add conditions, repeated file checks, named inputs, and values entered before a run" />
-          <CheckItem text="Set the input type and PDF extraction method" />
-          <CheckItem text="Import or export a step, a profile, or all profiles and settings" />
+        <Collapsible title="Reading your report">
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            A finished report opens in a workspace with three tabs. Report is
+            the consolidated write-up. Issues lists structured findings you can
+            accept, reject, or annotate; evidence links open the cited page or
+            file. Sources holds the material saved with the report.
+          </p>
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            Save the report as Markdown or PDF, or export everything — sources,
+            page images, figures, step reports, and logs.
+          </p>
+        </Collapsible>
+
+        <Collapsible title="History & Projects">
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            History lists every saved report. Rename, tag, or delete reports;
+            resume an interrupted one; rerun one from scratch; or compare two
+            side by side. Settings can also add a model-written comparison
+            automatically when Pipeline finds an earlier report for the same
+            document.
+          </p>
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            Projects group related reports and revisions and keep a running
+            ledger of issues across them, without moving or deleting anything.
+          </p>
+          <div className="flex gap-4">
+            <NavLink
+              onClick={onNavigate && (() => onNavigate("history"))}
+              label="Open History"
+            />
+            <NavLink
+              onClick={onNavigate && (() => onNavigate("projects"))}
+              label="Open Projects"
+            />
+          </div>
+        </Collapsible>
+
+        <Collapsible title="PDF & document handling">
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            Pipeline prepares a text version of each document before the
+            workflow begins. LaTeX and Word files are read directly. For PDFs,
+            pick a method in the workflow or inherit the choice from
+            Settings → PDF Extraction.
+          </p>
+          <div className="space-y-2">
+            <BadgeRow
+              badge="Included"
+              badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+              title="LaTeX and Word"
+            >
+              Read directly, keeping equations and table structure. A LaTeX
+              project also keeps page images from its compiled PDF when one is
+              present.
+            </BadgeRow>
+            <BadgeRow
+              badge="Uses your provider"
+              badgeColor="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-900/30"
+              title="LLM PDF extraction"
+            >
+              The model transcribes the PDF in page ranges. This costs model
+              calls but usually preserves equations and layout best. Pipeline
+              stops if its page checks fail.
+            </BadgeRow>
+            <BadgeRow
+              badge="Optional install"
+              badgeColor="text-gray-700 bg-gray-100 dark:text-gray-300 dark:bg-gray-700/50"
+              title="PaddleOCR-VL Full Parser"
+            >
+              A local engine that recovers reading order, headings, formulas,
+              and tables. Install it under Settings → PDF Extraction.
+            </BadgeRow>
+            <BadgeRow
+              badge="Included"
+              badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+              title="pdftotext"
+            >
+              Fast local plain-text extraction. Fine for simple text;
+              equations and complex layouts may not survive.
+            </BadgeRow>
+          </div>
+        </Collapsible>
+
+        <Collapsible title="Batch reports">
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            To review several documents with the same workflow, select
+            multiple files on New report, or choose a folder and set its
+            meaning to Batch of documents. Each document becomes an
+            independent report and the queue appears under Current batch.
+          </p>
+        </Collapsible>
+
+        <Collapsible
+          title="Data & privacy"
+          defaultOpen={initialSection === "privacy"}
+          detailsRef={privacyRef}
+        >
+          <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400 leading-relaxed list-disc pl-5">
+            <li>
+              Reports, sources, and logs stay on this computer under{" "}
+              <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">
+                ~/.pipeline/runs/
+              </code>{" "}
+              until you delete them or set a retention limit in Settings.
+            </li>
+            <li>
+              Each step reads only the material its workflow allows. When a
+              step runs on a cloud provider, that material is sent through the
+              provider's CLI or API and is subject to your provider account's
+              plan and data-use terms.
+            </li>
+            <li>
+              If a workflow enables web search and the provider supports it,
+              search queries are also sent to an external service.
+            </li>
+          </ul>
+          <ExternalLink url="https://github.com/mdroste/pipeline/blob/main/PRIVACY.md">
+            Full privacy details
+          </ExternalLink>
+        </Collapsible>
+      </div>
+
+      {/* Troubleshooting */}
+      <Section title="Something not working?">
+        <ul className="space-y-1.5 text-sm text-gray-600 dark:text-gray-400 leading-relaxed list-disc pl-5">
+          <li>
+            The status button in the lower-left corner reports missing CLIs,
+            keys, and tools.
+          </li>
+          <li>
+            The Console at the bottom of the workspace has per-step logs;
+            failed steps keep their error output.
+          </li>
+          <li>Found a bug? Open an issue through the GitHub link below.</li>
         </ul>
-      </Section>
-
-      <Section title="Run several documents">
-        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-          On <span className="font-medium text-gray-700 dark:text-gray-300">New run</span>,
-          select several documents or choose a folder and set its meaning to
-          <span className="font-medium text-gray-700 dark:text-gray-300"> Batch of documents</span>.
-          Pipeline applies the active workflow to each supported document as an
-          independent run and shows the queue in the same workspace.
-        </p>
-      </Section>
-
-      {/* Text extraction */}
-      <Section title="Document extraction">
-        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-3">
-          Pipeline prepares a text version of each document before the workflow
-          begins. LaTeX and Word files are read directly. For PDFs, choose a
-          method in the workflow or inherit the choice from Settings.
-        </p>
-        <div className="space-y-2">
-          <TierCard
-            tier="Source"
-            tierColor="text-green-700 bg-green-50"
-            title="LaTeX source"
-            description="Reads a .tex file directly, including safe local files referenced with \input{}. If a matching PDF is available, Pipeline also keeps its page images."
-          />
-          <TierCard
-            tier="Built in"
-            tierColor="text-green-700 bg-green-50"
-            title="Word (.docx)"
-            description="Reads the Word file directly and keeps equations, table structure, and embedded images."
-          />
-          <TierCard
-            tier="Provider"
-            tierColor="text-blue-700 bg-blue-50"
-            title="LLM PDF extraction"
-            description="Uses the active provider to transcribe the PDF in page ranges. This adds model calls, but usually preserves equations and layout better than plain-text extraction. Pipeline stops if its page checks fail."
-          />
-          <TierCard
-            tier="Local add-on"
-            tierColor="text-blue-700 bg-blue-50"
-            title="PaddleOCR-VL Full Parser"
-            description="Uses the optional local engine to recover reading order, document regions, headings, formulas, and tables. Install and configure it under Settings → PDF Extraction."
-          />
-          <TierCard
-            tier="Built in"
-            tierColor="text-amber-700 bg-amber-50"
-            title="pdftotext"
-            description="Extracts plain text locally with bundled PDF tools. It is quick and works well for simple text, but equations and complex layouts may not survive."
-          />
-        </div>
-      </Section>
-
-      {/* Results */}
-      <Section title="Results, history, and exports">
-        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-          Finished runs open in a workspace with Report, Issues, and Sources
-          tabs. You can save the report as Markdown or PDF, or export the whole
-          run with its reports, source material, page images, figures, and logs.
-          History lets you rename, tag, delete, resume, rerun, and compare saved
-          runs. Evidence references on structured issues open the cited page or
-          saved artifact in Sources. Projects group related runs and revisions
-          and maintain a persistent issue ledger across paper, source-tree, and
-          other structured reports without moving or deleting the runs. Automatic revision reconciliation in Settings can add a model-written
-          comparison when Pipeline finds an earlier run for the same document.
-        </p>
-      </Section>
-
-      <Section title="Data and privacy">
-        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-          Each step receives only the source material and earlier results allowed
-          by its workflow. When you use a cloud provider, that material is sent
-          through the provider's CLI or API and is subject to the provider's
-          account, plan, and data-use terms. If a workflow enables web search and
-          the provider supports it, search queries are also sent to an external
-          service. Pipeline stores run records and artifacts on this computer under{" "}
-          <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">
-            ~/.pipeline/runs/
-          </code>{" "}
-          until you delete them or set a retention limit in Settings.
-        </p>
-      </Section>
-
-      {/* Requirements */}
-      <Section title="Requirements">
-        <div className="space-y-2">
-          <ReqCard
-            name="An AI provider"
-            tag="Required"
-            tagColor="text-red-700 bg-red-50"
-            description="Sign in with the Claude Code, Codex, or Gemini CLI; add a supported API key; or connect an OpenAI-compatible local server. A CLI subscription can work without a separate API key. Use the status button in the lower-left corner to check setup."
-          />
-          <ReqCard
-            name="PDF tools"
-            tag="Included"
-            tagColor="text-green-700 bg-green-50"
-            description="Pipeline includes the tools it needs to render PDF pages, check extraction completeness, and run pdftotext. There is nothing else to install."
-          />
-        </div>
       </Section>
     </div>
   );
@@ -227,11 +376,67 @@ function HelpContent() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wide mb-3">
+      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
         {title}
       </h3>
       {children}
     </div>
+  );
+}
+
+function Collapsible({
+  title,
+  children,
+  defaultOpen = false,
+  detailsRef,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  detailsRef?: React.Ref<HTMLDetailsElement>;
+}) {
+  return (
+    <details
+      ref={detailsRef}
+      open={defaultOpen}
+      className="group border-b border-gray-200 dark:border-gray-800"
+    >
+      <summary className="flex cursor-pointer select-none items-center justify-between gap-2 py-3 text-sm font-semibold text-gray-800 dark:text-gray-200 list-none [&::-webkit-details-marker]:hidden">
+        {title}
+        <svg
+          className="w-4 h-4 shrink-0 text-gray-400 transition-transform group-open:rotate-180"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path
+            fillRule="evenodd"
+            d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </summary>
+      <div className="pb-4 space-y-3">{children}</div>
+    </details>
+  );
+}
+
+function NavLink({
+  onClick,
+  label,
+}: {
+  onClick?: () => void;
+  label: string;
+}) {
+  if (!onClick) return null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="block mt-1 text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+    >
+      {label} <span aria-hidden="true">→</span>
+    </button>
   );
 }
 
@@ -249,9 +454,9 @@ function StageCard({ number, title, description }: { number: string; title: stri
   );
 }
 
-function ProfileCard({ name, description }: { name: string; description: string }) {
+function BuiltinRow({ name, description }: { name: string; description: string }) {
   return (
-    <div className="flex items-baseline gap-2 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
+    <div className="flex items-baseline gap-2">
       <span className="text-sm font-medium text-gray-800 dark:text-gray-200 shrink-0">{name}</span>
       <span className="text-xs text-gray-500 dark:text-gray-400">{description}</span>
     </div>
@@ -260,7 +465,7 @@ function ProfileCard({ name, description }: { name: string; description: string 
 
 function CheckItem({ text }: { text: string }) {
   return (
-    <li className="flex items-start gap-2 text-sm text-gray-600">
+    <li className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
       <svg className="w-4 h-4 text-green-700 dark:text-green-400 mt-0.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
       </svg>
@@ -269,30 +474,58 @@ function CheckItem({ text }: { text: string }) {
   );
 }
 
-function TierCard({ tier, tierColor, title, description }: { tier: string; tierColor: string; title: string; description: string }) {
+function BadgeRow({
+  badge,
+  badgeColor,
+  title,
+  children,
+}: {
+  badge: string;
+  badgeColor: string;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
-      <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${tierColor}`}>
-        {tier}
+    <div className="flex items-start gap-3">
+      <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 whitespace-nowrap ${badgeColor}`}>
+        {badge}
       </span>
       <div>
         <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{title}</p>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{description}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{children}</p>
       </div>
     </div>
   );
 }
 
-function ReqCard({ name, tag, tagColor, description }: { name: string; tag: string; tagColor: string; description: string }) {
+function ExternalLink({ url, children }: { url: string; children: React.ReactNode }) {
+  const [error, setError] = useState("");
+
+  const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    setError("");
+    void openUrl(url).catch((cause) => {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      setError(
+        `Pipeline could not open the link in your browser${detail ? `: ${detail}` : "."} You can copy the address from the link instead.`,
+      );
+    });
+  };
+
   return (
-    <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
-      <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${tagColor}`}>
-        {tag}
-      </span>
-      <div>
-        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{name}</p>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{description}</p>
-      </div>
+    <div>
+      <a
+        href={url}
+        onClick={handleClick}
+        className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
+      >
+        {children}
+      </a>
+      {error && (
+        <p role="alert" className="mt-1 text-xs leading-relaxed text-red-700 dark:text-red-300">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

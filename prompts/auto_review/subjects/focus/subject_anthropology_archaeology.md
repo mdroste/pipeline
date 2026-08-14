@@ -1,0 +1,1 @@
+Review provenience, chronology and dating, formation and preservation, sampling, typology, material analysis, site and regional context, analogy, heritage ethics, and whether fragmentary remains support claims about past practice or social organization.

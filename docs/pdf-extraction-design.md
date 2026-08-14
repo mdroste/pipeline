@@ -37,19 +37,6 @@ pinned runtime without reinstalling Python or Paddle. Supported release
 targets are macOS arm64, Windows x64, and Linux x64/arm64. Full Parser is
 unavailable on Intel macOS because PaddlePaddle 3.2.1 has no matching wheel.
 
-## Security retirement (2026-07-27)
-
-Marker installation and execution were removed for Pipeline 0.9.0. The
-Marker release compatible with Pipeline's integration requires a Python
-dependency closure with known security vulnerabilities, and the current
-upstream release still constrains at least one affected dependency below its
-fixed version. Pipeline therefore does not discover, install, or execute
-managed or system Marker binaries. A legacy `marker` setting remains readable
-only so the UI can explain the retirement and let the user choose
-PaddleOCR-VL, LLM extraction, or pdftotext. Historical Marker structures in
-saved runs remain readable. The sections below labeled “historical” document
-the retired implementation and are not current product behavior.
-
 ## Reliability revision (2026-07-24)
 
 Production traces exposed failure modes that the initial single-call design
@@ -86,9 +73,7 @@ weaknesses were:
 2. **Provider-gated** — OpenAI/Google direct APIs can't return PDF bytes
    through the Read tool (`pdf_read_supported = false`), so those users are
    forced down to native extraction.
-3. **Marker was an afterthought** — the historical integration later retained
-   structured blocks and figures, but its executable path is now retired.
-4. **Plain-text PDF extraction garbles equations** — it remains an explicit
+3. **Plain-text PDF extraction garbles equations** — it remains an explicit
    basic option rather than an automatic fallback.
 
 ## What the research says (July 2026)
@@ -121,9 +106,7 @@ olmOCR-bench). Nothing here bets the architecture on a leaderboard position.
 - **Lightweight by default.** No Python or model weights are in the app bundle.
   The Paddle stack is opt-in, lives entirely under `~/.pipeline/`, reports its
   disk usage, and uninstalls cleanly.
-- **Modular.** Installable local extractors go through a small engine
-  registry. Historical Marker artifact parsing is isolated from executable
-  discovery and provisioning.
+- **Modular.** Installable local extractors go through a small engine registry.
 - **Rust does structure, LLMs do judgment.** Page rendering, chunking,
   stitching, validation, and provisioning are deterministic Rust. The LLM
   only transcribes what it sees.
@@ -140,7 +123,7 @@ Transport per path:
 
 | Path | How the PDF reaches the model |
 |---|---|
-| Claude CLI / Gemini CLI | Unchanged — prompt references the path, the CLI's Read tool is multimodal. |
+| Claude CLI / Antigravity CLI | Unchanged — prompt references the path, the CLI's Read tool is multimodal. |
 | Codex CLI | Prompt references the path and the CLI reads it from the granted source directory. |
 | Anthropic direct API | Attach as a base64 document block up front (the plumbing exists in `api_anthropic.rs` for the Read tool; attaching in the first request skips the tool round-trip). ~100-page / 32 MB request limit. |
 | OpenAI direct API | Attach as a file input (base64 `input_file` content part). ~100-page / 32 MB limit. |
@@ -159,8 +142,8 @@ Verification (the actual fix for silent truncation/summarization):
    characters. Missing or suspicious pages get one targeted retry in ranges
    of at most two pages. A missing marker, truncated response, or page that
    remains implausibly short fails the extraction before orientation.
-3. `scan_math_quality` runs on the result as today; final markdown lands in
-   `cache/papers/{hash}.txt` and the run's `context/` as usual.
+3. `scan_math_quality` runs on the result as today; final Markdown lands in
+   the run's `context/` artifacts.
 
 Chunking is proactive and bounded. The same PDF is attached/read for each
 range because splitting PDF object graphs while preserving shared resources is
@@ -178,93 +161,6 @@ Touches: `extract.rs` (`extract_llm` transport + verification loop),
 `api_anthropic.rs`/`api_openai.rs`/`api_google.rs` (up-front PDF attachment),
 `runs.rs` (`RunWriter::register_existing` for binary artifacts — today only
 `add_text` exists). No new dependencies.
-
-## Historical Move 2: managed Marker via uv (retired)
-
-The original implementation used this pattern:
-download the `uv` binary on demand, then let uv own an app-scoped Python
-toolchain. Nothing touched system Python; this same app-owned-runtime boundary
-is reused by the 2026-08-07 Paddle Full Parser, without reviving Marker.
-
-Layout — everything under one deletable root:
-
-```
-~/.pipeline/
-├── bin/            # uv binary + tool entry-point shims (UV_TOOL_BIN_DIR)
-├── tools/          # per-engine venvs (UV_TOOL_DIR)
-├── python/         # managed CPython (UV_PYTHON_INSTALL_DIR)
-├── uv-cache/       # wheel cache (UV_CACHE_DIR — same volume, hardlinked)
-└── hf/             # model weights (HF_HOME)
-```
-
-Engine registry (static, in Rust):
-
-```
-EngineSpec { id, label, description, pip_spec, entry_point,
-             est_download, est_disk, extra_env, platform_index_args }
-```
-
-The original registry shipped one Python entry — `marker` (`pip_spec:
-"marker-pdf"`, entry point `marker_single`, ~500 MB packages + ~2–3 GB
-models). Pipeline 0.9.0 removed the Python engine kind, uv provisioning, and
-this registry entry. At that release the registry contained only native
-PaddleOCR-VL; the later Full Parser add-on reintroduces a narrowly scoped
-managed Python engine, not generic Python-tool discovery.
-
-`ensure_uv()`:
-- Pinned uv version; per-platform download URL + SHA-256 table baked into the
-  binary (updated on our release cadence). ~25 MB download to
-  `~/.pipeline/bin/`, verified before chmod +x.
-- Files downloaded by our own code carry no quarantine xattr (macOS) or
-  Mark-of-the-Web (Windows) — no Gatekeeper/SmartScreen prompts, no
-  notarization impact. Verification responsibility is therefore ours: hard
-  SHA-256 check, no "latest" URLs.
-- Set `UV_SYSTEM_CERTS=1` and pass through `HTTP(S)_PROXY` — corporate/
-  university TLS interception is the top real-world failure mode.
-
-`install_engine(id)` — three labeled phases, each streaming to the log panel
-via new `engines:phase` / `engines:log` events (same pattern as
-`pipeline:log`), child PIDs registered for cancellation:
-1. *Runtime* — `ensure_uv()`; disk-space precheck against `est_disk`.
-2. *Packages* — `uv tool install <pip_spec> --python 3.12` with the env vars
-   above. On Linux/Windows add the PyTorch CPU index
-   (`https://download.pytorch.org/whl/cpu`) — the PyPI default on Linux is the
-   CUDA build (~3–4 GB download, 6–8 GB installed) that most of our users
-   can't use. macOS needs no pin (default wheel is MPS-enabled, 88 MB).
-3. *Models* — pre-warm weights with a bundled one-page PDF run
-   (`HF_HOME=~/.pipeline/hf`), so the 2–3 GB HuggingFace download happens
-   under the progress UI, not silently during the user's first real review.
-
-Also: `engine_status(id)` (installed, version via `uv tool list`, disk usage
-of tools/ + hf/), `uninstall_engine(id)` (`uv tool uninstall` + remove hf/),
-`cancel_install()`. All exposed as Tauri commands.
-
-The retired implementation checked `~/.pipeline/bin/` before PATH and
-redirected managed Marker model weights to `~/.pipeline/hf`. Pipeline 0.9.0
-does neither: dependency checks ignore Marker and the extraction guard rejects
-the legacy value before hashing or command resolution.
-
-The historical licensing assessment treated uv as MIT/Apache dual and Marker
-as GPL-3 code with separately licensed model weights. Neither component is
-downloaded or bundled by Pipeline 0.9.0.
-
-## Historical Move 3: Marker invocation upgrade (retired)
-
-The retired implementation ran Marker with `--output_dir` pointing into the versioned
-`~/.pipeline/cache/marker/{hash}/` workspace instead of scraping stdout. Read the emitted
-`.md` as the extraction text; register extracted figure images in the
-manifest so the ArtifactExplorer shows them. Keep stdout capture as the
-fallback for older marker versions. `marker_disable_images` was initially
-retained as true. As of the DocumentBundle work (2026-07-23), new settings
-default it to false because figure retention is part of the normal document
-contract; users can still disable it when speed or disk use matters more.
-Marker's own automatic OCR detection was the default; users could instead
-disable or force OCR. Settings also exposed figure extraction, low/high
-resolution DPI, machine-aware PDF-text workers, and layout/OCR recognition
-batches. Successful Markdown, figures, and an engine/settings manifest are
-reused only on an exact match. These controls and the invocation path were
-removed in 0.9.0. Only passive readers for previously saved Marker structure
-and figure artifacts remain.
 
 ### PaddleOCR-VL runtime policy
 
@@ -344,15 +240,10 @@ and its authenticated private recognition server.
   Parser when installed and LLM extraction otherwise. Below them, **Local
   Engines** exposes the parser's total size estimate, install progress,
   platform availability, installed version/disk use, cancellation, and
-  uninstall. A detected
-  app-managed Marker environment left by an older build gets a separate,
-  explicit removal control; no removal is automatic.
+  uninstall.
 - **PipelinePage** — the per-profile override uses the same supported labels.
-  A loaded legacy Marker value appears as disabled with an actionable
-  replacement warning.
 - **DepsCheck** — reports Full Parser as one managed dependency and verifies
-  both its recognition and layout components; it does not search for Marker
-  executables.
+  both its recognition and layout components.
 - `lib/types.ts` mirrors `EngineSpec`/status types; component tests for the
   engines card (install flow states) and the relabeled dropdown.
 
@@ -362,25 +253,10 @@ and its authenticated private recognition server.
    limitation, makes truncation detectable instead of silent, and ships page
    PNGs as artifacts. No new dependencies. Independent of everything else.
    *Implemented 2026-07-03.*
-2. **Provisioning backend** (Move 2 minus UI) — `engines.rs`, Tauri
-   commands, discovery changes, tested headlessly.
-   *Implemented 2026-07-03. Deviations: uv is pinned (version + five SHA-256
-   constants in engines.rs) rather than tracking latest; the pre-warm runs
-   the engine on a generated one-page PDF and downgrades to a warning on
-   failure; uninstall keeps uv and the wheel cache (small, make reinstall
-   fast) and removes model weights only when the last engine goes. This
-   Python/uv path was removed in 0.9.0; provisioning now covers only native
-   PaddleOCR-VL.*
-3. **Engines UI + Marker upgrade** (Moves 3–4; retired in 0.9.0).
-   *Implemented 2026-07-03. The Local Engines cards live inside Settings →
-   Text Extraction (EnginesPanel.tsx) rather than a separate nav section;
-   Marker output went to `~/.pipeline/cache/marker/{hash}/` and figure
-   images are copied into the run's artifacts after the run dir exists,
-   since extraction runs before the run id is known.*
-4. **Managed PaddleOCR-VL Full Parser** — private uv/CPython/Paddle environment,
+2. **Managed PaddleOCR-VL Full Parser** — private uv/CPython/Paddle environment,
    official layout client, settings, structured cache, DocumentBundle mapping,
    dependency checks, and UI install card. *Implemented 2026-08-07.*
-5. **Later, on demand** — `mineru` registry entry (MLX engine on Apple
+3. **Later, on demand** — `mineru` registry entry (MLX engine on Apple
    Silicon, richer layout JSON + figure images; AGPL noted in its card), and
    a private ~20-paper eval to settle local-engine ranking if it ever
    matters.
@@ -400,9 +276,7 @@ and its authenticated private recognition server.
 
 - Supported `pdf_extractor` values are
   (`llm`/`auto`/`paddleocr-vl-full`/`pdftotext`). The retired
-  `paddleocr-vl` value migrates to `paddleocr-vl-full`. Existing profiles and
-  export bundles containing `marker` still load for repair, but a document run fails
-  before command resolution with an actionable replacement message. `"llm"`
+  `paddleocr-vl` value migrates to `paddleocr-vl-full`. `"llm"`
   gets bounded verification; profile `"auto"` inherits the global setting,
   and global `"auto"` resolves to an installed Full Parser or otherwise LLM.
 - Old saved reports/runs unaffected; new runs gain `pages/` artifacts.
@@ -413,11 +287,9 @@ and its authenticated private recognition server.
 - Pure-function unit tests: page-marker verification, short/missing-page
   detection against a pdftotext baseline, range-split computation, native/uv
   engine artifact checksums, Full Parser platform gating and structure
-  verification, DocumentBundle layout/title semantics, and a fail-closed
-  legacy-Marker guard.
+  verification, and DocumentBundle layout/title semantics.
 - Vitest: engines card states (not installed / unavailable / installing with
-  progress / installed / failed), Full Parser controls, retired-environment
-  removal, and dropdown labels.
+  progress / installed / failed), Full Parser controls, and dropdown labels.
 - Manual matrix before release: macOS arm64, Windows x64, and Linux x64/arm64;
   install PaddleOCR-VL Full Parser, extract math/table/figure-heavy papers, and
   verify page completeness, title hierarchy, formula numbers, cross-page

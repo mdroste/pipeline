@@ -143,7 +143,7 @@ mod tests {
     fn output_matches_joins_multi_agent() {
         let prior = vec![
             out("triage/claude", "clean"),
-            out("triage/gemini", "SEVERITY: high"),
+            out("triage/antigravity", "SEVERITY: high"),
         ];
         let c = RunCondition::OutputMatches {
             step: "triage".into(),

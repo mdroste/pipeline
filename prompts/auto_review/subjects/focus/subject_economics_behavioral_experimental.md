@@ -1,0 +1,1 @@
+Assess the economic choice environment, incentives, information, elicitation, equilibrium or strategic context, behavioral construct, treatment contrast, demand and experimenter effects, heterogeneity, external validity, and whether the evidence distinguishes the proposed departure from standard economic benchmarks.

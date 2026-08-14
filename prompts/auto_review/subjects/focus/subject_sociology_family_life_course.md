@@ -1,0 +1,1 @@
+Review family and household definitions, linked lives and intergenerational relations, cohort and period, gendered care and work, legal and cultural institutions, selection into unions and parenthood, sequence and timing, within-family heterogeneity, and whether evidence distinguishes life-course process from age or cohort composition.

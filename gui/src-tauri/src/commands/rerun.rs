@@ -2,7 +2,7 @@ use super::*;
 
 // --- Resume / partial re-run (1.3.2) ---
 
-/// Re-run a past run, reusing its cached extraction and orientation and (for
+/// Re-run a past run, reusing its captured document and orientation and (for
 /// partial modes) its successful step outputs, so only the necessary steps
 /// re-execute. Uses the *active* profile's steps, so editing a prompt and
 /// re-running is cheap. Modes:
@@ -134,12 +134,30 @@ pub(super) async fn rerun_run_inner(
         .map_err(|_| "This run predates re-run support (no report.json). Re-run is only available for runs created after upgrading.".to_string())?;
     let parent_report: PipelineReport = serde_json::from_str(&report_json)
         .map_err(|e| format!("Invalid parent report.json: {e}"))?;
-    let extracted_text = read_run_file(parent_run_id, "context/extracted_text.md")?;
+    let parent_dir = crate::runs::runs_dir()?.join(parent_run_id);
+    let document_rel = crate::runs::captured_document_rel_path(&parent_dir, &parent)?;
+    let document_text = read_run_file(parent_run_id, document_rel)?;
     let mut orientation_value: serde_json::Value = parent_report.orientation.clone();
 
     // Active profile drives the re-run (edited prompts take effect).
-    let (config, profile_name) =
+    let (mut config, profile_name) =
         pipeline_config::load_required_profile_for(&settings.active_profile)?;
+    pipeline_config::validate_enabled_sequential_step(&config.steps)?;
+    crate::auto_review::validate_auto_review_preflight(&config)?;
+    // A source-tree parent captured only a file inventory as its document
+    // text; the adaptive router and reviewers would treat that inventory as
+    // the paper (same rule as a fresh launch).
+    let parent_is_source_tree = parent.input_interpretation == "source_tree"
+        || (parent.input_interpretation.is_empty() && parent.input_mode == "folder");
+    if parent_is_source_tree && crate::auto_review::uses_auto_review_contract(&config) {
+        return Err(
+            "Auto Paper Review reviews a document, not a browsable source tree. Re-run this \
+             folder input with a folder-oriented workflow, or start a new run on the paper \
+             file itself."
+                .to_string(),
+        );
+    }
+    pipeline_config::apply_agent_defaults(&mut config, &settings);
     crate::safety::validate_runtime_context(&parent.variables, "Re-run variables")?;
     crate::safety::validate_runtime_context(
         &parent.extra_input_sources,
@@ -149,7 +167,7 @@ pub(super) async fn rerun_run_inner(
     crate::safety::validate_run_budget(&config, &settings)?;
 
     // Keep all reconstructed model-readable inputs in one private root.
-    // If the original selection has since disappeared, cached text can still
+    // If the original selection has since disappeared, captured text can still
     // support steps that did not select the source artifact.
     let run_input_dir = tempfile::Builder::new()
         .prefix("pipeline_run_inputs_")
@@ -198,64 +216,63 @@ pub(super) async fn rerun_run_inner(
 
     // A run can stop after extraction but before its orientation map becomes
     // durable. Rebuild only that missing preprocessing stage; otherwise reuse
-    // the parent's cached map exactly.
-    if orientation_value.is_null() {
-        if config.use_orientation {
-            let orientation_label = if crate::auto_review::uses_auto_review_contract(&config) {
-                "Creating orientation map & review plan"
-            } else {
-                "Creating orientation map"
-            };
-            app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": "Resume: rebuilding the orientation map that did not complete"
-                }),
-            )
-            .ok();
-            app.emit_event(
-                "pipeline:stage",
-                serde_json::json!({
-                    "stage": "orienting",
-                    "id": "orienting",
-                    "label": orientation_label,
-                    "stepIds": [],
-                    "stepLabels": [],
-                }),
-            )
-            .ok();
-            let extraction = crate::models::ExtractionResult {
-                text: extracted_text.clone(),
-                method: "resumed-cache".to_string(),
-                source_path: parent.input_path.clone(),
-                paper_hash: parent_report.paper_hash.clone(),
-                quality_notes: Vec::new(),
-            };
-            let survey_template =
-                orient::resolve_survey_template(&config.orientation_prompt, &parent.input_mode);
-            orientation_value = orient::build_orientation_map(
-                app,
-                &extraction,
-                survey_template.as_deref(),
-                config.orientation_schema.as_ref(),
-                scoped_source_read_root.as_deref(),
-            )
-            .await?;
-            if is_cancelled() {
-                return Err("Pipeline cancelled".into());
-            }
+    // the parent's cached map exactly. One exception: the active profile
+    // drives the re-run, so when it expects an auto-review plan and the
+    // parent's survey was produced by a different workflow (no review_plan),
+    // the map must be rebuilt — materialization below would otherwise reject
+    // the re-run outright.
+    let needs_auto_plan = crate::auto_review::uses_auto_review_contract(&config)
+        && orientation_value.pointer("/review_plan").is_none();
+    if orientation_value.is_null() || needs_auto_plan {
+        let orientation_label = if crate::auto_review::uses_auto_review_contract(&config) {
+            "Creating orientation map & review plan"
         } else {
-            orientation_value =
-                serde_json::to_value(crate::models::OrientationMap::empty(&extracted_text))
-                    .map_err(|error| {
-                        format!("Failed to rebuild the orientation placeholder: {error}")
-                    })?;
+            "Creating orientation map"
+        };
+        let reason = if orientation_value.is_null() {
+            "Resume: rebuilding the orientation map that did not complete"
+        } else {
+            "Re-run: the parent survey has no review plan; rebuilding it for the adaptive workflow"
+        };
+        app.emit_event("pipeline:log", serde_json::json!({ "line": reason }))
+            .ok();
+        app.emit_event(
+            "pipeline:stage",
+            serde_json::json!({
+                "stage": "orienting",
+                "id": "orienting",
+                "label": orientation_label,
+                "stepIds": [],
+                "stepLabels": [],
+            }),
+        )
+        .ok();
+        let extraction = crate::models::ExtractionResult {
+            text: document_text.clone(),
+            method: "resumed-document".to_string(),
+            source_path: parent.input_path.clone(),
+            paper_hash: parent_report.paper_hash.clone(),
+            quality_notes: Vec::new(),
+        };
+        let survey_template =
+            orient::resolve_survey_template(&config.orientation_prompt, &parent.input_mode);
+        orientation_value = orient::build_orientation_map(
+            app,
+            &extraction,
+            survey_template.as_deref(),
+            config.orientation_schema.as_ref(),
+            scoped_source_read_root.as_deref(),
+        )
+        .await?;
+        if is_cancelled() {
+            return Err("Pipeline cancelled".into());
         }
     }
 
     // Reconstruct the same bounded Auto Review workflow before deciding what
     // can be reused. Dynamic specialist IDs are ordinary steps from here on.
-    let execution_config = crate::auto_review::materialize_config(&config, &orientation_value)?;
+    let mut execution_config = crate::auto_review::materialize_config(&config, &orientation_value)?;
+    pipeline_config::apply_agent_defaults(&mut execution_config, &settings);
     crate::pipeline_config::validate_runtime_config(&execution_config)?;
     crate::safety::validate_run_budget(&execution_config, &settings)?;
 
@@ -268,7 +285,20 @@ pub(super) async fn rerun_run_inner(
         .collect();
     let rerun: std::collections::HashSet<String> = if let Some(fs) = &from_step {
         match enabled_ids.iter().position(|id| id == fs) {
-            Some(k) => enabled_ids[k..].iter().cloned().collect(),
+            Some(k) => {
+                // Steps may be listed in any order while the executor schedules
+                // by dependency graph, so a dependent of a re-run step can sit
+                // earlier in the list. Extend the positional set with graph
+                // dependents so no step is preloaded with stale upstream output.
+                let seeds: std::collections::HashSet<String> =
+                    enabled_ids[k..].iter().cloned().collect();
+                let mut set = seeds.clone();
+                set.extend(crate::pipeline::executor::dependents_of(
+                    &execution_config,
+                    &seeds,
+                ));
+                set
+            }
             None => enabled_ids.iter().cloned().collect(), // unknown step → full re-run
         }
     } else if only_failed {
@@ -312,20 +342,20 @@ pub(super) async fn rerun_run_inner(
         }
     }
     let resumed_extraction = crate::models::ExtractionResult {
-        text: extracted_text.clone(),
-        method: "resumed-cache".to_string(),
+        text: document_text.clone(),
+        method: "resumed-document".to_string(),
         source_path: parent.input_path.clone(),
         paper_hash: parent_report.paper_hash.clone(),
         quality_notes: Vec::new(),
     };
     let mut rerun_bundle_json = None;
-    let mut rerun_document_text = extracted_text.clone();
+    let mut rerun_document_text = document_text.clone();
     if let Some(w) = run_writer.as_mut() {
         let _ = w.add_text(
-            "context/extracted_text.md",
-            "Extracted text",
-            "context",
-            &extracted_text,
+            crate::runs::DOCUMENT_TEXT_PATH,
+            "Readable document",
+            "document",
+            &document_text,
         );
         let orient_json = serde_json::to_string_pretty(&orientation_value).unwrap_or_default();
         let _ = w.add_text(
@@ -338,7 +368,7 @@ pub(super) async fn rerun_run_inner(
         // Prefer the parent's canonical bundle so a partial re-run keeps the
         // exact document model it was based on. Copy its visual assets into
         // the new run so the bundle remains self-contained. Older runs fall
-        // back to a bundle rebuilt from their cached extraction.
+        // back to a bundle rebuilt from their captured document.
         let mut bundle = read_run_file(parent_run_id, "context/document_bundle.json")
             .ok()
             .and_then(|json| {
@@ -383,19 +413,8 @@ pub(super) async fn rerun_run_inner(
                     }),
                 );
             } else {
-                let markdown = bundle.to_markdown_with_text(&extracted_text);
+                let markdown = bundle.to_markdown_with_text(&document_text);
                 rerun_document_text = markdown.clone();
-                if let Err(error) = w.add_text(
-                    "context/document.md",
-                    "Readable document",
-                    "document",
-                    &markdown,
-                ) {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({ "line": format!("WARNING: {error}") }),
-                    );
-                }
                 match bundle
                     .to_json_pretty()
                     .and_then(|json| bundle.to_jsonl().map(|jsonl| (json, jsonl)))
@@ -430,7 +449,7 @@ pub(super) async fn rerun_run_inner(
         }
     }
 
-    // Extracted-text + orientation + named-input temp files for the steps to
+    // Document + orientation + named-input temp files for the steps to
     // Read, confined to the same private root as the staged source context.
     let (_text_tmp, paper_text_path) = write_run_input_file(
         run_input_dir.path(),
@@ -555,7 +574,7 @@ pub(super) async fn rerun_run_inner(
         run_writer,
         &report,
         &markdown,
-        &extracted_text,
+        &document_text,
         elapsed,
         &settings,
         RunCompletion {

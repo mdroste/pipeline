@@ -1,0 +1,1 @@
+Assess the worker, household, job, and firm margins; labor-market institutions; selection and mobility; wage and employment measurement; compensating differentials; bargaining and monopsony; heterogeneity; incidence; and whether the evidence distinguishes the proposed labor-market mechanism from sorting and composition.

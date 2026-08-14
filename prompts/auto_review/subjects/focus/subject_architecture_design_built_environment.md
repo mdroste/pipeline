@@ -1,0 +1,1 @@
+Review site and program, spatial organization, users and accessibility, material and environmental performance, codes and constructability, representation, precedent, occupation and post-occupancy evidence, and whether the proposed building or typology answers its stated social and physical constraints.

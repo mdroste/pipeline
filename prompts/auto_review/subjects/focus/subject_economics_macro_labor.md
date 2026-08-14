@@ -1,0 +1,1 @@
+Assess stocks and flows, matching and bargaining, wage and hours margins, participation, worker and firm heterogeneity, vacancy and recruiting behavior, aggregation, cyclicality, policy incidence, and whether the model jointly accounts for the labor-market quantities used to discipline its propagation and welfare claims.

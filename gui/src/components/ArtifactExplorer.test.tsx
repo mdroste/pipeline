@@ -71,9 +71,81 @@ describe("ArtifactExplorer", () => {
       await screen.findByRole("heading", { name: "Report", level: 4 }),
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Context", level: 4 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Steps", level: 4 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Step outputs", level: 4 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Analysis script" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Final Report" })).toBeInTheDocument();
+  });
+
+  it("orders agent reports by step and groups sibling agents with their merge", async () => {
+    const groupedManifest = {
+      ...manifest,
+      artifacts: [
+        {
+          rel_path: "artifacts/agent-responses/technical-antigravity--111111111111--attempt-01-terminal-accepted.md",
+          label: "Technical antigravity · Attempt 1 · Terminal · Accepted",
+          kind: "markdown", bytes: 80, sha256: "a1", group: "agent_response",
+        },
+        {
+          rel_path: "artifacts/agent-responses/merge-contribution--222222222222--attempt-01-terminal-accepted.md",
+          label: "Merge contribution · Attempt 1 · Terminal · Accepted",
+          kind: "markdown", bytes: 80, sha256: "a2", group: "agent_response",
+        },
+        {
+          rel_path: "artifacts/agent-responses/contribution-codex--333333333333--attempt-01-terminal-accepted.md",
+          label: "Contribution codex · Attempt 1 · Terminal · Accepted",
+          kind: "markdown", bytes: 80, sha256: "a3", group: "agent_response",
+        },
+        {
+          rel_path: "artifacts/02_technical.md",
+          label: "Technical",
+          kind: "markdown", bytes: 80, sha256: "s2", group: "step",
+        },
+        {
+          rel_path: "artifacts/agent-responses/contribution-claude--444444444444--attempt-01-terminal-accepted.md",
+          label: "Contribution claude · Attempt 1 · Terminal · Accepted",
+          kind: "markdown", bytes: 80, sha256: "a4", group: "agent_response",
+        },
+        {
+          rel_path: "artifacts/01_contribution.md",
+          label: "Contribution [Claude]",
+          kind: "markdown", bytes: 80, sha256: "s1", group: "step",
+        },
+      ],
+    };
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_run_manifest") return Promise.resolve(groupedManifest);
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+
+    render(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        deferInitialArtifact
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Agent reports", level: 4 }))
+      .toBeInTheDocument();
+    const stepHeadings = screen.getAllByRole("heading", { level: 5 });
+    expect(stepHeadings.map((heading) => heading.textContent)).toEqual([
+      "Contribution",
+      "Technical",
+    ]);
+
+    const contribution = stepHeadings[0].closest("section");
+    expect(contribution).not.toBeNull();
+    expect(within(contribution!).getAllByRole("button").map((button) => button.textContent))
+      .toEqual([
+        "Contribution claude · Attempt 1 · Terminal · Accepted",
+        "Contribution codex · Attempt 1 · Terminal · Accepted",
+        "Merge contribution · Attempt 1 · Terminal · Accepted",
+      ]);
+    const technical = stepHeadings[1].closest("section");
+    expect(technical).not.toBeNull();
+    expect(within(technical!).getByRole("button", {
+      name: "Technical antigravity · Attempt 1 · Terminal · Accepted",
+    })).toBeInTheDocument();
   });
 
   it("can defer all artifact reads until the user chooses a source", async () => {
@@ -302,7 +374,7 @@ describe("ArtifactExplorer", () => {
           text: "Impulse responses after a monetary policy shock.",
           asset_ids: ["asset-figure"],
           representations: [{ format: "orientation_summary", content: { what_it_shows: "Output falls." } }],
-          provenance: { origin_id: "origin-primary", method: "marker", confidence: 0.9 },
+          provenance: { origin_id: "origin-primary", method: "paddleocr-vl-full", confidence: 0.9 },
         },
         {
           id: "equation-00003",
@@ -346,11 +418,11 @@ describe("ArtifactExplorer", () => {
           rel_path: "artifacts/figures/figure-1.png",
           media_type: "image/png",
           page: 1,
-          provenance: { origin_id: "origin-primary", method: "marker", confidence: 1 },
+          provenance: { origin_id: "origin-primary", method: "paddleocr-vl-full", confidence: 1 },
         },
       ],
       links: [],
-      extraction: { method: "marker", source_path: "/papers/draft.pdf", paper_hash: "0123456789abcdef" },
+      extraction: { method: "paddleocr-vl-full", source_path: "/papers/draft.pdf", paper_hash: "0123456789abcdef" },
       quality: [{ severity: "warning", scope: "page 1", message: "OCR confidence was low." }],
     };
     mockBackend({

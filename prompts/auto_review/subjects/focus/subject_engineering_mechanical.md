@@ -1,0 +1,1 @@
+Assess loads, constitutive and thermal assumptions, geometry, boundary conditions, fatigue and wear, tolerances, efficiency, failure modes, and prototype similarity to the intended regime. Check whether performance trades off against weight, cost, durability, or manufacturability as claimed.

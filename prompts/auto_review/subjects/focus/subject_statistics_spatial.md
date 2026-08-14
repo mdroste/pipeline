@@ -1,0 +1,1 @@
+Examine support and resolution, spatial dependence, anisotropy, edge effects, preferential sampling, change of support, neighborhood structure, and prediction uncertainty. Distinguish spatial interpolation from causal or process claims.

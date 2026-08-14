@@ -1,0 +1,1 @@
+Assess the scientific abstraction, numerical and software correctness, precision and reproducibility, parallel decomposition, scaling and communication, accelerator and memory assumptions, workflow provenance, verification against trusted solutions, portability, and whether performance improvements preserve the scientifically relevant result and error tolerance.

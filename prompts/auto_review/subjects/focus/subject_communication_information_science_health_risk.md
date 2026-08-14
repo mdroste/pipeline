@@ -1,0 +1,1 @@
+Review the scientific or risk object, source credibility, uncertainty framing, numeracy and visual display, audience knowledge and trust, channel, misinformation context, behavioral outcome, equity and accessibility, and whether measured responses support the claimed communication mechanism.

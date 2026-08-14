@@ -1,0 +1,1 @@
+Evaluate the paper's physical question, governing scales, conservation principles, approximations, and connection between theoretical objects and observable quantities. Use this fallback only when the contribution spans several physics areas or is genuinely outside the more specific lenses below.

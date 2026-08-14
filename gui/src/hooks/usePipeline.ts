@@ -4,6 +4,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type {
   PipelineReport,
   PipelineResult,
+  RunParallelOverrides,
   ToolCallCounts,
 } from "../lib/types";
 
@@ -75,6 +76,9 @@ export interface RuntimeStage {
   label: string;
   stepIds: string[];
   stepLabels?: string[];
+  /** Multi-provider steps that will receive a merge after this dispatch wave. */
+  mergeStepIds?: string[];
+  mergeStepLabels?: string[];
   passes: Record<string, PassStatus>;
   status: "active" | "done" | "failed" | "skipped";
 }
@@ -100,8 +104,8 @@ export interface TokenTotals {
 }
 
 /** Token usage aggregated over a run: a grand total plus per-session counts.
- *  Only providers that report usage (codex CLI, claude CLI JSON, and the
- *  direct APIs) contribute; text-mode gemini CLI reports nothing. */
+ *  Every current provider reports usage — codex CLI, claude CLI JSON, the
+ *  agy JSON envelope, and the direct APIs. */
 export interface UsageState {
   total: TokenTotals;
   bySession: Record<number, TokenTotals>;
@@ -173,10 +177,21 @@ export function usePipeline() {
           label: string;
           stepIds: string[];
           stepLabels?: string[];
+          mergeStepIds?: string[];
+          mergeStepLabels?: string[];
           skipped?: boolean;
         }>("pipeline:stage", (event) => {
           if (!mounted) return;
-          const { stage, id, label, stepIds, stepLabels = [], skipped = false } = event.payload;
+          const {
+            stage,
+            id,
+            label,
+            stepIds,
+            stepLabels = [],
+            mergeStepIds = [],
+            mergeStepLabels = [],
+            skipped = false,
+          } = event.payload;
           if (stage !== "extracting" &&
               stage !== "orienting" &&
               stage !== "dispatching" &&
@@ -196,6 +211,8 @@ export function usePipeline() {
               label,
               stepIds,
               stepLabels,
+              mergeStepIds,
+              mergeStepLabels,
               passes: {},
               status: skipped ? "skipped" : "active",
             });
@@ -231,6 +248,7 @@ export function usePipeline() {
           const { name, status } = event.payload;
           const now = Date.now();
           setPassTimes((prev) => {
+            if (status === "pending") return prev;
             const cur = prev[name];
             if (status === "running") {
               // First "running" marks the start; retries keep the original start.
@@ -451,9 +469,13 @@ export function usePipeline() {
       variables?: Record<string, string>,
       extraInputs?: Record<string, string>,
       expectedProfileSnapshotId?: string,
+      runParallelOverrides?: RunParallelOverrides | null,
     ) => {
       setState({ kind: "extracting" });
       setLogs([]);
+      // Also drop any lines still buffered from a previous run's dying
+      // subprocesses, so they aren't flushed into this run's console.
+      logBuffer.current = [];
       setUsage(EMPTY_USAGE);
       setRunStartedAt(Date.now());
       setPassTimes({});
@@ -468,6 +490,7 @@ export function usePipeline() {
           variables: variables ?? null,
           extraInputs: extraInputs ?? null,
           expectedProfileSnapshotId: expectedProfileSnapshotId ?? null,
+          ...(runParallelOverrides ? { runParallelOverrides } : {}),
         });
         setState({
           kind: "done",
@@ -498,6 +521,9 @@ export function usePipeline() {
     async (runId: string, opts?: { fromStep?: string; onlyFailed?: boolean }) => {
       setState({ kind: "extracting" });
       setLogs([]);
+      // Also drop any lines still buffered from a previous run's dying
+      // subprocesses, so they aren't flushed into this run's console.
+      logBuffer.current = [];
       setUsage(EMPTY_USAGE);
       setRunStartedAt(Date.now());
       setPassTimes({});

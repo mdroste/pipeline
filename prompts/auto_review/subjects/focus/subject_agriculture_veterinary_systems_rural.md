@@ -1,0 +1,1 @@
+Review farm and household objectives, agroecological constraints, labor and input access, extension and adoption pathway, risk and seasonality, value-chain and market context, heterogeneity across producers, scalability, and whether productivity, resilience, income, and distributional claims are jointly supported.

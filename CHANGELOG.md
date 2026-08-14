@@ -3,23 +3,179 @@
 This file records user-visible and release-integrity changes. Development before
 the first public release was not maintained as a stable release series.
 
+## Unreleased
+
+- A comprehensive default-workflow audit produced a batch of reliability
+  fixes across platforms and input types:
+  - GUI launches on macOS/Linux now resolve the login-shell PATH robustly:
+    rc-file banners no longer corrupt it (the probe reads `printenv PATH` and
+    takes the last output line), fish/csh/tcsh/nushell users get a working
+    probe, a transient probe failure is retried instead of being cached for
+    the whole session, and system `/opt/...` entries no longer suppress
+    resolution on Linux. Command lookup also skips non-executable files that
+    would shadow a real CLI later on PATH.
+  - A provider CLI killed by a signal Pipeline did not send (out-of-memory
+    kills, crashes) is now reported as a retryable provider failure instead
+    of "Pipeline cancelled", so normal retry policy applies.
+  - Folder inputs: one unreadable or concurrently deleted file no longer
+    aborts the run (it is fingerprinted by name/size with a quality note),
+    and folders with multi-gigabyte data files now run — the fingerprint
+    hashes at most 1 MB per file plus name, size, and mtime instead of
+    reading up to 2 GB of content and failing beyond it.
+  - PDF extraction: helper processes (pdftotext, pdftoppm, the Paddle
+    sidecar) and provider CLIs now read a staged private copy instead of the
+    original path, so a previously denied macOS folder permission cannot
+    silently break extraction; a failed pdftotext run surfaces its own error
+    (an encrypted PDF now says so); one failed chunk call feeds the targeted
+    retry pass instead of aborting the run; direct-API extraction fails fast
+    with the actual constraint when a PDF exceeds Anthropic/OpenAI attachment
+    limits (100 pages / 24 MB); oversized PDFs get a PDF-specific staging
+    message and a 256 MB budget instead of the LaTeX 32 MB error; and
+    Windows OneDrive Files-On-Demand placeholders are re-opened so they
+    hydrate instead of failing the first read.
+  - Shared-context reuse degrades to ordinary self-contained calls when the
+    shared prefix cannot be assembled (for example an extracted text between
+    the 8 MB shared-context cap and the 10 MB LaTeX cap) instead of failing
+    the run; a cancelled Codex warm-up no longer disables context reuse for
+    the rest of the run.
+  - Auto Paper Review: selecting a folder as a browsable source tree is
+    rejected up front with guidance (the router and reviewers would otherwise
+    treat the file inventory as the paper); the orientation editor now offers
+    a "Restore adaptive router prompt" action instead of survey-insert
+    buttons that silently broke the workflow's required review plan; changing
+    the exact adaptive-agent count no longer breaks resuming earlier runs;
+    and disabling all three core reviews is caught before the orientation
+    call instead of after it.
+  - Orientation surveys: a small JSON object echoed in prose can no longer
+    hijack the survey — the largest valid non-empty object wins, and an
+    empty-object response now retries instead of producing a blank survey.
+  - The finished-run view no longer crashes the app when a paper-shaped
+    survey omits its metadata or authors (seen with schema-less profiles and
+    older saved runs); the report workspace is also isolated behind its own
+    error boundary.
+  - Dependency preflight now requires every provider the active workflow
+    actually dispatches to, so an unrelated available provider (for example a
+    local server) can no longer mask a missing required CLI until mid-run.
+  - Completed parallel analyses are checkpointed as each finishes, so a crash
+    later in the wave no longer loses them; byte-based run retention can no
+    longer delete the run that just completed; merged multi-agent outputs no
+    longer double-count against the run output budget (and an over-budget
+    merge falls back to the unmerged analyses); a Sequential step listing
+    several agents now logs that only the first runs; the one-run Parallel
+    agent override is correctly included in the plan/launch fingerprint; and
+    Windows builds are long-path aware.
+  - LaTeX extraction no longer expands commented-out `\input{}` lines, and an
+    include that exists but cannot be read (encoding, size) leaves a quality
+    note instead of silently dropping the chapter.
+- Auto Paper Review is now the default workflow, and the Paper Review (Full)
+  and Paper Review (Quick) built-ins were retired: Auto's adaptive specialist
+  routing covers what both provided. On existing installations the retired
+  profiles (including any customizations) are archived under
+  `~/.pipeline/profiles/.retired-builtins/` rather than deleted, and an active
+  selection pointing at one of them switches to Auto Paper Review once. Their
+  step prompts (contribution, technical correctness, empirical strategy,
+  internal consistency, exposition, consolidation, feedback validation) remain
+  shipped defaults available from the workflow editor, and the freed profile
+  IDs can be reused by custom workflows. Deleting a custom profile now falls
+  back to Auto Paper Review, and "Reset to defaults" restores the matching
+  stock definition for the remaining built-ins.
+- A PaddleOCR-VL Full Parser install no longer dies silently when a pipeline
+  run finishes or is cancelled while the install is downloading or
+  provisioning. Installer subprocesses were tracked in the same kill list as
+  run subprocesses, so the end of an unrelated run terminated the installer
+  mid-flight and rolled the install back; the parser then appeared unusable
+  until the app was restarted and the install repeated. Installer processes
+  now have engine-scoped tracking (cancel from Settings still works, and
+  Windows still terminates the full installer process tree), and a failed
+  cleanup of the previous install's backup is logged instead of ignored.
+- LaTeX extraction now reads files a project explicitly references just
+  outside the selected directory (for example
+  `\input{../output/estimates/numbers.tex}` from a `draft/dev` selection).
+  Referenced files are accepted only when they are regular files of the
+  expected type within three directory levels above the selection; each
+  external read is recorded as a quality note, and everything else stays
+  blocked. Staged source views copy those files under `_external/` so
+  reviewer steps that read the source tree see the same content. Circular
+  `\input{}` chains are now skipped precisely (with one note) instead of
+  expanding to the depth limit, and repeated identical extraction warnings
+  are recorded once instead of once per occurrence.
+- A Claude CLI shared-context run no longer fails outright when the warmed
+  session cannot be forked (stderr like "No conversation found with session
+  ID"). The first affected step now marks the shared session unavailable and
+  every remaining step automatically uses a self-contained call; other fork
+  failures retry the one call self-contained without disabling sharing. A
+  cancelled warm-up is no longer cached as a permanent session failure.
+- Replaced the retired Gemini CLI with Google's Antigravity CLI (`agy`,
+  1.1.12 or newer required). Google retired Gemini CLI on 2026-06-18, so the
+  old transport no longer served requests. The provider is now named
+  `antigravity` in workflows and settings; the direct Google Gemini API mode
+  is unchanged and keeps the same `google_api_key`. The dependency check now
+  reports a deterministic signed-in/signed-out state for the Google CLI (via
+  `agy models`) instead of the old frequently-unverifiable probe, and blocks
+  a run before any step can stall on an interactive sign-in prompt. The
+  Antigravity CLI transport gains a reasoning-effort control (low/medium/
+  high) and per-call token accounting including thinking and cache-read
+  tokens. No migration is provided: profiles naming the removed `gemini`
+  agent must switch to `antigravity`, stale `gemini` entries in saved
+  settings are dropped on load, and the legacy `pro`/`flash`/`flash-lite`
+  model aliases no longer resolve.
+
 ## 0.9.0 — 2026-08-10
 
+- A PaddleOCR-VL Full Parser installed by an older app build now keeps working
+  after the app updates. Extraction verifies the managed runtime against its
+  own install-time manifest digests and integrity inventory instead of the
+  current binary's provisioning constants, and refreshes a stale bundled
+  sidecar in place when that pinned runtime verifies. Previously a
+  provisioning-metadata change (such as the pinned qualification mirror in
+  `runtime-lock.json`) made runs fail with "not installed" while Settings
+  still reported the parser as installed. The parser release name remains the
+  compatibility contract, and tampered or corrupted files still fail closed.
 - Added Paper Review (Auto), which validates one orientation/router call and
   selects one or two subject/subfield reviewers plus one to four method
-  reviewers from a host-owned catalog covering 28 disciplines, 191 subject
-  roles, and 32 method roles. Its saved workflow remains a four-step skeleton;
-  Rust assembles only the selected specialists for each six-to-ten-step run.
+  reviewers from a host-owned catalog covering 29 disciplines, 257 subject
+  roles, and 115 method roles in 15 method families. Its saved workflow
+  remains a five-step skeleton; Rust assembles only the selected specialists
+  for each seven-to-eleven-step run.
   The plan is visible in progress and saved orientation artifacts, and
   unselected specialists never become workflow steps or consume model calls.
   The New Run workflow summary links to a searchable catalog browser grouped
-  by discipline, with separate subject and method views. The Workflow Editor
-  now shows one combined Orientation & Classification stage followed by two
-  read-only adaptive slots instead of expanding the specialist catalog into
-  saved steps. Every selected subject and method report is a direct input to
-  synthesis alongside the three universal reviews. Untouched 28- and 29-step
-  Auto Review development profiles migrate to the compact skeleton, including
-  installs where an earlier migration marker was recorded before compaction.
+  by discipline and method family, with separate subject and method views.
+  The Workflow Editor now shows one combined Orientation & Classification
+  stage followed by read-only adaptive slots instead of expanding the
+  specialist catalog into saved steps.
+  Method families give each group of related roles an explicit broad-fallback
+  entry, so the router prefers the most specific fitting reviewer under one
+  generic rule. The orientation call also classifies the document's genre —
+  replication, comment or reply, survey article, data descriptor, methods or
+  tool paper, registered report, null results, case report, or research
+  software paper, defaulting to an ordinary research article — and every
+  reviewer receives the matching host-owned genre context, so a comment is
+  not faulted for lacking a free-standing contribution and a null-result
+  paper is not faulted for the null itself. Each materialized specialist
+  prompt also begins with the router's validated selection reason, quoted as
+  bounded, untrusted context, so every reviewer starts from the claim that
+  triggered its selection. The new subject coverage adds a neuroscience
+  discipline and deeper AI, astronomy, climate, demography, and metascience
+  subfields; new method coverage spans modern causal designs, AI-era
+  evaluation, health and laboratory research, and a
+  reproducibility-and-integrity family that can recompute reported
+  statistics, flag figure inconsistencies, spot-check citations, and audit
+  replication packages. The orientation prompt and schema that earlier stock
+  installs wrote to disk are pinned verbatim for migration fingerprinting, so
+  untouched stock Auto profiles keep upgrading in place while the live
+  catalog evolves. Every selected subject and method report is a direct input to
+  the Consolidate Feedback step alongside the three universal reviews, which
+  merges them into up to forty ordered comments; a Validate Feedback step then
+  re-checks each consolidated comment against the paper, repairs details that
+  are easy to fix, and removes comments that do not validate, returning the
+  same format the report viewer indexes. Web search is enabled by default on
+  every Auto review step, including materialized specialists. Untouched
+  28- and 29-step Auto Review development profiles and untouched four-step
+  skeletons migrate to the validated five-step skeleton, including installs
+  where an earlier migration marker was recorded before compaction; a
+  configured adaptive-agent count is preserved and customized workflows are
+  left exactly as edited.
   The pre-launch execution review now shows the bounded adaptive groups in the
   timeline and artifact-access table, including their direct inputs to Auto
   synthesis, without truncating step and count summaries. During a live run,
@@ -57,10 +213,6 @@ the first public release was not maintained as a stable release series.
   WebView.
 - Updated and constrained the frontend build and test dependency tree to
   eliminate all findings from the full npm production-and-development audit.
-- Retired Marker installation, discovery, and execution because its compatible
-  Python dependency closure contains known vulnerabilities. Legacy selections
-  now fail closed with replacement guidance; historical run artifacts remain
-  readable, and Settings can remove an old app-managed Marker environment.
 - Added a pre-run data-sharing notice, detailed privacy documentation, and a
   private vulnerability-reporting policy.
 
@@ -74,8 +226,8 @@ the first public release was not maintained as a stable release series.
 - Made folder-watch stop transitions visible immediately while retaining the
   completed-job history.
 - Preserved readable document text when provider limits prevent inclusion of a
-  large structured bundle, and stopped duplicating native Marker/Paddle blocks
-  with inferred Markdown structure.
+  large structured bundle, and stopped duplicating native Paddle blocks with
+  inferred Markdown structure.
 - Made saved-run export complete and atomic, with a unique destination for each
   export. The legacy core-file export is now clearly labeled and refuses to
   overwrite an existing destination.

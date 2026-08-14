@@ -167,7 +167,7 @@ pub struct OrientationMap {
 }
 
 impl OrientationMap {
-    /// Minimal placeholder when orientation is disabled.
+    /// Minimal compatibility placeholder for older saved reports without an orientation map.
     pub fn empty(paper_text: &str) -> Self {
         // Guess paper type from text heuristics
         let lower = paper_text.to_lowercase();
@@ -404,7 +404,7 @@ pub struct StepOutput {
     /// Effective model id/alias used for this step (resolved override or global).
     #[serde(default)]
     pub model: String,
-    /// Provider that ran this step ("claude", "codex", "gemini", "local").
+    /// Provider that ran this step ("claude", "codex", "antigravity", "local").
     #[serde(default)]
     pub provider: String,
     /// Transport used by the provider ("cli" or "api").
@@ -463,6 +463,10 @@ pub struct EditorSynthesis {
 pub struct StepFailure {
     pub step_id: String,
     pub step_label: String,
+    /// Execution phase of the failed step. Empty on reports saved before this
+    /// field existed and on run-level recovery sentinels.
+    #[serde(default)]
+    pub phase: String,
     pub error: String,
 }
 
@@ -525,20 +529,46 @@ impl PipelineReport {
         outputs
     }
 
-    /// Get the final output text (last sequential step, or last step if none sequential).
-    /// Skipped steps are never the final output.
+    /// Get the final usable output text. A successful sequential step remains
+    /// authoritative. If every sequential report-producing step failed, do
+    /// not silently promote one parallel specialist analysis to the canonical
+    /// report. Parallel-only workflows still fall back to their last output.
     pub fn final_output(&self) -> Option<&str> {
         if !self.step_outputs.is_empty() {
+            if let Some(output) =
+                self.step_outputs.iter().rev().find(|s| {
+                    s.phase == "sequential" && !s.skipped && !s.raw_text.trim().is_empty()
+                })
+            {
+                return Some(output.raw_text.as_str());
+            }
+            if self
+                .failed_steps
+                .iter()
+                .any(|failure| failure.phase == "sequential")
+            {
+                return None;
+            }
             return self
                 .step_outputs
                 .iter()
                 .rev()
-                .find(|s| s.phase == "sequential" && !s.skipped)
-                .or_else(|| self.step_outputs.iter().rev().find(|s| !s.skipped))
+                .find(|s| !s.skipped && !s.raw_text.trim().is_empty())
                 .map(|s| s.raw_text.as_str());
         }
         // Legacy
-        self.editor.as_ref().map(|e| e.overall_assessment.as_str())
+        self.editor
+            .as_ref()
+            .filter(|editor| !editor.overall_assessment.trim().is_empty())
+            .map(|editor| editor.overall_assessment.as_str())
+    }
+
+    pub fn final_output_blocked_by_failed_sequential(&self) -> bool {
+        self.final_output().is_none()
+            && self
+                .failed_steps
+                .iter()
+                .any(|failure| failure.phase == "sequential")
     }
 }
 
@@ -556,16 +586,6 @@ pub struct ExtractionResult {
     pub paper_hash: String,
     #[serde(default)]
     pub quality_notes: Vec<String>,
-}
-
-// --- Report History ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReportSummary {
-    pub paper_hash: String,
-    pub title: String,
-    pub report_date: NaiveDate,
-    pub file_path: String,
 }
 
 #[cfg(test)]
@@ -829,6 +849,40 @@ mod tests {
         }];
         let report = make_report(outputs, vec![], None);
         assert_eq!(report.final_output(), Some("only parallel"));
+    }
+
+    #[test]
+    fn final_output_does_not_promote_parallel_output_after_sequential_failure() {
+        let outputs = vec![StepOutput {
+            step_id: "technical".into(),
+            step_label: "Technical".into(),
+            phase: "parallel".into(),
+            raw_text: "specialist analysis".into(),
+            ..Default::default()
+        }];
+        let mut report = make_report(outputs, vec![], None);
+        report.failed_steps.push(StepFailure {
+            step_id: "synthesis".into(),
+            step_label: "Synthesis".into(),
+            phase: "sequential".into(),
+            error: "invalid report".into(),
+        });
+
+        assert_eq!(report.final_output(), None);
+        assert!(report.final_output_blocked_by_failed_sequential());
+    }
+
+    #[test]
+    fn final_output_ignores_blank_historical_outputs() {
+        let outputs = vec![StepOutput {
+            step_id: "technical".into(),
+            step_label: "Technical".into(),
+            phase: "parallel".into(),
+            raw_text: "  \n".into(),
+            ..Default::default()
+        }];
+        let report = make_report(outputs, vec![], None);
+        assert_eq!(report.final_output(), None);
     }
 
     #[test]

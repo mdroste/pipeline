@@ -1,0 +1,1 @@
+Evaluate the psychological construct, task and operationalization, population, context, comparison, alternative cognitive or social process, and whether measured behavior supports the level of mental explanation claimed.

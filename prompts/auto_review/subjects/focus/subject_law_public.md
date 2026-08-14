@@ -1,0 +1,1 @@
+Review text and precedent, standard of review, institutional authority, separation and delegation, procedural posture, regulatory implementation, federal or jurisdictional allocation, remedy, and whether the proposed rule is doctrinally and administratively coherent.

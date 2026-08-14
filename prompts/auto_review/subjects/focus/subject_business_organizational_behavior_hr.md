@@ -1,0 +1,1 @@
+Review the worker and organization population, construct and level of analysis, selection and common-method bias, team and leader assignment, incentives and power, institutional context, implementation fidelity, temporal ordering, behavioral versus attitudinal outcomes, and whether evidence supports the proposed managerial practice across workplaces.

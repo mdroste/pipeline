@@ -1,0 +1,1 @@
+Assess impairment, activity and participation targets, baseline function, intervention dose and progression, therapist and setting effects, assistive technology, adherence, meaningful change, durability, accessibility, and whether standardized measures reflect goals important to the population studied.

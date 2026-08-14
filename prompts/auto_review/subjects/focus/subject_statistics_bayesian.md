@@ -1,0 +1,1 @@
+Review the likelihood-prior relationship, prior support and sensitivity, identifiability, posterior concentration or calibration, computational approximation, diagnostics, and decision interpretation. Distinguish posterior precision from information supplied by the data.

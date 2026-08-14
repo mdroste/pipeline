@@ -1,0 +1,1 @@
+Evaluate the archive or corpus, historical and linguistic context, interpretive problem, conceptual vocabulary, evidence from form and detail, relation to scholarship, counterreadings, and the scale of the cultural claim.

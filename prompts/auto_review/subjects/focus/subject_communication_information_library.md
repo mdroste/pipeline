@@ -1,0 +1,1 @@
+Assess collection and user boundaries, metadata and classification, provenance, retrieval and discovery, preservation, access and exclusion, professional practice, platform governance, information behavior, and whether system metrics represent meaningful access, use, or knowledge organization.

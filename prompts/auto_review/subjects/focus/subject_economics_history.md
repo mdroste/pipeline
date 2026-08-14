@@ -1,0 +1,1 @@
+Review historical institutions and measurement, unit comparability, selection in records, timing, mechanism and counterfactual, persistence, spatial and cohort composition, and whether modern economic concepts are warranted by the historical setting.

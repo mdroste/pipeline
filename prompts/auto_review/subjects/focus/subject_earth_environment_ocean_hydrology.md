@@ -1,0 +1,1 @@
+Review circulation or flow, storage and flux closure, mixing, boundary exchanges, sampling depth and season, catchment or basin scale, tracer assumptions, extremes, and whether sparse observations constrain the claimed water-system dynamics.

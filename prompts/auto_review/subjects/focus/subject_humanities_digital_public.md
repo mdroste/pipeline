@@ -1,0 +1,1 @@
+Review corpus and metadata provenance, digitization and OCR bias, modeling choices, interpretability, interface and audience, preservation, community authority, public representation, and whether computational patterns return to historically and textually grounded claims.

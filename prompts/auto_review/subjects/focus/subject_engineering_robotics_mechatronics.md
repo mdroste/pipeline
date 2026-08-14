@@ -1,0 +1,1 @@
+Review requirements and task envelope, kinematics and dynamics, actuator and transmission limits, sensing and calibration, control-hardware integration, contact and disturbance behavior, safety and recovery, repeatability, energy and payload tradeoffs, hardware-in-the-loop evidence, and whether demonstrations establish robust operation beyond a tuned laboratory trajectory.

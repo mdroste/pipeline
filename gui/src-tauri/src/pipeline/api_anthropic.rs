@@ -106,6 +106,18 @@ fn remove_hosted_search(request: &mut AnthropicRequest) {
     });
 }
 
+/// Ceiling accepted by every current Claude model, used when a model rejects
+/// the DEFAULT_STEP_MAX_OUTPUT_TOKENS default.
+const FALLBACK_MAX_OUTPUT_TOKENS: u32 = 16_384;
+
+/// A 400 whose body says max_tokens exceeds the model's output ceiling, e.g.
+/// "max_tokens: 32000 > 16384, which is the maximum allowed number of output
+/// tokens for ...".
+fn max_tokens_capability_error(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("http 400") && error.contains("max_tokens") && error.contains("maximum")
+}
+
 fn hosted_search_capability_error(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     let validation_error = error.contains("http 400");
@@ -202,7 +214,9 @@ pub async fn call_anthropic_api(
 
     let request = AnthropicRequest {
         model,
-        max_tokens: overrides.max_output_tokens.unwrap_or(16384),
+        max_tokens: overrides
+            .max_output_tokens
+            .unwrap_or(DEFAULT_STEP_MAX_OUTPUT_TOKENS),
         system: system_prompt.map(|s| s.to_string()),
         messages,
         tools,
@@ -296,6 +310,34 @@ pub async fn call_anthropic_api(
                 ),
             );
             remove_hosted_search(&mut fallback_request);
+            super::logging::record_provider_attempt();
+            anthropic_tool_loop(
+                app,
+                client,
+                &settings.anthropic_api_key,
+                fallback_request,
+                retry_timeout,
+                label,
+                &access,
+            )
+            .await?
+        }
+        Err(error)
+            if fallback_request.max_tokens > FALLBACK_MAX_OUTPUT_TOKENS
+                && max_tokens_capability_error(&error) =>
+        {
+            let retry_timeout = timeout_secs.saturating_sub(start.elapsed().as_secs());
+            if retry_timeout == 0 {
+                return Err(error);
+            }
+            log(
+                app,
+                format!(
+                    "{label}: this model's output ceiling is below max_tokens={}; retrying once with {FALLBACK_MAX_OUTPUT_TOKENS}",
+                    fallback_request.max_tokens
+                ),
+            );
+            fallback_request.max_tokens = FALLBACK_MAX_OUTPUT_TOKENS;
             super::logging::record_provider_attempt();
             anthropic_tool_loop(
                 app,
@@ -405,6 +447,22 @@ mod tests {
         let hosted = tools.last().unwrap();
         assert_eq!(hosted["type"], "web_search_20250305");
         assert_eq!(hosted["max_uses"], MAX_HOSTED_WEB_SEARCH_USES);
+    }
+
+    #[test]
+    fn max_tokens_fallback_matches_only_output_ceiling_rejections() {
+        assert!(max_tokens_capability_error(
+            "Anthropic API error (HTTP 400): max_tokens: 32000 > 16384, which is the maximum allowed number of output tokens for claude-haiku-4-5"
+        ));
+        assert!(!max_tokens_capability_error(
+            "Anthropic API error (HTTP 400): max_tokens must be positive"
+        ));
+        assert!(!max_tokens_capability_error(
+            "Anthropic API error (HTTP 500): internal error"
+        ));
+        assert!(!max_tokens_capability_error(
+            "Anthropic API error (HTTP 400): web_search_20250305 is not enabled for this organization"
+        ));
     }
 
     #[test]

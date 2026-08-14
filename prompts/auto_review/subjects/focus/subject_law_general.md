@@ -1,0 +1,1 @@
+Evaluate the governing authority, jurisdiction, legal question, interpretive method, institutional competence, administrability, precedent, remedy, and the difference between descriptive doctrine and normative reform.

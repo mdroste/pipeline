@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type {
   Phase,
   PipelineConfig,
@@ -31,10 +31,15 @@ import {
 } from "./pipeline-editor/PreprocessingEditors";
 import { MemoizedStepRow as StepRow } from "./pipeline-editor/StepListItems";
 import {
-  AdaptiveSlotEditorPanel,
-  AdaptiveSlotRow,
+  AdaptiveAgentsEditorPanel,
+  AdaptiveAgentsRow,
   type AdaptiveSlotKind,
 } from "./pipeline-editor/AdaptiveReviewEditors";
+import {
+  adaptiveAgentCount as getAdaptiveAgentCount,
+  isAutoReview,
+  withAdaptiveAgentCount,
+} from "../lib/autoReview";
 import {
   conditionUpstreamIds,
   defaultStepContext,
@@ -77,7 +82,7 @@ export default function PipelinePage({
 
   // Profile state
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
-  const [activeProfile, setActiveProfile] = useState<string>("deep-review");
+  const [activeProfile, setActiveProfile] = useState<string>("auto-review");
   const [profileMutationPending, setProfileMutationPending] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [navigatorView, setNavigatorView] = useState<"steps" | "overview">("steps");
@@ -226,8 +231,7 @@ export default function PipelinePage({
     "pipeline_settings",
     "extraction",
     "orientation",
-    "auto_subject_slot",
-    "auto_method_slot",
+    "auto_adaptive_agents",
   ]);
   const isStepEditing = !!editing && !NON_STEP_EDITORS.has(editing);
 
@@ -397,7 +401,7 @@ export default function PipelinePage({
       await invoke("delete_profile", { id: profile });
       if (!profileMutationIsCurrent(request)) return;
       await refreshProfiles(request);
-      await switchProfileForMutation("deep-review", request);
+      await switchProfileForMutation("auto-review", request);
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
         alert(`Failed to delete profile: ${e instanceof Error ? e.message : String(e)}`);
@@ -482,47 +486,6 @@ export default function PipelinePage({
         dirtyBefore: dirty,
         editingBefore: editing,
         message: "Artifact access rules were updated.",
-      });
-    }
-    setConfig(nextConfig);
-    setDirty(true);
-  };
-
-  const updateUseOrientation = (enabled: boolean) => {
-    const affected = enabled
-      ? 0
-      : config.steps.reduce(
-          (count, step) =>
-            count + step.context.include.filter((selector) => selector.kind === "survey").length,
-          0,
-        );
-    if (
-      affected > 0 &&
-      !window.confirm(
-        `Disabling the orientation map removes survey access from ${affected} workflow step${affected === 1 ? "" : "s"}. Continue?`,
-      )
-    ) {
-      return;
-    }
-    const nextConfig = {
-      ...config,
-      use_orientation: enabled,
-      steps: enabled
-        ? config.steps
-        : config.steps.map((step) => ({
-            ...step,
-            context: {
-              include: step.context.include.filter((selector) => selector.kind !== "survey"),
-            },
-          })),
-    };
-    if (affected > 0) {
-      setUndoRewrite({
-        before: config,
-        after: JSON.stringify(nextConfig),
-        dirtyBefore: dirty,
-        editingBefore: editing,
-        message: "Survey access rules were removed.",
       });
     }
     setConfig(nextConfig);
@@ -683,32 +646,24 @@ export default function PipelinePage({
 
   // --- Export/Import ---
 
+  // The backend opens the native save dialog and writes only to the chosen
+  // path; the webview passes a suggested name but never a filesystem path.
   const handleExportItem = async () => {
     if (!editingStep) return;
     const envelope: ExportEnvelope = { type: "step", data: editingStep };
-    const defaultName = `pipeline-step-${editingStep.id}.json`;
+    const suggestedName = `pipeline-step-${editingStep.id}.json`;
     try {
-      const path = await saveDialog({
-        defaultPath: defaultName,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!path) return;
-      await invoke("export_item", { path, json: JSON.stringify(envelope, null, 2) });
+      await invoke("export_item", { json: JSON.stringify(envelope, null, 2), suggestedName });
     } catch (e) {
       alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
   const handleExportProfile = async () => {
-    const defaultName = `pipeline-profile-${activeProfile}.json`;
+    const suggestedName = `pipeline-profile-${activeProfile}.json`;
     try {
-      const path = await saveDialog({
-        defaultPath: defaultName,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!path) return;
       if (!(await saveBeforeExport("the profile"))) return;
-      await invoke("export_profile", { id: activeProfile, path });
+      await invoke("export_profile", { id: activeProfile, suggestedName });
     } catch (e) {
       alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -716,13 +671,8 @@ export default function PipelinePage({
 
   const handleExportBundle = async () => {
     try {
-      const path = await saveDialog({
-        defaultPath: "pipeline-settings-backup.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!path) return;
       if (!(await saveBeforeExport("the settings bundle"))) return;
-      await invoke("export_bundle", { path });
+      await invoke("export_bundle", { suggestedName: "pipeline-settings-backup.json" });
     } catch (e) {
       alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -797,10 +747,10 @@ export default function PipelinePage({
           const maxAttempts = logicalCalls * ((settings?.max_retries ?? 0) + 1) + mergeCalls;
           if (!confirm(
             `Import and activate profile “${envelope.name}”?\n\n` +
-            `${enabled.length} enabled steps; up to ${maxAttempts} provider attempts per run (including retries and merges).\n` +
+            `${enabled.length} enabled steps; up to ${maxAttempts} provider attempts per report (including retries and merges).\n` +
             `Tools: ${tools.join(", ") || "none"}\n` +
             `Agents: ${agents.join(", ") || "profile default"}\n\n` +
-            "Review the imported prompts in the editor before starting a run.",
+            "Review the imported prompts in the editor before generating a report.",
           )) return;
           const summary = await invoke<ProfileSummary>("import_profile", { path });
           await refreshProfiles();
@@ -864,7 +814,7 @@ export default function PipelinePage({
         return defaultStepContext(
           draft.phase,
           inputMode,
-          config.use_orientation,
+          true,
           config.steps,
         );
       }
@@ -1005,7 +955,8 @@ export default function PipelinePage({
   const parallelSteps = config.steps.filter((s) => s.phase === "parallel");
   const sequentialSteps = config.steps.filter((s) => s.phase === "sequential");
   const hasMultiAgent = parallelSteps.some((s) => s.agents?.length > 1);
-  const autoReview = config.orientation_schema?.["x-pipeline-contract"] === "auto-review-v2";
+  const autoReview = isAutoReview(config);
+  const adaptiveAgentCount = getAdaptiveAgentCount(config);
   const browseSpecialists = (kind: AdaptiveSlotKind) => {
     setCatalogTab(kind === "subject" ? "subjects" : "methods");
   };
@@ -1154,8 +1105,8 @@ export default function PipelinePage({
             <WaveDiagram
               steps={config.steps}
               merge={config.merge}
-              useOrientation={config.use_orientation}
               adaptiveReview={autoReview}
+              adaptiveAgentCount={adaptiveAgentCount}
               selectedId={editing}
               onSelect={(id) => setEditing(editing === id ? null : id)}
             />
@@ -1191,17 +1142,8 @@ export default function PipelinePage({
                 : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
             }`}
           >
-            <span className="flex items-center justify-between gap-2">
-              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                {autoReview ? "Orientation & classification" : "Orientation map"}
-              </span>
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                config.use_orientation
-                  ? "bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300"
-                  : "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
-              }`}>
-                {config.use_orientation ? "On" : "Off"}
-              </span>
+            <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
+              {autoReview ? "Orientation & classification" : "Orientation map"}
             </span>
             <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
               {autoReview
@@ -1234,15 +1176,10 @@ export default function PipelinePage({
               <div className="bg-blue-50/60 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:bg-blue-950/25 dark:text-blue-300">
                 Auto-filled from orientation
               </div>
-              <AdaptiveSlotRow
-                kind="subject"
-                selected={editing === "auto_subject_slot"}
-                onSelect={() => setEditing(editing === "auto_subject_slot" ? null : "auto_subject_slot")}
-              />
-              <AdaptiveSlotRow
-                kind="method"
-                selected={editing === "auto_method_slot"}
-                onSelect={() => setEditing(editing === "auto_method_slot" ? null : "auto_method_slot")}
+              <AdaptiveAgentsRow
+                count={adaptiveAgentCount}
+                selected={editing === "auto_adaptive_agents"}
+                onSelect={() => setEditing(editing === "auto_adaptive_agents" ? null : "auto_adaptive_agents")}
               />
             </div>
           )}
@@ -1409,11 +1346,9 @@ export default function PipelinePage({
           />
         ) : editing === "orientation" ? (
           <OrientationEditor
-            useOrientation={config.use_orientation}
             prompt={config.orientation_prompt}
             schema={config.orientation_schema}
             autoReview={autoReview}
-            onToggleUse={updateUseOrientation}
             onPromptChange={(orientation_prompt) => {
               setConfig((current) => current ? { ...current, orientation_prompt } : current);
               setDirty(true);
@@ -1423,10 +1358,15 @@ export default function PipelinePage({
               setDirty(true);
             }}
           />
-        ) : editing === "auto_subject_slot" ? (
-          <AdaptiveSlotEditorPanel kind="subject" onBrowse={browseSpecialists} />
-        ) : editing === "auto_method_slot" ? (
-          <AdaptiveSlotEditorPanel kind="method" onBrowse={browseSpecialists} />
+        ) : editing === "auto_adaptive_agents" ? (
+          <AdaptiveAgentsEditorPanel
+            count={adaptiveAgentCount}
+            onCountChange={(count) => {
+              setConfig(withAdaptiveAgentCount(config, count));
+              setDirty(true);
+            }}
+            onBrowse={browseSpecialists}
+          />
         ) : editing === "pipeline_settings" ? (
           <PipelineSettingsEditorPanel
             config={config}
@@ -1435,7 +1375,6 @@ export default function PipelinePage({
               setConfig({ ...config, context_cache: { enabled } });
               setDirty(true);
             }}
-            onUseOrientationChange={updateUseOrientation}
             onVariablesChange={(variables) => {
               setConfig({ ...config, variables });
               setDirty(true);

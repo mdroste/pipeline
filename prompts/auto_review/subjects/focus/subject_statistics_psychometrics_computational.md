@@ -1,0 +1,1 @@
+Assess measurement invariance, latent-scale identification, mixture separation, score interpretation, computational convergence, Monte Carlo error, and sensitivity to model structure. Check whether the latent object is empirically distinguished from alternative parameterizations.

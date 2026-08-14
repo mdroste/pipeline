@@ -1,0 +1,1 @@
+Examine site and load assumptions, material behavior, boundary and soil conditions, codes, deterioration, network demand, resilience, life-cycle performance, and safety factors. Determine whether case or laboratory evidence supports deployment across the claimed infrastructure class.

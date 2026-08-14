@@ -1,0 +1,1 @@
+Review physiological requirements, biocompatibility, interface and transport, sterilization, calibration, device failure, relevant biological model, translational path, and comparator technology. Separate proof of principle from evidence of safe and robust clinical function.

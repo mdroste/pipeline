@@ -1,0 +1,1 @@
+Review the legal treatment and institutional setting, case and decision selection, coding of doctrine and outcomes, strategic behavior, identification, external validity across jurisdictions, welfare and distribution, and whether empirical findings warrant the legal reform proposed.

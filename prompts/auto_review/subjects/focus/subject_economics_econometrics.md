@@ -1,0 +1,1 @@
+Review the estimand and statistical experiment, identifying and regularity assumptions, asymptotic sequence, robustness, efficiency, finite-sample behavior, implementation, and whether empirical illustrations exercise the method's difficult cases.

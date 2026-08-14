@@ -1,0 +1,1 @@
+Assess biological target definition, data integration, batch and cohort structure, network or mechanistic assumptions, annotation leakage, validation in independent systems, perturbational support, and whether computational patterns yield a biological explanation.

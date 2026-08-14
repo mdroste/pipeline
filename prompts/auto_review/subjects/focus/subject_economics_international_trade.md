@@ -1,0 +1,1 @@
+Review comparative advantage and market access, trade costs and elasticities, firm and product selection, input-output and value-chain structure, tariff and nontariff policy, pass-through, production location, general-equilibrium adjustment, gains and distribution, and whether counterfactuals use variation that identifies the claimed trade margins.

@@ -1,0 +1,1 @@
+Examine the language or system model, soundness and completeness claims, expressiveness, metatheory, trusted computing base, mechanization, compiler correctness, usability, and representative programs. Distinguish formal guarantees from properties of the deployed implementation.

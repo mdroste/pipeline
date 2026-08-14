@@ -10,7 +10,7 @@ use super::merge;
 use crate::models::{StepFailure, StepOutput};
 use crate::output::{
     capitalize, extract_report_envelope, new_report_nonce, normalize_math_delimiters,
-    report_output_format,
+    report_output_format, ReportRejectionKind, ReportValidationError,
 };
 use crate::pipeline_config::{
     ArtifactSelector, NamedInputArtifactPart, Phase, PipelineConfig, PrimaryArtifactPart,
@@ -107,6 +107,40 @@ async fn checkpoint_outputs(
             );
         }
     }
+}
+
+/// Remove checkpoint files at or above the given ordinal. Runs before a
+/// wave's final rewrite so its provisional completion-order checkpoints
+/// cannot linger next to the final ordering and double-load in recovery.
+/// Failure checkpoints (`failure_*.json`) have no numeric prefix and are
+/// never touched.
+async fn remove_checkpoints_from(write_dir: Option<&str>, start: usize) {
+    let Some(write_dir) = write_dir else {
+        return;
+    };
+    let directory = std::path::PathBuf::from(write_dir).join("checkpoints");
+    let _ = tokio::task::spawn_blocking(move || {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(ordinal) = name
+                .split('_')
+                .next()
+                .and_then(|prefix| prefix.parse::<usize>().ok())
+            else {
+                continue;
+            };
+            if ordinal >= start {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    })
+    .await;
 }
 
 async fn checkpoint_failure(write_dir: Option<&str>, failure: &StepFailure) -> Result<(), String> {
@@ -492,19 +526,31 @@ fn resolve_artifact_context(
             let Ok(instances) = std::fs::read_dir(&producer_root) else {
                 continue;
             };
-            for instance in instances.flatten() {
-                let files = instance.path().join("files");
-                if !files.is_dir() {
-                    continue;
-                }
+            let mut unit_files: Vec<(String, std::path::PathBuf)> = instances
+                .flatten()
+                .filter_map(|instance| {
+                    let files = instance.path().join("files");
+                    files
+                        .is_dir()
+                        .then(|| (instance.file_name().to_string_lossy().into_owned(), files))
+                })
+                .collect();
+            unit_files.sort();
+            // A multi-agent or fan-out producer has several units; staging
+            // their trees into one shared destination would let same-named
+            // files overwrite each other in read_dir order. Namespace each
+            // unit by its on-disk unit slug (the report-staging convention);
+            // a single unit keeps the flat layout.
+            let namespace_units = unit_files.len() > 1;
+            for (unit, files) in &unit_files {
                 if glob.is_empty() {
-                    add_read_root(&mut read_dirs, &files);
+                    add_read_root(&mut read_dirs, files);
                     manifest_lines.push(format!(
                         "- Supporting files from '{producer}': {}",
-                        normalized_path(&files)
+                        normalized_path(files)
                     ));
                 } else {
-                    let expanded = crate::pipeline::glob::expand(&files, glob, 500);
+                    let expanded = crate::pipeline::glob::expand(files, glob, 500);
                     if expanded
                         .limited_by
                         .is_some_and(|reason| reason != "match limit")
@@ -518,15 +564,17 @@ fn resolve_artifact_context(
                     for matched in expanded.matches {
                         let source = std::path::Path::new(&matched);
                         let relative = source
-                            .strip_prefix(&files)
+                            .strip_prefix(files)
                             .map_err(|_| "Selected supporting file escaped its producer root")?;
+                        let mut destination =
+                            std::path::Path::new("steps").join(step_slug(producer));
+                        if namespace_units {
+                            destination = destination.join(unit);
+                        }
                         let staged = stage_artifact_file(
                             view.path(),
                             &matched,
-                            &std::path::Path::new("steps")
-                                .join(step_slug(producer))
-                                .join("files")
-                                .join(relative),
+                            &destination.join("files").join(relative),
                         )?;
                         manifest_lines
                             .push(format!("- Supporting file from '{producer}': {staged}"));
@@ -559,18 +607,37 @@ fn resolve_artifact_context(
     })
 }
 
+/// Shared-context reuse is an optimization, never a precondition: any
+/// failure to assemble the shared prefix (unreadable staged text, or content
+/// past the runtime-context safety cap — possible because LaTeX extraction
+/// permits more than the 8 MB shared-context limit) degrades the affected
+/// calls to ordinary self-contained prompts instead of failing the run.
 fn prepare_selected_shared_context(
+    app: &crate::emit::EventBus,
     enabled: bool,
     resolved: &ResolvedArtifactContext,
     orientation: &serde_json::Value,
     pool: &super::context_cache::PreparedContextPool,
-) -> Result<Option<Arc<super::context_cache::PreparedContext>>, String> {
+) -> Option<Arc<super::context_cache::PreparedContext>> {
     if !enabled || (!resolved.includes_primary_text && !resolved.includes_survey) {
-        return Ok(None);
+        return None;
     }
+    let degrade = |error: &str| {
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({
+                "line": format!(
+                    "WARNING: shared input context unavailable ({error}); running without context reuse"
+                )
+            }),
+        );
+        None
+    };
     let text = if resolved.includes_primary_text && !resolved.paper_text_path.is_empty() {
-        std::fs::read_to_string(&resolved.paper_text_path)
-            .map_err(|error| format!("Failed to prepare selected shared input: {error}"))?
+        match std::fs::read_to_string(&resolved.paper_text_path) {
+            Ok(text) => text,
+            Err(error) => return degrade(&error.to_string()),
+        }
     } else {
         String::new()
     };
@@ -580,7 +647,10 @@ fn prepare_selected_shared_context(
     } else {
         &empty_survey
     };
-    Ok(Some(pool.prepare(&text, survey)?))
+    match pool.prepare(&text, survey) {
+        Ok(prepared) => Some(prepared),
+        Err(error) => degrade(&error),
+    }
 }
 
 /// One authoritative row in the profile's planned execution timeline.
@@ -616,20 +686,18 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
         step_ids: Vec::new(),
         step_labels: Vec::new(),
     }];
-    if config.use_orientation {
-        plan.push(ExecutionPlanStage {
-            id: "orienting".to_string(),
-            kind: "orienting".to_string(),
-            label: if crate::auto_review::uses_auto_review_contract(config) {
-                "Creating orientation map & review plan"
-            } else {
-                "Creating orientation map"
-            }
-            .to_string(),
-            step_ids: Vec::new(),
-            step_labels: Vec::new(),
-        });
-    }
+    plan.push(ExecutionPlanStage {
+        id: "orienting".to_string(),
+        kind: "orienting".to_string(),
+        label: if crate::auto_review::uses_auto_review_contract(config) {
+            "Creating orientation map & review plan"
+        } else {
+            "Creating orientation map"
+        }
+        .to_string(),
+        step_ids: Vec::new(),
+        step_labels: Vec::new(),
+    });
 
     let enabled: Vec<&StepConfig> = config.steps.iter().filter(|step| step.enabled).collect();
     let dependencies = resolve_dependencies(&enabled);
@@ -875,6 +943,8 @@ pub async fn execute_steps(
                     "label": wave_label,
                     "stepIds": wave_step_ids,
                     "stepLabels": wave_step_labels,
+                    "mergeStepIds": merged_step_ids,
+                    "mergeStepLabels": merged_step_labels,
                 }),
             )
             .ok();
@@ -984,11 +1054,44 @@ pub async fn execute_steps(
                     )
                     .await
                     {
-                        Ok(merged) => {
+                        Ok(mut merged) => {
+                            enforce_merge_output_schemas(
+                                app,
+                                &to_run,
+                                &wave_outputs,
+                                &mut merged,
+                            );
+                            // `merged` holds clones of already-reserved
+                            // pass-through outputs plus newly synthesized
+                            // per-group merge reports; only the latter are new
+                            // bytes. A merge result that would exceed the run
+                            // budget degrades to the (already reserved)
+                            // unmerged outputs instead of failing the run.
+                            let already_reserved: std::collections::HashSet<&str> = wave_outputs
+                                .iter()
+                                .map(|output| output.raw_text.as_str())
+                                .collect();
+                            let mut reserve_failure = None;
                             for output in &merged {
-                                output_budget.reserve(output)?;
+                                if already_reserved.contains(output.raw_text.as_str()) {
+                                    continue;
+                                }
+                                if let Err(error) = output_budget.reserve(output) {
+                                    reserve_failure = Some(error);
+                                    break;
+                                }
                             }
-                            wave_outputs = merged;
+                            match reserve_failure {
+                                None => wave_outputs = merged,
+                                Some(error) => {
+                                    let _ = app.emit_event(
+                                        "pipeline:log",
+                                        serde_json::json!({ "line": format!(
+                                            "WARNING: merged outputs exceed the run output budget ({error}); keeping the unmerged analyses."
+                                        ) }),
+                                    );
+                                }
+                            }
                         }
                         Err(e) if is_cancellation_error(&e) => return Err(e),
                         Err(e) => {
@@ -999,6 +1102,7 @@ pub async fn execute_steps(
                         }
                     }
                 }
+                remove_checkpoints_from(write_dir, all_outputs.len()).await;
                 checkpoint_outputs(app, write_dir, all_outputs.len(), &wave_outputs).await;
                 all_outputs.extend(wave_outputs);
             } else if planned_merge {
@@ -1089,11 +1193,12 @@ pub async fn execute_steps(
             },
         )?;
         let shared_context = prepare_selected_shared_context(
+            app,
             config.context_cache.enabled,
             &resolved,
             orientation_value,
             &shared_context_pool,
-        )?;
+        );
         match run_sequential_step(
             app,
             step,
@@ -1138,6 +1243,7 @@ pub async fn execute_steps(
                 let failure = StepFailure {
                     step_id: step.id.clone(),
                     step_label: step.label.clone(),
+                    phase: "sequential".to_string(),
                     error: e,
                 };
                 checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await;
@@ -1551,6 +1657,15 @@ async fn finish_response_capture(
     }
 }
 
+fn rejection_attempt_status(
+    error: &ReportValidationError,
+) -> super::response_journal::AttemptStatus {
+    match error.kind() {
+        ReportRejectionKind::Envelope => super::response_journal::AttemptStatus::RejectedEnvelope,
+        ReportRejectionKind::Content => super::response_journal::AttemptStatus::RejectedContent,
+    }
+}
+
 /// Execute one logical step call, including retries, report-file handoff, and
 /// structured-output validation. Scheduling and terminal pass events remain
 /// with the parallel/sequential callers.
@@ -1670,11 +1785,12 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                     (report, terminal_capture.take())
                 }
                 Err(stdout_error) => {
+                    let stdout_reason = stdout_error.to_string();
                     finish_response_capture(
                         &request,
                         terminal_capture.take(),
-                        super::response_journal::AttemptStatus::RejectedEnvelope,
-                        &stdout_error,
+                        rejection_attempt_status(&stdout_error),
+                        &stdout_reason,
                     )
                     .await;
                     if let Some(report_file) = compatibility_file {
@@ -1690,11 +1806,12 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                                 (report, file_capture.take())
                             }
                             Err(file_error) => {
+                                let file_reason = file_error.to_string();
                                 finish_response_capture(
                                     &request,
                                     file_capture.take(),
-                                    super::response_journal::AttemptStatus::RejectedEnvelope,
-                                    &file_error,
+                                    rejection_attempt_status(&file_error),
+                                    &file_reason,
                                 )
                                 .await;
                                 last_error = format!(
@@ -1733,11 +1850,12 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                             (report, file_capture.take())
                         }
                         Err(file_error) => {
+                            let file_reason = file_error.to_string();
                             finish_response_capture(
                                 &request,
                                 file_capture.take(),
-                                super::response_journal::AttemptStatus::RejectedEnvelope,
-                                &file_error,
+                                rejection_attempt_status(&file_error),
+                                &file_reason,
                             )
                             .await;
                             last_error = format!(
@@ -1977,6 +2095,76 @@ fn step_output(
     }
 }
 
+/// A merge report replaces schema-validated unit outputs, so it must satisfy
+/// the producing step's `output_schema` too. A non-conforming merge falls back
+/// to the first unit's already-valid output — never the concatenation banner,
+/// which would also break JSON consumers. The fallback keeps every unit call
+/// record, retains the merge call as `failed_merge` (matching the merge-failure
+/// convention) so its spend stays visible, and takes the retained text's
+/// provider/model provenance from the first unit.
+fn enforce_merge_output_schemas(
+    app: &crate::emit::EventBus,
+    steps: &[&StepConfig],
+    unit_outputs: &[StepOutput],
+    merged: &mut [StepOutput],
+) {
+    for output in merged {
+        // A group replacement (synthesized merge or merge-failure banner
+        // fallback) carries the merge group as its step_id — the step id, or
+        // `{id}/{item}` for a fan-out item. Pass-through unit outputs never
+        // match a merge group and were already validated by execute_step_call.
+        let Some(first_unit) = unit_outputs
+            .iter()
+            .find(|unit| unit.merge_group == output.step_id)
+        else {
+            continue;
+        };
+        let Some(schema) = steps
+            .iter()
+            .find(|step| {
+                step.id == output.step_id
+                    || output
+                        .step_id
+                        .strip_prefix(&step.id)
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .and_then(|step| step.output_schema.as_ref())
+        else {
+            continue;
+        };
+        let reason = if output.calls.iter().any(|call| call.role == "merge") {
+            match crate::pipeline::structured::check(schema, &output.raw_text) {
+                Ok(()) => continue,
+                Err(reason) => reason,
+            }
+        } else {
+            // The merge already failed upstream; its banner concatenation is
+            // never schema-shaped, so replace it without validating.
+            "the merge failed and its concatenation fallback is not schema-shaped".to_string()
+        };
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": format!(
+                "WARNING: merged output for step '{}' did not satisfy the step's output schema ({reason}); keeping the first agent's validated output.",
+                output.step_label
+            )}),
+        );
+        output.raw_text = first_unit.raw_text.clone();
+        output.agent = first_unit.agent.clone();
+        output.provider = first_unit.provider.clone();
+        output.model = first_unit.model.clone();
+        output.model_transport = first_unit.model_transport.clone();
+        output.model_policy = first_unit.model_policy.clone();
+        output.model_source = first_unit.model_source.clone();
+        output.model_catalog_updated_at = first_unit.model_catalog_updated_at.clone();
+        for call in &mut output.calls {
+            if call.role == "merge" {
+                call.role = "failed_merge".to_string();
+            }
+        }
+    }
+}
+
 /// The directory a fan-out glob is resolved against: the input folder itself,
 /// or the parent directory of a single-file input.
 fn fan_out_root(source_path: &str) -> std::path::PathBuf {
@@ -2008,6 +2196,18 @@ fn build_units(
     let multi = agents.len() > 1;
 
     let units = if let Some(fe) = &step.for_each {
+        // No-input profiles and runs whose source staging failed have an
+        // empty source root; fan_out_root("") would resolve to the process
+        // cwd, so treat this as zero matches instead of scanning it.
+        if source_path.is_empty() {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "WARNING: fan-out step '{}' has no source root to scan; treating glob '{}' as matching no files", step.label, fe.glob
+                )}),
+            );
+            return Ok(Vec::new());
+        }
         let root = fan_out_root(source_path);
         let expansion = crate::pipeline::glob::expand(&root, &fe.glob, fe.max.max(1) as usize);
         let items = expansion.matches;
@@ -2167,6 +2367,16 @@ async fn run_parallel_wave(
             } else {
                 format!("{}/{}", id, unit.suffix)
             };
+            // Publish every concrete provider/fan-out unit before it waits for
+            // a worker permit. The progress view can then distinguish queued
+            // work from a logical step that never expanded into provider calls.
+            let _ = app.emit_event(
+                "pipeline:pass",
+                serde_json::json!({
+                    "name": step_key,
+                    "status": "pending"
+                }),
+            );
 
             let mut resolved = resolve_artifact_context(
                 step,
@@ -2186,11 +2396,12 @@ async fn run_parallel_wave(
                 None => String::new(),
             };
             let shared_context = prepare_selected_shared_context(
+                app,
                 context_cache_enabled,
                 &resolved,
                 orientation_value,
                 shared_context_pool,
-            )?;
+            );
             let run_artifact_dir = write_dir.map(str::to_string);
             let task_write_dir = step_write_dir(write_dir, &step_key)?;
             let tools = tools_with_write(
@@ -2295,6 +2506,7 @@ async fn run_parallel_wave(
                     return Err(StepFailure {
                         step_id: step_key_emit.clone(),
                         step_label: fail_label.clone(),
+                        phase: "parallel".to_string(),
                         error,
                     });
                 }
@@ -2303,11 +2515,13 @@ async fn run_parallel_wave(
                     .map_err(|error| StepFailure {
                         step_id: step_key_emit.clone(),
                         step_label: fail_label.clone(),
+                        phase: "parallel".to_string(),
                         error,
                     })?
                     .map_err(|_| StepFailure {
                         step_id: step_key_emit.clone(),
                         step_label: fail_label.clone(),
+                        phase: "parallel".to_string(),
                         error: "Semaphore closed".to_string(),
                     })?;
                 // Cancellation can happen while this unit is queued for the
@@ -2317,6 +2531,7 @@ async fn run_parallel_wave(
                     return Err(StepFailure {
                         step_id: step_key_emit.clone(),
                         step_label: fail_label.clone(),
+                        phase: "parallel".to_string(),
                         error,
                     });
                 }
@@ -2336,11 +2551,13 @@ async fn run_parallel_wave(
                 .map_err(|error| StepFailure {
                     step_id: step_key_emit.clone(),
                     step_label: fail_label.clone(),
+                    phase: "parallel".to_string(),
                     error,
                 })?
                 .map_err(|error| StepFailure {
                     step_id: step_key_emit.clone(),
                     step_label: fail_label.clone(),
+                    phase: "parallel".to_string(),
                     error,
                 })?;
                 let model_policy = resolution.selection.label();
@@ -2389,6 +2606,7 @@ async fn run_parallel_wave(
                             return Err(StepFailure {
                                 step_id: step_key.clone(),
                                 step_label: fail_label.clone(),
+                                phase: "parallel".to_string(),
                                 error,
                             });
                         }
@@ -2406,6 +2624,7 @@ async fn run_parallel_wave(
                         Err(StepFailure {
                             step_id: step_key,
                             step_label: fail_label,
+                            phase: "parallel".to_string(),
                             error,
                         })
                     }
@@ -2419,11 +2638,26 @@ async fn run_parallel_wave(
 
     while let Some(res) = tasks.join_next().await {
         match res {
-            Ok(Ok(report)) => results.push(report),
+            Ok(Ok(report)) => {
+                // Durably checkpoint each unit as it completes, so a crash
+                // later in the wave cannot lose analyses that already
+                // finished. The completion-order ordinal is provisional: the
+                // caller clears this wave's ordinal range and rewrites it in
+                // final order once the wave (and any merge) settles.
+                checkpoint_outputs(
+                    app,
+                    write_dir,
+                    prior_outputs.len() + results.len(),
+                    std::slice::from_ref(&report.1),
+                )
+                .await;
+                results.push(report);
+            }
             Ok(Err(failure)) => failures.push(failure),
             Err(e) => failures.push(StepFailure {
                 step_id: "internal".to_string(),
                 step_label: "Internal task".to_string(),
+                phase: "parallel".to_string(),
                 error: format!("Task panicked: {e}"),
             }),
         }
@@ -2507,8 +2741,15 @@ fn expand_template(
         .map(|o| o.raw_text.as_str())
         .unwrap_or("(not yet generated)");
 
-    let mut expanded = template.to_string();
-    for (needle, value) in [
+    // Substitute in ONE pass over the template only. Inserted values include
+    // model-produced step outputs, which may quote placeholder-shaped text
+    // from the reviewed document; rescanning them (as sequential
+    // replace_all_limited calls did) would let that text pull in other step
+    // reports, inject artifact paths, or balloon the prompt past the byte cap.
+    // `{step:<id>}` references resolve exact composite ids ("technical/claude")
+    // or base ids (joining all agents' outputs); unknown ids become a
+    // parenthesized notice so the prompt stays readable.
+    let replacements: [(&str, &str); 9] = [
         ("{orientation}", orientation_ref.as_str()),
         ("{prior_outputs}", prior_text.as_str()),
         ("{referee_reports}", prior_text.as_str()),
@@ -2518,45 +2759,29 @@ fn expand_template(
         ("{input_path}", paper_text_path),
         ("{document_bundle}", document_bundle_path),
         ("{source_path}", source_path),
-    ] {
-        expanded = crate::safety::replace_all_limited(
-            &expanded,
-            needle,
-            value,
-            limit,
-            "Sequential prompt",
-        )?;
-    }
-
-    substitute_named_step_refs(&expanded, prior_outputs)
-}
-
-/// Replace `{step:<id>}` placeholders with the matching prior step's raw_text.
-/// Multi-agent runs produce composite IDs like "technical/claude"; both the base
-/// id ("technical") and the full id ("technical/claude") are matchable. When a
-/// base id has multiple agents, their outputs are joined with a separator.
-/// Unknown ids are replaced with a parenthesized notice so the prompt remains
-/// readable rather than leaking the literal `{step:foo}` to the LLM.
-fn substitute_named_step_refs(
-    template: &str,
-    prior_outputs: &[StepOutput],
-) -> Result<String, String> {
-    let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
+    ];
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
-    let needle = "{step:";
-
-    while let Some(start) = rest.find(needle) {
+    while let Some(start) = rest.find('{') {
         crate::safety::push_str_limited(&mut out, &rest[..start], limit, "Sequential prompt")?;
-        let after_open = &rest[start + needle.len()..];
-        let Some(end_rel) = after_open.find('}') else {
-            // No closing brace — emit the rest verbatim.
-            crate::safety::push_str_limited(&mut out, &rest[start..], limit, "Sequential prompt")?;
-            return Ok(out);
-        };
-        let id = after_open[..end_rel].trim();
-        append_step_ref(&mut out, id, prior_outputs, limit)?;
-        rest = &after_open[end_rel + 1..];
+        let candidate = &rest[start..];
+        if let Some((needle, value)) = replacements
+            .iter()
+            .find(|(needle, _)| candidate.starts_with(needle))
+        {
+            crate::safety::push_str_limited(&mut out, value, limit, "Sequential prompt")?;
+            rest = &candidate[needle.len()..];
+        } else if let Some((after_open, end_rel)) = candidate
+            .strip_prefix("{step:")
+            .and_then(|after_open| after_open.find('}').map(|end| (after_open, end)))
+        {
+            let id = after_open[..end_rel].trim();
+            append_step_ref(&mut out, id, prior_outputs, limit)?;
+            rest = &after_open[end_rel + 1..];
+        } else {
+            crate::safety::push_str_limited(&mut out, "{", limit, "Sequential prompt")?;
+            rest = &candidate[1..];
+        }
     }
     crate::safety::push_str_limited(&mut out, rest, limit, "Sequential prompt")?;
     Ok(out)
@@ -2749,6 +2974,20 @@ async fn run_sequential_step(
     )?;
 
     let agent = step.agents.first().map(|s| s.as_str());
+    if step.agents.len() > 1 {
+        // Multi-agent execution (and its merge) exists only for Parallel
+        // steps; a Sequential step runs exactly one call. Say so instead of
+        // silently ignoring the extra agents.
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": format!(
+                "WARNING: sequential step '{}' lists {} agents; only the first ('{}') runs. Use a Parallel step with a merge to combine multiple agents.",
+                step.id,
+                step.agents.len(),
+                agent.unwrap_or_default()
+            ) }),
+        );
+    }
     let log_label = format!("Step: {}", step.label);
 
     // Use the paper's parent directory as CWD for steps with Read access
@@ -2939,7 +3178,7 @@ mod tests {
             steps: vec![first, second, synthesis],
             merge: Default::default(),
             context_cache: Default::default(),
-            use_orientation: false,
+            use_orientation: true,
             orientation_prompt: String::new(),
             orientation_schema: None,
             extraction: Default::default(),
@@ -2998,6 +3237,8 @@ mod tests {
             vec!["wave-1-parallel", "wave-1-merge", "wave-2-sequential"]
         );
         assert_eq!(stages[1]["skipped"], true);
+        assert_eq!(stages[0]["mergeStepIds"], serde_json::json!(["first"]));
+        assert_eq!(stages[0]["mergeStepLabels"], serde_json::json!(["first"]));
         assert!(stages.iter().all(|payload| payload["stepIds"].is_array()));
         assert!(stages
             .iter()
@@ -3152,6 +3393,62 @@ mod tests {
     }
 
     #[test]
+    fn multi_unit_supporting_files_stage_into_per_unit_namespaces() {
+        let run = tempfile::tempdir().unwrap();
+        let artifacts = run.path().join("artifacts");
+        let producer_root = artifacts.join("by-step").join(step_slug("producer"));
+        let unit_a = step_slug("producer/claude");
+        let unit_b = step_slug("producer/codex");
+        for (unit, content) in [(&unit_a, "from claude"), (&unit_b, "from codex")] {
+            let files = producer_root.join(unit).join("files");
+            std::fs::create_dir_all(&files).unwrap();
+            std::fs::write(files.join("table.csv"), content).unwrap();
+        }
+
+        let mut step = make_step("consumer", Phase::Sequential);
+        step.context.include = vec![ArtifactSelector::Step {
+            step: "producer".into(),
+            parts: vec![StepArtifactPart::Files],
+            glob: "*.csv".into(),
+        }];
+        let resolved = resolve_artifact_context(
+            &step,
+            ArtifactRuntime {
+                orientation_path: "",
+                paper_text_path: "",
+                document_bundle_path: "",
+                source_path: "",
+                extra_inputs: &Default::default(),
+                extra_input_sources: &Default::default(),
+                outputs: &[],
+                run_artifact_dir: Some(artifacts.to_str().unwrap()),
+            },
+        )
+        .unwrap();
+
+        let staged_root = resolved._view.path().join("steps").join(step_slug("producer"));
+        let staged_a = staged_root.join(&unit_a).join("files").join("table.csv");
+        let staged_b = staged_root.join(&unit_b).join("files").join("table.csv");
+        assert_eq!(std::fs::read_to_string(&staged_a).unwrap(), "from claude");
+        assert_eq!(std::fs::read_to_string(&staged_b).unwrap(), "from codex");
+        // Both staged paths are listed, each exactly once.
+        assert_eq!(
+            resolved
+                .manifest
+                .matches(&normalized_path(&staged_a))
+                .count(),
+            1
+        );
+        assert_eq!(
+            resolved
+                .manifest
+                .matches(&normalized_path(&staged_b))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn parallel_artifact_resolution_rejects_step_outputs() {
         let mut step = make_step("parallel-consumer", Phase::Parallel);
         step.context.include = vec![ArtifactSelector::Step {
@@ -3254,13 +3551,13 @@ mod tests {
     #[test]
     fn build_units_multi_agent_keys_by_agent() {
         let mut step = make_step("s", Phase::Parallel);
-        step.agents = vec!["claude".into(), "gemini".into()];
+        step.agents = vec!["claude".into(), "antigravity".into()];
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
         let units = build_units(&step, &settings, "/tmp/x.pdf", &bus).unwrap();
         assert_eq!(units.len(), 2);
         assert_eq!(units[0].suffix, "claude");
-        assert_eq!(units[1].suffix, "gemini");
+        assert_eq!(units[1].suffix, "antigravity");
     }
 
     #[test]
@@ -3272,7 +3569,7 @@ mod tests {
         std::fs::write(temp.path().join("b/note.md"), "b").unwrap();
 
         let mut step = make_step("s", Phase::Parallel);
-        step.agents = vec!["claude".into(), "gemini".into()];
+        step.agents = vec!["claude".into(), "antigravity".into()];
         step.for_each = Some(crate::pipeline_config::ForEach {
             glob: "**/*.md".into(),
             max: 10,
@@ -3283,11 +3580,121 @@ mod tests {
 
         assert_eq!(units.len(), 4);
         assert_eq!(units.iter().filter(|u| u.agent == "claude").count(), 2);
-        assert_eq!(units.iter().filter(|u| u.agent == "gemini").count(), 2);
+        assert_eq!(units.iter().filter(|u| u.agent == "antigravity").count(), 2);
         let item_keys: std::collections::HashSet<&str> =
             units.iter().map(|u| u.item_suffix.as_str()).collect();
         assert_eq!(item_keys.len(), 2, "duplicate basenames need distinct keys");
         assert!(units.iter().all(|u| u.merge_agents));
+    }
+
+    #[test]
+    fn fan_out_with_empty_source_root_matches_nothing() {
+        let mut step = make_step("s", Phase::Parallel);
+        step.for_each = Some(crate::pipeline_config::ForEach {
+            glob: "**/*.md".into(),
+            max: 10,
+        });
+        let settings = crate::settings::Settings::default();
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        // An empty source root must not fall back to scanning the process cwd.
+        let units = build_units(&step, &settings, "", &bus).unwrap();
+        assert!(units.is_empty());
+    }
+
+    // ── merge output-schema enforcement ────────────────────────────
+
+    fn schema_unit(agent: &str, text: &str) -> StepOutput {
+        StepOutput {
+            step_id: format!("s/{agent}"),
+            merge_group: "s".into(),
+            agent: agent.into(),
+            raw_text: text.into(),
+            ..Default::default()
+        }
+    }
+
+    fn merge_output(text: &str) -> StepOutput {
+        StepOutput {
+            step_id: "s".into(),
+            step_label: "s".into(),
+            agent: "claude+codex".into(),
+            raw_text: text.into(),
+            calls: vec![
+                crate::models::StepCallRecord {
+                    role: "step".into(),
+                    ..Default::default()
+                },
+                crate::models::StepCallRecord {
+                    role: "merge".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn non_conforming_merge_falls_back_to_first_unit_output() {
+        let mut step = make_step("s", Phase::Parallel);
+        step.output_schema = Some(serde_json::json!({"type": "object", "required": ["issues"]}));
+        let units = vec![
+            schema_unit("claude", "{\"issues\": []}"),
+            schema_unit("codex", "{\"issues\": [1]}"),
+        ];
+        let mut merged = vec![merge_output("A narrative merge, not issues JSON.")];
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        enforce_merge_output_schemas(&bus, &[&step], &units, &mut merged);
+        assert_eq!(merged[0].raw_text, "{\"issues\": []}");
+        assert_eq!(merged[0].agent, "claude");
+        assert!(merged[0].calls.iter().any(|c| c.role == "failed_merge"));
+        assert!(merged[0].calls.iter().all(|c| c.role != "merge"));
+    }
+
+    #[test]
+    fn banner_fallback_for_schema_step_is_replaced_by_first_unit() {
+        let mut step = make_step("s", Phase::Parallel);
+        step.output_schema = Some(serde_json::json!({"type": "object", "required": ["issues"]}));
+        let units = vec![
+            schema_unit("claude", "{\"issues\": []}"),
+            schema_unit("codex", "{\"issues\": [1]}"),
+        ];
+        // merge.rs's merge-failure fallback: a banner plus concatenated unit
+        // outputs (which contain extractable JSON) and no successful merge call.
+        let mut banner = merge_output(
+            "> **Note**: Multi-agent merge failed. Showing individual agent outputs.\n\n{\"issues\": []}\n\n---\n\n{\"issues\": [1]}",
+        );
+        banner.calls[1].role = "failed_merge".into();
+        let mut merged = vec![banner];
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        enforce_merge_output_schemas(&bus, &[&step], &units, &mut merged);
+        assert_eq!(merged[0].raw_text, "{\"issues\": []}");
+        assert_eq!(merged[0].agent, "claude");
+    }
+
+    #[test]
+    fn conforming_merge_and_schemaless_step_are_untouched() {
+        let mut schema_step = make_step("s", Phase::Parallel);
+        schema_step.output_schema =
+            Some(serde_json::json!({"type": "object", "required": ["issues"]}));
+        let plain_step = make_step("p", Phase::Parallel);
+        let units = vec![
+            schema_unit("claude", "{\"issues\": []}"),
+            StepOutput {
+                step_id: "p/claude".into(),
+                merge_group: "p".into(),
+                agent: "claude".into(),
+                raw_text: "plain unit".into(),
+                ..Default::default()
+            },
+        ];
+        let mut plain_merge = merge_output("Narrative merge of a schemaless step.");
+        plain_merge.step_id = "p".into();
+        let mut merged = vec![merge_output("{\"issues\": [1, 2]}"), plain_merge];
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        enforce_merge_output_schemas(&bus, &[&schema_step, &plain_step], &units, &mut merged);
+        assert_eq!(merged[0].raw_text, "{\"issues\": [1, 2]}");
+        assert!(merged[0].calls.iter().any(|c| c.role == "merge"));
+        assert_eq!(merged[1].raw_text, "Narrative merge of a schemaless step.");
     }
 
     #[test]
@@ -3839,6 +4246,33 @@ mod tests {
         assert!(result.contains("(not yet generated)"));
     }
 
+    #[test]
+    fn inserted_step_outputs_are_not_rescanned_for_placeholders() {
+        // Model output may quote placeholder-shaped text from the reviewed
+        // document; it must reach the prompt verbatim, not be re-expanded.
+        let prior = vec![StepOutput {
+            step_id: "analysis".into(),
+            step_label: "Analysis".into(),
+            raw_text: "quotes {step:analysis}, {paper_path}, and {last_output}".into(),
+            ..Default::default()
+        }];
+        let result = expand_template(
+            "{prior_outputs}\nPATH={paper_path}\nREF={step:analysis}",
+            "",
+            "",
+            &prior,
+            "/paper.txt",
+            "",
+            "",
+        )
+        .unwrap();
+        assert_eq!(
+            result.matches("quotes {step:analysis}, {paper_path}, and {last_output}").count(),
+            2, // once via {prior_outputs}, once via the explicit {step:analysis}
+        );
+        assert!(result.contains("PATH=/paper.txt"));
+    }
+
     // ── named step references ──────────────────────────────────────
 
     fn out(id: &str, label: &str, text: &str) -> StepOutput {
@@ -3868,12 +4302,16 @@ mod tests {
     fn step_ref_multi_agent_base_id_joins() {
         let prior = vec![
             out("technical/claude", "Technical (Claude)", "claude says"),
-            out("technical/gemini", "Technical (Gemini)", "gemini says"),
+            out(
+                "technical/antigravity",
+                "Technical (Antigravity)",
+                "antigravity says",
+            ),
         ];
         let result =
             expand_template("All: {step:technical}", "", "", &prior, "p", "", "s").unwrap();
         assert!(result.contains("claude says"));
-        assert!(result.contains("gemini says"));
+        assert!(result.contains("antigravity says"));
         assert!(result.contains("---"));
     }
 
@@ -3881,7 +4319,11 @@ mod tests {
     fn step_ref_multi_agent_specific_id() {
         let prior = vec![
             out("technical/claude", "Technical (Claude)", "claude says"),
-            out("technical/gemini", "Technical (Gemini)", "gemini says"),
+            out(
+                "technical/antigravity",
+                "Technical (Antigravity)",
+                "antigravity says",
+            ),
         ];
         let result = expand_template(
             "Just one: {step:technical/claude}",
@@ -3894,7 +4336,7 @@ mod tests {
         )
         .unwrap();
         assert!(result.contains("claude says"));
-        assert!(!result.contains("gemini says"));
+        assert!(!result.contains("antigravity says"));
     }
 
     #[test]

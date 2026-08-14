@@ -1,0 +1,1 @@
+Review the target functional, smoothness and complexity class, bandwidth or tuning choice, boundary and dimensional effects, contamination model, breakdown and influence behavior, adaptivity, minimax or efficiency claims, finite-sample calibration, and whether robustness guarantees cover the deviations that motivate the method.

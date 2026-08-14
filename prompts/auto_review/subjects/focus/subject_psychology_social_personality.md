@@ -1,0 +1,1 @@
+Assess construct validity, situational and dispositional alternatives, demand and expectancy, sampling, cultural context, behavior versus self-report, multiple operationalizations, and whether effects support the claimed general social or personality process.

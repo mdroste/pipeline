@@ -1,0 +1,1 @@
+Assess eligibility and entitlement, target population, take-up and exclusion, benefit and service interaction, administrative burden, family and labor responses, distribution, implementation capacity, comparative institutional fit, and whether measured outcomes support the broader welfare conclusion.

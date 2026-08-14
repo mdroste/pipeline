@@ -77,4 +77,14 @@ describe("normalizeMathDelimiters", () => {
       ].join("\n"),
     );
   });
+
+  it("keeps prose and math inequalities that are not HTML tags", () => {
+    // Regression: whitespace after `<` must disqualify a pseudo-tag, or
+    // "T < N and R > 1" loses everything between the angle brackets.
+    const prose = "We assume T < N and R > 1, so for all t < T and s > 0.";
+    expect(stripPresentationalHtml(prose)).toBe(prose);
+
+    const math = "Assume $a < b$ holds and $c > d$ fails when x < y and z > 0.";
+    expect(stripPresentationalHtml(math)).toBe(math);
+  });
 });

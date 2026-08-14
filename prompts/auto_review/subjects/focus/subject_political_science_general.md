@@ -1,0 +1,1 @@
+Evaluate the political actors, institution, strategic environment, authority, mechanism, comparison, and scope conditions. Use this fallback for genuinely cross-cutting political questions rather than as a substitute for a clear subfield.

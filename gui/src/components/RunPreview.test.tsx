@@ -20,7 +20,7 @@ const config: PipelineConfig = {
       enabled: true,
       phase: "parallel",
       tools: ["WebSearch"],
-      agents: ["claude", "gemini"],
+      agents: ["claude", "antigravity"],
       context: { include: [
         { kind: "primary", parts: ["text", "visuals"] },
         { kind: "survey" },
@@ -65,7 +65,7 @@ describe("RunPreview", () => {
     expect(screen.getByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
     expect(screen.getByText(/2 documents · document/)).toBeVisible();
     expect(screen.getByTitle("4–16")).toBeVisible();
-    expect(screen.getByTitle("claude, gemini, local, default provider")).toBeVisible();
+    expect(screen.getByTitle("claude, antigravity, local, default provider")).toBeVisible();
     expect(screen.getByText("Primary text, visuals")).toBeVisible();
     expect(screen.getByText("Output: analysis")).toBeVisible();
     expect(screen.getAllByText("WebSearch").length).toBeGreaterThan(0);
@@ -84,7 +84,7 @@ describe("RunPreview", () => {
         onRun={onRun}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Start run" }));
+    await user.click(screen.getByRole("button", { name: "Generate report" }));
     expect(onRun).toHaveBeenCalledOnce();
     expect(onCancel).not.toHaveBeenCalled();
   });
@@ -94,7 +94,7 @@ describe("RunPreview", () => {
       <RunPreview
         config={{
           ...config,
-          use_orientation: false,
+          use_orientation: true,
           steps: [{
             ...config.steps[1],
             id: "conditional",
@@ -112,7 +112,8 @@ describe("RunPreview", () => {
         onRun={() => {}}
       />,
     );
-    expect(screen.getByTitle("0–1")).toBeVisible();
+    // The required orientation call contributes the fixed unit.
+    expect(screen.getByTitle("1–2")).toBeVisible();
     expect(screen.getByTitle("0 fixed + 1 conditional")).toBeVisible();
   });
 
@@ -180,15 +181,12 @@ describe("RunPreview", () => {
       />,
     );
     expect(screen.getByText("4 fixed")).toBeVisible();
-    expect(screen.getByText("+ 2–6 adaptive at run time")).toBeVisible();
+    expect(screen.getByText("+ 2–6 adaptive agents per report")).toBeVisible();
     expect(screen.getByTitle("7–11")).toBeVisible();
-    expect(screen.getByText(/1–2 subject and 1–4 method specialists/)).toBeVisible();
-    expect(screen.getByText("Subject specialists (1–2, auto-selected)")).toBeVisible();
-    expect(screen.getByText("Method specialists (1–4, auto-selected)")).toBeVisible();
-    expect(screen.getByText("Subject specialists")).toBeVisible();
-    expect(screen.getByText("Method specialists")).toBeVisible();
-    expect(screen.getByText("Reports: selected subject specialists (1–2)")).toBeVisible();
-    expect(screen.getByText("Reports: selected method specialists (1–4)")).toBeVisible();
+    expect(screen.getByText(/assembles 2–6 subject and method specialists/)).toBeVisible();
+    expect(screen.getByText("Adaptive agents (2–6, auto-selected)")).toBeVisible();
+    expect(screen.getByText("Adaptive agents")).toBeVisible();
+    expect(screen.getByText("Reports: selected adaptive agents (2–6)")).toBeVisible();
     expect(screen.getAllByText("Exposition & Architecture")[0]).not.toHaveClass("truncate");
     expect(screen.getByText("4 fixed")).not.toHaveClass("truncate");
   });

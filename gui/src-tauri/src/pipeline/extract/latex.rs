@@ -207,11 +207,50 @@ pub(super) fn latex_references(content: &str) -> Vec<LatexReference> {
     references
 }
 
+/// How many directory levels above the selected project root an explicitly
+/// referenced file may live and still be read (e.g. `\input{../output/x.tex}`
+/// from a `draft/dev` selection). Everything further away stays blocked.
+pub(super) const MAX_EXTERNAL_PARENT_LEVELS: usize = 3;
+
+/// A referenced file outside the selected directory is readable only when it
+/// stays near the project: within `MAX_EXTERNAL_PARENT_LEVELS` ancestors of
+/// the canonical project root, and never bounded by the filesystem root
+/// itself (a shallow project must not open the whole disk).
+pub(super) fn within_external_read_bound(canonical: &Path, project_root: &Path) -> bool {
+    let mut ancestor = project_root.to_path_buf();
+    for _ in 0..MAX_EXTERNAL_PARENT_LEVELS {
+        if !ancestor.pop() || ancestor.parent().is_none() {
+            return false;
+        }
+        if canonical.starts_with(&ancestor) {
+            return true;
+        }
+    }
+    false
+}
+
+fn external_reference_extension_allowed(reference: &LatexReference, resolved: &Path) -> bool {
+    !reference.default_extensions.is_empty()
+        && reference
+            .default_extensions
+            .iter()
+            .any(|extension| ext_eq(resolved, extension))
+}
+
+#[derive(Debug)]
+pub(super) enum ResolvedLatexReference {
+    /// Canonical file inside the selected project directory.
+    Internal(PathBuf),
+    /// Canonical file outside the selected directory but explicitly
+    /// referenced, of the expected file type, and within the read bound.
+    External(PathBuf),
+}
+
 pub(super) fn resolve_latex_reference(
     reference: &LatexReference,
     current_dir: &Path,
     project_root: &Path,
-) -> Option<PathBuf> {
+) -> Option<ResolvedLatexReference> {
     let raw = Path::new(&reference.target);
     if raw.is_absolute() {
         return None;
@@ -224,6 +263,8 @@ pub(super) fn resolve_latex_reference(
             candidate
         }));
     }
+    // A match inside the selected directory always wins over an equally
+    // valid resolution outside it.
     for base in [current_dir, project_root] {
         for relative in &relative_candidates {
             let candidate = base.join(relative);
@@ -231,7 +272,21 @@ pub(super) fn resolve_latex_reference(
                 continue;
             };
             if canonical.starts_with(project_root) && canonical.is_file() {
-                return Some(canonical);
+                return Some(ResolvedLatexReference::Internal(canonical));
+            }
+        }
+    }
+    for base in [current_dir, project_root] {
+        for relative in &relative_candidates {
+            let candidate = base.join(relative);
+            let Ok(canonical) = candidate.canonicalize() else {
+                continue;
+            };
+            if canonical.is_file()
+                && external_reference_extension_allowed(reference, &canonical)
+                && within_external_read_bound(&canonical, project_root)
+            {
+                return Some(ResolvedLatexReference::External(canonical));
             }
         }
     }
@@ -242,17 +297,18 @@ pub(super) fn copy_scoped_source_file(
     source: &Path,
     destination: &Path,
     total_bytes: &mut u64,
+    per_file_cap: u64,
 ) -> Result<(), String> {
     let mut input = open_regular_file(source)?;
     let size = input
         .metadata()
         .map_err(|error| format!("Failed to inspect {}: {error}", source.display()))?
         .len();
-    if size > MAX_SCOPED_SOURCE_FILE_BYTES {
+    if size > per_file_cap {
         return Err(format!(
-            "Referenced source file '{}' exceeds the {} MB per-file limit",
+            "Source file '{}' exceeds the {} MB staging limit",
             source.display(),
-            MAX_SCOPED_SOURCE_FILE_BYTES / (1024 * 1024)
+            per_file_cap / (1024 * 1024)
         ));
     }
     if total_bytes.saturating_add(size) > MAX_SCOPED_SOURCE_TOTAL_BYTES {
@@ -279,14 +335,14 @@ pub(super) fn copy_scoped_source_file(
                 destination.display()
             )
         })?;
-    let mut limited = std::io::Read::take(&mut input, MAX_SCOPED_SOURCE_FILE_BYTES + 1);
+    let mut limited = std::io::Read::take(&mut input, per_file_cap + 1);
     let copied = std::io::copy(&mut limited, &mut output)
         .map_err(|error| format!("Failed to stage '{}': {error}", source.display()))?;
-    if copied > MAX_SCOPED_SOURCE_FILE_BYTES {
+    if copied > per_file_cap {
         return Err(format!(
-            "Referenced source file '{}' exceeds the {} MB per-file limit",
+            "Source file '{}' exceeds the {} MB staging limit",
             source.display(),
-            MAX_SCOPED_SOURCE_FILE_BYTES / (1024 * 1024)
+            per_file_cap / (1024 * 1024)
         ));
     }
     if copied != size {
@@ -314,9 +370,10 @@ pub(super) fn stage_latex_project(
         return Err("The selected LaTeX file is outside its project root".to_string());
     }
 
-    let mut pending = VecDeque::from([(main_file, true)]);
+    let mut pending = VecDeque::from([(main_file.clone(), true)]);
     let mut visited = HashSet::new();
     let mut total_bytes = 0u64;
+    let mut skipped = Vec::new();
     while let Some((source, recurse)) = pending.pop_front() {
         if !visited.insert(source.clone()) {
             continue;
@@ -326,10 +383,34 @@ pub(super) fn stage_latex_project(
                 "LaTeX source closure exceeds the {MAX_SCOPED_SOURCE_FILES}-file limit"
             ));
         }
-        let relative = source
-            .strip_prefix(&project_root)
-            .map_err(|_| "A referenced LaTeX source escaped the project root".to_string())?;
-        copy_scoped_source_file(&source, &destination_root.join(relative), &mut total_bytes)?;
+        // An oversized referenced file (a scanned figure, a data set) costs
+        // that one file, not the whole source view. Only the main file over
+        // the cap remains fatal.
+        if source != main_file {
+            let size = fs::metadata(&source).map(|metadata| metadata.len()).ok();
+            if size.is_some_and(|size| size > MAX_SCOPED_SOURCE_FILE_BYTES) {
+                push_warning(
+                    &mut skipped,
+                    format!(
+                        "Skipped referenced source file '{}' ({} MB): it exceeds the {} MB per-file staging limit",
+                        source.display(),
+                        size.unwrap_or_default() / (1024 * 1024),
+                        MAX_SCOPED_SOURCE_FILE_BYTES / (1024 * 1024)
+                    ),
+                );
+                continue;
+            }
+        }
+        let destination = match source.strip_prefix(&project_root) {
+            Ok(relative) => destination_root.join(relative),
+            Err(_) => external_staging_destination(&source, &project_root, &destination_root)?,
+        };
+        copy_scoped_source_file(
+            &source,
+            &destination,
+            &mut total_bytes,
+            MAX_SCOPED_SOURCE_FILE_BYTES,
+        )?;
         if !recurse {
             continue;
         }
@@ -339,12 +420,50 @@ pub(super) fn stage_latex_project(
         };
         let current_dir = source.parent().unwrap_or(&project_root);
         for reference in latex_references(&content) {
-            if let Some(path) = resolve_latex_reference(&reference, current_dir, &project_root) {
-                pending.push_back((path, reference.recursive));
+            match resolve_latex_reference(&reference, current_dir, &project_root) {
+                Some(
+                    ResolvedLatexReference::Internal(path) | ResolvedLatexReference::External(path),
+                ) => pending.push_back((path, reference.recursive)),
+                None => {}
             }
         }
     }
+    // This stage has no console/quality-note channel, so record skips inside
+    // the staged view itself: the models reading this root (and any user
+    // inspecting it) see why a referenced file is absent. Best-effort — a
+    // project file that already claimed the name wins.
+    if !skipped.is_empty() {
+        let _ = fs::write(
+            destination_root.join(STAGING_NOTES_FILE),
+            skipped.join("\n") + "\n",
+        );
+    }
     Ok(())
+}
+
+/// Written into the staged source root when referenced files were skipped.
+pub(super) const STAGING_NOTES_FILE: &str = "_pipeline_staging_notes.txt";
+
+/// Map a bounded external source file into the private staged view. The
+/// `_external/up{N}/` prefix encodes which project-root ancestor the path is
+/// relative to, so two distinct external files can never collide.
+fn external_staging_destination(
+    source: &Path,
+    project_root: &Path,
+    destination_root: &Path,
+) -> Result<PathBuf, String> {
+    for (level, ancestor) in project_root.ancestors().skip(1).enumerate() {
+        if level >= MAX_EXTERNAL_PARENT_LEVELS {
+            break;
+        }
+        if let Ok(relative) = source.strip_prefix(ancestor) {
+            return Ok(destination_root
+                .join("_external")
+                .join(format!("up{}", level + 1))
+                .join(relative));
+        }
+    }
+    Err("A referenced LaTeX source escaped the project root".to_string())
 }
 
 pub(crate) fn stage_selected_source(
@@ -404,35 +523,108 @@ pub(crate) fn stage_selected_source(
         .unwrap_or_else(|| std::ffi::OsStr::new("source"));
     let destination = destination_root.join(name);
     let mut total_bytes = 0u64;
-    copy_scoped_source_file(selected, &destination, &mut total_bytes)?;
+    // The primary selected document gets the PDF staging budget, not the
+    // LaTeX-closure per-file cap: scanned PDFs routinely exceed 32 MB, and
+    // losing this root silently removes visual Read evidence for every step.
+    copy_scoped_source_file(
+        selected,
+        &destination,
+        &mut total_bytes,
+        MAX_STAGED_PDF_BYTES,
+    )?;
     Ok(ScopedSourceContext {
         source_path: Some(destination),
         read_root: Some(destination_root),
     })
 }
 
+/// Record a quality note once. Repeated includes of the same blocked or
+/// external file would otherwise flood the console with identical lines.
+fn push_warning(warnings: &mut Vec<String>, message: impl Into<String>) {
+    let message = message.into();
+    if !warnings.iter().any(|existing| existing == &message) {
+        warnings.push(message);
+    }
+}
+
 /// Extract text from a .tex file, resolving \input{} and \include{} recursively.
 pub(super) fn extract_latex(
     path: &Path,
-    depth: usize,
     root_dir: &Path,
     warnings: &mut Vec<String>,
 ) -> Result<String, String> {
-    if depth > 10 {
-        warnings.push("LaTeX \\input{} nesting exceeds 10 levels — possible circular includes. Output may be incomplete.".to_string());
+    let mut stack = Vec::new();
+    extract_latex_inner(path, root_dir, warnings, &mut stack)
+}
+
+fn extract_latex_inner(
+    path: &Path,
+    root_dir: &Path,
+    warnings: &mut Vec<String>,
+    stack: &mut Vec<PathBuf>,
+) -> Result<String, String> {
+    if stack.len() > 10 {
+        push_warning(warnings, "LaTeX \\input{} nesting exceeds 10 levels. Output may be incomplete.".to_string());
         return Ok(String::new());
     }
 
     let content = read_utf8_capped(path, MAX_LATEX_SIZE)?;
+    // Track the chain of files currently being expanded so a circular
+    // include is skipped precisely instead of recursing to the depth limit.
+    let opened = path.canonicalize().ok();
+    if let Some(opened) = &opened {
+        stack.push(opened.clone());
+    }
+    let result = expand_latex_includes(&content, path, root_dir, warnings, stack);
+    if opened.is_some() {
+        stack.pop();
+    }
+    result
+}
 
+/// True when the byte offset falls inside a LaTeX comment (an unescaped `%`
+/// earlier on the same line). Mirrors `latex_without_comments`' escape rule:
+/// `%` starts a comment unless preceded by an odd run of backslashes.
+fn inside_latex_comment(content: &str, offset: usize) -> bool {
+    let line_start = content[..offset]
+        .rfind('\n')
+        .map_or(0, |position| position + 1);
+    let mut slash_count = 0usize;
+    for character in content[line_start..offset].chars() {
+        if character == '%' && slash_count & 1 == 0 {
+            return true;
+        }
+        if character == '\\' {
+            slash_count += 1;
+        } else {
+            slash_count = 0;
+        }
+    }
+    false
+}
+
+fn expand_latex_includes(
+    content: &str,
+    path: &Path,
+    root_dir: &Path,
+    warnings: &mut Vec<String>,
+    stack: &mut Vec<PathBuf>,
+) -> Result<String, String> {
     let parent = path.parent().unwrap_or(Path::new("."));
     let re = Regex::new(r"\\(?:input|include)\{([^}]+)\}").expect("LaTeX include regex is invalid");
 
     let mut result = String::new();
     let mut last_end = 0;
 
-    for cap in re.captures_iter(&content) {
+    for cap in re.captures_iter(content) {
         let full_match = cap.get(0).unwrap();
+        // A commented-out \input{} is inert LaTeX: expanding it would splice
+        // stale content mid-comment into the text every reviewer reads (or
+        // emit a spurious file-not-found note). Leaving last_end untouched
+        // keeps the commented line verbatim in the output.
+        if inside_latex_comment(content, full_match.start()) {
+            continue;
+        }
         result.push_str(&content[last_end..full_match.start()]);
 
         let include_name = &cap[1];
@@ -441,29 +633,63 @@ pub(super) fn extract_latex(
             include_path.set_extension("tex");
         }
 
-        // Validate the resolved path stays within the root directory to prevent
-        // path traversal via malicious \input{../../../etc/passwd}
+        // Includes inside the selected directory are always allowed. A target
+        // outside it is read only when it is a nearby regular .tex file this
+        // document explicitly references, which keeps traversal like
+        // \input{../../../../etc/passwd} blocked while sibling-output layouts
+        // (\input{../output/estimates/numbers.tex}) still resolve.
         let canonical = include_path.canonicalize().ok();
-        let safe = canonical
+        let internal = canonical
             .as_ref()
-            .is_some_and(|resolved| resolved.starts_with(root_dir));
+            .is_some_and(|resolved| resolved.starts_with(root_dir) && resolved.is_file());
+        let external = !internal
+            && canonical.as_ref().is_some_and(|resolved| {
+                ext_eq(resolved, "tex")
+                    && resolved.is_file()
+                    && within_external_read_bound(resolved, root_dir)
+            });
 
-        if safe && include_path.is_file() {
-            match extract_latex(&include_path, depth + 1, root_dir, warnings) {
-                Ok(included) => result.push_str(&included),
-                Err(_) => result.push_str(&content[full_match.start()..full_match.end()]),
+        if let Some(resolved) = canonical.as_ref().filter(|_| internal || external) {
+            if stack.iter().any(|open| open == resolved) {
+                push_warning(
+                    warnings,
+                    format!("\\input{{{include_name}}} — circular include skipped."),
+                );
+                result.push_str(&content[full_match.start()..full_match.end()]);
+            } else {
+                if external {
+                    push_warning(
+                        warnings,
+                        format!(
+                            "\\input{{{include_name}}} — read from outside the selected directory ({}).",
+                            resolved.display()
+                        ),
+                    );
+                }
+                match extract_latex_inner(resolved, root_dir, warnings, stack) {
+                    Ok(included) => result.push_str(&included),
+                    Err(error) => {
+                        // Reviewers must know a referenced chapter is absent;
+                        // the not-found and blocked paths already warn.
+                        push_warning(
+                            warnings,
+                            format!(
+                                "\\input{{{include_name}}} — could not be read ({error}); left unexpanded."
+                            ),
+                        );
+                        result.push_str(&content[full_match.start()..full_match.end()]);
+                    }
+                }
             }
         } else {
             // Diagnose why the include failed
             if !include_path.exists() {
-                warnings.push(format!(
-                    "\\input{{{}}} — file not found. If this is a multi-file project, select the project folder instead of a single .tex file.",
-                    include_name
+                push_warning(warnings, format!(
+                    "\\input{{{include_name}}} — file not found. If this is a multi-file project, select the project folder instead of a single .tex file.",
                 ));
-            } else if canonical.is_some() && !safe {
-                warnings.push(format!(
-                    "\\input{{{}}} — resolves outside the project directory (blocked). Select the project folder instead of a single .tex file.",
-                    include_name
+            } else if canonical.is_some() {
+                push_warning(warnings, format!(
+                    "\\input{{{include_name}}} — resolves outside the selected directory (blocked). Only nearby .tex files explicitly referenced by the project are read from outside it; move this file into the project folder to include it.",
                 ));
             }
             result.push_str(&content[full_match.start()..full_match.end()]);

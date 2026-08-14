@@ -1,0 +1,1 @@
+Evaluate the statistical target, sampling model, information structure, uncertainty, robustness, and inferential scope. Use this fallback when the paper's contribution is statistical but no listed subfield supplies a clearly better lens.

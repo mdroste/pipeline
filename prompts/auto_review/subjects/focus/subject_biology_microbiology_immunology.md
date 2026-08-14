@@ -1,0 +1,1 @@
+Assess strain and host context, inoculum or exposure, contamination controls, replication competence, immune cell and antigen specificity, temporal response, microbiome compositional versus functional evidence, and whether in vitro or animal findings support the claimed host mechanism.

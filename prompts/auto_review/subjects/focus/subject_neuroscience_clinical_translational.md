@@ -1,0 +1,1 @@
+Evaluate disease models, biomarkers, neuromodulation, and translational claims running from animal or in vitro findings toward patients. Check model validity for the claimed disease feature, randomization and blinding in preclinical designs, biomarker performance beyond group-mean differences, and the distance between target engagement and the claimed clinical relevance.

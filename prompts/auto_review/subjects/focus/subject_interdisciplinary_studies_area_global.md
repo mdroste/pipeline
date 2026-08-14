@@ -1,0 +1,1 @@
+Assess regional and language competence, period and boundary choices, comparison and connected histories, colonial and geopolitical categories, source and case coverage, movement across local, national and global scales, and whether a broad global claim is grounded in the regions and institutions actually studied.

@@ -1,0 +1,1 @@
+Assess the nominal and real frictions, policy rule and instrument, expectations, determinacy and equilibrium selection, inflation and output measurement, bank or intermediary balance sheets, pass-through, distributional incidence, transition dynamics, and whether the proposed transmission mechanism is identified separately from the policy response to economic conditions.

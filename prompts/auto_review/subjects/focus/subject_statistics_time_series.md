@@ -1,0 +1,1 @@
+Review stationarity or nonstationarity, dependence and memory, structural breaks, filtering, forecast horizon, temporal leakage, uncertainty propagation, and evaluation design. Check whether asymptotics and validation respect the observed temporal structure.

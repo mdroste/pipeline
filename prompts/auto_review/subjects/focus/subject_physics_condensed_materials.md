@@ -1,0 +1,1 @@
+Assess the phase, excitation, transport, ordering mechanism, finite-size and disorder effects, sample regime, and connection between microscopic assumptions and macroscopic observables. Ask whether alternative mechanisms or material heterogeneity could produce the same signature.

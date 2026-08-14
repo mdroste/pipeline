@@ -1,0 +1,1 @@
+Assess neutron or plasma and thermal-transport models, materials and irradiation environment, fuel and coolant behavior, geometry and boundary conditions, uncertainty and validation, decay heat and transients, defense in depth, waste and proliferation-relevant governance at a non-operational level, and whether claimed margins cover credible system states and failures.

@@ -8,8 +8,27 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     provided_vars: std::collections::HashMap<String, String>,
     provided_inputs: std::collections::HashMap<String, String>,
     snapshot: Option<RunSnapshot>,
+    preflight_cancel_epoch: u64,
 ) -> Result<serde_json::Value, String> {
     let _run_state = begin_run_state();
+    // A batch "stop" that landed between the batch loop's pre-check and this
+    // reset would otherwise be erased by begin_run_state, letting this job run
+    // to completion after the user cancelled. Re-assert it so the job aborts at
+    // its first cancellation checkpoint. BATCH_CANCEL is false outside an active
+    // batch (reset at batch start and end), so foreground runs are unaffected.
+    if BATCH_CANCEL.load(std::sync::atomic::Ordering::Acquire) {
+        CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
+        signal_cancellation();
+    }
+    // The same race exists for a foreground "Cancel report" click: the launch
+    // command spends seconds in preflight (dependency probes, resumable-run
+    // recovery) before this task resets CANCEL_FLAG above. The caller captures
+    // the cancel epoch at command entry; if it advanced since, the user
+    // cancelled this launch — re-assert instead of silently erasing the click.
+    if current_cancel_epoch() != preflight_cancel_epoch {
+        CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
+        signal_cancellation();
+    }
     let pipeline_start = std::time::Instant::now();
     // One immutable settings/profile snapshot defines the entire run. UI
     // edits made while providers are working take effect only on the next run.
@@ -25,10 +44,11 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     validate_named_input_paths(&snapshot.config, &provided_inputs, true)?;
     let RunSnapshot {
         settings,
-        config,
+        mut config,
         profile_name,
         ..
     } = snapshot;
+    pipeline_config::apply_agent_defaults(&mut config, &settings);
     let _settings_snapshot = crate::settings::freeze_for_run(settings.clone());
 
     let paper = std::path::Path::new(paper_path);
@@ -50,6 +70,19 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         paper_path,
         requested_input_interpretation,
     );
+    // Legacy callers omit the interpretation, so a folder resolves to
+    // source_tree here without passing through the explicit-interpretation
+    // validation above; re-apply the auto-contract rule on the resolved value.
+    if input_interpretation == "source_tree"
+        && crate::auto_review::uses_auto_review_contract(&config)
+    {
+        return Err(
+            "Auto Paper Review reviews a document, not a browsable source tree. Select the \
+             folder as a LaTeX project (if it contains the paper's TeX source), pick the paper \
+             file directly, or switch to a folder-oriented workflow."
+                .to_string(),
+        );
+    }
     let input_mode = match input_interpretation {
         "source_tree" => "folder",
         "none" => "none",
@@ -73,14 +106,6 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             "label": input_processing_label,
             "stepIds": [],
             "stepLabels": [],
-        }),
-    )
-    .ok();
-    app.emit_event(
-        "pipeline:preprocess",
-        serde_json::json!({
-            "phase": "extract",
-            "status": "running",
         }),
     )
     .ok();
@@ -145,9 +170,9 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     }
     if let Some(w) = run_writer.as_mut() {
         if let Err(e) = w.add_text(
-            "context/extracted_text.md",
-            "Extracted text",
-            "context",
+            crate::runs::DOCUMENT_TEXT_PATH,
+            "Readable document",
+            "document",
             &extraction.text,
         ) {
             let _ = app.emit_event(
@@ -157,34 +182,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
                 }),
             );
         }
-        if extraction.method == "marker" {
-            match crate::pipeline::extract::read_marker_structure_json(&extraction.paper_hash) {
-                Ok(Some(structure)) => {
-                    if let Err(e) = w.add_text(
-                        "context/marker_structure.json",
-                        "Marker structure",
-                        "context",
-                        &structure,
-                    ) {
-                        let _ = app.emit_event(
-                            "pipeline:log",
-                            serde_json::json!({
-                                "line": format!("WARNING: {e}")
-                            }),
-                        );
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!("WARNING: could not retain Marker structure: {e}")
-                        }),
-                    );
-                }
-            }
-        } else if extraction.method == "paddleocr-vl-full" {
+        if extraction.method == "paddleocr-vl-full" {
             match crate::pipeline::extract::read_paddle_structure_json_for_method(
                 &extraction.paper_hash,
                 &extraction.method,
@@ -308,59 +306,6 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
 
-    // When marker did the extraction, collect the figure images it emitted
-    // into the run artifacts. Best-effort.
-    if extraction.method == "marker" {
-        if let Some(w) = run_writer.as_mut() {
-            let images = match crate::pipeline::extract::marker_image_files(&extraction.paper_hash)
-            {
-                Ok(images) => images,
-                Err(error) => {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!("WARNING: marker image discovery stopped: {error}")
-                        }),
-                    );
-                    Vec::new()
-                }
-            };
-            if !images.is_empty() {
-                let figures_dir = w.dir().join("artifacts").join("figures");
-                if let Err(e) = std::fs::create_dir_all(&figures_dir) {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!("WARNING: could not create figures dir: {e}")
-                        }),
-                    );
-                } else {
-                    let mut copied = 0usize;
-                    for src in &images {
-                        let Some(name) = src.file_name().and_then(|n| n.to_str()) else {
-                            continue;
-                        };
-                        if std::fs::copy(src, figures_dir.join(name)).is_ok()
-                            && w.register_existing(
-                                &format!("artifacts/figures/{name}"),
-                                name,
-                                "figures",
-                            )
-                            .is_ok()
-                        {
-                            copied += 1;
-                        }
-                    }
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!("Collected {copied} figure images from marker output")
-                        }),
-                    );
-                }
-            }
-        }
-    }
     if extraction.method == "paddleocr-vl-full" {
         if let Some(w) = run_writer.as_mut() {
             let inventory =
@@ -467,22 +412,6 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
 
-    // Cache the extracted text by paper hash so users can inspect it after the run.
-    // Temp files vanish when the process exits; the cache persists until deleted.
-    let cached_paper_path = match cache_paper_text(&extraction.paper_hash, &extraction.text) {
-        Ok(p) => Some(p),
-        Err(e) => {
-            // Caching is best-effort; a failure here shouldn't stop the run.
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: failed to cache extracted text: {e}")
-                }),
-            );
-            None
-        }
-    };
-
     // Keep every model-readable transient for this run under one private
     // directory. CLI providers can grant this root without exposing unrelated
     // files in the process-wide temp directory.
@@ -515,148 +444,91 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .read_root
         .as_deref()
         .and_then(|path| crate::pipeline::claude::normalize_cli_root(&path.to_string_lossy()));
+    // Every workflow builds an orientation map before its steps run.
+    let orientation_label = if crate::auto_review::uses_auto_review_contract(&config) {
+        "Creating orientation map & review plan"
+    } else {
+        "Creating orientation map"
+    };
     app.emit_event(
-        "pipeline:preprocess",
+        "pipeline:stage",
         serde_json::json!({
-            "phase": "extract",
-            "status": "done",
-            "method": extraction.method,
-            "chars": extraction.text.len(),
-            "elapsed_secs": extract_secs,
-            "paper_hash": extraction.paper_hash,
-            "cached_path": cached_paper_path,
+            "stage": "orienting",
+            "id": "orienting",
+            "label": orientation_label,
+            "stepIds": [],
+            "stepLabels": [],
         }),
     )
     .ok();
-
-    // Build orientation map (optional)
-    let mut _orient_tmp = None; // hold tempfile alive
-    let orientation;
-    let orientation_path;
-
-    if config.use_orientation {
-        let orientation_label = if crate::auto_review::uses_auto_review_contract(&config) {
-            "Creating orientation map & review plan"
-        } else {
-            "Creating orientation map"
-        };
-        app.emit_event(
-            "pipeline:stage",
-            serde_json::json!({
-                "stage": "orienting",
-                "id": "orienting",
-                "label": orientation_label,
-                "stepIds": [],
-                "stepLabels": [],
-            }),
-        )
-        .ok();
-        app.emit_event(
-            "pipeline:preprocess",
-            serde_json::json!({
-                "phase": "orient",
-                "status": "running",
-            }),
-        )
-        .ok();
-        let orient_start = std::time::Instant::now();
-        let survey_template =
-            orient::resolve_survey_template(&config.orientation_prompt, input_mode);
-        orientation = orient::build_orientation_map(
-            app,
-            &extraction,
-            survey_template.as_deref(),
-            config.orientation_schema.as_ref(),
-            scoped_source_read_root.as_deref(),
-        )
-        .await?;
-        let orient_secs = orient_start.elapsed().as_secs();
-        app.emit_event(
-            "pipeline:log",
-            serde_json::json!({
-                "line": format!("Orientation map built ({}s)", orient_secs)
-            }),
-        )
-        .ok();
-        if is_cancelled() {
-            return Err("Pipeline cancelled".into());
-        }
-
-        let orientation_json = serde_json::to_string(&orientation)
-            .map_err(|e| format!("Failed to serialize orientation map: {e}"))?;
-        let (orient_file, path) = write_run_input_file(
-            run_input_dir.path(),
-            "pipeline_orient_",
-            ".json",
-            &orientation_json,
-            "orientation",
-        )?;
-        orientation_path = path;
-        if let Some(w) = run_writer.as_mut() {
-            if let Err(e) = w.add_text(
-                "context/orientation.json",
-                "Orientation map",
-                "context",
-                &orientation_json,
-            ) {
-                let _ = app.emit_event(
-                    "pipeline:log",
-                    serde_json::json!({
-                        "line": format!("WARNING: {e}")
-                    }),
-                );
-            }
-        }
-        let orient_bytes = orientation_json.len();
-        app.emit_event(
-            "pipeline:log",
-            serde_json::json!({
-                "line": format!("Orientation map written to temp file ({orient_bytes} bytes)")
-            }),
-        )
-        .ok();
-        app.emit_event(
-            "pipeline:preprocess",
-            serde_json::json!({
-                "phase": "orient",
-                "status": "done",
-                "bytes": orient_bytes,
-                "elapsed_secs": orient_secs,
-            }),
-        )
-        .ok();
-        _orient_tmp = Some(orient_file);
-    } else {
-        app.emit_event(
-            "pipeline:log",
-            serde_json::json!({
-                "line": "Orientation map disabled for this profile"
-            }),
-        )
-        .ok();
-        app.emit_event(
-            "pipeline:preprocess",
-            serde_json::json!({
-                "phase": "orient",
-                "status": "skipped",
-            }),
-        )
-        .ok();
-        orientation = serde_json::to_value(crate::models::OrientationMap::empty(&extraction.text))
-            .map_err(|e| format!("Failed to build orientation placeholder: {e}"))?;
-        orientation_path = String::new();
+    let orient_start = std::time::Instant::now();
+    let survey_template = orient::resolve_survey_template(&config.orientation_prompt, input_mode);
+    let orientation = orient::build_orientation_map(
+        app,
+        &extraction,
+        survey_template.as_deref(),
+        config.orientation_schema.as_ref(),
+        scoped_source_read_root.as_deref(),
+    )
+    .await?;
+    let orient_secs = orient_start.elapsed().as_secs();
+    app.emit_event(
+        "pipeline:log",
+        serde_json::json!({
+            "line": format!("Orientation map built ({}s)", orient_secs)
+        }),
+    )
+    .ok();
+    if is_cancelled() {
+        return Err("Pipeline cancelled".into());
     }
 
-    // Auto Review stores only its stable four-step skeleton. Once the
+    let orientation_json = serde_json::to_string(&orientation)
+        .map_err(|e| format!("Failed to serialize orientation map: {e}"))?;
+    let (orient_file, orientation_path) = write_run_input_file(
+        run_input_dir.path(),
+        "pipeline_orient_",
+        ".json",
+        &orientation_json,
+        "orientation",
+    )?;
+    if let Some(w) = run_writer.as_mut() {
+        if let Err(e) = w.add_text(
+            "context/orientation.json",
+            "Orientation map",
+            "context",
+            &orientation_json,
+        ) {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!("WARNING: {e}")
+                }),
+            );
+        }
+    }
+    let orient_bytes = orientation_json.len();
+    app.emit_event(
+        "pipeline:log",
+        serde_json::json!({
+            "line": format!("Orientation map written to temp file ({orient_bytes} bytes)")
+        }),
+    )
+    .ok();
+    let _orient_tmp = orient_file; // hold tempfile alive through step execution
+
+    // Auto Review stores only its stable five-step skeleton. Once the
     // validated router has selected allowlisted IDs, assemble this run's
     // small concrete workflow before any step scheduling or budget checks.
-    let execution_config = crate::auto_review::materialize_config(&config, &orientation)?;
+    let mut execution_config = crate::auto_review::materialize_config(&config, &orientation)?;
+    pipeline_config::apply_agent_defaults(&mut execution_config, &settings);
     crate::pipeline_config::validate_runtime_config(&execution_config)?;
     crate::safety::validate_run_budget(&execution_config, &settings)?;
 
     // Orientation supplies semantic labels and page references that are useful
-    // additions to the deterministic extraction. Persist three views:
-    // canonical JSON, streaming JSONL blocks, and a readable Markdown view.
+    // additions to the deterministic extraction. Persist the structured JSON
+    // and streaming JSONL views. The enriched Markdown projection remains a
+    // model-facing transient; `context/document.md` stays the exact extraction.
     let mut bundle_json = None;
     let mut bundle_markdown = None;
     if let Some(bundle) = document_bundle.as_mut() {
@@ -670,21 +542,6 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             );
         } else {
             let markdown = bundle.to_markdown_with_text(&extraction.text);
-            if let Some(w) = run_writer.as_mut() {
-                if let Err(error) = w.add_text(
-                    "context/document.md",
-                    "Readable document",
-                    "document",
-                    &markdown,
-                ) {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!("WARNING: {error}")
-                        }),
-                    );
-                }
-            }
             bundle_markdown = Some(markdown);
             match bundle
                 .to_json_pretty()
@@ -732,8 +589,8 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
 
-    // New steps receive the readable bundle view. Runs where bundle
-    // persistence was unavailable retain the legacy extracted-text behavior.
+    // New steps receive the readable bundle projection. Runs where bundle
+    // construction was unavailable receive the exact canonical document.
     let paper_document_text = bundle_markdown.as_deref().unwrap_or(&extraction.text);
     let (_paper_tmp, paper_text_path) = write_run_input_file(
         run_input_dir.path(),

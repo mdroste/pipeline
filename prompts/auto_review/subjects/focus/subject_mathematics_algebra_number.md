@@ -1,0 +1,1 @@
+Focus on the category and invariants being studied, functoriality, hypotheses on rings, fields, schemes, groups, or representations, local-to-global steps, and the strength of classification or finiteness claims. Ask whether examples expose exceptional characteristics and boundary cases.

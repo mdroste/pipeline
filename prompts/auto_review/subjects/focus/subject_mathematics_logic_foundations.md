@@ -1,0 +1,1 @@
+Examine the formal system, language, metatheoretic assumptions, consistency strength, definability, interpretability, computability bounds, and model constructions. Verify that informal mathematical claims do not outrun what the stated foundational framework establishes.

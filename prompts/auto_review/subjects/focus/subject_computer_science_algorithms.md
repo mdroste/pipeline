@@ -1,0 +1,1 @@
+Review the computational model, input class, correctness, asymptotic and parameterized bounds, lower bounds, approximation notion, adversarial assumptions, and benchmark instances. Check whether the stated improvement is meaningful in the relevant regime.

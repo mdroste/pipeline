@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ComparePage from "./ComparePage";
+import ErrorBoundary from "./ErrorBoundary";
 import ReportWorkspace from "./ReportWorkspace";
 import type { RunSummary, RunsDiskUsage, ToolCallCounts } from "../lib/types";
 import type { ArtifactSelectionTarget } from "./ArtifactExplorer";
@@ -11,8 +12,10 @@ interface Props {
   /** When set, open this run's detail view immediately (e.g. from a batch job). */
   initialRunId?: string | null;
   initialSourceSelection?: ArtifactSelectionTarget | null;
-  /** Re-run a past run (reusing cached extraction/orientation and steps). */
+  /** Re-run a past run (reusing its captured document/orientation and steps). */
   onRerun?: (runId: string, onlyFailed: boolean) => void;
+  /** Disables Resume/Regenerate while a run or batch is already active. */
+  runInProgress?: boolean;
 }
 
 function fmtBytes(n: number): string {
@@ -104,7 +107,7 @@ function usageDescription(run: RunSummary): string {
     "Cache reads and cache writes are subsets of logical input, not additional tokens.",
     "Fresh input equals logical input minus cache reads minus cache writes.",
     "Model round trips and tool calls are shown only when the provider or CLI reports them; unknown tool kinds remain in the unknown bucket.",
-    "The completed report's Run summary prices these categories separately for a labelled API-equivalent estimate when the model is recognized.",
+    "The completed report's summary prices these categories separately for a labelled API-equivalent estimate when the model is recognized.",
     "Only providers that report usage are included.",
   ]
     .filter(Boolean)
@@ -148,6 +151,7 @@ export default function HistoryPage({
   initialRunId,
   initialSourceSelection,
   onRerun,
+  runInProgress = false,
 }: Props) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [usage, setUsage] = useState<RunsDiskUsage | null>(null);
@@ -248,7 +252,7 @@ export default function HistoryPage({
 
   const deleteRun = async (r: RunSummary) => {
     const label = r.title || r.input_name;
-    if (!window.confirm(`Delete run "${label}" and all its artifacts? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete report "${label}" and all its artifacts? This cannot be undone.`)) return;
     try {
       await invoke("delete_run", { runId: r.run_id });
       if (openRunId === r.run_id) {
@@ -270,15 +274,18 @@ export default function HistoryPage({
   if (openRunId) {
     const run = runs.find((r) => r.run_id === openRunId);
     return (
-      <ReportWorkspace
-        runId={openRunId}
-        summary={run}
-        onBack={() => {
-          setOpenRunId(null);
-          setOpenSourceSelection(null);
-        }}
-        initialSourceSelection={openSourceSelection}
-      />
+      // A rendering defect in one saved run must not take down History.
+      <ErrorBoundary>
+        <ReportWorkspace
+          runId={openRunId}
+          summary={run}
+          onBack={() => {
+            setOpenRunId(null);
+            setOpenSourceSelection(null);
+          }}
+          initialSourceSelection={openSourceSelection}
+        />
+      </ErrorBoundary>
     );
   }
 
@@ -286,14 +293,14 @@ export default function HistoryPage({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Run history</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Report history</h2>
         {usage && (
           <span className="text-xs text-gray-500 dark:text-gray-400">
-            {usage.count} run{usage.count === 1 ? "" : "s"} · {fmtBytes(usage.bytes)} on disk
+            {usage.count} report{usage.count === 1 ? "" : "s"} · {fmtBytes(usage.bytes)} on disk
           </span>
         )}
         <input
-          aria-label="Filter run history"
+          aria-label="Filter report history"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter by name, profile, tag…"
@@ -302,7 +309,7 @@ export default function HistoryPage({
         <button
           onClick={() => { setCompareMode((v) => !v); setCompareIds([]); }}
           className={`text-sm transition-colors ${compareMode ? "text-gray-900 dark:text-gray-100 font-medium" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"}`}
-          title="Select two runs to compare"
+          title="Select two reports to compare"
         >
           Compare
         </button>
@@ -316,7 +323,7 @@ export default function HistoryPage({
         {showClose && (
           <button
             onClick={onClose}
-            aria-label="Close run history"
+            aria-label="Close report history"
             className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
             title="Close"
           >
@@ -328,7 +335,7 @@ export default function HistoryPage({
       {compareMode && (
         <div className="flex items-center gap-3 px-6 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800 text-sm shrink-0">
           <span className="text-gray-500 dark:text-gray-400">
-            {compareIds.length === 0 ? "Select two runs to compare." : `${compareIds.length} of 2 selected`}
+            {compareIds.length === 0 ? "Select two reports to compare." : `${compareIds.length} of 2 selected`}
           </span>
           <button
             onClick={compareSelected}
@@ -350,7 +357,7 @@ export default function HistoryPage({
           <p className="text-gray-500 dark:text-gray-400 text-sm px-2">Loading…</p>
         ) : visible.length === 0 ? (
           <p className="text-gray-500 dark:text-gray-400 text-sm px-2">
-            {runs.length === 0 ? "No runs yet. Generate a report to see it here." : "No runs match the filter."}
+            {runs.length === 0 ? "No reports yet. Generate one to see it here." : "No reports match the filter."}
           </p>
         ) : (
           <div className="space-y-2">
@@ -414,7 +421,7 @@ export default function HistoryPage({
                             setOpenRunId(r.run_id);
                           }}
                           className="text-sm font-medium text-gray-900 dark:text-gray-100 hover:underline truncate"
-                          title="Open this run"
+                          title="Open this report"
                         >
                           {r.title || r.input_name}
                         </button>
@@ -486,18 +493,28 @@ export default function HistoryPage({
                           {r.resumable && (
                             <button
                               onClick={() => onRerun(r.run_id, true)}
-                              className="px-2 py-1 text-xs rounded text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
-                              title="Continue from the last completed step, reusing successful outputs and rerunning failed or missing work"
+                              disabled={runInProgress}
+                              className="px-2 py-1 text-xs rounded text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={
+                                runInProgress
+                                  ? "A report is already being generated"
+                                  : "Continue from the last completed step, reusing successful outputs and rerunning failed or missing work"
+                              }
                             >
                               Resume
                             </button>
                           )}
                           <button
                             onClick={() => onRerun(r.run_id, false)}
-                            className="px-2 py-1 text-xs rounded text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
-                            title="Re-run all steps with the active profile, reusing the cached extraction and orientation"
+                            disabled={runInProgress}
+                            className="px-2 py-1 text-xs rounded text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={
+                              runInProgress
+                                ? "A report is already being generated"
+                                : "Regenerate with the active workflow, reusing the captured document and orientation"
+                            }
                           >
-                            Re-run
+                            Regenerate
                           </button>
                         </>
                       )}
@@ -511,7 +528,7 @@ export default function HistoryPage({
                       <button
                         onClick={() => deleteRun(r)}
                         className="px-2 py-1 text-xs rounded text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                        title="Delete run"
+                        title="Delete report"
                       >
                         Delete
                       </button>

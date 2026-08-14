@@ -1,0 +1,1 @@
+Focus on proxy validity and calibration, age-model construction and uncertainty, archive resolution and coverage, multi-proxy consistency, and whether reconstructed variability supports the claimed mechanism or analogy to future change. Check that dating uncertainty propagates into headline timing and rate claims rather than disappearing at the synthesis stage.

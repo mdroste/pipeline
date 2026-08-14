@@ -1,0 +1,1 @@
+Examine category construction, racialization or boundary making, legal status, selection into migration, generation and place, institutions, discrimination, identity, and whether comparisons distinguish group composition from the claimed social process.

@@ -1,0 +1,1 @@
+Review place and neighborhood definitions, residential selection, institutions, segregation, mobility, local networks, spatial scale, historical development, and whether evidence connects place-based conditions to the claimed social outcomes.

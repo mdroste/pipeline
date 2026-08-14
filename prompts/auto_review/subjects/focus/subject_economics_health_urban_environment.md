@@ -1,0 +1,1 @@
+Assess prices, access and sorting, spatial or health externalities, household and firm location or care choices, policy incidence, capitalization, congestion, equilibrium adjustment, distribution, and whether welfare conclusions match the estimated margin. Use this role only for a genuinely cross-field contribution.

@@ -1,0 +1,1 @@
+Review mass and energy balances, kinetics, transport, phase behavior, residence-time and mixing assumptions, separation efficiency, process control, scale-up, feed variability, and hazards. Check whether laboratory conversion or selectivity implies viable process performance.

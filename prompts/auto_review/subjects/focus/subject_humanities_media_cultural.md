@@ -1,0 +1,1 @@
+Assess corpus and platform selection, medium and form, production and circulation, audience and reception, industry and power, historical context, representational analysis, and whether selected objects support claims about a wider culture.

@@ -2,6 +2,11 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PipelineConfig, ProfileSummary, StepConfig } from "../lib/types";
 import { computeWaves } from "../lib/pipelineHelpers";
+import {
+  adaptiveAgentCount,
+  adaptiveAgentCountLabel,
+  isAutoReview,
+} from "../lib/autoReview";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 
 interface Props {
@@ -93,8 +98,9 @@ export default function WorkflowPanel({
 
   const enabledSteps = config.steps.filter((s) => s.enabled);
   const disabledCount = config.steps.length - enabledSteps.length;
-  const autoAssembled = config.orientation_schema?.["x-pipeline-contract"] === "auto-review-v2";
+  const autoAssembled = isAutoReview(config);
   const autoReview = autoAssembled || activeId === "auto-review";
+  const configuredAdaptiveCount = adaptiveAgentCount(config);
 
   const groups: { phase: StepConfig["phase"]; steps: StepConfig[] }[] = computeWaves(config.steps)
     .map((wave) => wave.kind === "parallel"
@@ -150,6 +156,22 @@ export default function WorkflowPanel({
                 )}
               </div>
             ))}
+            {autoReview && group.phase === "parallel" && gi === groups.findIndex((candidate) => candidate.phase === "parallel") && (
+              <button
+                type="button"
+                onClick={() => setCatalogOpen(true)}
+                className="flex w-full items-center gap-2 py-0.5 text-left"
+                title="Browse the adaptive-agent catalog"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400 dark:bg-blue-500" />
+                <span className="truncate text-xs font-medium text-blue-700 dark:text-blue-300">
+                  Adaptive agents
+                </span>
+                <span className="ml-auto shrink-0 text-[10px] text-blue-600/80 dark:text-blue-300/80">
+                  {adaptiveAgentCountLabel(configuredAdaptiveCount)}
+                </span>
+              </button>
+            )}
             {!autoReview && (() => {
               const conditional = group.steps.filter((step) => !!step.run_if);
               if (conditional.length === 0) return null;
@@ -181,7 +203,7 @@ export default function WorkflowPanel({
         {autoReview && (
           <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 dark:border-blue-900/70 dark:bg-blue-950/25">
             <p className="text-[11px] leading-4 text-blue-900 dark:text-blue-200">
-              Orientation assembles 1–2 subject and 1–4 method specialists for each paper.
+              Automatic: selects 2-6 additional field/methodology-specific review agents tailored for each document.
             </p>
             <button
               type="button"

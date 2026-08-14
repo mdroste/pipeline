@@ -1,0 +1,1 @@
+Review demand and lead-time assumptions, capacity and inventory state, supplier and network dependence, service objective, contracting and incentives, disruption and recovery, information visibility, behavioral operations, implementation costs, equilibrium responses among partners, and whether performance gains survive realistic uncertainty and operating constraints.

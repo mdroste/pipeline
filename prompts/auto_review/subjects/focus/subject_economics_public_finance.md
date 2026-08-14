@@ -1,0 +1,1 @@
+Review the policy schedule and institutional detail, behavioral sufficient statistics or structural elasticities, fiscal externalities, incidence across agents and margins, take-up and enforcement, government budget closure, social objective, distributional weights, and whether the welfare counterfactual incorporates the behavioral and equilibrium responses induced by the policy.

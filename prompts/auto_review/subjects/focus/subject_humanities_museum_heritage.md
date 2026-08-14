@@ -1,0 +1,1 @@
+Assess object provenance and custody, collection and classification histories, material condition and conservation, curatorial framing, institutional and colonial power, community authority, legal and ethical claims, visitor and public interpretation, absences and contested narratives, and whether recommendations follow from documented histories and stakeholder relations.

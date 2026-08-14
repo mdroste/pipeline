@@ -1,0 +1,1 @@
+Assess location and commuting choices, land and housing supply, amenities and productivity, sorting, capitalization, congestion and networks, spatial equilibrium, local fiscal rules, displacement and spillovers, geographic scale, and whether the policy counterfactual accounts for mobility and market adjustment.

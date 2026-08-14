@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ExtractionConfig } from "../../lib/types";
+import { ADAPTIVE_AGENT_COUNT_KEY } from "../../lib/autoReview";
 import PromptEditor from "../PromptEditor";
 import { MemoizedExtraInputsEditor as ExtraInputsEditor } from "./ProfileSettingsEditors";
 import { outputSchemaError } from "./utils";
@@ -21,10 +22,7 @@ function ExtractionEditor({
   onChange: (patch: Partial<ExtractionConfig>) => void;
 }) {
   const method = extraction.method ?? "";
-  const markerRetired = method === "marker";
-  const hint = markerRetired
-    ? "Marker is unavailable in Pipeline 0.9.0 because its compatible Python dependencies contain known security vulnerabilities. Choose a supported method before running this workflow."
-    : EXTRACTION_METHODS.find((m) => m.value === method)?.hint;
+  const hint = EXTRACTION_METHODS.find((m) => m.value === method)?.hint;
   const inputMode = extraction.input_mode || "document";
 
   return (
@@ -84,23 +82,13 @@ function ExtractionEditor({
                        text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
                        focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
           >
-            {markerRetired && (
-              <option value="marker" disabled>
-                Marker (unavailable — choose a replacement)
-              </option>
-            )}
             {EXTRACTION_METHODS.map((m) => (
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
           {hint && (
             <p
-              role={markerRetired ? "alert" : undefined}
-              className={`text-[11px] mt-1.5 leading-relaxed ${
-                markerRetired
-                  ? "text-amber-700 dark:text-amber-300"
-                  : "text-gray-500 dark:text-gray-400"
-              }`}
+              className="text-[11px] mt-1.5 leading-relaxed text-gray-500 dark:text-gray-400"
             >
               {hint}
             </p>
@@ -119,19 +107,15 @@ function ExtractionEditor({
 }
 
 function OrientationEditor({
-  useOrientation,
   prompt,
   schema,
   autoReview = false,
-  onToggleUse,
   onPromptChange,
   onSchemaChange,
 }: {
-  useOrientation: boolean;
   prompt: string;
   schema?: Record<string, unknown> | null;
   autoReview?: boolean;
-  onToggleUse: (v: boolean) => void;
   onPromptChange: (p: string) => void;
   onSchemaChange: (schema: Record<string, unknown> | null) => void;
 }) {
@@ -173,6 +157,37 @@ function OrientationEditor({
     onPromptChange(next);
   };
 
+  const restoreRouterPrompt = async () => {
+    const request = ++resetRequest.current;
+    try {
+      // The router prompt lists the live catalog's subjects, methods, and
+      // genres; the saved schema must match it or newer routing picks fail
+      // validation. Restore both together, keeping only the configured
+      // adaptive-agent count from the current schema.
+      const defaults = await invoke<{
+        prompt: string;
+        schema: Record<string, unknown>;
+      }>("get_auto_review_orientation_defaults");
+      if (mounted.current && request === resetRequest.current) {
+        const nextSchema = { ...defaults.schema };
+        const count = schema?.[ADAPTIVE_AGENT_COUNT_KEY];
+        if (count !== undefined) {
+          nextSchema[ADAPTIVE_AGENT_COUNT_KEY] = count;
+        }
+        onPromptChange(defaults.prompt);
+        onSchemaChange(nextSchema);
+      }
+    } catch (error) {
+      if (mounted.current && request === resetRequest.current) {
+        alert(
+          `Failed to load the adaptive router prompt and schema: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  };
+
   const changeSchema = (next: string) => {
     setSchemaText(next);
     if (!next.trim()) {
@@ -203,7 +218,7 @@ function OrientationEditor({
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
             {autoReview ? (
-              <>Stage 0b. One LLM call builds the paper orientation map and classifies the review it needs. Alongside sections, formal results, tables, and notation, the validated map includes a compact <span className="font-mono">review_plan</span> that selects the subject and method specialists assembled for this run.</>
+              <>Stage 0b. One LLM call builds the paper orientation map and classifies the review it needs. Alongside sections, formal results, tables, and notation, the validated map includes a compact <span className="font-mono">review_plan</span> that selects the subject and method specialists assembled for this report and classifies the document genre shared with every reviewer.</>
             ) : (
               <>Stage 0b. One LLM call that builds a structured JSON survey of the input before any
               step runs — for a paper: sections, theorems, tables, notation. Steps that select the
@@ -213,23 +228,12 @@ function OrientationEditor({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            role="switch"
-            aria-label="Build orientation map"
-            aria-checked={useOrientation}
-            onClick={() => onToggleUse(!useOrientation)}
-            className={`w-8 h-5 rounded-full relative transition-colors shrink-0 ${
-              useOrientation ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
-            }`}
-          >
-            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-              useOrientation ? "translate-x-3.5" : "translate-x-0.5"
-            }`} />
-          </button>
+        <div className="flex items-center gap-2">
+          <span className="rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">
+            Required
+          </span>
           <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-            {autoReview ? "Orientation & classification" : "Orientation map"} {useOrientation ? "enabled" : "disabled"}
+            Runs before every workflow
           </span>
         </div>
       </div>
@@ -239,40 +243,57 @@ function OrientationEditor({
           Prompt
         </label>
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void insertDefault("orientation_generic")}
-            className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-            title="Insert the generic survey prompt (works for any input)."
-          >
-            Insert generic survey
-          </button>
-          <button
-            type="button"
-            onClick={() => void insertDefault("orientation_folder")}
-            className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-            title="Insert the folder survey prompt (explores the folder with the Read tool)."
-          >
-            Insert folder survey
-          </button>
-          <button
-            type="button"
-            onClick={() => void insertDefault("orientation")}
-            className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-            title="Insert the paper-review survey prompt (sections, theorems, tables, notation)."
-          >
-            Insert paper survey
-          </button>
-          <button
-            type="button"
-            onClick={() => changePrompt("")}
-            disabled={prompt.trim() === ""}
-            className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100
-                       disabled:opacity-40 disabled:hover:text-gray-600 dark:disabled:hover:text-gray-400 transition-colors"
-            title="Clear the override; the default template will be used."
-          >
-            Use default
-          </button>
+          {autoReview ? (
+            // A plain survey prompt (or an empty override, which falls back
+            // to the stock paper survey) cannot produce the validated
+            // review_plan this workflow's schema requires — every run would
+            // fail orientation. Offer only the generated router prompt.
+            <button
+              type="button"
+              onClick={() => void restoreRouterPrompt()}
+              className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+              title="Restore the generated orientation & classification prompt and its matching output schema. A configured adaptive-agent count is kept."
+            >
+              Restore adaptive router prompt & schema
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => void insertDefault("orientation_generic")}
+                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                title="Insert the generic survey prompt (works for any input)."
+              >
+                Insert generic survey
+              </button>
+              <button
+                type="button"
+                onClick={() => void insertDefault("orientation_folder")}
+                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                title="Insert the folder survey prompt (explores the folder with the Read tool)."
+              >
+                Insert folder survey
+              </button>
+              <button
+                type="button"
+                onClick={() => void insertDefault("orientation")}
+                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                title="Insert the paper-review survey prompt (sections, theorems, tables, notation)."
+              >
+                Insert paper survey
+              </button>
+              <button
+                type="button"
+                onClick={() => changePrompt("")}
+                disabled={prompt.trim() === ""}
+                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100
+                           disabled:opacity-40 disabled:hover:text-gray-600 dark:disabled:hover:text-gray-400 transition-colors"
+                title="Clear the override; the default template will be used."
+              >
+                Use default
+              </button>
+            </>
+          )}
         </div>
       </div>
       <div className="flex-1 min-h-0 p-4 flex flex-col">

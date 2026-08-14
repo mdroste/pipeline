@@ -79,9 +79,9 @@ export default function VariablePrompt({ variables, inputSlots = [], onSubmit, o
         tabIndex={-1}
         className="w-full max-w-md rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl p-5"
       >
-        <h3 id={titleId} className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Run options</h3>
+        <h3 id={titleId} className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Report options</h3>
         <p id={descriptionId} className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-          This profile asks for a few values before running.
+          This workflow asks for a few values before generating the report.
         </p>
         {pickerError && (
           <p role="alert" className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
@@ -175,7 +175,7 @@ export default function VariablePrompt({ variables, inputSlots = [], onSubmit, o
             disabled={missingRequired}
             className="px-4 py-2 text-sm rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Run
+            Continue
           </button>
         </div>
       </div>

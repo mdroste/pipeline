@@ -101,6 +101,9 @@ function renderOrientationMap(orientation: OrientationMap): string {
       md += `**Paper form**: ${plan.paper_forms.map(titleCase).join(", ")}  \n`;
     }
     if (plan.methods?.length) md += `**Methods**: ${plan.methods.join(", ")}  \n`;
+    if (plan.genre && plan.genre !== "research_article") {
+      md += `**Document genre**: ${titleCase(plan.genre.replace(/^genre_/, ""))}  \n`;
+    }
     md += `\n`;
     if (plan.selection_notes?.length) {
       md += `### Selected Specialists\n\n`;

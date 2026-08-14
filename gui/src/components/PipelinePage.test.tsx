@@ -65,11 +65,11 @@ const profiles: ProfileSummary[] = [
 
 function mockLoad(config: PipelineConfig, extra: Record<string, unknown> = {}) {
   invoke.mockImplementation((cmd: string) => {
+    if (cmd in extra) return Promise.resolve(extra[cmd]);
     if (cmd === "get_pipeline_config") return Promise.resolve(config);
     if (cmd === "list_profiles") return Promise.resolve(profiles);
     if (cmd === "get_active_profile") return Promise.resolve("deep-review");
     if (cmd === "save_pipeline_config") return Promise.resolve();
-    if (cmd in extra) return Promise.resolve(extra[cmd]);
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   });
 }
@@ -101,12 +101,16 @@ const adaptiveCatalog: AutoReviewCatalog = {
       exclusions: "the contribution is primarily microeconomic.",
     }],
   }],
-  methods: [{
+  methodFamilies: [{
+    id: "formal_conceptual",
+    label: "Formal Theory & Conceptual Analysis",
+    roles: [{
     id: "formal_proofs",
     label: "Method — Formal Proofs",
     level: "method",
     description: "Central theorems and derivations require proof verification.",
     exclusions: "routine algebra.",
+    }],
   }],
 };
 
@@ -157,7 +161,18 @@ describe("PipelinePage", () => {
       expect(alertSpy).toHaveBeenCalledWith("Import failed: picker unavailable");
     });
 
-    dialogMocks.save.mockRejectedValueOnce(new Error("save picker unavailable"));
+    // The backend now owns the save dialog, so an export failure surfaces from
+    // the export command itself rather than a JS dialog call.
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(makeConfig());
+      if (cmd === "list_profiles") return Promise.resolve(profiles);
+      if (cmd === "get_active_profile") return Promise.resolve("deep-review");
+      if (cmd === "save_pipeline_config") return Promise.resolve();
+      if (cmd === "export_profile") {
+        return Promise.reject(new Error("save picker unavailable"));
+      }
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     await user.click(screen.getByRole("button", { name: /Export profile/ }));
     await waitFor(() => {
@@ -246,8 +261,11 @@ describe("PipelinePage", () => {
     const deleteResult = new Promise<void>((resolve) => {
       finishDelete = resolve;
     });
+    const remaining: ProfileSummary[] = [
+      { id: "auto-review", name: "Auto Paper Review", step_count: 5, builtin: true },
+    ];
     const customProfiles: ProfileSummary[] = [
-      ...profiles,
+      ...remaining,
       { id: "custom", name: "Custom Review", step_count: 2, builtin: false },
     ];
     let profileLists = 0;
@@ -255,7 +273,7 @@ describe("PipelinePage", () => {
       if (cmd === "get_pipeline_config") return Promise.resolve(makeConfig());
       if (cmd === "list_profiles") {
         profileLists += 1;
-        return Promise.resolve(profileLists === 1 ? customProfiles : profiles);
+        return Promise.resolve(profileLists === 1 ? customProfiles : remaining);
       }
       if (cmd === "get_active_profile") return Promise.resolve("custom");
       if (cmd === "delete_profile") return deleteResult;
@@ -281,28 +299,11 @@ describe("PipelinePage", () => {
     await act(async () => finishDelete());
     await waitFor(() => {
       expect(selector).toBeEnabled();
-      expect(selector).toHaveValue("deep-review");
+      expect(selector).toHaveValue("auto-review");
     });
     expect(invoke).toHaveBeenCalledWith("delete_profile", { id: "custom" });
-    expect(invoke).toHaveBeenCalledWith("switch_profile", { id: "deep-review" });
+    expect(invoke).toHaveBeenCalledWith("switch_profile", { id: "auto-review" });
     confirmSpy.mockRestore();
-  });
-
-  it("keeps a legacy Marker workflow repairable but marks the method unavailable", async () => {
-    const config = makeConfig();
-    config.extraction.method = "marker";
-    mockLoad(config);
-    render(<PipelinePage onClose={() => {}} />);
-    await userEvent.click(await screen.findByRole("button", { name: "Input & extraction" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Marker is unavailable in Pipeline 0.9.0",
-    );
-    expect(
-      screen.getByRole("option", {
-        name: "Marker (unavailable — choose a replacement)",
-      }),
-    ).toBeDisabled();
   });
 
   it("disables Save until the config is dirty", async () => {
@@ -417,15 +418,15 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     await user.click(screen.getByRole("button", { name: "+ Add step" }));
-    await user.click(screen.getByRole("tab", { name: "From templates" }));
-    expect(await screen.findByText("Add one fixed specialist")).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Adaptive agent" }));
+    expect(await screen.findByText("Choose an adaptive agent")).toBeVisible();
     expect(screen.getByRole("tab", { name: "Guided setup" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Blank step" })).toBeInTheDocument();
 
     const search = screen.getByRole("searchbox", { name: "Search adaptive agents" });
     await user.type(search, "macro");
     await user.click(screen.getByRole("button", { name: "Economics — Macroeconomics" }));
-    expect(screen.getByText(/copies a snapshot/i)).toBeVisible();
+    expect(screen.getByText(/adds an editable snapshot/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Copy step" }));
 
     const prompt = await screen.findByRole("textbox", {
@@ -723,20 +724,23 @@ describe("PipelinePage", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("shows shared context reuse as the Paper Review (Full) default", async () => {
+  it("shows shared context reuse as the Auto Paper Review default", async () => {
     const user = userEvent.setup();
-    mockLoad({
-      ...makeConfig(),
-      context_cache: { enabled: true },
-    });
+    mockLoad(
+      {
+        ...makeConfig(),
+        context_cache: { enabled: true },
+      },
+      { get_active_profile: "auto-review" },
+    );
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
     await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
     const toggle = screen.getByRole("switch", { name: "Reuse shared input context" });
     expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByText("Full Review default")).toBeInTheDocument();
-    expect(screen.getByText(/Paper Review \(Full\) enables this by default/)).toBeInTheDocument();
+    expect(screen.getByText("Auto Review default")).toBeInTheDocument();
+    expect(screen.getByText(/Auto Paper Review enables this by default/)).toBeInTheDocument();
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "false");
 
@@ -751,6 +755,21 @@ describe("PipelinePage", () => {
         }),
       );
     });
+  });
+
+  it("shows orientation as an editable workflow stage without a disable control", async () => {
+    const user = userEvent.setup();
+    mockLoad({ ...makeConfig(), use_orientation: false });
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+
+    const orientation = screen.getByRole("button", { name: "Orientation map" });
+    expect(orientation).not.toHaveTextContent("Required");
+    await user.click(orientation);
+
+    expect(screen.getByText("Runs before every workflow")).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Build orientation map" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Orientation map prompt" })).toBeInTheDocument();
   });
 
   it("offers an overview without duplicating it in the primary step list", async () => {
@@ -779,26 +798,36 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const orientation = await screen.findByRole("button", { name: "Orientation & classification" });
-    expect(screen.getByRole("button", { name: "Subject specialists — Auto-filled from orientation" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Method specialists — Auto-filled from orientation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adaptive agents — Automatic, 2–6 agents" })).toBeInTheDocument();
     expect(screen.getAllByText("Auto-filled from orientation").length).toBeGreaterThan(0);
 
     await user.click(orientation);
     expect(screen.getByRole("heading", { name: "Orientation & Classification" })).toBeInTheDocument();
     expect(screen.getByText(/One LLM call builds the paper orientation map/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Method specialists — Auto-filled from orientation" }));
-    expect(screen.getByRole("heading", { name: "Method specialists" })).toBeInTheDocument();
-    expect(screen.getByText(/Every materialized specialist report feeds directly/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Adaptive agents — Automatic, 2–6 agents" }));
+    expect(screen.getByRole("heading", { name: "Adaptive agents" })).toBeInTheDocument();
+    expect(screen.getByText(/Every adaptive-agent report feeds directly/)).toBeInTheDocument();
     expect(screen.getByText(/alongside Contribution & Literature/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Browse method specialist catalog" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Number of adaptive agents" }), "4");
+    expect(screen.getByRole("button", { name: "Adaptive agents — 4 agents" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Browse method catalog" }));
     expect(screen.getByRole("dialog", { name: "Specialist catalog" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Methods" })).toHaveAttribute("aria-selected", "true");
     await user.click(screen.getByRole("button", { name: "Close specialist catalog" }));
 
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     expect(screen.getByRole("button", { name: "Orient + classify" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Subject specialists (1–2)" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Method specialists (1–4)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adaptive agents (4)" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Steps" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      expect(saveCall?.[1].config.orientation_schema).toMatchObject({
+        "x-pipeline-contract": "auto-review-v2",
+        "x-pipeline-adaptive-agent-count": 4,
+      });
+    });
   });
 });

@@ -40,9 +40,8 @@ Each new document run records:
 | Artifact | Purpose |
 |---|---|
 | `context/document_bundle.json` | Canonical machine-readable bundle |
-| `context/document.md` | Full readable document with stable node markers |
+| `context/document.md` | Canonical exact, readable extraction used by re-runs |
 | `context/blocks.jsonl` | One semantic node per line for streaming/indexing |
-| `context/extracted_text.md` | Legacy extraction view for compatibility |
 | `artifacts/pages/*` | Compact 120-DPI JPEG page renders, capped at 300 pages |
 | `artifacts/figures/*` | Figures emitted by PDF extraction |
 | `artifacts/document/figures/*` | Original TeX/DOCX figure media |
@@ -55,16 +54,18 @@ artifact body is fetched until the reader chooses one. Interrupted and older
 manifests retain ordinary page entries and remain compatible.
 
 Re-runs preserve the parent's canonical bundle and copy its visual assets into
-the new run. Runs created before bundle v1 remain resumable: Pipeline builds a
-compatibility bundle from their cached extraction.
+the new run. Run artifact schema 1 uses only `context/document.md` for the
+captured text. Version-0 manifests remain resumable at one compatibility
+boundary: Pipeline reads their exact `context/extracted_text.md`. It does not
+reuse an old `context/document.md`, which may include a bundle preamble.
 
 ## Source adapters
 
 ### PDF
 
 - Text comes from the configured verified LLM, PaddleOCR-VL Full Parser, or
-  pdftotext extractor. Marker and PaddleOCR-VL Fast retain passive decoding
-  only for historical run artifacts.
+  pdftotext extractor. PaddleOCR-VL Fast retains passive decoding only for
+  historical run artifacts.
 - Page markers are retained when available.
 - Every page is rendered independently of the text extraction method.
 - Full Parser preserves official layout labels, reading order, boxes/polygons,
@@ -72,7 +73,6 @@ compatibility bundle from their cached extraction.
   tables/captions, and extracted image associations in `paddle_block`
   representations. Its cross-page table and title reconstruction runs before
   bundle normalization.
-- Historical Marker images already stored in runs remain figure assets.
 - Figure/table nodes that lack a dedicated crop fall back to their rendered
   page asset. This is explicit in the asset link rather than silently
   pretending that a crop exists.
@@ -118,7 +118,8 @@ This boundary is important:
 Primary document access is selected per step. A profile may expose any subset
 of four independently useful representations:
 
-- `primary.text`: a private staged copy of readable `document.md`;
+- `primary.text`: a private staged readable projection derived from the exact
+  `document.md`, enriched with bundle metadata when available;
 - `primary.structure`: a private staged semantic index through
   `{document_bundle}`. The index retains equations, results, captions, tables,
   figures, assets, provenance, and their useful representations, but omits
@@ -159,7 +160,7 @@ run's allowed roots and return provider-native multimodal image blocks:
 - Google: `inlineData` after the function response.
 
 Claude Code maps the capability to its native multimodal `Read` tool. Codex
-and Gemini CLI receive the same selected roots through their native workspace
+and Antigravity CLI receive the same selected roots through their native workspace
 controls. Prompts tell CLI agents to group independent bounded reads and image
 inspections into one tool turn when supported. All transports must fall back
 to sequential reads for missing, truncated, or failed items; batching never

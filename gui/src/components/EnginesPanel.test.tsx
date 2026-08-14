@@ -87,9 +87,6 @@ describe("EnginesPanel", () => {
           ? Promise.reject(new Error("engine catalog unavailable"))
           : Promise.resolve([engine()]);
       }
-      if (cmd === "retired_marker_status") {
-        return Promise.resolve({ present: false, bytes: 0 });
-      }
       return Promise.resolve();
     });
     const user = userEvent.setup();
@@ -106,29 +103,9 @@ describe("EnginesPanel", () => {
     );
   });
 
-  it("surfaces a retired-environment status failure without hiding loaded engines", async () => {
-    invoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_engines") return Promise.resolve([engine()]);
-      if (cmd === "retired_marker_status") {
-        return Promise.reject(new Error("marker inspection denied"));
-      }
-      return Promise.resolve();
-    });
-    render(<EnginesPanel />);
-
-    expect(await screen.findByText("PaddleOCR-VL 1.6 Full Parser")).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Retired Marker status could not be checked: marker inspection denied",
-    );
-    expect(screen.getByRole("button", { name: "Retry status" })).toBeEnabled();
-  });
-
   it("surfaces a failure to open the Pipeline data folder", async () => {
     invoke.mockImplementation((cmd: string) => {
       if (cmd === "list_engines") return Promise.resolve([engine()]);
-      if (cmd === "retired_marker_status") {
-        return Promise.resolve({ present: false, bytes: 0 });
-      }
       if (cmd === "open_pipeline_dir") {
         return Promise.reject(new Error("shell integration unavailable"));
       }
@@ -146,31 +123,6 @@ describe("EnginesPanel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not open ~/.pipeline/: shell integration unavailable",
     );
-  });
-
-  it("offers explicit removal for an old managed Marker environment", async () => {
-    invoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_engines") return Promise.resolve([engine()]);
-      if (cmd === "retired_marker_status") {
-        return Promise.resolve({ present: true, bytes: 3_200_000_000 });
-      }
-      if (cmd === "remove_retired_marker") return Promise.resolve();
-      return Promise.resolve();
-    });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<EnginesPanel />);
-
-    expect(
-      await screen.findByText("Retired Marker environment found"),
-    ).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Remove old Marker files" }),
-    );
-    expect(confirmSpy).toHaveBeenCalled();
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("remove_retired_marker"),
-    );
-    confirmSpy.mockRestore();
   });
 
   it("install click invokes install_engine and streams phases and log lines", async () => {
@@ -233,9 +185,6 @@ describe("EnginesPanel", () => {
               }),
         ]);
       }
-      if (cmd === "retired_marker_status") {
-        return Promise.resolve({ present: false, bytes: 0 });
-      }
       if (cmd === "install_engine") return new Promise(() => {});
       return Promise.resolve();
     });
@@ -275,9 +224,6 @@ describe("EnginesPanel", () => {
   it("surfaces a failed engine cancellation", async () => {
     invoke.mockImplementation((cmd: string) => {
       if (cmd === "list_engines") return Promise.resolve([engine()]);
-      if (cmd === "retired_marker_status") {
-        return Promise.resolve({ present: false, bytes: 0 });
-      }
       if (cmd === "install_engine") return new Promise(() => {});
       if (cmd === "cancel_engine_install") {
         return Promise.reject(new Error("cancellation channel unavailable"));
@@ -344,37 +290,6 @@ describe("EnginesPanel", () => {
     confirmSpy.mockRestore();
   });
 
-  it("ignores an older engine-list response after a newer refresh completes", async () => {
-    let resolveOld!: (value: EngineStatus[]) => void;
-    const oldList = new Promise<EngineStatus[]>((resolve) => {
-      resolveOld = resolve;
-    });
-    let listRequests = 0;
-    invoke.mockImplementation((cmd: string) => {
-      if (cmd === "list_engines") {
-        listRequests += 1;
-        return listRequests === 1
-          ? oldList
-          : Promise.resolve([engine({ installed: true, version: "new" })]);
-      }
-      if (cmd === "retired_marker_status") {
-        return Promise.resolve({ present: true, bytes: 1 });
-      }
-      if (cmd === "remove_retired_marker") return Promise.resolve();
-      return Promise.resolve();
-    });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const user = userEvent.setup();
-    render(<EnginesPanel />);
-
-    await user.click(await screen.findByRole("button", { name: "Remove old Marker files" }));
-    expect(await screen.findByText("installed vnew")).toBeVisible();
-    await act(async () => resolveOld([engine({ installed: false })]));
-    expect(screen.getByText("installed vnew")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Uninstall" })).toBeVisible();
-    confirmSpy.mockRestore();
-  });
-
   it("fails closed and cleans partial registrations when a listener is unavailable", async () => {
     const cleanup = vi.fn();
     let registration = 0;
@@ -386,7 +301,6 @@ describe("EnginesPanel", () => {
     });
     invoke.mockImplementation((cmd: string) => {
       if (cmd === "list_engines") return Promise.resolve([engine()]);
-      if (cmd === "retired_marker_status") return Promise.resolve({ present: false, bytes: 0 });
       return Promise.resolve();
     });
     render(<EnginesPanel />);

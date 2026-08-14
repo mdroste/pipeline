@@ -72,7 +72,6 @@ export const PipelineSettingsEditorPanel = memo(function PipelineSettingsEditorP
   config,
   activeProfile,
   onContextCacheChange,
-  onUseOrientationChange,
   onVariablesChange,
   onCalibrationAppend,
   onResetParallelTemplate,
@@ -81,7 +80,6 @@ export const PipelineSettingsEditorPanel = memo(function PipelineSettingsEditorP
   config: PipelineConfig;
   activeProfile: string;
   onContextCacheChange: (enabled: boolean) => void;
-  onUseOrientationChange: (enabled: boolean) => void;
   onVariablesChange: (variables: VarSpec[]) => void;
   onCalibrationAppend: (stepId: string, text: string) => void;
   onResetParallelTemplate: (source: "generic" | "paper") => void;
@@ -120,11 +118,11 @@ export const PipelineSettingsEditorPanel = memo(function PipelineSettingsEditorP
                 Reuse shared input context
               </span>
               <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
-                {activeProfile === "deep-review" ? "Full Review default" : "Optional"}
+                {activeProfile === "auto-review" ? "Auto Review default" : "Optional"}
               </span>
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              Paper Review (Full) enables this by default. It prepares the extracted input
+              Auto Paper Review enables this by default. It prepares the extracted input
               and orientation map once for all review steps.
               Pipeline automatically uses provider prompt caches for API calls and forked
               base sessions for Claude or Codex CLI. For other profiles, turn it on for
@@ -140,27 +138,16 @@ export const PipelineSettingsEditorPanel = memo(function PipelineSettingsEditorP
         </div>
 
         <div className="flex items-start gap-3">
-          <button
-            type="button"
-            role="switch"
-            aria-label="Build orientation map"
-            aria-checked={config.use_orientation}
-            onClick={() => onUseOrientationChange(!config.use_orientation)}
-            className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
-              config.use_orientation ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
-            }`}
-          >
-            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-              config.use_orientation ? "translate-x-3.5" : "translate-x-0.5"
-            }`} />
-          </button>
+          <span className="mt-0.5 rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">
+            Required
+          </span>
           <div>
             <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
               Build orientation map
             </span>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              One LLM call surveys the input into structured JSON before any step runs.
-              Costs one call but keeps steps grounded in what the input actually
+              One LLM call surveys the input into structured JSON before every workflow runs.
+              It keeps steps grounded in what the input actually
               contains — e.g. it stops a review step criticizing something covered
               elsewhere in the document.
             </p>
@@ -343,7 +330,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
           defaultReportStepIds={defaultReportStepIds}
           namedInputs={config.extraction?.extra_inputs ?? []}
           inputMode={config.extraction?.input_mode || "document"}
-          surveyEnabled={config.use_orientation}
+          surveyEnabled={true}
           conditionStepIds={conditionStepIds}
           onChange={(patch) => onUpdate(step.id, patch)}
         />
@@ -392,7 +379,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
           defaultReportStepIds={defaultReportStepIds}
           namedInputs={config.extraction?.extra_inputs ?? []}
           inputMode={config.extraction?.input_mode || "document"}
-          surveyEnabled={config.use_orientation}
+          surveyEnabled={true}
           conditionStepIds={conditionStepIds}
           onChange={(patch) => onUpdate(step.id, patch)}
         />

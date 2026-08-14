@@ -1,0 +1,1 @@
+Assess species, breed and production setting, husbandry, nutrition, exposure or intervention, diagnostic definition, welfare and adverse outcomes, clustering by herd or facility, pathogen and environmental context, follow-up, and whether findings support the claimed animal population and management practice.

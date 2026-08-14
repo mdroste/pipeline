@@ -1,0 +1,1 @@
+Review organism and life-stage coverage, anatomy and functional performance, behavioral context, environmental and phylogenetic alternatives, sex and individual variation, captivity or handling effects, and whether observed traits support the claimed adaptive, mechanistic, or comparative conclusion.

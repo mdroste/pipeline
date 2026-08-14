@@ -1,0 +1,1 @@
+Evaluate the system boundary, spatial and temporal scale, process model, proxy or instrument, uncertainty, representativeness, and connection from local evidence to regional, planetary, or long-run claims.

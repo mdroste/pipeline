@@ -1,0 +1,1 @@
+Assess selectivity, sensitivity, calibration, matrix effects, blanks, recovery, detection limits, reference methods, speciation, transport and degradation, field representativeness, and whether the assay distinguishes the claimed analyte or process.

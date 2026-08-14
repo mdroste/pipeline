@@ -1,0 +1,1 @@
+Review the relevant nondimensional regimes, closure assumptions, boundary conditions, stability, turbulence or transport mechanism, kinetic versus continuum approximation, and conservation properties. Check that simulations or experiments occupy the regime used in the interpretation.

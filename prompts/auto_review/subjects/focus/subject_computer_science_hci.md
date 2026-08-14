@@ -1,0 +1,1 @@
+Review the human task and context, participant population, interaction design, comparison condition, construct validity, learning and novelty effects, qualitative analysis, accessibility, and connection from study outcomes to design claims. Distinguish preference from performance and durable use.

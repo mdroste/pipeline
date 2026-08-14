@@ -41,7 +41,7 @@ List the installed workflows:
 ```bash
 ./target/debug/pipeline-cli profiles
 ./target/debug/pipeline-cli profiles --json
-./target/debug/pipeline-cli profiles show quick-review
+./target/debug/pipeline-cli profiles show auto-review
 ```
 
 Without `--profile`, `check`, `run`, and `batch` use the active desktop
@@ -50,7 +50,7 @@ active workflow:
 
 ```bash
 ./target/debug/pipeline-cli run \
-  --profile quick-review \
+  --profile auto-review \
   --input /path/to/paper.pdf
 ```
 
@@ -62,11 +62,11 @@ model:
 
 ```bash
 ./target/debug/pipeline-cli check \
-  --profile quick-review \
+  --profile auto-review \
   --input /path/to/paper.pdf
 
 ./target/debug/pipeline-cli check \
-  --profile quick-review \
+  --profile auto-review \
   --input /path/to/paper.pdf \
   --json
 ```
@@ -90,7 +90,7 @@ standard error:
 
 ```bash
 ./target/debug/pipeline-cli run \
-  --profile quick-review \
+  --profile auto-review \
   --input /path/to/paper.pdf
 ```
 
@@ -98,7 +98,7 @@ Save the report to a file with `--out`:
 
 ```bash
 ./target/debug/pipeline-cli run \
-  --profile quick-review \
+  --profile auto-review \
   --input /path/to/paper.pdf \
   --out /path/to/report.md
 ```
@@ -130,7 +130,7 @@ Runtime variables and named inputs are repeatable:
 
 ```bash
 ./target/debug/pipeline-cli run \
-  --profile deep-review \
+  --profile auto-review \
   --input /path/to/paper.pdf \
   --var journal=AER \
   --var audience=editor \
@@ -147,7 +147,7 @@ runs them sequentially. Hidden files are skipped:
 
 ```bash
 ./target/debug/pipeline-cli batch \
-  --profile quick-review \
+  --profile auto-review \
   --input-dir /path/to/papers \
   --out-dir /path/to/reports
 ```

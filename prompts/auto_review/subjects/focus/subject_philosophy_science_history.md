@@ -1,0 +1,1 @@
+Assess the scientific practice or historical text represented, explanation and evidence, idealization, realism, causation and models, interpretive context, relation to primary sources, and whether the philosophical conclusion depends on an accurate account of the science or figure.

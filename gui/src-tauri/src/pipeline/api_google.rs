@@ -5,15 +5,12 @@ use super::claude::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 
-/// Map settings model shorthand to Google model ID.
-/// `override_model` (when non-empty) takes precedence over the global setting.
-fn resolve_model(settings: &Settings, override_model: Option<&str>) -> String {
-    let raw = override_model
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(settings.gemini_model.as_str());
-    match raw {
-        "" => "gemini-3.6-flash".to_string(),
-        other => other.to_string(),
+/// Resolve the Google model ID for this call. `override_model` carries the
+/// dispatcher-resolved selection; empty means the current default.
+fn resolve_model(override_model: Option<&str>) -> String {
+    match override_model.filter(|s| !s.trim().is_empty()) {
+        Some(other) => other.to_string(),
+        None => "gemini-3.6-flash".to_string(),
     }
 }
 
@@ -161,7 +158,7 @@ pub async fn call_google_api(
     let start = Instant::now();
     // Google's Gemini API doesn't expose an effort/thinking flag in this client,
     // so overrides.effort is ignored here.
-    let model = resolve_model(settings, overrides.model);
+    let model = resolve_model(overrides.model);
     log(
         app,
         format!("{label} started (API: Google, model: {model})"),
@@ -188,7 +185,9 @@ pub async fn call_google_api(
         tools,
         tool_config: None,
         generation_config: Some(serde_json::json!({
-            "maxOutputTokens": overrides.max_output_tokens.unwrap_or(16384),
+            "maxOutputTokens": overrides
+                .max_output_tokens
+                .unwrap_or(DEFAULT_STEP_MAX_OUTPUT_TOKENS),
         })),
     };
     if has_hosted_search(&request) && has_custom_functions(&request) {

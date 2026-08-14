@@ -1,0 +1,1 @@
+Review the stratification dimensions, population at risk, cohort and life-course timing, family or household structure, mobility concept, institutional sorting, compositional change, and whether observed gaps support the proposed mechanism rather than category construction alone.

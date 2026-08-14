@@ -1,0 +1,1 @@
+Review witnesses and editions, language and historical semantics, variants and emendations, translation choices, scribal or editorial intervention, material format, production and circulation, readership and reception, chronology and provenance, and whether claims about a text or tradition are supported across the relevant transmission history.

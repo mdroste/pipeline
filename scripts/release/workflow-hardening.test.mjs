@@ -94,11 +94,18 @@ test("release builds only installers from an explicit tag and keeps retries plat
 test("Tauri packages only the GUI and uses a cache-friendly release profile", () => {
   const cargo = readText("gui", "src-tauri", "Cargo.toml");
   const config = JSON.parse(readText("gui", "src-tauri", "tauri.conf.json"));
+  const capability = JSON.parse(
+    readText("gui", "src-tauri", "capabilities", "default.json"),
+  );
   assert.match(cargo, /\[\[bin\]\]\nname = "pipeline-gui"/);
   assert.match(cargo, /\[profile\.release\][\s\S]*incremental = true/);
   assert.doesNotMatch(cargo, /lto\s*=\s*true|codegen-units\s*=\s*1/);
   assert.deepEqual(config.bundle.targets, ["app", "dmg", "appimage", "nsis"]);
   assert.equal(config.build.beforeBundleCommand, "node ../scripts/release/sign-macos-cli.mjs");
+  assert.ok(
+    capability.permissions.includes("core:window:allow-destroy"),
+    "close-requested listener must be allowed to destroy the native window",
+  );
   assert.deepEqual(config.bundle.resources.filter((item) => item.includes("notices/")), [
     "resources/notices/NOTICE.txt",
     "resources/notices/PIPELINE_LICENSE.txt",

@@ -72,14 +72,15 @@ Generalization = replacing those five assumptions, not the engine.
 ### 1. Run directory + artifact manifest (foundation)
 
 Replace the scattered `history/{hash}.json` + `cache/papers/{hash}.txt` with a
-run-centric layout (keeping legacy read paths for old reports):
+run-centric layout. Current builds use only the run store; old directories are
+left untouched but are no longer read:
 
 ```
 ~/.pipeline/runs/{run_id}/
 ├── manifest.json          # inputs, profile snapshot, timings, failed_steps
 ├── report.md              # final rendered report (as today)
 ├── inputs/                # copy or reference of what was ingested
-├── context/               # extracted_text.md, orientation.json
+├── context/               # document.md, orientation.json
 └── artifacts/{step_id}/   # anything a step wrote (code, CSV, images, …)
 ```
 
@@ -118,7 +119,7 @@ profile:
 - **None**: workflow runs from the prompt alone (e.g. "draft X from these
   instructions").
 
-The orientation stage generalizes to an optional **survey** step: same
+The orientation stage generalizes to a required **survey** step: same
 mechanism (one LLM call, JSON output, retry on parse failure), but the schema
 becomes per-profile — either free-form JSON (validated as JSON, not against a
 struct) or the current paper schema for the built-in review profiles. The
@@ -166,8 +167,8 @@ Cross-platform robustness rules:
    outputs). Immediately improves the current paper workflow (orientation as
    pretty JSON, extracted text as plain text, not fake-markdown). No backend
    schema changes beyond a `read_artifact` command.
-2. **Run directory + manifest.** Move run outputs to `runs/{id}/`, keep
-   legacy history readable. Viewer switches to manifest-driven tree.
+2. **Run directory + manifest.** Move run outputs to `runs/{id}/` and switch
+   the viewer to the manifest-driven tree.
 3. **Write-enabled steps.** `{output_dir}` + sandboxed Write tool in both
    dispatch modes. This is the moment "generate code files" workflows work.
 4. **Generalized ingest + survey + vocabulary.** Folder/none input modes,

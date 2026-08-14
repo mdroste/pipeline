@@ -1,0 +1,1 @@
+Examine resource assumptions, channel or noise model, entanglement and measurement structure, fault or error model, scaling, and the gap between ideal protocol and physical implementation. Check comparisons against the correct classical and quantum baselines.

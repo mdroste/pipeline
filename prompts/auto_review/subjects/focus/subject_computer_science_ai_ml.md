@@ -1,0 +1,1 @@
+Assess task formulation, training signal, architecture or learning contribution, generalization regime, distribution shift, ablations, compute and data comparisons, benchmark contamination, failure analysis, and reproducibility. Separate empirical scale effects from algorithmic insight.

@@ -1,7 +1,7 @@
 use crate::models::{StepCallRecord, StepOutput};
 use crate::output::{
     capitalize, extract_report_envelope, new_report_nonce, normalize_math_delimiters,
-    report_output_format,
+    report_output_format, ReportRejectionKind,
 };
 use crate::pipeline_config::MergeConfig;
 use std::collections::BTreeMap;
@@ -247,12 +247,16 @@ pub async fn merge_step_outputs(
                 serde_json::json!({ "name": merge_key_done, "status": "running" }),
             );
             let log_label = format!("Merge: {}", topic);
-            let agent_ref = agent_override.as_deref();
-            let provider = agent_ref
-                .unwrap_or(&run_settings.preferred_provider)
+            let inherited_agent = agent_override.is_none();
+            let provider = agent_override
+                .as_deref()
+                .unwrap_or_else(|| run_settings.sequential_agent())
                 .to_string();
+            let selection = inherited_agent
+                .then(|| run_settings.sequential_model_selection(&provider))
+                .flatten();
             let resolution = crate::commands::await_or_cancel(
-                crate::model_catalog::resolve(&provider, &run_settings, None),
+                crate::model_catalog::resolve(&provider, &run_settings, selection.as_ref()),
                 Some(&merge_key_done),
             )
             .await
@@ -265,7 +269,11 @@ pub async fn merge_step_outputs(
             if let Some(error) = cancellation_error() {
                 return Err(early_error(error));
             }
-            let effort = run_settings.model_effort(&provider).to_string();
+            let effort = if inherited_agent {
+                run_settings.sequential_effort(&provider)
+            } else {
+                run_settings.model_effort(&provider).to_string()
+            };
             let model_policy = resolution.selection.label();
             let call = super::call::execute(super::call::Request {
                 app: &app_handle,
@@ -274,7 +282,7 @@ pub async fn merge_step_outputs(
                 prompt: &prompt,
                 tools: &[],
                 timeout_secs: timeout,
-                agent: agent_ref,
+                agent: Some(&provider),
                 cwd: None,
                 read_dirs: &[],
                 write_dir: None,
@@ -365,12 +373,18 @@ pub async fn merge_step_outputs(
                     let report = match extract_report_envelope(&raw_text, &report_nonce) {
                         Ok(report) => report,
                         Err(error) => {
+                            let rejection_status = match error.kind() {
+                                ReportRejectionKind::Envelope => {
+                                    super::response_journal::AttemptStatus::RejectedEnvelope
+                                }
+                                ReportRejectionKind::Content => {
+                                    super::response_journal::AttemptStatus::RejectedContent
+                                }
+                            };
+                            let rejection_reason = error.to_string();
                             if let Some(capture) = response_capture.take() {
                                 if let Err(journal_error) = capture
-                                    .finish(
-                                        super::response_journal::AttemptStatus::RejectedEnvelope,
-                                        &error,
-                                    )
+                                    .finish(rejection_status, &rejection_reason)
                                     .await
                                 {
                                     let _ = app_handle.emit_event(
@@ -670,9 +684,9 @@ mod tests {
     fn agent_outputs_merge_only_within_their_item() {
         let groups = group_outputs(vec![
             output("review/a/claude", "review/a"),
-            output("review/a/gemini", "review/a"),
+            output("review/a/antigravity", "review/a"),
             output("review/b/claude", "review/b"),
-            output("review/b/gemini", "review/b"),
+            output("review/b/antigravity", "review/b"),
         ]);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].0, "review/a");

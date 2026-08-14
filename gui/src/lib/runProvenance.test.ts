@@ -142,4 +142,36 @@ describe("run provenance", () => {
     expect(markdown).not.toContain("## Run provenance");
     expect(markdown).not.toContain("**Run total**");
   });
+
+  it("survives a paper-shaped survey with no metadata or authors", () => {
+    // Schema-less profiles validate the survey only as a JSON object, so a
+    // paper-shaped survey (stated_contribution present) may omit metadata
+    // entirely or return authors as null; the view must not throw.
+    const partial = report();
+    partial.orientation = {
+      stated_contribution: "A new estimator",
+    } as PipelineReport["orientation"];
+    const provenance = buildRunProvenance({
+      report: partial,
+      summary: null,
+      manifest: null,
+      durationSecs: null,
+    });
+    expect(provenance.subject).toBe("Pipeline report");
+    expect(provenance.authors).toEqual([]);
+
+    const nullAuthors = report();
+    (nullAuthors.orientation as Record<string, unknown>).metadata = {
+      title: "T",
+      authors: null,
+    };
+    const fromNull = buildRunProvenance({
+      report: nullAuthors,
+      summary: null,
+      manifest: null,
+      durationSecs: null,
+    });
+    expect(fromNull.subject).toBe("T");
+    expect(fromNull.authors).toEqual([]);
+  });
 });

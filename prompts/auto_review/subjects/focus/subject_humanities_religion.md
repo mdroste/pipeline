@@ -1,0 +1,1 @@
+Assess tradition-specific categories, sources and languages, doctrine and practice, historical location, insider and analytic perspectives, comparison, normative commitments, and whether evidence supports claims across communities or periods.

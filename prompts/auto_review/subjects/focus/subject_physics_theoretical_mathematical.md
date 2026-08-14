@@ -1,0 +1,1 @@
+Focus on whether the mathematical formulation represents the claimed physical system, whether symmetries and limiting regimes are used consistently, and whether formal results yield the stated physical content. Separate a mathematically valid construction from an argument that it describes the relevant physics.

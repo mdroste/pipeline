@@ -16,6 +16,9 @@ pub(super) struct PipelineRequest {
     pub(super) variables: std::collections::HashMap<String, String>,
     pub(super) extra_inputs: std::collections::HashMap<String, String>,
     pub(super) snapshot: Option<RunSnapshot>,
+    /// Cancel epoch captured at command entry, before preflight; the run
+    /// task re-asserts cancellation if it advanced in the interim.
+    pub(super) preflight_cancel_epoch: u64,
 }
 
 impl PipelineTask {
@@ -40,6 +43,7 @@ impl PipelineTask {
                 request.variables,
                 request.extra_inputs,
                 request.snapshot,
+                request.preflight_cancel_epoch,
             )
             .await
         })

@@ -1,0 +1,1 @@
+Review linguistic task validity, annotation, language and domain coverage, tokenization and data provenance, evaluation metrics, human evaluation, contamination, multilingual claims, and error categories. Check whether benchmark gains correspond to the claimed language capability.

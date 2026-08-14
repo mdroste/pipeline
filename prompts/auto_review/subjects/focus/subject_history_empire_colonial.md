@@ -1,0 +1,1 @@
+Assess metropolitan, colonial and Indigenous actors; coercion and brokerage; legal and racial categories; land, labor and extraction; connected archives and languages; scale across colony and empire; resistance and adaptation; archival silences; periodization of decolonization; and whether comparison preserves asymmetric power and local specificity.

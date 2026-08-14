@@ -16,7 +16,7 @@ function settings(overrides: Partial<Settings> = {}): Settings {
     google_api_key: "",
     claude_model: "",
     codex_model: "",
-    gemini_model: "",
+    antigravity_effort: "",
     ...overrides,
   } as Settings;
 }

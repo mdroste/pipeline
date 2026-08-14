@@ -4,9 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import IssuesTable from "./IssuesTable";
 
 const invoke = vi.hoisted(() => vi.fn());
-const save = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 
 const issues = [
   { id: "i1", title: "First issue", severity: "high", section: "1", body: "Details" },
@@ -15,7 +14,6 @@ const issues = [
 describe("IssuesTable annotation lifecycle", () => {
   beforeEach(() => {
     invoke.mockReset();
-    save.mockReset();
   });
 
   it("ignores a stale annotation load after switching runs", async () => {
@@ -117,8 +115,12 @@ describe("IssuesTable annotation lifecycle", () => {
     expect(screen.queryByText("saved ✓")).not.toBeInTheDocument();
   });
 
-  it("accurately surfaces an accepted-issues save-dialog failure", async () => {
-    save.mockRejectedValueOnce(new Error("dialog plugin unavailable"));
+  it("accurately surfaces an accepted-issues save failure", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "save_text_file"
+        ? Promise.reject(new Error("dialog plugin unavailable"))
+        : Promise.resolve(undefined),
+    );
     const user = userEvent.setup();
     render(<IssuesTable issues={issues} runId="" />);
 
@@ -130,7 +132,6 @@ describe("IssuesTable annotation lifecycle", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Accepted-issues export failed: dialog plugin unavailable",
     );
-    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("opens an evidence-linked page from an expanded issue", async () => {
@@ -156,7 +157,7 @@ describe("IssuesTable annotation lifecycle", () => {
   });
 
   it("retains concrete evidence identifiers in accepted-issue exports", async () => {
-    save.mockResolvedValueOnce("/tmp/accepted.md");
+    invoke.mockResolvedValueOnce("/tmp/accepted.md");
     const user = userEvent.setup();
     render(
       <IssuesTable
@@ -176,7 +177,7 @@ describe("IssuesTable annotation lifecycle", () => {
     await user.click(screen.getByRole("button", { name: "Export accepted" }));
 
     expect(invoke).toHaveBeenCalledWith("save_text_file", {
-      path: "/tmp/accepted.md",
+      suggestedName: "accepted-issues.md",
       content: expect.stringContaining(
         "p. 7, node paragraph-12, artifact artifacts/pages/page-7.png — Identification claim",
       ),

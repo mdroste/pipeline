@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
 import type {
   Project,
   ProjectIssue,
@@ -58,7 +57,7 @@ function severityRank(value: string): number {
 }
 
 function occurrenceLabel(occurrence: ProjectIssueOccurrence, run?: RunSummary): string {
-  return run?.title || run?.input_name || occurrence.input_name || "Saved run";
+  return run?.title || run?.input_name || occurrence.input_name || "Saved report";
 }
 
 function sourceLabel(evidence: ProjectIssueEvidence): string {
@@ -115,7 +114,7 @@ function exportLedger(project: Project, issues: ProjectIssue[]): string {
     }).join("\n");
     return `## ${issueIndex + 1}. ${issue.title}\n\n- Status: ${issue.status}\n- Severity: ${issue.severity || "unspecified"}\n- First observed: ${formatDate(issueFirstObserved(issue))}\n- Last observed: ${formatDate(issueLastObserved(issue))}\n- Occurrences: ${issue.occurrences.length}${issue.section ? `\n- Current section/location: ${issue.section}` : ""}${issue.note ? `\n\n**Project note:** ${issue.note}` : ""}\n\n### Observations\n\n${occurrences}`;
   }).join("\n\n");
-  return `# ${project.name} — Issue ledger\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are project-level; observations retain their original run provenance.\n\n${body || "No issues match the current filters."}\n`;
+  return `# ${project.name} — Issue ledger\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are project-level; observations retain their original report provenance.\n\n${body || "No issues match the current filters."}\n`;
 }
 
 export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Props) {
@@ -259,13 +258,10 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
   const exportVisible = async () => {
     setError(null);
     try {
-      const path = await save({
-        defaultPath: `${project.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "project"}-issues.md`,
-        filters: [{ name: "Markdown", extensions: ["md"] }],
-      });
-      if (path) {
-        await invoke("save_text_file", { path, content: exportLedger(project, visibleIssues) });
-      }
+      const suggestedName = `${project.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "project"}-issues.md`;
+      // The backend runs the native save dialog and writes only to the
+      // user-chosen path; the webview never supplies a filesystem path.
+      await invoke("save_text_file", { content: exportLedger(project, visibleIssues), suggestedName });
     } catch (caught) {
       setError(`Issue-ledger export failed: ${caught instanceof Error ? caught.message : String(caught)}`);
     }
@@ -325,8 +321,8 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
           <option value="all">All workflows</option>
           {workflows.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select>
-        <select aria-label="Issue run filter" value={runFilter} onChange={(event) => setRunFilter(event.target.value)} className="max-w-56 rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900">
-          <option value="all">All runs</option>
+        <select aria-label="Issue report filter" value={runFilter} onChange={(event) => setRunFilter(event.target.value)} className="max-w-56 rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900">
+          <option value="all">All reports</option>
           {project.run_ids.map((runId) => {
             const run = runsById.get(runId);
             return <option key={runId} value={runId}>{run?.title || run?.input_name || runId}</option>;
@@ -365,18 +361,18 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
                   <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
                     <div>
                       <label htmlFor={`project-issue-note-${issue.id}`} className="text-[11px] font-medium text-gray-700 dark:text-gray-300">Project note or decision rationale</label>
-                      <textarea id={`project-issue-note-${issue.id}`} value={noteDrafts[issue.id] ?? issue.note} onChange={(event) => setNoteDrafts((current) => ({ ...current, [issue.id]: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs dark:border-gray-700 dark:bg-gray-950" placeholder="This note persists across future runs." />
+                      <textarea id={`project-issue-note-${issue.id}`} value={noteDrafts[issue.id] ?? issue.note} onChange={(event) => setNoteDrafts((current) => ({ ...current, [issue.id]: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs dark:border-gray-700 dark:bg-gray-950" placeholder="This note persists across future reports." />
                       <button type="button" disabled={pendingIssueId !== null || (noteDrafts[issue.id] ?? issue.note) === issue.note} onClick={() => void updateIssue(issue, decisionValue, noteDrafts[issue.id] ?? issue.note)} className="mt-2 rounded-lg border border-gray-300 px-3 py-1.5 text-xs disabled:opacity-40 dark:border-gray-700">Save note</button>
                     </div>
                     <div className="space-y-3">
                       <label className="block text-[11px] font-medium text-gray-700 dark:text-gray-300">
                         Lifecycle
                         <select aria-label={`Lifecycle for ${issue.title}`} value={decisionValue} disabled={pendingIssueId !== null} onChange={(event) => void updateIssue(issue, event.target.value, noteDrafts[issue.id] ?? issue.note)} className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-950">
-                          <option value="automatic">Follow run annotations</option>
+                          <option value="automatic">Follow report annotations</option>
                           <option value="open">Open</option><option value="addressed">Addressed</option><option value="dismissed">Dismissed</option><option value="regressed">Regressed</option>
                         </select>
                       </label>
-                      <p className="text-[10px] leading-4 text-gray-500 dark:text-gray-400">{issue.decision_updated ? `Project decision updated ${formatDate(issue.decision_updated, true)}.` : "Derived from accept/reject/done annotations on its run occurrences."}</p>
+                      <p className="text-[10px] leading-4 text-gray-500 dark:text-gray-400">{issue.decision_updated ? `Project decision updated ${formatDate(issue.decision_updated, true)}.` : "Derived from accept/reject/done annotations on its report occurrences."}</p>
                       {ledger && ledger.issues.length > 1 && (
                         <div>
                           <label className="text-[11px] font-medium text-gray-700 dark:text-gray-300" htmlFor={`merge-${issue.id}`}>Combine duplicate into</label>
@@ -391,7 +387,7 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
                   </div>
 
                   <div className="mt-5 space-y-3">
-                    <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Run observations</h4>
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Report observations</h4>
                     {[...issue.occurrences].reverse().map((occurrence) => {
                       const run = runsById.get(occurrence.run_id);
                       return (
@@ -401,10 +397,10 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
                               <p className="truncate text-xs font-medium text-gray-900 dark:text-gray-100">{occurrenceLabel(occurrence, run)}</p>
                               <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">{formatDate(occurrence.observed_at, true)} · {occurrence.profile_name} · {occurrence.step_label}{occurrence.section ? ` · ${occurrence.section}` : ""}</p>
                             </div>
-                            <button type="button" onClick={() => onOpenRun(occurrence.run_id)} className="rounded-md border border-gray-300 px-2 py-1 text-[10px] dark:border-gray-700">Open run</button>
+                            <button type="button" onClick={() => onOpenRun(occurrence.run_id)} className="rounded-md border border-gray-300 px-2 py-1 text-[10px] dark:border-gray-700">Open report</button>
                           </div>
                           {occurrence.body && <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-gray-600 dark:text-gray-400">{occurrence.body}</p>}
-                          {occurrence.annotation_status && <p className="mt-2 text-[10px] text-gray-500 dark:text-gray-400">Run annotation: {occurrence.annotation_status}{occurrence.annotation_note ? ` — ${occurrence.annotation_note}` : ""}</p>}
+                          {occurrence.annotation_status && <p className="mt-2 text-[10px] text-gray-500 dark:text-gray-400">Report annotation: {occurrence.annotation_status}{occurrence.annotation_note ? ` — ${occurrence.annotation_note}` : ""}</p>}
                           {occurrence.evidence.length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {occurrence.evidence.map((evidence, index) => {
@@ -429,8 +425,8 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
         })}
         {!loading && visibleIssues.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-300 px-5 py-10 text-center dark:border-gray-700">
-            <p className="text-sm text-gray-600 dark:text-gray-300">{ledger?.issues.length ? "No issues match these filters." : "No structured issues were found in this project's runs."}</p>
-            <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">Any workflow can contribute: its saved report only needs an issues-shaped JSON output. Narrative reports remain available as runs but are not converted into findings implicitly.</p>
+            <p className="text-sm text-gray-600 dark:text-gray-300">{ledger?.issues.length ? "No issues match these filters." : "No structured issues were found in this project's reports."}</p>
+            <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">Any workflow can contribute: its saved report only needs an issues-shaped JSON output. Narrative reports remain available in report history but are not converted into findings implicitly.</p>
           </div>
         )}
       </div>

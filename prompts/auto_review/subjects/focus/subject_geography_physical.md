@@ -1,0 +1,1 @@
+Assess landscape and process scale, spatial heterogeneity, field sampling, land cover and history, coupled human influence, temporal baseline, regionalization, and whether local measurements identify the claimed landscape dynamics.

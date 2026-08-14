@@ -1,0 +1,1 @@
+Examine source populations, selection functions, foregrounds, distance and time scales, cosmological assumptions, gravitational dynamics, and degeneracies between astrophysical processes and fundamental parameters. Check whether observational reach supports the claimed cosmic scope.

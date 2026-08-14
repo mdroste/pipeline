@@ -1,0 +1,1 @@
+Review field relation and access, emic and analytic categories, translation, reflexivity, variation within the field site, temporal and political context, evidentiary path from scenes and interviews to interpretation, and comparative scope.

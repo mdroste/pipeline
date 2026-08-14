@@ -1,0 +1,1 @@
+Examine the interaction model, quantum numbers, kinematic regimes, backgrounds, detector acceptance, effective-theory scale, and relation between measured observables and the claimed particle or nuclear parameter. Check whether exclusions and discovery claims respect the stated model dependence.

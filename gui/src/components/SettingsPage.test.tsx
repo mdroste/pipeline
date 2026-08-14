@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPage from "./SettingsPage";
-import type { EngineStatus, ModelCatalog, Settings } from "../lib/types";
+import type { DepsReport, EngineStatus, ModelCatalog, Settings } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());
@@ -15,28 +15,19 @@ vi.mock("@tauri-apps/api/event", () => ({
 function makeSettings(): Settings {
   return {
     preferred_provider: "claude",
-    max_workers: 5,
+    max_workers: 16,
     active_profile: "deep-review",
     claude_model: "",
     claude_effort: "",
     codex_model: "",
     codex_effort: "",
-    gemini_model: "",
+    antigravity_effort: "",
     pdf_extractor: "llm",
-    marker_disable_ocr: false,
-    marker_force_ocr: false,
-    marker_disable_images: true,
-    marker_lowres_dpi: 96,
-    marker_highres_dpi: 192,
-    marker_pdftext_workers: 0,
-    marker_layout_batch_size: 0,
-    marker_recognition_batch_size: 0,
     paddle_page_concurrency: 0,
     paddle_mtmd_batch_tokens: 0,
     paddle_flash_attention: "auto",
     paddle_max_output_tokens: 4096,
     paddle_page_retries: 1,
-    paddle_render_dpi: 150,
     paddle_full_layout_detection: true,
     paddle_full_layout_threshold: 0.5,
     paddle_full_layout_nms: true,
@@ -91,9 +82,6 @@ function mockLoad(
     if (cmd === "get_settings") return Promise.resolve({ settings, warnings });
     if (cmd === "save_settings") return Promise.resolve();
     if (cmd === "list_engines") return Promise.resolve(engines);
-    if (cmd === "retired_marker_status") {
-      return Promise.resolve({ present: false, bytes: 0 });
-    }
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   });
 }
@@ -131,7 +119,118 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("combobox", { name: "Preferred Provider" })).toBeVisible();
     expect(screen.getByLabelText("Claude API Key")).toBeVisible();
     expect(screen.getByRole("combobox", { name: "claude model" })).toBeVisible();
+    expect(
+      screen.getByRole("group", { name: "Claude model configuration" }),
+    ).toHaveClass("grid-cols-2");
+    expect(
+      screen.getByRole("group", { name: "ChatGPT model configuration" }),
+    ).toHaveClass("grid-cols-2");
+    expect(
+      screen.getByRole("group", { name: "Antigravity model configuration" }),
+    ).toHaveClass("grid-cols-2");
+    expect(screen.getByText("or more", { selector: "strong" }).closest("p")).toHaveTextContent(
+      "Select one or more default model to use for parallel workflow steps.",
+    );
+    expect(screen.getByText("one", { selector: "strong" }).closest("p")).toHaveTextContent(
+      "Select one default model to use for sequential workflow steps.",
+    );
+    expect(screen.getByText(
+      "Select one default model to use for processing inputs and classifying adaptive workflow steps.",
+    )).toBeVisible();
+    const maxConcurrentAgents = screen.getByLabelText("Maximum Concurrent Agents");
+    expect(maxConcurrentAgents).toBeVisible();
+    expect(maxConcurrentAgents).toHaveValue("16");
+    expect(maxConcurrentAgents).toHaveAttribute("max", "20");
     expect(invoke).toHaveBeenCalledWith("get_settings");
+  });
+
+  it("disables CLI model and effort controls with the dependency diagnosis", async () => {
+    const dependencies: DepsReport = {
+      ready: false,
+      deps: [
+        {
+          name: "Claude CLI",
+          found: false,
+          version: "",
+          path: "",
+          required: true,
+          hint: "Install Claude Code using the official instructions.",
+        },
+        {
+          name: "Codex CLI",
+          found: true,
+          version: "codex-cli 1.2.3",
+          path: "/usr/local/bin/codex",
+          required: true,
+          hint: "Run `codex login` to authenticate.",
+          authenticated: false,
+          cli_auth_status: "signed_out",
+        },
+        {
+          name: "Antigravity CLI",
+          found: true,
+          version: "1.1.12",
+          path: "/Users/mike/.local/bin/agy",
+          required: false,
+          hint: "Run `agy` in a terminal to sign in, then refresh this check.",
+          cli_auth_status: "unknown",
+        },
+      ],
+    };
+    mockLoad(makeSettings());
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+        dependencies={dependencies}
+      />,
+    );
+
+    expect(await screen.findByRole("combobox", { name: "claude model" })).toBeDisabled();
+    expect(screen.getByLabelText("Claude Thinking Effort")).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "codex model" })).toBeDisabled();
+    expect(screen.getByLabelText("OpenAI Reasoning Effort")).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "antigravity model" })).toBeDisabled();
+    expect(screen.getByLabelText("Antigravity Reasoning Effort")).toBeDisabled();
+    expect(screen.getByText("Claude CLI could not be found on this system.")).toBeVisible();
+    expect(screen.getByText("Codex CLI is installed but not logged in.")).toBeVisible();
+    expect(
+      screen.getByText("Antigravity CLI is installed, but its login status could not be verified."),
+    ).toBeVisible();
+  });
+
+  it("keeps API model and effort controls available when the CLI is absent", async () => {
+    const settings = { ...makeSettings(), openai_api_key: "sk-api-key" };
+    const dependencies: DepsReport = {
+      ready: true,
+      deps: [
+        {
+          name: "Codex CLI",
+          found: true,
+          version: "direct API",
+          path: "",
+          required: true,
+          hint: "API key configured — CLI not required.",
+          authenticated: true,
+        },
+      ],
+    };
+    mockLoad(settings);
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+        dependencies={dependencies}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "codex model" })).toBeEnabled(),
+    );
+    expect(screen.getByLabelText("OpenAI Reasoning Effort")).toBeEnabled();
+    expect(screen.queryByText(/Codex CLI could not be found/)).not.toBeInTheDocument();
   });
 
   it("opens directly to a requested settings section", async () => {
@@ -337,6 +436,30 @@ describe("SettingsPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("ranks manual PDF extraction methods from best to basic quality", async () => {
+    mockLoad(makeSettings(), [], [paddleEngine()]);
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+
+    const paddle = screen.getByRole("radio", {
+      name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
+    });
+    const llm = screen.getByRole("radio", { name: /^LLM\b/ });
+    const pdftotext = screen.getByRole("radio", { name: /^pdftotext\b/ });
+
+    expect(screen.getByText("Best to basic ↓")).toBeVisible();
+    expect(screen.getByText("Best quality")).toBeVisible();
+    expect(screen.getByText("High quality")).toBeVisible();
+    expect(screen.getByText("Basic quality")).toBeVisible();
+    expect(screen.getByText(/Slightly less faithful than PaddleOCR-VL/)).toBeVisible();
+    expect(
+      paddle.compareDocumentPosition(llm) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      llm.compareDocumentPosition(pdftotext) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("reveals PaddleOCR-VL settings when the local engine is installed", async () => {
     mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
@@ -371,33 +494,6 @@ describe("SettingsPage", () => {
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
         settings: { ...makeSettings(), pdf_extractor: "llm" },
-      }),
-    );
-  });
-
-  it("explains a legacy Marker selection and saves a supported replacement", async () => {
-    const user = userEvent.setup();
-    mockLoad({ ...makeSettings(), pdf_extractor: "marker" });
-    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
-    await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Marker is unavailable in Pipeline 0.9.0",
-    );
-    expect(
-      screen.queryByRole("radio", { name: /marker-pdf/i }),
-    ).not.toBeInTheDocument();
-    await user.click(
-      screen.getByRole("radio", { name: /pdftotext \(basic\)/i }),
-    );
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("save_settings", {
-        settings: {
-          ...makeSettings(),
-          pdf_extractor: "pdftotext",
-        },
       }),
     );
   });
@@ -659,7 +755,6 @@ describe("SettingsPage", () => {
         return Promise.resolve(catalog(args?.provider ?? "local", "cli", "current"));
       }
       if (cmd === "list_engines") return Promise.resolve([]);
-      if (cmd === "retired_marker_status") return Promise.resolve({ present: false, bytes: 0 });
       if (cmd === "save_settings") return Promise.resolve();
       return Promise.resolve();
     });
@@ -744,7 +839,7 @@ describe("SettingsPage", () => {
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
-    await screen.findByText("8 runs · 7.0 GB");
+    await screen.findByText("8 reports · 7.0 GB");
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     await waitFor(() => {
@@ -759,10 +854,10 @@ describe("SettingsPage", () => {
       });
     });
     expect(confirmSpy.mock.calls[0][0]).toContain(
-      "permanently delete 3 completed runs (2.5 GB)",
+      "permanently delete 3 completed reports (2.5 GB)",
     );
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Removed 3 completed runs.",
+      "Removed 3 completed reports.",
     );
     confirmSpy.mockRestore();
   });
@@ -795,7 +890,7 @@ describe("SettingsPage", () => {
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "No completed runs were beyond the configured limits.",
+      "No completed reports were beyond the configured limits.",
     );
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
@@ -854,7 +949,7 @@ describe("SettingsPage", () => {
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The purge preview could not be loaded; no runs were deleted: history index unavailable",
+      "The purge preview could not be loaded; no reports were deleted: history index unavailable",
     );
     expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
   });

@@ -85,14 +85,18 @@ pub async fn run_pipeline(
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_snapshot_id: Option<String>,
+    run_parallel_overrides: Option<RunParallelOverrides>,
 ) -> Result<serde_json::Value, String> {
+    // Captured before preflight so a cancel click during the probes below is
+    // re-asserted by the run task rather than erased by its flag reset.
+    let preflight_cancel_epoch = current_cancel_epoch();
     // Prevent concurrent pipeline runs from corrupting shared state
     let _ = crate::runs::recover_resumable_runs();
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
     crate::safety::validate_runtime_context(&variables, "Run variables")?;
     crate::safety::validate_runtime_context(&extra_inputs, "Named input paths")?;
-    let snapshot = load_run_snapshot()?;
+    let snapshot = bind_parallel_overrides(load_run_snapshot()?, run_parallel_overrides.as_ref())?;
     validate_primary_input_selection(
         &snapshot.config,
         Some(&paper_path),
@@ -129,6 +133,7 @@ pub async fn run_pipeline(
             variables,
             extra_inputs,
             snapshot: Some(snapshot),
+            preflight_cancel_epoch,
         },
     )
     .join()
@@ -195,6 +200,7 @@ pub async fn run_headless_with_options(
     bus: crate::emit::EventBus,
     options: HeadlessRunOptions,
 ) -> Result<serde_json::Value, String> {
+    let preflight_cancel_epoch = current_cancel_epoch();
     let _ = crate::runs::recover_resumable_runs();
     let (snapshot, dependencies) = prepare_headless_run(&options).await?;
     require_snapshot_dependencies(&dependencies)?;
@@ -209,6 +215,7 @@ pub async fn run_headless_with_options(
             variables: options.variables,
             extra_inputs: options.extra_inputs,
             snapshot: Some(snapshot),
+            preflight_cancel_epoch,
         },
     )
     .join()

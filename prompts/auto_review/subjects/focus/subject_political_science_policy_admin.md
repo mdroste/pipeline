@@ -1,0 +1,1 @@
+Review policy authority, target population, administrative capacity, implementation chain, discretion, compliance, feedback, distribution, political feasibility, and whether observed program outcomes support the broader policy or governance conclusion.

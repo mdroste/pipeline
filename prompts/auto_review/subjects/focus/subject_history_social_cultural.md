@@ -1,0 +1,1 @@
+Review whose experience the sources preserve, category and identity formation, material and institutional context, representativeness, reading against archival silences, scale from individual cases to groups, and the chronology of cultural or social change.

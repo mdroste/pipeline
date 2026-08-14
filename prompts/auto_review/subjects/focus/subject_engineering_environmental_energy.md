@@ -1,0 +1,1 @@
+Assess material and energy balances, contaminant or degradation pathways, efficiency at matched conditions, intermittency, resource inputs, lifetime, waste streams, scale-up, and system boundaries. Check whether environmental benefits survive realistic operation and life-cycle accounting.

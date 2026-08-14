@@ -1,0 +1,1 @@
+Assess the behavioral margin, institutional and policy rules, labor or household selection, incidence, sufficient statistics or model channel, distributional consequences, equilibrium responses, and whether the counterfactual maps to a feasible policy. Use this combined role only when the contribution materially crosses the narrower listed fields.

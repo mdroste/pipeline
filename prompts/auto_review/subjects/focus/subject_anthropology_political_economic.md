@@ -1,0 +1,1 @@
+Assess how authority, value and exchange are constituted in practice; relations among households, markets and states; informal and formal institutions; histories of colonialism and development; material infrastructures; local moral economies; researcher access and scale; and whether ethnographic evidence connects everyday action to the larger political-economic formation claimed.

@@ -365,6 +365,38 @@ describe("ReportViewer", () => {
     expect(screen.getByText("\\(not math\\)")).toBeInTheDocument();
   });
 
+  it("finds matches and reports the position without touching hidden MathML", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <ReportViewer
+        markdown={"The gamma parameter $\\gamma$ drives gamma decay."}
+      />,
+    );
+    // KaTeX keeps the raw LaTeX in a hidden MathML copy; make sure it exists
+    // so the search below meaningfully proves it is skipped.
+    expect(container.querySelector(".katex-mathml")).not.toBeNull();
+
+    await user.keyboard("{Control>}f{/Control}");
+    await user.type(screen.getByLabelText("Find in report"), "gamma");
+
+    expect(container.querySelectorAll("mark.search-hit")).toHaveLength(2);
+    expect(container.querySelector(".katex-mathml mark")).toBeNull();
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+  });
+
+  it("caps find highlights on huge match counts and shows an open-ended total", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <ReportViewer markdown={"word ".repeat(1001).trim()} />,
+    );
+
+    await user.keyboard("{Control>}f{/Control}");
+    await user.type(screen.getByLabelText("Find in report"), "word");
+
+    expect(container.querySelectorAll("mark.search-hit")).toHaveLength(1000);
+    expect(screen.getByText("1/1000+")).toBeInTheDocument();
+  });
+
   it("never presents internal Pipeline run-detail boundary markers", () => {
     const markdown = [
       "# Report",

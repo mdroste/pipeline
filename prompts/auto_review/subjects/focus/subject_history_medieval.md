@@ -1,0 +1,1 @@
+Assess periodization, manuscript and material sources, ecclesiastical and political institutions, local variation, translation and terminology, chronology, and whether later categories are projected onto medieval actors or structures.

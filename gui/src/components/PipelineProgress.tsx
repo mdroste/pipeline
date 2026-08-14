@@ -317,6 +317,13 @@ export default function PipelineProgress({
 
   const plannedStages: DisplayStage[] = effectivePlan.map((stage, index) => {
     const runtime = runtimeByPlanIndex.get(index);
+    // The runtime dispatch stage is authoritative about which materialized
+    // steps are multi-provider. Its merge metadata is available before the
+    // merge stage itself begins, including for adaptive steps unknown at
+    // preflight time.
+    const dispatchForMerge = stage.kind === "merging" && index > 0
+      ? runtimeByPlanIndex.get(index - 1)
+      : undefined;
     let status: DisplayStatus = "pending";
     if (runtime?.status === "skipped") {
       status = "skipped";
@@ -340,10 +347,16 @@ export default function PipelineProgress({
     const currentPasses =
       runtime?.passes ??
       (index === fallbackIndex && "passes" in state ? state.passes : {});
-    const stepIds = runtime?.stepIds?.length ? runtime.stepIds : stage.stepIds;
+    const stepIds = runtime?.stepIds?.length
+      ? runtime.stepIds
+      : dispatchForMerge?.mergeStepIds?.length
+        ? dispatchForMerge.mergeStepIds
+        : stage.stepIds;
     const stepLabelValues = runtime?.stepLabels?.length
       ? runtime.stepLabels
-      : stage.stepLabels ?? [];
+      : dispatchForMerge?.mergeStepLabels?.length
+        ? dispatchForMerge.mergeStepLabels
+        : stage.stepLabels ?? [];
     const stepLabels = new Map(
       stepIds.map((stepId, stepIndex) => [stepId, stepLabelValues[stepIndex] || titleize(stepId)]),
     );
@@ -402,7 +415,7 @@ export default function PipelineProgress({
     };
   });
 
-  // Extraction/normalization and the optional orientation call are separate
+  // Extraction/normalization and the required orientation call are separate
   // scheduler stages, but they are one user-facing phase. Preserve each
   // stage's status as a subitem so failures still point to the exact work.
   const processingStages = plannedStages.filter(

@@ -74,7 +74,7 @@ function usageDescription(usage: UsageState["total"]): string {
     "Cache reads and cache writes are subsets of logical input, not additional tokens.",
     "Fresh input equals logical input minus cache reads minus cache writes.",
     "For an API-equivalent dollar estimate, price fresh input, cache reads, cache writes, and output at their separate list rates; cache reads are discounted, not free.",
-    "The completed report's Run summary calculates this estimate for recognized models.",
+    "The completed report's summary calculates this estimate for recognized models.",
     "Only providers that report usage are included.",
   ]
     .filter(Boolean)

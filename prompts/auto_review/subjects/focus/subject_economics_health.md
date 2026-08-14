@@ -1,0 +1,1 @@
+Review insurance and payment rules, patient and provider incentives, selection and moral hazard, access and quality, treatment substitution, market structure, health and spending measurement, clinical versus economic endpoints, incidence and distribution, and whether welfare conclusions value health outcomes and financial risk consistently with the estimated behavior.

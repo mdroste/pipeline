@@ -9,6 +9,7 @@
 
 import { computeWaves } from "../lib/pipelineHelpers";
 import type { StepConfig, MergeConfig } from "../lib/types";
+import { adaptiveAgentCountLabel } from "../lib/autoReview";
 
 export type WaveSelection =
   | string
@@ -16,19 +17,18 @@ export type WaveSelection =
   | "pipeline_settings"
   | "extraction"
   | "orientation"
-  | "auto_subject_slot"
-  | "auto_method_slot";
+  | "auto_adaptive_agents";
 
 interface Props {
   steps: StepConfig[];
   merge: MergeConfig;
-  useOrientation: boolean;
   adaptiveReview?: boolean;
+  adaptiveAgentCount?: number | null;
   selectedId: WaveSelection | null;
   onSelect: (id: WaveSelection) => void;
 }
 
-export default function WaveDiagram({ steps, merge, useOrientation, adaptiveReview = false, selectedId, onSelect }: Props) {
+export default function WaveDiagram({ steps, merge, adaptiveReview = false, adaptiveAgentCount = null, selectedId, onSelect }: Props) {
   const waves = computeWaves(steps, false);
   const noEnabledSteps = waves.length === 0;
   const enabledSteps = steps.filter((step) => step.enabled);
@@ -46,7 +46,7 @@ export default function WaveDiagram({ steps, merge, useOrientation, adaptiveRevi
 
   // Build a flat row list so the connector logic stays simple: we render a
   // row, then a connector, then the next row. Pre-processing (extract +
-  // optional orient) sits at the top so users can edit those stages too.
+  // required orient) sits at the top so users can edit those stages too.
   // Merge is a one-node row that sits between a multi-agent parallel wave
   // and whatever follows.
   type Row =
@@ -55,8 +55,7 @@ export default function WaveDiagram({ steps, merge, useOrientation, adaptiveRevi
     | { kind: "parallel"; steps: StepConfig[]; adaptive: boolean }
     | { kind: "sequential"; step: StepConfig }
     | { kind: "merge" };
-  const rows: Row[] = [{ kind: "extract" }];
-  if (useOrientation) rows.push({ kind: "orient" });
+  const rows: Row[] = [{ kind: "extract" }, { kind: "orient" }];
   let foundParallelWave = false;
   for (const w of waves) {
     if (w.kind === "parallel") {
@@ -76,7 +75,7 @@ export default function WaveDiagram({ steps, merge, useOrientation, adaptiveRevi
         </h3>
         <p className="mt-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
           {adaptiveReview
-            ? `${enabledSteps.length} saved steps plus 2–6 auto-selected specialists in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}.`
+            ? `${enabledSteps.length} saved steps plus ${adaptiveAgentCountLabel(adaptiveAgentCount)} auto-selected specialists in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}.`
             : `${enabledSteps.length} enabled ${enabledSteps.length === 1 ? "step" : "steps"} in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}; up to ${providerCalls} provider ${providerCalls === 1 ? "call" : "calls"} before retries.`}
         </p>
       </div>
@@ -111,6 +110,7 @@ export default function WaveDiagram({ steps, merge, useOrientation, adaptiveRevi
               <ParallelRow
                 steps={row.steps}
                 adaptive={row.adaptive}
+                adaptiveAgentCount={adaptiveAgentCount}
                 selectedId={selectedId}
                 onSelect={onSelect}
               />
@@ -144,11 +144,13 @@ export default function WaveDiagram({ steps, merge, useOrientation, adaptiveRevi
 function ParallelRow({
   steps,
   adaptive,
+  adaptiveAgentCount,
   selectedId,
   onSelect,
 }: {
   steps: StepConfig[];
   adaptive: boolean;
+  adaptiveAgentCount: number | null;
   selectedId: WaveSelection | null;
   onSelect: (id: string) => void;
 }) {
@@ -177,20 +179,12 @@ function ParallelRow({
         />
       ))}
       {adaptive && (
-        <>
-          <Node
-            label="Subject specialists (1–2)"
-            selected={selectedId === "auto_subject_slot"}
-            variant="adaptive"
-            onClick={() => onSelect("auto_subject_slot")}
-          />
-          <Node
-            label="Method specialists (1–4)"
-            selected={selectedId === "auto_method_slot"}
-            variant="adaptive"
-            onClick={() => onSelect("auto_method_slot")}
-          />
-        </>
+        <Node
+          label={`Adaptive agents (${adaptiveAgentCountLabel(adaptiveAgentCount)})`}
+          selected={selectedId === "auto_adaptive_agents"}
+          variant="adaptive"
+          onClick={() => onSelect("auto_adaptive_agents")}
+        />
       )}
     </div>
   );

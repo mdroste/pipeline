@@ -1,0 +1,1 @@
+Evaluate the biological question, organism or system, level of explanation, controls, variation, mechanism, and connection from assay or observation to biological conclusion. Use this fallback only when the contribution genuinely crosses several biological scales.

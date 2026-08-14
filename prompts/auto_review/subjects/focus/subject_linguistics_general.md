@@ -1,0 +1,1 @@
+Evaluate the linguistic object, language sample, descriptive adequacy, cross-linguistic scope, theoretical representation, judgments or corpus evidence, and whether generalizations distinguish language-specific facts from proposed universals.

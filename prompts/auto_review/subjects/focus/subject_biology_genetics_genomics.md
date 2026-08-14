@@ -1,0 +1,1 @@
+Assess variant or feature definition, inheritance and population structure, genomic context, multiple testing, batch and mapping artifacts, regulatory interpretation, perturbational validation, and the jump from association to gene or pathway mechanism.

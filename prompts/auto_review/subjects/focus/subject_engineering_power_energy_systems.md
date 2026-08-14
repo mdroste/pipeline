@@ -1,0 +1,1 @@
+Review network and device models, stability and protection, power quality, converter and storage limits, forecast uncertainty, dispatch and control timescales, contingency and islanding behavior, grid-code assumptions, degradation, cyber-physical dependencies, and whether simulations or hardware tests represent the operating conditions required for reliable integration.

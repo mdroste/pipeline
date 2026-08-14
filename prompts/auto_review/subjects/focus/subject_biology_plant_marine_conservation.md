@@ -1,0 +1,1 @@
+Review species and habitat coverage, environmental gradients, life history, dispersal, stress response, intervention feasibility, detection and abundance, temporal baseline, and whether local observations support conservation or ecosystem-wide conclusions.

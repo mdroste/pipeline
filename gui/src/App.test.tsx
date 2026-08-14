@@ -16,7 +16,7 @@ const previewConfig = {
   steps: [],
   merge: { enabled: false, prompt: "", agents: [] },
   context_cache: { enabled: false },
-  use_orientation: false,
+  use_orientation: true,
   orientation_prompt: "",
   extraction: { method: "", input_mode: "document", extra_inputs: [] },
   parallel_context_template: "{step_prompt}",
@@ -260,10 +260,10 @@ describe("App run options", () => {
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Choose test paper" }));
-    await user.click(screen.getByRole("button", { name: "Run" }));
+    await user.click(screen.getByRole("button", { name: "Review report" }));
     expect(await screen.findByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
     expect(startPipeline).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Start run" }));
+    await user.click(screen.getByRole("button", { name: "Generate report" }));
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
         variables: null,
@@ -288,7 +288,7 @@ describe("App run options", () => {
   it("keeps batch selection in New run instead of the left navigation", async () => {
     render(<App />);
 
-    await screen.findByRole("button", { name: "Run" });
+    await screen.findByRole("button", { name: "Review report" });
     expect(screen.queryByRole("button", { name: "Batch" })).not.toBeInTheDocument();
   });
 
@@ -297,9 +297,9 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Choose two papers" }));
-    await user.click(screen.getByRole("button", { name: "Run" }));
+    await user.click(screen.getByRole("button", { name: "Review report" }));
     expect(await screen.findByText(/2 documents · document/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Start run" }));
+    await user.click(screen.getByRole("button", { name: "Generate report" }));
 
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_batch", {
       paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
@@ -309,7 +309,7 @@ describe("App run options", () => {
     }));
     expect(await screen.findByText("Batch workspace · no setup")).toBeVisible();
     expect(screen.getByRole("button", { name: /Current batch/ })).toBeVisible();
-    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New report" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
@@ -354,12 +354,12 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Choose DOCX" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled());
     expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
-    await user.click(screen.getByRole("button", { name: "Run" }));
+    await user.click(screen.getByRole("button", { name: "Review report" }));
     expect(await screen.findByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Start run" }));
+    await user.click(screen.getByRole("button", { name: "Generate report" }));
 
     await waitFor(() => expect(startPipeline).toHaveBeenCalledWith(
       "/tmp/test-paper.docx",
@@ -397,7 +397,7 @@ describe("App run options", () => {
             "/tmp/test-paper.docx",
       );
       expect(exactChecks.length).toBeGreaterThanOrEqual(2);
-      expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled();
     });
   });
 
@@ -415,7 +415,7 @@ describe("App run options", () => {
     }));
 
     expect(await screen.findByText("Primary mode: folder")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Review report" })).toBeDisabled();
     expect(invoke).toHaveBeenLastCalledWith("get_execution_plan", expect.objectContaining({
       expectedProfileConfigSnapshotId: null,
       paperPath: null,
@@ -425,7 +425,7 @@ describe("App run options", () => {
   it("reloads the new settings snapshot without comparing it to the old fingerprint", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole("button", { name: "Run" });
+    await screen.findByRole("button", { name: "Review report" });
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(await screen.findByRole("button", {
@@ -568,7 +568,7 @@ describe("App run options", () => {
             : {
                 ready: false,
                 deps: [{
-                  name: "Gemini CLI",
+                  name: "Antigravity CLI",
                   found: false,
                   version: "",
                   path: "",
@@ -585,7 +585,7 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
-    await user.click(screen.getByRole("button", { name: "Run" }));
+    await user.click(screen.getByRole("button", { name: "Review report" }));
 
     expect(await screen.findByRole("dialog", { name: "Dependencies" })).toBeVisible();
     expect(screen.getByText(/Set up at least one model provider/)).toBeVisible();
@@ -619,7 +619,7 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
-    await user.click(screen.getByRole("button", { name: "Run" }));
+    await user.click(screen.getByRole("button", { name: "Review report" }));
 
     expect((await screen.findAllByText("active profile changed")).length).toBeGreaterThan(0);
     expect(startPipeline).not.toHaveBeenCalled();
@@ -630,7 +630,7 @@ describe("App run options", () => {
     render(<App />);
 
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
-    expect(screen.getByRole("button", { name: "New run" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "New report" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -643,7 +643,7 @@ describe("App run options", () => {
       "page",
     );
 
-    await user.click(screen.getByRole("button", { name: "New run" }));
+    await user.click(screen.getByRole("button", { name: "New report" }));
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
   });
 
@@ -654,12 +654,12 @@ describe("App run options", () => {
     expect(screen.getByRole("note", { name: "Data and privacy" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Got it" }));
     expect(screen.queryByRole("note", { name: "Data and privacy" })).not.toBeInTheDocument();
-    await screen.findByRole("button", { name: "Run" });
+    await screen.findByRole("button", { name: "Review report" });
 
     firstRender.unmount();
     render(<App />);
     expect(screen.queryByRole("note", { name: "Data and privacy" })).not.toBeInTheDocument();
-    await screen.findByRole("button", { name: "Run" });
+    await screen.findByRole("button", { name: "Review report" });
   });
 
   it("links the first-run notice to the detailed privacy explanation", async () => {
@@ -667,9 +667,22 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Privacy details" }));
-    expect(
-      await screen.findByRole("heading", { name: "Data and privacy" }),
-    ).toBeVisible();
+    const summary = await screen.findByText("Data & privacy");
+    expect(summary).toBeVisible();
+    expect(summary.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText(/plan and data-use terms/i)).toBeVisible();
+  });
+
+  it("opens the PaddleOCR install card from the Help setup section", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Help" }));
+    await user.click(await screen.findByRole("button", { name: "Install in Settings" }));
+
+    expect(await screen.findByText("Settings workspace")).toBeVisible();
+    expect(screen.getByText("Initial settings section: extraction")).toBeVisible();
+    expect(screen.getByText("Settings target: paddleocr-local-engine")).toBeVisible();
   });
 
   it("blocks in-app navigation away from unsaved settings", async () => {

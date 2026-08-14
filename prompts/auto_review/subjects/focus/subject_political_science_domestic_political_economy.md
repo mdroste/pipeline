@@ -1,0 +1,1 @@
+Assess the material interests and political coalitions, institutional veto and agenda structure, organization and lobbying, policy feedback, economic exposure and measurement, selection into rules, distribution and compensation, strategic response, and whether evidence identifies the political mechanism connecting economic stakes to policy.

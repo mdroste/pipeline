@@ -1,0 +1,1 @@
+Examine the operating regime, transport and transduction mechanism, interfaces and contacts, scaling, parasitic effects, material and device variability, calibration, thermal and noise limits, comparison with physical bounds and relevant baselines, and whether device-level observations isolate the proposed physical mechanism.

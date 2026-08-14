@@ -1,0 +1,1 @@
+Examine formal and informal rules, actor authority and incentives, agenda control, implementation, enforcement, institutional equilibrium, strategic adaptation, and whether observed outcomes reveal institutional effects rather than selection into rules.

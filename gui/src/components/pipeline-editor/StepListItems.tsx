@@ -75,11 +75,11 @@ function StepRow({
           aria-label={`Enable ${step.label}`}
           aria-checked={step.enabled}
           onClick={onToggle}
-          className={`w-8 h-5 rounded-full relative transition-colors shrink-0 ${
+          className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${
             step.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
           }`}
         >
-          <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+          <div className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform ${
             step.enabled ? "translate-x-3.5" : "translate-x-0.5"
           }`} />
         </button>
@@ -107,7 +107,7 @@ function StepRow({
           {badges.map((b) => (
             <span key={b} className={`text-[10px] px-1.5 py-0.5 rounded ${
               b === "web search" ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300" :
-              ["Claude", "Codex", "Gemini"].includes(b) ? "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300" :
+              ["Claude", "Codex", "Antigravity"].includes(b) ? "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300" :
               b.startsWith("model:") || b.startsWith("effort:") ? "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 font-mono" :
               "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
             }`}>{b}</span>

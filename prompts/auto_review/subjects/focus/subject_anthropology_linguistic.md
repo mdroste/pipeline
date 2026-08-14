@@ -1,0 +1,1 @@
+Review speech community and interactional setting, transcription and translation, participation roles, genre and register, indexicality and ideology, multilingual and code-switching practice, historical and institutional context, researcher position, variation among speakers, and whether excerpts support the claimed relation between linguistic form and social order.

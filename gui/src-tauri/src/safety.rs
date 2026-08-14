@@ -156,6 +156,37 @@ pub fn open_regular_file(path: &Path) -> Result<fs::File, String> {
     if !metadata.file_type().is_file() {
         return Err(format!("{} is not a regular file", path.display()));
     }
+    #[cfg(windows)]
+    {
+        // Reaching here with the reparse attribute set means a *file* reparse
+        // point that is not a symlink (std reports symlinks and mount points
+        // via is_symlink, rejected above; junctions are directories): in
+        // practice a cloud placeholder such as OneDrive Files-On-Demand. The
+        // handle was opened with FILE_FLAG_OPEN_REPARSE_POINT — precisely the
+        // flag that tells the cloud filter NOT to hydrate — so reads of an
+        // online-only file would fail. Reopen without the flag and let the
+        // filter recall the content like any ordinary application. The
+        // post-reopen type check keeps the anti-symlink property for the
+        // reopened handle.
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            drop(file);
+            let reopened = fs::OpenOptions::new().read(true).open(path).map_err(|error| {
+                format!(
+                    "Failed to open {} (a cloud-placeholder file that could not be hydrated): {error}",
+                    path.display()
+                )
+            })?;
+            let metadata = reopened
+                .metadata()
+                .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
+            if !metadata.file_type().is_file() {
+                return Err(format!("{} is not a regular file", path.display()));
+            }
+            return Ok(reopened);
+        }
+    }
     Ok(file)
 }
 
@@ -324,7 +355,7 @@ mod tests {
             agents: vec![
                 "claude".to_string(),
                 "codex".to_string(),
-                "gemini".to_string(),
+                "antigravity".to_string(),
             ],
             for_each: Some(crate::pipeline_config::ForEach {
                 glob: "**/*".to_string(),
@@ -336,7 +367,7 @@ mod tests {
             steps: vec![step],
             merge: Default::default(),
             context_cache: Default::default(),
-            use_orientation: false,
+            use_orientation: true,
             orientation_prompt: String::new(),
             orientation_schema: None,
             extraction: Default::default(),
@@ -355,7 +386,7 @@ mod tests {
             agents: vec![
                 "claude".to_string(),
                 "codex".to_string(),
-                "gemini".to_string(),
+                "antigravity".to_string(),
                 "local".to_string(),
             ],
             for_each: Some(crate::pipeline_config::ForEach {
@@ -368,7 +399,7 @@ mod tests {
             steps: (0..100).map(|_| step.clone()).collect(),
             merge: Default::default(),
             context_cache: Default::default(),
-            use_orientation: false,
+            use_orientation: true,
             orientation_prompt: String::new(),
             orientation_schema: None,
             extraction: Default::default(),

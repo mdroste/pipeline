@@ -1,0 +1,1 @@
+Examine objective and constraint geometry, existence, duality, stationarity versus global optimality, controllability, stability, bifurcation, invariant sets, and long-run behavior. Check whether algorithmic or comparative claims use the appropriate solution concept and parameter regime.

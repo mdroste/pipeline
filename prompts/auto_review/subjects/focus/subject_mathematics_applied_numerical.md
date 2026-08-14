@@ -1,0 +1,1 @@
+Review the mathematical model, discretization, consistency, stability, convergence, conditioning, identifiability, approximation error, and relation between continuous and discrete problems. Distinguish empirical performance from a mathematical guarantee.

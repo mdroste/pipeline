@@ -1,0 +1,1 @@
+Assess system boundaries, stocks and flows, exposure pathways, ecological coupling, baselines, spatial displacement, life-cycle burdens, rebound, intervention durability, and whether environmental indicators support the claimed sustainability outcome.

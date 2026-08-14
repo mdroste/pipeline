@@ -147,11 +147,11 @@ function RailButton({
                   transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
                   disabled:cursor-not-allowed disabled:opacity-40 ${
                     active
-                      ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200/80 dark:bg-gray-800 dark:text-gray-50 dark:ring-gray-700"
-                      : "text-gray-600 hover:bg-white/70 hover:text-gray-950 dark:text-gray-400 dark:hover:bg-gray-800/70 dark:hover:text-gray-100"
+                      ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200/80 dark:bg-neutral-800 dark:text-neutral-50 dark:ring-neutral-700"
+                      : "text-gray-600 hover:bg-white/70 hover:text-gray-950 dark:text-neutral-400 dark:hover:bg-neutral-800/70 dark:hover:text-neutral-100"
                   }`}
     >
-      <span className={active ? "text-gray-900 dark:text-gray-100" : "text-gray-500 group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-200"}>
+      <span className={active ? "text-gray-900 dark:text-neutral-100" : "text-gray-500 group-hover:text-gray-700 dark:text-neutral-400 dark:group-hover:text-neutral-200"}>
         <Icon name={icon} />
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -179,7 +179,7 @@ export default function NavRail({
     <aside
       style={{ width }}
       className={`relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-3 pb-3
-                  dark:border-gray-800 dark:bg-gray-950 ${isMac ? "pt-12" : "pt-4"}`}
+                  dark:border-neutral-800 dark:bg-[#101010] ${isMac ? "pt-12" : "pt-4"}`}
     >
       {isMac && (
         <div
@@ -189,7 +189,7 @@ export default function NavRail({
       )}
 
       <div className="mb-5 px-2">
-        <span className="text-base font-semibold tracking-[-0.01em] text-gray-900 dark:text-gray-100">
+        <span className="text-base font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100">
           Pipeline
         </span>
       </div>
@@ -199,15 +199,15 @@ export default function NavRail({
           active={activePage === "main" && !hasCurrentRun}
           disabled={runInProgress}
           icon="new"
-          label="New run"
+          label="New report"
           onClick={onNewRun}
-          title={runInProgress ? "A run is already in progress" : undefined}
+          title={runInProgress ? "A report is already being generated" : undefined}
         />
         {hasCurrentRun && (
           <RailButton
             active={activePage === "main"}
             icon="current"
-            label="Current run"
+            label="Current report"
             onClick={() => onNavigate("main")}
             suffix={runInProgress ? (
               <span
@@ -257,7 +257,7 @@ export default function NavRail({
         />
       </nav>
 
-      <div className="mt-auto space-y-1 border-t border-gray-200/80 pt-3 dark:border-gray-800">
+      <div className="mt-auto space-y-1 border-t border-gray-200/80 pt-3 dark:border-neutral-800">
         <RailButton
           active={activePage === "help"}
           icon="help"
@@ -275,8 +275,8 @@ export default function NavRail({
           onClick={onDependencies}
           className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs text-gray-500
                      transition-colors hover:bg-white/70 hover:text-gray-800 focus-visible:outline-none
-                     focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-400 dark:hover:bg-gray-800/70
-                     dark:hover:text-gray-200"
+                     focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-400 dark:hover:bg-neutral-800/70
+                     dark:hover:text-neutral-200"
         >
           <span
             aria-hidden="true"

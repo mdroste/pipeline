@@ -1,0 +1,1 @@
+Evaluate spatial scale, place and region, boundaries, mobility and connection, representation, unevenness, and whether the spatial evidence supports movement from a particular location to the claimed geographic process.

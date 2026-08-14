@@ -1,0 +1,1 @@
+Assess the geometry and support of the data, covariance structure, identifiability of components or factors, scaling and registration, dependence across coordinates and functions, dimensional asymptotics, regularization, invariance, uncertainty for derived components, and whether low-dimensional summaries preserve the scientific variation used in the claims.

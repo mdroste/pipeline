@@ -1,0 +1,1 @@
+Assess the image formation or rendering model, dataset and scene coverage, geometric assumptions, perceptual metric, temporal consistency, occlusion and lighting robustness, baselines, and qualitative failure modes. Check whether evaluation supports real-world or photorealism claims.

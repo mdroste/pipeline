@@ -1,0 +1,1 @@
+Assess primitives, information and timing, equilibrium concept, incentives, off-path behavior, implementability, comparative statics, robustness to strategic alternatives, and the economic content and scope of welfare conclusions.

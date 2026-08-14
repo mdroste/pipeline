@@ -162,8 +162,8 @@ export default function PaperSelector({
                 ? "The workflow receives an inventory and may read files inside this folder on demand."
                 : selection?.interpretation === "batch"
                   ? selection.selectionKind === "folder"
-                    ? "Each supported document directly inside this folder becomes an independent run."
-                    : "Each selected document becomes an independent run."
+                    ? "Each supported document directly inside this folder becomes an independent report."
+                    : "Each selected document becomes an independent report."
                   : "Pipeline extracts this as one document."}
           </p>
         </div>

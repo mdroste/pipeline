@@ -1,0 +1,1 @@
+Review spatial ontology, scale and resolution, projection, positional error, classification and validation, change detection, map communication, interoperability, and whether the geographic representation is fit for the substantive inference.

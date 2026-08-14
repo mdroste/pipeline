@@ -1,0 +1,1 @@
+Review domestic and international actors, distributional coalitions, institutions, bargaining, capital and trade exposure, policy endogeneity, cross-border spillovers, and whether economic measures identify the political mechanism claimed.

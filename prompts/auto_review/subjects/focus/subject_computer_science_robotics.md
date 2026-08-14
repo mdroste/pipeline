@@ -1,0 +1,1 @@
+Assess sensing, state estimation, planning, control integration, environment assumptions, sim-to-real transfer, safety, recovery, embodiment, and evaluation across tasks and disturbances. Check whether autonomy claims survive perception and actuation failures.

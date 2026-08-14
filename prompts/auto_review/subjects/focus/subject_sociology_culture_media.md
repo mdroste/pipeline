@@ -1,0 +1,1 @@
+Review how meanings and classifications are produced, circulated, contested, and linked to actors and institutions; how cultural objects are selected; and whether evidence supports the claimed audience, field, repertoire, or cultural mechanism.

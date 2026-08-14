@@ -1,0 +1,1 @@
+Assess the physical degrees of freedom, energy and force scales, active versus thermal fluctuations, constitutive assumptions, boundary and crowding effects, dimensional analysis, mapping from biological measurements to model variables, and whether the proposed physical mechanism is distinguishable from biochemical regulation or sample heterogeneity.

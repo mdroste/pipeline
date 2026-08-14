@@ -24,12 +24,11 @@ describe("WaveDiagram", () => {
     render(
       <WaveDiagram
         steps={[
-          step({ id: "technical", label: "Technical", agents: ["claude", "gemini"] }),
+          step({ id: "technical", label: "Technical", agents: ["claude", "antigravity"] }),
           step({ id: "empirical", label: "Empirical" }),
           step({ id: "consolidate", label: "Consolidate", phase: "sequential" }),
         ]}
         merge={merge}
-        useOrientation={true}
         selectedId={null}
         onSelect={() => {}}
       />,
@@ -41,17 +40,16 @@ describe("WaveDiagram", () => {
     expect(screen.getByRole("button", { name: "Consolidate" })).toBeInTheDocument();
   });
 
-  it("omits the orient node and merge node when disabled", () => {
+  it("keeps the required orient node when merge is disabled", () => {
     render(
       <WaveDiagram
         steps={[step({ id: "technical", label: "Technical" })]}
         merge={{ ...merge, enabled: false }}
-        useOrientation={false}
         selectedId={null}
         onSelect={() => {}}
       />,
     );
-    expect(screen.queryByRole("button", { name: "Orient" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Orient" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Merge" })).not.toBeInTheDocument();
   });
 
@@ -62,7 +60,6 @@ describe("WaveDiagram", () => {
       <WaveDiagram
         steps={[step({ id: "technical", label: "Technical" })]}
         merge={merge}
-        useOrientation={true}
         selectedId={null}
         onSelect={onSelect}
       />,
@@ -80,7 +77,6 @@ describe("WaveDiagram", () => {
       <WaveDiagram
         steps={[step({ id: "technical", enabled: false })]}
         merge={merge}
-        useOrientation={false}
         selectedId={null}
         onSelect={() => {}}
       />,
@@ -93,7 +89,6 @@ describe("WaveDiagram", () => {
       <WaveDiagram
         steps={[step({ id: "technical", label: "Technical" })]}
         merge={merge}
-        useOrientation={false}
         selectedId={null}
         onSelect={() => {}}
       />,
@@ -116,7 +111,6 @@ describe("WaveDiagram", () => {
           step({ id: "auto_synthesis", label: "Consolidate", phase: "sequential" }),
         ]}
         merge={merge}
-        useOrientation={true}
         adaptiveReview={true}
         selectedId={null}
         onSelect={onSelect}
@@ -124,11 +118,10 @@ describe("WaveDiagram", () => {
     );
 
     expect(screen.getByRole("button", { name: "Orient + classify" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Subject specialists (1–2)" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Method specialists (1–4)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adaptive agents (2–6)" })).toBeInTheDocument();
     expect(screen.getByText(/4 saved steps plus 2–6 auto-selected specialists/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Method specialists (1–4)" }));
-    expect(onSelect).toHaveBeenLastCalledWith("auto_method_slot");
+    await user.click(screen.getByRole("button", { name: "Adaptive agents (2–6)" }));
+    expect(onSelect).toHaveBeenLastCalledWith("auto_adaptive_agents");
   });
 });

@@ -82,7 +82,9 @@ function ModelOverrides({
               catalog,
               selection,
               provider === "claude" ? ["low", "medium", "high", "max"]
-                : provider === "codex" ? ["low", "medium", "high"] : [],
+                : provider === "codex" ? ["low", "medium", "high"]
+                  : provider === "antigravity" && transportFor(provider) === "cli"
+                    ? ["low", "medium", "high"] : [],
             );
             return (
               <div key={key} className="space-y-1.5">

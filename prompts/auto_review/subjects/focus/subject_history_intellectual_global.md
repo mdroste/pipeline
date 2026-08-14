@@ -1,0 +1,1 @@
+Assess concepts in their historical language, circulation and translation, connected archives, asymmetries of empire, scale across regions, knowledge and environmental context, reception, and whether transnational linkage is demonstrated rather than inferred from parallel developments.

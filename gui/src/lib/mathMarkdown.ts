@@ -97,8 +97,11 @@ export function normalizeMathDelimiters(markdown: string): string {
     .join("");
 }
 
+// The tag name must immediately follow `<` or `</` (CommonMark's inline-HTML
+// rule): tolerating whitespace there made prose inequalities like
+// "T < N and R > 1" match as a pseudo-tag and vanish from the rendered report.
 const RAW_HTML_TAG_RE =
-  /<\s*\/?\s*[A-Za-z][A-Za-z0-9-]*(?:\s(?:[^>"']|"[^"]*"|'[^']*')*)?\s*\/?\s*>/g;
+  /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s(?:[^>"']|"[^"]*"|'[^']*')*)?\s*\/?>/g;
 const BLOCK_HTML_TAGS = new Set([
   "address",
   "article",
@@ -131,9 +134,7 @@ const BLOCK_HTML_TAGS = new Set([
 
 function stripHtmlChunk(chunk: string): string {
   return chunk.replace(RAW_HTML_TAG_RE, (tag) => {
-    const name = tag
-      .match(/^<\s*\/?\s*([A-Za-z][A-Za-z0-9-]*)/)?.[1]
-      ?.toLowerCase();
+    const name = tag.match(/^<\/?([A-Za-z][A-Za-z0-9-]*)/)?.[1]?.toLowerCase();
     if (name === "br") return "\n";
     if (name && BLOCK_HTML_TAGS.has(name)) return "\n";
     return "";

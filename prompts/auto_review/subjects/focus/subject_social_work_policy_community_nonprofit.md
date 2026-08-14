@@ -1,0 +1,1 @@
+Review community definition and representation, governance and accountability, participation and power, organizational capacity, funding and mission drift, volunteer and paid labor, partnership, reach, sustainability, and whether local outcomes support the claimed community or sector-wide mechanism.

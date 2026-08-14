@@ -1,0 +1,1 @@
+Review the political estimand and data-generating process, construct and measurement assumptions, identification, strategic or institutional dependence, sampling and missingness, estimator guarantees, validation against politically realistic designs, and whether the method resolves a recurring inferential problem rather than only improving fit in one application.

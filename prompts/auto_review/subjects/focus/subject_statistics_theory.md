@@ -1,0 +1,1 @@
+Focus on the experiment or model class, loss and risk, asymptotic sequence, uniformity, lower and upper bounds, adaptivity, efficiency, and finite-sample relevance. Check whether assumptions and rates are comparable to the correct theoretical frontier.

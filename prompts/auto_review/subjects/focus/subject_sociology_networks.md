@@ -1,0 +1,1 @@
+Assess node and tie meaning, boundary specification, missing ties, homophily and influence, dependence, temporal ordering, network opportunity, diffusion mechanism, and whether structural measures identify the claimed social relation.

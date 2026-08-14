@@ -1,0 +1,1 @@
+Assess consumer construct and choice environment, targeting and exposure, channel and competitive context, pricing, measurement of response, short- versus long-run effects, heterogeneity, firm objective, and whether experimental or observational evidence supports the marketing action proposed.

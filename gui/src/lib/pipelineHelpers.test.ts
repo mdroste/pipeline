@@ -58,7 +58,7 @@ describe("computeWaves", () => {
   });
 
   it("flags multi-agent waves", () => {
-    const waves = computeWaves([step({ id: "a", agents: ["claude", "gemini"] })]);
+    const waves = computeWaves([step({ id: "a", agents: ["claude", "antigravity"] })]);
     expect(waves[0]).toMatchObject({ kind: "parallel", hasMultiAgent: true });
   });
 });

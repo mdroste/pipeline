@@ -1,0 +1,1 @@
+Assess the work and version, medium and staging, performance archive, formal and embodied detail, production institutions, performer and audience relation, historical and political context, circulation and reception, comparison across events or recordings, and whether analysis preserves the difference between a live or mediated instance and the broader performance claimed.

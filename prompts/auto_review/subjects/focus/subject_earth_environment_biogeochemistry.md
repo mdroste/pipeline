@@ -1,0 +1,1 @@
+Examine flux measurement and upscaling, budget closure and its residuals, isotopic and tracer constraints, and process attribution among competing sources and sinks. Check consistency with independent regional and global constraints, and that trend claims are separated from changes in measurement networks, methods, and definitions.

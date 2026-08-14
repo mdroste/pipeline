@@ -55,8 +55,12 @@ pub fn custom_endpoint_client(base_url: &str) -> &'static reqwest::Client {
 /// Maximum text file size for Read tool calls (5 MB).
 const MAX_READ_SIZE: usize = 5 * 1024 * 1024;
 
-/// Maximum PDF file size for Read tool calls (32 MB — matches Anthropic's document limit).
+/// Maximum PDF file size for attachments (32 MB — matches Anthropic's document limit).
 const MAX_PDF_SIZE: usize = 32 * 1024 * 1024;
+/// Maximum PDF file size for Read tool calls. Base64 inflation (×4/3) must
+/// leave the encoded document inside Anthropic's 32 MB request cap with
+/// headroom for the rest of the conversation.
+const MAX_TOOL_PDF_SIZE: usize = 20 * 1024 * 1024;
 /// Maximum image size for a visual document-asset read.
 const MAX_IMAGE_SIZE: usize = 20 * 1024 * 1024;
 /// Cumulative direct-API Read budget per model call. This bounds repeated
@@ -72,6 +76,37 @@ const MAX_BATCH_ASSET_REQUESTS: usize = 8;
 /// base64/JSON expansion. Keep a batch comfortably below those request caps.
 const MAX_BATCH_ASSET_RAW_BYTES: usize = 12 * 1024 * 1024;
 pub const MAX_HOSTED_WEB_SEARCH_USES: usize = 5;
+
+/// Default output-token ceiling for step calls when no override is set.
+/// CLI transports have no comparable cap; 16384 deterministically truncated
+/// long consolidation reports. Matches the order of magnitude of
+/// `extract::pdf::EXTRACTION_MAX_OUTPUT_TOKENS`.
+pub const DEFAULT_STEP_MAX_OUTPUT_TOKENS: u32 = 32_000;
+
+/// Per-provider tool-result media constraints for the tool loop.
+/// `pdf_reads` is false where the transport's tool-result converter discards
+/// PDF content (OpenAI/Google), so `.pdf` Reads fail fast before any bytes
+/// are read or charged. `encoded_media_budget` caps cumulative base64
+/// image/PDF tool-result bytes per model call: Anthropic and OpenAI accept
+/// ~32 MB request bodies, Google ~20 MB, and the running conversation needs
+/// headroom around the media.
+struct MediaPolicy {
+    pdf_reads: bool,
+    encoded_media_budget: usize,
+}
+
+const ANTHROPIC_MEDIA_POLICY: MediaPolicy = MediaPolicy {
+    pdf_reads: true,
+    encoded_media_budget: 24 * 1024 * 1024,
+};
+const OPENAI_MEDIA_POLICY: MediaPolicy = MediaPolicy {
+    pdf_reads: false,
+    encoded_media_budget: 24 * 1024 * 1024,
+};
+const GOOGLE_MEDIA_POLICY: MediaPolicy = MediaPolicy {
+    pdf_reads: false,
+    encoded_media_budget: 14 * 1024 * 1024,
+};
 
 /// Maximum size of a single Write tool call (5 MB — reports are ~100 KB;
 /// this leaves room for data artifacts without letting a runaway model
@@ -661,31 +696,9 @@ fn validate_tool_path(
 
 fn read_bytes_limited(path: &std::path::Path, limit: usize) -> Result<Vec<u8>, String> {
     use std::io::Read as _;
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt as _;
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    let file = options
-        .open(path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| format!("Failed to inspect {}: {e}", path.display()))?;
-    if !metadata.is_file() {
-        return Err(format!(
-            "Access denied: {} is not a regular file",
-            path.display()
-        ));
-    }
+    // Symlink/FIFO-safe open; on Windows it also reopens non-symlink file
+    // reparse points (OneDrive-style cloud placeholders) so they hydrate.
+    let file = crate::safety::open_regular_file(path)?;
     let mut bytes = Vec::with_capacity(64 * 1024);
     file.take(limit as u64 + 1)
         .read_to_end(&mut bytes)
@@ -806,7 +819,7 @@ fn text_line_bounds(
 
 /// Read a PDF file and return its contents as base64-encoded bytes.
 fn read_pdf_for_tool(access: &ToolAccess, path: &str, limit: usize) -> Result<String, String> {
-    let limit = MAX_PDF_SIZE.min(limit);
+    let limit = MAX_TOOL_PDF_SIZE.min(limit);
     let canonical = validate_tool_path(access, path, limit)?;
     let bytes = read_bytes_limited(&canonical, limit)?;
     Ok(STANDARD.encode(&bytes))
@@ -1014,12 +1027,15 @@ pub struct GoogleRequest {
     pub generation_config: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GoogleContent {
+    #[serde(default)]
     pub role: String,
     /// Keep every part losslessly. Combined Google Search + custom-function
     /// responses carry server tool context and thought signatures that must be
-    /// echoed unchanged on the next turn.
+    /// echoed unchanged on the next turn. Gemini omits `parts` entirely when
+    /// thinking consumed the whole output budget (MAX_TOKENS).
+    #[serde(default)]
     pub parts: Vec<serde_json::Value>,
 }
 
@@ -1048,6 +1064,10 @@ pub struct GoogleResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct GoogleCandidate {
+    /// Omitted entirely on SAFETY/RECITATION-blocked candidates; default so
+    /// the finish-reason diagnostics stay reachable instead of failing
+    /// deserialization.
+    #[serde(default)]
     pub content: GoogleContent,
     #[serde(rename = "finishReason")]
     pub finish_reason: Option<String>,
@@ -1248,16 +1268,20 @@ pub async fn anthropic_tool_loop(
         let request_timeout = timeout_secs - elapsed;
 
         let pass_key = super::logging::current_pass();
-        let request_future = client
+        let request_builder = client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .timeout(std::time::Duration::from_secs(request_timeout))
-            .json(&request)
-            .send();
-        let resp = await_or_cancel(request_future, pass_key.as_deref())
-            .await?
-            .map_err(|e| format_http_error("Anthropic", &e))?;
+            .json(&request);
+        let resp = send_with_status_retry(
+            app,
+            "Anthropic",
+            label,
+            request_builder,
+            pass_key.as_deref(),
+        )
+        .await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -1344,8 +1368,17 @@ pub async fn anthropic_tool_loop(
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
             let input = block.get("input").unwrap_or(&serde_json::Value::Null);
-            let result =
-                execute_tool(app, name, input, label, iteration, &mut tool_budget, access).await;
+            let result = execute_tool(
+                app,
+                name,
+                input,
+                label,
+                iteration,
+                &mut tool_budget,
+                access,
+                &ANTHROPIC_MEDIA_POLICY,
+            )
+            .await;
             let (content, is_error) = anthropic_tool_result_content(result);
             let mut tool_result = serde_json::json!({
                 "type": "tool_result",
@@ -1401,6 +1434,7 @@ pub async fn openai_tool_loop(
     let start = std::time::Instant::now();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let mut tools_retry_used = false;
+    let mut effort_retry_used = false;
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
         if crate::commands::is_cancelled() {
@@ -1424,15 +1458,28 @@ pub async fn openai_tool_loop(
             req = req.header("Authorization", format!("Bearer {api_key}"));
         }
         let pass_key = super::logging::current_pass();
-        let resp = await_or_cancel(req.send(), pass_key.as_deref())
-            .await?
-            .map_err(|e| format_http_error(provider, &e))?;
+        let resp = send_with_status_retry(app, provider, label, req, pass_key.as_deref()).await?;
 
         let status = resp.status();
         if !status.is_success() {
             let bytes =
                 response_bytes_limited(resp, MAX_API_ERROR_BYTES, pass_key.as_deref()).await?;
             let body = String::from_utf8_lossy(&bytes);
+            if !effort_retry_used
+                && status.as_u16() == 400
+                && request.reasoning_effort.is_some()
+                && (body.contains("reasoning_effort") || body.contains("Unsupported parameter"))
+            {
+                log(
+                    app,
+                    format!(
+                        "WARNING: {label}: {provider} rejected reasoning_effort for this model — retrying once without it"
+                    ),
+                );
+                request.reasoning_effort = None;
+                effort_retry_used = true;
+                continue;
+            }
             if drop_tools_on_400
                 && !tools_retry_used
                 && status.as_u16() == 400
@@ -1508,6 +1555,7 @@ pub async fn openai_tool_loop(
                                     iteration,
                                     &mut tool_budget,
                                     access,
+                                    &OPENAI_MEDIA_POLICY,
                                 )
                                 .await
                             }
@@ -1597,15 +1645,14 @@ pub async fn google_tool_loop(
         let request_timeout = timeout_secs - elapsed;
 
         let pass_key = super::logging::current_pass();
-        let request_future = client
+        let request_builder = client
             .post(&url)
             .header("x-goog-api-key", api_key)
             .timeout(std::time::Duration::from_secs(request_timeout))
-            .json(&request)
-            .send();
-        let resp = await_or_cancel(request_future, pass_key.as_deref())
-            .await?
-            .map_err(|e| format_http_error("Google", &e))?;
+            .json(&request);
+        let resp =
+            send_with_status_retry(app, "Google", label, request_builder, pass_key.as_deref())
+                .await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -1718,6 +1765,7 @@ pub async fn google_tool_loop(
                     iteration,
                     &mut tool_budget,
                     access,
+                    &GOOGLE_MEDIA_POLICY,
                 )
                 .await;
                 let (function_response, images) = google_tool_result_parts(fc, result);
@@ -1765,6 +1813,7 @@ struct ToolBudget {
     read_bytes: usize,
     tool_calls: usize,
     argument_bytes: usize,
+    encoded_media_bytes: usize,
 }
 
 impl ToolBudget {
@@ -1822,6 +1871,38 @@ impl ToolBudget {
             .saturating_add(bytes)
             .min(MAX_TOOL_READ_BYTES);
     }
+}
+
+/// Base64-encoded image/PDF bytes this tool result would add to the request.
+fn encoded_media_bytes(result: &ToolResult) -> usize {
+    match result {
+        ToolResult::PdfBase64(data) => data.len(),
+        ToolResult::ImageBase64 { data, .. } => data.len(),
+        ToolResult::ImageBatch { images, .. } => images.iter().map(|image| image.data.len()).sum(),
+        ToolResult::Text(_) | ToolResult::Error(_) => 0,
+    }
+}
+
+/// Replace a media-bearing result with a tool error once its payload would
+/// push the conversation past the provider's per-request media budget.
+fn enforce_media_budget(
+    result: ToolResult,
+    budget: &mut ToolBudget,
+    media: &MediaPolicy,
+) -> ToolResult {
+    let encoded = encoded_media_bytes(&result);
+    if encoded == 0 {
+        return result;
+    }
+    let next = budget.encoded_media_bytes.saturating_add(encoded);
+    if next > media.encoded_media_budget {
+        return ToolResult::Error(format!(
+            "The image/PDF budget for this request ({} MB encoded) is exhausted; reason from the already-provided content instead of requesting more media",
+            media.encoded_media_budget / 1024 / 1024
+        ));
+    }
+    budget.encoded_media_bytes = next;
+    result
 }
 
 const TOOL_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -2263,6 +2344,7 @@ fn google_tool_result_parts(
 
 /// Execute a tool call. Filesystem work runs on the blocking pool so a slow
 /// or hostile filesystem entry cannot stall the async API loop.
+#[allow(clippy::too_many_arguments)]
 async fn execute_tool(
     app: &crate::emit::EventBus,
     name: &str,
@@ -2271,8 +2353,9 @@ async fn execute_tool(
     iteration: usize,
     budget: &mut ToolBudget,
     access: &ToolAccess,
+    media: &MediaPolicy,
 ) -> ToolResult {
-    match name {
+    let result = match name {
         "Read" => {
             let path = input
                 .get("file_path")
@@ -2283,11 +2366,19 @@ async fn execute_tool(
                 app,
                 format!("[api] {label}: Read tool call #{} -> {path}", iteration + 1),
             );
+            let is_pdf = path.to_lowercase().ends_with(".pdf");
+            if is_pdf && !media.pdf_reads {
+                // Reject before reading so the read budget is not charged for
+                // bytes the tool-result converter would discard anyway.
+                return ToolResult::Error(
+                    "This provider cannot accept PDF content from Read. Use the extracted document text or rendered page assets instead.".to_string(),
+                );
+            }
             let remaining = match budget.reserve_read() {
                 Ok(remaining) => remaining,
                 Err(error) => return ToolResult::Error(error),
             };
-            if path.to_lowercase().ends_with(".pdf") {
+            if is_pdf {
                 let owned_path = path.to_string();
                 let access = access.clone();
                 match run_blocking_tool(move || read_pdf_for_tool(&access, &owned_path, remaining))
@@ -2395,7 +2486,70 @@ async fn execute_tool(
             );
             ToolResult::Error(format!("Tool '{name}' is not available"))
         }
+    };
+    enforce_media_budget(result, budget, media)
+}
+
+/// Backoff before each retry of a transient status, when the response
+/// carries no usable Retry-After header.
+const TRANSIENT_STATUS_BACKOFF_SECS: [u64; 2] = [2, 8];
+/// Ceiling on a server-requested Retry-After delay.
+const MAX_RETRY_AFTER_SECS: u64 = 60;
+
+/// Rate-limit and overload statuses worth an in-client retry.
+fn transient_api_status(status: u16) -> bool {
+    matches!(status, 429 | 503 | 529)
+}
+
+/// Parse a delta-seconds Retry-After header, capped at MAX_RETRY_AFTER_SECS.
+fn retry_after_delay(resp: &reqwest::Response) -> Option<std::time::Duration> {
+    resp.headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|secs| std::time::Duration::from_secs(secs.min(MAX_RETRY_AFTER_SECS)))
+}
+
+/// Send a request, retrying HTTP 429/503/529 up to two extra attempts with
+/// Retry-After-aware, cancellation-aware backoff. The final failing response
+/// is returned unchanged so callers keep their existing error formatting.
+async fn send_with_status_retry(
+    app: &crate::emit::EventBus,
+    provider: &str,
+    label: &str,
+    request: reqwest::RequestBuilder,
+    pass_key: Option<&str>,
+) -> Result<reqwest::Response, String> {
+    for backoff_secs in TRANSIENT_STATUS_BACKOFF_SECS {
+        // A non-cloneable (streaming) body cannot be retried; fall through to
+        // the single attempt below.
+        let Some(attempt) = request.try_clone() else {
+            break;
+        };
+        let resp = await_or_cancel(attempt.send(), pass_key)
+            .await?
+            .map_err(|e| format_http_error(provider, &e))?;
+        let status = resp.status().as_u16();
+        if !transient_api_status(status) {
+            return Ok(resp);
+        }
+        let delay = retry_after_delay(&resp)
+            .unwrap_or_else(|| std::time::Duration::from_secs(backoff_secs));
+        log(
+            app,
+            format!(
+                "{label}: {provider} returned HTTP {status}; retrying in {}s",
+                delay.as_secs()
+            ),
+        );
+        await_or_cancel(tokio::time::sleep(delay), pass_key).await?;
     }
+    await_or_cancel(request.send(), pass_key)
+        .await?
+        .map_err(|e| format_http_error(provider, &e))
 }
 
 fn format_http_error(provider: &str, e: &reqwest::Error) -> String {
@@ -2455,6 +2609,66 @@ mod tests {
         assert!(!openai_output_incomplete(Some("stop")));
         assert!(google_output_incomplete(Some("MAX_TOKENS")));
         assert!(!google_output_incomplete(Some("STOP")));
+    }
+
+    #[test]
+    fn blocked_google_candidates_deserialize_without_content_or_parts() {
+        // SAFETY/RECITATION-blocked candidates omit `content` entirely.
+        let blocked: GoogleResponse = serde_json::from_value(serde_json::json!({
+            "candidates": [{"finishReason": "SAFETY"}]
+        }))
+        .unwrap();
+        let candidate = &blocked.candidates.unwrap()[0];
+        assert!(candidate.content.parts.is_empty());
+        assert!(google_output_incomplete(candidate.finish_reason.as_deref()));
+
+        // MAX_TOKENS during thinking omits `parts`.
+        let truncated: GoogleResponse = serde_json::from_value(serde_json::json!({
+            "candidates": [{"content": {"role": "model"}, "finishReason": "MAX_TOKENS"}]
+        }))
+        .unwrap();
+        assert!(truncated.candidates.unwrap()[0].content.parts.is_empty());
+    }
+
+    #[test]
+    fn transient_statuses_are_retryable() {
+        assert!(transient_api_status(429));
+        assert!(transient_api_status(503));
+        assert!(transient_api_status(529));
+        assert!(!transient_api_status(400));
+        assert!(!transient_api_status(500));
+    }
+
+    #[test]
+    fn media_budget_replaces_overflowing_results_with_tool_errors() {
+        let mut budget = ToolBudget::default();
+        let policy = MediaPolicy {
+            pdf_reads: true,
+            encoded_media_budget: 10,
+        };
+        let accepted = enforce_media_budget(
+            ToolResult::ImageBase64 {
+                data: "12345678".to_string(),
+                media_type: "image/png".to_string(),
+            },
+            &mut budget,
+            &policy,
+        );
+        assert!(matches!(accepted, ToolResult::ImageBase64 { .. }));
+        assert_eq!(budget.encoded_media_bytes, 8);
+
+        let rejected =
+            enforce_media_budget(ToolResult::PdfBase64("123".to_string()), &mut budget, &policy);
+        let ToolResult::Error(message) = rejected else {
+            panic!("expected budget error")
+        };
+        assert!(message.contains("budget"), "{message}");
+        assert_eq!(budget.encoded_media_bytes, 8);
+
+        // Text results are never charged against the media budget.
+        let text = enforce_media_budget(ToolResult::Text("t".repeat(100)), &mut budget, &policy);
+        assert!(matches!(text, ToolResult::Text(_)));
+        assert_eq!(budget.encoded_media_bytes, 8);
     }
 
     #[test]

@@ -1,0 +1,1 @@
+Examine operator domains and spectra, thermodynamic or continuum limits, symmetry and conservation structure, regularity and boundary conditions, control of approximations, existence of phases or states, connections between finite and infinite systems, and whether the rigorous result captures the physical regime invoked in the interpretation.

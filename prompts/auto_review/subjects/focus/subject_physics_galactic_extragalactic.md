@@ -1,0 +1,1 @@
+Examine sample selection and completeness, photometric and spectroscopic calibration, distance and mass estimators, AGN–host degeneracies, and the mapping from observables to physical quantities through population-synthesis and radiative models. Check that claimed evolution across cosmic time separates selection effects from genuine astrophysical change.

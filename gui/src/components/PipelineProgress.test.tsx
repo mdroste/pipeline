@@ -15,6 +15,13 @@ const autoReviewPlan: ExecutionPlanStage[] = [
     stepLabels: ["Contribution & Literature", "Claims & Consistency", "Exposition & Argument"],
   },
   {
+    id: "review-merges",
+    kind: "merging",
+    label: "Merge parallel wave 1",
+    stepIds: ["contribution", "claims", "exposition"],
+    stepLabels: ["Contribution & Literature", "Claims & Consistency", "Exposition & Argument"],
+  },
+  {
     id: "synthesis",
     kind: "synthesizing",
     label: "Sequential agent wave",
@@ -46,7 +53,7 @@ describe("PipelineProgress", () => {
     expect(screen.queryByText("Merge cross-agent reports")).not.toBeInTheDocument();
   });
 
-  it("uses an input-specific preparation label and omits orientation when disabled", () => {
+  it("supports legacy plans captured before orientation became required", () => {
     render(
       <PipelineProgress
         state={{ kind: "extracting" }}
@@ -80,7 +87,7 @@ describe("PipelineProgress", () => {
     expect(screen.getByText("Creating orientation map & review plan")).toBeInTheDocument();
   });
 
-  it("resolves the adaptive-agent placeholder into the selected specialists", () => {
+  it("shows routed provider units and merge targets for adaptive specialists", () => {
     const { rerender } = render(
       <PipelineProgress state={{ kind: "orienting" }} plan={autoReviewPlan} />,
     );
@@ -120,8 +127,27 @@ describe("PipelineProgress", () => {
           "Mathematics — Algebraic Geometry",
           "Method — Formal Proofs",
         ],
+        mergeStepIds: [
+          "contribution",
+          "claims",
+          "exposition",
+          "subject_mathematics_algebraic_geometry",
+          "formal_proofs",
+        ],
+        mergeStepLabels: [
+          "Contribution & Literature",
+          "Claims & Consistency",
+          "Exposition & Argument",
+          "Mathematics — Algebraic Geometry",
+          "Method — Formal Proofs",
+        ],
         status: "active",
-        passes: {},
+        passes: {
+          "subject_mathematics_algebraic_geometry/claude": "pending",
+          "subject_mathematics_algebraic_geometry/codex": "pending",
+          "formal_proofs/claude": "pending",
+          "formal_proofs/codex": "pending",
+        },
       },
     ];
     rerender(
@@ -133,8 +159,14 @@ describe("PipelineProgress", () => {
       />,
     );
     parallelWave = screen.getByText("Parallel agent wave").closest("[data-status]");
-    expect(parallelWave?.textContent?.match(/Mathematics — Algebraic Geometry/g)).toHaveLength(1);
-    expect(parallelWave?.textContent?.match(/Method — Formal Proofs/g)).toHaveLength(1);
+    expect(parallelWave).toHaveTextContent("Mathematics — Algebraic Geometry (Claude)");
+    expect(parallelWave).toHaveTextContent("Mathematics — Algebraic Geometry (Codex)");
+    expect(parallelWave).toHaveTextContent("Method — Formal Proofs (Claude)");
+    expect(parallelWave).toHaveTextContent("Method — Formal Proofs (Codex)");
+
+    const mergeWave = screen.getByText("Merge parallel wave 1").closest("[data-status]");
+    expect(mergeWave).toHaveTextContent("Merge: Mathematics — Algebraic Geometry");
+    expect(mergeWave).toHaveTextContent("Merge: Method — Formal Proofs");
   });
 
   it("shows the merge stage while merging", () => {

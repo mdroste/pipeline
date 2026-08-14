@@ -1,0 +1,1 @@
+Evaluate the organization or market, decision maker, managerial mechanism, performance objective, institutional setting, implementation, and whether evidence supports useful inference for firms without treating managerial relevance as self-evident.
