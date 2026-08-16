@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_earth_environment_climate_impacts",
+  "label": "Earth & Environment — Climate Impacts & Adaptation",
+  "order": 107,
+  "group": {
+    "id": "earth_environment",
+    "label": "Earth & Environmental Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Climate-change impacts, vulnerability, adaptation, or climate-risk assessment for ecosystems, resources, or society.",
+    "exclusions": "physical climate dynamics without an impact pathway, or economic policy analysis where the climate component is only an input."
+  }
+}

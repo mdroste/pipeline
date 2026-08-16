@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "legal_doctrinal",
+  "label": "Method — Doctrinal Legal Reasoning",
+  "order": 98,
+  "group": {
+    "id": "sources_history_law",
+    "label": "Sources, History & Law"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Interpretation of cases, statutes, regulations, constitutional provisions, precedent, or institutional legal authority is central.",
+    "exclusions": "empirical legal studies whose main claims do not depend on doctrinal interpretation."
+  }
+}

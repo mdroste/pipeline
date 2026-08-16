@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "analytical_chemistry_validation",
+  "label": "Method — Analytical-Chemistry Validation",
+  "order": 83,
+  "group": {
+    "id": "lab_instrumentation",
+    "label": "Laboratory & Instrumentation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Quantitative chemical measurement — chromatography, mass spectrometry, spectroscopy — with calibration and validation carries central claims.",
+    "exclusions": "materials-property characterization, or synthetic-route evidence covered by synthesis and characterization review."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_anthropology_medical",
+  "label": "Anthropology — Medical Anthropology",
+  "order": 201,
+  "group": {
+    "id": "anthropology",
+    "label": "Anthropology & Archaeology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Medical anthropology, illness and healing, embodiment, care, disability, pharmaceuticals, global health, or the cultural and political organization of medicine.",
+    "exclusions": "the central contribution is clinical efficacy, epidemiology, or health sociology without ethnographic or comparative anthropological analysis."
+  }
+}

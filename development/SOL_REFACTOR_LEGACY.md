@@ -1,5 +1,10 @@
 # Solution plan: retire dead and legacy Pipeline code
 
+> Historical audit snapshot. Its Auto Review compatibility analysis is now
+> resolved: the retired Auto modules, prompts, schemas, and migrations were
+> removed before release. Use `CLAUDE.md` and `docs/auto-review-catalog.md` for
+> the current modular catalog and schema architecture.
+
 - **Status:** Work packages 1 and 2 plus finding C7 implemented on 2026-08-11; later packages remain proposed
 - **Audit date:** 2026-08-11
 - **Audited version:** `0.9.0` on the local `main` worktree

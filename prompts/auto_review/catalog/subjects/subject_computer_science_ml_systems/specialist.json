@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_ml_systems",
+  "label": "Computer Science — ML Systems & Efficiency",
+  "order": 57,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Systems for machine learning: training and inference infrastructure, efficiency, compression, hardware acceleration, or distributed and federated learning.",
+    "exclusions": "an ML algorithm whose systems footprint is incidental, or general distributed systems without a learning workload."
+  }
+}

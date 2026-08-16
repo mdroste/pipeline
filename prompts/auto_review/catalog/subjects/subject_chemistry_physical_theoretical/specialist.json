@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_chemistry_physical_theoretical",
+  "label": "Chemistry — Physical & Theoretical",
+  "order": 99,
+  "group": {
+    "id": "chemistry",
+    "label": "Chemistry"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Physical chemistry, spectroscopy, chemical dynamics, quantum chemistry, statistical chemistry, or theoretical chemistry.",
+    "exclusions": "the contribution is a general physics theory or numerical method without a chemical question."
+  }
+}

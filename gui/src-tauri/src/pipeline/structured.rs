@@ -1,25 +1,190 @@
-//! Lightweight validation of a step's JSON output against a declared shape.
+//! Pipeline's deliberately small, provider-portable JSON Schema dialect.
 //!
-//! This is intentionally NOT a full JSON Schema implementation (that would pull
-//! in a heavy dependency). It supports the subset the pipeline actually uses:
-//!
-//! - top-level `type`: "object" | "array" | "string" | "number" | "integer" |
-//!   "boolean"
-//! - for objects: `required` (a list of keys that must be present) and
-//!   `properties` (each property's `type` is checked, one level deep)
-//! - `enum` for an allowlist of exact JSON values
-//! - for arrays: `items` with a `type` (and, if the item type is object, its
-//!   `required` keys are checked on every element), plus `minItems`,
-//!   `maxItems`, and `uniqueItems`
-//!
-//! Enough to enforce "an array of issue objects each with id/severity/body"
-//! without a schema engine. Unknown schema keywords are ignored, so a stricter
-//! validator could be swapped in later without breaking stored schemas.
+//! Artifact schemas have an object root and may use `type`, `enum`, `required`,
+//! `properties`, `items`, `minItems`, `maxItems`, `uniqueItems`, `title`, and
+//! `description`, plus the documented `x-pipeline-*` extensions. The validator
+//! fails closed on every other keyword: accepting a constraint that is later
+//! discarded by a provider would make the editor promise an unenforced contract.
 
 const MAX_SCHEMA_DEPTH: usize = 32;
+/// Common inline-schema ceiling chosen to remain safe on every supported CLI,
+/// including Windows' much smaller process command-line limit.
+pub const MAX_PROVIDER_SCHEMA_BYTES: usize = 20 * 1024;
+const MAX_PROVIDER_ENUM_VALUES: usize = 1_000;
+const LARGE_ENUM_THRESHOLD: usize = 250;
+const MAX_LARGE_ENUM_STRING_CHARS: usize = 15_000;
 const SUPPORTED_TYPES: &[&str] = &[
     "object", "array", "string", "number", "integer", "boolean", "null",
 ];
+const SUPPORTED_KEYWORDS: &[&str] = &[
+    "type",
+    "enum",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "title",
+    "description",
+    "required",
+    "properties",
+    "items",
+    "x-pipeline-contract",
+    "x-pipeline-catalog",
+    "x-pipeline-catalog-policy",
+    "x-pipeline-adaptive-agent-count",
+];
+
+/// Provider structured-output implementations accept overlapping but not
+/// identical JSON Schema dialects. Compile Pipeline's validated portable
+/// subset into the common structural core and keep stricter checks such as
+/// `uniqueItems` host-owned. The original schema remains authoritative after
+/// the provider returns.
+pub fn provider_schema(schema: &serde_json::Value) -> Result<serde_json::Value, String> {
+    validate_schema(schema)?;
+    let projected = project_provider_schema(schema, "$", 0)?;
+    let mut enum_values = 0usize;
+    validate_provider_enums(&projected, "$", &mut enum_values)?;
+    let size = serde_json::to_vec(&projected)
+        .map_err(|error| format!("Failed to serialize provider schema: {error}"))?
+        .len();
+    if size > MAX_PROVIDER_SCHEMA_BYTES {
+        return Err(format!(
+            "Provider schema is {size} bytes; the portable limit is {MAX_PROVIDER_SCHEMA_BYTES} bytes"
+        ));
+    }
+    Ok(projected)
+}
+
+fn validate_provider_enums(
+    schema: &serde_json::Value,
+    path: &str,
+    total: &mut usize,
+) -> Result<(), String> {
+    let object = schema
+        .as_object()
+        .ok_or_else(|| format!("{path}: schema must be a JSON object"))?;
+    if let Some(values) = object.get("enum").and_then(serde_json::Value::as_array) {
+        *total = total.saturating_add(values.len());
+        if *total > MAX_PROVIDER_ENUM_VALUES {
+            return Err(format!(
+                "Provider schema contains more than {MAX_PROVIDER_ENUM_VALUES} enum values"
+            ));
+        }
+        if values.len() > LARGE_ENUM_THRESHOLD {
+            let string_chars = values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(|value| value.chars().count())
+                .sum::<usize>();
+            if string_chars > MAX_LARGE_ENUM_STRING_CHARS {
+                return Err(format!(
+                    "{path}.enum contains {string_chars} string characters; enums with more than {LARGE_ENUM_THRESHOLD} values are limited to {MAX_LARGE_ENUM_STRING_CHARS}"
+                ));
+            }
+        }
+    }
+    if let Some(properties) = object
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (key, child) in properties {
+            validate_provider_enums(child, &format!("{path}.properties.{key}"), total)?;
+        }
+    }
+    if let Some(items) = object.get("items") {
+        validate_provider_enums(items, &format!("{path}.items"), total)?;
+    }
+    Ok(())
+}
+
+fn project_provider_schema(
+    schema: &serde_json::Value,
+    path: &str,
+    depth: usize,
+) -> Result<serde_json::Value, String> {
+    if depth > MAX_SCHEMA_DEPTH {
+        return Err(format!(
+            "{path}: schema nesting exceeds the {MAX_SCHEMA_DEPTH}-level safety limit"
+        ));
+    }
+    let source = schema
+        .as_object()
+        .ok_or_else(|| format!("{path}: schema must be a JSON object"))?;
+    if source.contains_key("x-pipeline-catalog") || source.contains_key("x-pipeline-catalog-policy")
+    {
+        return Err(format!(
+            "{path}: catalog references must be resolved before compiling a provider schema"
+        ));
+    }
+    let mut projected = serde_json::Map::new();
+
+    for key in ["type", "enum", "minItems", "maxItems"] {
+        if let Some(value) = source.get(key) {
+            projected.insert(key.to_string(), value.clone());
+        }
+    }
+    for key in ["title", "description"] {
+        if let Some(serde_json::Value::String(value)) = source.get(key) {
+            projected.insert(key.to_string(), serde_json::Value::String(value.clone()));
+        }
+    }
+    if let Some(required) = source.get("required") {
+        projected.insert("required".to_string(), required.clone());
+    }
+    if let Some(properties) = source.get("properties").and_then(|value| value.as_object()) {
+        let mut children = serde_json::Map::new();
+        for (key, child) in properties {
+            children.insert(
+                key.clone(),
+                project_provider_schema(child, &format!("{path}.properties.{key}"), depth + 1)?,
+            );
+        }
+        projected.insert(
+            "properties".to_string(),
+            serde_json::Value::Object(children),
+        );
+    }
+    if let Some(items) = source.get("items") {
+        projected.insert(
+            "items".to_string(),
+            project_provider_schema(items, &format!("{path}.items"), depth + 1)?,
+        );
+    }
+
+    Ok(serde_json::Value::Object(projected))
+}
+
+/// Serialize a provider-compatible schema for CLIs that accept it inline.
+pub fn provider_schema_json(schema: &serde_json::Value) -> Result<String, String> {
+    serde_json::to_string(&provider_schema(schema)?)
+        .map_err(|error| format!("Failed to serialize output schema: {error}"))
+}
+
+/// A private schema file retained for the lifetime of a CLI invocation.
+pub struct PreparedSchemaFile {
+    pub path: String,
+    pub read_root: String,
+    _temp_dir: tempfile::TempDir,
+}
+
+pub fn prepare_provider_schema_file(
+    schema: &serde_json::Value,
+) -> Result<PreparedSchemaFile, String> {
+    let projected = provider_schema(schema)?;
+    let temp_dir = tempfile::Builder::new()
+        .prefix("pipeline_schema_")
+        .tempdir()
+        .map_err(|error| format!("Failed to create output-schema directory: {error}"))?;
+    let path = temp_dir.path().join("output-schema.json");
+    let file = std::fs::File::create(&path)
+        .map_err(|error| format!("Failed to create output-schema file: {error}"))?;
+    serde_json::to_writer(file, &projected)
+        .map_err(|error| format!("Failed to write output-schema file: {error}"))?;
+    Ok(PreparedSchemaFile {
+        path: path.to_string_lossy().replace('\\', "/"),
+        read_root: temp_dir.path().to_string_lossy().replace('\\', "/"),
+        _temp_dir: temp_dir,
+    })
+}
 
 /// Pull a JSON value out of a model's text response: the whole string, any
 /// fenced block, or any object/array embedded in prose. Candidates are tried
@@ -65,9 +230,8 @@ fn fenced_blocks(mut text: &str) -> Vec<&str> {
     blocks
 }
 
-/// Validate the supported schema subset itself. Unknown keywords are retained
-/// for forwards compatibility, but every supported keyword must be well
-/// formed and semantically compatible with the declared type.
+/// Validate the portable schema dialect. Artifact roots must be objects and
+/// unknown keywords are rejected rather than silently ignored.
 pub fn validate_schema(schema: &serde_json::Value) -> Result<(), String> {
     validate_schema_at(schema, "$", 0)
 }
@@ -81,6 +245,13 @@ fn validate_schema_at(schema: &serde_json::Value, path: &str, depth: usize) -> R
     let object = schema
         .as_object()
         .ok_or_else(|| format!("{path}: schema must be a JSON object"))?;
+    for keyword in object.keys() {
+        if !SUPPORTED_KEYWORDS.contains(&keyword.as_str()) {
+            return Err(format!(
+                "{path}.{keyword}: unsupported keyword in Pipeline's portable schema dialect"
+            ));
+        }
+    }
     let declared_type = match object.get("type") {
         Some(serde_json::Value::String(ty)) if SUPPORTED_TYPES.contains(&ty.as_str()) => {
             Some(ty.as_str())
@@ -91,6 +262,85 @@ fn validate_schema_at(schema: &serde_json::Value, path: &str, depth: usize) -> R
         Some(_) => return Err(format!("{path}.type: expected a string")),
         None => None,
     };
+    if depth == 0 && declared_type != Some("object") {
+        return Err(format!(
+            "{path}.type: artifact schema root must explicitly be 'object' for all-provider portability"
+        ));
+    }
+
+    for keyword in ["title", "description"] {
+        if object.get(keyword).is_some_and(|value| !value.is_string()) {
+            return Err(format!("{path}.{keyword}: expected a string"));
+        }
+    }
+    for keyword in [
+        "x-pipeline-contract",
+        "x-pipeline-catalog",
+        "x-pipeline-catalog-policy",
+    ] {
+        if object.get(keyword).is_some_and(|value| !value.is_string()) {
+            return Err(format!("{path}.{keyword}: expected a string"));
+        }
+    }
+    if depth > 0 {
+        for keyword in [
+            "x-pipeline-contract",
+            "x-pipeline-catalog-policy",
+            "x-pipeline-adaptive-agent-count",
+        ] {
+            if object.contains_key(keyword) {
+                return Err(format!("{path}.{keyword}: only valid at the schema root"));
+            }
+        }
+    }
+    if let Some(contract) = object
+        .get("x-pipeline-contract")
+        .and_then(serde_json::Value::as_str)
+    {
+        if contract != crate::auto_review::AUTO_REVIEW_CONTRACT {
+            return Err(format!(
+                "{path}.x-pipeline-contract: unsupported contract '{contract}'"
+            ));
+        }
+    }
+    if let Some(catalog) = object
+        .get("x-pipeline-catalog")
+        .and_then(serde_json::Value::as_str)
+    {
+        if declared_type != Some("string") {
+            return Err(format!(
+                "{path}.x-pipeline-catalog: catalog-backed values must have type 'string'"
+            ));
+        }
+        if ![
+            crate::auto_review::SUBJECT_CATALOG,
+            crate::auto_review::METHOD_CATALOG,
+            crate::auto_review::GENRE_CATALOG,
+        ]
+        .contains(&catalog)
+        {
+            return Err(format!(
+                "{path}.x-pipeline-catalog: unknown Pipeline catalog '{catalog}'"
+            ));
+        }
+    }
+    if object
+        .get("x-pipeline-catalog-policy")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|policy| policy != "live")
+    {
+        return Err(format!(
+            "{path}.x-pipeline-catalog-policy: only 'live' is supported"
+        ));
+    }
+    if object
+        .get("x-pipeline-adaptive-agent-count")
+        .is_some_and(|value| value.as_u64().is_none())
+    {
+        return Err(format!(
+            "{path}.x-pipeline-adaptive-agent-count: expected a non-negative integer"
+        ));
+    }
 
     if let Some(values) = object.get("enum") {
         let values = values
@@ -300,6 +550,17 @@ pub fn check(schema: &serde_json::Value, text: &str) -> Result<(), String> {
     validate(schema, &value)
 }
 
+/// Parse a provider's structured result as one exact JSON value, validate the
+/// original Pipeline schema, and return host-owned canonical JSON. Unlike the
+/// legacy extractor this deliberately rejects fences and surrounding prose.
+pub fn canonicalize(schema: &serde_json::Value, text: &str) -> Result<String, String> {
+    let value = serde_json::from_str::<serde_json::Value>(text.trim())
+        .map_err(|error| format!("output is not one complete JSON value: {error}"))?;
+    validate(schema, &value)?;
+    serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("failed to canonicalize structured output: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,34 +626,58 @@ mod tests {
     #[test]
     fn validate_array_items_required_keys() {
         let schema = serde_json::json!({
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["id", "severity"]
+            "type": "object",
+            "required": ["items"],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["id", "severity"]
+                    }
+                }
             }
         });
-        let good = serde_json::json!([{"id": "1", "severity": "high"}]);
+        let good = serde_json::json!({"items": [{"id": "1", "severity": "high"}]});
         assert!(validate(&schema, &good).is_ok());
-        let bad = serde_json::json!([{"id": "1"}]);
+        let bad = serde_json::json!({"items": [{"id": "1"}]});
         assert!(validate(&schema, &bad).unwrap_err().contains("severity"));
     }
 
     #[test]
     fn validates_enum_and_bounded_unique_arrays() {
         let schema = serde_json::json!({
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 3,
-            "uniqueItems": true,
-            "items": {
-                "type": "string",
-                "enum": ["proofs", "statistics", "computation"]
+            "type": "object",
+            "required": ["methods"],
+            "properties": {
+                "methods": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 3,
+                    "uniqueItems": true,
+                    "items": {
+                        "type": "string",
+                        "enum": ["proofs", "statistics", "computation"]
+                    }
+                }
             }
         });
-        assert!(validate(&schema, &serde_json::json!(["proofs", "statistics"])).is_ok());
-        assert!(validate(&schema, &serde_json::json!(["proofs"])).is_err());
-        assert!(validate(&schema, &serde_json::json!(["proofs", "proofs"])).is_err());
-        assert!(validate(&schema, &serde_json::json!(["proofs", "unknown"])).is_err());
+        assert!(validate(
+            &schema,
+            &serde_json::json!({"methods": ["proofs", "statistics"]})
+        )
+        .is_ok());
+        assert!(validate(&schema, &serde_json::json!({"methods": ["proofs"]})).is_err());
+        assert!(validate(
+            &schema,
+            &serde_json::json!({"methods": ["proofs", "proofs"]})
+        )
+        .is_err());
+        assert!(validate(
+            &schema,
+            &serde_json::json!({"methods": ["proofs", "unknown"]})
+        )
+        .is_err());
     }
 
     #[test]
@@ -404,20 +689,116 @@ mod tests {
     }
 
     #[test]
+    fn canonicalize_rejects_prose_and_owns_serialization() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["ok"],
+            "properties": {"ok": {"type": "boolean"}}
+        });
+        assert_eq!(
+            canonicalize(&schema, "{\"ok\":true}").unwrap(),
+            "{\n  \"ok\": true\n}"
+        );
+        assert!(canonicalize(&schema, "Here: {\"ok\":true}").is_err());
+        assert!(canonicalize(&schema, "```json\n{\"ok\":true}\n```").is_err());
+    }
+
+    #[test]
+    fn provider_schema_projects_only_the_portable_structural_core() {
+        let schema = serde_json::json!({
+            "x-pipeline-contract": "auto-review-v1",
+            "type": "object",
+            "required": ["findings"],
+            "properties": {
+                "findings": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "required": ["id"],
+                        "properties": {
+                            "id": {"type": "string", "description": "Stable id"}
+                        }
+                    }
+                }
+            }
+        });
+        let projected = provider_schema(&schema).unwrap();
+        assert_eq!(projected["type"], "object");
+        assert_eq!(projected["properties"]["findings"]["maxItems"], 3);
+        assert_eq!(
+            projected["properties"]["findings"]["items"]["required"],
+            serde_json::json!(["id"])
+        );
+        assert!(projected["properties"]["findings"]
+            .get("uniqueItems")
+            .is_none());
+        assert!(projected.get("x-pipeline-contract").is_none());
+    }
+
+    #[test]
     fn malformed_and_unknown_schemas_are_rejected() {
         assert!(validate_schema(&serde_json::json!([])).is_err());
         assert!(validate_schema(&serde_json::json!({"type": "date"}))
             .unwrap_err()
             .contains("unsupported type"));
-        assert!(validate_schema(&serde_json::json!({"required": ["id", 2]})).is_err());
-        assert!(validate_schema(&serde_json::json!({"type": "string", "items": {}})).is_err());
+        assert!(
+            validate_schema(&serde_json::json!({"type": "object", "required": ["id", 2]})).is_err()
+        );
+        assert!(validate_schema(&serde_json::json!({"type": "object", "properties": {"bad": {"type": "string", "items": {}}}})).is_err());
         assert!(validate_schema(
-            &serde_json::json!({"type": "array", "minItems": 3, "maxItems": 2})
+            &serde_json::json!({"type": "object", "properties": {"bad": {"type": "array", "minItems": 3, "maxItems": 2}}})
         )
         .is_err());
-        assert!(validate_schema(&serde_json::json!({"type": "string", "enum": []})).is_err());
+        assert!(validate_schema(&serde_json::json!({"type": "object", "properties": {"bad": {"type": "string", "enum": []}}})).is_err());
         assert!(
-            validate_schema(&serde_json::json!({"type": "array", "uniqueItems": "yes"})).is_err()
+            validate_schema(&serde_json::json!({"type": "object", "properties": {"bad": {"type": "array", "uniqueItems": "yes"}}})).is_err()
         );
+        assert!(validate_schema(
+            &serde_json::json!({"type": "array", "items": {"type": "string"}})
+        )
+        .unwrap_err()
+        .contains("root must explicitly be 'object'"));
+        assert!(validate_schema(&serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"name": {"type": "string", "minLength": 2}}
+        }))
+        .unwrap_err()
+        .contains("unsupported keyword"));
+        assert!(validate_schema(&serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "x-pipeline-contract": "auto-review-v1"}
+            }
+        }))
+        .unwrap_err()
+        .contains("only valid at the schema root"));
+    }
+
+    #[test]
+    fn provider_schema_rejects_payloads_too_large_for_portable_cli_transport() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "description": "x".repeat(MAX_PROVIDER_SCHEMA_BYTES),
+        });
+        assert!(provider_schema(&schema)
+            .unwrap_err()
+            .contains("portable limit"));
+    }
+
+    #[test]
+    fn provider_schema_rejects_enums_outside_the_common_provider_limits() {
+        let values = (0..=MAX_PROVIDER_ENUM_VALUES)
+            .map(|index| format!("value_{index}"))
+            .collect::<Vec<_>>();
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"value": {"type": "string", "enum": values}}
+        });
+        assert!(provider_schema(&schema)
+            .unwrap_err()
+            .contains("enum values"));
     }
 }

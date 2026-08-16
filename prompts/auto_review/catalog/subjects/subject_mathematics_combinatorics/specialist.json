@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_combinatorics",
+  "label": "Mathematics — Combinatorics & Discrete",
+  "order": 28,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Combinatorics, graph theory, discrete geometry, extremal or probabilistic combinatorics.",
+    "exclusions": "the graph or discrete representation serves only an algorithmic engineering objective."
+  }
+}

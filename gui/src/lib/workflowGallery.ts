@@ -58,7 +58,7 @@ const issuesSchema = {
 };
 
 function issueOutputInstruction(max = 20): string {
-  return `Return only JSON with the shape {"issues":[...]}. Each issue must contain id, title, severity (high, medium, or low), section, body, and an evidence array when the source supports a precise citation. Evidence entries may include page, line_start, line_end, node_id, asset_id, artifact_path, description, and a short quote. Use artifact_path only for a path available in the run's saved Sources; otherwise put a source-file path and line range in the description. Include no more than ${max} issues.`;
+  return `Populate the configured issues schema. Each issue must contain id, title, severity (high, medium, or low), section, body, and an evidence array when the source supports a precise citation. Evidence entries may include page, line_start, line_end, node_id, asset_id, artifact_path, description, and a short quote. Use artifact_path only for a path available in the run's saved Sources; otherwise put a source-file path and line range in the description. Include no more than ${max} issues.`;
 }
 
 function step(config: Partial<StepConfig> & Pick<StepConfig, "id" | "label" | "prompt" | "phase">): StepConfig {
@@ -89,6 +89,7 @@ const revisionResponse: PipelineConfig = {
   context_cache: { enabled: true },
   parallel_context_template: genericParallelContext,
   merge: { enabled: false, prompt: "", agents: [] },
+  outputs: { primary_step: "revision_verdict", findings_step: "revision_verdict" },
   steps: [
     step({
       id: "verify_claims",
@@ -141,6 +142,7 @@ const literaturePositioning: PipelineConfig = {
   context_cache: { enabled: true },
   parallel_context_template: genericParallelContext,
   merge: { enabled: false, prompt: "", agents: [] },
+  outputs: { primary_step: "positioning_ledger", findings_step: "positioning_ledger" },
   steps: [
     step({
       id: "claimed_contribution",
@@ -186,6 +188,7 @@ const thesisReview: PipelineConfig = {
   context_cache: { enabled: false },
   parallel_context_template: genericParallelContext,
   merge: { enabled: false, prompt: "", agents: [] },
+  outputs: { primary_step: "cross_chapter", findings_step: "cross_chapter" },
   steps: [
     step({
       id: "chapter_review",
@@ -226,6 +229,7 @@ const rubricReview: PipelineConfig = {
   context_cache: { enabled: true },
   parallel_context_template: genericParallelContext,
   merge: { enabled: false, prompt: "", agents: [] },
+  outputs: { primary_step: "rubric_ledger", findings_step: "rubric_ledger" },
   steps: [
     step({
       id: "rubric_assessment",

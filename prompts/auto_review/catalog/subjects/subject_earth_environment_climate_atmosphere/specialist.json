@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_earth_environment_climate_atmosphere",
+  "label": "Earth & Environment — Climate & Atmosphere",
+  "order": 104,
+  "group": {
+    "id": "earth_environment",
+    "label": "Earth & Environmental Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Climate science, meteorology, atmospheric chemistry, weather, or Earth-system dynamics.",
+    "exclusions": "the paper concerns policy impacts without a material climate or atmospheric scientific contribution, or paleoclimate reconstruction, biogeochemical cycling, or climate-impact assessment carries the contribution."
+  }
+}

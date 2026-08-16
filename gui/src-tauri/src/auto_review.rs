@@ -5,11 +5,6 @@
 //! the host materializes only the selected `StepConfig`s from these static
 //! entries and the existing executor handles the run.
 
-mod genres;
-mod legacy;
-mod methods;
-mod subjects;
-
 use crate::pipeline_config::{
     ArtifactSelector, Phase, PipelineConfig, StepArtifactPart, StepConfig,
 };
@@ -25,8 +20,13 @@ const CORE_EXPOSITION: &str = include_str!("../../../prompts/auto_review/core/ex
 const SYNTHESIS: &str = include_str!("../../../prompts/auto_review/synthesis.md");
 const VALIDATE: &str = include_str!("../../../prompts/auto_review/validate.md");
 
-pub const AUTO_REVIEW_CONTRACT: &str = "auto-review-v2";
+pub const AUTO_REVIEW_CONTRACT: &str = "auto-review-v1";
 pub const ADAPTIVE_AGENT_COUNT_KEY: &str = "x-pipeline-adaptive-agent-count";
+pub const CATALOG_REFERENCE_KEY: &str = "x-pipeline-catalog";
+pub const CATALOG_POLICY_KEY: &str = "x-pipeline-catalog-policy";
+pub const SUBJECT_CATALOG: &str = "auto-review.subjects";
+pub const METHOD_CATALOG: &str = "auto-review.methods";
+pub const GENRE_CATALOG: &str = "auto-review.genres";
 pub const MIN_ADAPTIVE_AGENTS: usize = 2;
 pub const MAX_ADAPTIVE_AGENTS: usize = 6;
 
@@ -117,14 +117,239 @@ pub fn configured_agent_count(schema: &serde_json::Value) -> Result<Option<usize
 }
 
 pub fn validate_schema_settings(schema: &serde_json::Value) -> Result<(), String> {
-    if schema
-        .get("x-pipeline-contract")
-        .and_then(serde_json::Value::as_str)
-        == Some(AUTO_REVIEW_CONTRACT)
+    if schema.get(ADAPTIVE_AGENT_COUNT_KEY).is_some() && schema.get("x-pipeline-contract").is_none()
     {
+        return Err(format!(
+            "{ADAPTIVE_AGENT_COUNT_KEY} requires x-pipeline-contract: '{AUTO_REVIEW_CONTRACT}'"
+        ));
+    }
+    if let Some(contract) = schema.get("x-pipeline-contract") {
+        let contract = contract
+            .as_str()
+            .ok_or_else(|| "x-pipeline-contract must be a string".to_string())?;
+        if contract != AUTO_REVIEW_CONTRACT {
+            return Err(format!(
+                "Unsupported x-pipeline-contract '{contract}'; expected '{AUTO_REVIEW_CONTRACT}'"
+            ));
+        }
+        validate_auto_review_schema_contract(schema)?;
         adaptive_agent_bounds(schema)?;
     }
     configured_agent_count(schema).map(|_| ())
+}
+
+pub fn validate_profile_contract_identity(
+    steps: &[StepConfig],
+    schema: Option<&serde_json::Value>,
+) -> Result<(), String> {
+    let has_auto_skeleton = steps.iter().any(|step| {
+        matches!(
+            step.id.as_str(),
+            "auto_contribution"
+                | "auto_consistency"
+                | "auto_exposition"
+                | "auto_synthesis"
+                | "auto_validate"
+        )
+    });
+    let has_contract = schema
+        .and_then(|schema| schema.get("x-pipeline-contract"))
+        .and_then(serde_json::Value::as_str)
+        == Some(AUTO_REVIEW_CONTRACT);
+    if has_auto_skeleton && !has_contract {
+        Err(format!(
+            "Auto Review skeleton steps require x-pipeline-contract: '{AUTO_REVIEW_CONTRACT}'"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn schema_node<'a>(
+    schema: &'a serde_json::Value,
+    pointer: &str,
+) -> Result<&'a serde_json::Value, String> {
+    schema
+        .pointer(pointer)
+        .ok_or_else(|| format!("Auto Review schema is missing {pointer}"))
+}
+
+fn require_schema_type(
+    schema: &serde_json::Value,
+    pointer: &str,
+    expected: &str,
+) -> Result<(), String> {
+    let actual = schema_node(schema, pointer)?
+        .get("type")
+        .and_then(serde_json::Value::as_str);
+    if actual == Some(expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Auto Review schema {pointer}.type must be '{expected}'"
+        ))
+    }
+}
+
+fn require_schema_required(
+    schema: &serde_json::Value,
+    pointer: &str,
+    expected: &[&str],
+) -> Result<(), String> {
+    let required = schema_node(schema, pointer)?
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("Auto Review schema {pointer}.required must be an array"))?;
+    for key in expected {
+        if !required
+            .iter()
+            .any(|candidate| candidate.as_str() == Some(key))
+        {
+            return Err(format!(
+                "Auto Review schema {pointer}.required must include '{key}'"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn require_catalog_reference(
+    schema: &serde_json::Value,
+    pointer: &str,
+    expected: &str,
+) -> Result<(), String> {
+    let actual = schema_node(schema, pointer)?
+        .get(CATALOG_REFERENCE_KEY)
+        .and_then(serde_json::Value::as_str);
+    if actual == Some(expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Auto Review schema {pointer}.{CATALOG_REFERENCE_KEY} must be '{expected}'"
+        ))
+    }
+}
+
+/// Protect the host-owned Auto Review materialization contract while leaving
+/// array bounds and descriptions editable. A profile that removes the marker
+/// becomes an ordinary custom workflow; one that retains it must remain a
+/// complete Auto Review router schema.
+fn validate_auto_review_schema_contract(schema: &serde_json::Value) -> Result<(), String> {
+    require_schema_type(schema, "", "object")?;
+    if schema
+        .get(CATALOG_POLICY_KEY)
+        .and_then(serde_json::Value::as_str)
+        != Some("live")
+    {
+        return Err(format!(
+            "Auto Review schema {CATALOG_POLICY_KEY} must be 'live'"
+        ));
+    }
+    require_schema_required(
+        schema,
+        "",
+        &[
+            "metadata",
+            "review_plan",
+            "sections",
+            "formal_results",
+            "tables_figures",
+            "notation",
+            "stated_contribution",
+            "key_references",
+            "extraction_quality_notes",
+        ],
+    )?;
+    for (property, expected_type) in [
+        ("metadata", "object"),
+        ("review_plan", "object"),
+        ("sections", "array"),
+        ("formal_results", "array"),
+        ("tables_figures", "array"),
+        ("notation", "array"),
+        ("stated_contribution", "string"),
+        ("key_references", "array"),
+        ("extraction_quality_notes", "array"),
+    ] {
+        require_schema_type(schema, &format!("/properties/{property}"), expected_type)?;
+    }
+
+    let metadata = "/properties/metadata";
+    require_schema_required(
+        schema,
+        metadata,
+        &[
+            "title",
+            "authors",
+            "paper_type",
+            "has_appendix",
+            "has_online_appendix",
+        ],
+    )?;
+    for (property, expected_type) in [
+        ("title", "string"),
+        ("authors", "array"),
+        ("paper_type", "string"),
+        ("has_appendix", "boolean"),
+        ("has_online_appendix", "boolean"),
+    ] {
+        require_schema_type(
+            schema,
+            &format!("{metadata}/properties/{property}"),
+            expected_type,
+        )?;
+    }
+
+    let plan = "/properties/review_plan";
+    require_schema_required(
+        schema,
+        plan,
+        &[
+            "primary_domain",
+            "subject",
+            "paper_forms",
+            "methods",
+            "subject_specialist_ids",
+            "method_specialist_ids",
+            "genre",
+            "selection_notes",
+            "routing_uncertainty",
+        ],
+    )?;
+    for (property, expected_type) in [
+        ("primary_domain", "string"),
+        ("subject", "string"),
+        ("paper_forms", "array"),
+        ("methods", "array"),
+        ("subject_specialist_ids", "array"),
+        ("method_specialist_ids", "array"),
+        ("genre", "string"),
+        ("selection_notes", "array"),
+        ("routing_uncertainty", "array"),
+    ] {
+        require_schema_type(
+            schema,
+            &format!("{plan}/properties/{property}"),
+            expected_type,
+        )?;
+    }
+    require_catalog_reference(
+        schema,
+        &format!("{plan}/properties/subject_specialist_ids/items"),
+        SUBJECT_CATALOG,
+    )?;
+    require_catalog_reference(
+        schema,
+        &format!("{plan}/properties/method_specialist_ids/items"),
+        METHOD_CATALOG,
+    )?;
+    require_catalog_reference(schema, &format!("{plan}/properties/genre"), GENRE_CATALOG)?;
+    let note = format!("{plan}/properties/selection_notes/items");
+    require_schema_type(schema, &note, "object")?;
+    require_schema_required(schema, &note, &["id", "reason"])?;
+    require_schema_type(schema, &format!("{note}/properties/id"), "string")?;
+    require_schema_type(schema, &format!("{note}/properties/reason"), "string")?;
+    Ok(())
 }
 
 fn agent_range_phrase(minimum: usize, maximum: usize, singular: &str, plural: &str) -> String {
@@ -246,9 +471,140 @@ pub struct GenreSpec {
 /// default classification, carrying no injected genre context.
 pub const RESEARCH_ARTICLE_GENRE: &str = "research_article";
 
-pub use genres::GENRES;
-pub use methods::METHODS;
-pub use subjects::SUBJECTS;
+include!(concat!(env!("OUT_DIR"), "/auto_review_catalog.rs"));
+
+fn catalog_values(reference: &str) -> Result<Vec<serde_json::Value>, String> {
+    let strings = match reference {
+        SUBJECT_CATALOG => SUBJECTS.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        METHOD_CATALOG => METHODS.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        GENRE_CATALOG => std::iter::once(RESEARCH_ARTICLE_GENRE)
+            .chain(GENRES.iter().map(|entry| entry.id))
+            .collect::<Vec<_>>(),
+        _ => return Err(format!("unknown Pipeline catalog reference '{reference}'")),
+    };
+    Ok(strings
+        .into_iter()
+        .map(|value| serde_json::Value::String(value.to_string()))
+        .collect())
+}
+
+fn resolve_schema_catalogs_at(
+    schema: &mut serde_json::Value,
+    path: &str,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > 32 {
+        return Err(format!(
+            "{path}: schema catalog resolution exceeds 32 levels"
+        ));
+    }
+    let object = schema
+        .as_object_mut()
+        .ok_or_else(|| format!("{path}: schema must be a JSON object"))?;
+    if let Some(policy) = object.remove(CATALOG_POLICY_KEY) {
+        if policy.as_str() != Some("live") {
+            return Err(format!(
+                "{path}.{CATALOG_POLICY_KEY}: only the 'live' catalog policy is supported"
+            ));
+        }
+    }
+    if let Some(reference) = object.remove(CATALOG_REFERENCE_KEY) {
+        let reference = reference
+            .as_str()
+            .ok_or_else(|| format!("{path}.{CATALOG_REFERENCE_KEY}: expected a string"))?;
+        if object.get("type").and_then(serde_json::Value::as_str) != Some("string") {
+            return Err(format!(
+                "{path}.{CATALOG_REFERENCE_KEY}: catalog-backed values must have type 'string'"
+            ));
+        }
+        if object.contains_key("enum") {
+            return Err(format!(
+                "{path}: use either enum or {CATALOG_REFERENCE_KEY}, not both"
+            ));
+        }
+        object.insert(
+            "enum".to_string(),
+            serde_json::Value::Array(catalog_values(reference)?),
+        );
+    }
+    if let Some(properties) = object
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for (key, child) in properties {
+            resolve_schema_catalogs_at(child, &format!("{path}.properties.{key}"), depth + 1)?;
+        }
+    }
+    if let Some(items) = object.get_mut("items") {
+        resolve_schema_catalogs_at(items, &format!("{path}.items"), depth + 1)?;
+    }
+    Ok(())
+}
+
+/// Compile Pipeline catalog references into ordinary JSON Schema enums. The
+/// saved workflow stays compact; providers and host validation receive this
+/// self-contained snapshot for the current run.
+pub fn resolve_schema_catalogs(schema: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut resolved = schema.clone();
+    resolve_schema_catalogs_at(&mut resolved, "$", 0)?;
+    crate::pipeline::structured::validate_schema(&resolved)?;
+    Ok(resolved)
+}
+
+pub fn catalog_revision() -> &'static str {
+    use sha2::{Digest as _, Sha256};
+    static REVISION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut digest = Sha256::new();
+        digest.update(b"pipeline auto-review catalog v1\0");
+        for shared_contract in [SUBJECT_REVIEW_BASE, METHOD_REVIEW_BASE] {
+            digest.update(shared_contract.as_bytes());
+            digest.update(b"\0");
+        }
+        for subject in SUBJECTS {
+            for value in [
+                subject.id,
+                subject.label,
+                subject.discipline_id,
+                subject.discipline_label,
+                subject.routing_description,
+                subject.routing_exclusions,
+                subject.discipline_prompt,
+                subject.review_focus,
+            ] {
+                digest.update(value.as_bytes());
+                digest.update(b"\0");
+            }
+        }
+        for method in METHODS {
+            for value in [
+                method.id,
+                method.label,
+                method.family_id,
+                method.family_label,
+                method.routing_description,
+                method.routing_exclusions,
+                method.prompt,
+            ] {
+                digest.update(value.as_bytes());
+                digest.update(b"\0");
+            }
+        }
+        for genre in GENRES {
+            for value in [
+                genre.id,
+                genre.label,
+                genre.routing_description,
+                genre.routing_exclusions,
+                genre.prompt,
+            ] {
+                digest.update(value.as_bytes());
+                digest.update(b"\0");
+            }
+        }
+        format!("sha256:{:x}", digest.finalize())
+    });
+    REVISION.as_str()
+}
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -272,8 +628,10 @@ pub struct CatalogGroup {
 #[serde(rename_all = "camelCase")]
 pub struct AutoReviewCatalog {
     pub contract: &'static str,
+    pub revision: &'static str,
     pub subject_count: usize,
     pub method_count: usize,
+    pub genre_count: usize,
     pub disciplines: Vec<CatalogGroup>,
     pub method_families: Vec<CatalogGroup>,
 }
@@ -329,8 +687,10 @@ pub fn catalog() -> AutoReviewCatalog {
     }
     AutoReviewCatalog {
         contract: AUTO_REVIEW_CONTRACT,
+        revision: catalog_revision(),
         subject_count: SUBJECTS.len(),
         method_count: METHODS.len(),
+        genre_count: GENRES.len() + 1,
         disciplines,
         method_families,
     }
@@ -351,7 +711,6 @@ pub fn label_for(id: &str) -> Option<&'static str> {
                 .find(|specialist| specialist.id == id)
                 .map(|specialist| specialist.label)
         })
-        .or_else(|| legacy::label_for(id))
 }
 
 fn subject_prompt(specialist: &SubjectSpec) -> String {
@@ -465,6 +824,7 @@ pub fn steps() -> Vec<StepConfig> {
         &["WebSearch"],
     );
     synthesis.phase = Phase::Sequential;
+    synthesis.output_schema = Some(crate::findings::output_schema());
     steps.push(synthesis);
     let mut validate = base_step(
         "auto_validate",
@@ -473,6 +833,7 @@ pub fn steps() -> Vec<StepConfig> {
         &["WebSearch"],
     );
     validate.phase = Phase::Sequential;
+    validate.output_schema = Some(crate::findings::output_schema());
     steps.push(validate);
     steps
 }
@@ -516,7 +877,7 @@ pub fn copyable_specialist_step(id: &str) -> Option<StepConfig> {
 }
 
 fn specialist_step(id: &str) -> Option<StepConfig> {
-    current_specialist_step(id).or_else(|| legacy::specialist_step(id))
+    current_specialist_step(id)
 }
 
 pub(crate) fn uses_auto_review_contract(config: &PipelineConfig) -> bool {
@@ -567,33 +928,26 @@ pub fn materialize_config(
         .get("review_plan")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| "Auto-review orientation is missing review_plan".to_string())?;
-    let selected_ids = if plan.get("subject_specialist_ids").is_some() {
-        // The plan itself must be valid, but the configured exact agent
-        // count is an orientation-time constraint (enforced in
-        // build_orientation_map via validate_contract_for_schema): a saved
-        // plan produced under an earlier count setting must stay resumable
-        // after the user changes that setting.
-        validate_review_plan(orientation)?;
-        plan.get("subject_specialist_ids")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .chain(
-                plan.get("method_specialist_ids")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten(),
-            )
-            .filter_map(serde_json::Value::as_str)
-            .collect::<Vec<_>>()
-    } else {
-        // Saved Auto v1 reports can still be rerun after the stock profile is
-        // migrated. Keep their already-validated field/method plan intact.
-        legacy::selected_ids(orientation)?
-    };
+    // The plan itself must be valid, but the configured exact agent count is
+    // an orientation-time constraint. A saved plan remains resumable after
+    // the user changes that setting.
+    validate_review_plan(orientation)?;
+    let selected_ids = plan
+        .get("subject_specialist_ids")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(
+            plan.get("method_specialist_ids")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten(),
+        )
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
     // The validated per-selection reasons are foregrounded in each
     // materialized prompt so the specialist starts from the claim that
-    // triggered its selection. Legacy v1 plans predate this note format.
+    // triggered its selection.
     let selection_reasons = plan
         .get("selection_notes")
         .and_then(serde_json::Value::as_array)
@@ -676,7 +1030,6 @@ pub fn materialize_config(
     // the host-owned genre paragraph is injected into every enabled step —
     // core reviewers, specialists, consolidation, and validation alike — so
     // the whole panel judges the manuscript as what it claims to be. Plans
-    // from pre-genre schemas simply omit the field.
     if let Some(genre_id) = plan
         .get("genre")
         .and_then(serde_json::Value::as_str)
@@ -693,9 +1046,17 @@ pub fn materialize_config(
     Ok(materialized)
 }
 
-/// Orientation prompt with both catalogs injected from the same source of
-/// truth used to build the run-specific specialist steps.
+/// Compact, editable Auto Review orientation template. Catalog placeholders
+/// are expanded from the live manifest catalog only when the orientation call
+/// is built; saved profiles and the workflow editor never embed catalog rows.
 pub fn orientation_prompt() -> String {
+    ORIENTATION_TEMPLATE.to_string()
+}
+
+/// Expand the compact router template from the same catalog used to validate
+/// IDs and materialize run-specific specialist steps. Custom templates may
+/// move or omit these placeholders; already-expanded prompts are unchanged.
+pub fn expand_orientation_prompt(template: &str) -> String {
     let mut subject_catalog = String::new();
     let mut current_discipline = "";
     for specialist in SUBJECTS {
@@ -740,7 +1101,7 @@ pub fn orientation_prompt() -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    ORIENTATION_TEMPLATE
+    template
         .replace("{subject_catalog}", subject_catalog.trim())
         .replace("{method_catalog}", method_catalog.trim())
         .replace("{genre_catalog}", &genre_catalog)
@@ -749,50 +1110,27 @@ pub fn orientation_prompt() -> String {
 /// Schema for the auto-review router. `subject_specialist_ids` is ordered: the
 /// first element is primary and the optional second element is secondary.
 pub fn orientation_schema() -> serde_json::Value {
-    let subject_ids = SUBJECTS
-        .iter()
-        .map(|specialist| serde_json::Value::String(specialist.id.to_string()))
-        .collect::<Vec<_>>();
-    let method_ids = METHODS
-        .iter()
-        .map(|specialist| serde_json::Value::String(specialist.id.to_string()))
-        .collect::<Vec<_>>();
-    let genre_values = std::iter::once(serde_json::Value::String(
-        RESEARCH_ARTICLE_GENRE.to_string(),
-    ))
-    .chain(
-        GENRES
-            .iter()
-            .map(|genre| serde_json::Value::String(genre.id.to_string())),
-    )
-    .collect::<Vec<_>>();
-    let all_ids = subject_ids
-        .iter()
-        .chain(method_ids.iter())
-        .cloned()
-        .collect::<Vec<_>>();
-    serde_json::json!({
-        "x-pipeline-contract": AUTO_REVIEW_CONTRACT,
-        "type": "object",
-        "required": [
-            "metadata", "review_plan", "sections", "formal_results",
-            "tables_figures", "notation", "stated_contribution",
-            "key_references", "extraction_quality_notes"
-        ],
-        "properties": {
-            "metadata": {
+    let mut schema = crate::orientation_contract::paper_schema();
+    let root = schema
+        .as_object_mut()
+        .expect("the stock paper orientation schema has an object root");
+    root.insert(
+        "x-pipeline-contract".to_string(),
+        serde_json::json!(AUTO_REVIEW_CONTRACT),
+    );
+    root.insert(CATALOG_POLICY_KEY.to_string(), serde_json::json!("live"));
+    root.get_mut("required")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("the stock paper orientation schema declares required fields")
+        .insert(1, serde_json::json!("review_plan"));
+    root.get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the stock paper orientation schema declares properties")
+        .insert(
+            "review_plan".to_string(),
+            serde_json::json!({
                 "type": "object",
-                "required": ["title", "authors", "paper_type", "has_appendix", "has_online_appendix"],
-                "properties": {
-                    "title": {"type": "string"},
-                    "authors": {"type": "array", "items": {"type": "string"}},
-                    "paper_type": {"type": "string", "enum": ["theory", "empirical", "mixed"]},
-                    "has_appendix": {"type": "boolean"},
-                    "has_online_appendix": {"type": "boolean"}
-                }
-            },
-            "review_plan": {
-                "type": "object",
+                "description": "Bounded paper classification and specialist plan.",
                 "required": [
                     "primary_domain", "subject", "paper_forms", "methods",
                     "subject_specialist_ids", "method_specialist_ids",
@@ -802,56 +1140,70 @@ pub fn orientation_schema() -> serde_json::Value {
                     "primary_domain": {"type": "string"},
                     "subject": {"type": "string"},
                     "paper_forms": {
-                        "type": "array", "minItems": 1, "uniqueItems": true,
-                        "items": {"type": "string"}
+                        "type": "array",
+                        "description": "Forms central to the paper's claims.",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "formal_theory", "causal_empirical", "quantitative_model",
+                                "descriptive", "experimental", "algorithmic", "qualitative",
+                                "interpretive", "historical", "clinical", "engineering_design"
+                            ]
+                        }
                     },
                     "methods": {
-                        "type": "array", "minItems": 1, "uniqueItems": true,
+                        "type": "array",
+                        "description": "Methods central to the paper's claims.",
+                        "minItems": 1,
+                        "uniqueItems": true,
                         "items": {"type": "string"}
                     },
                     "subject_specialist_ids": {
                         "type": "array",
+                        "description": "Primary, then optional secondary subject specialist.",
                         "minItems": 1,
                         "maxItems": 2,
                         "uniqueItems": true,
-                        "items": {"type": "string", "enum": subject_ids}
+                        "items": {"type": "string", CATALOG_REFERENCE_KEY: SUBJECT_CATALOG}
                     },
                     "method_specialist_ids": {
                         "type": "array",
+                        "description": "Smallest nonduplicative method panel.",
                         "minItems": 1,
                         "maxItems": 4,
                         "uniqueItems": true,
-                        "items": {"type": "string", "enum": method_ids}
+                        "items": {"type": "string", CATALOG_REFERENCE_KEY: METHOD_CATALOG}
                     },
-                    "genre": {"type": "string", "enum": genre_values},
+                    "genre": {
+                        "type": "string",
+                        CATALOG_REFERENCE_KEY: GENRE_CATALOG
+                    },
                     "selection_notes": {
                         "type": "array",
+                        "description": "One paper-specific reason per selected specialist.",
                         "minItems": 2,
                         "maxItems": 6,
                         "items": {
                             "type": "object",
                             "required": ["id", "reason"],
                             "properties": {
-                                "id": {"type": "string", "enum": all_ids},
-                                "reason": {"type": "string"}
+                                "id": {"type": "string"},
+                                "reason": {"type": "string", "description": "Concrete paper-specific selection reason."}
                             }
                         }
                     },
                     "routing_uncertainty": {
-                        "type": "array", "maxItems": 5,
+                        "type": "array",
+                        "description": "Material ambiguity; empty when none.",
+                        "maxItems": 5,
                         "items": {"type": "string"}
                     }
                 }
-            },
-            "sections": {"type": "array"},
-            "formal_results": {"type": "array"},
-            "tables_figures": {"type": "array"},
-            "notation": {"type": "array"},
-            "stated_contribution": {"type": "string"},
-            "key_references": {"type": "array", "items": {"type": "string"}},
-            "extraction_quality_notes": {"type": "array"}
-        }
-    })
+            }),
+        );
+    schema
 }
 
 /// Quick uses the same allowlisted router and subject range as Full, but caps
@@ -980,9 +1332,7 @@ pub fn validate_review_plan_object(plan: &serde_json::Value) -> Result<(), Strin
         }
     }
 
-    // Genre is a document classification, not a reviewer selection. Plans
-    // produced under a pre-genre saved schema simply omit the field; absent
-    // is equivalent to an ordinary research article.
+    // Genre is a document classification, not a reviewer selection.
     if let Some(value) = plan.get("genre") {
         let genre = value
             .as_str()
@@ -1030,34 +1380,6 @@ pub fn validate_review_plan_object(plan: &serde_json::Value) -> Result<(), Strin
     Ok(())
 }
 
-pub(crate) fn legacy_steps() -> Vec<StepConfig> {
-    legacy::steps()
-}
-
-/// Exact steps of the prior stock v2 skeleton, for migration fingerprints.
-pub(crate) fn legacy_v2_steps() -> Vec<StepConfig> {
-    legacy::v2_steps()
-}
-
-/// The orientation prompt exactly as the 0.9.0 releases rendered it, pinned
-/// for migration fingerprints while the live catalog evolves.
-pub(crate) fn frozen_v2_orientation_prompt() -> String {
-    legacy::ORIENTATION_V2_PROMPT.to_string()
-}
-
-/// The orientation schema exactly as the 0.9.0 releases generated it.
-pub(crate) fn frozen_v2_orientation_schema() -> serde_json::Value {
-    legacy::orientation_v2_schema()
-}
-
-pub(crate) fn legacy_orientation_prompt() -> String {
-    legacy::orientation_prompt()
-}
-
-pub(crate) fn legacy_orientation_schema() -> serde_json::Value {
-    legacy::orientation_schema()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1066,6 +1388,7 @@ mod tests {
         let mut config = PipelineConfig {
             steps: steps(),
             merge: Default::default(),
+            outputs: Default::default(),
             context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: orientation_prompt(),
@@ -1117,7 +1440,8 @@ mod tests {
     fn valid_orientation() -> serde_json::Value {
         serde_json::json!({
             "metadata": {
-                "title": "A paper", "authors": [], "paper_type": "theory",
+                "title": "A paper", "authors": [], "date": "", "paper_type": "theory",
+                "page_count": 0,
                 "has_appendix": true, "has_online_appendix": false
             },
             "review_plan": {
@@ -1142,8 +1466,8 @@ mod tests {
 
     #[test]
     fn catalog_ids_prompts_and_fallbacks_are_complete() {
-        assert_eq!(SUBJECTS.len(), 287);
-        assert_eq!(METHODS.len(), 115);
+        assert!(!SUBJECTS.is_empty());
+        assert!(!METHODS.is_empty());
         let mut ids = std::collections::HashSet::new();
         let mut disciplines = std::collections::HashMap::<&str, bool>::new();
         for specialist in SUBJECTS {
@@ -1181,7 +1505,7 @@ mod tests {
             assert!(genre.prompt.len() > 200, "{}", genre.id);
             assert!(!genre.prompt.contains("## Output"), "{}", genre.id);
         }
-        assert_eq!(disciplines.len(), 29);
+        assert!(!disciplines.is_empty());
         assert!(disciplines.values().all(|fallback| *fallback));
         // Every family has at most one broad fallback role.
         for family in &seen_families {
@@ -1199,7 +1523,7 @@ mod tests {
         let view = catalog();
         assert_eq!(view.subject_count, SUBJECTS.len());
         assert_eq!(view.method_count, METHODS.len());
-        assert_eq!(view.disciplines.len(), 29);
+        assert_eq!(view.disciplines.len(), disciplines.len());
         assert_eq!(view.method_families.len(), seen_families.len());
         assert_eq!(
             view.disciplines
@@ -1275,18 +1599,21 @@ mod tests {
             assert!(prompt.starts_with("# "), "{label}");
             assert_report_output_fields(prompt, label);
         }
-        assert!(SYNTHESIS.contains("**#N. Descriptive title naming the specific issue**"));
-        assert!(SYNTHESIS.contains("issue-navigation format used by the report viewer"));
-        assert!(SYNTHESIS.contains("Retain up to forty comments total"));
+        assert!(SYNTHESIS.contains("Populate the supplied findings schema"));
+        assert!(SYNTHESIS.contains("Retain up to forty findings"));
+        assert!(SYNTHESIS.contains("never use an ordinal"));
         assert!(VALIDATE.contains("{last_output}"));
-        assert!(VALIDATE.contains("**#N. Descriptive title naming the specific issue**"));
-        assert!(VALIDATE.contains("issue-navigation format used by the report viewer"));
-        assert!(VALIDATE.contains("Do not introduce new issues"));
+        assert!(VALIDATE.contains("retain its exact input `id`"));
+        assert!(VALIDATE.contains("Do not add new findings"));
     }
 
     #[test]
     fn generated_prompt_and_schema_cover_the_catalog() {
-        let prompt = orientation_prompt();
+        let template = orientation_prompt();
+        assert!(template.contains("{subject_catalog}"));
+        assert!(template.contains("{method_catalog}"));
+        assert!(template.contains("{genre_catalog}"));
+        let prompt = expand_orientation_prompt(&template);
         assert!(!prompt.contains("{subject_catalog}"));
         assert!(!prompt.contains("{method_catalog}"));
         assert!(!prompt.contains("{genre_catalog}"));
@@ -1300,8 +1627,73 @@ mod tests {
         for specialist in GENRES {
             assert!(prompt.contains(&format!("`{}`", specialist.id)));
         }
-        crate::pipeline::structured::validate_schema(&orientation_schema()).unwrap();
-        crate::pipeline::structured::validate_schema(&quick_orientation_schema()).unwrap();
+        let compact = orientation_schema();
+        crate::pipeline::structured::validate_schema(&compact).unwrap();
+        assert_eq!(
+            compact.pointer("/properties/review_plan/properties/subject_specialist_ids/items/x-pipeline-catalog"),
+            Some(&serde_json::json!(SUBJECT_CATALOG))
+        );
+        assert!(compact
+            .pointer("/properties/review_plan/properties/subject_specialist_ids/items/enum")
+            .is_none());
+
+        let resolved = resolve_schema_catalogs(&compact).unwrap();
+        let subject_ids = resolved
+            .pointer("/properties/review_plan/properties/subject_specialist_ids/items/enum")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        let method_ids = resolved
+            .pointer("/properties/review_plan/properties/method_specialist_ids/items/enum")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        assert_eq!(subject_ids.len(), SUBJECTS.len());
+        assert_eq!(method_ids.len(), METHODS.len());
+        assert!(resolved.to_string().find(CATALOG_REFERENCE_KEY).is_none());
+        crate::pipeline::structured::validate_schema(&resolved).unwrap();
+        let provider = crate::pipeline::structured::provider_schema(&resolved).unwrap();
+        let provider_bytes = serde_json::to_vec(&provider).unwrap().len();
+        assert!(
+            provider_bytes + 1024 <= crate::pipeline::structured::MAX_PROVIDER_SCHEMA_BYTES,
+            "resolved Auto Review schema needs at least 1 KiB of catalog growth headroom; got {provider_bytes} bytes"
+        );
+        resolve_schema_catalogs(&quick_orientation_schema()).unwrap();
+        assert!(resolve_schema_catalogs(&serde_json::json!({
+            "type": "string",
+            CATALOG_REFERENCE_KEY: "missing.catalog"
+        }))
+        .unwrap_err()
+        .contains("unknown Pipeline catalog reference"));
+    }
+
+    #[test]
+    fn auto_review_marker_requires_the_complete_host_contract() {
+        let mut schema = orientation_schema();
+        schema["properties"]["review_plan"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("method_specialist_ids");
+        assert!(validate_schema_settings(&schema)
+            .unwrap_err()
+            .contains("method_specialist_ids"));
+
+        let mut custom = schema;
+        custom
+            .as_object_mut()
+            .unwrap()
+            .remove("x-pipeline-contract");
+        assert!(validate_schema_settings(&custom).is_ok());
+
+        let typo = serde_json::json!({
+            "type": "object",
+            "x-pipeline-contract": "auto-reveiw-v1"
+        });
+        assert!(validate_schema_settings(&typo)
+            .unwrap_err()
+            .contains("Unsupported x-pipeline-contract"));
+
+        assert!(validate_profile_contract_identity(&steps(), None)
+            .unwrap_err()
+            .contains("require x-pipeline-contract"));
     }
 
     #[test]
@@ -1340,37 +1732,6 @@ mod tests {
         let mut fixed = schema;
         fixed[ADAPTIVE_AGENT_COUNT_KEY] = serde_json::json!(5);
         assert!(validate_schema_settings(&fixed).is_err());
-    }
-
-    #[test]
-    fn pinned_v2_migration_artifacts_do_not_track_the_live_catalog() {
-        // 0.9.0 installs wrote exactly these bytes into their stock Auto
-        // profile; the migration fingerprint breaks silently if anyone
-        // "refreshes" them from the current catalog.
-        let frozen_prompt = frozen_v2_orientation_prompt();
-        assert_ne!(frozen_prompt, orientation_prompt());
-        assert!(!frozen_prompt.contains("DOCUMENT GENRE CATALOG"));
-        let frozen_schema = frozen_v2_orientation_schema();
-        assert_ne!(frozen_schema, orientation_schema());
-        let subject_ids = frozen_schema
-            .pointer("/properties/review_plan/properties/subject_specialist_ids/items/enum")
-            .and_then(serde_json::Value::as_array)
-            .unwrap();
-        let method_ids = frozen_schema
-            .pointer("/properties/review_plan/properties/method_specialist_ids/items/enum")
-            .and_then(serde_json::Value::as_array)
-            .unwrap();
-        assert_eq!((subject_ids.len(), method_ids.len()), (191, 32));
-        // Plans produced under the pinned schema (no genre field) still
-        // validate and materialize with the current engine.
-        let mut orientation = valid_orientation();
-        orientation["review_plan"]
-            .as_object_mut()
-            .unwrap()
-            .remove("genre");
-        validate_review_plan(&orientation).unwrap();
-        let materialized = materialize_config(&configured_auto_review(), &orientation).unwrap();
-        assert_eq!(materialized.steps.len(), 7);
     }
 
     #[test]
@@ -1547,94 +1908,17 @@ mod tests {
     }
 
     #[test]
-    fn migrated_profile_can_rerun_a_saved_v1_orientation() {
-        let mut orientation = valid_orientation();
-        let plan = orientation["review_plan"].as_object_mut().unwrap();
-        plan.remove("subject_specialist_ids");
-        plan.insert(
-            "field_specialist_id".to_string(),
-            serde_json::json!("field_mathematics"),
-        );
-        plan.insert(
-            "selection_notes".to_string(),
-            serde_json::json!([
-                {"id": "field_mathematics", "reason": "The paper is a mathematics contribution."},
-                {"id": "formal_proofs", "reason": "The theorem and proof carry the contribution."}
-            ]),
-        );
-        let mut config = PipelineConfig {
-            steps: steps(),
-            merge: Default::default(),
-            context_cache: Default::default(),
-            use_orientation: true,
-            orientation_prompt: orientation_prompt(),
-            orientation_schema: Some(orientation_schema()),
-            extraction: Default::default(),
-            parallel_context_template: String::new(),
-            variables: Vec::new(),
-        };
-        for step in &mut config.steps {
-            step.context.include = vec![ArtifactSelector::Survey];
-        }
-        let materialized = materialize_config(&config, &orientation).unwrap();
-        assert_eq!(materialized.steps.len(), 7);
-        assert!(materialized
-            .steps
-            .iter()
-            .any(|step| step.id == "field_mathematics"));
-    }
-
-    #[test]
-    fn migrated_profile_can_rerun_the_earliest_combined_specialist_plan() {
-        let mut orientation = valid_orientation();
-        let plan = orientation["review_plan"].as_object_mut().unwrap();
-        plan.remove("subject_specialist_ids");
-        plan.remove("method_specialist_ids");
-        plan.insert(
-            "specialist_ids".to_string(),
-            serde_json::json!(["formal_proofs", "field_mathematics"]),
-        );
-        plan.insert(
-            "selection_notes".to_string(),
-            serde_json::json!([
-                {"id": "formal_proofs", "reason": "The theorem and proof carry the contribution."},
-                {"id": "field_mathematics", "reason": "The paper is a mathematics contribution."}
-            ]),
-        );
-        let config = configured_auto_review();
-        let materialized = materialize_config(&config, &orientation).unwrap();
-        assert_eq!(materialized.steps.len(), 7);
-        assert!(materialized
-            .steps
-            .iter()
-            .any(|step| step.id == "formal_proofs"));
-        assert!(materialized
-            .steps
-            .iter()
-            .any(|step| step.id == "field_mathematics"));
-        assert_eq!(
-            synthesis_report_inputs(&materialized),
-            [
-                "auto_contribution",
-                "auto_consistency",
-                "auto_exposition",
-                "formal_proofs",
-                "field_mathematics",
-            ]
-        );
-    }
-
-    #[test]
     fn routing_schema_and_semantics_reject_invalid_plans() {
         let schema = orientation_schema();
+        let resolved = resolve_schema_catalogs(&schema).unwrap();
         let valid = valid_orientation();
-        crate::pipeline::structured::validate(&schema, &valid).unwrap();
+        crate::pipeline::structured::validate(&resolved, &valid).unwrap();
         validate_contract_for_schema(&schema, &valid).unwrap();
 
         let mut wrong_category = valid.clone();
         wrong_category["review_plan"]["subject_specialist_ids"] =
             serde_json::json!(["formal_proofs"]);
-        assert!(crate::pipeline::structured::validate(&schema, &wrong_category).is_err());
+        assert!(crate::pipeline::structured::validate(&resolved, &wrong_category).is_err());
 
         let mut missing_note = valid.clone();
         missing_note["review_plan"]["selection_notes"] = serde_json::json!([

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_political_science_theory",
+  "label": "Political Science — Political Theory",
+  "order": 138,
+  "group": {
+    "id": "political_science",
+    "label": "Political Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Normative, analytic, historical, or critical political theory concerning justice, authority, democracy, liberty, or power.",
+    "exclusions": "the central contribution is empirical political behavior or general moral philosophy without a political institutional object."
+  }
+}

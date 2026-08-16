@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_science",
+  "label": "Philosophy — Science",
+  "order": 216,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Scientific explanation, confirmation, causation, models, measurement, laws, realism, values in science, or the foundations of particular sciences.",
+    "exclusions": "the contribution is scientific methodology or history of science without a substantive philosophical claim about knowledge, explanation, representation, or scientific practice."
+  }
+}

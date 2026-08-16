@@ -1,6 +1,6 @@
 import type { PipelineConfig } from "./types";
 
-export const AUTO_REVIEW_CONTRACT = "auto-review-v2";
+export const AUTO_REVIEW_CONTRACT = "auto-review-v1";
 export const ADAPTIVE_AGENT_COUNT_KEY = "x-pipeline-adaptive-agent-count";
 export const MIN_ADAPTIVE_AGENTS = 2;
 export const MAX_ADAPTIVE_AGENTS = 6;

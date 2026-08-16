@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_registered_report",
+  "label": "Registered Report & Preregistration",
+  "order": 5,
+  "routing": {
+    "description": "The paper is a registered report or its confirmatory claims rest on a preregistration reproduced or cited in the manuscript.",
+    "exclusions": "a passing preregistration mention that the paper's claims do not depend on."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_finance",
+  "label": "Economics — Finance",
+  "order": 179,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Asset pricing, corporate finance, banking, household finance, intermediaries, or market microstructure.",
+    "exclusions": "the contribution is accounting description or business valuation without a finance mechanism or asset-market claim."
+  }
+}

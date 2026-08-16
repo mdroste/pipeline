@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_business_accounting_finance",
+  "label": "Business — Accounting & Corporate Finance",
+  "order": 239,
+  "group": {
+    "id": "business",
+    "label": "Business & Management"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Accounting, auditing, disclosure, governance, corporate finance, capital markets, or taxation in firms spanning accounting and finance.",
+    "exclusions": "the primary contribution is asset-pricing or public-finance economics without a firm reporting or governance question, or a listed accounting-auditing or corporate-finance specialist clearly carries the contribution."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_crime_punishment",
+  "label": "Sociology — Crime, Law & Punishment",
+  "order": 130,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Criminology, policing, courts and punishment, incarceration, surveillance, deviance, legal consciousness, or social control.",
+    "exclusions": "the central claim is legal doctrine, individual clinical pathology, or a policy effect without a sociological account of institutions, inequality, or control."
+  }
+}

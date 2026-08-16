@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "digital_trace_social_media",
+  "label": "Method — Digital Traces & Platform Data",
+  "order": 66,
+  "group": {
+    "id": "networks_text_traces",
+    "label": "Networks, Text & Digital Traces"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Platform or digital-trace data — social media, search, app logs — supports substantive claims about behavior, attitudes, or populations.",
+    "exclusions": "text content analysis covered by computational text analysis, or platform data used only to recruit participants."
+  }
+}

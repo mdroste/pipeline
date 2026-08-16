@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_agriculture_veterinary_food",
+  "label": "Agriculture & Veterinary Science — Food Science & Safety",
+  "order": 258,
+  "group": {
+    "id": "agriculture_veterinary",
+    "label": "Agriculture & Veterinary Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Food chemistry, processing, preservation, sensory science, food microbiology, quality, or food safety.",
+    "exclusions": "the contribution is human nutrition, molecular chemistry, or process engineering without a food-system quality or safety claim."
+  }
+}

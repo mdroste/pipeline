@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_health",
+  "label": "Economics — Health Economics",
+  "order": 181,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Health care demand and supply, insurance, providers, health behavior, medical innovation, health inequality, or economic evaluation of health policy.",
+    "exclusions": "clinical efficacy or population epidemiology without an economic choice, market, insurance, provider, or welfare claim."
+  }
+}

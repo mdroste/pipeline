@@ -223,6 +223,8 @@ describe("App run options", () => {
     systemIsDark = false;
     systemThemeListener = undefined;
     localStorage.clear();
+    document.documentElement.classList.remove("dark", "theme-transitioning");
+    document.documentElement.style.colorScheme = "";
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
@@ -267,6 +269,7 @@ describe("App run options", () => {
 
     await waitFor(() => {
       expect(document.documentElement).toHaveClass("dark");
+      expect(document.documentElement).not.toHaveClass("theme-transitioning");
       expect(setWindowTheme).toHaveBeenCalledWith(null);
     });
 

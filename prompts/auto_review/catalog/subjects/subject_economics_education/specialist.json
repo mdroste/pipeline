@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_education",
+  "label": "Economics — Economics of Education",
+  "order": 174,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Schooling, skill formation, teachers, school choice, education finance, admissions, higher education, or returns to education studied as economic decisions and institutions.",
+    "exclusions": "curriculum or pedagogy research without an economic allocation, incentive, or policy-incidence claim, or generic labor human-capital work with no education institution."
+  }
+}

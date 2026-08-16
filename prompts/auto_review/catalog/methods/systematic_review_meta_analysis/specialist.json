@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "systematic_review_meta_analysis",
+  "label": "Method — Systematic Review & Meta-analysis",
+  "order": 101,
+  "group": {
+    "id": "synthesis_meta",
+    "label": "Synthesis, Evaluation & Meta-research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Evidence search, study inclusion, effect harmonization, evidence grading, or quantitative synthesis across studies is central.",
+    "exclusions": "an ordinary narrative literature review or paper citing several prior estimates without systematic synthesis."
+  }
+}

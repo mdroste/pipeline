@@ -49,6 +49,7 @@ import {
 } from "./pipeline-editor/utils";
 import { describeStep } from "./pipeline-editor/stepSummary";
 import { ISSUES_SCHEMA } from "./pipeline-editor/stepTemplates";
+import SchemaEditorPanel from "./pipeline-editor/SchemaEditorPanel";
 
 interface Props {
   onClose: () => void;
@@ -79,6 +80,8 @@ export default function PipelinePage({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [schemaDraftValid, setSchemaDraftValid] = useState(true);
+  const [schemaEditorEpoch, setSchemaEditorEpoch] = useState(0);
   const [editing, setEditing] = useState<EditingMode>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
@@ -88,7 +91,7 @@ export default function PipelinePage({
   const [activeProfile, setActiveProfile] = useState<string>("auto-review");
   const [profileMutationPending, setProfileMutationPending] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [navigatorView, setNavigatorView] = useState<"steps" | "overview">("steps");
+  const [navigatorView, setNavigatorView] = useState<"steps" | "overview" | "schemas">("steps");
   const [catalogTab, setCatalogTab] = useState<"subjects" | "methods" | null>(null);
   const [undoRewrite, setUndoRewrite] = useState<{
     before: PipelineConfig;
@@ -222,6 +225,8 @@ export default function PipelinePage({
     setConfig(normalizeConfig(newConfig));
     setActiveProfile(id);
     setEditing(null);
+    setSchemaDraftValid(true);
+    setSchemaEditorEpoch((current) => current + 1);
     setDirty(false);
     onProfileChange?.();
     return true;
@@ -417,18 +422,57 @@ export default function PipelinePage({
   // --- Config editing ---
 
   const updateStep = (id: string, patch: Partial<StepConfig>) => {
-    setConfig((current) => current ? {
-      ...current,
-      steps: current.steps.map((step) => step.id === id ? { ...step, ...patch } : step),
-    } : current);
+    setConfig((current) => {
+      if (!current) return current;
+      const outputs = { ...(current.outputs ?? {}) };
+      if (patch.output_schema === null && outputs.findings_step === id) {
+        outputs.findings_step = "";
+      }
+      return {
+        ...current,
+        outputs,
+        steps: current.steps.map((step) => step.id === id ? { ...step, ...patch } : step),
+      };
+    });
     setDirty(true);
   };
 
   const updateStepPhase = (id: string, phase: Phase) => {
-    setConfig((current) => current ? {
-      ...current,
-      steps: current.steps.map((step) => step.id === id ? { ...step, phase } : step),
-    } : current);
+    setConfig((current) => {
+      if (!current) return current;
+      const outputs = { ...(current.outputs ?? {}) };
+      if (phase !== "sequential") {
+        if (outputs.primary_step === id) outputs.primary_step = "";
+        if (outputs.findings_step === id) outputs.findings_step = "";
+      }
+      return {
+        ...current,
+        outputs,
+        steps: current.steps.map((step) => step.id === id ? { ...step, phase } : step),
+      };
+    });
+    setDirty(true);
+  };
+
+  const updateOutputRole = (
+    id: string,
+    role: "primary_step" | "findings_step",
+    enabled: boolean,
+  ) => {
+    setConfig((current) => {
+      if (!current) return current;
+      const outputs = { ...(current.outputs ?? {}) };
+      outputs[role] = enabled ? id : outputs[role] === id ? "" : outputs[role];
+      return {
+        ...current,
+        outputs,
+        steps: role === "findings_step" && enabled
+          ? current.steps.map((step) => step.id === id && !step.output_schema
+            ? { ...step, output_schema: ISSUES_SCHEMA }
+            : step)
+          : current.steps,
+      };
+    });
     setDirty(true);
   };
 
@@ -515,6 +559,13 @@ export default function PipelinePage({
     }
     const nextConfig = {
       ...config,
+      outputs: enabled
+        ? config.outputs
+        : {
+            ...(config.outputs ?? {}),
+            primary_step: config.outputs?.primary_step === id ? "" : config.outputs?.primary_step,
+            findings_step: config.outputs?.findings_step === id ? "" : config.outputs?.findings_step,
+          },
       steps: config.steps.map((step) => {
         if (step.id === id) return { ...step, enabled };
         if (enabled) return step;
@@ -632,6 +683,8 @@ export default function PipelinePage({
         activeProfileRef.current !== profile
       ) return;
       setConfig(normalizeConfig(d)); setEditing(null); setDirty(false);
+      setSchemaDraftValid(true);
+      setSchemaEditorEpoch((current) => current + 1);
       await refreshProfiles(request);
       if (
         !profileMutationIsCurrent(request) ||
@@ -761,6 +814,8 @@ export default function PipelinePage({
           setActiveProfile(a);
           setEditing(null);
           setDirty(false);
+          setSchemaDraftValid(true);
+          setSchemaEditorEpoch((current) => current + 1);
           break;
         }
       }
@@ -836,7 +891,7 @@ export default function PipelinePage({
         contextBlocks.push("PRIOR OUTPUTS:\n{prior_outputs}");
       }
       const outputInstruction = draft.output === "issues"
-        ? "Return JSON matching the configured issues schema."
+        ? "Populate the configured issues schema with the completed findings."
         : "Return a clear, self-contained markdown report.";
       return [
         `# ${draft.label}`,
@@ -873,7 +928,16 @@ export default function PipelinePage({
       : -1;
     const steps = config.steps.slice();
     steps.splice(insertionIndex < 0 ? steps.length : insertionIndex, 0, step);
-    setConfig({ ...config, steps });
+    const publishesFindings = draft.mode === "guided"
+      && draft.output === "issues"
+      && step.phase === "sequential";
+    setConfig({
+      ...config,
+      steps,
+      outputs: publishesFindings
+        ? { ...(config.outputs ?? {}), primary_step: id, findings_step: id }
+        : config.outputs,
+    });
     setAddStepOpen(false);
     setNavigatorView("steps");
     setEditing(id);
@@ -895,6 +959,11 @@ export default function PipelinePage({
     if (!window.confirm(`Remove “${step?.label ?? id}”?${consequence}`)) return;
     const nextConfig = {
       ...config,
+      outputs: {
+        ...(config.outputs ?? {}),
+        primary_step: config.outputs?.primary_step === id ? "" : config.outputs?.primary_step,
+        findings_step: config.outputs?.findings_step === id ? "" : config.outputs?.findings_step,
+      },
       steps: config.steps
         .filter((step) => step.id !== id)
         .map((step) => ({
@@ -1067,22 +1136,27 @@ export default function PipelinePage({
           <div
             role="tablist"
             aria-label="Workflow navigator view"
-            className="grid grid-cols-2 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800"
+            className="grid grid-cols-3 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800"
           >
-            {(["steps", "overview"] as const).map((view) => (
+            {(["steps", "overview", "schemas"] as const).map((view) => (
               <button
                 key={view}
                 type="button"
                 role="tab"
                 aria-selected={navigatorView === view}
-                onClick={() => setNavigatorView(view)}
+                onClick={() => {
+                  setNavigatorView(view);
+                  if (view === "schemas" && editing !== "orientation" && !editingStep) {
+                    setEditing("orientation");
+                  }
+                }}
                 className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
                   navigatorView === view
                     ? "bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100"
                     : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
                 }`}
               >
-                {view === "steps" ? "Steps" : "Overview"}
+                {view === "steps" ? "Steps" : view === "overview" ? "Overview" : "Schemas"}
               </button>
             ))}
           </div>
@@ -1100,6 +1174,87 @@ export default function PipelinePage({
               selectedId={editing}
               onSelect={(id) => setEditing(editing === id ? null : id)}
             />
+          ) : navigatorView === "schemas" ? (
+            <div>
+              <div className="sticky top-0 z-[1] border-b border-gray-100 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-900">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
+                    Artifact contracts
+                  </span>
+                  <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+                    {config.steps.filter((step) => !!step.output_schema).length + (config.orientation_schema ? 1 : 0)} configured
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+                  Select a stage to inspect its effective provider schema.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Orientation schema"
+                onClick={() => setEditing("orientation")}
+                className={`w-full border-b border-gray-100 px-4 py-3 text-left transition-colors dark:border-gray-800 ${
+                  !editingStep
+                    ? "bg-violet-50/70 dark:bg-violet-950/25"
+                    : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                }`}
+              >
+                <span className="flex items-center justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
+                      Orientation map
+                    </span>
+                    <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                      Preprocessing JSON survey
+                    </span>
+                  </span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                    config.orientation_schema
+                      ? "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"
+                      : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                  }`}>
+                    {config.orientation_schema
+                      ? autoReview ? "Catalog-backed" : "Workflow contract"
+                      : "Object only"}
+                  </span>
+                </span>
+              </button>
+              <div className="bg-gray-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
+                Step outputs
+              </div>
+              {config.steps.map((step) => (
+                <button
+                  key={step.id}
+                  type="button"
+                  aria-label={`${step.label} output schema`}
+                  onClick={() => setEditing(step.id)}
+                  className={`w-full border-b border-gray-100 px-4 py-3 text-left transition-colors dark:border-gray-800 ${
+                    editingStep?.id === step.id
+                      ? "bg-violet-50/70 dark:bg-violet-950/25"
+                      : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                  }`}
+                >
+                  <span className="flex items-center justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
+                        {step.label}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                        {step.phase === "parallel" ? "Parallel" : "Sequential"}
+                        {!step.enabled ? " · Disabled" : ""}
+                      </span>
+                    </span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      step.output_schema
+                        ? "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"
+                        : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                    }`}>
+                      {step.output_schema ? "Custom JSON" : "Markdown"}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
           ) : (
             <>
           <div className="px-4 py-1.5 bg-gray-50 dark:bg-gray-800/50 sticky top-0 z-[1]">
@@ -1247,7 +1402,7 @@ export default function PipelinePage({
           <div className="flex gap-2">
             <button
               onClick={handleSave}
-              disabled={saving || profileMutationPending || !dirty}
+              disabled={saving || profileMutationPending || !dirty || !schemaDraftValid}
               className="flex-1 py-2 px-3 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg text-sm font-medium
                          hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-300 dark:disabled:bg-gray-700 transition-colors"
             >
@@ -1330,7 +1485,29 @@ export default function PipelinePage({
 
       {/* Right panel — independently memoizable editors */}
       <div className="flex-1 flex flex-col min-h-0">
-        {editing === "merge" ? (
+        {navigatorView === "schemas" ? (
+          <SchemaEditorPanel
+            scopeKey={`${activeProfile}:${schemaEditorEpoch}`}
+            target={editingStep
+              ? {
+                  kind: "step",
+                  step: editingStep,
+                  publishesFindings: config.outputs?.findings_step === editingStep.id,
+                }
+              : {
+                  kind: "orientation",
+                  schema: config.orientation_schema,
+                  autoReview,
+                }}
+            onOrientationSchemaChange={(orientation_schema) => {
+              setConfig((current) => current ? { ...current, orientation_schema } : current);
+              setDirty(true);
+            }}
+            onStepSchemaChange={(id, output_schema) => updateStep(id, { output_schema })}
+            onDraftValidityChange={setSchemaDraftValid}
+            onBrowseCatalog={setCatalogTab}
+          />
+        ) : editing === "merge" ? (
           <MergeEditorPanel merge={config.merge} onChange={updateMerge} />
         ) : editing === "extraction" ? (
           <ExtractionEditor
@@ -1341,6 +1518,7 @@ export default function PipelinePage({
           <OrientationEditor
             prompt={config.orientation_prompt}
             schema={config.orientation_schema}
+            inputMode={config.extraction?.input_mode ?? "document"}
             autoReview={autoReview}
             onPromptChange={(orientation_prompt) => {
               setConfig((current) => current ? { ...current, orientation_prompt } : current);
@@ -1401,6 +1579,7 @@ export default function PipelinePage({
             conditionStepIds={conditionStepIds}
             onUpdate={updateStep}
             onPhaseChange={updateStepPhase}
+            onOutputRoleChange={updateOutputRole}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_networks_graphical",
+  "label": "Statistics — Networks & Graphical Models",
+  "order": 49,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Statistical network models, graphical models, network dependence, community inference, relational sampling, or uncertainty for graph-structured data.",
+    "exclusions": "the graph is principally an algorithmic data structure, a physical network, or a descriptive visualization without a statistical network model or inferential claim."
+  }
+}

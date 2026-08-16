@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_communication_information_library",
+  "label": "Communication & Information — Library & Information Science",
+  "order": 263,
+  "group": {
+    "id": "communication_information",
+    "label": "Communication & Information"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Library and information science, archives, knowledge organization, information behavior, scholarly communication, or information institutions.",
+    "exclusions": "the central contribution is database engineering or digital humanities without an information-practice or institution claim."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "panel_longitudinal",
+  "label": "Method — Panel & Longitudinal Analysis",
+  "order": 27,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Repeated observations on people, firms, places, organisms, or other units are used to identify within-unit change, trajectories, transitions, or dynamic heterogeneity.",
+    "exclusions": "a two-period policy contrast whose main logic is difference-in-differences, or a single aggregate time series without repeated cross-sectional units."
+  }
+}

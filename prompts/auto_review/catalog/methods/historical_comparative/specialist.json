@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "historical_comparative",
+  "label": "Method — Historical & Comparative Reasoning",
+  "order": 97,
+  "group": {
+    "id": "sources_history_law",
+    "label": "Sources, History & Law"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Periodization, sequence, path dependence, comparative cases, or process-based historical explanation supports the central argument.",
+    "exclusions": "a single contemporaneous case with no historical or comparative explanatory claim."
+  }
+}

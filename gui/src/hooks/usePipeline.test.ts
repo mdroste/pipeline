@@ -6,13 +6,14 @@ import { usePipeline } from "./usePipeline";
 const handlers: Record<string, (event: { payload: unknown }) => void> = {};
 const unlisten = vi.fn();
 const listenMock = vi.hoisted(() => vi.fn());
+const invokeMock = vi.hoisted(() => vi.fn(() => new Promise(() => {})));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: listenMock,
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(() => new Promise(() => {})),
+  invoke: invokeMock,
 }));
 
 function emitLog(
@@ -197,6 +198,34 @@ describe("usePipeline log buffering", () => {
       },
     });
     expect(result.current.usage.bySession[3]).toBeUndefined();
+    unmount();
+  });
+
+  it("ignores queued progress stages after the run reaches done", async () => {
+    invokeMock.mockResolvedValueOnce({
+      markdown: "# Done",
+      extracted_text: "Document",
+      run_id: "run-1",
+      report: {
+        orientation: null,
+        step_outputs: [],
+        failed_steps: [],
+        report_date: "2026-08-15",
+        paper_hash: "abcdef1234567890",
+      },
+    });
+    const { result, unmount } = renderHook(() => usePipeline());
+    await waitFor(() => expect(result.current.listenersReady).toBe(true));
+
+    await act(async () => {
+      await result.current.startPipeline("/papers/example.pdf");
+    });
+    expect(result.current.state.kind).toBe("done");
+    expect(result.current.stageHistory).toEqual([]);
+
+    act(() => emitStage("dispatching", "late-dispatch"));
+    expect(result.current.state.kind).toBe("done");
+    expect(result.current.stageHistory).toEqual([]);
     unmount();
   });
 

@@ -45,6 +45,8 @@ function evidenceCitation(item: IssueEvidence): string {
     item.nodeId ? `node ${item.nodeId}` : "",
     item.assetId ? `asset ${item.assetId}` : "",
     item.artifactPath ? `artifact ${item.artifactPath}` : "",
+    item.sourcePath ? `source ${item.sourcePath}` : "",
+    item.sourceHash ? `source hash ${item.sourceHash}` : "",
   ].filter(Boolean);
   const location = references.join(", ") || item.description || "source";
   const description = item.description && item.description !== location
@@ -392,9 +394,11 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                             : "";
                           const label = evidence.page
                             ? `Page ${evidence.page}`
-                            : evidence.artifactPath
-                              ? `${evidence.artifactPath}${lineLabel}`
-                              : evidence.description || evidence.assetId || evidence.nodeId || (lineLabel ? `Line ${lineLabel.slice(1)}` : `Source ${evidenceIndex + 1}`);
+                            : evidence.sourcePath
+                              ? `${evidence.sourcePath}${lineLabel}`
+                              : evidence.artifactPath
+                                ? `${evidence.artifactPath}${lineLabel}`
+                                : evidence.description || evidence.assetId || evidence.nodeId || (lineLabel ? `Line ${lineLabel.slice(1)}` : `Source ${evidenceIndex + 1}`);
                           const location = (
                             <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-medium ${
                               canOpen
@@ -405,7 +409,7 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                             </span>
                           );
                           return (
-                            <div key={`${evidence.page ?? ""}-${evidence.nodeId ?? ""}-${evidenceIndex}`} className="text-xs text-gray-600 dark:text-gray-400">
+                            <div key={`${evidence.page ?? ""}-${evidence.sourcePath ?? ""}-${evidence.nodeId ?? ""}-${evidenceIndex}`} className="text-xs text-gray-600 dark:text-gray-400">
                               <div className="flex flex-wrap items-center gap-2">
                                 {canOpen ? (
                                   <button

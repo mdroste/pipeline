@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "bunching_estimators",
+  "label": "Method — Bunching & Notch Designs",
+  "order": 10,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Bunching at a kink, notch, or threshold in a schedule identifies an elasticity, behavioral response, or structural parameter central to the paper.",
+    "exclusions": "a discontinuity design comparing outcomes across a cutoff, or descriptive heaping without a recovered parameter."
+  }
+}

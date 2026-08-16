@@ -4,7 +4,11 @@ pub(super) struct RunCompletion {
     pub(super) input_path: String,
     pub(super) input_mode: String,
     pub(super) input_interpretation: String,
+    pub(super) input_identity: crate::runs::InputIdentity,
     pub(super) profile_name: String,
+    pub(super) workflow_source: String,
+    pub(super) workflow_fingerprint: String,
+    pub(super) specialist_catalog_revision: String,
     pub(super) variables: std::collections::HashMap<String, String>,
     pub(super) extra_inputs: std::collections::HashMap<String, String>,
     pub(super) extra_input_sources: std::collections::HashMap<String, String>,
@@ -33,8 +37,12 @@ pub(super) fn complete_run(
         input_path: completion.input_path,
         input_mode: completion.input_mode,
         input_interpretation: completion.input_interpretation,
+        input_identity: completion.input_identity,
         profile_id: settings.active_profile.clone(),
         profile_name: completion.profile_name,
+        workflow_source: completion.workflow_source,
+        workflow_fingerprint: completion.workflow_fingerprint,
+        specialist_catalog_revision: completion.specialist_catalog_revision,
         provider: settings.preferred_provider.clone(),
         status: status.to_string(),
         duration_secs: elapsed.as_secs(),
@@ -149,10 +157,37 @@ pub async fn run_pipeline(
 #[derive(Debug, Clone, Default)]
 pub struct HeadlessRunOptions {
     pub profile_id: Option<String>,
+    pub workflow: Option<HeadlessWorkflow>,
     pub input_path: String,
     pub input_interpretation: Option<String>,
     pub variables: std::collections::HashMap<String, String>,
     pub extra_inputs: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HeadlessWorkflow {
+    /// Human-readable origin retained in the run manifest (`stdin` or an
+    /// absolute/entered file path). It is metadata, never an input path.
+    pub source: String,
+    pub document: crate::pipeline_config::WorkflowDocument,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HeadlessCheckReport {
+    pub workflow_source: String,
+    pub workflow_fingerprint: String,
+    pub schema_version: u32,
+    pub profile_id: String,
+    pub profile_name: String,
+    pub configured_input_mode: String,
+    pub stages: Vec<crate::pipeline::executor::ExecutionPlanStage>,
+    pub parallel_agents: Vec<String>,
+    pub merge_agent: Option<String>,
+    pub budget: crate::safety::RunBudgetEstimate,
+    /// Flatten the historical dependency report so existing `ready`/`deps`
+    /// JSON consumers keep working as planning metadata is added.
+    #[serde(flatten)]
+    pub readiness: crate::deps::DepsReport,
 }
 
 async fn prepare_headless_run(
@@ -160,7 +195,8 @@ async fn prepare_headless_run(
 ) -> Result<(RunSnapshot, crate::deps::DepsReport), String> {
     crate::safety::validate_runtime_context(&options.variables, "Run variables")?;
     crate::safety::validate_runtime_context(&options.extra_inputs, "Named input paths")?;
-    let snapshot = load_run_snapshot_for_profile(options.profile_id.as_deref())?;
+    let snapshot =
+        load_run_snapshot_for_workflow(options.profile_id.as_deref(), options.workflow.as_ref())?;
     validate_primary_input_selection(
         &snapshot.config,
         Some(&options.input_path),
@@ -194,6 +230,57 @@ pub async fn check_headless_dependencies(
     prepare_headless_run(options)
         .await
         .map(|(_, dependencies)| dependencies)
+}
+
+/// Return the normalized identity, authoritative scheduler waves, worst-case
+/// work bounds, and dependencies for the exact prospective CLI invocation.
+pub async fn check_headless_plan(
+    options: &HeadlessRunOptions,
+) -> Result<HeadlessCheckReport, String> {
+    let (snapshot, readiness) = prepare_headless_run(options).await?;
+    let mut config = snapshot.config.clone();
+    pipeline_config::apply_agent_defaults(&mut config, &snapshot.settings);
+    let budget = crate::safety::estimate_run_budget(&config, &snapshot.settings)?;
+    crate::safety::validate_run_budget(&config, &snapshot.settings)?;
+    let resolved_interpretation = resolved_input_interpretation(
+        &config.extraction.input_mode,
+        &options.input_path,
+        options.input_interpretation.as_deref(),
+    );
+    let mut stages = executor::execution_plan(&config)?;
+    if let Some(stage) = stages.iter_mut().find(|stage| stage.kind == "extracting") {
+        stage.label = executor::input_processing_label(resolved_interpretation).to_string();
+    }
+    let merge_agent = (config.merge.enabled
+        && config.steps.iter().any(|step| {
+            step.enabled
+                && step.phase == crate::pipeline_config::Phase::Parallel
+                && step.agents.len() > 1
+        }))
+    .then(|| {
+        config
+            .merge
+            .agents
+            .first()
+            .cloned()
+            .unwrap_or_else(|| snapshot.settings.merge_agent().to_string())
+    });
+    Ok(HeadlessCheckReport {
+        workflow_source: snapshot.workflow_source,
+        workflow_fingerprint: snapshot.workflow_fingerprint,
+        schema_version: crate::pipeline_config::CURRENT_SCHEMA_VERSION,
+        profile_id: snapshot.settings.active_profile.clone(),
+        profile_name: snapshot.profile_name,
+        configured_input_mode: match config.extraction.input_mode.trim() {
+            "" => "document".to_string(),
+            mode => mode.to_string(),
+        },
+        stages,
+        parallel_agents: snapshot.settings.parallel_agents(),
+        merge_agent,
+        budget,
+        readiness,
+    })
 }
 
 /// Headless entry point for the CLI. It performs the same concrete input,

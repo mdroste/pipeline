@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "missing_data_attrition",
+  "label": "Method — Missing Data & Attrition",
+  "order": 30,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Missing outcomes, attrition, nonresponse, censoring, incomplete covariates, imputation, or missing-not-at-random assumptions materially affect a central result.",
+    "exclusions": "missingness is negligible, fully mechanical, and demonstrably unrelated to the conclusions, or only incidental reporting fields are incomplete."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_biomedical",
+  "label": "Engineering — Biomedical",
+  "order": 77,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Medical devices, biomaterials, tissue engineering, biosensors, biomechanics, or biomedical systems.",
+    "exclusions": "the primary claim is clinical efficacy or basic biology rather than an engineered biomedical artifact."
+  }
+}

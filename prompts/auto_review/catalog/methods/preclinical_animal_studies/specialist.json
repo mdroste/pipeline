@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "preclinical_animal_studies",
+  "label": "Method — Preclinical Animal Studies",
+  "order": 71,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "In vivo animal experiments — disease models, interventions, or mechanism tests — carry central claims.",
+    "exclusions": "human studies, in vitro work without animals, or behavioral lab research covered by laboratory-experiment review."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "extreme_value_tail_risk",
+  "label": "Method — Extreme Values & Tail Risk",
+  "order": 37,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Extreme-value theory, return levels, exceedance probabilities, or tail-risk estimation carries a central claim about rare events.",
+    "exclusions": "tail behavior mentioned descriptively, or risk measures computed from the body of the distribution with standard methods."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_general",
+  "label": "Mathematics — General",
+  "order": 19,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Pure or applied mathematics spanning several areas or outside the listed mathematical subfields.",
+    "exclusions": "a listed mathematical subfield clearly contains the main theorem or construction."
+  }
+}

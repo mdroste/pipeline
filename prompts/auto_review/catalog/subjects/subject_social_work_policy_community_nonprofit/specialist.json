@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_social_work_policy_community_nonprofit",
+  "label": "Social Work & Social Policy — Community & Nonprofit",
+  "order": 274,
+  "group": {
+    "id": "social_work_policy",
+    "label": "Social Work & Social Policy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Community practice, nonprofit and voluntary organizations, mutual aid, social development, advocacy, or collective service provision.",
+    "exclusions": "the main contribution is organizational sociology or public administration without a community-practice, voluntary-sector, or service mission."
+  }
+}

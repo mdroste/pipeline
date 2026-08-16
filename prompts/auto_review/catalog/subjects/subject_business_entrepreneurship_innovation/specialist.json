@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_business_entrepreneurship_innovation",
+  "label": "Business — Entrepreneurship & Innovation",
+  "order": 244,
+  "group": {
+    "id": "business",
+    "label": "Business & Management"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Entrepreneurship, new ventures, innovation strategy, technology commercialization, venture finance, ecosystems, or founder and startup dynamics.",
+    "exclusions": "innovation is an aggregate growth outcome or technology measure without a venture, firm-strategy, commercialization, or entrepreneurial process."
+  }
+}

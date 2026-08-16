@@ -49,6 +49,10 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         settings,
         mut config,
         profile_name,
+        workflow_source,
+        workflow_fingerprint,
+        workflow_json,
+        specialist_catalog_revision,
         ..
     } = snapshot;
     pipeline_config::apply_agent_defaults(&mut config, &settings);
@@ -147,6 +151,12 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     for note in &extraction.quality_notes {
         crate::pipeline::logging::emit(app, format!("WARNING: {note}"));
     }
+    let input_identity = crate::runs::input_identity(
+        paper_path,
+        input_interpretation,
+        &extraction.paper_hash,
+        None,
+    );
 
     // Close/flush the preprocessing sink before copying it into the newly
     // addressable run directory.
@@ -158,8 +168,12 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             input_path: paper_path.to_string(),
             input_mode: input_mode.to_string(),
             input_interpretation: input_interpretation.to_string(),
+            input_identity: input_identity.clone(),
             profile_id: settings.active_profile.clone(),
             profile_name: profile_name.clone(),
+            workflow_source: workflow_source.clone(),
+            workflow_fingerprint: workflow_fingerprint.clone(),
+            specialist_catalog_revision: specialist_catalog_revision.clone(),
             provider: settings.preferred_provider.clone(),
             variables: variables.clone(),
             ..Default::default()
@@ -172,6 +186,17 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
     if let Some(w) = run_writer.as_mut() {
+        if let Err(e) = w.add_text(
+            "context/workflow.json",
+            "Workflow snapshot",
+            "context",
+            &workflow_json,
+        ) {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!("WARNING: {e}") }),
+            );
+        }
         if let Err(e) = w.add_text(
             crate::runs::DOCUMENT_TEXT_PATH,
             "Readable document",
@@ -466,11 +491,16 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     .ok();
     let orient_start = std::time::Instant::now();
     let survey_template = orient::resolve_survey_template(&config.orientation_prompt, input_mode);
+    let survey_schema = orient::resolve_survey_schema(
+        &config.orientation_prompt,
+        config.orientation_schema.as_ref(),
+        input_mode,
+    );
     let orientation = orient::build_orientation_map(
         app,
         &extraction,
         survey_template.as_deref(),
-        config.orientation_schema.as_ref(),
+        survey_schema.as_ref(),
         scoped_source_read_root.as_deref(),
     )
     .await?;
@@ -716,10 +746,22 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         return Err("Pipeline cancelled".into());
     }
 
+    let mut products = crate::findings::build_run_products(&execution_config, &result.outputs);
+    if let Some(writer) = run_writer.as_mut() {
+        for warning in
+            writer.capture_source_evidence(&mut products, std::path::Path::new(&scoped_source_path))
+        {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!("WARNING: {warning}") }),
+            );
+        }
+    }
     let report = PipelineReport {
         orientation,
         step_outputs: result.outputs,
         failed_steps: result.failed_steps,
+        products,
         referee_reports: vec![],
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -752,7 +794,11 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             input_path: paper_path.to_string(),
             input_mode: input_mode.to_string(),
             input_interpretation: input_interpretation.to_string(),
+            input_identity,
             profile_name,
+            workflow_source,
+            workflow_fingerprint,
+            specialist_catalog_revision,
             variables,
             extra_inputs: persisted_inputs,
             extra_input_sources: extra_sources,

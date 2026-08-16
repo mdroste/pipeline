@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "textual_criticism_editions",
+  "label": "Method — Textual Criticism & Critical Editions",
+  "order": 99,
+  "group": {
+    "id": "sources_history_law",
+    "label": "Sources, History & Law"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Editions, stemmata, attributions, datings, or emendations of texts as artifacts carry central claims.",
+    "exclusions": "interpretation of established texts, or archival evidence about events covered by source criticism."
+  }
+}

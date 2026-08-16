@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_interdisciplinary_metascience",
+  "label": "Interdisciplinary Studies — Metascience & Science of Science",
+  "order": 286,
+  "group": {
+    "id": "interdisciplinary_studies",
+    "label": "Interdisciplinary Studies"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "The scientific study of science itself: replication and reliability, publication and funding systems, research careers, peer review, or science-policy evidence.",
+    "exclusions": "a bibliometric mapping exercise without a claim about how science works, or the history and sociology of one discipline reviewed by its own field."
+  }
+}

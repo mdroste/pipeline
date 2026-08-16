@@ -27,6 +27,7 @@ cargo run --locked --bin pipeline-cli -- <COMMAND> [OPTIONS]
 | --- | --- |
 | `profiles` | List available workflows, or print the list as JSON. |
 | `profiles show <ID>` | Print one workflow's export JSON. |
+| `workflow` | Print the schema/template, strictly validate portable JSON, or explicitly install it. |
 | `check` | Validate one prospective run and its exact dependencies without running it. |
 | `run` | Run one workflow and print or save its Markdown report. |
 | `batch` | Run one workflow over supported documents in a directory. |
@@ -54,6 +55,71 @@ active workflow:
   --input /path/to/paper.pdf
 ```
 
+## Portable workflows and agent authoring
+
+A workflow is saved as the same versioned JSON `profile` envelope produced by
+the GUI export and `profiles show`. There is no second CLI-only format. The
+current schema is v8 and includes steps, dependency and artifact selectors,
+merge policy, published outputs, extraction/input declarations, variables,
+orientation settings, and context caching. User settings and credentials are
+not part of a portable workflow.
+
+Start from a complete normalized example and consult the machine-readable
+schema rather than constructing the format from memory:
+
+```bash
+./target/debug/pipeline-cli workflow template
+./target/debug/pipeline-cli workflow schema
+```
+
+Validate generated JSON without changing local state:
+
+```bash
+./target/debug/pipeline-cli workflow validate /path/to/workflow.json --json
+```
+
+Validation is strict for agent safety. It rejects unknown fields (including
+misspellings), malformed typed fields, newer schema versions, invalid or cyclic
+dependencies, unsupported providers or tools, invalid artifact access,
+unbounded fan-out, invalid output schemas, and workflows without an enabled
+Sequential report step. Older supported exports receive their normal defaults
+and are normalized to the current schema before hashing.
+
+Use a validated file ephemerally with `check`, `run`, or `batch`:
+
+```bash
+./target/debug/pipeline-cli check \
+  --workflow /path/to/workflow.json \
+  --input /path/to/paper.pdf \
+  --json
+
+./target/debug/pipeline-cli run \
+  --workflow /path/to/workflow.json \
+  --input /path/to/paper.pdf \
+  --out /path/to/review.md
+```
+
+`--workflow -` reads up to 10 MB of UTF-8 JSON from standard input. It is
+mutually exclusive with `--profile`. Ephemeral use never edits the active
+desktop workflow or saves a profile. To save a generated workflow explicitly:
+
+```bash
+./target/debug/pipeline-cli workflow install /path/to/workflow.json --json
+```
+
+Installation creates a new deduplicated profile ID; it does not overwrite an
+existing profile. Every run records the workflow source and normalized SHA-256
+fingerprint in `manifest.json` and retains the exact normalized definition as
+`context/workflow.json`, so a result remains auditable if the source file or an
+installed profile later changes.
+
+The repository includes a Codex/ChatGPT skill at
+`.agents/skills/pipeline-workflow` and exposes the same package to Claude from
+`.claude/skills/pipeline-workflow`. The skill obtains the live template/schema
+from the CLI, validates generated JSON, inspects the preflight plan and work
+bounds, and uses ephemeral execution unless installation is explicitly asked
+for.
+
 ## Check a run
 
 `check` resolves the selected workflow, inputs, runtime variables, providers,
@@ -70,6 +136,10 @@ model:
   --input /path/to/paper.pdf \
   --json
 ```
+
+With `--json`, the report also includes the normalized workflow fingerprint,
+authoritative scheduler stages, selected Parallel/Merge agents, and upper
+bounds on step units, merge calls, and provider attempts.
 
 The concrete primary and named-input paths determine whether PDF parsing can
 run. For a PDF:
@@ -196,9 +266,10 @@ package managers, or other system software.
 - `2`: command syntax or local pre-dispatch validation was invalid.
 - `130`: an active run or installation was interrupted.
 
-Machine-readable profile, dependency, and engine status output is available
-with the commands' `--json` options. Progress and diagnostics remain on
-standard error so standard output can be redirected safely.
+Machine-readable workflow validation/planning, profile, dependency, and engine
+status output is available with the commands' `--json` options. Progress and
+diagnostics remain on standard error so standard output can be redirected
+safely.
 
 ## Local state and concurrency
 

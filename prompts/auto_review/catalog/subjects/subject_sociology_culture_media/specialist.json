@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_culture_media",
+  "label": "Sociology — Culture & Media",
+  "order": 125,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Culture, meaning, classification, knowledge, religion, media, consumption, or cultural production.",
+    "exclusions": "the paper is primarily textual interpretation without a sociological claim about actors, institutions, or social distribution."
+  }
+}

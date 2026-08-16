@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_astrophysics_cosmology",
+  "label": "Physics — Astrophysics & Cosmology (General)",
+  "order": 9,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Astrophysics or astronomy spanning several areas or outside the listed astronomy subfields.",
+    "exclusions": "the main object is terrestrial geophysics, or a listed astronomy subfield — stellar and exoplanetary, galactic and extragalactic, or cosmology and gravitation — clearly carries the contribution."
+  }
+}

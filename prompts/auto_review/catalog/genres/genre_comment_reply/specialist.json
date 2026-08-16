@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_comment_reply",
+  "label": "Comment & Reply",
+  "order": 1,
+  "routing": {
+    "description": "The paper is a comment on, correction of, or reply to one or more identified papers.",
+    "exclusions": "ordinary disagreement with the literature inside an original contribution, or a stand-alone paper that merely revisits a topic."
+  }
+}

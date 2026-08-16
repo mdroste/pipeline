@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_diagnostics",
+  "label": "Medicine & Health — Diagnostics & Imaging",
+  "order": 114,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Diagnostic tests, biomarkers, pathology, medical imaging, screening, prognostic models, or clinical decision support.",
+    "exclusions": "the main contribution is an imaging algorithm without a clinical diagnostic claim."
+  }
+}

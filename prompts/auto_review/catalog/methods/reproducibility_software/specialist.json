@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "reproducibility_software",
+  "label": "Method — Reproducibility & Research Software",
+  "order": 109,
+  "group": {
+    "id": "integrity_governance",
+    "label": "Reproducibility, Integrity & Governance"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Correctness, determinism, numerical behavior, dependency sensitivity, or failure handling in custom research software and computational workflows materially supports the scientific result.",
+    "exclusions": "routine use of standard software with no software or workflow claim, or a paper-and-package traceability question whose main issue is completeness and reproducibility documentation rather than computational behavior."
+  }
+}

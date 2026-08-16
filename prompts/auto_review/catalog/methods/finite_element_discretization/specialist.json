@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "finite_element_discretization",
+  "label": "Method — Finite Elements & Discretization",
+  "order": 46,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Finite-element, finite-volume, finite-difference, spectral, meshfree, or related discretization methods materially support a scientific or engineering conclusion.",
+    "exclusions": "a black-box solver is used routinely and the claimed result is demonstrably insensitive to discretization, mesh, boundary treatment, and solver behavior."
+  }
+}

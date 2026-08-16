@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_chemistry_synthesis_catalysis",
+  "label": "Chemistry — Organic Synthesis & Catalysis",
+  "order": 96,
+  "group": {
+    "id": "chemistry",
+    "label": "Chemistry"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Organic synthesis, reaction development, total synthesis, homogeneous or heterogeneous catalysis, organocatalysis, or stereoselective methodology.",
+    "exclusions": "the molecule is chiefly a biological probe or therapeutic candidate and the synthetic transformation itself is routine."
+  }
+}

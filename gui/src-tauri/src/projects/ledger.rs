@@ -11,7 +11,7 @@ use std::fs;
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
-const LEDGER_SCHEMA_VERSION: u32 = 1;
+const LEDGER_SCHEMA_VERSION: u32 = 2;
 const MAX_LEDGER_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_LEDGER_ISSUES: usize = 10_000;
 const MAX_LEDGER_OCCURRENCES: usize = 20_000;
@@ -47,6 +47,10 @@ pub struct ProjectIssueEvidence {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub artifact_path: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub quote: String,
@@ -57,6 +61,8 @@ pub struct ProjectIssueOccurrence {
     pub key: String,
     pub run_id: String,
     pub issue_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_key: String,
     pub observed_at: String,
     pub profile_id: String,
     pub profile_name: String,
@@ -253,6 +259,7 @@ fn validate_ledger(ledger: &ProjectIssueLedger, project_id: &str) -> Result<(), 
             }
             crate::runs::validate_run_id(&occurrence.run_id)?;
             if occurrence.title.len() > MAX_TITLE_BYTES
+                || occurrence.source_key.len() > MAX_REFERENCE_BYTES
                 || occurrence.section.len() > MAX_SECTION_BYTES
                 || occurrence.body.len() > MAX_BODY_BYTES
                 || occurrence.annotation_note.len() > MAX_NOTE_BYTES
@@ -296,9 +303,12 @@ fn validate_evidence(evidence: &ProjectIssueEvidence) -> Result<(), String> {
         || evidence.node_id.len() > MAX_REFERENCE_BYTES
         || evidence.asset_id.len() > MAX_REFERENCE_BYTES
         || evidence.artifact_path.len() > MAX_REFERENCE_BYTES
+        || evidence.source_path.len() > MAX_REFERENCE_BYTES
+        || evidence.source_hash.len() > MAX_REFERENCE_BYTES
         || evidence.description.len() > MAX_BODY_BYTES
         || evidence.quote.len() > MAX_BODY_BYTES
         || (!evidence.artifact_path.is_empty() && !safe_artifact_path(&evidence.artifact_path))
+        || (!evidence.source_path.is_empty() && !safe_artifact_path(&evidence.source_path))
     {
         return Err("Project issue evidence is invalid".to_string());
     }
@@ -324,7 +334,10 @@ fn read_run_report(run_id: &str) -> Result<crate::models::PipelineReport, String
     if bytes.len() as u64 > MAX_REPORT_BYTES {
         return Err("report.json exceeds the ledger scan limit".to_string());
     }
-    serde_json::from_slice(&bytes).map_err(|error| format!("Invalid report.json: {error}"))
+    let mut report: crate::models::PipelineReport =
+        serde_json::from_slice(&bytes).map_err(|error| format!("Invalid report.json: {error}"))?;
+    crate::findings::ensure_legacy_products(&mut report);
+    Ok(report)
 }
 
 fn scan_project(
@@ -443,148 +456,72 @@ fn extract_occurrences(
         .iter()
         .map(|artifact| artifact.rel_path.as_str())
         .collect::<HashSet<_>>();
-    for output in report.all_outputs().iter().rev() {
-        if output.skipped {
-            continue;
-        }
-        let Some(value) = crate::pipeline::structured::extract_json(&output.raw_text) else {
-            continue;
-        };
-        let Some(items) = value
-            .as_array()
-            .or_else(|| value.get("issues").and_then(serde_json::Value::as_array))
-        else {
-            continue;
-        };
-        if items.is_empty() || items.len() > MAX_ISSUES_PER_RUN {
-            continue;
-        }
-        let mut occurrences = Vec::new();
-        let mut used_issue_ids = HashMap::<String, usize>::new();
-        for (index, item) in items.iter().enumerate() {
-            let Some(object) = item.as_object() else {
-                continue;
-            };
-            let title = bounded_value(
-                first_value(object, &["title", "summary", "message", "name"]),
-                MAX_TITLE_BYTES,
-            );
-            let body = bounded_value(
-                first_value(
-                    object,
-                    &[
-                        "body",
-                        "description",
-                        "detail",
-                        "explanation",
-                        "rationale",
-                        "recommendation",
-                    ],
-                ),
-                MAX_BODY_BYTES,
-            );
-            if title.is_empty() && body.is_empty() {
-                continue;
-            }
-            let issue_id = bounded_value(
-                first_value(
-                    object,
-                    &[
-                        "id",
-                        "issue_id",
-                        "issueId",
-                        "rule_id",
-                        "ruleId",
-                        "fingerprint",
-                        "key",
-                    ],
-                ),
-                MAX_REFERENCE_BYTES,
-            );
-            let base_issue_id = if issue_id.is_empty() {
-                (index + 1).to_string()
-            } else {
-                issue_id
-            };
-            let count = used_issue_ids.entry(base_issue_id.clone()).or_default();
-            *count += 1;
-            let issue_id = if *count == 1 {
-                base_issue_id
-            } else {
-                bounded_text(&format!("{base_issue_id}#{count}"), MAX_REFERENCE_BYTES)
-            };
-            let section = bounded_value(
-                first_value(
-                    object,
-                    &[
-                        "section",
-                        "location",
-                        "file",
-                        "file_path",
-                        "filePath",
-                        "path",
-                        "criterion",
-                        "category",
-                    ],
-                ),
-                MAX_SECTION_BYTES,
-            );
-            let severity = normalize_severity(&bounded_value(
-                first_value(object, &["severity", "priority", "level"]),
-                100,
-            ));
-            let mut evidence = match object.get("evidence") {
-                Some(serde_json::Value::Array(values)) => values
-                    .iter()
-                    .take(MAX_EVIDENCE_PER_ISSUE)
-                    .filter_map(|value| parse_evidence(value, &artifact_paths))
-                    .collect(),
-                Some(value @ serde_json::Value::Object(_)) => {
-                    parse_evidence(value, &artifact_paths).into_iter().collect()
-                }
-                _ => Vec::new(),
-            };
-            if evidence.len() < MAX_EVIDENCE_PER_ISSUE {
-                if let Some(inline) = parse_inline_evidence(object, &artifact_paths) {
-                    if !evidence.contains(&inline) {
-                        evidence.push(inline);
+    let Some(product) = crate::findings::canonical_findings(report) else {
+        return Vec::new();
+    };
+    product
+        .findings
+        .iter()
+        .take(MAX_ISSUES_PER_RUN)
+        .enumerate()
+        .map(|(index, finding)| {
+            let evidence = finding
+                .evidence
+                .iter()
+                .take(MAX_EVIDENCE_PER_ISSUE)
+                .map(|item| {
+                    let artifact_path = if item.artifact_path.is_empty() {
+                        resolve_artifact_path(&item.source_path, &artifact_paths)
+                    } else {
+                        resolve_artifact_path(&item.artifact_path, &artifact_paths)
+                    };
+                    ProjectIssueEvidence {
+                        page: item.page,
+                        line_start: item.line_start,
+                        line_end: item.line_end,
+                        node_id: bounded_text(&item.node_id, MAX_REFERENCE_BYTES),
+                        asset_id: bounded_text(&item.asset_id, MAX_REFERENCE_BYTES),
+                        artifact_path,
+                        source_path: bounded_text(&item.source_path, MAX_REFERENCE_BYTES),
+                        source_hash: bounded_text(&item.source_hash, MAX_REFERENCE_BYTES),
+                        description: bounded_text(&item.description, MAX_BODY_BYTES),
+                        quote: bounded_text(&item.quote, MAX_BODY_BYTES),
                     }
-                }
-            }
+                })
+                .collect();
             let (annotation_status, annotation_note) =
-                annotations.get(&issue_id).cloned().unwrap_or_default();
-            occurrences.push(ProjectIssueOccurrence {
-                key: occurrence_key(&manifest.run_id, &output.step_id, &issue_id, index),
+                annotations.get(&finding.id).cloned().unwrap_or_default();
+            ProjectIssueOccurrence {
+                key: occurrence_key(
+                    &manifest.run_id,
+                    &product.source_step_id,
+                    &finding.id,
+                    index,
+                ),
                 run_id: manifest.run_id.clone(),
-                issue_id,
+                issue_id: bounded_text(&finding.id, MAX_REFERENCE_BYTES),
+                source_key: bounded_text(&finding.source_key, MAX_REFERENCE_BYTES),
                 observed_at: manifest.created.clone(),
                 profile_id: bounded_text(&manifest.profile_id, MAX_REFERENCE_BYTES),
                 profile_name: bounded_text(&manifest.profile_name, MAX_TITLE_BYTES),
                 input_name: input_name(&manifest.input_path),
                 input_mode: bounded_text(&manifest.input_mode, 100),
                 input_interpretation: bounded_text(&manifest.input_interpretation, 100),
-                step_id: bounded_text(&output.step_id, MAX_REFERENCE_BYTES),
-                step_label: bounded_text(&output.step_label, MAX_TITLE_BYTES),
-                title: if title.is_empty() {
-                    bounded_text(&body, MAX_TITLE_BYTES)
-                } else {
-                    title
-                },
-                severity,
-                section,
-                body,
+                step_id: bounded_text(&product.source_step_id, MAX_REFERENCE_BYTES),
+                step_label: bounded_text(&product.source_step_label, MAX_TITLE_BYTES),
+                title: bounded_text(&finding.title, MAX_TITLE_BYTES),
+                severity: bounded_text(&finding.priority, 100),
+                section: bounded_text(&finding.category, MAX_SECTION_BYTES),
+                body: bounded_text(&finding.body, MAX_BODY_BYTES),
                 evidence,
                 annotation_status,
                 annotation_note,
-            });
-        }
-        if !occurrences.is_empty() {
-            return occurrences;
-        }
-    }
-    Vec::new()
+            }
+        })
+        .collect()
 }
 
+#[cfg(test)]
 fn parse_evidence(
     value: &serde_json::Value,
     artifact_paths: &HashSet<&str>,
@@ -593,39 +530,7 @@ fn parse_evidence(
     parse_evidence_object(object, artifact_paths, true)
 }
 
-fn parse_inline_evidence(
-    object: &serde_json::Map<String, serde_json::Value>,
-    artifact_paths: &HashSet<&str>,
-) -> Option<ProjectIssueEvidence> {
-    const LOCATION_KEYS: &[&str] = &[
-        "page",
-        "page_number",
-        "pageNumber",
-        "line",
-        "line_start",
-        "lineStart",
-        "line_end",
-        "lineEnd",
-        "node_id",
-        "nodeId",
-        "asset_id",
-        "assetId",
-        "artifact_path",
-        "artifactPath",
-        "rel_path",
-        "file",
-        "file_path",
-        "filePath",
-        "path",
-        "source_path",
-        "sourcePath",
-    ];
-    if !LOCATION_KEYS.iter().any(|key| object.contains_key(*key)) {
-        return None;
-    }
-    parse_evidence_object(object, artifact_paths, false)
-}
-
+#[cfg(test)]
 fn parse_evidence_object(
     object: &serde_json::Map<String, serde_json::Value>,
     artifact_paths: &HashSet<&str>,
@@ -670,6 +575,15 @@ fn parse_evidence_object(
         MAX_REFERENCE_BYTES,
     );
     let artifact_path = resolve_artifact_path(&raw_artifact_path, artifact_paths);
+    let source_path = if artifact_path.is_empty() && safe_artifact_path(&raw_artifact_path) {
+        raw_artifact_path.clone()
+    } else {
+        String::new()
+    };
+    let source_hash = bounded_value(
+        first_value(object, &["source_hash", "sourceHash"]),
+        MAX_REFERENCE_BYTES,
+    );
     let mut description = if include_description {
         bounded_value(
             first_value(object, &["description", "label", "location"]),
@@ -695,6 +609,8 @@ fn parse_evidence_object(
         && node_id.is_empty()
         && asset_id.is_empty()
         && artifact_path.is_empty()
+        && source_path.is_empty()
+        && source_hash.is_empty()
         && description.is_empty()
         && quote.is_empty()
     {
@@ -707,11 +623,14 @@ fn parse_evidence_object(
         node_id,
         asset_id,
         artifact_path,
+        source_path,
+        source_hash,
         description,
         quote,
     })
 }
 
+#[cfg(test)]
 fn first_value<'a>(
     object: &'a serde_json::Map<String, serde_json::Value>,
     keys: &[&str],
@@ -719,6 +638,7 @@ fn first_value<'a>(
     keys.iter().find_map(|key| object.get(*key))
 }
 
+#[cfg(test)]
 fn bounded_u32(value: Option<&serde_json::Value>, maximum: u32) -> Option<u32> {
     value
         .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
@@ -755,6 +675,7 @@ fn safe_artifact_path(value: &str) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
+#[cfg(test)]
 fn bounded_value(value: Option<&serde_json::Value>, max_bytes: usize) -> String {
     match value {
         Some(serde_json::Value::String(value)) => bounded_text(value, max_bytes),
@@ -773,15 +694,6 @@ fn bounded_text(value: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     value[..end].to_string()
-}
-
-fn normalize_severity(value: &str) -> String {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "critical" | "major" | "severe" | "high" => "high".to_string(),
-        "moderate" | "medium" | "warning" => "medium".to_string(),
-        "minor" | "low" | "suggestion" | "info" | "informational" => "low".to_string(),
-        other => bounded_text(other, 100),
-    }
 }
 
 fn input_name(input_path: &str) -> String {
@@ -853,7 +765,12 @@ fn semantic_key(occurrence: &ProjectIssueOccurrence) -> Option<String> {
 }
 
 fn stable_source_key(occurrence: &ProjectIssueOccurrence) -> Option<String> {
-    let issue_id = normalize_identity(&occurrence.issue_id);
+    let explicit = normalize_identity(&occurrence.source_key);
+    let issue_id = if explicit.is_empty() {
+        normalize_identity(&occurrence.issue_id)
+    } else {
+        explicit
+    };
     if issue_id.len() < 3
         || issue_id.chars().all(|character| character.is_ascii_digit())
         || generic_ordinal_id(&issue_id)
@@ -1196,6 +1113,7 @@ mod tests {
             key: key.to_string(),
             run_id: run_id.to_string(),
             issue_id: "stable-finding".to_string(),
+            source_key: String::new(),
             observed_at: format!("2026-08-0{}T00:00:00Z", run_id.len()),
             profile_id: "review".to_string(),
             profile_name: "Review".to_string(),

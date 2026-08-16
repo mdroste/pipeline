@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "statistical_reporting_consistency",
+  "label": "Method — Statistical-Reporting Consistency",
+  "order": 111,
+  "group": {
+    "id": "integrity_governance",
+    "label": "Reproducibility, Integrity & Governance"
+  },
+  "level": "method",
+  "routing": {
+    "description": "The paper's reported statistics are dense enough that recomputing test statistics, intervals, and table arithmetic can materially check its claims.",
+    "exclusions": "papers with few reported statistics, or statistical-design concerns covered by the statistical-inference family."
+  }
+}

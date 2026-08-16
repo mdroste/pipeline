@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_mechanism_design",
+  "label": "Economics — Mechanism Design",
+  "order": 164,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Implementation, revelation, incentive compatibility, optimal mechanisms, auctions or procurement as design problems, information elicitation, or robust mechanism design.",
+    "exclusions": "the rules are fixed and the paper only analyzes equilibrium behavior, or the main contribution concerns operation and performance of a concrete matching or allocation institution rather than implementability."
+  }
+}

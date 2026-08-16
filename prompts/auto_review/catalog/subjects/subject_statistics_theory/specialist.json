@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_theory",
+  "label": "Statistics — Theory & Asymptotics",
+  "order": 36,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Asymptotic theory or foundational statistical methodology spanning several narrower theoretical areas or outside the listed specialties.",
+    "exclusions": "the paper primarily applies established theory to one empirical domain, or statistical decision theory clearly carries the contribution."
+  }
+}

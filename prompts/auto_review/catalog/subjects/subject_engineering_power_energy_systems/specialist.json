@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_power_energy_systems",
+  "label": "Engineering — Power & Energy Systems",
+  "order": 82,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Electric power systems, grids, power electronics, renewable integration, energy storage systems, microgrids, or energy-system operation and control.",
+    "exclusions": "the contribution is an electrochemical material, environmental life-cycle study, or electricity-market model without a central power-system engineering claim."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_general",
+  "label": "Computer Science — General",
+  "order": 51,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Computer-science research spanning several areas or outside the listed subfields.",
+    "exclusions": "a listed computer-science subfield clearly owns the central artifact or theorem."
+  }
+}

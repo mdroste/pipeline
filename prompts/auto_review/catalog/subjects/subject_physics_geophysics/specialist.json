@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_geophysics",
+  "label": "Physics — Geophysics",
+  "order": 14,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Physical study of Earth's interior, seismology, geomagnetism, geodynamics, or planetary interiors.",
+    "exclusions": "the central contribution concerns climate, ecology, or descriptive geology rather than a physical Earth model."
+  }
+}

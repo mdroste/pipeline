@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_econometrics",
+  "label": "Economics — Econometrics",
+  "order": 169,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Econometric theory or methodology is itself the main contribution.",
+    "exclusions": "established econometric tools are applied without a methodological contribution."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "multiple_testing_selective_reporting",
+  "label": "Method — Multiplicity & Selective Reporting",
+  "order": 31,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Many outcomes, subgroups, models, hypotheses, researcher choices, or sequential analyses create a material multiplicity or selective-reporting problem.",
+    "exclusions": "the paper has one prespecified primary analysis and no material model, outcome, subgroup, or stopping multiplicity."
+  }
+}

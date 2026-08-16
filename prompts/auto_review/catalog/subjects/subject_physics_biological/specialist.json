@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_biological",
+  "label": "Physics — Biological & Soft-Matter Physics",
+  "order": 16,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Biological physics, active matter, biomechanics, membrane and polymer physics, cellular mechanics, or quantitative physical models of living systems.",
+    "exclusions": "biological mechanism is central but no physical law, scale, material property, or nonequilibrium model carries the contribution."
+  }
+}

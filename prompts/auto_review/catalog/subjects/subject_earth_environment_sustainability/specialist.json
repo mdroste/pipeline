@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_earth_environment_sustainability",
+  "label": "Earth & Environment — Ecology & Sustainability",
+  "order": 109,
+  "group": {
+    "id": "earth_environment",
+    "label": "Earth & Environmental Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Environmental science, biogeochemistry, pollution, ecosystem services, sustainability, or coupled human-natural systems.",
+    "exclusions": "the contribution is primarily ecological biology, engineering treatment, or policy evaluation."
+  }
+}

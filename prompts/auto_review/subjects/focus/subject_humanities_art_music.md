@@ -1,1 +1,0 @@
-Review object provenance and condition, formal and material analysis, attribution and chronology, site or performance context, circulation and reception, comparison, reproduction limits, and whether visual or sonic details sustain the historical interpretation.

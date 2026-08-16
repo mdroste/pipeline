@@ -15,10 +15,11 @@
 //! derived page images. No viewer uses file:// URLs, keeping behavior
 //! consistent across WKWebView / WebView2 / WebKitGTK.
 
+use crate::models::RunProducts;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Text artifacts larger than this are truncated when read for display.
@@ -30,6 +31,9 @@ const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_MANIFEST_ARTIFACTS: usize = 5_000;
 const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ANNOTATION_BYTES: usize = 1_000_000;
+const MAX_SOURCE_EVIDENCE_FILES: usize = 200;
+const MAX_SOURCE_EVIDENCE_FILE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_SOURCE_EVIDENCE_TOTAL_BYTES: usize = 50 * 1024 * 1024;
 const CURRENT_ARTIFACT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const DOCUMENT_TEXT_PATH: &str = "context/document.md";
 const LEGACY_EXTRACTED_TEXT_PATH: &str = "context/extracted_text.md";
@@ -113,7 +117,8 @@ pub struct ArtifactEntry {
     pub bytes: u64,
     /// First 16 hex chars of the SHA-256, matching the paper-hash style.
     pub sha256: String,
-    /// Grouping hint for the explorer: report | context | agent_response | step.
+    /// Grouping hint for the explorer: report | product | context |
+    /// agent_response | step.
     pub group: String,
 }
 
@@ -126,6 +131,67 @@ pub struct PageArtifactIndex {
     pub digit_width: u8,
     pub extension: String,
     pub total_bytes: u64,
+}
+
+/// Durable identity of the selected subject, independent of whether it was a
+/// document, LaTeX project, source tree, or input-free workflow.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InputIdentity {
+    /// Canonical selection spelling plus its explicit interpretation.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub selection_key: String,
+    /// Hash produced by the input adapter (document text or bounded tree
+    /// fingerprint). Promoted from the historical run-id/report-only field.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub content_hash: String,
+    /// Stable across re-runs. Fresh selections derive it from selection_key;
+    /// a re-run inherits it even if its source is later moved or renamed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub lineage_id: String,
+}
+
+pub fn input_identity(
+    input_path: &str,
+    interpretation: &str,
+    content_hash: &str,
+    inherited: Option<&InputIdentity>,
+) -> InputIdentity {
+    let selection = if input_path.trim().is_empty() {
+        String::new()
+    } else {
+        let path = Path::new(input_path);
+        path.canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+    let selection_key = if selection.is_empty() {
+        String::new()
+    } else {
+        format!("{}:{selection}", interpretation.trim())
+    };
+    let inherited_lineage = inherited
+        .map(|identity| identity.lineage_id.trim())
+        .filter(|lineage| !lineage.is_empty());
+    let lineage_id = inherited_lineage.map(str::to_string).unwrap_or_else(|| {
+        if selection_key.is_empty() {
+            String::new()
+        } else {
+            let digest = Sha256::digest(selection_key.as_bytes());
+            format!(
+                "lineage-{}",
+                digest[..8]
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            )
+        }
+    });
+    InputIdentity {
+        selection_key,
+        content_hash: content_hash.trim().to_string(),
+        lineage_id,
+    }
 }
 
 impl PageArtifactIndex {
@@ -167,8 +233,21 @@ pub struct RunManifest {
     /// manifests written before input interpretations were introduced.
     #[serde(default)]
     pub input_interpretation: String,
+    #[serde(default)]
+    pub input_identity: InputIdentity,
     pub profile_id: String,
     pub profile_name: String,
+    /// Where the executable workflow came from (`profile:<id>`, `stdin`, or a
+    /// file path). Empty on manifests written before portable workflows.
+    #[serde(default)]
+    pub workflow_source: String,
+    /// SHA-256 of the normalized portable workflow retained as an artifact.
+    #[serde(default)]
+    pub workflow_fingerprint: String,
+    /// SHA-256 of the modular specialist catalog used to resolve catalog-backed
+    /// schemas. Empty for workflows that do not use Automatic Paper Review.
+    #[serde(default)]
+    pub specialist_catalog_revision: String,
     pub provider: String,
     pub artifacts: Vec<ArtifactEntry>,
     /// Completed runs compact homogeneous page records into this descriptor.
@@ -221,8 +300,12 @@ pub struct RunFinishMeta {
     pub input_path: String,
     pub input_mode: String,
     pub input_interpretation: String,
+    pub input_identity: InputIdentity,
     pub profile_id: String,
     pub profile_name: String,
+    pub workflow_source: String,
+    pub workflow_fingerprint: String,
+    pub specialist_catalog_revision: String,
     pub provider: String,
     pub status: String,
     pub duration_secs: u64,
@@ -246,8 +329,12 @@ pub struct RunSummary {
     pub input_path: String,
     pub input_mode: String,
     pub input_interpretation: String,
+    pub input_identity: InputIdentity,
     pub profile_id: String,
     pub profile_name: String,
+    pub workflow_source: String,
+    pub workflow_fingerprint: String,
+    pub specialist_catalog_revision: String,
     pub provider: String,
     pub status: String,
     pub duration_secs: u64,
@@ -306,8 +393,12 @@ impl RunManifest {
             input_path: self.input_path.clone(),
             input_mode: self.input_mode.clone(),
             input_interpretation: self.input_interpretation.clone(),
+            input_identity: self.input_identity.clone(),
             profile_id: self.profile_id.clone(),
             profile_name: self.profile_name.clone(),
+            workflow_source: self.workflow_source.clone(),
+            workflow_fingerprint: self.workflow_fingerprint.clone(),
+            specialist_catalog_revision: self.specialist_catalog_revision.clone(),
             provider: self.provider.clone(),
             status: if self.status.is_empty() {
                 "done".to_string()
@@ -593,14 +684,23 @@ impl RunWriter {
         group: &str,
         content: &str,
     ) -> Result<(), String> {
+        self.add_bytes(rel_path, label, group, content.as_bytes())
+    }
+
+    fn add_bytes(
+        &mut self,
+        rel_path: &str,
+        label: &str,
+        group: &str,
+        bytes: &[u8],
+    ) -> Result<(), String> {
         self.ensure_artifact_capacity()?;
         let path = self.dir.join(rel_path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create {rel_path} parent: {e}"))?;
         }
-        fs::write(&path, content).map_err(|e| format!("Failed to write {rel_path}: {e}"))?;
-        let bytes = content.as_bytes();
+        fs::write(&path, bytes).map_err(|e| format!("Failed to write {rel_path}: {e}"))?;
         self.artifacts.push(ArtifactEntry {
             rel_path: rel_path.to_string(),
             label: label.to_string(),
@@ -610,6 +710,157 @@ impl RunWriter {
             group: group.to_string(),
         });
         Ok(())
+    }
+
+    /// Preserve source files cited by canonical findings inside the immutable
+    /// run. The finding keeps its human-facing source path and gains an
+    /// `artifact_path` that the evidence viewer can open later, even if the
+    /// selected source tree subsequently moves or changes.
+    pub fn capture_source_evidence(
+        &mut self,
+        products: &mut RunProducts,
+        source_root: &Path,
+    ) -> Vec<String> {
+        let Some(findings) = products.findings.as_mut() else {
+            return Vec::new();
+        };
+        let has_uncaptured_source = findings.findings.iter().any(|finding| {
+            finding.evidence.iter().any(|evidence| {
+                evidence.artifact_path.is_empty() && !evidence.source_path.is_empty()
+            })
+        });
+        if !has_uncaptured_source {
+            return Vec::new();
+        }
+        if source_root.as_os_str().is_empty() {
+            return vec!["Source evidence was cited but no source root was available".to_string()];
+        }
+        let root = match source_root.canonicalize() {
+            Ok(root) if root.is_dir() => root,
+            Ok(_) => return vec!["Source evidence root is not a directory".to_string()],
+            Err(error) => return vec![format!("Could not resolve source evidence root: {error}")],
+        };
+        let mut warnings: Vec<String> = Vec::new();
+        let mut captured: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        let mut captured_bytes = 0usize;
+
+        for finding in &mut findings.findings {
+            for evidence in &mut finding.evidence {
+                if !evidence.artifact_path.is_empty() || evidence.source_path.is_empty() {
+                    continue;
+                }
+                let source_path = evidence.source_path.clone();
+                if let Some(existing) = captured.get(&source_path) {
+                    if let Some(artifact_path) = existing {
+                        evidence.artifact_path = artifact_path.clone();
+                    }
+                    continue;
+                }
+                if captured.len() >= MAX_SOURCE_EVIDENCE_FILES {
+                    if !warnings
+                        .iter()
+                        .any(|warning| warning.contains("file-count limit"))
+                    {
+                        warnings.push(format!(
+                            "Source evidence reached the {MAX_SOURCE_EVIDENCE_FILES}-file-count limit"
+                        ));
+                    }
+                    captured.insert(source_path, None);
+                    continue;
+                }
+                let relative = Path::new(&source_path);
+                if source_path.starts_with('/')
+                    || source_path.contains('\\')
+                    || source_path.contains(':')
+                    || !relative
+                        .components()
+                        .all(|component| matches!(component, Component::Normal(_)))
+                {
+                    warnings.push(format!(
+                        "Rejected unsafe source evidence path '{source_path}'"
+                    ));
+                    captured.insert(source_path, None);
+                    continue;
+                }
+                let resolved = match root.join(relative).canonicalize() {
+                    Ok(path) if path.starts_with(&root) => path,
+                    Ok(_) => {
+                        warnings.push(format!(
+                            "Rejected source evidence outside the selected root: '{source_path}'"
+                        ));
+                        captured.insert(source_path, None);
+                        continue;
+                    }
+                    Err(error) => {
+                        warnings.push(format!(
+                            "Could not resolve source evidence '{source_path}': {error}"
+                        ));
+                        captured.insert(source_path, None);
+                        continue;
+                    }
+                };
+                let mut file = match crate::safety::open_regular_file(&resolved) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        warnings.push(format!(
+                            "Could not open source evidence '{source_path}': {error}"
+                        ));
+                        captured.insert(source_path, None);
+                        continue;
+                    }
+                };
+                let mut bytes = Vec::new();
+                use std::io::Read as _;
+                if let Err(error) = file
+                    .by_ref()
+                    .take(MAX_SOURCE_EVIDENCE_FILE_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)
+                {
+                    warnings.push(format!(
+                        "Could not read source evidence '{source_path}': {error}"
+                    ));
+                    captured.insert(source_path, None);
+                    continue;
+                }
+                if bytes.len() > MAX_SOURCE_EVIDENCE_FILE_BYTES {
+                    warnings.push(format!(
+                        "Source evidence '{source_path}' exceeds the {} MB file limit",
+                        MAX_SOURCE_EVIDENCE_FILE_BYTES / (1024 * 1024)
+                    ));
+                    captured.insert(source_path, None);
+                    continue;
+                }
+                if captured_bytes.saturating_add(bytes.len()) > MAX_SOURCE_EVIDENCE_TOTAL_BYTES {
+                    if !warnings
+                        .iter()
+                        .any(|warning| warning.contains("total byte limit"))
+                    {
+                        warnings.push(format!(
+                            "Source evidence reached the {} MB total byte limit",
+                            MAX_SOURCE_EVIDENCE_TOTAL_BYTES / (1024 * 1024)
+                        ));
+                    }
+                    captured.insert(source_path, None);
+                    continue;
+                }
+                let artifact_path = format!("context/source-evidence/{source_path}");
+                match self.add_bytes(&artifact_path, &source_path, "files", &bytes) {
+                    Ok(()) => {
+                        captured_bytes += bytes.len();
+                        evidence.artifact_path = artifact_path.clone();
+                        captured.insert(source_path, Some(artifact_path));
+                    }
+                    Err(error) => {
+                        warnings.push(format!(
+                            "Could not save source evidence '{source_path}': {error}"
+                        ));
+                        captured.insert(source_path, None);
+                    }
+                }
+            }
+        }
+        warnings
     }
 
     /// Record a file that already exists inside the run directory (e.g.
@@ -861,8 +1112,12 @@ impl RunWriter {
             input_path: self.meta.input_path.clone(),
             input_mode: self.meta.input_mode.clone(),
             input_interpretation: self.meta.input_interpretation.clone(),
+            input_identity: self.meta.input_identity.clone(),
             profile_id: self.meta.profile_id.clone(),
             profile_name: self.meta.profile_name.clone(),
+            workflow_source: self.meta.workflow_source.clone(),
+            workflow_fingerprint: self.meta.workflow_fingerprint.clone(),
+            specialist_catalog_revision: self.meta.specialist_catalog_revision.clone(),
             provider: self.meta.provider.clone(),
             artifacts: self.artifacts.clone(),
             page_artifacts: self.page_artifacts.clone(),

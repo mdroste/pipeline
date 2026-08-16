@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_interdisciplinary_studies_race_indigenous",
+  "label": "Interdisciplinary Studies — Race, Ethnicity & Indigenous",
+  "order": 284,
+  "group": {
+    "id": "interdisciplinary_studies",
+    "label": "Interdisciplinary Studies"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Ethnic studies, race and diaspora studies, Indigenous studies, settler-colonial studies, or community-grounded scholarship across fields.",
+    "exclusions": "race, ethnicity, or indigeneity is only a control variable and no historical, institutional, cultural, territorial, or knowledge-governance claim is central."
+  }
+}

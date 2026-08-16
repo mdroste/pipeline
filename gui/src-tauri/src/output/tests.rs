@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn schema_backed_text_artifact_round_trips_without_transport_json() {
+    let raw = serde_json::json!({"content": "# Report\n\nA result."}).to_string();
+    assert_eq!(
+        extract_text_artifact(&raw).unwrap(),
+        "# Report\n\nA result."
+    );
+    assert!(extract_text_artifact("```json\n{\"content\":\"x\"}\n```").is_err());
+    assert!(extract_text_artifact(r#"{"content":""}"#).is_err());
+}
+
+#[test]
 fn nonce_report_envelope_accepts_two_unambiguous_boundaries() {
     let nonce = "abc123";
     let (start, end) = report_markers(nonce);
@@ -272,6 +283,7 @@ fn report_with(outputs: Vec<crate::models::StepOutput>) -> PipelineReport {
         orientation: serde_json::json!({}),
         step_outputs: outputs,
         failed_steps: vec![],
+        products: Default::default(),
         referee_reports: vec![],
         editor: None,
         report_date: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
@@ -295,6 +307,59 @@ fn failed_synthesis_is_not_replaced_by_a_parallel_analysis() {
     assert!(markdown.contains("## Final report unavailable"));
     assert!(markdown.contains("has not"));
     assert!(!markdown.contains("This is one specialist analysis."));
+}
+
+#[test]
+fn empty_published_findings_render_as_a_human_result_not_raw_json() {
+    let mut output = metric_output("Validate", "opus", "claude", 0, 0, 0);
+    output.phase = "sequential".into();
+    output.raw_text = r#"{"findings":[]}"#.into();
+    let mut report = report_with(vec![output]);
+    report.products = crate::models::RunProducts {
+        schema_version: 1,
+        primary_step_id: "Validate".into(),
+        findings: Some(crate::models::FindingSet {
+            schema_version: 1,
+            source_step_id: "Validate".into(),
+            source_step_label: "Validate".into(),
+            findings: Vec::new(),
+        }),
+    };
+
+    let markdown = render_markdown(&report, None, Duration::from_secs(1), &Settings::default());
+    assert!(markdown.contains("No findings."));
+    assert!(!markdown.contains(r#"{"findings":[]}"#));
+}
+
+#[test]
+fn a_separate_findings_product_does_not_replace_the_primary_report() {
+    let mut findings_output = metric_output("findings", "opus", "claude", 0, 0, 0);
+    findings_output.phase = "sequential".into();
+    findings_output.raw_text = r#"{"findings":[{"id":"finding","title":"Finding","category":"Review","body":"Details","evidence":[]}]}"#.into();
+    let mut primary_output = metric_output("primary", "opus", "claude", 0, 0, 0);
+    primary_output.phase = "sequential".into();
+    primary_output.raw_text = "# Main result\n\nNarrative report.".into();
+    let mut report = report_with(vec![findings_output, primary_output]);
+    report.products = crate::models::RunProducts {
+        schema_version: 1,
+        primary_step_id: "primary".into(),
+        findings: Some(crate::models::FindingSet {
+            schema_version: 1,
+            source_step_id: "findings".into(),
+            source_step_label: "Findings".into(),
+            findings: vec![crate::models::Finding {
+                id: "finding".into(),
+                title: "Finding".into(),
+                category: "Review".into(),
+                body: "Details".into(),
+                ..Default::default()
+            }],
+        }),
+    };
+
+    let markdown = render_markdown(&report, None, Duration::from_secs(1), &Settings::default());
+    assert!(markdown.contains("Narrative report."));
+    assert!(!markdown.contains("**#1. Finding**"));
 }
 
 #[test]

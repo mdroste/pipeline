@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "mixed_methods",
+  "label": "Method — Mixed-Methods Integration",
+  "order": 92,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "The contribution depends on integrating qualitative and quantitative evidence rather than presenting them as independent appendages.",
+    "exclusions": "a paper with multiple methods whose conclusions do not rely on their integration."
+  }
+}

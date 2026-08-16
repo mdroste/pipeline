@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_political_diplomatic",
+  "label": "History — Political, Diplomatic & Military",
+  "order": 150,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Political, diplomatic, legal-institutional, military, state, or international history.",
+    "exclusions": "the paper is an international-relations model using historical cases without a primary historical intervention."
+  }
+}

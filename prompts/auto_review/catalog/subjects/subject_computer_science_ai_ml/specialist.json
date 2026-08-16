@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_ai_ml",
+  "label": "Computer Science — Machine Learning & AI (General)",
+  "order": 53,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Machine learning and AI methodology spanning several areas or outside the listed AI subfields: learning theory, optimization for learning, probabilistic modeling, generative methods, or general model classes.",
+    "exclusions": "standard machine learning is used only to measure a substantive phenomenon in another field, or a listed AI subfield — LLMs and foundation models, reinforcement learning, AI safety and evaluation, or ML systems — clearly carries the contribution."
+  }
+}

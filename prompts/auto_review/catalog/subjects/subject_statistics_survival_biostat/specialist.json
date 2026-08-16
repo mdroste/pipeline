@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_survival_biostat",
+  "label": "Statistics — Survival & Biostatistics",
+  "order": 43,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Survival, event-history, competing-risk, longitudinal biomedical, diagnostic, or clinical statistical methodology.",
+    "exclusions": "clinical substance dominates and the statistical methods are entirely standard."
+  }
+}

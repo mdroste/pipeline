@@ -10,7 +10,7 @@ use super::merge;
 use crate::models::{StepFailure, StepOutput};
 use crate::output::{
     capitalize, extract_report_envelope, new_report_nonce, normalize_math_delimiters,
-    report_output_format, ReportRejectionKind, ReportValidationError,
+    structured_output_format, text_artifact_output_format,
 };
 use crate::pipeline_config::{
     ArtifactSelector, NamedInputArtifactPart, Phase, PipelineConfig, PrimaryArtifactPart,
@@ -823,16 +823,11 @@ pub async fn execute_steps(
         .cloned()
         .and_then(|value| serde_json::from_value::<crate::models::ReviewPlan>(value).ok())
     {
-        let subject_ids = if plan.subject_specialist_ids.is_empty() {
-            std::iter::once(plan.field_specialist_id.as_str())
-                .filter(|id| !id.is_empty())
-                .collect::<Vec<_>>()
-        } else {
-            plan.subject_specialist_ids
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-        };
+        let subject_ids = plan
+            .subject_specialist_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         let method_ids = plan
             .method_specialist_ids
             .iter()
@@ -1044,6 +1039,14 @@ pub async fn execute_steps(
                     .ok();
                 }
                 if has_multi_agent && config.merge.enabled {
+                    let output_schemas = to_run
+                        .iter()
+                        .filter_map(|step| {
+                            step.output_schema
+                                .clone()
+                                .map(|schema| (step.id.clone(), schema))
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>();
                     match merge::merge_step_outputs(
                         app,
                         wave_outputs.clone(),
@@ -1051,6 +1054,7 @@ pub async fn execute_steps(
                         &semaphore,
                         write_dir,
                         settings,
+                        &output_schemas,
                     )
                     .await
                     {
@@ -1276,7 +1280,7 @@ fn base_id(step_key: &str) -> &str {
 }
 
 fn is_cancellation_error(error: &str) -> bool {
-    error.to_ascii_lowercase().contains("cancelled")
+    crate::commands::is_pipeline_cancellation_error(error)
 }
 
 fn cancellation_error(pass_key: &str) -> Option<String> {
@@ -1417,8 +1421,16 @@ fn step_write_dir(
 }
 
 /// Build the OUTPUT FORMAT block appended to every step prompt.
-fn output_format_block(write_dir: Option<&str>, report_nonce: &str) -> String {
-    report_output_format(write_dir, report_nonce)
+fn output_format_block(
+    write_dir: Option<&str>,
+    _report_nonce: &str,
+    output_schema: Option<&serde_json::Value>,
+) -> String {
+    if output_schema.is_some() {
+        structured_output_format(write_dir)
+    } else {
+        text_artifact_output_format(write_dir, "Markdown report")
+    }
 }
 
 fn append_shared_context_note(
@@ -1654,21 +1666,20 @@ async fn finish_response_capture(
     }
 }
 
-fn rejection_attempt_status(
-    error: &ReportValidationError,
-) -> super::response_journal::AttemptStatus {
-    match error.kind() {
-        ReportRejectionKind::Envelope => super::response_journal::AttemptStatus::RejectedEnvelope,
-        ReportRejectionKind::Content => super::response_journal::AttemptStatus::RejectedContent,
-    }
-}
-
 /// Execute one logical step call, including retries, report-file handoff, and
 /// structured-output validation. Scheduling and terminal pass events remain
 /// with the parallel/sequential callers.
 async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResult, String> {
     let timeout = request.settings.step_timeout_secs.max(60);
     let max_retries = request.settings.max_retries;
+    let text_artifact_schema = request
+        .output_schema
+        .is_none()
+        .then(crate::output::text_artifact_schema);
+    let terminal_schema = request
+        .output_schema
+        .or(text_artifact_schema.as_ref())
+        .expect("every step artifact has a terminal JSON schema");
     let mut last_error = String::new();
     let mut total_duration_secs = 0u64;
     let mut total_usage = crate::pipeline::logging::CallUsage::default();
@@ -1705,7 +1716,7 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                 &mut retry_prompt,
                 &format!(
                     "\n\nRETRY NOTICE:\nThe previous response was rejected: {last_error}\n\
-                     Return the entire report again and obey the OUTPUT FORMAT contract exactly."
+                     Return the entire report again and satisfy the supplied response schema."
                 ),
                 crate::safety::MAX_EXPANDED_PROMPT_BYTES,
                 "Step retry prompt",
@@ -1721,6 +1732,7 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             log_label: request.log_label,
             prompt,
             tools: request.tools,
+            output_schema: Some(terminal_schema),
             timeout_secs: timeout,
             agent: request.agent,
             cwd: request.cwd,
@@ -1775,59 +1787,78 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
         }
 
         let (text, mut accepted_capture) = match call.output {
-            Ok(stdout) => match extract_report_envelope(&stdout, request.report_nonce) {
-                Ok(report) => {
-                    finish_response_capture(
-                        &request,
-                        file_capture.take(),
-                        super::response_journal::AttemptStatus::Ignored,
-                        "The validated terminal response was selected instead.",
-                    )
-                    .await;
-                    (report, terminal_capture.take())
-                }
-                Err(stdout_error) => {
-                    let stdout_reason = stdout_error.to_string();
-                    finish_response_capture(
-                        &request,
-                        terminal_capture.take(),
-                        rejection_attempt_status(&stdout_error),
-                        &stdout_reason,
-                    )
-                    .await;
-                    if let Some(report_file) = compatibility_file {
-                        match extract_report_envelope(&report_file, request.report_nonce) {
-                            Ok(report) => {
-                                let _ = request.app.emit_event(
-                                    "pipeline:log",
-                                    serde_json::json!({ "line": format!(
-                                        "{}: terminal response was invalid; accepted a validated compatibility report file",
-                                        request.log_label,
-                                    )}),
-                                );
-                                (report, file_capture.take())
+            Ok(stdout) => {
+                match crate::pipeline::structured::canonicalize(terminal_schema, &stdout) {
+                    Ok(canonical) => {
+                        finish_response_capture(
+                            &request,
+                            file_capture.take(),
+                            super::response_journal::AttemptStatus::Ignored,
+                            "The validated terminal structured response was selected instead.",
+                        )
+                        .await;
+                        (canonical, terminal_capture.take())
+                    }
+                    Err(stdout_error) => {
+                        finish_response_capture(
+                            &request,
+                            terminal_capture.take(),
+                            super::response_journal::AttemptStatus::RejectedSchema,
+                            &stdout_error,
+                        )
+                        .await;
+                        if let Some(report_file) = compatibility_file {
+                            let file_artifact = crate::pipeline::structured::canonicalize(
+                                terminal_schema,
+                                &report_file,
+                            )
+                            .or_else(|structured_error| {
+                                if request.output_schema.is_some() {
+                                    return Err(structured_error);
+                                }
+                                extract_report_envelope(&report_file, request.report_nonce)
+                                    .map(|content| {
+                                        serde_json::json!({"content": content}).to_string()
+                                    })
+                                    .map_err(|legacy_error| {
+                                        format!(
+                                            "{structured_error}; legacy report envelope was also invalid ({legacy_error})"
+                                        )
+                                    })
+                            });
+                            match file_artifact {
+                                Ok(canonical) => {
+                                    let _ = request.app.emit_event(
+                                        "pipeline:log",
+                                        serde_json::json!({ "line": format!(
+                                            "{}: terminal response did not satisfy the output schema; accepted a validated compatibility artifact file",
+                                            request.log_label,
+                                        )}),
+                                    );
+                                    (canonical, file_capture.take())
+                                }
+                                Err(file_error) => {
+                                    finish_response_capture(
+                                        &request,
+                                        file_capture.take(),
+                                        super::response_journal::AttemptStatus::RejectedSchema,
+                                        &file_error,
+                                    )
+                                    .await;
+                                    last_error = format!(
+                                        "invalid terminal structured output ({stdout_error}); compatibility artifact file was also invalid ({file_error})"
+                                    );
+                                    continue;
+                                }
                             }
-                            Err(file_error) => {
-                                let file_reason = file_error.to_string();
-                                finish_response_capture(
-                                    &request,
-                                    file_capture.take(),
-                                    rejection_attempt_status(&file_error),
-                                    &file_reason,
-                                )
-                                .await;
-                                last_error = format!(
-                                    "invalid terminal report ({stdout_error}); compatibility report file was also invalid ({file_error})"
-                                );
-                                continue;
-                            }
+                        } else {
+                            last_error =
+                                format!("invalid terminal structured output: {stdout_error}");
+                            continue;
                         }
-                    } else {
-                        last_error = format!("invalid terminal report: {stdout_error}");
-                        continue;
                     }
                 }
-            },
+            }
             Err(error) => {
                 if is_cancellation_error(&error) {
                     finish_response_capture(
@@ -1840,30 +1871,46 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                     return Err(error);
                 }
                 if let Some(report_file) = compatibility_file {
-                    match extract_report_envelope(&report_file, request.report_nonce) {
-                        Ok(report) => {
-                            let _ = request.app.emit_event(
-                                "pipeline:log",
-                                serde_json::json!({ "line": format!(
-                                    "{}: call reported an error but wrote a complete validated compatibility report; using it. ({error})",
-                                    request.log_label,
-                                )}),
-                            );
-                            (report, file_capture.take())
-                        }
-                        Err(file_error) => {
-                            let file_reason = file_error.to_string();
-                            finish_response_capture(
-                                &request,
-                                file_capture.take(),
-                                rejection_attempt_status(&file_error),
-                                &file_reason,
-                            )
-                            .await;
-                            last_error = format!(
-                                "{error}; compatibility report file did not contain a complete validated report ({file_error})"
-                            );
-                            continue;
+                    if request.output_schema.is_some() {
+                        (report_file.trim().to_string(), file_capture.take())
+                    } else {
+                        let file_artifact = crate::pipeline::structured::canonicalize(
+                            terminal_schema,
+                            &report_file,
+                        )
+                        .or_else(|structured_error| {
+                            extract_report_envelope(&report_file, request.report_nonce)
+                                .map(|content| serde_json::json!({"content": content}).to_string())
+                                .map_err(|legacy_error| {
+                                    format!(
+                                        "{structured_error}; legacy report envelope was also invalid ({legacy_error})"
+                                    )
+                                })
+                        });
+                        match file_artifact {
+                            Ok(artifact) => {
+                                let _ = request.app.emit_event(
+                                    "pipeline:log",
+                                    serde_json::json!({ "line": format!(
+                                        "{}: call reported an error but wrote a complete validated compatibility report; using it. ({error})",
+                                        request.log_label,
+                                    )}),
+                                );
+                                (artifact, file_capture.take())
+                            }
+                            Err(file_error) => {
+                                finish_response_capture(
+                                    &request,
+                                    file_capture.take(),
+                                    super::response_journal::AttemptStatus::RejectedSchema,
+                                    &file_error,
+                                )
+                                .await;
+                                last_error = format!(
+                                    "{error}; compatibility report file did not contain a complete validated report ({file_error})"
+                                );
+                                continue;
+                            }
                         }
                     }
                 } else {
@@ -1875,34 +1922,56 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                 }
             }
         };
-        let text = normalize_math_delimiters(&text);
-
-        if let Some(schema) = request.output_schema {
-            if let Err(reason) = crate::pipeline::structured::check(schema, &text) {
-                finish_response_capture(
-                    &request,
-                    accepted_capture.take(),
-                    super::response_journal::AttemptStatus::RejectedSchema,
-                    &reason,
-                )
-                .await;
-                last_error = if attempt < max_retries {
-                    format!("output did not satisfy schema: {reason}")
-                } else {
-                    format!("output did not satisfy schema after {max_retries} retries: {reason}")
-                };
-                continue;
+        let text = if let Some(schema) = request.output_schema {
+            match crate::pipeline::structured::canonicalize(schema, &text) {
+                Ok(canonical) => canonical,
+                Err(reason) => {
+                    finish_response_capture(
+                        &request,
+                        accepted_capture.take(),
+                        super::response_journal::AttemptStatus::RejectedSchema,
+                        &reason,
+                    )
+                    .await;
+                    last_error = if attempt < max_retries {
+                        format!("output did not satisfy schema: {reason}")
+                    } else {
+                        format!(
+                            "output did not satisfy schema after {max_retries} retries: {reason}"
+                        )
+                    };
+                    continue;
+                }
             }
-        }
+        } else {
+            match crate::output::extract_text_artifact(&text) {
+                Ok(content) => normalize_math_delimiters(&content),
+                Err(reason) => {
+                    finish_response_capture(
+                        &request,
+                        accepted_capture.take(),
+                        super::response_journal::AttemptStatus::RejectedContent,
+                        &reason,
+                    )
+                    .await;
+                    last_error = if attempt < max_retries {
+                        format!("text artifact was unusable: {reason}")
+                    } else {
+                        format!("text artifact was unusable after {max_retries} retries: {reason}")
+                    };
+                    continue;
+                }
+            }
+        };
 
         finish_response_capture(
             &request,
             accepted_capture.take(),
             super::response_journal::AttemptStatus::Accepted,
             if request.output_schema.is_some() {
-                "Validated report boundaries and output schema."
+                "Validated and canonicalized native structured output."
             } else {
-                "Validated report boundaries."
+                "Validated and extracted a schema-backed text artifact."
             },
         )
         .await;
@@ -2053,6 +2122,7 @@ fn step_output(
     call: StepCallResult,
     resolution: &crate::model_catalog::ResolvedModel,
     effort: &str,
+    structured_json: bool,
 ) -> StepOutput {
     let fallback_usage = call.usage_limit_fallbacks.iter().fold(
         crate::pipeline::logging::CallUsage::default(),
@@ -2168,6 +2238,7 @@ fn step_output(
         provider: effective_provider.to_string(),
         agent: effective_agent.to_string(),
         raw_text: call.text,
+        structured_json,
         duration_secs: call.duration_secs,
         input_tokens: call.usage.input_tokens,
         output_tokens: call.usage.output_tokens,
@@ -2241,6 +2312,7 @@ fn enforce_merge_output_schemas(
             )}),
         );
         output.raw_text = first_unit.raw_text.clone();
+        output.structured_json = first_unit.structured_json;
         output.agent = first_unit.agent.clone();
         output.provider = first_unit.provider.clone();
         output.model = first_unit.model.clone();
@@ -2503,7 +2575,11 @@ async fn run_parallel_wave(
             );
             let report_rel = "report.md".to_string();
             let report_nonce = new_report_nonce()?;
-            let output_format = output_format_block(task_write_dir.as_deref(), &report_nonce);
+            let output_format = output_format_block(
+                task_write_dir.as_deref(),
+                &report_nonce,
+                output_schema.as_ref(),
+            );
             let mut prompt = build_parallel_prompt(
                 step,
                 if resolved.includes_survey {
@@ -2686,6 +2762,7 @@ async fn run_parallel_wave(
                             call,
                             &resolution,
                             &effort_override,
+                            output_schema.is_some(),
                         );
                         output.merge_group = merge_group;
                         output.fan_out_item = fan_out_item;
@@ -3059,7 +3136,11 @@ async fn run_sequential_step(
     prompt = append_evidence_retrieval_guidance(prompt, &tools)?;
     crate::safety::push_str_limited(
         &mut prompt,
-        &output_format_block(task_write_dir.as_deref(), &report_nonce),
+        &output_format_block(
+            task_write_dir.as_deref(),
+            &report_nonce,
+            step.output_schema.as_ref(),
+        ),
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Sequential prompt",
     )?;
@@ -3133,6 +3214,7 @@ async fn run_sequential_step(
         call,
         &resolution,
         &effort,
+        step.output_schema.is_some(),
     ))
 }
 
@@ -3207,6 +3289,7 @@ mod tests {
         let config = PipelineConfig {
             steps: vec![first, second, synthesis, follow_up, disabled],
             merge: Default::default(),
+            outputs: Default::default(),
             context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
@@ -3268,6 +3351,7 @@ mod tests {
         let config = PipelineConfig {
             steps: vec![first, second, synthesis],
             merge: Default::default(),
+            outputs: Default::default(),
             context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
@@ -3906,6 +3990,7 @@ mod tests {
                 synthesis,
             ],
             merge: MergeConfig::default(),
+            outputs: Default::default(),
             context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
@@ -4102,7 +4187,7 @@ mod tests {
     fn build_parallel_prompt_output_format_substitution() {
         let step = make_step("test", Phase::Parallel);
         let template = "{step_prompt}\n{output_format}";
-        let block = output_format_block(Some("/runs/r1/artifacts"), "testnonce");
+        let block = output_format_block(Some("/runs/r1/artifacts"), "testnonce", None);
         let result = build_parallel_prompt(
             &step,
             "",
@@ -4117,7 +4202,9 @@ mod tests {
         )
         .unwrap();
         assert!(result.contains("/runs/r1/artifacts/files/"));
-        assert!(result.contains("PIPELINE REPORT testnonce START"));
+        assert!(result.contains("response schema supplied by Pipeline"));
+        assert!(!result.contains("JSON object"));
+        assert!(!result.contains("PIPELINE REPORT testnonce START"));
         // Old templates without the placeholder receive the current contract.
         let old = "{step_prompt}\nREPORT START markers here";
         let result = build_parallel_prompt(
@@ -4135,7 +4222,18 @@ mod tests {
         .unwrap();
         assert!(!result.contains("{output_format}"));
         assert!(result.contains("REPORT START markers here"));
-        assert!(result.contains("PIPELINE REPORT testnonce START"));
+        assert!(result.contains("response schema supplied by Pipeline"));
+    }
+
+    #[test]
+    fn schema_output_format_defers_serialization_to_native_schema() {
+        let schema = serde_json::json!({"type": "object", "properties": {}});
+        let block = output_format_block(Some("/runs/r1/artifacts"), "unusednonce", Some(&schema));
+        assert!(block.contains("response schema supplied by Pipeline"));
+        assert!(block.contains("/runs/r1/artifacts/files/"));
+        assert!(!block.contains("PIPELINE REPORT"));
+        assert!(!block.contains("JSON"));
+        assert!(!block.contains("markdown fences"));
     }
 
     // ── write handoff helpers ──────────────────────────────────────
@@ -4150,13 +4248,14 @@ mod tests {
 
     #[test]
     fn output_format_block_modes() {
-        let write = output_format_block(Some("/runs/x/artifacts"), "nonce123");
+        let write = output_format_block(Some("/runs/x/artifacts"), "nonce123", None);
         assert!(write.contains("/runs/x/artifacts/files/"));
-        assert!(write.contains("PIPELINE REPORT nonce123 START"));
-        assert!(write.contains("Do not write the report itself to a file"));
-        let markers = output_format_block(None, "nonce456");
-        assert!(markers.contains("PIPELINE REPORT nonce456 START"));
-        assert!(!markers.contains("/runs/x/artifacts"));
+        assert!(write.contains("response schema supplied by Pipeline"));
+        assert!(!write.contains("PIPELINE REPORT nonce123 START"));
+        let envelope = output_format_block(None, "nonce456", None);
+        assert!(!envelope.contains("JSON object"));
+        assert!(envelope.contains("Markdown report"));
+        assert!(!envelope.contains("/runs/x/artifacts"));
     }
 
     #[test]

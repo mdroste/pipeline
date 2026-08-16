@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "database_record_linkage",
+  "label": "Method — Administrative Data & Record Linkage",
+  "order": 40,
+  "group": {
+    "id": "measurement_records",
+    "label": "Measurement, Data & Records"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Administrative records, registries, transactions, electronic records, entity resolution, probabilistic linkage, or longitudinal database construction materially supports the evidence.",
+    "exclusions": "a clean public dataset is analyzed without a material coverage, linkage, entity, provenance, or changing-definition problem."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_literature_classics",
+  "label": "Humanities — Literature & Classics",
+  "order": 247,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Literary studies, comparative literature, classics, rhetoric, poetics, genre, or interpretation of established literary texts.",
+    "exclusions": "the central contribution is historical fact, formal linguistics, or automated text analysis without literary interpretation, or textual transmission, translation, philology, bibliography, manuscript culture, or book history carries the contribution."
+  }
+}

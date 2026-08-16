@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_agriculture_veterinary_animal",
+  "label": "Agriculture & Veterinary Science — Animal & Veterinary",
+  "order": 257,
+  "group": {
+    "id": "agriculture_veterinary",
+    "label": "Agriculture & Veterinary Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Animal science, veterinary medicine, livestock systems, animal health, breeding, welfare, or comparative clinical research.",
+    "exclusions": "the central contribution is human clinical medicine, wildlife ecology, or cellular biology without an animal-health or production-system claim."
+  }
+}

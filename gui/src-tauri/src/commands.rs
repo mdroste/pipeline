@@ -26,8 +26,8 @@ pub use batch::*;
 pub use config::*;
 pub use export::*;
 pub use lifecycle::{
-    await_or_cancel, cancel_pass, is_cancelled, is_pass_cancelled, register_child_pid,
-    unregister_child_pid, wait_for_cancellation,
+    await_or_cancel, cancel_pass, is_cancelled, is_pass_cancelled, is_pipeline_cancellation_error,
+    register_child_pid, unregister_child_pid, wait_for_cancellation,
 };
 pub(crate) use lifecycle::{
     kill_all_children, kill_pass_children, kill_process, register_engine_child_pid,
@@ -35,8 +35,8 @@ pub(crate) use lifecycle::{
 };
 pub use rerun::*;
 pub use run_entry::{
-    check_headless_dependencies, run_headless, run_headless_with_options, run_pipeline,
-    HeadlessRunOptions,
+    check_headless_dependencies, check_headless_plan, run_headless, run_headless_with_options,
+    run_pipeline, HeadlessCheckReport, HeadlessRunOptions, HeadlessWorkflow,
 };
 
 use guard::*;

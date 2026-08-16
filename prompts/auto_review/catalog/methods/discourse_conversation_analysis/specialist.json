@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "discourse_conversation_analysis",
+  "label": "Method — Discourse & Conversation Analysis",
+  "order": 95,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Sequential analysis of talk or fine-grained discourse analysis of interaction carries central claims about practice.",
+    "exclusions": "thematic interview analysis covered by interview review, or literary text interpretation covered by textual-interpretive review."
+  }
+}

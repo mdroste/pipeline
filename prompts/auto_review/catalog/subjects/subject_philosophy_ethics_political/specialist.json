@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_ethics_political",
+  "label": "Philosophy — Ethics & Political",
+  "order": 212,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Normative, metaethical, applied, political, or legal philosophy spanning several of these areas.",
+    "exclusions": "the central contribution is empirical policy analysis or political theory grounded primarily in historical interpretation, or a listed moral or political-legal specialty clearly carries the argument."
+  }
+}

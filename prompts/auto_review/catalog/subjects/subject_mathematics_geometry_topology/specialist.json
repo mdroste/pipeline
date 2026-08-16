@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_geometry_topology",
+  "label": "Mathematics — Geometry & Topology",
+  "order": 22,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Geometry or topology spanning several traditions or outside the listed differential-geometric and topological specialties.",
+    "exclusions": "geometric language is merely a representation of an analytic or applied problem, or a listed differential-geometry or topology specialist clearly carries the theorem."
+  }
+}

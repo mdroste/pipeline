@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "dynamic_treatment_g_methods",
+  "label": "Method — Time-Varying Treatments & G-Methods",
+  "order": 12,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Sustained or time-varying treatment strategies with treatment-confounder feedback are analyzed via marginal structural models, the g-formula, or emulated target trials.",
+    "exclusions": "point-in-time treatments handled by a standard design, or a randomized trial analyzed by intention to treat."
+  }
+}

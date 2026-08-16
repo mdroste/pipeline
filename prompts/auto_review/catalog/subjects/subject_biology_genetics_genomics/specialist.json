@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_genetics_genomics",
+  "label": "Biology — Genetics & Genomics",
+  "order": 85,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Genetics, genomics, epigenomics, population genetics, genome regulation, or functional genomics.",
+    "exclusions": "sequence data are only a measurement input and no genetic or genomic claim is central."
+  }
+}

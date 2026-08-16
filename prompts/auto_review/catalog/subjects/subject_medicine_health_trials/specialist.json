@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_trials",
+  "label": "Medicine & Health — Trials & Therapeutics",
+  "order": 113,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Clinical trials, therapeutic development, comparative treatment, dosing, or intervention efficacy and safety.",
+    "exclusions": "the intervention is nonclinical or the study is purely observational with no trial design."
+  }
+}

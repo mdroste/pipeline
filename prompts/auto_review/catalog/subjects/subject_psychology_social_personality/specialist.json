@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_psychology_social_personality",
+  "label": "Psychology — Social & Personality",
+  "order": 187,
+  "group": {
+    "id": "psychology",
+    "label": "Psychology & Cognitive Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Social psychology, personality, attitudes, identity, interpersonal behavior, judgment, or decision-making.",
+    "exclusions": "the main contribution is sociological institutions or political behavior at a collective level."
+  }
+}

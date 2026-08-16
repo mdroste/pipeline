@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_medical_crime",
+  "label": "Sociology — Health & Medicine",
+  "order": 128,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Medical sociology, health inequality, illness and disability, professions and care, medicalization, health institutions, or social organization of diagnosis and treatment.",
+    "exclusions": "clinical efficacy, epidemiology, or health-services delivery is central without a sociological institution or inequality claim, or crime, policing, courts, punishment, surveillance, or social control clearly carries the contribution."
+  }
+}

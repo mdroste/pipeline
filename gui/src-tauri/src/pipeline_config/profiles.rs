@@ -190,6 +190,7 @@ pub fn export_profile_data(id: &str) -> Result<String, String> {
         name: profile.name,
         steps: profile.steps,
         merge: profile.merge,
+        outputs: profile.outputs,
         context_cache: profile.context_cache,
         use_orientation: profile.use_orientation,
         orientation_prompt: profile.orientation_prompt,
@@ -269,6 +270,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
                 name,
                 steps: convert_legacy_steps(referees, post_steps),
                 merge,
+                outputs: OutputConfig::default(),
                 context_cache: ContextCacheConfig::default(),
                 use_orientation: true,
                 orientation_prompt: String::new(),
@@ -298,6 +300,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
             name: "Imported".into(),
             steps: convert_legacy_steps(referees, post_steps),
             merge,
+            outputs: OutputConfig::default(),
             context_cache: ContextCacheConfig::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
@@ -316,6 +319,7 @@ pub fn import_profile_data(
     name: &str,
     steps: Vec<StepConfig>,
     merge: MergeConfig,
+    outputs: OutputConfig,
     context_cache: ContextCacheConfig,
     _use_orientation: bool,
     orientation_prompt: String,
@@ -341,6 +345,7 @@ pub fn import_profile_data(
         counter += 1;
     }
     let mut profile = ProfileData::new(name, steps, merge);
+    profile.outputs = outputs;
     profile.context_cache = context_cache;
     profile.use_orientation = true;
     profile.orientation_prompt = orientation_prompt;
@@ -350,6 +355,24 @@ pub fn import_profile_data(
     profile.variables = variables;
     save_profile_unlocked(&id, &profile)?;
     Ok(profile_summary(id, &profile))
+}
+
+/// Install a validated portable workflow as a new profile. Installation is
+/// explicit; `run --workflow` never mutates the profile store.
+pub fn install_workflow_document(workflow: &WorkflowDocument) -> Result<ProfileSummary, String> {
+    import_profile_data(
+        &workflow.name,
+        workflow.config.steps.clone(),
+        workflow.config.merge.clone(),
+        workflow.config.outputs.clone(),
+        workflow.config.context_cache.clone(),
+        workflow.config.use_orientation,
+        workflow.config.orientation_prompt.clone(),
+        workflow.config.orientation_schema.clone(),
+        workflow.config.extraction.clone(),
+        workflow.config.parallel_context_template.clone(),
+        workflow.config.variables.clone(),
+    )
 }
 
 pub fn import_bundle(json: &str) -> Result<(), String> {

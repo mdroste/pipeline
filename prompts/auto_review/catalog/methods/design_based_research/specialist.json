@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "design_based_research",
+  "label": "Method — Design-Based & Practice Research",
+  "order": 106,
+  "group": {
+    "id": "engineering_design",
+    "label": "Engineering, Design & Applied Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Iterative design, research-through-design, design-based implementation, prototyping with users, or practice-based inquiry is itself the evidentiary strategy.",
+    "exclusions": "ordinary product engineering, a one-shot usability test, or an intervention evaluated without a material iterative-design claim."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_psychometrics_computational",
+  "label": "Statistics — Latent Variables & Computation",
+  "order": 45,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Psychometrics, latent-variable models, item response, mixture models, or statistical computation as a methodological contribution.",
+    "exclusions": "latent constructs or computation are routine components of a primarily substantive application."
+  }
+}

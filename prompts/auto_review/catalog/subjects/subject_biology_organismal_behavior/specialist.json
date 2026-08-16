@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_organismal_behavior",
+  "label": "Biology — Organismal, Integrative & Behavior",
+  "order": 92,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Zoology, organismal biology, comparative anatomy, functional morphology, animal behavior, or integrative biology.",
+    "exclusions": "the central contribution is cellular physiology, ecology, or human psychology rather than whole-organism biological function."
+  }
+}

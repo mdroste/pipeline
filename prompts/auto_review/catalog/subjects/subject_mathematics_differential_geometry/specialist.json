@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_differential_geometry",
+  "label": "Mathematics — Differential Geometry & Geometric Analysis",
+  "order": 23,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Riemannian, pseudo-Riemannian, symplectic, or complex differential geometry; geometric analysis; curvature; or geometric flows.",
+    "exclusions": "the central result is topological or algebraic without differential-geometric structure, or a PDE is studied without a material geometric invariant or conclusion."
+  }
+}

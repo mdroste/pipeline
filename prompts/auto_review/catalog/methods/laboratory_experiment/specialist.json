@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "laboratory_experiment",
+  "label": "Method — Laboratory Experiment",
+  "order": 21,
+  "group": {
+    "id": "experiments",
+    "label": "Experiments & Trials"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Controlled laboratory manipulation, bench experiment, or apparatus-based experiment supplies central evidence not exhausted by a listed assay or characterization role.",
+    "exclusions": "randomized social interventions, purely observational measurements, computational simulations, or evidence fully covered by imaging, omics, sensor, or materials-characterization review."
+  }
+}

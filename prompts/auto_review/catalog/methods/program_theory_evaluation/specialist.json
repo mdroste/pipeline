@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "program_theory_evaluation",
+  "label": "Method — Theory-Based Program Evaluation",
+  "order": 103,
+  "group": {
+    "id": "synthesis_meta",
+    "label": "Synthesis, Evaluation & Meta-research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Theory-of-change, realist, or contribution-analysis evaluation logic carries the central claim that and how a program worked.",
+    "exclusions": "effect estimation by experimental or quasi-experimental design, or implementation measurement without a contribution claim."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_anthropology_linguistic",
+  "label": "Anthropology — Linguistic Anthropology",
+  "order": 203,
+  "group": {
+    "id": "anthropology",
+    "label": "Anthropology & Archaeology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Linguistic anthropology, language ideology, discourse and interaction, multilingualism, semiotics, linguistic inequality, or language and social identity.",
+    "exclusions": "the central result is formal linguistics, NLP, or discourse content without an anthropological claim about language in social and cultural practice."
+  }
+}

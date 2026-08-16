@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_nonparametric_robust",
+  "label": "Statistics — Nonparametric & Robust Methods",
+  "order": 46,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Nonparametric and semiparametric estimation outside causal work, robust statistics, rank methods, smoothing, density estimation, or inference under contamination and weak distributional assumptions.",
+    "exclusions": "a conventional parametric model is central and robustness or nonparametric adaptation is only a minor sensitivity check."
+  }
+}

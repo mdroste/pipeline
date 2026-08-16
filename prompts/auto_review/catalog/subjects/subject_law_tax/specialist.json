@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_tax",
+  "label": "Law — Tax",
+  "order": 231,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Individual, corporate, partnership, international, estate, consumption, or administrative tax law and the legal design of fiscal rules.",
+    "exclusions": "the contribution is public-finance incidence or optimal taxation without a material doctrinal, statutory, administrative, or compliance question."
+  }
+}

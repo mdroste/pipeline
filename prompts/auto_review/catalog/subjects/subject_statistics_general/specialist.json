@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_general",
+  "label": "Statistics — General",
+  "order": 35,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Statistical methodology spanning several areas or not covered by a narrower statistics specialist.",
+    "exclusions": "statistics is only an application tool and another substantive discipline owns the contribution."
+  }
+}

@@ -56,6 +56,48 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         )?;
     }
 
+    // The modular manifest catalog deliberately starts a new, single Auto
+    // Review contract. Development builds may already have written a built-in
+    // profile with the retired hard-coded-catalog contract; such a profile is
+    // rejected by current validation before the editor can offer its reset
+    // action. Replace only the host-owned orientation prompt/schema pair and
+    // preserve the rest of the workflow, including user edits to its steps.
+    // Use a semantic marker rather than the historical numeric namespace:
+    // unreleased development stores may contain now-retired v11–v18 markers.
+    let modular_auto_review_marker = profiles.join(".modular-auto-review-contract-v1");
+    if !modular_auto_review_marker.exists() {
+        refresh_builtin_auto_review_contracts(profiles)?;
+        fs::write(
+            &modular_auto_review_marker,
+            b"modular-auto-review-contract\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the Auto Review contract migration '{}': {error}",
+                modular_auto_review_marker.display()
+            )
+        })?;
+    }
+
+    // Earlier development builds saved the fully rendered specialist catalog
+    // in the prompt. Compact exact stock prompts back to the editable template;
+    // user-authored prompts are never rewritten. Runtime expands the live
+    // catalog immediately before the provider call.
+    let compact_auto_review_prompt_marker = profiles.join(".compact-auto-review-prompt-v1");
+    if !compact_auto_review_prompt_marker.exists() {
+        compact_builtin_auto_review_prompts(profiles)?;
+        fs::write(
+            &compact_auto_review_prompt_marker,
+            b"runtime-expanded-auto-review-catalog\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the compact Auto Review prompt migration '{}': {error}",
+                compact_auto_review_prompt_marker.display()
+            )
+        })?;
+    }
+
     // Artifact access is part of the workflow definition, not an ambient
     // executor default. Refresh every shipped profile into the explicit
     // producer/role format. This must run before migrations that load and
@@ -236,261 +278,6 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         })?;
     }
 
-    // Auto Review v1 stored the entire catalog as conditional steps. Replace
-    // only an exact stock profile with the compact runtime-assembled skeleton;
-    // any edit to its prompt, schema, steps, or settings is preserved.
-    let auto_assembly_marker = profiles.join(".builtin-catalog-v11");
-    if !auto_assembly_marker.exists() {
-        let path = profiles.join("auto-review.json");
-        if path.exists() {
-            let content = read_profile_file(&path)
-                .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
-            let profile: ProfileData = serde_json::from_str(&content)
-                .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
-            validate_profile_data(&profile)?;
-            if matches_prior_stock_auto_review(&profile)? {
-                let replacement = auto_review_profile();
-                validate_profile_data(&replacement)?;
-                let json = serde_json::to_string_pretty(&replacement).map_err(|error| {
-                    format!("Failed to serialize '{}': {error}", path.display())
-                })?;
-                restore_profile_bytes(&path, json.as_bytes())
-                    .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
-            }
-        }
-        fs::write(
-            &auto_assembly_marker,
-            b"runtime-assembled-auto-review-specialists\n",
-        )
-        .map_err(|error| {
-            format!(
-                "Failed to record the Auto Review assembly migration '{}': {error}",
-                auto_assembly_marker.display()
-            )
-        })?;
-    }
-
-    // The earliest development Auto profile used one combined specialist-ID
-    // list and predated `conceptual_argument` (28 rather than 29 steps). The
-    // v11 exact fingerprint deliberately preserved it. Recognize that known
-    // stock shape separately so existing installs receive the compact profile
-    // without touching customized variants.
-    run_auto_review_v1_28_migration(
-        profiles,
-        ".builtin-catalog-v12",
-        b"compact-auto-review-legacy-v1-variants\n",
-        KNOWN_STOCK_AUTO_V1_28_ORIENTATION_PROMPT,
-        KNOWN_STOCK_AUTO_V1_28_PROFILE_SHAPE,
-    )?;
-
-    // v12 was briefly able to record its marker before its historical
-    // fingerprint was complete. Retry once under a new marker so affected
-    // installs compact the still-untouched profile after updating.
-    run_auto_review_v1_28_migration(
-        profiles,
-        ".builtin-catalog-v13",
-        b"retry-corrected-auto-review-v1-28-compaction\n",
-        KNOWN_STOCK_AUTO_V1_28_ORIENTATION_PROMPT,
-        KNOWN_STOCK_AUTO_V1_28_PROFILE_SHAPE,
-    )?;
-
-    // Keep customized Auto profiles intact while adopting the current
-    // user-facing name. This runs after the exact legacy-profile migrations
-    // above because their fingerprints include the historical name.
-    let auto_path = profiles.join("auto-review.json");
-    if auto_path.exists() {
-        let content = read_profile_file(&auto_path)
-            .map_err(|error| format!("Failed to read '{}': {error}", auto_path.display()))?;
-        let mut profile: ProfileData = serde_json::from_str(&content)
-            .map_err(|error| format!("Failed to parse '{}': {error}", auto_path.display()))?;
-        validate_profile_data(&profile)?;
-        if profile.name == "Paper Review (Auto)" {
-            profile.name = "Auto Paper Review".to_string();
-            let json = serde_json::to_string_pretty(&profile).map_err(|error| {
-                format!("Failed to serialize '{}': {error}", auto_path.display())
-            })?;
-            restore_profile_bytes(&auto_path, json.as_bytes())
-                .map_err(|error| format!("Failed to update '{}': {error}", auto_path.display()))?;
-        }
-    }
-
-    // The Auto skeleton renamed consolidation to "Consolidate Feedback",
-    // widened its comment ceiling, added the Validate Feedback step, and made
-    // web search a default capability on every step. Upgrade only an exact
-    // untouched v2 stock skeleton, carrying over a configured adaptive-agent
-    // count — the one setting the workflow editor exposes on that skeleton.
-    // Any other customization is preserved as-is.
-    let auto_validation_marker = profiles.join(".builtin-catalog-v14");
-    if !auto_validation_marker.exists() {
-        let path = profiles.join("auto-review.json");
-        if path.exists() {
-            let content = read_profile_file(&path)
-                .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
-            let profile: ProfileData = serde_json::from_str(&content)
-                .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
-            validate_profile_data(&profile)?;
-            if let Some(prior) = matches_prior_stock_auto_review_v2(&profile)? {
-                let mut replacement = auto_review_profile();
-                if let (Some(count), Some(schema)) = (
-                    prior.adaptive_agent_count,
-                    replacement.orientation_schema.as_mut(),
-                ) {
-                    schema[crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY] = count;
-                }
-                validate_profile_data(&replacement)?;
-                let json = serde_json::to_string_pretty(&replacement).map_err(|error| {
-                    format!("Failed to serialize '{}': {error}", path.display())
-                })?;
-                restore_profile_bytes(&path, json.as_bytes())
-                    .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
-            }
-        }
-        fs::write(
-            &auto_validation_marker,
-            b"validated-auto-review-consolidation\n",
-        )
-        .map_err(|error| {
-            format!(
-                "Failed to record the Auto Review validation migration '{}': {error}",
-                auto_validation_marker.display()
-            )
-        })?;
-    }
-
-    // Earlier builds replayed the v6 artifact-context refresh against stores
-    // whose auto-review.json had just been created in the current format
-    // (fresh installs), widening auto_validate's context to the raw core
-    // reports — undoing the deliberate consolidated-only isolation in
-    // auto_review_profile() and breaking the untouched-stock fingerprint.
-    // Heal exactly that replayed shape back to stock, carrying over a
-    // configured adaptive-agent count; any other customization is preserved.
-    let validate_context_marker = profiles.join(".builtin-catalog-v16");
-    if !validate_context_marker.exists() {
-        let path = profiles.join("auto-review.json");
-        if path.exists() {
-            if let Ok(Ok(profile)) = read_profile_file(&path)
-                .map(|content| serde_json::from_str::<ProfileData>(&content))
-            {
-                let carry_count = |target: &mut ProfileData| {
-                    if let (Some(from), Some(to)) = (
-                        profile.orientation_schema.as_ref(),
-                        target.orientation_schema.as_mut(),
-                    ) {
-                        if let Some(count) = from.get(crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY)
-                        {
-                            to[crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY] = count.clone();
-                        }
-                    }
-                };
-                let mut replayed = auto_review_profile();
-                // v16 fingerprints the pre-rename stock profile.
-                replayed.name = "Auto Paper Review".to_string();
-                pin_fingerprint_prompt_defaults(&mut replayed);
-                replayed.steps = configure_artifact_flow(
-                    replayed.steps,
-                    &replayed.extraction.input_mode,
-                    builtin_primary_readers("auto-review"),
-                );
-                carry_count(&mut replayed);
-                let matches_replayed = match (
-                    serde_json::to_value(&profile),
-                    serde_json::to_value(&replayed),
-                ) {
-                    (Ok(actual), Ok(expected)) => actual == expected,
-                    _ => false,
-                };
-                if matches_replayed {
-                    let mut replacement = auto_review_profile();
-                    carry_count(&mut replacement);
-                    validate_profile_data(&replacement)?;
-                    let json = serde_json::to_string_pretty(&replacement).map_err(|error| {
-                        format!("Failed to serialize '{}': {error}", path.display())
-                    })?;
-                    restore_profile_bytes(&path, json.as_bytes()).map_err(|error| {
-                        format!("Failed to update '{}': {error}", path.display())
-                    })?;
-                }
-            }
-        }
-        fs::write(
-            &validate_context_marker,
-            b"restored-auto-validate-isolation\n",
-        )
-        .map_err(|error| {
-            format!(
-                "Failed to record the validate-context repair '{}': {error}",
-                validate_context_marker.display()
-            )
-        })?;
-    }
-
-    // Rename the adaptive default and add its Quick companion. The Quick file
-    // is created before migrations run; on older stores, v6 may therefore
-    // replay artifact flow over that newly written file and widen validation's
-    // context. Heal only that exact replayed shape, preserving any customized
-    // profile. Likewise, rename Full only while it still has the prior stock
-    // name so a user-supplied display name remains untouched.
-    let automatic_review_variants_marker = profiles.join(".builtin-catalog-v17");
-    if !automatic_review_variants_marker.exists() {
-        let full_path = profiles.join("auto-review.json");
-        if full_path.exists() {
-            let content = read_profile_file(&full_path)
-                .map_err(|error| format!("Failed to read '{}': {error}", full_path.display()))?;
-            let mut profile: ProfileData = serde_json::from_str(&content)
-                .map_err(|error| format!("Failed to parse '{}': {error}", full_path.display()))?;
-            validate_profile_data(&profile)?;
-            if profile.name == "Auto Paper Review" {
-                profile.name = "Automatic Paper Review (Full)".to_string();
-                let json = serde_json::to_string_pretty(&profile).map_err(|error| {
-                    format!("Failed to serialize '{}': {error}", full_path.display())
-                })?;
-                restore_profile_bytes(&full_path, json.as_bytes()).map_err(|error| {
-                    format!("Failed to update '{}': {error}", full_path.display())
-                })?;
-            }
-        }
-
-        let quick_path = profiles.join("auto-review-quick.json");
-        if quick_path.exists() {
-            let content = read_profile_file(&quick_path)
-                .map_err(|error| format!("Failed to read '{}': {error}", quick_path.display()))?;
-            let profile: ProfileData = serde_json::from_str(&content)
-                .map_err(|error| format!("Failed to parse '{}': {error}", quick_path.display()))?;
-            validate_profile_data(&profile)?;
-            let stock = quick_auto_review_profile();
-            let mut replayed = stock.clone();
-            replayed.steps = configure_artifact_flow(
-                replayed.steps,
-                &replayed.extraction.input_mode,
-                builtin_primary_readers("auto-review-quick"),
-            );
-            let actual = serde_json::to_value(&profile).map_err(|error| {
-                format!("Failed to fingerprint '{}': {error}", quick_path.display())
-            })?;
-            let replayed = serde_json::to_value(&replayed)
-                .map_err(|error| format!("Failed to fingerprint Quick review: {error}"))?;
-            if actual == replayed {
-                let json = serde_json::to_string_pretty(&stock).map_err(|error| {
-                    format!("Failed to serialize '{}': {error}", quick_path.display())
-                })?;
-                restore_profile_bytes(&quick_path, json.as_bytes()).map_err(|error| {
-                    format!("Failed to update '{}': {error}", quick_path.display())
-                })?;
-            }
-        }
-
-        fs::write(
-            &automatic_review_variants_marker,
-            b"automatic-paper-review-full-and-quick\n",
-        )
-        .map_err(|error| {
-            format!(
-                "Failed to record the Automatic Paper Review variants migration '{}': {error}",
-                automatic_review_variants_marker.display()
-            )
-        })?;
-    }
-
     Ok(())
 }
 
@@ -509,14 +296,89 @@ const CATALOG_MIGRATION_MARKERS: &[&str] = &[
     ".builtin-catalog-v8",
     ".builtin-catalog-v9",
     ".builtin-catalog-v10",
-    ".builtin-catalog-v11",
-    ".builtin-catalog-v12",
-    ".builtin-catalog-v13",
-    ".builtin-catalog-v14",
     ".builtin-catalog-v15",
-    ".builtin-catalog-v16",
-    ".builtin-catalog-v17",
+    ".modular-auto-review-contract-v1",
+    ".compact-auto-review-prompt-v1",
 ];
+
+pub(super) fn refresh_builtin_auto_review_contracts(profiles: &Path) -> Result<(), String> {
+    for (id, replacement) in [
+        ("auto-review", auto_review_profile()),
+        ("auto-review-quick", quick_auto_review_profile()),
+    ] {
+        let path = profiles.join(format!("{id}.json"));
+        if !path.exists() {
+            continue;
+        }
+        let content = read_profile_file(&path)
+            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+        let mut profile: ProfileData = serde_json::from_str(&content)
+            .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+        let has_auto_review_skeleton = profile.steps.iter().any(|step| {
+            matches!(
+                step.id.as_str(),
+                "auto_contribution"
+                    | "auto_consistency"
+                    | "auto_exposition"
+                    | "auto_synthesis"
+                    | "auto_validate"
+            )
+        });
+        if !has_auto_review_skeleton {
+            continue;
+        }
+        let current_contract = profile.orientation_schema.as_ref().is_some_and(|schema| {
+            schema
+                .get("x-pipeline-contract")
+                .and_then(serde_json::Value::as_str)
+                == Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
+                && crate::auto_review::validate_schema_settings(schema).is_ok()
+        });
+        if current_contract {
+            continue;
+        }
+
+        profile.orientation_prompt = replacement.orientation_prompt;
+        profile.orientation_schema = replacement.orientation_schema;
+        validate_profile_data(&profile)?;
+        let json = serde_json::to_string_pretty(&profile)
+            .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+        restore_profile_bytes(&path, json.as_bytes())
+            .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+    }
+    Ok(())
+}
+
+pub(super) fn compact_builtin_auto_review_prompts(profiles: &Path) -> Result<(), String> {
+    let template = crate::auto_review::orientation_prompt();
+    let expanded = crate::auto_review::expand_orientation_prompt(&template);
+    for id in ["auto-review", "auto-review-quick"] {
+        let path = profiles.join(format!("{id}.json"));
+        if !path.exists() {
+            continue;
+        }
+        let content = read_profile_file(&path)
+            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+        let mut profile: ProfileData = serde_json::from_str(&content)
+            .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+        let current_contract = profile
+            .orientation_schema
+            .as_ref()
+            .and_then(|schema| schema.get("x-pipeline-contract"))
+            .and_then(serde_json::Value::as_str)
+            == Some(crate::auto_review::AUTO_REVIEW_CONTRACT);
+        if !current_contract || profile.orientation_prompt != expanded {
+            continue;
+        }
+        profile.orientation_prompt = template.clone();
+        validate_profile_data(&profile)?;
+        let json = serde_json::to_string_pretty(&profile)
+            .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+        restore_profile_bytes(&path, json.as_bytes())
+            .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+    }
+    Ok(())
+}
 
 pub(super) fn record_fresh_install_markers(profiles: &Path) -> Result<(), String> {
     for marker in CATALOG_MIGRATION_MARKERS {
@@ -548,130 +410,6 @@ pub(super) fn pin_fingerprint_prompt_defaults(profile: &mut ProfileData) {
     if let Some(merge) = prompts::compiled_default("merge") {
         profile.merge.prompt = merge.to_string();
     }
-}
-
-pub(super) fn prior_stock_auto_review() -> ProfileData {
-    let steps = configure_artifact_flow(crate::auto_review::legacy_steps(), "document", &[]);
-    let mut profile = ProfileData::new("Paper Review (Auto)", steps, MergeConfig::default());
-    pin_fingerprint_prompt_defaults(&mut profile);
-    profile.context_cache.enabled = true;
-    profile.orientation_prompt = crate::auto_review::legacy_orientation_prompt();
-    profile.orientation_schema = Some(crate::auto_review::legacy_orientation_schema());
-    profile
-}
-
-pub(super) fn matches_prior_stock_auto_review(profile: &ProfileData) -> Result<bool, String> {
-    let actual = serde_json::to_value(profile)
-        .map_err(|error| format!("Failed to fingerprint Paper Review (Auto): {error}"))?;
-    let expected = serde_json::to_value(prior_stock_auto_review())
-        .map_err(|error| format!("Failed to fingerprint stock Auto profile: {error}"))?;
-    Ok(actual == expected)
-}
-
-/// The second stock Auto profile: the runtime-assembled four-step skeleton
-/// before consolidation was renamed, Validate Feedback was added, and web
-/// search became a default step capability. The orientation prompt and schema
-/// are the pinned 0.9.0-era rendering, frozen because the live catalog has
-/// since gained subjects, method families, and genre reviewers.
-pub(super) fn prior_stock_auto_review_v2() -> ProfileData {
-    let steps = configure_artifact_flow(crate::auto_review::legacy_v2_steps(), "document", &[]);
-    let mut profile = ProfileData::new("Auto Paper Review", steps, MergeConfig::default());
-    pin_fingerprint_prompt_defaults(&mut profile);
-    profile.context_cache.enabled = true;
-    profile.orientation_prompt = crate::auto_review::frozen_v2_orientation_prompt();
-    profile.orientation_schema = Some(crate::auto_review::frozen_v2_orientation_schema());
-    profile
-}
-
-pub(super) struct PriorStockAutoV2 {
-    /// A configured adaptive-agent count found on the otherwise untouched
-    /// stock profile, preserved through the upgrade.
-    pub(super) adaptive_agent_count: Option<serde_json::Value>,
-}
-
-/// Recognize an untouched v2 stock Auto profile, treating the adaptive-agent
-/// count as the one preserved editor setting rather than a disqualifying edit.
-pub(super) fn matches_prior_stock_auto_review_v2(
-    profile: &ProfileData,
-) -> Result<Option<PriorStockAutoV2>, String> {
-    let mut actual = serde_json::to_value(profile)
-        .map_err(|error| format!("Failed to fingerprint Auto Paper Review: {error}"))?;
-    let adaptive_agent_count = actual
-        .pointer_mut("/orientation_schema")
-        .and_then(serde_json::Value::as_object_mut)
-        .and_then(|schema| schema.remove(crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY));
-    let expected = serde_json::to_value(prior_stock_auto_review_v2())
-        .map_err(|error| format!("Failed to fingerprint stock Auto v2 profile: {error}"))?;
-    Ok((actual == expected).then_some(PriorStockAutoV2 {
-        adaptive_agent_count,
-    }))
-}
-
-pub(super) const KNOWN_STOCK_AUTO_V1_28_ORIENTATION_PROMPT: &str =
-    "1825f9041431baf3f6ec55ffc3069a29690a200804bb77da763122096981c570";
-pub(super) const KNOWN_STOCK_AUTO_V1_28_PROFILE_SHAPE: &str =
-    "c63526e4822bda967a2426f12de339ea87927859407535f0fee330ffc0f8e71c";
-
-pub(super) fn run_auto_review_v1_28_migration(
-    profiles: &Path,
-    marker_name: &str,
-    marker_contents: &[u8],
-    expected_prompt_digest: &str,
-    expected_profile_shape_digest: &str,
-) -> Result<(), String> {
-    let marker = profiles.join(marker_name);
-    if marker.exists() {
-        return Ok(());
-    }
-    let path = profiles.join("auto-review.json");
-    if path.exists() {
-        let content = read_profile_file(&path)
-            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
-        let profile: ProfileData = serde_json::from_str(&content)
-            .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
-        validate_profile_data(&profile)?;
-        if matches_stock_auto_review_v1_28_with_digests(
-            &profile,
-            expected_prompt_digest,
-            expected_profile_shape_digest,
-        )? {
-            let replacement = auto_review_profile();
-            validate_profile_data(&replacement)?;
-            let json = serde_json::to_string_pretty(&replacement)
-                .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
-            restore_profile_bytes(&path, json.as_bytes())
-                .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
-        }
-    }
-    fs::write(&marker, marker_contents).map_err(|error| {
-        format!(
-            "Failed to record the Auto Review legacy migration '{}': {error}",
-            marker.display()
-        )
-    })
-}
-
-pub(super) fn matches_stock_auto_review_v1_28_with_digests(
-    profile: &ProfileData,
-    expected_prompt_digest: &str,
-    expected_profile_shape_digest: &str,
-) -> Result<bool, String> {
-    if prompt_digest(&profile.orientation_prompt) != expected_prompt_digest {
-        return Ok(false);
-    }
-    Ok(profile_shape_digest_without_orientation_prompt(profile)? == expected_profile_shape_digest)
-}
-
-pub(super) fn profile_shape_digest_without_orientation_prompt(
-    profile: &ProfileData,
-) -> Result<String, String> {
-    let mut shape = profile.clone();
-    shape.orientation_prompt.clear();
-    let value = serde_json::to_value(shape)
-        .map_err(|error| format!("Failed to fingerprint legacy Paper Review (Auto): {error}"))?;
-    let serialized = serde_json::to_string(&value)
-        .map_err(|error| format!("Failed to serialize legacy Auto fingerprint: {error}"))?;
-    Ok(prompt_digest(&serialized))
 }
 
 pub(super) fn matches_prior_stock_full_review(profile: &ProfileData) -> Result<bool, String> {

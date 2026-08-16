@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "qualitative_case_study",
+  "label": "Method — Qualitative & Case Evidence",
+  "order": 86,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "family",
+  "routing": {
+    "description": "Qualitative or case evidence carries central claims but spans approaches or does not fit a listed ethnographic, interview, process-tracing, or configurational role.",
+    "exclusions": "archival source criticism alone, purely textual interpretation, cases used only as illustrations, or a single listed qualitative role that fully covers the inferential strategy."
+  }
+}

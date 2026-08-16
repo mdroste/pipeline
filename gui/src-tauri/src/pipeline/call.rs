@@ -23,6 +23,7 @@ pub struct Request<'a> {
     pub log_label: &'a str,
     pub prompt: &'a str,
     pub tools: &'a [String],
+    pub output_schema: Option<&'a serde_json::Value>,
     pub timeout_secs: u64,
     pub agent: Option<&'a str>,
     pub cwd: Option<&'a str>,
@@ -47,6 +48,7 @@ pub struct OwnedRequest {
     pub tools: Vec<String>,
     pub system_prompt: Option<String>,
     pub output_format: String,
+    pub output_schema: Option<serde_json::Value>,
     pub timeout_secs: u64,
     pub agent: Option<String>,
     pub cwd: Option<String>,
@@ -82,6 +84,7 @@ impl OwnedRequest {
             tools: Vec::new(),
             system_prompt: None,
             output_format: "text".to_string(),
+            output_schema: None,
             timeout_secs,
             agent: None,
             cwd: None,
@@ -110,6 +113,7 @@ impl From<Request<'_>> for OwnedRequest {
             tools: request.tools.to_vec(),
             system_prompt: None,
             output_format: "text".to_string(),
+            output_schema: request.output_schema.cloned(),
             timeout_secs: request.timeout_secs,
             agent: request.agent.map(str::to_string),
             cwd: request.cwd.map(str::to_string),
@@ -351,6 +355,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
     primary_overrides.model_resolved = request.model_resolved;
     primary_overrides.pdf_attachment = request.pdf_attachment.as_deref();
     primary_overrides.max_output_tokens = request.max_output_tokens;
+    primary_overrides.output_schema = request.output_schema.as_ref();
     primary_overrides.write_dir = request.write_dir.as_deref();
     primary_overrides.settings = Some(request.settings.as_ref());
     primary_overrides.shared_context = request.shared_context.clone();
@@ -571,6 +576,7 @@ mod tests {
             log_label: "Size test",
             prompt: "",
             tools: &[],
+            output_schema: None,
             timeout_secs: 60,
             agent: None,
             cwd: None,

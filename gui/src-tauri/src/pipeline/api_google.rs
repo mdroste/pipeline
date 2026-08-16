@@ -86,6 +86,18 @@ fn remove_hosted_search(request: &mut GoogleRequest) {
     request.tool_config = None;
 }
 
+fn generation_config(
+    max_output_tokens: u32,
+    schema: Option<&serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let mut config = serde_json::json!({"maxOutputTokens": max_output_tokens});
+    if let Some(schema) = schema {
+        config["responseMimeType"] = serde_json::Value::String("application/json".to_string());
+        config["responseJsonSchema"] = crate::pipeline::structured::provider_schema(schema)?;
+    }
+    Ok(config)
+}
+
 fn hosted_search_capability_error(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     let validation_error = error.contains("http 400");
@@ -184,11 +196,12 @@ pub async fn call_google_api(
         system_instruction,
         tools,
         tool_config: None,
-        generation_config: Some(serde_json::json!({
-            "maxOutputTokens": overrides
+        generation_config: Some(generation_config(
+            overrides
                 .max_output_tokens
                 .unwrap_or(DEFAULT_STEP_MAX_OUTPUT_TOKENS),
-        })),
+            overrides.output_schema,
+        )?),
     };
     if has_hosted_search(&request) && has_custom_functions(&request) {
         request.tool_config = Some(serde_json::json!({
@@ -340,6 +353,24 @@ mod tests {
         let task = contents[0].parts[1]["text"].as_str().unwrap();
         assert!(shared.contains("paper body"));
         assert_eq!(task, "task-specific request");
+    }
+
+    #[test]
+    fn generation_config_enables_json_schema_output() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["ok"],
+            "properties": {"ok": {"type": "boolean"}}
+        });
+        let config = generation_config(1234, Some(&schema)).unwrap();
+        assert_eq!(config["maxOutputTokens"], 1234);
+        assert_eq!(config["responseMimeType"], "application/json");
+        assert_eq!(
+            config["responseJsonSchema"]["required"],
+            serde_json::json!(["ok"])
+        );
+        let plain = generation_config(32, None).unwrap();
+        assert!(plain.get("responseMimeType").is_none());
     }
 
     #[test]

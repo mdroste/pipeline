@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_theoretical_mathematical",
+  "label": "Physics — Theoretical & Mathematical",
+  "order": 1,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Theoretical or mathematical physics centered on formal physical models, symmetries, fields, or exact structure.",
+    "exclusions": "the result is primarily a pure mathematical theorem without a material physical interpretation."
+  }
+}

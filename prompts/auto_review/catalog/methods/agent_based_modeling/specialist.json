@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "agent_based_modeling",
+  "label": "Method — Agent-Based Modeling",
+  "order": 48,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Agent-based or individual-based simulation generates the evidence for a central mechanism, pattern, or policy claim.",
+    "exclusions": "equation-based simulation without heterogeneous interacting agents, or an ABM used only as an illustrative appendix."
+  }
+}

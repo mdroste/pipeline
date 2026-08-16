@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_chemistry_electrochemistry_energy",
+  "label": "Chemistry — Electrochemistry & Energy",
+  "order": 101,
+  "group": {
+    "id": "chemistry",
+    "label": "Chemistry"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Electrochemical mechanisms, batteries, fuel cells, electrocatalysis, photoelectrochemistry, redox-flow systems, or molecular and interfacial energy conversion.",
+    "exclusions": "electrochemistry is used only as an analytical measurement, or device engineering dominates without a material chemical mechanism, composition, or degradation claim."
+  }
+}

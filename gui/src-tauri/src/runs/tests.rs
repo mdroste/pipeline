@@ -49,6 +49,84 @@ fn read_artifact_rejects_traversal() {
 }
 
 #[test]
+fn cited_source_files_become_bounded_run_artifacts() {
+    let source = tempfile::tempdir().unwrap();
+    fs::create_dir_all(source.path().join("src")).unwrap();
+    fs::write(source.path().join("src/lib.rs"), "fn invariant() {}\n").unwrap();
+    let runs = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(runs.path(), "source-evidence").unwrap();
+    let evidence = crate::models::FindingEvidence {
+        source_path: "src/lib.rs".into(),
+        line_start: Some(1),
+        ..Default::default()
+    };
+    let mut products = crate::models::RunProducts {
+        findings: Some(crate::models::FindingSet {
+            findings: vec![crate::models::Finding {
+                id: "invariant".into(),
+                title: "Broken invariant".into(),
+                evidence: vec![evidence.clone(), evidence],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    assert!(writer
+        .capture_source_evidence(&mut products, source.path())
+        .is_empty());
+    let findings = products.findings.unwrap();
+    let artifact_path = "context/source-evidence/src/lib.rs";
+    assert!(findings.findings[0]
+        .evidence
+        .iter()
+        .all(|item| item.artifact_path == artifact_path));
+    assert_eq!(
+        fs::read_to_string(writer.dir().join(artifact_path)).unwrap(),
+        "fn invariant() {}\n"
+    );
+    let manifest = writer.current_manifest();
+    assert_eq!(
+        manifest
+            .artifacts
+            .iter()
+            .filter(|artifact| artifact.rel_path == artifact_path)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn source_evidence_capture_rejects_path_traversal() {
+    let source = tempfile::tempdir().unwrap();
+    let runs = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(runs.path(), "unsafe-source-evidence").unwrap();
+    let mut products = crate::models::RunProducts {
+        findings: Some(crate::models::FindingSet {
+            findings: vec![crate::models::Finding {
+                id: "unsafe".into(),
+                title: "Unsafe path".into(),
+                evidence: vec![crate::models::FindingEvidence {
+                    source_path: "../secret.txt".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let warnings = writer.capture_source_evidence(&mut products, source.path());
+    assert!(warnings.iter().any(|warning| warning.contains("unsafe")));
+    assert!(products.findings.unwrap().findings[0].evidence[0]
+        .artifact_path
+        .is_empty());
+    assert!(writer.current_manifest().artifacts.is_empty());
+}
+
+#[test]
 fn completed_page_entries_compact_without_removing_files() {
     let root = tempfile::tempdir().unwrap();
     let mut writer = RunWriter::create_in(root.path(), "compact-pages").unwrap();
@@ -247,8 +325,12 @@ fn summary_carries_metrics_and_basename() {
         input_path: "/home/u/paper.tex".into(),
         input_mode: "document".into(),
         input_interpretation: "document".into(),
+        input_identity: Default::default(),
         profile_id: "deep-review".into(),
         profile_name: "Deep Review".into(),
+        workflow_source: "profile:deep-review".into(),
+        workflow_fingerprint: "sha256:test".into(),
+        specialist_catalog_revision: "sha256:catalog".into(),
         provider: "claude".into(),
         artifacts: vec![],
         page_artifacts: None,
@@ -280,6 +362,7 @@ fn summary_carries_metrics_and_basename() {
     let s = m.to_summary();
     assert_eq!(s.input_name, "paper.tex");
     assert_eq!(s.status, "partial");
+    assert_eq!(s.specialist_catalog_revision, "sha256:catalog");
     assert_eq!(s.input_tokens, 1000);
     assert_eq!(s.output_tokens, 200);
     assert_eq!(s.cached_input_tokens, 700);
@@ -290,6 +373,28 @@ fn summary_carries_metrics_and_basename() {
     assert_eq!(s.step_count, 6);
     assert_eq!(s.failed_steps, vec!["Empirical".to_string()]);
     assert_eq!(s.title, "My run");
+}
+
+#[test]
+fn input_identity_is_stable_across_input_kinds_and_reruns() {
+    let document = input_identity("/papers/main.pdf", "document", "hash-a", None);
+    let document_again = input_identity("/papers/main.pdf", "document", "hash-b", None);
+    assert_eq!(document.lineage_id, document_again.lineage_id);
+    assert_ne!(document.content_hash, document_again.content_hash);
+
+    let moved_tree = input_identity(
+        "/new-location/source",
+        "source_tree",
+        "tree-hash",
+        Some(&document),
+    );
+    assert_eq!(moved_tree.lineage_id, document.lineage_id);
+    assert!(moved_tree.selection_key.starts_with("source_tree:"));
+
+    assert_eq!(
+        input_identity("", "none", "", None),
+        InputIdentity::default()
+    );
 }
 
 #[test]

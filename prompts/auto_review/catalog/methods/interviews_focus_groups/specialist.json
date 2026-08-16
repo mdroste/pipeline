@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "interviews_focus_groups",
+  "label": "Method — Interviews & Focus Groups",
+  "order": 88,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Semistructured, structured, life-history, elite, expert, or focus-group interviews materially support the conclusions.",
+    "exclusions": "informal conversations incidental to ethnography, questionnaire items analyzed quantitatively, or quotations used only as illustrations."
+  }
+}

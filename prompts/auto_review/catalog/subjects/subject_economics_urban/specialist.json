@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_urban",
+  "label": "Economics — Urban, Regional & Transportation",
+  "order": 182,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Cities, housing, land use, transportation, local public goods, spatial sorting, regional development, or place-based policy.",
+    "exclusions": "geographic description, planning design, or transport engineering without an economic location, market, equilibrium, or welfare mechanism."
+  }
+}

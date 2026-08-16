@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "synthesis_compound_characterization",
+  "label": "Method — Synthesis & Compound Characterization",
+  "order": 84,
+  "group": {
+    "id": "lab_instrumentation",
+    "label": "Laboratory & Instrumentation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "New compounds, synthetic routes, yields, and their spectroscopic characterization carry central claims.",
+    "exclusions": "quantitative analysis of known analytes, or biological activity claims covered by assay and preclinical roles."
+  }
+}

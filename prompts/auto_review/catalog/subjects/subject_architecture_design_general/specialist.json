@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_architecture_design_general",
+  "label": "Architecture, Planning & Design — General",
+  "order": 266,
+  "group": {
+    "id": "architecture_design",
+    "label": "Architecture, Planning & Design"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Architecture, planning, landscape, or design scholarship spanning several areas or outside the listed specialties.",
+    "exclusions": "a listed built-environment, planning, landscape, or design lens clearly contains the central artifact or intervention."
+  }
+}

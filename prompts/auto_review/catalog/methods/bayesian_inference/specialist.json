@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "bayesian_inference",
+  "label": "Method — Bayesian Inference",
+  "order": 25,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Prior distributions, hierarchical Bayes, posterior computation, Bayesian model comparison, or posterior decision statements materially support the conclusions.",
+    "exclusions": "Bayesian terminology appears only in motivation, or a standard posterior is used as a minor computational input with no claim sensitive to prior, hierarchy, or posterior approximation."
+  }
+}

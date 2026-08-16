@@ -150,6 +150,16 @@ pub(super) fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String>
             }
         }
         if let Some(schema) = &step.output_schema {
+            if schema.get("x-pipeline-contract").is_some()
+                || schema
+                    .get(crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY)
+                    .is_some()
+            {
+                return Err(format!(
+                    "Step '{}' output schema uses an orientation-only x-pipeline contract setting",
+                    step.id
+                ));
+            }
             let bytes = serde_json::to_vec(schema)
                 .map_err(|e| format!("Step '{}' output schema is invalid: {e}", step.id))?;
             if bytes.len() > MAX_OUTPUT_SCHEMA_BYTES {
@@ -159,7 +169,7 @@ pub(super) fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String>
                     MAX_OUTPUT_SCHEMA_BYTES / 1024 / 1024
                 ));
             }
-            crate::pipeline::structured::validate_schema(schema)
+            crate::pipeline::structured::provider_schema(schema)
                 .map_err(|e| format!("Step '{}' output schema is invalid: {e}", step.id))?;
         }
     }
@@ -315,7 +325,12 @@ pub(super) fn validate_profile_data(profile: &ProfileData) -> Result<(), String>
         return Err("Every workflow must build an orientation map".to_string());
     }
     validate_profile_steps(&profile.steps)?;
+    crate::auto_review::validate_profile_contract_identity(
+        &profile.steps,
+        profile.orientation_schema.as_ref(),
+    )?;
     validate_artifact_context(profile)?;
+    validate_published_outputs(profile)?;
 
     for (label, value) in [
         ("orientation prompt", profile.orientation_prompt.as_str()),
@@ -341,10 +356,12 @@ pub(super) fn validate_profile_data(profile: &ProfileData) -> Result<(), String>
                 MAX_OUTPUT_SCHEMA_BYTES / 1024 / 1024
             ));
         }
-        crate::pipeline::structured::validate_schema(schema)
-            .map_err(|error| format!("Invalid orientation schema: {error}"))?;
         crate::auto_review::validate_schema_settings(schema)
             .map_err(|error| format!("Invalid adaptive-review setting: {error}"))?;
+        let resolved = crate::auto_review::resolve_schema_catalogs(schema)
+            .map_err(|error| format!("Invalid orientation schema catalog reference: {error}"))?;
+        crate::pipeline::structured::provider_schema(&resolved)
+            .map_err(|error| format!("Invalid orientation schema: {error}"))?;
     }
     if profile.merge.agents.len() > 1 {
         return Err("Merge supports at most one selected agent".to_string());
@@ -447,6 +464,36 @@ pub(super) fn validate_profile_data(profile: &ProfileData) -> Result<(), String>
             return Err(format!(
                 "Invalid mode '{}' for input '{}'",
                 input.mode, input.key
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_published_outputs(profile: &ProfileData) -> Result<(), String> {
+    for (role, step_id) in [
+        ("primary report", profile.outputs.primary_step.trim()),
+        ("findings", profile.outputs.findings_step.trim()),
+    ] {
+        if step_id.is_empty() {
+            continue;
+        }
+        let step = profile
+            .steps
+            .iter()
+            .find(|step| step.id == step_id)
+            .ok_or_else(|| format!("Published {role} names unknown step '{step_id}'"))?;
+        if !step.enabled {
+            return Err(format!("Published {role} step '{step_id}' is disabled"));
+        }
+        if step.phase != Phase::Sequential {
+            return Err(format!(
+                "Published {role} step '{step_id}' must be Sequential"
+            ));
+        }
+        if role == "findings" && step.output_schema.is_none() {
+            return Err(format!(
+                "Published findings step '{step_id}' must define an output JSON schema"
             ));
         }
     }

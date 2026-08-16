@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_history",
+  "label": "Economics — Economic History",
+  "order": 184,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Economic history using economic theory or empirical methods to explain historical development.",
+    "exclusions": "the contribution is primarily historiographic and source-interpretive without an economic mechanism or estimand."
+  }
+}

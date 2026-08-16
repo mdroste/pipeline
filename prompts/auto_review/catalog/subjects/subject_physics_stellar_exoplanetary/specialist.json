@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_stellar_exoplanetary",
+  "label": "Physics — Stellar & Exoplanetary Astrophysics",
+  "order": 10,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Stars, stellar evolution, compact objects as stellar endpoints, exoplanets, planet formation, or stellar-system dynamics.",
+    "exclusions": "galaxy-scale structure, cosmological inference, or planetary geoscience of solar-system bodies carries the contribution."
+  }
+}

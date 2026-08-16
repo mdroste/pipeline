@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_modern",
+  "label": "History — Modern & Contemporary",
+  "order": 148,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Modern or contemporary history, including industrialization, nation-states, colonialism, war, and mass politics.",
+    "exclusions": "the paper's intervention is primarily a social-science analysis of current outcomes rather than historical explanation."
+  }
+}

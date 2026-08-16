@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_software_paper",
+  "label": "Research Software Paper",
+  "order": 8,
+  "routing": {
+    "description": "The paper presents research software as its contribution, with claims about the implementation's correctness, performance, or capability.",
+    "exclusions": "a paper whose software merely implements its analysis, or a methods paper where the algorithm rather than the implementation is the contribution."
+  }
+}

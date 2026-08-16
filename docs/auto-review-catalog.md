@@ -55,21 +55,43 @@ A subject prompt has four layers, all Markdown:
    referee, evidence, safety, and report-output contract.
 2. One discipline lens in `prompts/auto_review/subjects/` supplies shared
    domain standards.
-3. `prompts/auto_review/subjects/focus/{id}.md` supplies the subfield-specific
-   review focus; `auto_review/subjects.rs` holds only compact routing metadata.
-4. The same catalog entry supplies an explicit scope boundary used both in the
+3. `prompts/auto_review/catalog/subjects/{id}/focus.md` supplies the
+   subfield-specific review focus; the adjacent `specialist.json` holds its
+   compact routing metadata.
+4. The same manifest supplies an explicit scope boundary used both in the
    routing prompt and the assembled reviewer prompt.
 
 Method prompts combine one method-specific file under
-`prompts/auto_review/methods/{id}.md` with the shared evidence, calibration,
-safety, and Markdown output contract in `methods/_review_contract.md`.
-Genre entries under `prompts/auto_review/genres/{id}.md` are compact context
+`prompts/auto_review/catalog/methods/{id}/prompt.md` with the shared evidence,
+calibration, safety, and Markdown output contract in
+`prompts/auto_review/methods/_review_contract.md`.
+Genre entries under `prompts/auto_review/catalog/genres/{id}/prompt.md` are compact context
 paragraphs, not referee prompts: each states how to judge that kind of
 document and what not to demand of it, and is injected verbatim into every
-step's prompt when its genre is classified. `auto_review/methods.rs` and
-`auto_review/genres.rs` supply classification descriptions and exclusions.
-This keeps all long-form prose in Markdown and compact routing metadata in
-typed catalogs.
+step's prompt when its genre is classified. Every role's adjacent
+`specialist.json` supplies its classification description and exclusions.
+The build validates every manifest and prompt, then generates the typed Rust
+catalog consumed by routing and the editor.
+
+## Catalog-backed orientation schema
+
+The saved Auto Review orientation schema does not enumerate every role. Its
+selection fields use compact `x-pipeline-catalog` references for subjects,
+methods, and genres, with the live-catalog policy set explicitly at the schema
+root. `selection_notes.id` does not repeat the combined subject-and-method
+enum: host semantic validation already requires its IDs to match the selected
+specialists exactly. Before any provider call, Pipeline resolves the three
+catalog references to ordinary JSON Schema enums. The same resolved schema is
+used for strict host validation, followed by routing-specific semantic checks
+such as note coverage, fallback conflicts, and valid subject/method placement.
+
+The Workflow Editor shows both the compact schema and the compact router prompt
+template. The prompt contains subject, method, and genre catalog placeholders;
+Pipeline expands them from the live manifests only when building the provider
+call. The editor summarizes the catalog without crowding the canvas and offers
+the fully resolved provider schema as an advanced view. Each Auto Review run
+fingerprints all manifest metadata and prompt content; that catalog revision is
+included in the launch fingerprint and recorded in the run manifest.
 
 ## Subject coverage
 
@@ -118,8 +140,9 @@ The method catalog is grouped into families. Within a family, entries marked
 *(fallback)* are the family's broad role, selected only for approaches its
 specific siblings do not list, for contributions spanning several of them, or
 when a separate general issue in that family is central. Entries must stay
-contiguous by family in `methods.rs`; the orientation prompt and the catalog
-browser render the same grouping.
+contiguous by family through manifest `order` values; the orientation prompt
+and the catalog browser render the same grouping. Build validation rejects
+gaps, duplicate IDs, malformed groups, and duplicate family fallbacks.
 
 | Family | Roles |
 |---|---|
@@ -166,29 +189,28 @@ reviewer does not replace clinical-study design review.
 
 ## Adding a specialist
 
-1. Add a stable `subject_*` or method ID (or a `genre_*` classification) to
-   the relevant typed catalog. IDs are durable provenance and rerun keys, so
-   do not rename an existing ID casually. Method entries also declare a
-   family and stay contiguous with it; at most one role per family is
-   `Family`-level.
+1. Add one directory under `catalog/subjects/`, `catalog/methods/`, or
+   `catalog/genres/`. Its directory name and `specialist.json` ID must match.
+   IDs are durable provenance and rerun keys, so do not rename an existing ID
+   casually. Subject and method entries declare a group; at most one method
+   per family is `family`-level.
 2. Give the router a positive description and a concrete exclusion. The
    exclusion is important for avoiding attractive but irrelevant reviewers.
-3. For a subject role, reuse its discipline lens and add a focus file under
-   `subjects/focus/{id}.md`. Add a new discipline Markdown lens only for a
-   genuinely new discipline. For a method role, add a focused Markdown prompt
-   named after the ID; both reviewer types inherit their shared evidence and
-   report-output contract. For a genre, add a compact context paragraph with
-   no output contract of its own.
+3. For a subject role, reuse its discipline lens and add `focus.md` beside the
+   manifest. Add a new discipline Markdown lens only for a genuinely new
+   discipline. For a method role, add `prompt.md` beside the manifest; both
+   reviewer types inherit their shared evidence and report-output contract.
+   For a genre, add a compact `prompt.md` context paragraph with no output
+   contract of its own.
 4. Keep the role's executable properties host-owned. Do not add catalog-wide
    steps or a general expression/template engine.
-5. Run the Auto Review catalog, schema, materialization, migration, and UI
-   preview tests. The saved profile must remain five steps and the materialized
-   workflow must remain below the 100-step profile limit.
+5. Run the Auto Review catalog, schema, materialization, and UI preview tests.
+   `specialist.schema.json` is compiled and applied to every manifest by
+   `build.rs`; catalog-size tests derive their expectations from the manifests,
+   so adding a valid role does not require updating a frozen count.
+   The saved profile must remain five steps and the materialized workflow must
+   remain below the 100-step profile limit.
 
-The legacy `prompts/auto_review/fields/` directory and `auto_review/legacy.rs`
-exist only to recognize untouched Auto v1 profiles and rerun their saved
-reports. New routing must use the subject hierarchy.
-`prompts/auto_review/orientation_v2.md` and `orientation_v2_schema.json` are
-the pinned 0.9.0-era orientation prompt and schema (191 subjects, 32 flat
-methods); migration fingerprints for untouched stock profiles depend on those
-exact artifacts, so they must never track the live catalog.
+There are no pinned or legacy Auto Review catalogs in this pre-release codebase.
+The current manifest format, compact schema references, and generated catalog
+are the single source of truth.

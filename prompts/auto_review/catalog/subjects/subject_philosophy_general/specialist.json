@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_general",
+  "label": "Philosophy — General",
+  "order": 208,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Philosophical work spanning several areas or outside the listed philosophical specialties.",
+    "exclusions": "a listed philosophical area clearly contains the principal argument."
+  }
+}

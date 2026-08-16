@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_null_results",
+  "label": "Null & Negative Results",
+  "order": 6,
+  "routing": {
+    "description": "The paper's headline contribution is a null, negative, or failed-to-detect finding.",
+    "exclusions": "a positive-result paper that also reports some insignificant estimates."
+  }
+}

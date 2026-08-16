@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_metaphysics_mind",
+  "label": "Philosophy — Metaphysics & Mind",
+  "order": 210,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Metaphysics, ontology, modality, causation, time, personal identity, consciousness, or philosophy of mind spanning these areas.",
+    "exclusions": "the contribution is empirical neuroscience or psychology without a substantive metaphysical or philosophy-of-mind argument, or philosophy of mind clearly carries the central argument."
+  }
+}

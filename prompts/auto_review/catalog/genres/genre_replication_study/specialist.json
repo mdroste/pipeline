@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_replication_study",
+  "label": "Replication & Reanalysis",
+  "order": 0,
+  "routing": {
+    "description": "The paper's central contribution is replicating, reproducing, or reanalyzing identified prior published work.",
+    "exclusions": "an original study that merely includes a replication arm or robustness section within a novel contribution."
+  }
+}

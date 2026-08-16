@@ -50,6 +50,7 @@ fn build_antigravity_args(
     model: &str,
     effort: &str,
     timeout_secs: u64,
+    output_schema_path: Option<&str>,
     prompt_argument: &str,
 ) -> Vec<String> {
     let mut cmd_args: Vec<String> = Vec::new();
@@ -66,6 +67,10 @@ fn build_antigravity_args(
     cmd_args.push("--output-format".to_string());
     cmd_args.push("json".to_string());
     cmd_args.push("--disable-slash-commands".to_string());
+    if let Some(path) = output_schema_path {
+        cmd_args.push("--json-schema".to_string());
+        cmd_args.push(path.to_string());
+    }
     cmd_args.push("--print-timeout".to_string());
     cmd_args.push(format!(
         "{}s",
@@ -108,7 +113,7 @@ struct AntigravityEnvelope {
     #[serde(default)]
     status: String,
     #[serde(default)]
-    response: String,
+    response: serde_json::Value,
     #[serde(default)]
     error: String,
     #[serde(default)]
@@ -143,7 +148,12 @@ fn parse_antigravity_result(
     if envelope.status.eq_ignore_ascii_case("error") {
         return Err("Antigravity marked the result as an error".to_string());
     }
-    let text = envelope.response.trim().to_string();
+    let text = match envelope.response {
+        serde_json::Value::String(text) => text.trim().to_string(),
+        serde_json::Value::Null => String::new(),
+        structured => serde_json::to_string(&structured)
+            .map_err(|error| format!("invalid structured `response`: {error}"))?,
+    };
     if text.is_empty() {
         return Err("missing or empty `response`".to_string());
     }
@@ -211,9 +221,19 @@ pub async fn call_antigravity(
     // Long prompts live in a private temp directory that becomes one of the
     // granted read roots; the argument then tells the model to read it.
     let prepared_prompt = prepare_cli_prompt(prompt)?;
+    let prepared_output_schema = overrides
+        .output_schema
+        .map(crate::pipeline::structured::prepare_provider_schema_file)
+        .transpose()?;
+    let mut provider_read_dirs = extra_read_dirs.to_vec();
+    provider_read_dirs.extend(
+        prepared_output_schema
+            .as_ref()
+            .map(|schema| schema.read_root.as_str()),
+    );
     let workspace = plan_cli_workspace(
         cwd,
-        extra_read_dirs,
+        &provider_read_dirs,
         prepared_prompt.read_root.as_deref(),
         if needs_write {
             overrides.write_dir
@@ -233,6 +253,9 @@ pub async fn call_antigravity(
         &model,
         &effort,
         timeout_secs,
+        prepared_output_schema
+            .as_ref()
+            .map(|schema| schema.path.as_str()),
         &prepared_prompt.argument,
     );
 
@@ -409,6 +432,7 @@ mod tests {
                 "",
                 "",
                 900,
+                None,
                 "Review the paper.",
             );
             assert!(args.contains(&"--sandbox".to_string()));
@@ -430,6 +454,7 @@ mod tests {
             "",
             "",
             600,
+            None,
             "p",
         );
         let mode_at = read_only.iter().position(|a| a == "--mode").unwrap();
@@ -441,6 +466,7 @@ mod tests {
             "",
             "",
             600,
+            None,
             "p",
         );
         let mode_at = write.iter().position(|a| a == "--mode").unwrap();
@@ -455,6 +481,7 @@ mod tests {
             "gemini-3.1-pro",
             "high",
             600,
+            None,
             "p",
         );
         let model_at = args.iter().position(|a| a == "--model").unwrap();
@@ -465,8 +492,15 @@ mod tests {
         // Other providers' effort levels (for example Claude's "max") and the
         // empty default are dropped rather than failing the call.
         for effort in ["max", "", "xhigh"] {
-            let args =
-                build_antigravity_args(&workspace(&[], Some("/tmp")), false, "", effort, 600, "p");
+            let args = build_antigravity_args(
+                &workspace(&[], Some("/tmp")),
+                false,
+                "",
+                effort,
+                600,
+                None,
+                "p",
+            );
             assert!(!args.contains(&"--effort".to_string()), "{effort:?}");
             assert!(!args.contains(&"--model".to_string()));
         }
@@ -480,11 +514,27 @@ mod tests {
             "",
             "",
             600,
+            None,
             "Read the instructions at /private/tmp/pipeline_prompt_1/prompt.txt and follow them exactly.",
         );
         let p_at = args.iter().position(|a| a == "-p").unwrap();
         assert!(args[p_at + 1].starts_with("Read the instructions at "));
         assert_eq!(p_at + 2, args.len());
+    }
+
+    #[test]
+    fn schema_path_is_passed_to_native_structured_output_flag() {
+        let args = build_antigravity_args(
+            &workspace(&[], Some("/tmp")),
+            false,
+            "",
+            "",
+            600,
+            Some("/tmp/schema.json"),
+            "p",
+        );
+        let schema_at = args.iter().position(|arg| arg == "--json-schema").unwrap();
+        assert_eq!(args[schema_at + 1], "/tmp/schema.json");
     }
 
     #[test]
@@ -509,6 +559,14 @@ mod tests {
         assert_eq!(usage.cached_input_tokens, 10);
         assert_eq!(usage.cache_write_input_tokens, 0);
         assert_eq!(usage.model_round_trips, 4);
+    }
+
+    #[test]
+    fn json_envelope_preserves_an_object_structured_response() {
+        let (text, _) =
+            parse_antigravity_result(r#"{"status":"SUCCESS","response":{"content":"Report"}}"#)
+                .unwrap();
+        assert_eq!(text, r#"{"content":"Report"}"#);
     }
 
     #[test]

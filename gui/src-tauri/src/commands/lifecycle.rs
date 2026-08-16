@@ -271,6 +271,22 @@ pub fn is_cancelled() -> bool {
     CANCEL_FLAG.load(std::sync::atomic::Ordering::Acquire)
 }
 
+/// Recognize only the cancellation errors Pipeline itself creates. Provider
+/// messages are untrusted prose and may legitimately contain words such as
+/// "cancelled" (for example, a cancelled subscription); those remain ordinary
+/// failures and must not bypass retries or acquire shell interrupt status.
+pub fn is_pipeline_cancellation_error(error: &str) -> bool {
+    if error == "Pipeline cancelled" || error.starts_with("Pipeline cancelled during ") {
+        return true;
+    }
+    error
+        .strip_prefix("Pass '")
+        .and_then(|value| value.strip_suffix("' cancelled"))
+        .is_some_and(|pass_key| {
+            !pass_key.is_empty() && !pass_key.contains('\n') && !pass_key.contains('\r')
+        })
+}
+
 pub(super) fn cancellation_signal() -> &'static tokio::sync::watch::Sender<u64> {
     CANCEL_SIGNAL.get_or_init(|| tokio::sync::watch::channel(0).0)
 }
@@ -461,5 +477,29 @@ pub(crate) fn kill_process(pid: u32) {
             .args(["/F", "/T", "/PID", &pid.to_string()])
             .creation_flags(0x08000000)
             .status();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_pipeline_cancellation_error;
+
+    #[test]
+    fn cancellation_errors_use_pipeline_owned_messages_only() {
+        assert!(is_pipeline_cancellation_error("Pipeline cancelled"));
+        assert!(is_pipeline_cancellation_error(
+            "Pipeline cancelled during fan-out discovery"
+        ));
+        assert!(is_pipeline_cancellation_error(
+            "Pass 'technical/claude' cancelled"
+        ));
+
+        assert!(!is_pipeline_cancellation_error(
+            "Provider request cancelled by upstream"
+        ));
+        assert!(!is_pipeline_cancellation_error(
+            "Pipeline task was cancelled unexpectedly"
+        ));
+        assert!(!is_pipeline_cancellation_error("Pass '' cancelled"));
     }
 }

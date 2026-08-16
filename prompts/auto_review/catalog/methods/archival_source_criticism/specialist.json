@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "archival_source_criticism",
+  "label": "Method — Archival & Primary-Source Criticism",
+  "order": 96,
+  "group": {
+    "id": "sources_history_law",
+    "label": "Sources, History & Law"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Archival records, manuscripts, legal or administrative documents, material archives, or primary-source provenance carry historical claims.",
+    "exclusions": "secondary-source synthesis or interviews and ethnography without a material archival evidentiary problem."
+  }
+}

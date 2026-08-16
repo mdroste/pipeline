@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_moral",
+  "label": "Philosophy — Moral",
+  "order": 213,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Normative ethics, metaethics, moral psychology, responsibility, reasons, value theory, population ethics, or applied moral philosophy.",
+    "exclusions": "the argument centrally concerns justice, legitimacy, political authority, or law rather than moral theory, or the work is empirical ethics without a philosophical argument."
+  }
+}

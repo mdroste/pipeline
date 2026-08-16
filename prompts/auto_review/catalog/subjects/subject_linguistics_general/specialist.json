@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_linguistics_general",
+  "label": "Linguistics — General",
+  "order": 217,
+  "group": {
+    "id": "linguistics",
+    "label": "Linguistics"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Linguistic research spanning several levels or outside the listed linguistic specialties.",
+    "exclusions": "a formal, sound-structure, or social-historical linguistic lens clearly fits."
+  }
+}

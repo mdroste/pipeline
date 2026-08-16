@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_earth_environment_geology",
+  "label": "Earth & Environment — Geology & Geochemistry",
+  "order": 103,
+  "group": {
+    "id": "earth_environment",
+    "label": "Earth & Environmental Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Geology, geochemistry, geomorphology, sedimentology, stratigraphy, tectonics, or solid-Earth history.",
+    "exclusions": "the central contribution is a physical geophysics inverse problem, a modern atmospheric process, or reconstruction of past climate from proxies and archives that is better covered by the dedicated paleoclimate role."
+  }
+}

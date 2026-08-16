@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_game_information",
+  "label": "Economics — Game Theory & Information Economics",
+  "order": 163,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Noncooperative or cooperative games, repeated and dynamic games, signaling, screening, communication, global games, reputation, or strategic information transmission.",
+    "exclusions": "a designer chooses an allocation rule and implementability is central, a concrete matching or allocation institution is being designed, or strategic interaction is only ancillary to another economic field."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_science_history",
+  "label": "Philosophy — Science & History of Philosophy",
+  "order": 215,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Philosophy of science or historically grounded philosophy spanning several scientific domains or historical traditions.",
+    "exclusions": "the paper is history of science without a philosophical claim or science without conceptual analysis, or philosophy of science clearly carries the central argument."
+  }
+}

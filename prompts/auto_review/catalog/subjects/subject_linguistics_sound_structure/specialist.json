@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_linguistics_sound_structure",
+  "label": "Linguistics — Phonetics, Phonology & Morphology",
+  "order": 219,
+  "group": {
+    "id": "linguistics",
+    "label": "Linguistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Phonetics, phonology, morphology, speech production or perception, and sound or word structure.",
+    "exclusions": "speech is merely an engineering signal and no linguistic sound-structure claim is made."
+  }
+}

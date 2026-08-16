@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_demography_population",
+  "label": "Sociology — Demography & Population",
+  "order": 121,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Formal demography and population studies: fertility, mortality, migration flows, population projection, or demographic methods.",
+    "exclusions": "inequality and stratification analysis where population composition is context rather than the object of study."
+  }
+}

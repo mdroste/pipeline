@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_high_energy_particle",
+  "label": "Physics — High-Energy & Particle",
+  "order": 3,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "High-energy theory or experiment, quantum field theory with particle content, collider phenomenology, particle detectors, or tests of fundamental interactions.",
+    "exclusions": "nuclear structure, reactions, or dense hadronic matter rather than elementary particles and fundamental interactions carries the contribution."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_nlp",
+  "label": "Computer Science — Natural-Language Processing",
+  "order": 58,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Natural-language processing, computational linguistics systems, information extraction, translation, dialogue, or text generation and evaluation outside a foundation-model contribution.",
+    "exclusions": "texts are analyzed as social or historical evidence and no NLP method is contributed, or large language or multimodal foundation models, their training, adaptation, alignment, or general capabilities carry the contribution."
+  }
+}

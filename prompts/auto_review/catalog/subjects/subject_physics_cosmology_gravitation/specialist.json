@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_cosmology_gravitation",
+  "label": "Physics — Cosmology & Gravitation",
+  "order": 12,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Cosmological parameter inference, the early universe, dark matter and dark energy, gravitational waves, or tests of gravity.",
+    "exclusions": "galaxy astrophysics where cosmology is only a backdrop, or laboratory gravity experiments reviewed as instrumentation."
+  }
+}

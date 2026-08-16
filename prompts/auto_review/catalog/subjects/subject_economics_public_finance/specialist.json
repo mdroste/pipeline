@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_public_finance",
+  "label": "Economics — Public Finance",
+  "order": 172,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Taxation, social insurance, redistribution, government spending, fiscal federalism, public goods, or normative and positive public economics.",
+    "exclusions": "aggregate fiscal stabilization without a public-finance incidence or welfare object, or labor-market research in which tax and transfer institutions are incidental."
+  }
+}

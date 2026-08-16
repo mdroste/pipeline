@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "creative_practice_research",
+  "label": "Method — Creative & Practice-Led Research",
+  "order": 94,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Artistic, performative, curatorial, compositional, literary, or other creative practice is used to generate and substantiate a central research claim.",
+    "exclusions": "a creative work is only the object of interpretation, or an artifact is evaluated primarily as a functional design intervention."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "sufficient_statistics_welfare",
+  "label": "Method — Sufficient Statistics & Welfare Analysis",
+  "order": 18,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Welfare, deadweight-loss, or optimal-policy conclusions are computed by plugging reduced-form elasticities into envelope-based theoretical formulas.",
+    "exclusions": "structural-model counterfactuals, or theoretical welfare analysis with no empirical inputs."
+  }
+}

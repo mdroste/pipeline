@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_databases",
+  "label": "Computer Science — Databases & Data Management",
+  "order": 62,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Databases, query processing, transactions, data integration, knowledge bases, or data-management systems.",
+    "exclusions": "a dataset is created for scientific analysis but no data-management contribution is made."
+  }
+}

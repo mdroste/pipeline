@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_general",
+  "label": "Medicine & Health — General",
+  "order": 110,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Medical, clinical, or health research spanning several specialties or outside the listed health subfields.",
+    "exclusions": "a listed clinical, epidemiological, diagnostic, therapeutic, or health-systems lens clearly fits."
+  }
+}

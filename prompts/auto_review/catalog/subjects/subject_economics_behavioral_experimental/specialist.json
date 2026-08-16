@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_behavioral_experimental",
+  "label": "Economics — Behavioral & Experimental",
+  "order": 170,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Behavioral economics, experimental economics, decision theory with behavioral content, or field and laboratory evidence on economic choice.",
+    "exclusions": "the contribution is general psychology without an economic choice, incentive, market, or welfare object."
+  }
+}

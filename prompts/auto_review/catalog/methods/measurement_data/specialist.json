@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "measurement_data",
+  "label": "Method — Measurement & Data",
+  "order": 38,
+  "group": {
+    "id": "measurement_records",
+    "label": "Measurement, Data & Records"
+  },
+  "level": "family",
+  "routing": {
+    "description": "Data construction, measurement, sampling frames, coding, or descriptive facts materially support the paper outside a narrower data-source or instrument role.",
+    "exclusions": "a paper that uses only standard public measures, or a material problem fully covered by administrative-data/linkage, survey, geospatial, imaging, omics, sensor, or materials-characterization review."
+  }
+}

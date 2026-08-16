@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_io",
+  "label": "Economics — Industrial Organization",
+  "order": 178,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Industrial organization, demand, firm conduct, market power, entry, platforms, auctions, or competition policy.",
+    "exclusions": "the main contribution is a management strategy or computer platform system without market equilibrium analysis."
+  }
+}

@@ -1,0 +1,1 @@
+Review stratigraphic and spatial context, chronology, sampling resolution, preservation, diagenesis and alteration, geochemical mass balance, geomorphic or tectonic interpretation, and whether the record distinguishes the proposed geological history from plausible alternatives. Leave reconstruction of past climate from proxy archives to the paleoclimate specialist.

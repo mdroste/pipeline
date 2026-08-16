@@ -1,0 +1,1 @@
+Assess corpus and platform selection, media affordances, production and circulation, audience and reception, cultural industries and power, historical context, representation, and whether selected objects support claims about a wider culture. Leave film form, theater, dance, dramaturgy, and embodied performance to the film, theater, and performance specialist.

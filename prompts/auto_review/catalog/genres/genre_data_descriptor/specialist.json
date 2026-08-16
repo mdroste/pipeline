@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_data_descriptor",
+  "label": "Data & Resource Descriptor",
+  "order": 3,
+  "routing": {
+    "description": "The paper's contribution is a dataset, corpus, database, or comparable reusable research resource, described for reuse.",
+    "exclusions": "a substantive study that introduces data only to answer its own research question."
+  }
+}

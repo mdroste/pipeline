@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_civil",
+  "label": "Engineering — Civil, Structural & Transportation",
+  "order": 74,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Civil, structural, geotechnical, construction, infrastructure, or transportation engineering.",
+    "exclusions": "the paper is primarily urban social science, economics, or descriptive geology."
+  }
+}

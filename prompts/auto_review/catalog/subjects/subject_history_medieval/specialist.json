@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_medieval",
+  "label": "History — Medieval",
+  "order": 146,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Medieval history across regions, including institutions, religion, economy, society, and material culture.",
+    "exclusions": "the paper is primarily ancient or early-modern and does not turn on medieval periodization."
+  }
+}

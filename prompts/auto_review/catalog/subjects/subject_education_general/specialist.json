@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_education_general",
+  "label": "Education — General",
+  "order": 221,
+  "group": {
+    "id": "education",
+    "label": "Education"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Education research spanning policy, learning, instruction, institutions, or assessment.",
+    "exclusions": "a listed education specialty clearly contains the intervention or institution."
+  }
+}

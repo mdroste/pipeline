@@ -19,7 +19,7 @@ export type PromptContext =
   | { kind: "sequential"; otherStepIds: string[] }  // step.prompt for a Sequential step
   | { kind: "parallel_template" }            // pipeline-level wrapping template
   | { kind: "merge" }                        // merge.prompt
-  | { kind: "orientation" };                 // orientation-map prompt
+  | { kind: "orientation"; autoReview?: boolean }; // orientation-map prompt
 
 /** Return the placeholders that the executor will substitute in this context. */
 export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
@@ -64,6 +64,11 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
       return [
         { token: "{input_text}", description: "The extracted input text (truncated to 250k chars)" },
         { token: "{paper_text}", description: "Alias of {input_text} (legacy)" },
+        ...(ctx.autoReview ? [
+          { token: "{subject_catalog}", description: "Live subject-specialist catalog (injected at run time)" },
+          { token: "{method_catalog}", description: "Live method-specialist catalog (injected at run time)" },
+          { token: "{genre_catalog}", description: "Live document-genre catalog (injected at run time)" },
+        ] : []),
       ];
   }
 }

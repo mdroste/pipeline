@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_llm_foundation",
+  "label": "Computer Science — LLMs & Foundation Models",
+  "order": 54,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Large language models, foundation models, multimodal generative systems, their training, adaptation, alignment techniques, or capabilities.",
+    "exclusions": "general machine-learning methodology where foundation models are only an example, or social-science text analysis using an LLM as a measurement tool."
+  }
+}

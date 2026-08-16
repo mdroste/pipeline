@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "causal_identification",
+  "label": "Method — Causal Identification",
+  "order": 3,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "family",
+  "routing": {
+    "description": "Observational or quasi-experimental variation is used for a material causal claim that spans designs or does not fit a listed design-specific role.",
+    "exclusions": "descriptive association, prediction, randomized assignment, causal language confined to motivation, or a single listed design-specific role that fully covers the identifying strategy."
+  }
+}

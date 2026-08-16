@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "algorithmic_ml",
+  "label": "Method — Algorithms & Machine Learning",
+  "order": 55,
+  "group": {
+    "id": "ml_ai",
+    "label": "Machine Learning & AI"
+  },
+  "level": "family",
+  "routing": {
+    "description": "Algorithms, prediction systems, learning procedures, benchmarks, or computational complexity are central.",
+    "exclusions": "a standard classifier or software package is merely used as a control or preprocessing device."
+  }
+}

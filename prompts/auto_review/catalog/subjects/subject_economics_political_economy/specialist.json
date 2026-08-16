@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_political_economy",
+  "label": "Economics — Political Economy",
+  "order": 168,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Endogenous policy, voting and elections, accountability, lobbying, conflict, state capacity, institutions, collective action, or political selection studied through economic incentives and allocation.",
+    "exclusions": "the contribution is political description or causal political science without an economic model of incentives, allocation, or welfare, or collective choice is purely axiomatic."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_experimental_design",
+  "label": "Statistics — Experimental Design & Adaptive Trials",
+  "order": 50,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Optimal and sequential design, adaptive randomization, response-adaptive trials, factorial and fractional designs, bandit experiments, or design-based efficiency theory.",
+    "exclusions": "a standard randomized experiment whose assignment mechanism is fixed and not itself a statistical contribution."
+  }
+}

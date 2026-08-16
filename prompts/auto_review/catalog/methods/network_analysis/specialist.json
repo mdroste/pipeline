@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "network_analysis",
+  "label": "Method — Network Analysis",
+  "order": 63,
+  "group": {
+    "id": "networks_text_traces",
+    "label": "Networks, Text & Digital Traces"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Relational data, graph construction, centrality, communities, diffusion, link prediction, or network dependence materially support a central claim.",
+    "exclusions": "a graph is only a computational data structure or visual illustration with no substantive relational inference."
+  }
+}

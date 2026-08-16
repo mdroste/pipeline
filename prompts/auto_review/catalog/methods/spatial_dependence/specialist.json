@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "spatial_dependence",
+  "label": "Method — Spatial Dependence & Spatial Econometrics",
+  "order": 28,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Spatial correlation, interference, spillovers, neighborhood structure, boundary effects, or spatial statistical models materially determine inference.",
+    "exclusions": "a map is only descriptive, coordinates are used only for routine geocoding, or remote-sensing measurement rather than spatial dependence is the central methodological issue."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_genetics_genomics",
+  "label": "Statistics — Statistical Genetics & Genomics",
+  "order": 48,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Statistical genetics, genomics, genetic association, heritability, fine mapping, polygenic prediction, population structure, or multi-omic inference.",
+    "exclusions": "the main contribution is molecular biology or a bioinformatics pipeline using standard statistical machinery without a genetics-specific inferential advance."
+  }
+}

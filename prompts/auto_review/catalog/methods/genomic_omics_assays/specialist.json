@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "genomic_omics_assays",
+  "label": "Method — Genomic & Omics Assays",
+  "order": 70,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Sequencing, genotyping, transcriptomic, epigenomic, proteomic, metabolomic, single-cell, or multi-omics assays materially support biological conclusions.",
+    "exclusions": "a small targeted assay with routine interpretation, or genomic data used only as a benchmark for a general computational method."
+  }
+}

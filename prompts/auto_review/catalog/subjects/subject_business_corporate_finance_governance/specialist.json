@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_business_corporate_finance_governance",
+  "label": "Business — Corporate Finance & Governance",
+  "order": 241,
+  "group": {
+    "id": "business",
+    "label": "Business & Management"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Financing, investment, payout, ownership, boards, executive incentives, takeovers, restructuring, venture finance, or governance of firms.",
+    "exclusions": "the contribution is asset pricing or banking without a material corporate decision or governance mechanism, or it is legal doctrine without a managerial or valuation claim."
+  }
+}

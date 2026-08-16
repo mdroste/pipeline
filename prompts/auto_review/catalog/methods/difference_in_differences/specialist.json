@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "difference_in_differences",
+  "label": "Method — Difference-in-Differences & Event Studies",
+  "order": 5,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Group-time treatment adoption, policy timing, or event-study contrasts identify a material causal effect through untreated potential-outcome trends.",
+    "exclusions": "a purely descriptive before-after comparison, a single aggregate time-series break, or an event study used only to display dynamics without a causal claim."
+  }
+}

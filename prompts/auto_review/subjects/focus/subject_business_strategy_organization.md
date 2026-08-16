@@ -1,1 +1,0 @@
-Review firm boundaries and capabilities, competitive and institutional setting, managerial choice, organization and incentives, selection and performance, innovation pathway, founder or workforce heterogeneity, and whether evidence distinguishes strategy from ex post success narratives.

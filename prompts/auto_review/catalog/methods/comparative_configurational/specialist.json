@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "comparative_configurational",
+  "label": "Method — Comparative & Configurational Analysis",
+  "order": 90,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Small- or medium-N comparison, qualitative comparative analysis, set-theoretic methods, typologies, or necessary and sufficient configurations support a central claim.",
+    "exclusions": "a large-sample regression with country indicators, a single case, or paired examples used only for exposition."
+  }
+}

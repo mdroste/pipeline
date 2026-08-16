@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "implementation_process_evaluation",
+  "label": "Method — Implementation & Process Evaluation",
+  "order": 76,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Fidelity, adaptation, mechanism, and context evidence about how an intervention was delivered carries central claims.",
+    "exclusions": "outcome-effectiveness estimation covered by trial or causal roles, or program theory evaluation as the central frame."
+  }
+}

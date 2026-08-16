@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_systems_computational",
+  "label": "Biology — Systems & Computational",
+  "order": 91,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Systems biology, bioinformatics, computational biology, network biology, or multi-omics integration.",
+    "exclusions": "the principal contribution is a general computer-science algorithm with biology only as a benchmark."
+  }
+}

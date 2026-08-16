@@ -152,6 +152,8 @@ export interface ContextCacheConfig {
 export interface PipelineConfig {
   steps: StepConfig[];
   merge: MergeConfig;
+  /** Explicit public products. Empty fields retain legacy final-step inference. */
+  outputs?: OutputConfig;
   /** Missing on older profiles/backends and therefore treated as disabled. */
   context_cache?: ContextCacheConfig;
   /** Compatibility field; the backend and editor normalize this to true. */
@@ -164,6 +166,11 @@ export interface PipelineConfig {
   parallel_context_template: string;
   /** Run-time variables the profile declares; referenced in prompts as {var:key}. */
   variables?: VarSpec[];
+}
+
+export interface OutputConfig {
+  primary_step?: string;
+  findings_step?: string;
 }
 
 /** Provider-neutral breakdown of model-issued tool calls. */
@@ -185,6 +192,8 @@ export interface StepOutput {
   phase: string;
   agent: string;
   raw_text: string;
+  /** Whether raw_text is a schema-validated standalone JSON artifact. */
+  structured_json?: boolean;
   /** Wall-clock seconds the step's LLM call took (0 for pre-1.1 reports). */
   duration_secs?: number;
   input_tokens?: number;
@@ -249,11 +258,48 @@ export interface PipelineReport {
   orientation: OrientationMap | Record<string, unknown> | null;
   step_outputs: StepOutput[];
   failed_steps?: StepFailure[];
+  products?: RunProducts;
   // Legacy fields for old saved reports
   referee_reports?: RefereeReport[];
   editor?: EditorSynthesis | null;
   report_date: string;
   paper_hash: string;
+}
+
+export interface FindingEvidence {
+  page?: number;
+  line_start?: number;
+  line_end?: number;
+  node_id?: string;
+  asset_id?: string;
+  artifact_path?: string;
+  source_path?: string;
+  source_hash?: string;
+  description?: string;
+  quote?: string;
+}
+
+export interface Finding {
+  id: string;
+  source_key?: string;
+  title: string;
+  category?: string;
+  priority?: string;
+  body: string;
+  evidence?: FindingEvidence[];
+}
+
+export interface FindingSet {
+  schema_version: number;
+  source_step_id: string;
+  source_step_label: string;
+  findings: Finding[];
+}
+
+export interface RunProducts {
+  schema_version: number;
+  primary_step_id: string;
+  findings?: FindingSet | null;
 }
 
 export interface OrientationMap {
@@ -282,11 +328,8 @@ export interface ReviewPlan {
   paper_forms: string[];
   methods: string[];
   subject_specialist_ids?: string[];
-  /** Legacy Auto Review v1 field selection retained for saved reports. */
-  field_specialist_id?: string;
   method_specialist_ids: string[];
-  /** Document-genre classification shared with every reviewer as context;
-   *  absent on pre-genre saved reports and "research_article" by default. */
+  /** Document-genre classification shared with every reviewer as context. */
   genre?: string;
   selection_notes: ReviewSelectionNote[];
   routing_uncertainty: string[];
@@ -310,8 +353,10 @@ export interface AutoReviewCatalogGroup {
 
 export interface AutoReviewCatalog {
   contract: string;
+  revision: string;
   subjectCount: number;
   methodCount: number;
+  genreCount: number;
   disciplines: AutoReviewCatalogGroup[];
   methodFamilies: AutoReviewCatalogGroup[];
 }
@@ -394,8 +439,12 @@ export interface RunSummary {
   input_path: string;
   input_mode: string;
   input_interpretation?: string;
+  input_identity?: InputIdentity;
   profile_id: string;
   profile_name: string;
+  workflow_source?: string;
+  workflow_fingerprint?: string;
+  specialist_catalog_revision?: string;
   provider: string;
   status: string;
   duration_secs: number;
@@ -411,6 +460,12 @@ export interface RunSummary {
   resumable: boolean;
   title: string;
   tags: string[];
+}
+
+export interface InputIdentity {
+  selection_key: string;
+  content_hash: string;
+  lineage_id: string;
 }
 
 /** Mirrors runs::RunsDiskUsage. */
@@ -444,6 +499,8 @@ export interface ProjectIssueEvidence {
   node_id?: string;
   asset_id?: string;
   artifact_path?: string;
+  source_path?: string;
+  source_hash?: string;
   description?: string;
   quote?: string;
 }
@@ -453,6 +510,7 @@ export interface ProjectIssueOccurrence {
   key: string;
   run_id: string;
   issue_id: string;
+  source_key?: string;
   observed_at: string;
   profile_id: string;
   profile_name: string;
@@ -652,6 +710,7 @@ export interface ProfileExport {
   name: string;
   steps: StepConfig[];
   merge: MergeConfig;
+  outputs?: OutputConfig;
   context_cache?: ContextCacheConfig;
   use_orientation?: boolean;
   orientation_prompt?: string;
@@ -669,12 +728,14 @@ export type ExportEnvelope =
       name: string;
       steps: StepConfig[];
       merge: MergeConfig;
+      outputs?: OutputConfig;
       context_cache?: ContextCacheConfig;
       use_orientation?: boolean;
       orientation_prompt?: string;
       orientation_schema?: Record<string, unknown> | null;
       extraction?: ExtractionConfig;
       parallel_context_template?: string;
+      variables?: VarSpec[];
     }
   | { type: "bundle"; settings: Settings; profiles: ProfileExport[]; active_profile: string };
 

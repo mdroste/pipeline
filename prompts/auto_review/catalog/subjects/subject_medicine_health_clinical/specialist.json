@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_clinical",
+  "label": "Medicine & Health — Clinical (General)",
+  "order": 111,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Clinical observational research, prognosis, treatment outcomes, patient management, or cross-specialty medicine outside the listed disease and care specialties.",
+    "exclusions": "the contribution is a formal trial, diagnostic technology, population-health study, health-services question, or a cardiometabolic, oncologic, neurologic, psychiatric, or mental-health problem clearly covered by a narrower listed role."
+  }
+}

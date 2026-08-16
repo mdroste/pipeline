@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "corpus_linguistics",
+  "label": "Method — Corpus Linguistics",
+  "order": 67,
+  "group": {
+    "id": "networks_text_traces",
+    "label": "Networks, Text & Digital Traces"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Corpus frequencies, distributions, or attestation patterns support central linguistic claims.",
+    "exclusions": "automated text measurement of social phenomena, or theoretical linguistics without corpus evidence."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_political_legal",
+  "label": "Philosophy — Political & Legal",
+  "order": 214,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Justice, equality, liberty, rights, legitimacy, authority, democracy, punishment, jurisprudence, or the moral foundations of public institutions and law.",
+    "exclusions": "the paper is doctrinal law, positive political science, or policy evaluation without a normative or conceptual argument about political or legal authority."
+  }
+}

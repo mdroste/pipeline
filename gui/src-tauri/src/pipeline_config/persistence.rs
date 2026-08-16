@@ -80,6 +80,14 @@ pub fn load() -> PipelineConfig {
 /// snapshot. Run manifests use the returned name so a concurrent profile edit
 /// cannot make their metadata disagree with the workflow that actually ran.
 pub fn load_required_profile_for(active_profile: &str) -> Result<(PipelineConfig, String), String> {
+    let workflow = load_required_workflow_for(active_profile)?;
+    Ok((workflow.config, workflow.name))
+}
+
+/// Load an installed profile as the same normalized portable document used by
+/// ephemeral CLI runs. This keeps fingerprints and retained provenance
+/// identical across installed and file-backed workflows.
+pub fn load_required_workflow_for(active_profile: &str) -> Result<WorkflowDocument, String> {
     ensure_migrated()?;
     let profile = load_profile(active_profile).map_err(|error| {
         format!(
@@ -87,6 +95,5 @@ pub fn load_required_profile_for(active_profile: &str) -> Result<(PipelineConfig
             active_profile
         )
     })?;
-    let profile_name = profile.name.clone();
-    Ok((profile.into(), profile_name))
+    WorkflowDocument::from_profile_data(profile)
 }

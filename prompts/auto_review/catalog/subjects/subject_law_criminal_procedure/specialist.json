@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_criminal_procedure",
+  "label": "Law — Criminal Law & Procedure",
+  "order": 229,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Substantive criminal law, policing, investigation, adjudication, evidence, sentencing, punishment, incarceration, or constitutional criminal procedure.",
+    "exclusions": "crime is studied only as an empirical social outcome and no criminal doctrine, legal process, institutional authority, or remedy carries the contribution."
+  }
+}

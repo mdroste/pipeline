@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "structural_estimation",
+  "label": "Method — Structural Estimation",
+  "order": 43,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Estimated structural parameters or model-based counterfactuals are central.",
+    "exclusions": "reduced-form estimation, calibration without estimation, or a theoretical structural model with no fitted parameters."
+  }
+}

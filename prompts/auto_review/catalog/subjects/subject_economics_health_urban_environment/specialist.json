@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_health_urban_environment",
+  "label": "Economics — Health, Urban & Environmental (General)",
+  "order": 180,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Economic research that materially crosses health, urban, transportation, housing, environmental, or energy economics and is not well represented by one listed field.",
+    "exclusions": "a listed health, urban, or environmental-energy field clearly contains the main contribution, or the paper lacks an economic behavior or welfare object."
+  }
+}

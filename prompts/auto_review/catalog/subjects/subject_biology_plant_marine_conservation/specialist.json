@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_plant_marine_conservation",
+  "label": "Biology — Plant, Marine & Conservation",
+  "order": 93,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Plant science, marine biology, conservation biology, biodiversity, or applied organismal ecology.",
+    "exclusions": "the central contribution is agricultural engineering or environmental policy rather than organismal biology."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_physiology",
+  "label": "Biology — Physiology",
+  "order": 88,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Organismal, comparative, integrative, endocrine, cardiovascular, respiratory, or metabolic physiology.",
+    "exclusions": "the paper is primarily clinical medicine or cell biology without an organism-level functional claim."
+  }
+}

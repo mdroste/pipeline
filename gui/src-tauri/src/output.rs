@@ -67,9 +67,8 @@ impl std::fmt::Display for ReportValidationError {
 
 impl std::error::Error for ReportValidationError {}
 
-/// Generate a fresh identifier for one logical report-producing call. Static
-/// markers are easy for quoted source material or stale artifacts to collide
-/// with; a random call nonce makes the report boundary unambiguous.
+/// Generate a fresh identifier for the legacy report-file compatibility path.
+/// New terminal artifacts use provider-native JSON Schema constraints.
 pub fn new_report_nonce() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|error| format!("RNG failed: {error}"))?;
@@ -83,9 +82,9 @@ pub fn report_markers(nonce: &str) -> (String, String) {
     )
 }
 
-/// Produce the provider-neutral terminal response contract. Models may write
-/// supporting artifacts, but the report itself always travels through the
-/// provider's terminal assistant-response channel.
+/// Produce the legacy nonce report contract retained for compatibility tests
+/// and old model-written report files. New calls use one of the schema-backed
+/// contracts below.
 pub fn report_output_format(write_dir: Option<&str>, nonce: &str) -> String {
     let (start, end) = report_markers(nonce);
     let artifact_note = write_dir
@@ -111,6 +110,79 @@ pub fn report_output_format(write_dir: Option<&str>, nonce: &str) -> String {
          Use `$...$` for inline math and `$$...$$` for display math. Do not use `\\(...\\)` or \
          `\\[...\\]` delimiters."
     )
+}
+
+/// Provider-neutral reminder for a schema-bearing artifact. The schema travels
+/// through the provider's native structured-output channel and remains the
+/// only source of truth for serialization and field structure.
+pub fn structured_output_format(write_dir: Option<&str>) -> String {
+    let artifact_note = write_dir
+        .map(|dir| {
+            format!(
+                " Supporting files may be saved under {dir}/files/, but the schema-bearing primary artifact must be returned in the final response."
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "RESPONSE CONTRACT:\n\
+         Complete the requested primary artifact using every applicable field in the response schema supplied by Pipeline.{artifact_note}"
+    )
+}
+
+/// Portable schema used when the durable artifact is text (normally
+/// Markdown). The provider constrains the transport envelope; Pipeline owns
+/// extraction and stores only the `content` string.
+pub fn text_artifact_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "title": "Text artifact",
+        "description": "Transport envelope for the complete requested text artifact.",
+        "required": ["content"],
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "The complete requested text artifact, without a second transport envelope."
+            }
+        }
+    })
+}
+
+/// Task-level reminder for a schema-backed text artifact. The native schema's
+/// `content` description owns the transport detail.
+pub fn text_artifact_output_format(write_dir: Option<&str>, content_kind: &str) -> String {
+    let artifact_note = write_dir
+        .map(|dir| {
+            format!(
+                " Supporting files may be saved under {dir}/files/, but the primary artifact must be returned in the final response."
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "RESPONSE CONTRACT:\n\
+         These instructions supersede any earlier output-only or report-file instructions. \
+         Complete the {content_kind} using the response schema supplied by Pipeline; do not create a second artifact envelope.{artifact_note}"
+    )
+}
+
+/// Strictly decode a provider-constrained text artifact. This deliberately
+/// rejects fence/preamble recovery and also retains the report-level empty and
+/// refusal checks that predate structured transport.
+pub fn extract_text_artifact(text: &str) -> Result<String, String> {
+    let canonical = crate::pipeline::structured::canonicalize(&text_artifact_schema(), text)?;
+    let value: serde_json::Value = serde_json::from_str(&canonical)
+        .map_err(|error| format!("failed to decode canonical text artifact: {error}"))?;
+    let content = value
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .expect("the text artifact schema requires a string content field")
+        .trim();
+    if content.is_empty() {
+        return Err("structured text artifact was empty".to_string());
+    }
+    if apparent_refusal(content) {
+        return Err("structured text artifact contained an apparent refusal".to_string());
+    }
+    Ok(content.to_string())
 }
 
 /// Extract a complete, nonce-delimited report.

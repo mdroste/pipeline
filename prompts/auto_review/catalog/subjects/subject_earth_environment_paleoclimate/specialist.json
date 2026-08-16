@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_earth_environment_paleoclimate",
+  "label": "Earth & Environment — Paleoclimate & Reconstruction",
+  "order": 105,
+  "group": {
+    "id": "earth_environment",
+    "label": "Earth & Environmental Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Paleoclimate, paleoceanography, or past environmental reconstruction from proxies, cores, and archives.",
+    "exclusions": "modern instrumental climate analysis, or archaeological environmental history reviewed by its own field."
+  }
+}

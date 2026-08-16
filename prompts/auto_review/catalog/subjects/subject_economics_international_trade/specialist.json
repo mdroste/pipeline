@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_international_trade",
+  "label": "Economics — International Trade",
+  "order": 177,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "International trade, trade policy, multinational production, global value chains, economic geography of trade, or firm participation in foreign markets.",
+    "exclusions": "exchange rates, sovereign debt, or capital flows without a central goods-trade, production-location, or trade-policy mechanism."
+  }
+}

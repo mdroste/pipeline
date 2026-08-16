@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_electrical_computer",
+  "label": "Engineering — Electrical & Computer",
+  "order": 71,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Circuits, electronics, communications, signal processing, embedded systems, or computer hardware.",
+    "exclusions": "the contribution is primarily a computer-science system or a physical-material mechanism."
+  }
+}

@@ -369,6 +369,10 @@ pub struct LlmOverrides<'a> {
     /// analysis steps; full-document transcription needs more. CLI paths
     /// ignore this.
     pub max_output_tokens: Option<u32>,
+    /// Optional schema for the terminal artifact. Every provider transport
+    /// receives a native structured-output constraint when this is present;
+    /// Pipeline still validates the original schema after the call.
+    pub output_schema: Option<&'a serde_json::Value>,
     /// The run's artifact directory (absolute, forward slashes). When set,
     /// the call is allowed to write files — confined to this directory by
     /// each provider's sandbox mechanism — and callers should also set the
@@ -440,7 +444,7 @@ fn is_cli_session_capability_error(error: &str) -> bool {
 /// clock; every other failure of a fork whose warm-up already succeeded is
 /// worth one self-contained attempt rather than failing the step.
 fn fork_failure_uses_fallback(error: &str) -> bool {
-    !error.to_ascii_lowercase().contains("cancelled")
+    !crate::commands::is_pipeline_cancellation_error(error)
         && !error.contains("timed out after")
         && !super::provider_error::is_usage_limit_error(error)
 }
@@ -505,6 +509,7 @@ pub async fn call_claude(
                     let mut primer_overrides = overrides.clone();
                     primer_overrides.shared_context = None;
                     primer_overrides.write_dir = None;
+                    primer_overrides.output_schema = None;
                     let primer_label = format!("{label} · cache warm-up");
                     match call_claude_inner(
                         app,
@@ -529,7 +534,7 @@ pub async fn call_claude(
                             // A cancelled warm-up says nothing about the CLI's
                             // session support; leave the slot empty so a later
                             // unit can warm the shared session again.
-                            if !error.to_ascii_lowercase().contains("cancelled") {
+                            if !crate::commands::is_pipeline_cancellation_error(&error) {
                                 *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
                             }
                             Err(error)
@@ -611,7 +616,7 @@ pub async fn call_claude(
             result
         }
         Err(error) => {
-            if error.to_ascii_lowercase().contains("cancelled") {
+            if crate::commands::is_pipeline_cancellation_error(&error) {
                 return Err(error);
             }
             if super::provider_error::is_usage_limit_error(&error) {
@@ -681,6 +686,19 @@ fn cli_disallowed_tools(
         denies.push("NotebookEdit".to_string());
     }
     denies
+}
+
+fn append_claude_output_schema(
+    cmd_args: &mut Vec<String>,
+    schema: Option<&serde_json::Value>,
+) -> Result<(), String> {
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    let schema = crate::pipeline::structured::provider_schema_json(schema)?;
+    cmd_args.push("--json-schema".to_string());
+    cmd_args.push(schema);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -818,6 +836,7 @@ async fn call_claude_inner(
     let _ = output_format;
     cmd_args.push("--output-format".to_string());
     cmd_args.push("json".to_string());
+    append_claude_output_schema(&mut cmd_args, overrides.output_schema)?;
 
     // Apply Claude Code settings (model, effort) with optional per-step overrides.
     let model_src = overrides.model.unwrap_or("");
@@ -1014,12 +1033,17 @@ fn parse_claude_result(
             return Err(format!("provider error: {detail}"));
         }
     }
-    let text = v
-        .get("result")
-        .and_then(|r| r.as_str())
-        .ok_or("missing string `result`")?
-        .trim()
-        .to_string();
+    let text = if let Some(structured) = v.get("structured_output").filter(|value| !value.is_null())
+    {
+        serde_json::to_string(structured)
+            .map_err(|error| format!("invalid `structured_output`: {error}"))?
+    } else {
+        v.get("result")
+            .and_then(|r| r.as_str())
+            .ok_or("missing string `result`")?
+            .trim()
+            .to_string()
+    };
     let model_round_trips = v
         .get("num_turns")
         .and_then(|value| value.as_u64())
@@ -1315,6 +1339,7 @@ pub async fn call_llm(
                 "timeout_secs": timeout_secs,
                 "max_output_tokens": max_output_tokens,
                 "output_format": output_format,
+                "structured_output": overrides.output_schema.is_some(),
                 "prompt": prompt_preview.text,
                 "prompt_truncated": prompt_preview.truncated,
                 "prompt_chars": prompt_chars,
@@ -1779,6 +1804,9 @@ mod tests {
         assert!(!fork_failure_uses_fallback(
             "Claude call failed: You've hit your limit · resets 3am"
         ));
+        assert!(fork_failure_uses_fallback(
+            "Claude call failed: subscription cancelled"
+        ));
     }
 
     #[test]
@@ -1786,6 +1814,29 @@ mod tests {
         let (text, usage) = parse_claude_result(r#"{"type":"result","result":"ok"}"#).unwrap();
         assert_eq!(text, "ok");
         assert_eq!(usage, None);
+    }
+
+    #[test]
+    fn structured_result_envelope_returns_canonical_json_text() {
+        let (text, usage) =
+            parse_claude_result(r#"{"type":"result","result":"","structured_output":{"ok":true}}"#)
+                .unwrap();
+        assert_eq!(text, r#"{"ok":true}"#);
+        assert_eq!(usage, None);
+    }
+
+    #[test]
+    fn claude_cli_receives_native_json_schema_argument() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["ok"],
+            "properties": {"ok": {"type": "boolean"}}
+        });
+        let mut args = Vec::new();
+        append_claude_output_schema(&mut args, Some(&schema)).unwrap();
+        assert_eq!(args[0], "--json-schema");
+        let sent: serde_json::Value = serde_json::from_str(&args[1]).unwrap();
+        assert_eq!(sent["required"], serde_json::json!(["ok"]));
     }
 
     #[test]

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_international",
+  "label": "Law — International & Comparative",
+  "order": 232,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Public or private international law, human rights, trade law, comparative law, transnational regulation, or conflict of laws.",
+    "exclusions": "international relations or comparative politics is central but no legal-authority or doctrinal claim is made."
+  }
+}

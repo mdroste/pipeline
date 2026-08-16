@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_algorithms",
+  "label": "Computer Science — Algorithms & Complexity",
+  "order": 52,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Algorithms, data structures, complexity theory, approximation, online algorithms, or theoretical computer science.",
+    "exclusions": "the algorithm is a routine implementation device for an applied system or statistical model."
+  }
+}

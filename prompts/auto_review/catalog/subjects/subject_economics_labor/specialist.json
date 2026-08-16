@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_labor",
+  "label": "Economics — Labor Economics",
+  "order": 173,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Labor supply and demand, wages, employment, inequality, discrimination, migration, family economics, personnel, or human-capital decisions outside education institutions.",
+    "exclusions": "aggregate unemployment and vacancy dynamics with a macro propagation claim, or schooling institutions and learning outcomes as the central object."
+  }
+}

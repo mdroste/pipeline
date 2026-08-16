@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_geography_general",
+  "label": "Geography — General",
+  "order": 204,
+  "group": {
+    "id": "geography",
+    "label": "Geography"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Geographic research spanning human, physical, and geospatial approaches or outside the listed specialties.",
+    "exclusions": "a listed geographic subfield clearly contains the spatial process."
+  }
+}

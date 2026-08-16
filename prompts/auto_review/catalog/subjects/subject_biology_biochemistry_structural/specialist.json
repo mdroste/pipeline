@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_biochemistry_structural",
+  "label": "Biology — Biochemistry & Structural",
+  "order": 86,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Biochemistry, enzymology, metabolism, structural biology, biophysics of macromolecules, or molecular interactions.",
+    "exclusions": "the contribution is synthetic chemistry or materials characterization rather than biological molecular function."
+  }
+}

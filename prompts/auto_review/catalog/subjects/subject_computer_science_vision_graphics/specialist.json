@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_vision_graphics",
+  "label": "Computer Science — Vision & Graphics",
+  "order": 59,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Computer vision, image/video understanding, computer graphics, rendering, or visual computing.",
+    "exclusions": "imaging is chiefly a scientific measurement instrument or clinical diagnostic rather than a visual-computing contribution."
+  }
+}

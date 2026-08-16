@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_psychology_industrial_human_factors",
+  "label": "Psychology — Industrial, Organizational & Human Factors",
+  "order": 190,
+  "group": {
+    "id": "psychology",
+    "label": "Psychology & Cognitive Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Work psychology, personnel selection, teams, leadership, occupational behavior, ergonomics, or human factors.",
+    "exclusions": "the main contribution is management strategy, organizational sociology, or interface design without a psychological construct or human-performance claim."
+  }
+}

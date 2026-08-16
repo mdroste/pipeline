@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "ethnography",
+  "label": "Method — Ethnography & Participant Observation",
+  "order": 87,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Sustained fieldwork, participant observation, fieldnotes, situated interaction, or multisited ethnography supplies central evidence.",
+    "exclusions": "interviews without sustained observation or field immersion, archival research, or cases reconstructed entirely from documents."
+  }
+}

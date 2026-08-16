@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pipeline.local/schemas/auto-review-specialist-v1.json",
+  "title": "Pipeline Auto Review catalog role",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "id",
+    "label",
+    "order",
+    "routing"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "enum": ["subject", "method", "genre"]
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "order": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "level": {
+      "enum": ["discipline", "subfield", "family", "method"]
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "exclusions"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exclusions": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": { "const": "subject" }
+        }
+      },
+      "then": {
+        "required": ["group", "level"],
+        "properties": {
+          "level": { "enum": ["discipline", "subfield"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": { "const": "method" }
+        }
+      },
+      "then": {
+        "required": ["group", "level"],
+        "properties": {
+          "level": { "enum": ["family", "method"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": { "const": "genre" }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["group"] },
+            { "required": ["level"] }
+          ]
+        }
+      }
+    }
+  ]
+}

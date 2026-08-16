@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_race_migration",
+  "label": "Sociology — Race, Ethnicity & Migration",
+  "order": 124,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Race, ethnicity, indigeneity, immigration, citizenship, assimilation, boundaries, or transnational communities.",
+    "exclusions": "group categories are incidental controls and no racial, ethnic, migration, or boundary process is central."
+  }
+}

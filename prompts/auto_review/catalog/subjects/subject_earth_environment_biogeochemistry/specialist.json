@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_earth_environment_biogeochemistry",
+  "label": "Earth & Environment — Biogeochemistry & Carbon Cycle",
+  "order": 106,
+  "group": {
+    "id": "earth_environment",
+    "label": "Earth & Environmental Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Biogeochemical cycles, carbon and nutrient fluxes, greenhouse-gas budgets, or land and ocean carbon-sink dynamics.",
+    "exclusions": "ecosystem ecology without an elemental-cycle claim, or a purely atmospheric-physics contribution."
+  }
+}

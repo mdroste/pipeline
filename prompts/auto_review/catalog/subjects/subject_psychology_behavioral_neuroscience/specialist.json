@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_psychology_behavioral_neuroscience",
+  "label": "Psychology — Behavioral Neuroscience",
+  "order": 189,
+  "group": {
+    "id": "psychology",
+    "label": "Psychology & Cognitive Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Brain-behavior research framed by psychological function: neuropsychology, psychophysiology, or behavioral neuroscience of psychological constructs.",
+    "exclusions": "the central contribution is cellular, circuit, or computational neuroscience, which the neuroscience discipline reviews, or medical imaging diagnosis rather than psychological function."
+  }
+}

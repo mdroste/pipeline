@@ -113,10 +113,10 @@ function renderOrientationMap(orientation: OrientationMap): string {
       }
       md += `\n`;
     } else {
-      const subjectIds = plan.subject_specialist_ids?.length
-        ? plan.subject_specialist_ids
-        : [plan.field_specialist_id].filter((id): id is string => !!id);
-      const ids = [...subjectIds, ...(plan.method_specialist_ids ?? [])].filter(Boolean);
+      const ids = [
+        ...(plan.subject_specialist_ids ?? []),
+        ...(plan.method_specialist_ids ?? []),
+      ].filter(Boolean);
       if (ids.length) md += ids.map((id) => `- ${titleCase(id)}`).join("\n") + "\n\n";
     }
     if (plan.routing_uncertainty?.length) {

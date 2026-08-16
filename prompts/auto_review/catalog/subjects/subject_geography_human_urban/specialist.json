@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_geography_human_urban",
+  "label": "Geography — Human, Economic & Urban",
+  "order": 205,
+  "group": {
+    "id": "geography",
+    "label": "Geography"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Human, economic, political, urban, cultural, or development geography.",
+    "exclusions": "the contribution is primarily sociology, economics, or political science without a geographic account of space and place."
+  }
+}

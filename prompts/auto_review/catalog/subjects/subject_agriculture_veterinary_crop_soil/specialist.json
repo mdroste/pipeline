@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_agriculture_veterinary_crop_soil",
+  "label": "Agriculture & Veterinary Science — Crop, Soil & Horticulture",
+  "order": 256,
+  "group": {
+    "id": "agriculture_veterinary",
+    "label": "Agriculture & Veterinary Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Agronomy, crop science, horticulture, soil science, agroecology, plant breeding, or crop protection.",
+    "exclusions": "the contribution is basic plant biology without a managed production or agroecosystem claim."
+  }
+}

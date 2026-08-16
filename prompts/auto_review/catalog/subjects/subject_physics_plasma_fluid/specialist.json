@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_plasma_fluid",
+  "label": "Physics — Plasma & Fluid",
+  "order": 13,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Plasma physics, fluid dynamics, magnetohydrodynamics, turbulence, or continuum-flow research.",
+    "exclusions": "the main contribution is an engineering device with fluid behavior only as an input."
+  }
+}

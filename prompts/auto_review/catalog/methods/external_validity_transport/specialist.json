@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "external_validity_transport",
+  "label": "Method — External Validity & Transportability",
+  "order": 16,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Carrying an estimate to another population, scale, or setting — scaling pilots, transporting trial results, or generalizing local estimates — is itself central to the contribution.",
+    "exclusions": "a routine external-validity caveat, or a paper whose claims stay within the studied population."
+  }
+}

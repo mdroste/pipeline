@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_communication_information_interpersonal_organizational",
+  "label": "Communication & Information — Interpersonal & Organizational",
+  "order": 265,
+  "group": {
+    "id": "communication_information",
+    "label": "Communication & Information"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Interpersonal, organizational, health, family, group, or computer-mediated communication.",
+    "exclusions": "the main contribution is social psychology or management without a material message, interaction, discourse, or communication-system claim."
+  }
+}

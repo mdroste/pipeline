@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "latent_variable_psychometrics",
+  "label": "Method — Latent Variables & Psychometrics",
+  "order": 33,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Scales, tests, latent traits, factor models, item-response models, structural equation models, or measurement invariance support substantive conclusions.",
+    "exclusions": "a directly observed outcome or an unsupervised representation used only for prediction without a latent-construct interpretation."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_time_series",
+  "label": "Statistics — Time Series",
+  "order": 41,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Temporal dependence, forecasting, state-space models, longitudinal stochastic processes, or frequency-domain methods.",
+    "exclusions": "time appears only as a fixed covariate or panel index with no temporal methodological issue."
+  }
+}

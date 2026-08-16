@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_communication_information_media_journalism",
+  "label": "Communication & Information — Media, Journalism & Public Communication",
+  "order": 262,
+  "group": {
+    "id": "communication_information",
+    "label": "Communication & Information"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Journalism studies, mass communication, news, political communication, public relations, or media institutions.",
+    "exclusions": "the contribution is interpretive media studies without a communication-process claim or political behavior without a material media institution."
+  }
+}

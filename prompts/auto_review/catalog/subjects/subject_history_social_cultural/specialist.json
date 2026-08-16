@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_social_cultural",
+  "label": "History — Social, Cultural & Gender",
+  "order": 151,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Social, cultural, gender, race, family, everyday-life, or subaltern history.",
+    "exclusions": "culture or inequality is analyzed without a historical source base or historiographic contribution."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_design_sampling",
+  "label": "Statistics — Survey Sampling & Randomization Inference",
+  "order": 44,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Survey sampling, complex sample design, finite-population inference, randomization-based inference, nonresponse adjustment, or calibration and weighting methodology.",
+    "exclusions": "the sampling or assignment design is only an application detail, or optimal, sequential, factorial, or response-adaptive experimental design is the contribution and is better covered by the dedicated experimental-design role."
+  }
+}

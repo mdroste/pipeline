@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_micro_theory",
+  "label": "Economics — Microeconomic Theory",
+  "order": 162,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Microeconomic theory spanning several strategic or allocative mechanisms or lying outside the listed game-theory, mechanism-design, market-design, contract, decision, and political-economy specialties.",
+    "exclusions": "the formal result is mathematical but has no material economic incentives, allocation, or welfare content, or a listed microeconomic specialty clearly carries the contribution."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "atomistic_simulation",
+  "label": "Method — Atomistic & Molecular Simulation",
+  "order": 51,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Molecular-dynamics or Monte Carlo simulation of atomistic systems materially supports a structural, thermodynamic, or mechanistic claim.",
+    "exclusions": "quantum electronic-structure calculation without dynamics or sampling, or coarse-grained models far above atomistic resolution."
+  }
+}

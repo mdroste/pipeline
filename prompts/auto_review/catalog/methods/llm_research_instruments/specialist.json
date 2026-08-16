@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "llm_research_instruments",
+  "label": "Method — LLMs as Research Instruments",
+  "order": 57,
+  "group": {
+    "id": "ml_ai",
+    "label": "Machine Learning & AI"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Language models act as annotators, simulated participants, data generators, or analysts inside a study whose conclusions are about something else.",
+    "exclusions": "papers evaluating the models themselves, or conventional NLP measurement covered by computational text analysis."
+  }
+}

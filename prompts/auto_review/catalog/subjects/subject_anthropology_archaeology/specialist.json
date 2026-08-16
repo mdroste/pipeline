@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_anthropology_archaeology",
+  "label": "Anthropology — Archaeology & Material Culture",
+  "order": 200,
+  "group": {
+    "id": "anthropology",
+    "label": "Anthropology & Archaeology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Archaeology, material culture, heritage, bioarchaeology, or archaeological science.",
+    "exclusions": "material objects are chiefly art-historical texts or geological specimens without archaeological context."
+  }
+}

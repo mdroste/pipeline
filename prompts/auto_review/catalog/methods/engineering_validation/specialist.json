@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "engineering_validation",
+  "label": "Method — Engineering Validation & Safety",
+  "order": 105,
+  "group": {
+    "id": "engineering_design",
+    "label": "Engineering, Design & Applied Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Prototype testing, tolerances, reliability, standards, verification, failure modes, scale-up, or safety margins support an engineering claim.",
+    "exclusions": "basic scientific experiments with no design-performance, reliability, or safety claim."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_general",
+  "label": "History — General",
+  "order": 144,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Historical scholarship spanning several periods or themes or outside the listed historical subfields.",
+    "exclusions": "a listed period or thematic history specialist clearly fits the main intervention."
+  }
+}

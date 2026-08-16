@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "materials_characterization",
+  "label": "Method — Materials Characterization",
+  "order": 81,
+  "group": {
+    "id": "lab_instrumentation",
+    "label": "Laboratory & Instrumentation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Spectroscopy, diffraction, microscopy, thermal analysis, mechanical testing, surface analysis, or complementary characterization establishes material identity, structure, or properties.",
+    "exclusions": "routine confirmation of a known material, or device performance and safety rather than material characterization carries the main claim."
+  }
+}

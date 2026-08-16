@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_political_science_policy_admin",
+  "label": "Political Science — Public Policy & Administration",
+  "order": 139,
+  "group": {
+    "id": "political_science",
+    "label": "Political Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Policy design, implementation, bureaucracy, regulation, public administration, or program governance.",
+    "exclusions": "the paper estimates a program effect without a material claim about political design, administration, or implementation."
+  }
+}

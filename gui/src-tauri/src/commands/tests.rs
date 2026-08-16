@@ -4,6 +4,7 @@ fn empty_test_config() -> PipelineConfig {
     PipelineConfig {
         steps: Vec::new(),
         merge: Default::default(),
+        outputs: Default::default(),
         context_cache: Default::default(),
         use_orientation: true,
         orientation_prompt: String::new(),
@@ -174,6 +175,10 @@ fn runtime_snapshot_identity_is_order_stable_and_value_sensitive() {
         profile_name: "test".to_string(),
         config_fingerprint: "profile-base".to_string(),
         fingerprint: "profile-base".to_string(),
+        workflow_source: String::new(),
+        workflow_fingerprint: String::new(),
+        workflow_json: String::new(),
+        specialist_catalog_revision: String::new(),
     };
     let variables_a = std::collections::HashMap::from([
         ("alpha".to_string(), "one".to_string()),
@@ -255,14 +260,22 @@ fn profile_snapshot_identity_is_stable_across_nested_override_map_order() {
         values
     };
 
-    let mut settings_a = crate::settings::Settings::default();
-    settings_a.default_parallel_model_overrides = selections("claude:cli", "codex:cli");
-    settings_a.default_parallel_effort_overrides =
-        efforts([("claude:cli", "high"), ("codex:cli", "medium")]);
-    let mut settings_b = crate::settings::Settings::default();
-    settings_b.default_parallel_model_overrides = selections("codex:cli", "claude:cli");
-    settings_b.default_parallel_effort_overrides =
-        efforts([("codex:cli", "medium"), ("claude:cli", "high")]);
+    let settings_a = crate::settings::Settings {
+        default_parallel_model_overrides: selections("claude:cli", "codex:cli"),
+        default_parallel_effort_overrides: efforts([
+            ("claude:cli", "high"),
+            ("codex:cli", "medium"),
+        ]),
+        ..Default::default()
+    };
+    let settings_b = crate::settings::Settings {
+        default_parallel_model_overrides: selections("codex:cli", "claude:cli"),
+        default_parallel_effort_overrides: efforts([
+            ("codex:cli", "medium"),
+            ("claude:cli", "high"),
+        ]),
+        ..Default::default()
+    };
 
     let step = |model_overrides, effort_overrides| crate::pipeline_config::StepConfig {
         id: "parallel".into(),
@@ -295,6 +308,10 @@ fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
         profile_name: "test".to_string(),
         config_fingerprint: "profile-base".to_string(),
         fingerprint: "profile-base".to_string(),
+        workflow_source: String::new(),
+        workflow_fingerprint: String::new(),
+        workflow_json: String::new(),
+        specialist_catalog_revision: String::new(),
     };
     let overrides = |entries: [(&str, &str, &str); 2]| {
         let mut model_overrides = std::collections::HashMap::new();
@@ -475,6 +492,7 @@ fn core_export_writes_only_the_canonical_document_name() {
         orientation: serde_json::Value::Null,
         step_outputs: Vec::new(),
         failed_steps: Vec::new(),
+        products: Default::default(),
         referee_reports: Vec::new(),
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -501,6 +519,96 @@ fn core_export_writes_only_the_canonical_document_name() {
 }
 
 #[test]
+fn core_export_includes_the_canonical_findings_product() {
+    let destination = tempfile::tempdir().unwrap();
+    let report = PipelineReport {
+        orientation: serde_json::Value::Null,
+        step_outputs: Vec::new(),
+        failed_steps: Vec::new(),
+        products: crate::models::RunProducts {
+            schema_version: 1,
+            primary_step_id: "final".into(),
+            findings: Some(crate::models::FindingSet {
+                schema_version: 1,
+                source_step_id: "final".into(),
+                source_step_label: "Final".into(),
+                findings: Vec::new(),
+            }),
+        },
+        referee_reports: Vec::new(),
+        editor: None,
+        report_date: chrono::Local::now().date_naive(),
+        paper_hash: "test".into(),
+    };
+
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(save_all_artifacts(
+            destination.path().to_string_lossy().into_owned(),
+            "# Report".into(),
+            "exact document".into(),
+            report,
+        ))
+        .unwrap();
+
+    let findings = std::fs::read_to_string(
+        destination
+            .path()
+            .join("pipeline-core-export/findings.json"),
+    )
+    .unwrap();
+    assert!(findings.contains(r#""source_step_id": "final""#));
+}
+
+#[test]
+fn core_export_writes_structured_step_artifacts_as_standalone_json() {
+    let destination = tempfile::tempdir().unwrap();
+    let report = PipelineReport {
+        orientation: serde_json::json!({}),
+        step_outputs: vec![crate::models::StepOutput {
+            step_id: "structured".into(),
+            step_label: "Structured result".into(),
+            raw_text: "{\n  \"result\": \"ok\"\n}".into(),
+            structured_json: true,
+            ..Default::default()
+        }],
+        failed_steps: Vec::new(),
+        products: Default::default(),
+        referee_reports: Vec::new(),
+        editor: None,
+        report_date: chrono::Local::now().date_naive(),
+        paper_hash: "test".into(),
+    };
+
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(save_all_artifacts(
+            destination.path().to_string_lossy().into_owned(),
+            "# Report".into(),
+            "document".into(),
+            report,
+        ))
+        .unwrap();
+
+    let artifact = std::fs::read_to_string(
+        destination
+            .path()
+            .join("pipeline-core-export/steps/01_structured.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&artifact).unwrap(),
+        serde_json::json!({"result": "ok"})
+    );
+    assert!(!destination
+        .path()
+        .join("pipeline-core-export/steps/01_structured.md")
+        .exists());
+}
+
+#[test]
 fn rerun_cache_preserves_every_output_for_a_base_step() {
     let outputs = vec![
         crate::models::StepOutput {
@@ -516,6 +624,43 @@ fn rerun_cache_preserves_every_output_for_a_base_step() {
     ];
     let cache = collect_preloaded_outputs(&outputs, &Default::default());
     assert_eq!(cache["review"].len(), 2);
+}
+
+#[test]
+fn rerun_cache_invalidates_artifacts_when_the_output_contract_changes() {
+    let mut config = empty_test_config();
+    config.steps = vec![crate::pipeline_config::StepConfig {
+        id: "review".into(),
+        output_schema: Some(serde_json::json!({
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {"verdict": {"type": "string"}}
+        })),
+        ..Default::default()
+    }];
+    let markdown_parent = crate::models::StepOutput {
+        step_id: "review".into(),
+        raw_text: "# Old report".into(),
+        structured_json: false,
+        ..Default::default()
+    };
+    assert!(incompatible_reuse_ids(&config, &[markdown_parent]).contains("review"));
+
+    let valid_json = crate::models::StepOutput {
+        step_id: "review".into(),
+        raw_text: r#"{"verdict":"accept"}"#.into(),
+        structured_json: true,
+        ..Default::default()
+    };
+    assert!(!incompatible_reuse_ids(&config, &[valid_json]).contains("review"));
+
+    let invalid_json = crate::models::StepOutput {
+        step_id: "review".into(),
+        raw_text: r#"{"score":1}"#.into(),
+        structured_json: true,
+        ..Default::default()
+    };
+    assert!(incompatible_reuse_ids(&config, &[invalid_json]).contains("review"));
 }
 
 #[test]
@@ -545,6 +690,7 @@ fn resume_starts_at_the_first_missing_step_after_recovery() {
             phase: String::new(),
             error: "cancelled".into(),
         }],
+        products: Default::default(),
         referee_reports: Vec::new(),
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -698,6 +844,10 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
         profile_name: "Test".into(),
         config_fingerprint: "base".into(),
         fingerprint: "base".into(),
+        workflow_source: String::new(),
+        workflow_fingerprint: String::new(),
+        workflow_json: String::new(),
+        specialist_catalog_revision: String::new(),
     };
     let overrides = RunParallelOverrides {
         agents: vec!["codex".into(), "antigravity".into()],
@@ -738,6 +888,10 @@ fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
         profile_name: "Test".into(),
         config_fingerprint: "base".into(),
         fingerprint: "base".into(),
+        workflow_source: String::new(),
+        workflow_fingerprint: String::new(),
+        workflow_json: String::new(),
+        specialist_catalog_revision: String::new(),
     };
     let overrides = RunParallelOverrides {
         agents: vec!["claude".into(), "codex".into()],

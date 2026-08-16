@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_general",
+  "label": "Engineering — General",
+  "order": 70,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Engineering research spanning several systems or outside the listed engineering subfields.",
+    "exclusions": "a listed engineering specialty clearly owns the design and performance claim."
+  }
+}

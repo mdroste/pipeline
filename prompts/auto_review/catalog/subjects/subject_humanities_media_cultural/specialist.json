@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_media_cultural",
+  "label": "Humanities — Media & Cultural Studies",
+  "order": 250,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Media and cultural studies, television, digital and platform culture, popular culture, games, audiences, or cultural industries outside the listed form-specific specialties.",
+    "exclusions": "the contribution is a technical media system or quantitative communication effect without interpretive cultural analysis, or film form, theater, dance, dramaturgy, or embodied and mediated performance clearly carries the contribution."
+  }
+}

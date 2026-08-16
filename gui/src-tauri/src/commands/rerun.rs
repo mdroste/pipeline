@@ -65,7 +65,10 @@ pub(super) fn read_run_file(run_id: &str, rel: &str) -> Result<String, String> {
 pub(super) fn load_run_report(run_id: &str) -> Result<PipelineReport, String> {
     let json = read_run_file(run_id, "report.json")
         .map_err(|_| "This run predates comparison support (no report.json).".to_string())?;
-    serde_json::from_str(&json).map_err(|e| format!("Invalid report.json: {e}"))
+    let mut report: PipelineReport =
+        serde_json::from_str(&json).map_err(|e| format!("Invalid report.json: {e}"))?;
+    crate::findings::ensure_legacy_products(&mut report);
+    Ok(report)
 }
 
 pub(super) fn base_step_id(step_id: &str) -> String {
@@ -117,6 +120,60 @@ pub(super) fn collect_preloaded_outputs(
     preloaded
 }
 
+fn orientation_contract_error(
+    config: &crate::pipeline_config::PipelineConfig,
+    orientation: &serde_json::Value,
+    input_mode: &str,
+) -> Result<(), String> {
+    let contract = crate::pipeline::orient::resolve_survey_schema(
+        &config.orientation_prompt,
+        config.orientation_schema.as_ref(),
+        input_mode,
+    )
+    .unwrap_or_else(|| serde_json::json!({"type": "object"}));
+    let resolved = crate::auto_review::resolve_schema_catalogs(&contract)?;
+    crate::pipeline::structured::validate(&resolved, orientation)?;
+    crate::auto_review::validate_contract_for_schema(&contract, orientation)?;
+    Ok(())
+}
+
+pub(super) fn incompatible_reuse_ids(
+    config: &crate::pipeline_config::PipelineConfig,
+    outputs: &[crate::models::StepOutput],
+) -> std::collections::HashSet<String> {
+    let mut by_base = std::collections::HashMap::<&str, Vec<&crate::models::StepOutput>>::new();
+    for output in outputs.iter().filter(|output| !output.skipped) {
+        by_base
+            .entry(output.step_id.split('/').next().unwrap_or(&output.step_id))
+            .or_default()
+            .push(output);
+    }
+    config
+        .steps
+        .iter()
+        .filter(|step| step.enabled)
+        .filter_map(|step| {
+            let compatible = by_base.get(step.id.as_str()).is_some_and(|prior| {
+                !prior.is_empty()
+                    && prior
+                        .iter()
+                        .all(|output| match step.output_schema.as_ref() {
+                            Some(schema) => {
+                                output.structured_json
+                                    && crate::pipeline::structured::canonicalize(
+                                        schema,
+                                        &output.raw_text,
+                                    )
+                                    .is_ok()
+                            }
+                            None => !output.structured_json && !output.raw_text.trim().is_empty(),
+                        })
+            });
+            (!compatible).then(|| step.id.clone())
+        })
+        .collect()
+}
+
 pub(super) async fn rerun_run_inner(
     app: &crate::emit::EventBus,
     parent_run_id: &str,
@@ -134,16 +191,31 @@ pub(super) async fn rerun_run_inner(
         .map_err(|_| "This run predates re-run support (no report.json). Re-run is only available for runs created after upgrading.".to_string())?;
     let parent_report: PipelineReport = serde_json::from_str(&report_json)
         .map_err(|e| format!("Invalid parent report.json: {e}"))?;
+    let input_identity = crate::runs::input_identity(
+        &parent.input_path,
+        &parent.input_interpretation,
+        &parent_report.paper_hash,
+        Some(&parent.input_identity),
+    );
     let parent_dir = crate::runs::runs_dir()?.join(parent_run_id);
     let document_rel = crate::runs::captured_document_rel_path(&parent_dir, &parent)?;
     let document_text = read_run_file(parent_run_id, document_rel)?;
     let mut orientation_value: serde_json::Value = parent_report.orientation.clone();
 
     // Active profile drives the re-run (edited prompts take effect).
-    let (mut config, profile_name) =
-        pipeline_config::load_required_profile_for(&settings.active_profile)?;
+    let workflow = pipeline_config::load_required_workflow_for(&settings.active_profile)?;
+    let mut config = workflow.config.clone();
+    let profile_name = workflow.name.clone();
+    let workflow_source = format!("profile:{}", settings.active_profile);
+    let workflow_fingerprint = workflow.fingerprint.clone();
+    let workflow_json = workflow.canonical_json.clone();
     pipeline_config::validate_enabled_sequential_step(&config.steps)?;
     crate::auto_review::validate_auto_review_preflight(&config)?;
+    let specialist_catalog_revision = if crate::auto_review::uses_auto_review_contract(&config) {
+        crate::auto_review::catalog_revision().to_string()
+    } else {
+        String::new()
+    };
     // A source-tree parent captured only a file inventory as its document
     // text; the adaptive router and reviewers would treat that inventory as
     // the paper (same rule as a fresh launch).
@@ -214,27 +286,23 @@ pub(super) async fn rerun_run_inner(
         .as_deref()
         .and_then(|path| crate::pipeline::claude::normalize_cli_root(&path.to_string_lossy()));
 
-    // A run can stop after extraction but before its orientation map becomes
-    // durable. Rebuild only that missing preprocessing stage; otherwise reuse
-    // the parent's cached map exactly. One exception: the active profile
-    // drives the re-run, so when it expects an auto-review plan and the
-    // parent's survey was produced by a different workflow (no review_plan),
-    // the map must be rebuilt — materialization below would otherwise reject
-    // the re-run outright.
-    let needs_auto_plan = crate::auto_review::uses_auto_review_contract(&config)
-        && orientation_value.pointer("/review_plan").is_none();
-    if orientation_value.is_null() || needs_auto_plan {
+    // The active profile drives a re-run, so a cached orientation is reusable
+    // only when it still satisfies that profile's current schema and semantic
+    // contract. Rebuilding it invalidates every downstream step.
+    let orientation_error =
+        orientation_contract_error(&config, &orientation_value, &parent.input_mode).err();
+    let orientation_rebuilt = orientation_error.is_some();
+    if let Some(contract_error) = orientation_error {
         let orientation_label = if crate::auto_review::uses_auto_review_contract(&config) {
             "Creating orientation map & review plan"
         } else {
             "Creating orientation map"
         };
-        let reason = if orientation_value.is_null() {
-            "Resume: rebuilding the orientation map that did not complete"
-        } else {
-            "Re-run: the parent survey has no review plan; rebuilding it for the adaptive workflow"
-        };
-        app.emit_event("pipeline:log", serde_json::json!({ "line": reason }))
+        app.emit_event("pipeline:log", serde_json::json!({
+            "line": format!(
+                "Re-run: rebuilding the parent orientation because it does not satisfy the active workflow ({contract_error})"
+            )
+        }))
             .ok();
         app.emit_event(
             "pipeline:stage",
@@ -256,11 +324,16 @@ pub(super) async fn rerun_run_inner(
         };
         let survey_template =
             orient::resolve_survey_template(&config.orientation_prompt, &parent.input_mode);
+        let survey_schema = orient::resolve_survey_schema(
+            &config.orientation_prompt,
+            config.orientation_schema.as_ref(),
+            &parent.input_mode,
+        );
         orientation_value = orient::build_orientation_map(
             app,
             &extraction,
             survey_template.as_deref(),
-            config.orientation_schema.as_ref(),
+            survey_schema.as_ref(),
             scoped_source_read_root.as_deref(),
         )
         .await?;
@@ -283,7 +356,9 @@ pub(super) async fn rerun_run_inner(
         .filter(|s| s.enabled)
         .map(|s| s.id.clone())
         .collect();
-    let rerun: std::collections::HashSet<String> = if let Some(fs) = &from_step {
+    let mut rerun: std::collections::HashSet<String> = if orientation_rebuilt {
+        enabled_ids.iter().cloned().collect()
+    } else if let Some(fs) = &from_step {
         match enabled_ids.iter().position(|id| id == fs) {
             Some(k) => {
                 // Steps may be listed in any order while the executor schedules
@@ -313,8 +388,28 @@ pub(super) async fn rerun_run_inner(
         enabled_ids.iter().cloned().collect()
     };
 
+    // Even when the user asks for a narrow partial re-run, never preload an
+    // artifact produced under a different output mode or one that fails the
+    // step's current schema. Its graph dependents are stale as well.
+    let incompatible = incompatible_reuse_ids(&execution_config, &parent_report.step_outputs);
+    if !incompatible.is_empty() {
+        rerun.extend(incompatible.iter().cloned());
+        rerun.extend(crate::pipeline::executor::dependents_of(
+            &execution_config,
+            &incompatible,
+        ));
+        app.emit_event("pipeline:log", serde_json::json!({
+            "line": format!(
+                "Re-run: invalidating {} cached step artifact(s) that do not satisfy the active output contracts",
+                incompatible.len()
+            )
+        })).ok();
+    }
+
     // Preload the reused steps' outputs (keyed by base id).
-    let preloaded = collect_preloaded_outputs(&parent_report.step_outputs, &rerun);
+    let mut preloaded = collect_preloaded_outputs(&parent_report.step_outputs, &rerun);
+    let enabled: std::collections::HashSet<&str> = enabled_ids.iter().map(String::as_str).collect();
+    preloaded.retain(|id, _| enabled.contains(id.as_str()));
     app.emit_event("pipeline:log", serde_json::json!({
         "line": format!("Re-run of {parent_run_id}: reusing {} step(s), re-running the rest", preloaded.len())
     })).ok();
@@ -327,8 +422,12 @@ pub(super) async fn rerun_run_inner(
             input_path: parent.input_path.clone(),
             input_mode: parent.input_mode.clone(),
             input_interpretation: parent.input_interpretation.clone(),
+            input_identity: input_identity.clone(),
             profile_id: settings.active_profile.clone(),
             profile_name: profile_name.clone(),
+            workflow_source: workflow_source.clone(),
+            workflow_fingerprint: workflow_fingerprint.clone(),
+            specialist_catalog_revision: specialist_catalog_revision.clone(),
             provider: settings.preferred_provider.clone(),
             variables: parent.variables.clone(),
             parent_run_id: Some(parent_run_id.to_string()),
@@ -337,6 +436,12 @@ pub(super) async fn rerun_run_inner(
         None,
     );
     if let Some(writer) = run_writer.as_mut() {
+        let _ = writer.add_text(
+            "context/workflow.json",
+            "Workflow snapshot",
+            "context",
+            &workflow_json,
+        );
         for (key, path) in &extra_input_sources {
             let _ = writer.record_extra_input_source(key, path);
         }
@@ -557,10 +662,22 @@ pub(super) async fn rerun_run_inner(
         return Err("Pipeline cancelled".into());
     }
 
+    let mut products = crate::findings::build_run_products(&execution_config, &result.outputs);
+    if let Some(writer) = run_writer.as_mut() {
+        for warning in
+            writer.capture_source_evidence(&mut products, std::path::Path::new(&scoped_source_path))
+        {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!("WARNING: {warning}") }),
+            );
+        }
+    }
     let report = PipelineReport {
         orientation: orientation_value,
         step_outputs: result.outputs,
         failed_steps: result.failed_steps,
+        products,
         referee_reports: vec![],
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -581,7 +698,11 @@ pub(super) async fn rerun_run_inner(
             input_path: parent.input_path,
             input_mode: parent.input_mode,
             input_interpretation: parent.input_interpretation,
+            input_identity,
             profile_name,
+            workflow_source,
+            workflow_fingerprint,
+            specialist_catalog_revision,
             variables,
             extra_inputs: persisted_inputs,
             extra_input_sources,

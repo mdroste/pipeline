@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_science_medicine_technology",
+  "label": "History — Science, Medicine & Technology",
+  "order": 153,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "History of science, medicine, technology, expertise, laboratories, infrastructure, or knowledge institutions.",
+    "exclusions": "the paper evaluates current scientific validity or technology performance without a historiographic intervention or historical source base."
+  }
+}

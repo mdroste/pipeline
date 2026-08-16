@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "instrumental_variables",
+  "label": "Method — Instrumental Variables",
+  "order": 6,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "An instrument, encouragement, judge or examiner assignment, or other excluded variation identifies a central causal parameter outside a dedicated design-specific role.",
+    "exclusions": "the variable is merely a control, a randomized treatment is analyzed directly, the paper makes no exclusion-based causal interpretation, or a shift-share exposure design is the central instrument and is better covered by the dedicated shift-share role."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_logic_epistemology",
+  "label": "Philosophy — Logic & Epistemology",
+  "order": 209,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Philosophical logic, epistemology, rational belief, formal epistemology, or philosophy of language.",
+    "exclusions": "the central result is mathematical logic or empirical cognition rather than a philosophical account of knowledge or meaning."
+  }
+}

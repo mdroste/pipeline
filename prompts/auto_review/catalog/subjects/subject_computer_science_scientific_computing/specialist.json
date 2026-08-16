@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_scientific_computing",
+  "label": "Computer Science — Scientific Computing & Computational Science",
+  "order": 69,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Computational science systems, scientific workflows, high-performance scientific software, domain-specific simulation infrastructure, or computational methods whose systems contribution serves science.",
+    "exclusions": "the contribution is a mathematical numerical method, a domain-science result using standard code, or generic high-performance systems without a scientific-computing claim."
+  }
+}

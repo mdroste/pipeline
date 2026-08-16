@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_algebra_number",
+  "label": "Mathematics — Algebra & Number Theory",
+  "order": 20,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Algebra, representation theory, algebraic geometry, arithmetic geometry, or number theory spanning several of these areas or outside the narrower listed specialties.",
+    "exclusions": "the central result is geometric or analytic without material algebraic or arithmetic structure, or a listed algebraic-geometry or number-theory specialist clearly carries the contribution."
+  }
+}

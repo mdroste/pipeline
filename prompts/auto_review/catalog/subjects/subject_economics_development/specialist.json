@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_development",
+  "label": "Economics — Development Economics",
+  "order": 176,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Households, firms, states, markets, poverty, institutions, or policy in low- and middle-income settings, including structural transformation at the micro and regional level.",
+    "exclusions": "cross-country growth accounting, international trade, or political-science research without a central development-economics allocation or welfare question."
+  }
+}

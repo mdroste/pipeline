@@ -80,6 +80,21 @@ pub async fn get_auto_review_catalog() -> crate::auto_review::AutoReviewCatalog 
     crate::auto_review::catalog()
 }
 
+/// Show the exact portable schema sent to providers after catalog expansion and
+/// removal of host-owned constraints and Pipeline metadata.
+#[tauri::command]
+pub async fn resolve_orientation_schema_catalogs(
+    schema: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let encoded = serde_json::to_vec(&schema)
+        .map_err(|error| format!("Could not serialize orientation schema: {error}"))?;
+    if encoded.len() > crate::pipeline_config::MAX_OUTPUT_SCHEMA_BYTES {
+        return Err("Orientation schema exceeds Pipeline's size limit".to_string());
+    }
+    let resolved = crate::auto_review::resolve_schema_catalogs(&schema)?;
+    crate::pipeline::structured::provider_schema(&resolved)
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSetupResponse {
@@ -272,9 +287,27 @@ pub async fn get_default_prompt(name: String) -> Result<String, String> {
         .ok_or_else(|| format!("Unknown prompt: {name}"))
 }
 
-/// The Automatic Paper Review router prompt is generated from the live catalog,
-/// not a compiled prompts/*.md file, so the editor needs its own way to
-/// restore it after an accidental overwrite.
+#[derive(serde::Serialize)]
+pub struct OrientationDefaults {
+    pub prompt: String,
+    pub schema: serde_json::Value,
+}
+
+/// A stock orientation prompt and its authoritative artifact contract. The
+/// editor applies these as one operation so changing survey variants cannot
+/// leave a stale schema behind.
+#[tauri::command]
+pub async fn get_orientation_defaults(name: String) -> Result<OrientationDefaults, String> {
+    let prompt = crate::prompts::compiled_default(&name)
+        .ok_or_else(|| format!("Unknown prompt: {name}"))?
+        .to_string();
+    let schema = crate::orientation_contract::schema_for_prompt_name(&name)
+        .ok_or_else(|| format!("Prompt has no stock orientation schema: {name}"))?;
+    Ok(OrientationDefaults { prompt, schema })
+}
+
+/// Compact Automatic Paper Review router template. Runtime expands its catalog
+/// placeholders from the live manifest catalog.
 #[tauri::command]
 pub async fn get_auto_review_orientation_prompt() -> Result<String, String> {
     Ok(crate::auto_review::orientation_prompt())
@@ -287,10 +320,9 @@ pub struct AutoReviewOrientationDefaults {
     pub schema: serde_json::Value,
 }
 
-/// The router prompt lists the live catalog's subjects, methods, and genres;
-/// a profile restored to that prompt must also adopt the matching
-/// orientation schema, or the model's newer picks fail enum validation.
-/// The editor's restore action applies both together.
+/// The router template and its compact catalog-backed orientation contract.
+/// The editor restores both together; catalog rows are injected only at run
+/// time and never stored in the profile prompt.
 /// (`get_auto_review_orientation_prompt` above remains for compatibility.)
 #[tauri::command]
 pub async fn get_auto_review_orientation_defaults() -> Result<AutoReviewOrientationDefaults, String>
@@ -380,13 +412,13 @@ pub(super) fn import_profile_envelope(
     envelope: pipeline_config::ExportEnvelope,
 ) -> Result<ProfileSummary, String> {
     match envelope {
-        pipeline_config::ExportEnvelope::Profile { schema_version, name, steps, merge, context_cache, use_orientation, orientation_prompt, orientation_schema, extraction, parallel_context_template, variables } => {
+        pipeline_config::ExportEnvelope::Profile { schema_version, name, steps, merge, outputs, context_cache, use_orientation, orientation_prompt, orientation_schema, extraction, parallel_context_template, variables } => {
             if schema_version > pipeline_config::CURRENT_SCHEMA_VERSION {
                 return Err(format!(
                     "This profile was made with a newer version of Pipeline (schema v{schema_version}). Update the app to import it."
                 ));
             }
-            pipeline_config::import_profile_data(&name, steps, merge, context_cache, use_orientation, orientation_prompt, orientation_schema, extraction, parallel_context_template, variables)
+            pipeline_config::import_profile_data(&name, steps, merge, outputs, context_cache, use_orientation, orientation_prompt, orientation_schema, extraction, parallel_context_template, variables)
         }
         pipeline_config::ExportEnvelope::Step { .. } => {
             Err("This file contains a single step, not a profile. Use Import on the pipeline page to add it to the current profile.".into())

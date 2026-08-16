@@ -1,8 +1,6 @@
 import { memo, useState } from "react";
 import type { InputSlot, StepConfig } from "../../lib/types";
 import ArtifactContextEditor from "./ArtifactContextEditor";
-import { ISSUES_SCHEMA } from "./stepTemplates";
-import { outputSchemaError } from "./utils";
 
 function AdvancedStepOptions({
   step,
@@ -25,14 +23,10 @@ function AdvancedStepOptions({
   section?: "all" | "inputs" | "execution";
   onChange: (patch: Partial<StepConfig>) => void;
 }) {
-  const hasAny = !!(step.context.include.length || step.after?.length || step.run_if || step.output_schema);
+  const hasAny = !!(step.context.include.length || step.after?.length || step.run_if);
   const [open, setOpen] = useState(
-    section !== "all" || !!(step.run_if || step.output_schema),
+    section !== "all" || !!step.run_if,
   );
-  const [schemaText, setSchemaText] = useState(
-    step.output_schema ? JSON.stringify(step.output_schema, null, 2) : ""
-  );
-  const [schemaError, setSchemaError] = useState<string | null>(null);
 
   const cond = step.run_if ?? null;
   const condKind = cond?.kind ?? "none";
@@ -42,27 +36,6 @@ function AdvancedStepOptions({
     if (kind === "output_matches")
       return onChange({ run_if: { kind: "output_matches", step: conditionStepIds[0] ?? "", pattern: "" } });
     return onChange({ run_if: { kind: "survey_path", pointer: "", exists: true } });
-  };
-
-  const applySchema = (text: string) => {
-    setSchemaText(text);
-    if (!text.trim()) {
-      setSchemaError(null);
-      onChange({ output_schema: null });
-      return;
-    }
-    try {
-      const parsed = JSON.parse(text);
-      const error = outputSchemaError(parsed);
-      if (error) {
-        setSchemaError(error);
-        return;
-      }
-      setSchemaError(null);
-      onChange({ output_schema: parsed });
-    } catch (e) {
-      setSchemaError(e instanceof Error ? e.message : "invalid JSON");
-    }
   };
 
   const inputClass =
@@ -263,38 +236,6 @@ function AdvancedStepOptions({
                   that the pointer exists.
                 </p>
               </div>
-            )}
-          </div>
-
-          {/* output_schema */}
-          <div>
-            <div className="flex items-center justify-between mb-0.5">
-              <label className="block text-[10px] font-medium text-gray-500">
-                Output JSON schema (optional)
-              </label>
-              <button
-                type="button"
-                onClick={() => applySchema(JSON.stringify(ISSUES_SCHEMA, null, 2))}
-                className="text-[10px] text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 underline"
-                title="Fill with the issues schema, which enables the Issues table + annotations in the report view"
-              >
-                Use issues schema
-              </button>
-            </div>
-            <textarea
-              aria-label="Output JSON schema"
-              value={schemaText}
-              onChange={(e) => applySchema(e.target.value)}
-              rows={4}
-              placeholder='{ "type": "array", "items": { "type": "object", "required": ["id", "severity"] } }'
-              className={`${inputClass} resize-y`}
-            />
-            {schemaError ? (
-              <p className="text-[10px] text-red-600 dark:text-red-400 mt-0.5">Invalid schema: {schemaError}</p>
-            ) : (
-              <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">
-                When set, the step must emit JSON matching this shape (with one retry).
-              </p>
             )}
           </div>
 

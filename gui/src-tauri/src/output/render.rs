@@ -66,9 +66,18 @@ pub fn render_markdown(
     // Consolidated issues — use final_output() which handles both new and
     // legacy formats and never substitutes a parallel analysis for a failed
     // sequential report step.
-    let final_text = report
-        .final_output()
-        .map(strip_to_report)
+    let final_text = crate::findings::canonical_findings(report)
+        .filter(|findings| {
+            !report.products.primary_step_id.is_empty()
+                && findings
+                    .source_step_id
+                    .split('/')
+                    .next()
+                    .unwrap_or_default()
+                    == report.products.primary_step_id
+        })
+        .map(|findings| crate::findings::render_markdown(&findings))
+        .or_else(|| report.final_output().map(strip_to_report))
         .filter(|text| !text.trim().is_empty());
     if let Some(final_text) = final_text {
         md.push_str(&normalize_math_delimiters(&final_text));

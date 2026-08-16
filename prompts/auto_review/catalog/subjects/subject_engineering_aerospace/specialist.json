@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_aerospace",
+  "label": "Engineering — Aerospace",
+  "order": 73,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Aeronautical, astronautical, propulsion, flight, spacecraft, or aerospace-systems research.",
+    "exclusions": "the work concerns atmospheric or plasma physics with no vehicle or mission design objective."
+  }
+}

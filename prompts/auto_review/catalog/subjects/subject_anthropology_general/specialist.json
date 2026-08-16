@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_anthropology_general",
+  "label": "Anthropology — General",
+  "order": 197,
+  "group": {
+    "id": "anthropology",
+    "label": "Anthropology & Archaeology"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Anthropological or archaeological scholarship spanning several traditions or outside the listed specialties.",
+    "exclusions": "a sociocultural, biological, linguistic, medical, political-economic, or archaeological lens clearly fits."
+  }
+}

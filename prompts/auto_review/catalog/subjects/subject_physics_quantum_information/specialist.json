@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_quantum_information",
+  "label": "Physics — Quantum Information",
+  "order": 15,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Quantum information, communication, sensing, error correction, or physically realized quantum computation.",
+    "exclusions": "the contribution is a classical algorithm or an AMO experiment without an information-theoretic claim."
+  }
+}

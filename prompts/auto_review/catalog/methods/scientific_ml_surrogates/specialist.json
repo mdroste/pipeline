@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "scientific_ml_surrogates",
+  "label": "Method — Scientific ML & Surrogate Models",
+  "order": 54,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Learned surrogates, emulators, physics-informed networks, or ML force fields replace simulation or measurement in support of a scientific claim.",
+    "exclusions": "ML methodology evaluated on benchmarks without a scientific conclusion, or conventional simulation without a learned component."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "neuroimaging_analysis",
+  "label": "Method — Neuroimaging Analysis",
+  "order": 72,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "fMRI, EEG, MEG, PET, or similar brain-measurement analyses carry central brain-behavior or clinical claims.",
+    "exclusions": "clinical radiology diagnosis, microscopy of neural tissue, or behavior-only studies without brain measurement."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_general",
+  "label": "Sociology — General",
+  "order": 119,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Sociological research spanning several areas or outside the listed sociological subfields.",
+    "exclusions": "a listed sociological subfield clearly contains the principal social process."
+  }
+}

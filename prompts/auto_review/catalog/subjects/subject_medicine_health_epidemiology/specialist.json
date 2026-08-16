@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_epidemiology",
+  "label": "Medicine & Health — Epidemiology & Public Health",
+  "order": 112,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Epidemiology, population health, prevention, infectious-disease spread, environmental health, or health disparities.",
+    "exclusions": "the paper is a patient-level clinical efficacy study or a biological transmission mechanism without population inference."
+  }
+}

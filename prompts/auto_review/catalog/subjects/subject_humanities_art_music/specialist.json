@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_art_music",
+  "label": "Humanities — Art History, Visual Culture & Music",
+  "order": 249,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Art history, visual culture, musicology, sound studies, material aesthetics, or histories of artistic production and reception.",
+    "exclusions": "images or music are data inputs without an art-historical, visual, or musicological contribution, or architecture as designed space or film, theater, dance, and embodied performance clearly carries the contribution."
+  }
+}

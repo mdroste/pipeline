@@ -37,6 +37,36 @@ fn effort_config(model: &str, effort: &str) -> Option<serde_json::Value> {
     }
 }
 
+fn output_config(
+    model: &str,
+    effort: &str,
+    schema: Option<&serde_json::Value>,
+) -> Result<Option<serde_json::Value>, String> {
+    let mut config = effort_config(model, effort)
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(schema) = schema {
+        config.insert(
+            "format".to_string(),
+            serde_json::json!({
+                "type": "json_schema",
+                "schema": crate::pipeline::structured::provider_schema(schema)?
+            }),
+        );
+    }
+    Ok((!config.is_empty()).then_some(serde_json::Value::Object(config)))
+}
+
+fn remove_structured_format(config: &mut Option<serde_json::Value>) {
+    let Some(object) = config.as_mut().and_then(serde_json::Value::as_object_mut) else {
+        return;
+    };
+    object.remove("format");
+    if object.is_empty() {
+        *config = None;
+    }
+}
+
 /// Build Anthropic tools array from allowed tool names.
 fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     let mut tools = Vec::new();
@@ -193,7 +223,7 @@ pub async fn call_anthropic_api(
         .effort
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("");
-    let output_config = effort_config(&model, effort.trim());
+    let output_config = output_config(&model, effort.trim(), overrides.output_schema)?;
     log(
         app,
         format!("{label} started (API: Anthropic, model: {model})"),
@@ -245,6 +275,7 @@ pub async fn call_anthropic_api(
         if state.is_none() {
             let mut warm_request = request.clone();
             warm_request.max_tokens = 32;
+            remove_structured_format(&mut warm_request.output_config);
             warm_request.messages = vec![AnthropicMessage {
                 role: "user".to_string(),
                 content: build_content(
@@ -411,6 +442,20 @@ mod tests {
         // Empty or unrecognized values are dropped rather than sent.
         assert_eq!(effort_config("claude-sonnet-4-6", ""), None);
         assert_eq!(effort_config("claude-sonnet-4-6", "xhigh"), None);
+    }
+
+    #[test]
+    fn structured_output_merges_with_effort_and_can_be_removed_for_warmup() {
+        let schema = serde_json::json!({"type": "object", "properties": {}});
+        let mut config = output_config("claude-sonnet-4-6", "high", Some(&schema)).unwrap();
+        assert_eq!(config.as_ref().unwrap()["effort"], "high");
+        assert_eq!(config.as_ref().unwrap()["format"]["type"], "json_schema");
+        remove_structured_format(&mut config);
+        assert_eq!(config, Some(serde_json::json!({"effort": "high"})));
+
+        let mut schema_only = output_config("claude-haiku-4-5", "high", Some(&schema)).unwrap();
+        remove_structured_format(&mut schema_only);
+        assert!(schema_only.is_none());
     }
 
     #[test]

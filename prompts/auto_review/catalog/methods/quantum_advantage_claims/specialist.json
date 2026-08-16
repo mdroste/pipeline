@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "quantum_advantage_claims",
+  "label": "Method — Quantum-Advantage Claims",
+  "order": 62,
+  "group": {
+    "id": "ml_ai",
+    "label": "Machine Learning & AI"
+  },
+  "level": "method",
+  "routing": {
+    "description": "A claim of quantum computational advantage, speedup, or utility against classical baselines is central.",
+    "exclusions": "quantum hardware physics without a computational-advantage claim, or quantum algorithm theory with no comparative performance assertion."
+  }
+}

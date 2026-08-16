@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "survey_research",
+  "label": "Method — Survey Research",
+  "order": 39,
+  "group": {
+    "id": "measurement_records",
+    "label": "Measurement, Data & Records"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Questionnaire design, respondent sampling, weighting, nonresponse, reporting behavior, or survey experiments materially determine the evidence.",
+    "exclusions": "administrative or sensor data with no survey instrument, or surveys used only for a minor control variable."
+  }
+}

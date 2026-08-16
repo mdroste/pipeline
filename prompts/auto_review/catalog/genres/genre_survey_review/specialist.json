@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_survey_review",
+  "label": "Survey & Review Article",
+  "order": 2,
+  "routing": {
+    "description": "The paper is a narrative survey or review article whose contribution is organizing and synthesizing a literature.",
+    "exclusions": "a formal systematic review or meta-analysis with search and pooling methodology, which the systematic-review method role audits."
+  }
+}

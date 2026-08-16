@@ -247,6 +247,13 @@ pub async fn save_all_artifacts(
     std::fs::write(base.join("orientation.json"), &orient_json)
         .map_err(|e| format!("Failed to write orientation.json: {e}"))?;
 
+    if let Some(findings) = report.products.findings.as_ref() {
+        let findings_json = serde_json::to_string_pretty(findings)
+            .map_err(|e| format!("Failed to serialize findings: {e}"))?;
+        std::fs::write(base.join("findings.json"), findings_json)
+            .map_err(|e| format!("Failed to write findings.json: {e}"))?;
+    }
+
     // Individual step outputs
     let steps_dir = base.join("steps");
     std::fs::create_dir_all(&steps_dir)
@@ -266,22 +273,29 @@ pub async fn save_all_artifacts(
                 }
             })
             .collect::<String>();
-        let filename = format!("{:02}_{}.md", i + 1, slug);
-        let header = format!(
-            "# {}\n\n**Phase**: {} · **Agent**: {}\n\n---\n\n",
-            output.step_label,
-            output.phase,
-            if output.agent.is_empty() {
-                "default"
-            } else {
-                &output.agent
-            },
-        );
-        std::fs::write(
-            steps_dir.join(&filename),
-            format!("{}{}", header, output.raw_text),
-        )
-        .map_err(|e| format!("Failed to write {filename}: {e}"))?;
+        let (filename, contents) = if output.structured_json {
+            (
+                format!("{:02}_{}.json", i + 1, slug),
+                output.raw_text.clone(),
+            )
+        } else {
+            let header = format!(
+                "# {}\n\n**Phase**: {} · **Agent**: {}\n\n---\n\n",
+                output.step_label,
+                output.phase,
+                if output.agent.is_empty() {
+                    "default"
+                } else {
+                    &output.agent
+                },
+            );
+            (
+                format!("{:02}_{}.md", i + 1, slug),
+                format!("{}{}", header, output.raw_text),
+            )
+        };
+        std::fs::write(steps_dir.join(&filename), contents)
+            .map_err(|e| format!("Failed to write {filename}: {e}"))?;
     }
 
     finish_export_stage(&stage, destination, "pipeline-core-export")?;

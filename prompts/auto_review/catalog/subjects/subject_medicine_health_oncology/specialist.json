@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_oncology",
+  "label": "Medicine & Health — Oncology & Hematology",
+  "order": 117,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Cancer and hematologic disease, screening, molecular classification, systemic therapy, radiation, surgery, prognosis, or survivorship.",
+    "exclusions": "the main contribution is basic tumor biology or a general diagnostic algorithm without an intended oncologic decision or patient outcome."
+  }
+}

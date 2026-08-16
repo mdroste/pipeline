@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_political_science_institutions",
+  "label": "Political Science — Institutions & Governance",
+  "order": 136,
+  "group": {
+    "id": "political_science",
+    "label": "Political Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Legislatures, executives, courts, bureaucracy, federalism, constitutions, corruption, or governance.",
+    "exclusions": "the central contribution is legal doctrine or organizational sociology without a political institutional claim."
+  }
+}

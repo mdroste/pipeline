@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_interdisciplinary_studies_general",
+  "label": "Interdisciplinary Studies — General",
+  "order": 281,
+  "group": {
+    "id": "interdisciplinary_studies",
+    "label": "Interdisciplinary Studies"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Interdisciplinary scholarship whose central contribution cannot be evaluated adequately from one listed discipline or more specific interdisciplinary field.",
+    "exclusions": "one or two listed disciplinary or interdisciplinary subfield reviewers can cover the paper's central contribution without a general fallback."
+  }
+}

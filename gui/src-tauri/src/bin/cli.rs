@@ -7,7 +7,7 @@
 use pipeline_gui_lib::emit::{CliEvents, EventBus};
 use pipeline_gui_lib::{commands, engines, pipeline_config};
 use std::collections::{HashMap, HashSet};
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,6 +18,7 @@ USAGE:
   pipeline-cli run [OPTIONS]
   pipeline-cli check [OPTIONS]
   pipeline-cli batch --input-dir <DIR> [OPTIONS]
+  pipeline-cli workflow <schema|template|validate|install> ...
   pipeline-cli profiles [--json]
   pipeline-cli profiles show <ID>
   pipeline-cli engines [status] [--json]
@@ -28,6 +29,7 @@ COMMANDS:
   run       Run one workflow
   check     Check dependencies for one prospective run
   batch     Run one workflow over each supported document in a folder
+  workflow  Author, validate, or explicitly install portable workflow JSON
   profiles  List or inspect installed workflows
   engines   Inspect or manage the PaddleOCR-VL Full Parser bundle
   help      Show help for Pipeline or one command
@@ -41,7 +43,8 @@ Run one Pipeline workflow
 
 USAGE:
   pipeline-cli run [--input <PATH>] [--interpret-as <KIND>]
-                       [--profile <ID>] [--var <KEY=VALUE>]...
+                       [--profile <ID> | --workflow <FILE|->]
+                       [--var <KEY=VALUE>]...
                        [--extra-input <KEY=PATH>]... [--out <FILE>] [--force]
 
 OPTIONS:
@@ -50,6 +53,8 @@ OPTIONS:
       --interpret-as <KIND>   document, latex-project, or source-tree.
   -p, --profile <ID>          Workflow for this run. Does not change the
                               desktop app's active workflow.
+  -w, --workflow <FILE|->     Portable workflow JSON file, or '-' for stdin.
+                              Runs ephemerally and is not installed.
       --var <KEY=VALUE>       Workflow variable; repeat for multiple values.
       --extra-input <KEY=PATH>
                               Named input; repeat for multiple inputs.
@@ -65,7 +70,7 @@ const BATCH_HELP: &str = "\
 Run one Pipeline workflow over a folder of documents
 
 USAGE:
-  pipeline-cli batch --input-dir <DIR> [--profile <ID>]
+  pipeline-cli batch --input-dir <DIR> [--profile <ID> | --workflow <FILE|->]
                      [--var <KEY=VALUE>]...
                      [--extra-input <KEY=PATH>]... [--out-dir <DIR>] [--force]
 
@@ -73,6 +78,7 @@ OPTIONS:
   -i, --input-dir <DIR>       Folder containing PDF, TeX, or DOCX inputs.
   -p, --profile <ID>          Workflow for this batch. Does not change the
                               desktop app's active workflow.
+  -w, --workflow <FILE|->     Portable workflow JSON file, or '-' for stdin.
       --var <KEY=VALUE>       Workflow variable; repeat for multiple values.
       --extra-input <KEY=PATH>
                               Named input shared by every run; repeatable.
@@ -89,7 +95,8 @@ Check dependencies for one prospective Pipeline run
 
 USAGE:
   pipeline-cli check [--input <PATH>] [--interpret-as <KIND>]
-                     [--profile <ID>] [--var <KEY=VALUE>]...
+                     [--profile <ID> | --workflow <FILE|->]
+                     [--var <KEY=VALUE>]...
                      [--extra-input <KEY=PATH>]... [--json]
 
 OPTIONS:
@@ -98,6 +105,7 @@ OPTIONS:
       --interpret-as <KIND>   document, latex-project, or source-tree.
   -p, --profile <ID>          Workflow to check without changing the desktop
                               app's active workflow.
+  -w, --workflow <FILE|->     Portable workflow JSON file, or '-' for stdin.
       --var <KEY=VALUE>       Workflow variable; repeatable.
       --extra-input <KEY=PATH>
                               Named input; repeatable. Named PDFs also trigger
@@ -105,8 +113,30 @@ OPTIONS:
       --json                  Print the complete dependency report as JSON.
   -h, --help                  Show this help.
 
-No extraction or model call is made. Exit status 0 means the exact run is
+No extraction or model call is made. With --json, output includes the
+normalized workflow hash, scheduler waves, work bounds, and dependencies.
+Exit status 0 means the exact run is
 ready; exit status 1 means one or more required dependencies are unavailable.
+";
+
+const WORKFLOW_HELP: &str = "\
+Author and use portable Pipeline workflow JSON
+
+USAGE:
+  pipeline-cli workflow schema
+  pipeline-cli workflow template
+  pipeline-cli workflow validate <FILE|-> [--json]
+  pipeline-cli workflow install <FILE|-> [--json]
+
+COMMANDS:
+  schema    Print the current JSON Schema.
+  template  Print a small valid workflow agents can modify.
+  validate  Strictly parse and semantically validate without installing.
+  install   Validate, then save as a new installed profile.
+
+Unknown fields are rejected. '-' reads at most 10 MB of UTF-8 JSON from
+stdin. `run`, `check`, and `batch` use --workflow ephemerally; only this
+explicit install command changes the profile store.
 ";
 
 const PROFILES_HELP: &str = "\
@@ -144,6 +174,7 @@ or llama.cpp installation is used.
 ";
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // One short-lived parse result per CLI process.
 enum ParseAction {
     Execute(Command),
     Help(&'static str),
@@ -155,6 +186,7 @@ enum Command {
     Run(RunArgs),
     Check(CheckArgs),
     Batch(BatchArgs),
+    Workflow(WorkflowArgs),
     Profiles(ProfilesArgs),
     Engines(EnginesArgs),
 }
@@ -164,6 +196,7 @@ struct RunArgs {
     input: Option<String>,
     input_interpretation: Option<String>,
     profile_id: Option<String>,
+    workflow_path: Option<String>,
     variables: HashMap<String, String>,
     extra_inputs: HashMap<String, String>,
     out: Option<String>,
@@ -174,6 +207,7 @@ struct RunArgs {
 struct BatchArgs {
     input_dir: String,
     profile_id: Option<String>,
+    workflow_path: Option<String>,
     variables: HashMap<String, String>,
     extra_inputs: HashMap<String, String>,
     out_dir: Option<String>,
@@ -185,6 +219,7 @@ struct CheckArgs {
     input: Option<String>,
     input_interpretation: Option<String>,
     profile_id: Option<String>,
+    workflow_path: Option<String>,
     variables: HashMap<String, String>,
     extra_inputs: HashMap<String, String>,
     json: bool,
@@ -194,6 +229,14 @@ struct CheckArgs {
 enum ProfilesArgs {
     List { json: bool },
     Show { id: String },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WorkflowArgs {
+    Schema,
+    Template,
+    Validate { source: String, json: bool },
+    Install { source: String, json: bool },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -246,6 +289,7 @@ fn parse_cli(args: &[String]) -> Result<ParseAction, String> {
         "run" => parse_run(&args[1..]),
         "check" => parse_check(&args[1..]),
         "batch" => parse_batch(&args[1..]),
+        "workflow" => parse_workflow(&args[1..]),
         "profiles" => parse_profiles(&args[1..]),
         "engines" => parse_engines(&args[1..]),
         "help" => parse_help(&args[1..]),
@@ -267,6 +311,7 @@ fn parse_help(args: &[String]) -> Result<ParseAction, String> {
         [command] if command == "run" => Ok(ParseAction::Help(RUN_HELP)),
         [command] if command == "check" => Ok(ParseAction::Help(CHECK_HELP)),
         [command] if command == "batch" => Ok(ParseAction::Help(BATCH_HELP)),
+        [command] if command == "workflow" => Ok(ParseAction::Help(WORKFLOW_HELP)),
         [command] if command == "profiles" => Ok(ParseAction::Help(PROFILES_HELP)),
         [command] if command == "engines" => Ok(ParseAction::Help(ENGINES_HELP)),
         [command] => Err(format!("unknown command '{command}'")),
@@ -293,6 +338,10 @@ fn parse_check(args: &[String]) -> Result<ParseAction, String> {
                 let value = next_value(args, &mut index, "--profile")?;
                 set_once(&mut parsed.profile_id, value, "--profile")?;
             }
+            "--workflow" | "-w" => {
+                let value = next_value(args, &mut index, "--workflow")?;
+                set_once(&mut parsed.workflow_path, value, "--workflow")?;
+            }
             "--var" => {
                 let value = next_value(args, &mut index, "--var")?;
                 insert_assignment(&mut parsed.variables, &value, "--var", true)?;
@@ -310,6 +359,7 @@ fn parse_check(args: &[String]) -> Result<ParseAction, String> {
     if parsed.input_interpretation.is_some() && parsed.input.is_none() {
         return Err("check: --interpret-as requires --input".to_string());
     }
+    reject_profile_and_workflow("check", &parsed.profile_id, &parsed.workflow_path)?;
     Ok(ParseAction::Execute(Command::Check(parsed)))
 }
 
@@ -331,6 +381,10 @@ fn parse_run(args: &[String]) -> Result<ParseAction, String> {
             "--profile" | "-p" => {
                 let value = next_value(args, &mut index, "--profile")?;
                 set_once(&mut parsed.profile_id, value, "--profile")?;
+            }
+            "--workflow" | "-w" => {
+                let value = next_value(args, &mut index, "--workflow")?;
+                set_once(&mut parsed.workflow_path, value, "--workflow")?;
             }
             "--var" => {
                 let value = next_value(args, &mut index, "--var")?;
@@ -356,6 +410,7 @@ fn parse_run(args: &[String]) -> Result<ParseAction, String> {
     if parsed.force && matches!(parsed.out.as_deref(), None | Some("-")) {
         return Err("run: --force requires a file destination in --out".to_string());
     }
+    reject_profile_and_workflow("run", &parsed.profile_id, &parsed.workflow_path)?;
     Ok(ParseAction::Execute(Command::Run(parsed)))
 }
 
@@ -373,6 +428,10 @@ fn parse_batch(args: &[String]) -> Result<ParseAction, String> {
             "--profile" | "-p" => {
                 let value = next_value(args, &mut index, "--profile")?;
                 set_once(&mut parsed.profile_id, value, "--profile")?;
+            }
+            "--workflow" | "-w" => {
+                let value = next_value(args, &mut index, "--workflow")?;
+                set_once(&mut parsed.workflow_path, value, "--workflow")?;
             }
             "--var" => {
                 let value = next_value(args, &mut index, "--var")?;
@@ -396,7 +455,65 @@ fn parse_batch(args: &[String]) -> Result<ParseAction, String> {
     if parsed.force && parsed.out_dir.is_none() {
         return Err("batch: --force requires --out-dir".to_string());
     }
+    reject_profile_and_workflow("batch", &parsed.profile_id, &parsed.workflow_path)?;
     Ok(ParseAction::Execute(Command::Batch(parsed)))
+}
+
+fn reject_profile_and_workflow(
+    command: &str,
+    profile: &Option<String>,
+    workflow: &Option<String>,
+) -> Result<(), String> {
+    if profile.is_some() && workflow.is_some() {
+        Err(format!(
+            "{command}: --profile and --workflow are mutually exclusive"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn parse_workflow(args: &[String]) -> Result<ParseAction, String> {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        return Ok(ParseAction::Help(WORKFLOW_HELP));
+    }
+    match args {
+        [action] if action == "schema" => Ok(ParseAction::Execute(Command::Workflow(
+            WorkflowArgs::Schema,
+        ))),
+        [action] if action == "template" => Ok(ParseAction::Execute(Command::Workflow(
+            WorkflowArgs::Template,
+        ))),
+        [action, source] if action == "validate" => Ok(ParseAction::Execute(Command::Workflow(
+            WorkflowArgs::Validate {
+                source: source.clone(),
+                json: false,
+            },
+        ))),
+        [action, source, flag] if action == "validate" && flag == "--json" => Ok(
+            ParseAction::Execute(Command::Workflow(WorkflowArgs::Validate {
+                source: source.clone(),
+                json: true,
+            })),
+        ),
+        [action, source] if action == "install" => Ok(ParseAction::Execute(Command::Workflow(
+            WorkflowArgs::Install {
+                source: source.clone(),
+                json: false,
+            },
+        ))),
+        [action, source, flag] if action == "install" && flag == "--json" => Ok(
+            ParseAction::Execute(Command::Workflow(WorkflowArgs::Install {
+                source: source.clone(),
+                json: true,
+            })),
+        ),
+        [] => Err("workflow: expected schema, template, validate, or install".to_string()),
+        [action, ..] => Err(format!("workflow: invalid arguments for '{action}'")),
+    }
 }
 
 fn parse_profiles(args: &[String]) -> Result<ParseAction, String> {
@@ -570,6 +687,7 @@ async fn dispatch(command: Command) -> i32 {
         Command::Run(args) => cmd_run(args).await,
         Command::Check(args) => cmd_check(args).await,
         Command::Batch(args) => cmd_batch(args).await,
+        Command::Workflow(args) => cmd_workflow(args),
         Command::Profiles(args) => cmd_profiles(args),
         Command::Engines(args) => cmd_engines(args).await,
     }
@@ -636,8 +754,16 @@ async fn run_with_interrupt(
 }
 
 fn is_interruption(error: &str) -> bool {
-    let error = error.to_ascii_lowercase();
-    error.contains("cancel") || error.contains("interrupt")
+    commands::is_pipeline_cancellation_error(error)
+        || matches!(
+            error,
+            "Pipeline cancelled by interrupt"
+                | "Pipeline cancellation timed out; child processes were terminated"
+                | "Engine installation cancelled by interrupt"
+                | "Engine installation cancellation timed out; child processes were terminated"
+                | "Install cancelled"
+                | "Installation cancelled"
+        )
 }
 
 async fn cmd_run(args: RunArgs) -> i32 {
@@ -647,8 +773,21 @@ async fn cmd_run(args: RunArgs) -> i32 {
             return 2;
         }
     }
+    let workflow = match args
+        .workflow_path
+        .as_deref()
+        .map(load_cli_workflow)
+        .transpose()
+    {
+        Ok(workflow) => workflow,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return 2;
+        }
+    };
     let options = commands::HeadlessRunOptions {
         profile_id: args.profile_id,
+        workflow,
         input_path: args.input.unwrap_or_default(),
         input_interpretation: args.input_interpretation,
         variables: args.variables,
@@ -662,14 +801,27 @@ async fn cmd_run(args: RunArgs) -> i32 {
 }
 
 async fn cmd_check(args: CheckArgs) -> i32 {
+    let workflow = match args
+        .workflow_path
+        .as_deref()
+        .map(load_cli_workflow)
+        .transpose()
+    {
+        Ok(workflow) => workflow,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return 2;
+        }
+    };
     let options = commands::HeadlessRunOptions {
         profile_id: args.profile_id,
+        workflow,
         input_path: args.input.unwrap_or_default(),
         input_interpretation: args.input_interpretation,
         variables: args.variables,
         extra_inputs: args.extra_inputs,
     };
-    let report = match commands::check_headless_dependencies(&options).await {
+    let plan = match commands::check_headless_plan(&options).await {
         Ok(report) => report,
         Err(error) => {
             eprintln!("Error: {error}");
@@ -677,7 +829,7 @@ async fn cmd_check(args: CheckArgs) -> i32 {
         }
     };
     if args.json {
-        match serde_json::to_string_pretty(&report) {
+        match serde_json::to_string_pretty(&plan) {
             Ok(encoded) => println!("{encoded}"),
             Err(error) => {
                 eprintln!("Error: failed to encode dependency report: {error}");
@@ -685,7 +837,16 @@ async fn cmd_check(args: CheckArgs) -> i32 {
             }
         }
     } else {
-        let required = report
+        println!("Workflow: {}", plan.profile_name);
+        println!("Fingerprint: {}", plan.workflow_fingerprint);
+        println!(
+            "Plan: {} stages, up to {} step units and {} provider attempts",
+            plan.stages.len(),
+            plan.budget.step_units_upper_bound,
+            plan.budget.provider_attempts_upper_bound
+        );
+        let required = plan
+            .readiness
             .deps
             .iter()
             .filter(|dependency| dependency.required)
@@ -708,10 +869,14 @@ async fn cmd_check(args: CheckArgs) -> i32 {
         }
         println!(
             "Dependency check: {}",
-            if report.ready { "ready" } else { "not ready" }
+            if plan.readiness.ready {
+                "ready"
+            } else {
+                "not ready"
+            }
         );
     }
-    if report.ready {
+    if plan.readiness.ready {
         0
     } else {
         1
@@ -776,15 +941,31 @@ fn report_run_error(error: &str) -> i32 {
 }
 
 async fn cmd_batch(args: BatchArgs) -> i32 {
-    let selected_profile = args
-        .profile_id
-        .clone()
-        .unwrap_or_else(pipeline_config::get_active_profile_id);
-    let (config, _) = match pipeline_config::load_required_profile_for(&selected_profile) {
-        Ok(profile) => profile,
+    let workflow = match args
+        .workflow_path
+        .as_deref()
+        .map(load_cli_workflow)
+        .transpose()
+    {
+        Ok(workflow) => workflow,
         Err(error) => {
             eprintln!("Error: {error}");
             return 2;
+        }
+    };
+    let selected_profile = args.profile_id.clone();
+    let config = if let Some(workflow) = workflow.as_ref() {
+        workflow.document.config.clone()
+    } else {
+        let profile_id = selected_profile
+            .clone()
+            .unwrap_or_else(pipeline_config::get_active_profile_id);
+        match pipeline_config::load_required_profile_for(&profile_id) {
+            Ok((config, _)) => config,
+            Err(error) => {
+                eprintln!("Error: {error}");
+                return 2;
+            }
         }
     };
     if config.extraction.input_mode.trim() == "none" {
@@ -820,7 +1001,8 @@ async fn cmd_batch(args: BatchArgs) -> i32 {
         eprintln!("\n[{}/{}] {path}", index + 1, files.len());
         let bus: EventBus = Arc::new(CliEvents);
         let options = commands::HeadlessRunOptions {
-            profile_id: Some(selected_profile.clone()),
+            profile_id: selected_profile.clone(),
+            workflow: workflow.clone(),
             input_path: path.clone(),
             input_interpretation: Some("document".to_string()),
             variables: args.variables.clone(),
@@ -969,6 +1151,184 @@ fn write_report_file(path: &Path, markdown: &str, force: bool) -> Result<(), Str
     output
         .write_all(markdown.as_bytes())
         .map_err(|error| format!("Failed to write {}: {error}", path.display()))
+}
+
+const MAX_WORKFLOW_BYTES: usize = 10_000_000;
+
+fn read_workflow_source(source: &str) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    if source == "-" {
+        std::io::stdin()
+            .lock()
+            .take(MAX_WORKFLOW_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("Failed to read workflow from stdin: {error}"))?;
+    } else {
+        let file = pipeline_gui_lib::safety::open_regular_file(Path::new(source))
+            .map_err(|error| format!("Failed to read workflow '{source}': {error}"))?;
+        file.take(MAX_WORKFLOW_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("Failed to read workflow '{source}': {error}"))?;
+    }
+    if bytes.len() > MAX_WORKFLOW_BYTES {
+        return Err("Workflow exceeds the 10 MB safety limit".to_string());
+    }
+    String::from_utf8(bytes).map_err(|error| format!("Workflow is not valid UTF-8: {error}"))
+}
+
+fn load_cli_workflow(source: &str) -> Result<commands::HeadlessWorkflow, String> {
+    let content = read_workflow_source(source)?;
+    let document = pipeline_config::parse_workflow_document_strict(&content)?;
+    let source = if source == "-" {
+        "stdin".to_string()
+    } else {
+        Path::new(source)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(source))
+            .to_string_lossy()
+            .to_string()
+    };
+    Ok(commands::HeadlessWorkflow { source, document })
+}
+
+fn workflow_validation_summary(workflow: &commands::HeadlessWorkflow) -> serde_json::Value {
+    let agents = workflow
+        .document
+        .config
+        .steps
+        .iter()
+        .flat_map(|step| step.agents.iter())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    serde_json::json!({
+        "valid": true,
+        "schema_version": workflow.document.schema_version,
+        "name": workflow.document.name,
+        "fingerprint": workflow.document.fingerprint,
+        "step_count": workflow.document.config.steps.len(),
+        "agents": agents,
+        "source": workflow.source,
+    })
+}
+
+fn cmd_workflow(args: WorkflowArgs) -> i32 {
+    match args {
+        WorkflowArgs::Schema => {
+            match serde_json::to_string_pretty(&pipeline_config::workflow_json_schema()) {
+                Ok(schema) => {
+                    println!("{schema}");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("Error: failed to encode workflow schema: {error}");
+                    1
+                }
+            }
+        }
+        WorkflowArgs::Template => match pipeline_config::workflow_template() {
+            Ok(template) => {
+                print!("{}", template.canonical_json);
+                0
+            }
+            Err(error) => {
+                eprintln!("Error: {error}");
+                1
+            }
+        },
+        WorkflowArgs::Validate { source, json } => {
+            let workflow = match load_cli_workflow(&source) {
+                Ok(workflow) => workflow,
+                Err(error) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "valid": false,
+                                "error": error,
+                            }))
+                            .expect("workflow validation error is serializable")
+                        );
+                    } else {
+                        eprintln!("Error: {error}");
+                    }
+                    return 1;
+                }
+            };
+            let summary = workflow_validation_summary(&workflow);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&summary)
+                        .expect("workflow validation summary is serializable")
+                );
+            } else {
+                println!(
+                    "Valid workflow '{}' ({} steps, {})",
+                    workflow.document.name,
+                    workflow.document.config.steps.len(),
+                    workflow.document.fingerprint
+                );
+            }
+            0
+        }
+        WorkflowArgs::Install { source, json } => {
+            let workflow = match load_cli_workflow(&source) {
+                Ok(workflow) => workflow,
+                Err(error) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "installed": false,
+                                "error": error,
+                            }))
+                            .expect("workflow install error is serializable")
+                        );
+                    } else {
+                        eprintln!("Error: {error}");
+                    }
+                    return 1;
+                }
+            };
+            let installed = match pipeline_config::install_workflow_document(&workflow.document) {
+                Ok(installed) => installed,
+                Err(error) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "installed": false,
+                                "error": error,
+                            }))
+                            .expect("workflow install error is serializable")
+                        );
+                    } else {
+                        eprintln!("Error: {error}");
+                    }
+                    return 1;
+                }
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "installed": true,
+                        "id": installed.id,
+                        "name": installed.name,
+                        "step_count": installed.step_count,
+                        "fingerprint": workflow.document.fingerprint,
+                    }))
+                    .expect("workflow install summary is serializable")
+                );
+            } else {
+                println!(
+                    "Installed workflow '{}' as {}",
+                    installed.name, installed.id
+                );
+            }
+            0
+        }
+    }
 }
 
 fn cmd_profiles(args: ProfilesArgs) -> i32 {
@@ -1228,6 +1588,58 @@ mod tests {
         assert!(parse_cli(&strings(&["run", "--input"])).is_err());
         assert!(parse_cli(&strings(&["run", "--profile", "one", "--profile", "two"])).is_err());
         assert!(parse_cli(&strings(&["run", "--var", "key=one", "--var", "key=two"])).is_err());
+        assert!(parse_cli(&strings(&[
+            "run",
+            "--profile",
+            "one",
+            "--workflow",
+            "workflow.json"
+        ]))
+        .is_err());
+    }
+
+    #[test]
+    fn workflow_commands_and_ephemeral_sources_parse() {
+        assert!(matches!(
+            parse_cli(&strings(&["workflow", "schema"])),
+            Ok(ParseAction::Execute(Command::Workflow(
+                WorkflowArgs::Schema
+            )))
+        ));
+        assert!(matches!(
+            parse_cli(&strings(&[
+                "workflow",
+                "validate",
+                "-",
+                "--json"
+            ])),
+            Ok(ParseAction::Execute(Command::Workflow(
+                WorkflowArgs::Validate { source, json: true }
+            ))) if source == "-"
+        ));
+        let action = parse_cli(&strings(&[
+            "check",
+            "--workflow",
+            "workflow.json",
+            "--json",
+        ]))
+        .unwrap();
+        let ParseAction::Execute(Command::Check(parsed)) = action else {
+            panic!("expected check command");
+        };
+        assert_eq!(parsed.workflow_path.as_deref(), Some("workflow.json"));
+        assert!(parsed.profile_id.is_none());
+    }
+
+    #[test]
+    fn workflow_loader_uses_the_strict_portable_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("workflow.json");
+        let template = pipeline_config::workflow_template().unwrap();
+        std::fs::write(&path, &template.canonical_json).unwrap();
+        let loaded = load_cli_workflow(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.document.fingerprint, template.fingerprint);
+        assert_eq!(loaded.document.config.outputs.primary_step, "synthesis");
     }
 
     #[test]
@@ -1344,10 +1756,18 @@ mod tests {
     #[test]
     fn interruption_errors_map_to_shell_interrupt_status() {
         assert!(is_interruption("Pipeline cancelled by interrupt"));
-        assert!(is_interruption("Pipeline cancellation timed out"));
+        assert!(is_interruption(
+            "Pipeline cancellation timed out; child processes were terminated"
+        ));
         assert!(is_interruption(
             "Engine installation cancelled by interrupt"
         ));
+        assert!(is_interruption("Pipeline cancelled"));
+        assert!(is_interruption("Pass 'technical/claude' cancelled"));
         assert!(!is_interruption("provider authentication failed"));
+        assert!(!is_interruption("provider subscription cancelled"));
+        assert!(!is_interruption(
+            "provider process was interrupted unexpectedly"
+        ));
     }
 }

@@ -1,48 +1,6 @@
 Build a structured orientation map and a bounded review plan for this academic paper. Multiple independent reviewers will use this object. Your routing choices determine which specialist reviewers the host application assembles for this run, so classify the paper from its actual claims, evidence, and methods rather than keywords, author affiliations, or departmental labels.
 
-Return a JSON object with exactly these top-level fields:
-
-{
-  "metadata": {
-    "title": "...",
-    "authors": ["..."],
-    "date": "...",
-    "paper_type": "theory" | "empirical" | "mixed",
-    "page_count": null,
-    "has_appendix": true,
-    "has_online_appendix": false
-  },
-  "review_plan": {
-    "primary_domain": "The paper's broad discipline",
-    "subject": "A concise, specific field or subject description",
-    "paper_forms": ["formal_theory", "causal_empirical", "quantitative_model", "descriptive", "experimental", "algorithmic", "qualitative", "interpretive", "historical", "clinical", "engineering_design"],
-    "methods": ["Concise names of methods that actually support central claims"],
-    "subject_specialist_ids": ["one primary subject ID and, only when necessary, one secondary subject ID"],
-    "method_specialist_ids": ["one to four method IDs"],
-    "genre": "research_article, or the one genre ID from the document-genre catalog that the manuscript actually is",
-    "selection_notes": [
-      {"id": "one selected ID", "reason": "Concrete reason tied to a central claim, method, theorem, dataset, source base, experiment, or design"}
-    ],
-    "routing_uncertainty": ["Material ambiguity in classification, or an empty array"]
-  },
-  "sections": [
-    {"number": "1", "title": "Introduction", "page_start": 1, "page_end": 4}
-  ],
-  "formal_results": [
-    {"kind": "theorem", "number": "1", "page": 10, "summary": "...", "proof_location": "Appendix A, pp. 30-33"}
-  ],
-  "tables_figures": [
-    {"kind": "table", "number": "1", "page": 14, "caption_summary": "...", "what_it_shows": "..."}
-  ],
-  "notation": [
-    {"symbol": "beta", "definition": "...", "page_introduced": 5}
-  ],
-  "stated_contribution": "Quoted or closely paraphrased from the introduction",
-  "key_references": ["Author (year)"],
-  "extraction_quality_notes": [
-    {"page_range": "pp. 10-15", "description": "equations garbled, subscripts missing"}
-  ]
-}
+Populate the supplied orientation schema from the paper itself. The schema defines the inventory fields, routing fields, allowed paper forms, catalog-backed specialist IDs, document genres, and panel-size bounds.
 
 SUBJECT SPECIALIST CATALOG
 
@@ -87,7 +45,6 @@ Inventory rules:
 - List every explicitly defined symbol in `notation`; do not invent definitions.
 - Record the paper's own contribution claim in `stated_contribution`.
 - Flag garbled or incomplete extraction rather than treating it as an error in the paper.
-- Return ONLY valid JSON. No markdown fences or commentary.
 
 <paper>
 {paper_text}

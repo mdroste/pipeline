@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_agriculture_veterinary_systems_rural",
+  "label": "Agriculture & Veterinary Science — Agricultural Systems & Rural Development",
+  "order": 260,
+  "group": {
+    "id": "agriculture_veterinary",
+    "label": "Agriculture & Veterinary Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Farming systems, agricultural extension, rural development, food systems, farm management, or technology adoption.",
+    "exclusions": "the contribution is development economics or rural sociology without material agricultural production, extension, or food-system expertise."
+  }
+}

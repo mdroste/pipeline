@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_hci",
+  "label": "Computer Science — Human-Computer Interaction",
+  "order": 64,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Human-computer interaction, CSCW, information visualization, accessibility, or interactive-system research.",
+    "exclusions": "humans appear only as annotators or users of a system whose contribution is otherwise algorithmic."
+  }
+}

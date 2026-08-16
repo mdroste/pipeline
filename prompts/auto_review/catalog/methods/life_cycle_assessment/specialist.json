@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "life_cycle_assessment",
+  "label": "Method — Life-Cycle Assessment",
+  "order": 108,
+  "group": {
+    "id": "engineering_design",
+    "label": "Engineering, Design & Applied Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Life-cycle assessment with functional units, system boundaries, and impact categories carries central environmental claims.",
+    "exclusions": "environmental measurement without life-cycle accounting, or energy-system pathway modeling."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "crystallography_structure",
+  "label": "Method — Crystallography & Structure Determination",
+  "order": 85,
+  "group": {
+    "id": "lab_instrumentation",
+    "label": "Laboratory & Instrumentation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Diffraction or cryo-EM structure determination and the mechanistic conclusions drawn from structural models carry central claims.",
+    "exclusions": "microscopy imaging without atomic-model refinement, or structures quoted from depositions without new determination."
+  }
+}

@@ -1,7 +1,8 @@
 use super::call::{execute_text, OwnedRequest};
 use crate::models::PipelineReport;
 use crate::output::{
-    extract_report_envelope, new_report_nonce, normalize_math_delimiters, report_output_format,
+    extract_text_artifact, normalize_math_delimiters, text_artifact_output_format,
+    text_artifact_schema,
 };
 
 /// Produce a markdown diff between two reports on the same paper.
@@ -73,7 +74,6 @@ Write a structured diff in markdown:
 [1-2 paragraph assessment: Did the revision make meaningful progress?
 What is the most important remaining issue?]"#
     );
-    let report_nonce = new_report_nonce()?;
     crate::safety::push_str_limited(
         &mut prompt,
         "\n\n",
@@ -82,13 +82,14 @@ What is the most important remaining issue?]"#
     )?;
     crate::safety::push_str_limited(
         &mut prompt,
-        &report_output_format(None, &report_nonce),
+        &text_artifact_output_format(None, "Markdown revision diff"),
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Reconciliation prompt",
     )?;
 
     let settings = crate::settings::load();
     let timeout = settings.step_timeout_secs.max(60);
+    let output_schema = text_artifact_schema();
     let mut last_error = String::new();
     for attempt in 0..=settings.max_retries {
         let mut attempt_prompt = prompt.clone();
@@ -97,7 +98,7 @@ What is the most important remaining issue?]"#
                 &mut attempt_prompt,
                 &format!(
                     "\n\nRETRY NOTICE:\nThe previous response was rejected: {last_error}\n\
-                     Return the complete diff again and obey the OUTPUT FORMAT contract exactly."
+                     Return the complete diff again and satisfy the supplied response schema."
                 ),
                 crate::safety::MAX_EXPANDED_PROMPT_BYTES,
                 "Reconciliation retry prompt",
@@ -110,17 +111,20 @@ What is the most important remaining issue?]"#
             attempt_prompt,
             timeout,
         );
+        request.output_schema = Some(output_schema.clone());
         request.settings = std::sync::Arc::new(settings.clone());
         let raw = match execute_text(request).await {
             Ok(raw) => raw,
-            Err(error) if error.to_ascii_lowercase().contains("cancel") => return Err(error),
+            Err(error) if crate::commands::is_pipeline_cancellation_error(&error) => {
+                return Err(error)
+            }
             Err(error) if super::provider_error::is_usage_limit_error(&error) => return Err(error),
             Err(error) => {
                 last_error = error;
                 continue;
             }
         };
-        match extract_report_envelope(&raw, &report_nonce) {
+        match extract_text_artifact(&raw) {
             Ok(report) => return Ok(normalize_math_delimiters(&report)),
             Err(error) => {
                 last_error = format!("Revision reconciliation returned an invalid report: {error}");

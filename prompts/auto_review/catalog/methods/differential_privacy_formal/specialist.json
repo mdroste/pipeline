@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "differential_privacy_formal",
+  "label": "Method — Formal Privacy & Disclosure",
+  "order": 60,
+  "group": {
+    "id": "ml_ai",
+    "label": "Machine Learning & AI"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Differential privacy or comparable formal privacy and disclosure guarantees, with their utility tradeoffs, are central to the contribution.",
+    "exclusions": "security mechanisms without a formal privacy definition, or privacy discussed only as an ethical consideration."
+  }
+}

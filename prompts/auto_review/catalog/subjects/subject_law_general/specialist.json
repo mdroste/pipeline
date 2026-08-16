@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_general",
+  "label": "Law — General",
+  "order": 225,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Legal scholarship spanning several domains or outside the listed legal specialties.",
+    "exclusions": "a listed doctrinal, private-criminal, international, or empirical-legal lens clearly fits."
+  }
+}

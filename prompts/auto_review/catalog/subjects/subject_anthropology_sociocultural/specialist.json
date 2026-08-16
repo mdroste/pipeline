@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_anthropology_sociocultural",
+  "label": "Anthropology — Sociocultural",
+  "order": 198,
+  "group": {
+    "id": "anthropology",
+    "label": "Anthropology & Archaeology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Ethnographic and sociocultural anthropology of meaning, practice, kinship, ritual, identity, institutions, and social relations outside the listed thematic specialties.",
+    "exclusions": "the paper is primarily survey sociology or textual humanities without ethnographic or anthropological comparison, or a biological, linguistic, medical, political-economic, or archaeological lens clearly carries the contribution."
+  }
+}

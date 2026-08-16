@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "participatory_community_research",
+  "label": "Method — Participatory & Community Research",
+  "order": 93,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Community-based participatory research, action research, co-production, citizen science, or stakeholder-governed inquiry materially shapes the evidence and claims.",
+    "exclusions": "participants merely provide data or feedback without shared agenda setting, interpretation, governance, or action."
+  }
+}

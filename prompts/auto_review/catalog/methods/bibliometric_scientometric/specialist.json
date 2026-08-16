@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "bibliometric_scientometric",
+  "label": "Method — Bibliometric & Scientometric Analysis",
+  "order": 65,
+  "group": {
+    "id": "networks_text_traces",
+    "label": "Networks, Text & Digital Traces"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Publication, citation, authorship, collaboration, patent, or scholarly-communication records are analyzed to make central claims about research systems or knowledge structure.",
+    "exclusions": "citations are used only for literature positioning or a systematic review synthesizes study findings rather than publication-system patterns."
+  }
+}

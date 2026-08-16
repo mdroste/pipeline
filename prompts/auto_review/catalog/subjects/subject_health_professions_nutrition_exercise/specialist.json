@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_health_professions_nutrition_exercise",
+  "label": "Health Professions — Nutrition, Dietetics & Exercise",
+  "order": 280,
+  "group": {
+    "id": "health_professions",
+    "label": "Health Professions"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Human nutrition, dietetics, exercise science, sports medicine, physical activity, or lifestyle intervention research.",
+    "exclusions": "the contribution is food chemistry, elite performance engineering, or population epidemiology without a material nutrition, exercise, or professional-practice claim."
+  }
+}

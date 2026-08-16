@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_general",
+  "label": "Physics — General",
+  "order": 0,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Broad physics research that does not fit a more specific physics subfield in this catalog.",
+    "exclusions": "a listed physics subfield clearly carries the main contribution."
+  }
+}

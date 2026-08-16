@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_digital_public",
+  "label": "Humanities — Digital & Public",
+  "order": 251,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Digital humanities, public humanities, computational cultural analysis, scholarly interfaces, digital collections, or public-facing interpretation of humanistic research.",
+    "exclusions": "the central contribution is a general computer-science method or public-history narrative without a humanities research object, or textual editing and transmission, book history, museum curation, heritage, provenance, restitution, or material culture clearly carries the contribution."
+  }
+}

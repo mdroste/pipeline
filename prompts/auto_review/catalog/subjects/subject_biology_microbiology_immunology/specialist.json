@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_microbiology_immunology",
+  "label": "Biology — Microbiology, Virology & Immunology",
+  "order": 89,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Microbiology, virology, host-pathogen biology, immunology, or microbial communities.",
+    "exclusions": "the central claim is population epidemiology without a microbial or immune mechanism."
+  }
+}

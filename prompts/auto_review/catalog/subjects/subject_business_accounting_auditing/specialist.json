@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_business_accounting_auditing",
+  "label": "Business — Accounting & Auditing",
+  "order": 240,
+  "group": {
+    "id": "business",
+    "label": "Business & Management"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Financial or managerial accounting, auditing, disclosure, reporting standards, tax accounting, internal controls, assurance, or information intermediaries.",
+    "exclusions": "financial statements are used only as data and no reporting, disclosure, audit, control, or accounting-incentive question carries the contribution."
+  }
+}

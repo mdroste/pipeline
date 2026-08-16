@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_programming_languages",
+  "label": "Computer Science — Programming Languages & Formal Methods",
+  "order": 61,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Programming languages, type systems, compilers, semantics, program verification, or formal methods.",
+    "exclusions": "formal proof concerns a mathematical theorem rather than a programming-language or software property."
+  }
+}

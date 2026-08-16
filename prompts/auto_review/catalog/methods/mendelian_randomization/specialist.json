@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "mendelian_randomization",
+  "label": "Method — Mendelian Randomization",
+  "order": 14,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Genetic variants serve as instruments for a central exposure-outcome causal claim.",
+    "exclusions": "GWAS discovery or polygenic prediction without an instrumented causal contrast, or a non-genetic instrument."
+  }
+}

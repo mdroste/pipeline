@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "finance_event_study",
+  "label": "Method — Financial Event Studies",
+  "order": 15,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Abnormal security-price or market reactions around events, measured against an expected-return benchmark, carry a central claim.",
+    "exclusions": "a difference-in-differences event study of non-price outcomes, or price data used only descriptively."
+  }
+}

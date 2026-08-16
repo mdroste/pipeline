@@ -87,6 +87,14 @@ describe("findUnknownPlaceholders", () => {
     expect(hits[0].line).toBe(2);
   });
 
+  it("recognizes live catalog placeholders only for Auto Review orientation prompts", () => {
+    const prompt = "{subject_catalog} {method_catalog} {genre_catalog}";
+    expect(findUnknownPlaceholders(prompt, { kind: "orientation", autoReview: true }))
+      .toHaveLength(0);
+    expect(findUnknownPlaceholders(prompt, { kind: "orientation" }))
+      .toHaveLength(3);
+  });
+
   it("permits draft {step:...} references in sequential prompts", () => {
     const hits = findUnknownPlaceholders(
       "{step:not-yet-created}",
@@ -109,6 +117,13 @@ describe("placeholdersFor", () => {
 
   it("returns no placeholders for parallel step prompts", () => {
     expect(placeholdersFor({ kind: "parallel" })).toEqual([]);
+  });
+
+  it("offers runtime catalog placeholders for Auto Review orientation prompts", () => {
+    const tokens = placeholdersFor({ kind: "orientation", autoReview: true }).map((p) => p.token);
+    expect(tokens).toContain("{subject_catalog}");
+    expect(tokens).toContain("{method_catalog}");
+    expect(tokens).toContain("{genre_catalog}");
   });
 
   it("includes per-step references for sequential prompts", () => {

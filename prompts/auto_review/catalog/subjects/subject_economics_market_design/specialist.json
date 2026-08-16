@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_market_design",
+  "label": "Economics — Market Design & Matching",
+  "order": 165,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Matching and assignment markets, school choice, organ exchange, centralized clearing, auction-market rules, platform allocation, or the design and evaluation of real allocation institutions.",
+    "exclusions": "the contribution is an abstract implementation theorem without a material institution, or it is conventional industrial organization with market rules taken as given."
+  }
+}

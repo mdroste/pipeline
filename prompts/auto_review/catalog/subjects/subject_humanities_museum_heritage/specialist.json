@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_museum_heritage",
+  "label": "Humanities — Museums, Heritage & Material Culture",
+  "order": 254,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Museum and heritage studies, curation, conservation, monuments, collecting, provenance, restitution, or humanistic interpretation of material culture.",
+    "exclusions": "the object is an archaeological specimen studied chiefly for past social inference, or museum display is incidental to an art-historical argument."
+  }
+}

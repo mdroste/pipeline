@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_development_neuroscience",
+  "label": "Biology — Development & Neuroscience",
+  "order": 87,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Developmental biology, stem cells, or neural development within a broad biological program.",
+    "exclusions": "the main contribution is psychological behavior without a biological mechanism, or mechanistic neuroscience is the central program, which the neuroscience discipline reviews."
+  }
+}

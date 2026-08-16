@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_neurology_mental",
+  "label": "Medicine & Health — Neurology, Psychiatry & Mental Health",
+  "order": 118,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Neurologic and psychiatric disease, neurodevelopment, mental health, addiction, cognition, behavioral treatment, or clinical neuroscience.",
+    "exclusions": "the contribution is basic neural mechanism or general psychology without a diagnosis, impairment, prognosis, prevention, or clinical-care claim."
+  }
+}

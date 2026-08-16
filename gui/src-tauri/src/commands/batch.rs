@@ -150,7 +150,7 @@ pub async fn start_batch(
                     });
                 }
                 Err(e) => {
-                    let cancelled = e.to_lowercase().contains("cancelled");
+                    let cancelled = is_pipeline_cancellation_error(&e);
                     set_job(i, |j| {
                         j.status = if cancelled { "cancelled" } else { "failed" }.to_string();
                         j.error = Some(e.clone());

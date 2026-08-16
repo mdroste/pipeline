@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_neuroscience_clinical_translational",
+  "label": "Neuroscience — Clinical & Translational",
+  "order": 196,
+  "group": {
+    "id": "neuroscience",
+    "label": "Neuroscience"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Translational and clinical neuroscience: disease mechanisms, models, biomarkers, neuromodulation, or therapeutic-target work.",
+    "exclusions": "a powered clinical trial or patient-care study, which clinical medicine and clinical-study roles review."
+  }
+}

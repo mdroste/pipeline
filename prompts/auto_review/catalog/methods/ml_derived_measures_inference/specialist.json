@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "ml_derived_measures_inference",
+  "label": "Method — ML-Derived Measures & Downstream Inference",
+  "order": 41,
+  "group": {
+    "id": "measurement_records",
+    "label": "Measurement, Data & Records"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Model-generated variables — predicted attributes, imputed classes, or extracted measures — enter downstream estimation that carries central claims.",
+    "exclusions": "the ML system itself is the contribution, or generated measures are validated incidentals that no central estimate depends on."
+  }
+}

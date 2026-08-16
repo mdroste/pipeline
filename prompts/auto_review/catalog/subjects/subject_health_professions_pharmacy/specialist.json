@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_health_professions_pharmacy",
+  "label": "Health Professions — Pharmacy & Pharmacoepidemiology",
+  "order": 278,
+  "group": {
+    "id": "health_professions",
+    "label": "Health Professions"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Pharmacy practice, medication use and safety, pharmacotherapy, pharmacoepidemiology, pharmacovigilance, or medicines policy.",
+    "exclusions": "the central contribution is molecular pharmacology, a clinical trial, or health economics without a medication-use or pharmacy-practice claim."
+  }
+}

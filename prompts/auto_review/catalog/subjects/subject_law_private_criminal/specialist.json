@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_private_criminal",
+  "label": "Law — Private & Criminal",
+  "order": 227,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Private, commercial, corporate, family, or criminal law spanning several domains or outside the narrower listed specialties.",
+    "exclusions": "the central contribution is public regulation or empirical crime analysis without doctrinal private or criminal law, or a listed corporate, criminal, intellectual-property, or tax specialist clearly carries the claim."
+  }
+}

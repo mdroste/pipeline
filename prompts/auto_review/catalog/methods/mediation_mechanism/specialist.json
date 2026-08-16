@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "mediation_mechanism",
+  "label": "Method — Mediation & Mechanism Analysis",
+  "order": 9,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Direct and indirect effects, causal mediation, decomposition, mechanism experiments, or intermediate outcomes are used to substantiate how an effect operates.",
+    "exclusions": "an intermediate outcome is merely reported, a structural model defines a channel without a mediation estimand, or the paper makes no claim that the mediator carries the effect."
+  }
+}

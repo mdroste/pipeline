@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_mechanical",
+  "label": "Engineering — Mechanical",
+  "order": 72,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Mechanical design, mechanics, thermofluids, heat transfer, tribology, or mechanical systems.",
+    "exclusions": "the main result is fundamental fluid physics or materials science without an engineered design claim."
+  }
+}

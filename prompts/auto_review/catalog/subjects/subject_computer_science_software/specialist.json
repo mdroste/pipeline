@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_software",
+  "label": "Computer Science — Software Engineering",
+  "order": 66,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Software engineering, testing, debugging, program analysis, development tools, repositories, or empirical software research.",
+    "exclusions": "custom research code is merely an implementation artifact and no software-engineering claim is made."
+  }
+}

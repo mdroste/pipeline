@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_development_trade",
+  "label": "Economics — Development & International (General)",
+  "order": 175,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Economic research that materially crosses development and international economics or lies outside the listed development, trade, and international-macro fields.",
+    "exclusions": "a listed development, international-trade, or international-macro field clearly contains the main contribution, or no economic allocation mechanism is central."
+  }
+}

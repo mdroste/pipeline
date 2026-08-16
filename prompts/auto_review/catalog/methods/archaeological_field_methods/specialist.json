@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "archaeological_field_methods",
+  "label": "Method — Archaeological Field Methods",
+  "order": 100,
+  "group": {
+    "id": "sources_history_law",
+    "label": "Sources, History & Law"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Stratigraphy, excavation data, dating programs, or material assemblages carry central claims about past activity.",
+    "exclusions": "documentary history, heritage-policy discussion, or laboratory analyses reviewed by their own instrument roles."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_political_science_identity_representation",
+  "label": "Political Science — Identity, Representation & Citizenship",
+  "order": 143,
+  "group": {
+    "id": "political_science",
+    "label": "Political Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Political representation and participation organized around race, ethnicity, gender, religion, indigeneity, migration, citizenship, or group identity.",
+    "exclusions": "identity is only a demographic subgroup or the contribution is sociological boundary formation without a material political institution, behavior, or representation claim."
+  }
+}

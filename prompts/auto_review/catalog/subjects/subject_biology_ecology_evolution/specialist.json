@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_ecology_evolution",
+  "label": "Biology — Ecology & Evolution",
+  "order": 90,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Ecology, evolutionary biology, behavior, population biology, community ecology, or macroevolution.",
+    "exclusions": "the work is environmental monitoring without an ecological or evolutionary inference."
+  }
+}

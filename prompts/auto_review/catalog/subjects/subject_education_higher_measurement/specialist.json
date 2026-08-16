@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_education_higher_measurement",
+  "label": "Education — Higher, Special & Assessment",
+  "order": 224,
+  "group": {
+    "id": "education",
+    "label": "Education"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Higher education, special education, educational measurement, assessment, admissions, or institutional student support.",
+    "exclusions": "the contribution is psychometric theory or organizational policy without a substantive education question."
+  }
+}

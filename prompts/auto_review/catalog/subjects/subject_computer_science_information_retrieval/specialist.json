@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_information_retrieval",
+  "label": "Computer Science — Information Retrieval & Data Mining",
+  "order": 68,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Search, ranking, recommendation, information retrieval, data mining, graph mining, or user-item discovery systems.",
+    "exclusions": "the contribution is database query processing, NLP generation, or a substantive text-as-data analysis without a retrieval or discovery objective."
+  }
+}

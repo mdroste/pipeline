@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "epidemiologic_observational",
+  "label": "Method — Observational Epidemiology",
+  "order": 69,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Cohort, case-control, cross-sectional, registry, surveillance, or population-exposure evidence supports etiologic, prognostic, or burden claims.",
+    "exclusions": "a randomized clinical trial, nonhuman laboratory study, or administrative-data analysis with no population-health or disease inference."
+  }
+}

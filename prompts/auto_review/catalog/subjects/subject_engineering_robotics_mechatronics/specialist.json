@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_robotics_mechatronics",
+  "label": "Engineering — Robotics & Mechatronics",
+  "order": 80,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Robotic hardware, mechatronic systems, actuators, manipulation, locomotion, human-robot systems, or integrated sensing-control design.",
+    "exclusions": "the principal contribution is autonomous planning or robot learning with standard hardware, or a mechanical component with no integrated robotic function."
+  }
+}

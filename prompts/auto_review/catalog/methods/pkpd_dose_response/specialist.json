@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "pkpd_dose_response",
+  "label": "Method — PK/PD & Dose-Response",
+  "order": 73,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Pharmacokinetic, pharmacodynamic, or dose-response modeling supports central dosing, exposure, or toxicity claims.",
+    "exclusions": "clinical-outcome trials without exposure modeling, or biochemical assays without a dose-response inference."
+  }
+}

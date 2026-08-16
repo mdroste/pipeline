@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_business_strategy",
+  "label": "Business — Strategic Management",
+  "order": 236,
+  "group": {
+    "id": "business",
+    "label": "Business & Management"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Competitive strategy, corporate strategy, diversification, alliances, capabilities, industry evolution, business models, or value creation and capture.",
+    "exclusions": "the contribution is industrial-organization economics without a managerial choice or capability claim, or entrepreneurship and innovation processes rather than established-firm strategy are central."
+  }
+}

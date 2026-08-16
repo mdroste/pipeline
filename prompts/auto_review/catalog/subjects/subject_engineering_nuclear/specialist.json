@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_nuclear",
+  "label": "Engineering — Nuclear Engineering",
+  "order": 81,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Nuclear fission or fusion systems, reactor physics and thermal hydraulics, radiation engineering, fuel cycles, shielding, or nuclear materials and safety.",
+    "exclusions": "the contribution is fundamental particle or plasma physics without a reactor, radiation, fuel, or engineered nuclear-system objective."
+  }
+}

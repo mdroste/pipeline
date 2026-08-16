@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_economic",
+  "label": "History — Economic & Business",
+  "order": 149,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Economic, business, labor, financial, technological, or quantitative history.",
+    "exclusions": "the contribution is principally an economics estimate with little historiographic or source-based historical argument."
+  }
+}

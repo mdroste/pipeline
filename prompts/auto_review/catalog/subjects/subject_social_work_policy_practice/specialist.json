@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_social_work_policy_practice",
+  "label": "Social Work & Social Policy — Practice & Human Services",
+  "order": 272,
+  "group": {
+    "id": "social_work_policy",
+    "label": "Social Work & Social Policy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Clinical and direct social work, child and family services, mental-health services, case management, safeguarding, or human-service delivery.",
+    "exclusions": "the contribution is clinical treatment efficacy or organizational management without a social-work practice, service, or person-in-environment claim."
+  }
+}

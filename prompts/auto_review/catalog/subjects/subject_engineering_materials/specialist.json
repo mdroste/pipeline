@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_engineering_materials",
+  "label": "Engineering — Materials",
+  "order": 76,
+  "group": {
+    "id": "engineering",
+    "label": "Engineering"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Materials engineering, metallurgy, ceramics, polymers, composites, processing, or performance design.",
+    "exclusions": "the work is fundamental condensed-matter physics or synthetic chemistry without an engineering property target."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_nuclear_hadronic",
+  "label": "Physics — Nuclear & Hadronic",
+  "order": 4,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Nuclear structure and reactions, hadron physics, heavy-ion collisions, nuclear astrophysics, or dense strongly interacting matter.",
+    "exclusions": "elementary-particle phenomenology, collider searches, or formal field theory without a material nuclear or hadronic object carries the contribution."
+  }
+}

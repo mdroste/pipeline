@@ -144,10 +144,11 @@ pub(super) fn recover_resumable_run_dir(
     } else {
         checkpoint_failures
     };
-    let report = crate::models::PipelineReport {
+    let mut report = crate::models::PipelineReport {
         orientation,
         step_outputs: outputs,
         failed_steps,
+        products: Default::default(),
         referee_reports: Vec::new(),
         editor: None,
         report_date: chrono::DateTime::parse_from_rfc3339(&manifest.created)
@@ -160,6 +161,7 @@ pub(super) fn recover_resumable_run_dir(
             .unwrap_or_default()
             .to_string(),
     };
+    crate::findings::ensure_legacy_products(&mut report);
     let report_json = serde_json::to_vec_pretty(&report)
         .map_err(|error| format!("Failed to serialize recovered report: {error}"))?;
     write_text_atomic(dir, "report.json", &report_json)?;
@@ -210,6 +212,13 @@ pub(super) fn recover_resumable_run_dir(
         dir,
         "context/orientation.json",
         "Orientation map",
+        "context",
+    );
+    register_recovered_artifact(
+        manifest,
+        dir,
+        "context/workflow.json",
+        "Workflow snapshot",
         "context",
     );
     for path in checkpoints {
@@ -472,8 +481,12 @@ pub(super) fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
         input_path: String::new(),
         input_mode: String::new(),
         input_interpretation: String::new(),
+        input_identity: Default::default(),
         profile_id: String::new(),
         profile_name: String::new(),
+        workflow_source: String::new(),
+        workflow_fingerprint: String::new(),
+        specialist_catalog_revision: String::new(),
         provider: String::new(),
         artifacts: Vec::new(),
         page_artifacts: None,
@@ -489,6 +502,13 @@ pub(super) fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
         extra_input_sources: Default::default(),
         parent_run_id: None,
     };
+    register_recovered_artifact(
+        &mut manifest,
+        dir,
+        "context/workflow.json",
+        "Workflow snapshot",
+        "context",
+    );
     register_recovered_directory(
         &mut manifest,
         dir,

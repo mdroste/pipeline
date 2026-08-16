@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_political_science_methodology",
+  "label": "Political Science — Political Methodology",
+  "order": 141,
+  "group": {
+    "id": "political_science",
+    "label": "Political Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Political methodology, measurement and scaling, research design, formal-empirical integration, text or survey methodology, or new statistical tools for political data.",
+    "exclusions": "established methods are merely applied to a substantive political question and no methodological contribution is claimed."
+  }
+}

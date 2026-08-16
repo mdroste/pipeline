@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_translation_book_history",
+  "label": "Humanities — Translation, Philology & Book History",
+  "order": 253,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Translation studies, philology, textual criticism, bibliography, manuscript and print cultures, reception, or the material history and transmission of texts.",
+    "exclusions": "translation is merely a transparent aid, or the paper interprets a stable modern text without a material linguistic, editorial, or transmission problem."
+  }
+}

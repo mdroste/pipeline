@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "benchmark_dataset_construction",
+  "label": "Method — Benchmark & Dataset Construction",
+  "order": 61,
+  "group": {
+    "id": "ml_ai",
+    "label": "Machine Learning & AI"
+  },
+  "level": "method",
+  "routing": {
+    "description": "The contribution is a benchmark, evaluation suite, or dataset built to measure other systems, with construction and validation choices to audit.",
+    "exclusions": "a substantive dataset introduced only to answer the paper's own question, which the data-descriptor genre or measurement roles cover."
+  }
+}

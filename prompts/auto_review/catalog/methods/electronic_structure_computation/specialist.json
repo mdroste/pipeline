@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "electronic_structure_computation",
+  "label": "Method — Electronic-Structure Computation",
+  "order": 50,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Density-functional or wavefunction electronic-structure calculations materially support a chemical, materials, or physical claim.",
+    "exclusions": "classical force-field simulation, or electronic-structure results quoted from prior literature."
+  }
+}

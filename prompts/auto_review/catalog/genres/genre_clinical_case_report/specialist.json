@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_clinical_case_report",
+  "label": "Case Report & Case Series",
+  "order": 7,
+  "routing": {
+    "description": "The paper is a clinical or applied case report or small case series whose evidence is one documented instance or a handful.",
+    "exclusions": "a powered clinical study, trial, or cohort analysis, which the clinical-study method role audits."
+  }
+}

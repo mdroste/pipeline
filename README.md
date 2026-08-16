@@ -220,10 +220,12 @@ cargo run --locked --bin pipeline-cli -- run \
   --out /path/to/report.md
 ```
 
-The CLI can list and inspect workflows, check an exact run without contacting a
-model, run one input or a batch, write Markdown reports, and manage the local
-PaddleOCR-VL bundle. See the [Pipeline CLI guide](docs/cli/README.md) for input
-modes, variables, named inputs, batch behavior, and exit codes.
+The CLI can list and inspect workflows, create and strictly validate portable
+workflow JSON for agent-authored runs, check an exact run without contacting a
+model, run one input or a batch ephemerally, write Markdown reports, and manage
+the local PaddleOCR-VL bundle. See the
+[Pipeline CLI guide](docs/cli/README.md) for input modes, variables, named
+inputs, batch behavior, and exit codes.
 
 ## Build from source
 

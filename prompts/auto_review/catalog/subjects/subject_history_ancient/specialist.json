@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_ancient",
+  "label": "History — Ancient",
+  "order": 145,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Ancient Mediterranean, Near Eastern, African, Asian, American, or other pre-medieval history.",
+    "exclusions": "the central evidence and historiography belong to a later period."
+  }
+}

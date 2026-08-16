@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "regression_discontinuity",
+  "label": "Method — Regression Discontinuity",
+  "order": 4,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "A cutoff, threshold rule, score, or geographic boundary supplies local identifying variation for a central causal claim.",
+    "exclusions": "a discontinuity used only descriptively, an interrupted time series without cross-sectional score continuity, or an arbitrary threshold selected after seeing outcomes."
+  }
+}

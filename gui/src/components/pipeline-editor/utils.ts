@@ -6,6 +6,7 @@ import type {
   StepConfig,
   StepContext,
 } from "../../lib/types";
+import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
 
 /** Mirror the backend's effective graph and return transitive upstreams. */
 export function conditionUpstreamIds(steps: StepConfig[], targetId: string): string[] {
@@ -67,6 +68,14 @@ export function defaultStepContext(
 const OUTPUT_SCHEMA_TYPES = new Set([
   "object", "array", "string", "number", "integer", "boolean", "null",
 ]);
+const OUTPUT_SCHEMA_KEYWORDS = new Set([
+  "type", "enum", "minItems", "maxItems", "uniqueItems", "title", "description",
+  "required", "properties", "items", "x-pipeline-contract", "x-pipeline-catalog",
+  "x-pipeline-catalog-policy", "x-pipeline-adaptive-agent-count",
+]);
+const OUTPUT_SCHEMA_CATALOGS = new Set([
+  "auto-review.subjects", "auto-review.methods", "auto-review.genres",
+]);
 
 function schemaTypeMatches(type: unknown, value: unknown): boolean {
   switch (type) {
@@ -87,9 +96,52 @@ export function outputSchemaError(schema: unknown, path = "$", depth = 0): strin
     return `${path}: schema must be a JSON object`;
   }
   const object = schema as Record<string, unknown>;
+  const unknownKeyword = Object.keys(object).find((key) => !OUTPUT_SCHEMA_KEYWORDS.has(key));
+  if (unknownKeyword) {
+    return `${path}.${unknownKeyword}: unsupported keyword in Pipeline's portable schema dialect`;
+  }
   if (object.type !== undefined &&
       (typeof object.type !== "string" || !OUTPUT_SCHEMA_TYPES.has(object.type))) {
     return `${path}.type: unsupported type`;
+  }
+  if (depth === 0 && object.type !== "object") {
+    return `${path}.type: artifact schema root must explicitly be 'object' for all-provider portability`;
+  }
+  for (const keyword of ["title", "description", "x-pipeline-contract",
+    "x-pipeline-catalog", "x-pipeline-catalog-policy"] as const) {
+    if (object[keyword] !== undefined && typeof object[keyword] !== "string") {
+      return `${path}.${keyword}: expected a string`;
+    }
+  }
+  if (object["x-pipeline-contract"] !== undefined &&
+      object["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT) {
+    return `${path}.x-pipeline-contract: unsupported contract`;
+  }
+  if (object["x-pipeline-catalog"] !== undefined &&
+      !OUTPUT_SCHEMA_CATALOGS.has(object["x-pipeline-catalog"] as string)) {
+    return `${path}.x-pipeline-catalog: unknown Pipeline catalog`;
+  }
+  if (object["x-pipeline-catalog-policy"] !== undefined &&
+      object["x-pipeline-catalog-policy"] !== "live") {
+    return `${path}.x-pipeline-catalog-policy: only 'live' is supported`;
+  }
+  if (object["x-pipeline-adaptive-agent-count"] !== undefined &&
+      (typeof object["x-pipeline-adaptive-agent-count"] !== "number" ||
+       !Number.isSafeInteger(object["x-pipeline-adaptive-agent-count"]) ||
+       object["x-pipeline-adaptive-agent-count"] < 0)) {
+    return `${path}.x-pipeline-adaptive-agent-count: expected a non-negative integer`;
+  }
+  if (object["x-pipeline-adaptive-agent-count"] !== undefined &&
+      object["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT) {
+    return `${path}.x-pipeline-adaptive-agent-count: requires the Auto Review contract`;
+  }
+  if (depth > 0 && (object["x-pipeline-contract"] !== undefined ||
+      object["x-pipeline-catalog-policy"] !== undefined ||
+      object["x-pipeline-adaptive-agent-count"] !== undefined)) {
+    return `${path}: contract, policy, and adaptive-count settings are root-only`;
+  }
+  if (object["x-pipeline-catalog"] !== undefined && object.type !== "string") {
+    return `${path}.x-pipeline-catalog: catalog-backed values must have type 'string'`;
   }
   if (object.enum !== undefined) {
     if (!Array.isArray(object.enum) || object.enum.length === 0) {
@@ -172,6 +224,7 @@ export function normalizeConfig(config: PipelineConfig): PipelineConfig {
       context: step.context ?? { include: [] },
     })),
     merge: config.merge ?? { enabled: true, prompt: "", agents: [] },
+    outputs: config.outputs ?? {},
     context_cache: config.context_cache ?? { enabled: false },
     extraction: config.extraction ?? { method: "" },
     orientation_prompt: config.orientation_prompt ?? "",

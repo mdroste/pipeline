@@ -135,7 +135,7 @@ describe("RunPreview", () => {
     });
     const autoConfig: PipelineConfig = {
       ...config,
-      orientation_schema: { "x-pipeline-contract": "auto-review-v2" },
+      orientation_schema: { "x-pipeline-contract": "auto-review-v1" },
       steps: [
         coreStep("auto_contribution", "Contribution & Literature"),
         coreStep("auto_consistency", "Claims & Consistency"),
@@ -201,7 +201,7 @@ describe("RunPreview", () => {
     const quickConfig: PipelineConfig = {
       ...config,
       orientation_schema: {
-        "x-pipeline-contract": "auto-review-v2",
+        "x-pipeline-contract": "auto-review-v1",
         properties: {
           review_plan: {
             properties: {

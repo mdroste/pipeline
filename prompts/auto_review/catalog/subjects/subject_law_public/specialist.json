@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_public",
+  "label": "Law — Constitutional, Administrative & Regulatory",
+  "order": 226,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Constitutional, administrative, regulatory, legislation, courts, public law, or governance doctrine.",
+    "exclusions": "the primary question is international, private, or criminal law without a material public-law issue."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "heterogeneous_effects_ml",
+  "label": "Method — ML-Based Heterogeneous Effects",
+  "order": 13,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Machine-learning estimation of heterogeneous treatment effects, causal forests, debiased ML, or learned targeting policies carries a central claim.",
+    "exclusions": "a prespecified subgroup interaction in a conventional model, or predictive ML without a causal-effect claim."
+  }
+}

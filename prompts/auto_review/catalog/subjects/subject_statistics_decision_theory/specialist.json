@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_decision_theory",
+  "label": "Statistics — Decision Theory",
+  "order": 37,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Statistical decision theory, minimax and Bayes risk, admissibility, compound decisions, shrinkage, regret, or optimal procedures under explicit loss.",
+    "exclusions": "decision theory is purely economic or philosophical without a statistical experiment, information structure, and inferential risk comparison."
+  }
+}

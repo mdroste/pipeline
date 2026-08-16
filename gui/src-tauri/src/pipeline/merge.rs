@@ -1,7 +1,6 @@
 use crate::models::{StepCallRecord, StepOutput};
 use crate::output::{
-    capitalize, extract_report_envelope, new_report_nonce, normalize_math_delimiters,
-    report_output_format, ReportRejectionKind,
+    capitalize, normalize_math_delimiters, structured_output_format, text_artifact_output_format,
 };
 use crate::pipeline_config::MergeConfig;
 use std::collections::BTreeMap;
@@ -76,6 +75,7 @@ pub async fn merge_step_outputs(
     semaphore: &Arc<Semaphore>,
     run_artifact_dir: Option<&str>,
     settings: &crate::settings::Settings,
+    output_schemas: &BTreeMap<String, serde_json::Value>,
 ) -> Result<Vec<StepOutput>, String> {
     // Validate merge prompt has required placeholders
     if !merge_config.prompt.contains("{topic}") || !merge_config.prompt.contains("{agent_reports}")
@@ -155,12 +155,28 @@ pub async fn merge_step_outputs(
             limit,
             "Merge prompt",
         )?;
-        let report_nonce = new_report_nonce()?;
+        let base_id = group[0].merge_group.clone();
+        let output_schema = output_schemas
+            .iter()
+            .find(|(step_id, _)| {
+                base_id == **step_id
+                    || base_id
+                        .strip_prefix(step_id.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .map(|(_, schema)| schema.clone());
+        let terminal_schema = output_schema
+            .clone()
+            .unwrap_or_else(crate::output::text_artifact_schema);
         let mut prompt = prompt;
         crate::safety::push_str_limited(&mut prompt, "\n\n", limit, "Merge prompt")?;
         crate::safety::push_str_limited(
             &mut prompt,
-            &report_output_format(None, &report_nonce),
+            &if output_schema.is_some() {
+                structured_output_format(None)
+            } else {
+                text_artifact_output_format(None, "merged Markdown report")
+            },
             limit,
             "Merge prompt",
         )?;
@@ -202,7 +218,6 @@ pub async fn merge_step_outputs(
             .collect::<Vec<_>>()
             .join("+");
 
-        let base_id = group[0].merge_group.clone();
         let fan_out_item = group[0].fan_out_item.clone();
         let merge_key = format!("merge/{}", base_id);
 
@@ -281,6 +296,7 @@ pub async fn merge_step_outputs(
                 log_label: &log_label,
                 prompt: &prompt,
                 tools: &[],
+                output_schema: Some(&terminal_schema),
                 timeout_secs: timeout,
                 agent: Some(&provider),
                 cwd: None,
@@ -403,18 +419,28 @@ pub async fn merge_step_outputs(
             }
             match call.output {
                 Ok(raw_text) => {
-                    let report = match extract_report_envelope(&raw_text, &report_nonce) {
+                    let report = match crate::pipeline::structured::canonicalize(
+                        &terminal_schema,
+                        &raw_text,
+                    ) {
+                        Err(error) => Err((
+                            super::response_journal::AttemptStatus::RejectedSchema,
+                            error,
+                        )),
+                        Ok(canonical) if output_schema.is_some() => Ok(canonical),
+                        Ok(canonical) => crate::output::extract_text_artifact(&canonical)
+                            .map(|report| normalize_math_delimiters(&report))
+                            .map_err(|error| {
+                                (
+                                    super::response_journal::AttemptStatus::RejectedContent,
+                                    error,
+                                )
+                            }),
+                    };
+                    let report = match report {
                         Ok(report) => report,
-                        Err(error) => {
-                            let rejection_status = match error.kind() {
-                                ReportRejectionKind::Envelope => {
-                                    super::response_journal::AttemptStatus::RejectedEnvelope
-                                }
-                                ReportRejectionKind::Content => {
-                                    super::response_journal::AttemptStatus::RejectedContent
-                                }
-                            };
-                            let rejection_reason = error.to_string();
+                        Err((rejection_status, error)) => {
+                            let rejection_reason = error.clone();
                             if let Some(capture) = response_capture.take() {
                                 if let Err(journal_error) = capture
                                     .finish(rejection_status, &rejection_reason)
@@ -436,7 +462,7 @@ pub async fn merge_step_outputs(
                             failed.role = "failed_merge".to_string();
                             return Err((
                                 idx,
-                                format!("Merge for {base_id} returned an invalid report: {error}"),
+                                format!("Merge for {base_id} returned an invalid artifact: {error}"),
                                 call.usage,
                                 call.duration_secs,
                                 Some(failed),
@@ -447,7 +473,11 @@ pub async fn merge_step_outputs(
                         if let Err(error) = capture
                             .finish(
                                 super::response_journal::AttemptStatus::Accepted,
-                                "Validated report boundaries.",
+                                if output_schema.is_some() {
+                                    "Validated and canonicalized native structured output."
+                                } else {
+                                    "Validated and extracted a schema-backed text artifact."
+                                },
                             )
                             .await
                         {
@@ -481,7 +511,8 @@ pub async fn merge_step_outputs(
                             phase: "parallel".to_string(),
                             provider: effective_provider,
                             agent: agents_joined,
-                            raw_text: normalize_math_delimiters(&report),
+                            raw_text: report,
+                            structured_json: output_schema.is_some(),
                             duration_secs: original_duration.saturating_add(call.duration_secs),
                             input_tokens: original_input.saturating_add(call.usage.input_tokens),
                             output_tokens: original_output.saturating_add(call.usage.output_tokens),
@@ -548,10 +579,11 @@ pub async fn merge_step_outputs(
         if crate::commands::is_cancelled() {
             if let Some((_, error, _, _, _)) = errors
                 .iter()
-                .find(|(_, error, _, _, _)| error.to_ascii_lowercase().contains("cancelled"))
+                .find(|(_, error, _, _, _)| crate::commands::is_pipeline_cancellation_error(error))
             {
                 return Err(error.clone());
             }
+            return Err("Pipeline cancelled".to_string());
         }
         for (idx, err, merge_usage, merge_duration_secs, merge_call) in &errors {
             let _ = app.emit_event(

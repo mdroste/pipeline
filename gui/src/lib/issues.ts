@@ -7,6 +7,8 @@ export interface IssueEvidence {
   nodeId?: string;
   assetId?: string;
   artifactPath?: string;
+  sourcePath?: string;
+  sourceHash?: string;
   description?: string;
   quote?: string;
 }
@@ -167,6 +169,17 @@ function boundedString(value: unknown, max = 2_000): string | undefined {
   return text ? text.slice(0, max) : undefined;
 }
 
+function safeRelativePath(value: string | undefined): string | undefined {
+  if (
+    !value
+    || value.startsWith("/")
+    || value.includes("\\")
+    || value.includes(":")
+    || !value.split("/").every((part) => part && part !== "." && part !== "..")
+  ) return undefined;
+  return value;
+}
+
 function parseEvidence(value: unknown): IssueEvidence[] {
   if (!Array.isArray(value)) return [];
   const evidence: IssueEvidence[] = [];
@@ -194,16 +207,17 @@ function parseEvidence(value: unknown): IssueEvidence[] {
       object.artifact_path ?? object.artifactPath ?? object.rel_path,
       1_000,
     );
-    const artifactPath = rawArtifactPath
-      && !rawArtifactPath.startsWith("/")
-      && !rawArtifactPath.includes("..")
-      && !rawArtifactPath.includes("\\")
-      ? rawArtifactPath
-      : undefined;
+    const artifactPath = safeRelativePath(rawArtifactPath);
+    const rawSourcePath = boundedString(
+      object.source_path ?? object.sourcePath ?? object.file_path ?? object.filePath ?? object.file,
+      1_000,
+    );
+    const sourcePath = safeRelativePath(rawSourcePath);
+    const sourceHash = boundedString(object.source_hash ?? object.sourceHash, 1_000);
     const description = boundedString(object.description ?? object.label);
     const quote = boundedString(object.quote);
-    if (page || lineStart || lineEnd || nodeId || assetId || artifactPath || description || quote) {
-      evidence.push({ page, lineStart, lineEnd, nodeId, assetId, artifactPath, description, quote });
+    if (page || lineStart || lineEnd || nodeId || assetId || artifactPath || sourcePath || sourceHash || description || quote) {
+      evidence.push({ page, lineStart, lineEnd, nodeId, assetId, artifactPath, sourcePath, sourceHash, description, quote });
     }
   }
   return evidence;
@@ -213,9 +227,11 @@ function parseIssueCandidate(json: unknown): Issue[] | null {
   const MAX_ISSUES = 1_000;
   let arr: unknown;
   if (Array.isArray(json)) arr = json;
-  else if (typeof json === "object" && json !== null &&
-           Array.isArray((json as Record<string, unknown>).issues)) {
-    arr = (json as Record<string, unknown>).issues;
+  else if (typeof json === "object" && json !== null) {
+    const object = json as Record<string, unknown>;
+    if (Array.isArray(object.findings)) arr = object.findings;
+    else if (Array.isArray(object.issues)) arr = object.issues;
+    else return null;
   } else {
     return null;
   }
@@ -238,8 +254,8 @@ function parseIssueCandidate(json: unknown): Issue[] | null {
     issues.push({
       id,
       title: title || `Issue ${i + 1}`,
-      severity: normalizeSeverity(obj.severity),
-      section: String(obj.section ?? "").trim(),
+      severity: normalizeSeverity(obj.priority ?? obj.severity),
+      section: String(obj.category ?? obj.section ?? "").trim(),
       body,
       evidence: parseEvidence(obj.evidence),
     });
@@ -247,8 +263,9 @@ function parseIssueCandidate(json: unknown): Issue[] | null {
   return issues;
 }
 
-/** Interpret `text` as a structured issue list, or null if it isn't one.
- *  Accepts `{ "issues": [...] }` or a bare array of issue-shaped objects. */
+/** Interpret `text` as a structured finding list, or null if it isn't one.
+ *  Accepts canonical `{ "findings": [...] }`, legacy `{ "issues": [...] }`,
+ *  or a bare array of issue-shaped objects. */
 export function parseIssues(text: string): Issue[] | null {
   for (const candidate of jsonCandidates(text)) {
     const issues = parseIssueCandidate(candidate);
@@ -260,6 +277,18 @@ export function parseIssues(text: string): Issue[] | null {
 /** Detect a structured issue list in a report's step outputs (the last step
  *  whose output parses as issues wins — usually the synthesis step). */
 export function detectReportIssues(report: PipelineReport): Issue[] | null {
+  if ((report.products?.schema_version ?? 0) > 0) {
+    const published = report.products?.findings?.findings;
+    if (!published) return null;
+    return published.map((finding, index) => ({
+      id: finding.id || String(index + 1),
+      title: finding.title || `Issue ${index + 1}`,
+      severity: normalizeSeverity(finding.priority),
+      section: finding.category ?? "",
+      body: finding.body ?? "",
+      evidence: parseEvidence(finding.evidence ?? []),
+    }));
+  }
   const outputs = report.step_outputs ?? [];
   for (let i = outputs.length - 1; i >= 0; i--) {
     if (outputs[i].skipped) continue;

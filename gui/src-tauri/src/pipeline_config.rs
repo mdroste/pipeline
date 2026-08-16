@@ -52,7 +52,7 @@ const MAX_STEP_LABEL_CHARS: usize = 200;
 const MAX_PROFILE_NAME_CHARS: usize = 200;
 const MAX_VARIABLES: usize = 100;
 const MAX_EXTRA_INPUTS: usize = 100;
-const MAX_OUTPUT_SCHEMA_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_OUTPUT_SCHEMA_BYTES: usize = 1024 * 1024;
 const MAX_RUN_IF_PATTERN_BYTES: usize = 16 * 1024;
 const MAX_JSON_POINTER_BYTES: usize = 4 * 1024;
 const ALLOWED_TOOLS: &[&str] = &["WebSearch"];
@@ -413,12 +413,24 @@ where
     })
 }
 
+/// Explicit public products selected from a workflow's step graph. Empty
+/// fields preserve legacy inference for profiles saved before this contract.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OutputConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub primary_step: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub findings_step: String,
+}
+
 /// Combined config returned to callers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     pub steps: Vec<StepConfig>,
     #[serde(default)]
     pub merge: MergeConfig,
+    #[serde(default)]
+    pub outputs: OutputConfig,
     /// Optional run-local shared-context caching. When enabled, the executor
     /// prepares the extracted input and orientation map once, then lets each
     /// provider use its native prefix cache or forkable CLI sessions.
@@ -438,8 +450,9 @@ pub struct PipelineConfig {
     /// substituted with the extracted paper at runtime.
     #[serde(default)]
     pub orientation_prompt: String,
-    /// Optional JSON-shape contract for the orientation call. When set, the
-    /// survey is validated and retried before any workflow step can use it.
+    /// JSON-shape contract for the orientation call. Stock workflows store
+    /// their full contract here; `None` is reserved for custom prompts that
+    /// intentionally accept Pipeline's minimal object-root contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orientation_schema: Option<serde_json::Value>,
     /// Per-profile extraction overrides. When unset (default), the global
@@ -468,6 +481,8 @@ pub struct ProfileData {
     #[serde(default)]
     pub merge: MergeConfig,
     #[serde(default)]
+    pub outputs: OutputConfig,
+    #[serde(default)]
     pub context_cache: ContextCacheConfig,
     #[serde(
         default = "default_true",
@@ -493,10 +508,11 @@ impl ProfileData {
             name: name.into(),
             steps,
             merge,
+            outputs: OutputConfig::default(),
             context_cache: ContextCacheConfig::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
-            orientation_schema: None,
+            orientation_schema: Some(crate::orientation_contract::paper_schema()),
             extraction: ExtractionConfig::default(),
             parallel_context_template: default_parallel_template(),
             variables: Vec::new(),
@@ -508,6 +524,7 @@ impl ProfileData {
             name: name.into(),
             steps: config.steps.clone(),
             merge: config.merge.clone(),
+            outputs: config.outputs.clone(),
             context_cache: config.context_cache.clone(),
             use_orientation: config.use_orientation,
             orientation_prompt: config.orientation_prompt.clone(),
@@ -524,6 +541,7 @@ impl From<ProfileData> for PipelineConfig {
         Self {
             steps: profile.steps,
             merge: profile.merge,
+            outputs: profile.outputs,
             context_cache: profile.context_cache,
             use_orientation: profile.use_orientation,
             orientation_prompt: profile.orientation_prompt,
@@ -630,11 +648,11 @@ pub struct ProfileSummary {
 /// context caching; v5 centralizes parser tuning in global Settings; v6
 /// replaces implicit step inputs with explicit artifact context and order
 /// dependencies; v7 adds validated orientation schemas and array-membership
-/// survey conditions. v1
+/// survey conditions; v8 adds explicit published run products. v1
 /// (unversioned) profiles read fine because every added field is
 /// `#[serde(default)]`; exports are tagged so future format changes can
 /// migrate or reject gracefully.
-pub const CURRENT_SCHEMA_VERSION: u32 = 7;
+pub const CURRENT_SCHEMA_VERSION: u32 = 8;
 
 fn default_schema_version() -> u32 {
     1
@@ -654,6 +672,8 @@ pub enum ExportEnvelope {
         steps: Vec<StepConfig>,
         #[serde(default)]
         merge: MergeConfig,
+        #[serde(default)]
+        outputs: OutputConfig,
         #[serde(default)]
         context_cache: ContextCacheConfig,
         #[serde(
@@ -688,6 +708,8 @@ pub struct ProfileExport {
     #[serde(default)]
     pub merge: MergeConfig,
     #[serde(default)]
+    pub outputs: OutputConfig,
+    #[serde(default)]
     pub context_cache: ContextCacheConfig,
     #[serde(
         default = "default_true",
@@ -713,6 +735,7 @@ impl ProfileExport {
             name: profile.name,
             steps: profile.steps,
             merge: profile.merge,
+            outputs: profile.outputs,
             context_cache: profile.context_cache,
             use_orientation: profile.use_orientation,
             orientation_prompt: profile.orientation_prompt,
@@ -728,6 +751,7 @@ impl ProfileExport {
             name: self.name.clone(),
             steps: self.steps.clone(),
             merge: self.merge.clone(),
+            outputs: self.outputs.clone(),
             context_cache: self.context_cache.clone(),
             use_orientation: self.use_orientation,
             orientation_prompt: self.orientation_prompt.clone(),
@@ -822,19 +846,24 @@ mod persistence;
 mod profiles;
 mod storage;
 mod validation;
+mod workflow;
 
 pub(crate) use persistence::load_profile;
-pub use persistence::{load, load_required_profile_for, save_profile};
+pub use persistence::{load, load_required_profile_for, load_required_workflow_for, save_profile};
 pub use profiles::{
     create_profile, delete_profile, duplicate_profile, export_bundle, export_profile_data,
-    get_active_profile_id, import_bundle, import_envelope, import_profile_data, list_profiles,
-    rename_profile, reset_defaults, save, save_for, switch_profile,
+    get_active_profile_id, import_bundle, import_envelope, import_profile_data,
+    install_workflow_document, list_profiles, rename_profile, reset_defaults, save, save_for,
+    switch_profile,
 };
 pub use storage::{sanitize_step_id, slugify};
 pub(crate) use validation::{resolve_dependencies, validate_runtime_config};
 pub use validation::{
     validate_dependencies, validate_enabled_sequential_step, validate_unique_step_ids,
     validate_workflow_semantics,
+};
+pub use workflow::{
+    parse_workflow_document_strict, workflow_json_schema, workflow_template, WorkflowDocument,
 };
 
 use builtins::{
@@ -853,11 +882,8 @@ use validation::{validate_profile_data, validate_profile_steps};
 use builtins::default_steps;
 #[cfg(test)]
 use migrations::{
-    archive_retired_profile, matches_stock_auto_review_v1_28_with_digests, migrate_builtin_catalog,
-    migrate_review_quality_prompt_defaults, pin_fingerprint_prompt_defaults,
-    prior_stock_auto_review, prior_stock_auto_review_v2,
-    profile_shape_digest_without_orientation_prompt, prompt_digest,
-    run_auto_review_v1_28_migration,
+    archive_retired_profile, compact_builtin_auto_review_prompts, migrate_builtin_catalog,
+    migrate_review_quality_prompt_defaults, prompt_digest, refresh_builtin_auto_review_contracts,
 };
 #[cfg(test)]
 use profiles::{

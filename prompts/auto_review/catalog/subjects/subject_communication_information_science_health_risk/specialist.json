@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_communication_information_science_health_risk",
+  "label": "Communication & Information — Science, Health & Risk Communication",
+  "order": 264,
+  "group": {
+    "id": "communication_information",
+    "label": "Communication & Information"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Communication of science, medicine, environment, uncertainty, crisis, hazards, or public risk.",
+    "exclusions": "the contribution is clinical, environmental, or engineering risk assessment without a communicative process or audience claim."
+  }
+}

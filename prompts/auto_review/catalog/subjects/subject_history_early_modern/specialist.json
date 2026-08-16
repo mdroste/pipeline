@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_early_modern",
+  "label": "History — Early Modern",
+  "order": 147,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Early-modern state formation, empire, religion, science, commerce, culture, or social change.",
+    "exclusions": "the central intervention belongs clearly to medieval or modern historiography."
+  }
+}

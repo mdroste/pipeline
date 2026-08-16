@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_bayesian",
+  "label": "Statistics — Bayesian",
+  "order": 38,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Bayesian modeling, posterior theory, probabilistic programming, prior construction, or Bayesian computation.",
+    "exclusions": "Bayesian software is used routinely but no Bayesian modeling or inferential contribution is made."
+  }
+}

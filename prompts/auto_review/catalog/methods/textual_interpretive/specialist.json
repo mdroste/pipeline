@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "textual_interpretive",
+  "label": "Method — Textual & Interpretive Analysis",
+  "order": 91,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Close reading, hermeneutics, rhetoric, translation, or interpretation of literary, philosophical, legal, religious, visual, or other cultural texts carries the contribution.",
+    "exclusions": "automated text measurement alone, texts used only as sources of factual observations, or fine-grained sequential analysis of talk and interaction that is better covered by discourse and conversation analysis."
+  }
+}

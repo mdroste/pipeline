@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "uncertainty_sensitivity_analysis",
+  "label": "Method — Uncertainty & Sensitivity Analysis",
+  "order": 34,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Global or local sensitivity, uncertainty propagation, robustness envelopes, scenario uncertainty, or probabilistic risk analysis is central to the claims.",
+    "exclusions": "routine standard errors alone, a few conventional robustness specifications with no substantive uncertainty-analysis contribution, or formal identified sets, bounds, and breakdown regions that are better covered by the dedicated partial-identification role."
+  }
+}

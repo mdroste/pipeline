@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "matching_weighting",
+  "label": "Method — Matching, Weighting & Selection on Observables",
+  "order": 7,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Matching, propensity scores, inverse-probability weights, balancing weights, standardization, or doubly robust adjustment supports a central causal comparison under selection on observables.",
+    "exclusions": "ordinary regression adjustment without a material design or weighting claim, randomized assignment, or a design identified by discontinuity, timing, or an instrument."
+  }
+}

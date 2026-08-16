@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "hci_user_studies",
+  "label": "Method — HCI & Usability Studies",
+  "order": 107,
+  "group": {
+    "id": "engineering_design",
+    "label": "Engineering, Design & Applied Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "User studies of interfaces, systems, or interaction techniques — lab or deployed — carry central usability or comparative claims.",
+    "exclusions": "psychological lab experiments about cognition, or survey research without an evaluated system."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_inequality_demography",
+  "label": "Sociology — Inequality, Stratification & Mobility",
+  "order": 120,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Social stratification, mobility, class, status, wealth and income inequality, educational inequality, or institutional production and reproduction of unequal outcomes.",
+    "exclusions": "the central contribution is a labor or public-economics estimate without a sociological account of structure or group process, or formal demographic change, family and household relations, or life-course transitions clearly carry the contribution."
+  }
+}

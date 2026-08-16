@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_social_work_policy_welfare",
+  "label": "Social Work & Social Policy — Welfare & Social Policy",
+  "order": 273,
+  "group": {
+    "id": "social_work_policy",
+    "label": "Social Work & Social Policy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Welfare states, poverty policy, social protection, disability policy, family policy, housing support, or comparative social policy.",
+    "exclusions": "the paper is public economics or political administration without a material welfare institution, service-user, or social-policy contribution."
+  }
+}

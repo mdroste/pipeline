@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_psychology_general",
+  "label": "Psychology — General",
+  "order": 185,
+  "group": {
+    "id": "psychology",
+    "label": "Psychology & Cognitive Science"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Psychological or cognitive research spanning several areas or outside the listed specialties.",
+    "exclusions": "a listed psychological subfield clearly contains the construct and evidence."
+  }
+}

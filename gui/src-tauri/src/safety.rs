@@ -66,10 +66,17 @@ pub fn validate_runtime_context(
 /// Reject profiles whose declared Cartesian products and retry policy can
 /// create an unexpectedly large or costly run before any extraction or model
 /// call starts.
-pub fn validate_run_budget(
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct RunBudgetEstimate {
+    pub step_units_upper_bound: u64,
+    pub merge_calls_upper_bound: u64,
+    pub provider_attempts_upper_bound: u64,
+}
+
+pub fn estimate_run_budget(
     config: &crate::pipeline_config::PipelineConfig,
     settings: &crate::settings::Settings,
-) -> Result<(), String> {
+) -> Result<RunBudgetEstimate, String> {
     let mut units = 0u64;
     let mut merge_calls = 0u64;
     for step in config.steps.iter().filter(|step| step.enabled) {
@@ -99,11 +106,6 @@ pub fn validate_run_budget(
                 .ok_or_else(|| "Merge call count overflow".to_string())?;
         }
     }
-    if units > MAX_RUN_STEP_UNITS {
-        return Err(format!(
-            "Profile can dispatch {units} step units; the safety limit is {MAX_RUN_STEP_UNITS}"
-        ));
-    }
     let attempts_per_step = u64::from(settings.max_retries).saturating_add(1);
     let mut attempts = units
         .checked_mul(attempts_per_step)
@@ -130,9 +132,28 @@ pub fn validate_run_budget(
             .checked_mul(2)
             .ok_or_else(|| "Provider attempt count overflow".to_string())?;
     }
-    if attempts > MAX_RUN_PROVIDER_ATTEMPTS {
+    Ok(RunBudgetEstimate {
+        step_units_upper_bound: units,
+        merge_calls_upper_bound: merge_calls,
+        provider_attempts_upper_bound: attempts,
+    })
+}
+
+pub fn validate_run_budget(
+    config: &crate::pipeline_config::PipelineConfig,
+    settings: &crate::settings::Settings,
+) -> Result<(), String> {
+    let estimate = estimate_run_budget(config, settings)?;
+    if estimate.step_units_upper_bound > MAX_RUN_STEP_UNITS {
         return Err(format!(
-            "Profile can make up to {attempts} provider attempts; the safety limit is {MAX_RUN_PROVIDER_ATTEMPTS}"
+            "Profile can dispatch {} step units; the safety limit is {MAX_RUN_STEP_UNITS}",
+            estimate.step_units_upper_bound
+        ));
+    }
+    if estimate.provider_attempts_upper_bound > MAX_RUN_PROVIDER_ATTEMPTS {
+        return Err(format!(
+            "Profile can make up to {} provider attempts; the safety limit is {MAX_RUN_PROVIDER_ATTEMPTS}",
+            estimate.provider_attempts_upper_bound
         ));
     }
     Ok(())
@@ -373,6 +394,7 @@ mod tests {
         let config = crate::pipeline_config::PipelineConfig {
             steps: vec![step],
             merge: Default::default(),
+            outputs: Default::default(),
             context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: String::new(),
@@ -405,6 +427,7 @@ mod tests {
         let mut config = crate::pipeline_config::PipelineConfig {
             steps: (0..100).map(|_| step.clone()).collect(),
             merge: Default::default(),
+            outputs: Default::default(),
             context_cache: Default::default(),
             use_orientation: true,
             orientation_prompt: String::new(),

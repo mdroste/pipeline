@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_optimization_dynamics",
+  "label": "Mathematics — Optimization, Control & Dynamics",
+  "order": 31,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Optimization theory, optimal control, operations research mathematics, dynamical systems, or ergodic dynamics.",
+    "exclusions": "optimization is merely a routine fitting algorithm or the main contribution is an engineering controller."
+  }
+}

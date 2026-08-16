@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_stochastic_processes_finance",
+  "label": "Mathematics — Stochastic Processes & Mathematical Finance",
+  "order": 33,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Stochastic processes, stochastic calculus, interacting particle systems, stochastic control, mathematical finance, or rigorous random dynamics.",
+    "exclusions": "the contribution is statistical inference from stochastic data or an applied financial model without a substantive mathematical result."
+  }
+}

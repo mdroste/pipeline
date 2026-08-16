@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_chemistry_organic_biological",
+  "label": "Chemistry — Organic & Chemical Biology",
+  "order": 95,
+  "group": {
+    "id": "chemistry",
+    "label": "Chemistry"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Organic synthesis, reaction methodology, catalysis, medicinal chemistry, or chemical biology spanning the narrower specialties in this catalog.",
+    "exclusions": "the main result is a biological mechanism with standard chemical probes or an industrial process scale-up, or a listed synthesis-catalysis or chemical-biology specialist clearly carries the contribution."
+  }
+}

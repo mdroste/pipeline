@@ -1,1 +1,0 @@
-Assess population and comparative sample, ancestry and environment, evolutionary interpretation, morphology or behavior, language practice and ideology, community variation, ethical provenance, and whether biological or linguistic measures support the human historical claim.

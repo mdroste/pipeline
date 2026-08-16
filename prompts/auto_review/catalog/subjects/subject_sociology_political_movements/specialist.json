@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_political_movements",
+  "label": "Sociology — Political & Social Movements",
+  "order": 123,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Political sociology, states, citizenship, collective action, protest, social movements, or power.",
+    "exclusions": "the contribution is primarily electoral behavior, formal institutions, or international relations without a sociological mechanism."
+  }
+}

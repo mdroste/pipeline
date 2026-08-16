@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_philosophy_mind",
+  "label": "Philosophy — Mind",
+  "order": 211,
+  "group": {
+    "id": "philosophy",
+    "label": "Philosophy"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Consciousness, intentionality, mental representation, perception, action, emotion, personal identity, embodied cognition, or the relation between mind and brain.",
+    "exclusions": "the paper is empirical psychology or neuroscience without a substantive conceptual or metaphysical argument about mind."
+  }
+}

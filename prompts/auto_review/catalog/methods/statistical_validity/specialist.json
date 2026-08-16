@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "statistical_validity",
+  "label": "Method — Statistical Validity",
+  "order": 24,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "family",
+  "routing": {
+    "description": "Statistical inference, estimation, uncertainty, prediction, or sampling claims require broad scrutiny not exhausted by a listed specialized statistical role.",
+    "exclusions": "a paper with no stochastic evidence or uncertainty claims, or a narrow listed statistical role that fully covers the material inferential question."
+  }
+}

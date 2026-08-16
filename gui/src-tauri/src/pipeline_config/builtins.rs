@@ -102,6 +102,8 @@ fn adaptive_review_profile(
     }
     let mut profile = ProfileData::new(name, steps, MergeConfig::default());
     profile.context_cache.enabled = true;
+    profile.outputs.primary_step = "auto_validate".to_string();
+    profile.outputs.findings_step = "auto_validate".to_string();
     profile.orientation_prompt = crate::auto_review::orientation_prompt();
     profile.orientation_schema = Some(orientation_schema);
     profile
@@ -278,6 +280,7 @@ pub(super) fn generic_profile(
     let steps = configure_artifact_flow(steps, &extraction.input_mode, primary_readers);
     let mut profile = ProfileData::new(name, steps, MergeConfig::default());
     profile.orientation_prompt = prompts::load_prompt(survey).unwrap_or_default();
+    profile.orientation_schema = crate::orientation_contract::schema_for_prompt_name(survey);
     profile.extraction = extraction;
     profile.parallel_context_template = generic_parallel_template();
     profile

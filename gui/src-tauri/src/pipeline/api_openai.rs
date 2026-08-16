@@ -89,6 +89,65 @@ fn sanitize_reasoning_effort(effort: &str) -> Option<&'static str> {
     }
 }
 
+fn structured_response_format(
+    schema: Option<&serde_json::Value>,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(schema) = schema else {
+        return Ok(None);
+    };
+    let schema = crate::pipeline::structured::provider_schema(schema)?;
+    let strict_schema = openai_strict_schema(schema.clone());
+    Ok(Some(serde_json::json!({
+        "type": "json_schema",
+        "json_schema": {
+            "name": "pipeline_artifact",
+            // Use exact constrained decoding whenever every declared object
+            // property is required. Portable Pipeline schemas may contain
+            // optional fields, which OpenAI's strict subset does not permit;
+            // those retain json_schema mode plus authoritative host checks.
+            "strict": strict_schema.is_some(),
+            "schema": strict_schema.unwrap_or(schema)
+        }
+    })))
+}
+
+fn openai_strict_schema(mut schema: serde_json::Value) -> Option<serde_json::Value> {
+    let object = schema.as_object_mut()?;
+    match object.get("type").and_then(serde_json::Value::as_str) {
+        Some("object") => {
+            let property_keys = {
+                let properties = object.get_mut("properties")?.as_object_mut()?;
+                for child in properties.values_mut() {
+                    *child = openai_strict_schema(child.clone())?;
+                }
+                properties
+                    .keys()
+                    .cloned()
+                    .collect::<std::collections::HashSet<_>>()
+            };
+            let required = object.get("required")?.as_array()?;
+            let required = required
+                .iter()
+                .map(|value| serde_json::Value::as_str(value).map(str::to_string))
+                .collect::<Option<std::collections::HashSet<_>>>()?;
+            if required != property_keys {
+                return None;
+            }
+            object.insert(
+                "additionalProperties".to_string(),
+                serde_json::Value::Bool(false),
+            );
+        }
+        Some("array") => {
+            let items = object.get_mut("items")?;
+            *items = openai_strict_schema(items.clone())?;
+        }
+        Some(_) => {}
+        None => return None,
+    }
+    Some(schema)
+}
+
 /// Build the system + user messages shared by the OpenAI and local providers.
 /// With a PDF attachment, the user message is [file, text] content parts;
 /// otherwise a plain string.
@@ -225,6 +284,7 @@ pub async fn call_openai_api(
         reasoning_effort,
         max_completion_tokens: overrides.max_output_tokens,
         prompt_cache_key,
+        response_format: structured_response_format(overrides.output_schema)?,
     };
 
     let mut warm_usage = Usage::default();
@@ -244,6 +304,7 @@ pub async fn call_openai_api(
                 Some(context),
             )?;
             warm_request.max_completion_tokens = Some(32);
+            warm_request.response_format = None;
             let warm_label = format!("{label} · cache warm-up");
             super::logging::record_provider_attempt();
             match openai_tool_loop(
@@ -386,6 +447,7 @@ pub async fn call_local_api(
         reasoning_effort: None,
         max_completion_tokens: overrides.max_output_tokens,
         prompt_cache_key: None,
+        response_format: structured_response_format(overrides.output_schema)?,
     };
 
     super::logging::record_provider_attempt();
@@ -435,6 +497,47 @@ mod tests {
         // Unknown values are dropped rather than sent.
         assert_eq!(sanitize_reasoning_effort("max"), None);
         assert_eq!(sanitize_reasoning_effort(""), None);
+    }
+
+    #[test]
+    fn structured_response_format_carries_pipeline_schema() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["issues"],
+            "properties": {
+                "issues": {"type": "array", "items": {"type": "string"}}
+            }
+        });
+        let format = structured_response_format(Some(&schema)).unwrap().unwrap();
+        assert_eq!(format["type"], "json_schema");
+        assert_eq!(format["json_schema"]["name"], "pipeline_artifact");
+        assert_eq!(format["json_schema"]["strict"], true);
+        assert_eq!(
+            format["json_schema"]["schema"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            format["json_schema"]["schema"]["required"],
+            serde_json::json!(["issues"])
+        );
+        assert!(structured_response_format(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn optional_properties_use_non_strict_openai_schema_mode() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["title"],
+            "properties": {
+                "title": {"type": "string"},
+                "note": {"type": "string"}
+            }
+        });
+        let format = structured_response_format(Some(&schema)).unwrap().unwrap();
+        assert_eq!(format["json_schema"]["strict"], false);
+        assert!(format["json_schema"]["schema"]
+            .get("additionalProperties")
+            .is_none());
     }
 
     #[test]

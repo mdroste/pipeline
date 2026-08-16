@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_methods_tool",
+  "label": "Methods & Tool Paper",
+  "order": 4,
+  "routing": {
+    "description": "The paper's contribution is a new method, estimator, protocol, instrument, or analytic technique offered for adoption by other researchers.",
+    "exclusions": "routine application of existing methods, or software presented as the contribution, which the software-paper genre covers."
+  }
+}

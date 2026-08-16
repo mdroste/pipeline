@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "partial_identification_bounds",
+  "label": "Method — Partial Identification & Bounds",
+  "order": 35,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Bounds, breakdown points, or formal sensitivity regions — rather than point estimates — carry a central conclusion.",
+    "exclusions": "a routine robustness table around a point estimate, or sensitivity analysis of a physical model's parameters."
+  }
+}

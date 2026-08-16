@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_neuroscience_computational",
+  "label": "Neuroscience — Computational & Theoretical",
+  "order": 195,
+  "group": {
+    "id": "neuroscience",
+    "label": "Neuroscience"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Computational and theoretical neuroscience: mechanistic or normative models of neural dynamics, coding, learning, or computation.",
+    "exclusions": "generic machine learning without a neural claim, or standard model-based data analysis without a theoretical contribution."
+  }
+}

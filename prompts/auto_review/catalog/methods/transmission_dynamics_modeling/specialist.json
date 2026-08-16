@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "transmission_dynamics_modeling",
+  "label": "Method — Infectious-Disease Transmission Modeling",
+  "order": 74,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Epidemic transmission models, reproduction-number estimation, or intervention counterfactuals for infectious disease carry central claims.",
+    "exclusions": "descriptive epidemiology without a transmission model, or non-infectious simulation covered by other computational roles."
+  }
+}

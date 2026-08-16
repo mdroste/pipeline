@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_macro_labor",
+  "label": "Economics — Labor Macroeconomics",
+  "order": 161,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Aggregate labor markets, unemployment dynamics, search and matching, wage setting, worker and job flows, or labor-market propagation of macro shocks.",
+    "exclusions": "individual labor-supply or personnel questions without an aggregate labor-market equilibrium or business-cycle mechanism."
+  }
+}

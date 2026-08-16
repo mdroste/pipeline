@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "energy_systems_iam",
+  "label": "Method — Energy Systems & Integrated Assessment",
+  "order": 53,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Energy-system optimization or integrated assessment modeling produces central pathway, cost, or climate-economy claims.",
+    "exclusions": "an econometric energy study, or climate-physics modeling without a technology or economy representation."
+  }
+}

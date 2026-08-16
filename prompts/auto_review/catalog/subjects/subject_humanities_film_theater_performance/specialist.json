@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_film_theater_performance",
+  "label": "Humanities — Film, Theater & Performance",
+  "order": 252,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Film studies, theater and dance studies, performance studies, screen cultures, dramaturgy, or embodied and mediated performance.",
+    "exclusions": "performance is only an experimental intervention or media exposure and no interpretive claim about form, staging, embodiment, or spectatorship is central."
+  }
+}

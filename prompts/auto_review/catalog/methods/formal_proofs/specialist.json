@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "formal_proofs",
+  "label": "Method — Formal Proofs",
+  "order": 0,
+  "group": {
+    "id": "formal_conceptual",
+    "label": "Formal Theory & Conceptual Analysis"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Central theorems, propositions, lemmas, or nontrivial formal derivations require proof verification.",
+    "exclusions": "routine algebra, a purely conceptual argument, or results whose proof is not material to the main claims."
+  }
+}

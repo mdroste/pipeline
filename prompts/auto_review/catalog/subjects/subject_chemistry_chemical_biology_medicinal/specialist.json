@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_chemistry_chemical_biology_medicinal",
+  "label": "Chemistry — Chemical Biology & Medicinal",
+  "order": 97,
+  "group": {
+    "id": "chemistry",
+    "label": "Chemistry"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Chemical biology, medicinal chemistry, probe development, structure-activity relationships, chemical proteomics, or molecular therapeutic design.",
+    "exclusions": "the contribution is a biological mechanism studied with standard compounds, or a synthetic method without a material biological target or pharmacological claim."
+  }
+}

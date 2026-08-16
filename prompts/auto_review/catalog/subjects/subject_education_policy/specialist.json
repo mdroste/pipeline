@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_education_policy",
+  "label": "Education — Policy & Economics",
+  "order": 222,
+  "group": {
+    "id": "education",
+    "label": "Education"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Education policy, school choice, finance, accountability, teacher labor markets, access, or inequality.",
+    "exclusions": "the paper is economics of education without material educational institutions or practice to assess."
+  }
+}

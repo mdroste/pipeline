@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "fairness_algorithm_audit",
+  "label": "Method — Algorithmic Fairness & Audits",
+  "order": 59,
+  "group": {
+    "id": "ml_ai",
+    "label": "Machine Learning & AI"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Fairness measurement, disparity analysis, or an audit of an algorithmic system carries a central claim.",
+    "exclusions": "human-discrimination audit designs with fictitious applications, or ethics discussion without measured system behavior."
+  }
+}

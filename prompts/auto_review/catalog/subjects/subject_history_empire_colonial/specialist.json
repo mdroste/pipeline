@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_empire_colonial",
+  "label": "History — Empire, Colonialism & Decolonization",
+  "order": 154,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Imperial, colonial, postcolonial, Indigenous, slavery, borderlands, anticolonial, or decolonization history.",
+    "exclusions": "empire is only background to a domestic narrative and colonial relations, archives, or historiography do not shape the main claim."
+  }
+}

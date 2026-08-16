@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_mathematical_physics",
+  "label": "Mathematics — Mathematical Physics",
+  "order": 34,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Rigorous mathematical physics, spectral and scattering theory, quantum many-body systems, integrable systems, statistical mechanics, or mathematically controlled physical limits.",
+    "exclusions": "the work is primarily a physics model with formal calculations but no mathematical theorem or rigorous structural contribution."
+  }
+}

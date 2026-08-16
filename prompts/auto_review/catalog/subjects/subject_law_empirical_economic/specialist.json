@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_empirical_economic",
+  "label": "Law — Empirical & Law and Economics",
+  "order": 233,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Empirical legal studies, law and economics, legal institutions, judicial behavior, or quantitative doctrinal consequences.",
+    "exclusions": "the contribution is an economics or political-science result with law only as background."
+  }
+}

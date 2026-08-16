@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_macro",
+  "label": "Economics — Macroeconomics (General)",
+  "order": 157,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Macroeconomic research spanning several aggregate mechanisms or lying outside the listed monetary, growth, international, and labor-macro fields.",
+    "exclusions": "a listed macroeconomic field clearly contains the main contribution, or the paper is household or firm microeconomics without an aggregate equilibrium claim."
+  }
+}

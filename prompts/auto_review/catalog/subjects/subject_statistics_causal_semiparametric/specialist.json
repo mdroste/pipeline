@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_causal_semiparametric",
+  "label": "Statistics — Causal & Semiparametric",
+  "order": 39,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Causal estimands, semiparametric efficiency, missing data, treatment effects, or robust causal methodology as the contribution.",
+    "exclusions": "causal identification is only an application and the methodological contribution is not statistical."
+  }
+}

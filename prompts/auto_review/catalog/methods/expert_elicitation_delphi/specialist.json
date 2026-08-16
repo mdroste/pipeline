@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "expert_elicitation_delphi",
+  "label": "Method — Expert Elicitation & Delphi",
+  "order": 104,
+  "group": {
+    "id": "synthesis_meta",
+    "label": "Synthesis, Evaluation & Meta-research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Structured expert judgment — Delphi rounds, elicited probabilities, consensus processes — supplies central quantities or conclusions.",
+    "exclusions": "ordinary author judgment, surveys of non-expert populations, or stakeholder consultation without structured elicitation."
+  }
+}

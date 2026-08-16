@@ -114,6 +114,7 @@ fn active_profile_explicit_agents_are_required() {
     let config = crate::pipeline_config::PipelineConfig {
         steps: vec![explicit],
         merge: Default::default(),
+        outputs: Default::default(),
         context_cache: Default::default(),
         use_orientation: true,
         orientation_prompt: String::new(),
@@ -160,6 +161,7 @@ fn inherited_merge_default_is_required_for_multi_provider_steps() {
             ..Default::default()
         }],
         merge: Default::default(),
+        outputs: Default::default(),
         context_cache: Default::default(),
         use_orientation: true,
         orientation_prompt: String::new(),
@@ -186,6 +188,7 @@ fn llm_extraction_requires_a_provider_only_for_a_possible_pdf_input() {
     let mut config = crate::pipeline_config::PipelineConfig {
         steps: Vec::new(),
         merge: Default::default(),
+        outputs: Default::default(),
         context_cache: Default::default(),
         use_orientation: true,
         orientation_prompt: String::new(),
@@ -227,6 +230,7 @@ fn selected_named_pdf_inputs_participate_in_readiness() {
     let mut config = crate::pipeline_config::PipelineConfig {
         steps: Vec::new(),
         merge: Default::default(),
+        outputs: Default::default(),
         context_cache: Default::default(),
         use_orientation: true,
         orientation_prompt: String::new(),
@@ -276,6 +280,7 @@ fn pdf_dependencies_follow_the_effective_extractor() {
     let mut config = crate::pipeline_config::PipelineConfig {
         steps: Vec::new(),
         merge: Default::default(),
+        outputs: Default::default(),
         context_cache: Default::default(),
         use_orientation: true,
         orientation_prompt: String::new(),

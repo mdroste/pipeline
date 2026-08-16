@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_organizations_economic",
+  "label": "Sociology — Organizations & Economic Life",
+  "order": 122,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Organizations, occupations, professions, markets, work, firms, economic sociology, or institutional fields.",
+    "exclusions": "the paper models firms or markets without a sociological organizational or relational contribution."
+  }
+}

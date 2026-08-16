@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "gwas_polygenic_scores",
+  "label": "Method — GWAS & Polygenic Scores",
+  "order": 77,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Genome-wide association analysis or polygenic-score construction and application carries central claims.",
+    "exclusions": "instrumented causal contrasts covered by Mendelian randomization, or molecular assays covered by genomic and omics review."
+  }
+}

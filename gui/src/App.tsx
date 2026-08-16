@@ -1,4 +1,12 @@
-import { lazy, Suspense, useState, useEffect, useCallback, useRef } from "react";
+import {
+  lazy,
+  Suspense,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -252,6 +260,7 @@ function App() {
     window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
   const dark = resolveDarkTheme(theme, systemIsDark);
+  const themeApplied = useRef(false);
 
   // Release smoke tests set a private environment variable and wait for this
   // IPC round trip. Normal app launches take the no-op path in Rust.
@@ -337,14 +346,22 @@ function App() {
     setTheme(preference);
   }, []);
 
-  useEffect(() => {
-    document.documentElement.classList.add("theme-transitioning");
-    document.documentElement.classList.toggle("dark", dark);
-    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const animate = themeApplied.current && root.classList.contains("dark") !== dark;
+    themeApplied.current = true;
+    root.classList.toggle("theme-transitioning", animate);
+    root.classList.toggle("dark", dark);
+    root.style.colorScheme = dark ? "dark" : "light";
+    if (!animate) return;
+
     const timer = setTimeout(() => {
-      document.documentElement.classList.remove("theme-transitioning");
+      root.classList.remove("theme-transitioning");
     }, 350);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      root.classList.remove("theme-transitioning");
+    };
   }, [dark]);
 
   // matchMedia is provided by WebKit/WebView2/WebKitGTK, so system appearance

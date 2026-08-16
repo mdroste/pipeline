@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_urban_community",
+  "label": "Sociology — Urban & Community",
+  "order": 127,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Urban sociology, neighborhoods, housing, place, communities, segregation, or local institutions.",
+    "exclusions": "the main contribution is urban economics, planning engineering, or geography without a sociological community process."
+  }
+}

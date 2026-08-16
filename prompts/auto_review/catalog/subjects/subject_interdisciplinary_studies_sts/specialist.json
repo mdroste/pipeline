@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_interdisciplinary_studies_sts",
+  "label": "Interdisciplinary Studies — Science, Technology & Society",
+  "order": 282,
+  "group": {
+    "id": "interdisciplinary_studies",
+    "label": "Interdisciplinary Studies"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Science and technology studies, sociology or anthropology of knowledge, infrastructure studies, innovation studies, or critical data and algorithm studies.",
+    "exclusions": "the contribution is philosophy or history of science, technical system design, or innovation economics without a material knowledge-practice or sociotechnical claim."
+  }
+}

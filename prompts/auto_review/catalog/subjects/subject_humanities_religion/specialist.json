@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_religion",
+  "label": "Humanities — Religion & Theology",
+  "order": 248,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Religious studies, theology, scriptural interpretation, ritual, doctrine, or religion and society.",
+    "exclusions": "religion is only a demographic category and no religious text, practice, institution, or theological argument is central."
+  }
+}

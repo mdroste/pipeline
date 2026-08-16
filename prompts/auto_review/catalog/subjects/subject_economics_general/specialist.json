@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_general",
+  "label": "Economics — General",
+  "order": 156,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Economic research spanning several fields or outside the listed economics subfields.",
+    "exclusions": "a listed economics field clearly contains the model, data, and contribution."
+  }
+}

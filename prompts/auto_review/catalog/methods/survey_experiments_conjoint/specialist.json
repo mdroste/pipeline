@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "survey_experiments_conjoint",
+  "label": "Method — Survey Experiments & Conjoint Designs",
+  "order": 22,
+  "group": {
+    "id": "experiments",
+    "label": "Experiments & Trials"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Vignette, framing, list, endorsement, or conjoint experiments embedded in surveys support a central causal claim about preferences or attitudes.",
+    "exclusions": "a field or lab experiment with behavioral outcomes, or a descriptive survey without randomized content."
+  }
+}

@@ -206,6 +206,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
   conditionStepIds,
   onUpdate,
   onPhaseChange,
+  onOutputRoleChange,
 }: {
   step: StepConfig;
   config: PipelineConfig;
@@ -214,6 +215,11 @@ export const StepEditorPanel = memo(function StepEditorPanel({
   conditionStepIds: string[];
   onUpdate: (id: string, patch: Partial<StepConfig>) => void;
   onPhaseChange: (id: string, phase: Phase) => void;
+  onOutputRoleChange: (
+    id: string,
+    role: "primary_step" | "findings_step",
+    enabled: boolean,
+  ) => void;
 }) {
   const [activeTab, setActiveTab] = useState<"prompt" | "inputs" | "execution" | "model">("prompt");
   useEffect(() => setActiveTab("prompt"), [step.id]);
@@ -346,7 +352,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
         <div className="mb-5">
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Execution rules</h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Control timing, conditions, output validation, and file-by-file fan-out.
+            Control timing, conditions, publication, and file-by-file fan-out. Output contracts live in the Schemas tab.
           </p>
         </div>
         <div className="mb-5">
@@ -370,6 +376,51 @@ export const StepEditorPanel = memo(function StepEditorPanel({
               </button>
             ))}
           </div>
+        </div>
+        <div className="mb-5 space-y-2">
+          <div>
+            <h4 className="text-xs font-medium text-gray-600 dark:text-gray-300">
+              Published results
+            </h4>
+            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+              Tell Pipeline which step is the report people read and which structured findings Projects tracks.
+            </p>
+          </div>
+          <label className="flex items-start gap-2 text-xs text-gray-700 dark:text-gray-300">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              disabled={!step.enabled || step.phase !== "sequential"}
+              checked={config.outputs?.primary_step === step.id}
+              onChange={(event) => onOutputRoleChange(step.id, "primary_step", event.target.checked)}
+            />
+            <span>
+              Use as the primary report
+              <span className="block text-[10px] text-gray-500 dark:text-gray-400">
+                This becomes the run's main human-readable result.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-xs text-gray-700 dark:text-gray-300">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              disabled={!step.enabled || step.phase !== "sequential"}
+              checked={config.outputs?.findings_step === step.id}
+              onChange={(event) => onOutputRoleChange(step.id, "findings_step", event.target.checked)}
+            />
+            <span>
+              Publish findings to Projects
+              <span className="block text-[10px] text-gray-500 dark:text-gray-400">
+                Pipeline adds an issues contract automatically; review it in the Schemas tab.
+              </span>
+            </span>
+          </label>
+          {step.phase !== "sequential" && (
+            <p className="text-[10px] text-amber-700 dark:text-amber-300">
+              Published results must come from a sequential step.
+            </p>
+          )}
         </div>
         <AdvancedStepOptions
           key={`${step.id}-execution`}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "computational_text_analysis",
+  "label": "Method — Computational Text Analysis",
+  "order": 64,
+  "group": {
+    "id": "networks_text_traces",
+    "label": "Networks, Text & Digital Traces"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Dictionary, topic, embedding, classifier, large-language-model, corpus, or other text-as-data measurements support substantive claims about documents, speakers, or discourse.",
+    "exclusions": "the contribution is an NLP algorithm itself or a close reading that does not rely on automated text measurement."
+  }
+}

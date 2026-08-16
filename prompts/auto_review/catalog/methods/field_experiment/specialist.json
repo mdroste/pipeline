@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "field_experiment",
+  "label": "Method — Field Experiment",
+  "order": 20,
+  "group": {
+    "id": "experiments",
+    "label": "Experiments & Trials"
+  },
+  "level": "method",
+  "routing": {
+    "description": "A manipulated intervention in a natural, organizational, ecological, educational, or market setting supplies central evidence.",
+    "exclusions": "a laboratory experiment, a randomized policy evaluation already fully covered by randomized-experiment review, or passive field observation without researcher manipulation."
+  }
+}

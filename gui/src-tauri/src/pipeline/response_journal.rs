@@ -17,6 +17,8 @@ static JOURNAL_BYTES: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new()
 #[derive(Debug, Clone, Copy)]
 pub enum AttemptStatus {
     Accepted,
+    // Retained for historic nonce-envelope journals and their readers.
+    #[allow(dead_code)]
     RejectedEnvelope,
     RejectedContent,
     RejectedSchema,

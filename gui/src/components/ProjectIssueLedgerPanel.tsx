@@ -66,6 +66,8 @@ function sourceLabel(evidence: ProjectIssueEvidence): string {
     : "";
   if (evidence.page) return `Page ${evidence.page}`;
   if (evidence.artifact_path) return `${evidence.artifact_path}${lines}`;
+  if (evidence.source_path) return `${evidence.source_path}${lines}`;
+  if (evidence.source_hash) return `Source ${evidence.source_hash}`;
   if (evidence.description) return `${evidence.description}${lines}`;
   if (lines) return `Line ${lines.slice(1)}`;
   if (evidence.asset_id) return `Asset ${evidence.asset_id}`;
@@ -95,6 +97,8 @@ function exportEvidence(evidence: ProjectIssueEvidence): string {
     evidence.node_id ? `node ${evidence.node_id}` : "",
     evidence.asset_id ? `asset ${evidence.asset_id}` : "",
     evidence.artifact_path ? `artifact ${evidence.artifact_path}` : "",
+    evidence.source_path ? `source ${evidence.source_path}` : "",
+    evidence.source_hash ? `source hash ${evidence.source_hash}` : "",
   ].filter(Boolean);
   const location = references.join(", ") || evidence.description || "source";
   const description = evidence.description && evidence.description !== location
@@ -426,7 +430,7 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
         {!loading && visibleIssues.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-300 px-5 py-10 text-center dark:border-gray-700">
             <p className="text-sm text-gray-600 dark:text-gray-300">{ledger?.issues.length ? "No issues match these filters." : "No structured issues were found in this project's reports."}</p>
-            <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">Any workflow can contribute: its saved report only needs an issues-shaped JSON output. Narrative reports remain available in report history but are not converted into findings implicitly.</p>
+            <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">Any workflow can contribute by publishing structured findings. Existing issue-shaped JSON reports and older Automatic Paper Review reports remain compatible; ordinary narrative reports are not reinterpreted as findings.</p>
           </div>
         )}
       </div>

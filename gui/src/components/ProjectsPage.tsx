@@ -17,6 +17,17 @@ function runLabel(run: RunSummary): string {
   return run.title || run.input_name || "Untitled report";
 }
 
+function sameInputLineage(left: RunSummary, right: RunSummary): boolean {
+  const a = left.input_identity;
+  const b = right.input_identity;
+  if (a && b) {
+    if (a.lineage_id && a.lineage_id === b.lineage_id) return true;
+    if (a.content_hash && a.content_hash === b.content_hash) return true;
+    if (a.selection_key && a.selection_key === b.selection_key) return true;
+  }
+  return Boolean(left.input_path && left.input_path === right.input_path);
+}
+
 export default function ProjectsPage({ onOpenRun }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
@@ -144,8 +155,8 @@ export default function ProjectsPage({ onOpenRun }: Props) {
 
   const addRelatedRuns = async () => {
     if (!selected || pending) return;
-    const paths = new Set(projectRuns.flatMap(({ run }) => run?.input_path ? [run.input_path] : []));
-    const related = availableRuns.filter((run) => paths.has(run.input_path));
+    const members = projectRuns.flatMap(({ run }) => run ? [run] : []);
+    const related = availableRuns.filter((run) => members.some((member) => sameInputLineage(member, run)));
     if (related.length === 0) return;
     setPending(true);
     setError(null);
@@ -318,7 +329,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
                   {projectRuns.some(({ run }) => run) && (
                     <button
                       type="button"
-                      disabled={pending || !availableRuns.some((run) => projectRuns.some(({ run: member }) => member?.input_path === run.input_path))}
+                      disabled={pending || !availableRuns.some((run) => projectRuns.some(({ run: member }) => member ? sameInputLineage(member, run) : false))}
                       onClick={() => void addRelatedRuns()}
                       className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-600 disabled:opacity-40 dark:border-gray-700 dark:text-gray-400"
                     >

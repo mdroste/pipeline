@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_probability",
+  "label": "Mathematics — Probability",
+  "order": 27,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Probability theory, stochastic processes, random structures, concentration, or stochastic analysis.",
+    "exclusions": "probability is used only for routine statistical inference rather than as the mathematical contribution."
+  }
+}

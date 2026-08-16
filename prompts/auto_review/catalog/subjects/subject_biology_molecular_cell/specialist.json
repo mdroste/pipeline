@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_molecular_cell",
+  "label": "Biology — Molecular & Cell",
+  "order": 84,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Molecular biology, cell biology, cell signaling, organelles, trafficking, or cellular mechanisms.",
+    "exclusions": "the primary contribution is organismal physiology, ecology, or a clinical endpoint."
+  }
+}

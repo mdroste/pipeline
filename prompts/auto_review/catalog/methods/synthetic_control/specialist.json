@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "synthetic_control",
+  "label": "Method — Synthetic Control & Comparative Time Series",
+  "order": 8,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "A weighted donor pool, matrix-completion counterfactual, comparative interrupted time series, or related synthetic-control design identifies a central intervention effect.",
+    "exclusions": "a generic forecasting exercise, a standard difference-in-differences design without synthetic comparison construction, or a descriptive index assembled from comparison units."
+  }
+}

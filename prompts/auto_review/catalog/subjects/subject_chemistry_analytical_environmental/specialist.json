@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_chemistry_analytical_environmental",
+  "label": "Chemistry — Analytical & Environmental",
+  "order": 100,
+  "group": {
+    "id": "chemistry",
+    "label": "Chemistry"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Analytical chemistry, separations, sensors, mass spectrometry, electrochemistry, or environmental chemistry.",
+    "exclusions": "measurement is routine and the substantive contribution lies entirely in another scientific field, or electrochemical conversion or storage rather than measurement clearly carries the contribution."
+  }
+}

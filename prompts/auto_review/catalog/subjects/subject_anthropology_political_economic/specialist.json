@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_anthropology_political_economic",
+  "label": "Anthropology — Political & Economic Anthropology",
+  "order": 202,
+  "group": {
+    "id": "anthropology",
+    "label": "Anthropology & Archaeology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Anthropology of states, law, markets, labor, exchange, value, development, infrastructure, violence, borders, or political economy.",
+    "exclusions": "the contribution is an economics or political-science account without ethnographic categories, situated practice, or anthropological comparison."
+  }
+}

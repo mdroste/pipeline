@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_health_professions_nursing",
+  "label": "Health Professions — Nursing & Care Science",
+  "order": 276,
+  "group": {
+    "id": "health_professions",
+    "label": "Health Professions"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Nursing science, midwifery, care delivery, symptom management, patient safety, or nursing workforce research.",
+    "exclusions": "the central contribution is physician-led clinical efficacy or health-services economics without a nursing or care-process claim."
+  }
+}

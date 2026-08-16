@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "image_data_integrity",
+  "label": "Method — Image & Data Integrity Signals",
+  "order": 112,
+  "group": {
+    "id": "integrity_governance",
+    "label": "Reproducibility, Integrity & Governance"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Figures and data presentations are central evidence and can be checked for duplication, splicing, or figure-text inconsistency from the provided assets.",
+    "exclusions": "papers whose figures are schematic illustrations, or image-analysis methodology covered by imaging roles."
+  }
+}

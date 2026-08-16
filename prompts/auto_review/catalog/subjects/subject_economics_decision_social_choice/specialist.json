@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_decision_social_choice",
+  "label": "Economics — Decision Theory & Social Choice",
+  "order": 167,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Choice under risk or ambiguity, revealed preference, intertemporal or stochastic choice, welfare aggregation, voting rules, social choice, or axiomatic allocation criteria.",
+    "exclusions": "the main contribution is empirical behavioral evidence without a decision-theoretic or axiomatic result, or voting and institutions are studied without an economic aggregation or welfare object."
+  }
+}

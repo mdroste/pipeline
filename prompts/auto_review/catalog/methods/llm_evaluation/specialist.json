@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "llm_evaluation",
+  "label": "Method — LLM & Foundation-Model Evaluation",
+  "order": 56,
+  "group": {
+    "id": "ml_ai",
+    "label": "Machine Learning & AI"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Claims about the capabilities, behavior, or comparative performance of large language or foundation models rest on benchmark or task evaluations.",
+    "exclusions": "an ML contribution unrelated to foundation models, or a study using an LLM only as a tool to measure something else."
+  }
+}

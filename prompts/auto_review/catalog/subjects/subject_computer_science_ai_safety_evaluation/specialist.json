@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_ai_safety_evaluation",
+  "label": "Computer Science — AI Safety, Alignment & Evaluation",
+  "order": 56,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "AI safety, alignment, interpretability, model-evaluation science, red-teaming, or measurement of AI-system risk.",
+    "exclusions": "general AI capability work, or AI policy discussion without a technical safety or evaluation contribution."
+  }
+}

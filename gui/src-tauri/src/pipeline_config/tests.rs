@@ -133,6 +133,36 @@ fn runtime_validation_rejects_parallel_only_workflows() {
     );
 }
 
+#[test]
+fn published_outputs_require_a_runnable_sequential_producer() {
+    let mut profile = ProfileData::new(
+        "Published",
+        vec![StepConfig {
+            id: "final".into(),
+            label: "Final".into(),
+            phase: Phase::Sequential,
+            enabled: true,
+            ..Default::default()
+        }],
+        MergeConfig::default(),
+    );
+    profile.outputs.primary_step = "final".into();
+    profile.outputs.findings_step = "final".into();
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Published findings step 'final' must define an output JSON schema"
+    );
+
+    profile.steps[0].output_schema = Some(crate::findings::output_schema());
+    validate_profile_data(&profile).unwrap();
+
+    profile.steps[0].phase = Phase::Parallel;
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Published primary report step 'final' must be Sequential"
+    );
+}
+
 // ── validate_dependencies ──────────────────────────────────────
 
 fn step_dep(id: &str, deps: &[&str]) -> StepConfig {
@@ -294,6 +324,7 @@ fn bundle_profile(id: &str, steps: Vec<StepConfig>) -> ProfileExport {
         name: id.into(),
         steps,
         merge: MergeConfig::default(),
+        outputs: OutputConfig::default(),
         context_cache: ContextCacheConfig::default(),
         use_orientation: true,
         orientation_prompt: String::new(),
@@ -496,6 +527,18 @@ fn stock_full_review_enables_shared_context_reuse() {
         !ProfileData::new("Custom", Vec::new(), MergeConfig::default())
             .context_cache
             .enabled
+    );
+}
+
+#[test]
+fn stock_profiles_store_their_complete_orientation_contracts() {
+    assert_eq!(
+        full_review_profile(false).orientation_schema,
+        Some(crate::orientation_contract::paper_schema())
+    );
+    assert_eq!(
+        grant_review_profile().orientation_schema,
+        Some(crate::orientation_contract::generic_schema())
     );
 }
 
@@ -785,189 +828,6 @@ fn quick_auto_review_is_bounded_and_omits_contribution() {
         })
         .collect::<Vec<_>>();
     assert_eq!(report_inputs, ["auto_synthesis"]);
-}
-
-#[test]
-fn auto_review_v1_migration_replaces_only_exact_stock_profile() {
-    let stock_dir = tempfile::tempdir().unwrap();
-    let stock_path = stock_dir.path().join("auto-review.json");
-    fs::write(
-        &stock_path,
-        serde_json::to_vec_pretty(&prior_stock_auto_review()).unwrap(),
-    )
-    .unwrap();
-    migrate_builtin_catalog(stock_dir.path()).unwrap();
-    let migrated: ProfileData = serde_json::from_slice(&fs::read(&stock_path).unwrap()).unwrap();
-    assert_eq!(migrated.name, "Automatic Paper Review (Full)");
-    assert_eq!(migrated.steps.len(), 5);
-    assert_eq!(
-        migrated
-            .orientation_schema
-            .as_ref()
-            .and_then(|schema| schema.get("x-pipeline-contract"))
-            .and_then(serde_json::Value::as_str),
-        Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
-    );
-    assert!(stock_dir.path().join(".builtin-catalog-v11").exists());
-
-    let custom_dir = tempfile::tempdir().unwrap();
-    let custom_path = custom_dir.path().join("auto-review.json");
-    let mut customized = prior_stock_auto_review();
-    customized.steps[0].prompt.push_str("\nCustom instruction.");
-    fs::write(
-        &custom_path,
-        serde_json::to_vec_pretty(&customized).unwrap(),
-    )
-    .unwrap();
-    migrate_builtin_catalog(custom_dir.path()).unwrap();
-    let preserved: ProfileData = serde_json::from_slice(&fs::read(&custom_path).unwrap()).unwrap();
-    assert_eq!(preserved.steps.len(), customized.steps.len());
-    assert!(preserved.steps[0].prompt.ends_with("Custom instruction."));
-}
-
-#[test]
-fn stock_fingerprints_use_compiled_prompt_defaults() {
-    // User prompt overrides live in ~/.pipeline/prompts/ and cannot be
-    // injected from a test, so assert the pinning invariant directly: every
-    // fingerprint profile carries the compiled-in merge and parallel-context
-    // defaults regardless of what load_prompt would return, and the pin
-    // helper repairs override-tainted fields.
-    let merge_default = prompts::compiled_default("merge").unwrap();
-    let template_default = prompts::compiled_default("parallel_context").unwrap();
-    for fingerprint in [prior_stock_auto_review(), prior_stock_auto_review_v2()] {
-        assert_eq!(fingerprint.merge.prompt, merge_default);
-        assert_eq!(fingerprint.parallel_context_template, template_default);
-    }
-
-    let mut tainted = prior_stock_auto_review();
-    tainted.merge.prompt = "user override".to_string();
-    tainted.parallel_context_template = "user override".to_string();
-    pin_fingerprint_prompt_defaults(&mut tainted);
-    assert_eq!(tainted.merge.prompt, merge_default);
-    assert_eq!(tainted.parallel_context_template, template_default);
-}
-
-#[test]
-fn auto_review_v1_28_step_migration_recognizes_only_the_stock_variant() {
-    let mut legacy = prior_stock_auto_review();
-    legacy.orientation_prompt = "historical Auto Review prompt fixture".to_string();
-    let fixture_digest = prompt_digest(&legacy.orientation_prompt);
-    let shape_digest = profile_shape_digest_without_orientation_prompt(&legacy).unwrap();
-    assert!(
-        matches_stock_auto_review_v1_28_with_digests(&legacy, &fixture_digest, &shape_digest,)
-            .unwrap()
-    );
-
-    let mut customized = legacy.clone();
-    customized.steps[0]
-        .prompt
-        .push_str("\nCustom review guidance.");
-    assert!(!matches_stock_auto_review_v1_28_with_digests(
-        &customized,
-        &fixture_digest,
-        &shape_digest,
-    )
-    .unwrap());
-
-    legacy
-        .orientation_prompt
-        .push_str("\nCustom routing guidance.");
-    assert!(
-        !matches_stock_auto_review_v1_28_with_digests(&legacy, &fixture_digest, &shape_digest,)
-            .unwrap()
-    );
-}
-
-#[test]
-fn auto_review_v13_retries_when_v12_marker_preceded_the_corrected_matcher() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("auto-review.json");
-    let mut legacy = prior_stock_auto_review();
-    legacy.orientation_prompt = "historical Auto Review prompt fixture".to_string();
-    let prompt_digest = prompt_digest(&legacy.orientation_prompt);
-    let shape_digest = profile_shape_digest_without_orientation_prompt(&legacy).unwrap();
-    fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
-    fs::write(
-        dir.path().join(".builtin-catalog-v12"),
-        b"premature-marker\n",
-    )
-    .unwrap();
-
-    run_auto_review_v1_28_migration(
-        dir.path(),
-        ".builtin-catalog-v13",
-        b"corrected-retry\n",
-        &prompt_digest,
-        &shape_digest,
-    )
-    .unwrap();
-
-    let migrated: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(migrated.steps.len(), 5);
-    assert_eq!(
-        migrated
-            .orientation_schema
-            .as_ref()
-            .and_then(|schema| schema.get("x-pipeline-contract"))
-            .and_then(serde_json::Value::as_str),
-        Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
-    );
-    assert!(dir.path().join(".builtin-catalog-v13").exists());
-}
-
-#[test]
-fn auto_review_v14_upgrades_only_untouched_v2_skeletons() {
-    // An untouched stock v2 skeleton gains the validated five-step skeleton.
-    let stock_dir = tempfile::tempdir().unwrap();
-    let stock_path = stock_dir.path().join("auto-review.json");
-    fs::write(
-        &stock_path,
-        serde_json::to_vec_pretty(&prior_stock_auto_review_v2()).unwrap(),
-    )
-    .unwrap();
-    migrate_builtin_catalog(stock_dir.path()).unwrap();
-    let migrated: ProfileData = serde_json::from_slice(&fs::read(&stock_path).unwrap()).unwrap();
-    assert_eq!(migrated.steps.len(), 5);
-    assert_eq!(
-        migrated.steps.last().map(|step| step.id.as_str()),
-        Some("auto_validate")
-    );
-    assert!(stock_dir.path().join(".builtin-catalog-v14").exists());
-
-    // A configured adaptive-agent count is the one preserved editor setting.
-    let counted_dir = tempfile::tempdir().unwrap();
-    let counted_path = counted_dir.path().join("auto-review.json");
-    let mut counted = prior_stock_auto_review_v2();
-    counted.orientation_schema.as_mut().unwrap()[crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY] =
-        serde_json::json!(3);
-    fs::write(&counted_path, serde_json::to_vec_pretty(&counted).unwrap()).unwrap();
-    migrate_builtin_catalog(counted_dir.path()).unwrap();
-    let migrated: ProfileData = serde_json::from_slice(&fs::read(&counted_path).unwrap()).unwrap();
-    assert_eq!(migrated.steps.len(), 5);
-    assert_eq!(
-        migrated
-            .orientation_schema
-            .as_ref()
-            .and_then(|schema| schema.get(crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY))
-            .and_then(serde_json::Value::as_u64),
-        Some(3)
-    );
-
-    // Any other customization keeps the profile exactly as the user left it.
-    let custom_dir = tempfile::tempdir().unwrap();
-    let custom_path = custom_dir.path().join("auto-review.json");
-    let mut customized = prior_stock_auto_review_v2();
-    customized.steps[0].prompt.push_str("\nCustom instruction.");
-    fs::write(
-        &custom_path,
-        serde_json::to_vec_pretty(&customized).unwrap(),
-    )
-    .unwrap();
-    migrate_builtin_catalog(custom_dir.path()).unwrap();
-    let preserved: ProfileData = serde_json::from_slice(&fs::read(&custom_path).unwrap()).unwrap();
-    assert_eq!(preserved.steps.len(), 4);
-    assert!(preserved.steps[0].prompt.ends_with("Custom instruction."));
-    assert!(custom_dir.path().join(".builtin-catalog-v14").exists());
 }
 
 #[test]
@@ -1270,96 +1130,6 @@ fn role_defaults_materialize_only_inherited_workflow_agents() {
 }
 
 #[test]
-fn v16_restores_auto_validate_isolation_after_replayed_artifact_flow() {
-    // Reproduce the fresh-install corruption: the stock Auto profile with the
-    // v6 artifact-flow refresh replayed over it, which widened auto_validate's
-    // context beyond the deliberate consolidated-only isolation.
-    let dir = tempfile::tempdir().unwrap();
-    super::migrations::record_fresh_install_markers(dir.path()).unwrap();
-    std::fs::remove_file(dir.path().join(".builtin-catalog-v16")).unwrap();
-    let mut replayed = auto_review_profile();
-    replayed.name = "Auto Paper Review".to_string();
-    replayed.steps = configure_artifact_flow(
-        replayed.steps,
-        &replayed.extraction.input_mode,
-        builtin_primary_readers("auto-review"),
-    );
-    std::fs::write(
-        dir.path().join("auto-review.json"),
-        serde_json::to_string_pretty(&replayed).unwrap(),
-    )
-    .unwrap();
-
-    migrate_builtin_catalog(dir.path()).unwrap();
-
-    let healed: ProfileData = serde_json::from_str(
-        &std::fs::read_to_string(dir.path().join("auto-review.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        serde_json::to_value(&healed).unwrap(),
-        serde_json::to_value(auto_review_profile()).unwrap()
-    );
-
-    // Any other customization on top of the replayed shape is preserved as-is.
-    let custom_dir = tempfile::tempdir().unwrap();
-    super::migrations::record_fresh_install_markers(custom_dir.path()).unwrap();
-    std::fs::remove_file(custom_dir.path().join(".builtin-catalog-v16")).unwrap();
-    let mut customized = replayed.clone();
-    customized.steps[0].prompt.push_str("\nCustom addition.");
-    let customized_json = serde_json::to_string_pretty(&customized).unwrap();
-    std::fs::write(custom_dir.path().join("auto-review.json"), &customized_json).unwrap();
-    migrate_builtin_catalog(custom_dir.path()).unwrap();
-    assert_eq!(
-        std::fs::read_to_string(custom_dir.path().join("auto-review.json")).unwrap(),
-        customized_json
-    );
-}
-
-#[test]
-fn v17_renames_full_and_heals_the_new_quick_builtin() {
-    let dir = tempfile::tempdir().unwrap();
-    super::migrations::record_fresh_install_markers(dir.path()).unwrap();
-    std::fs::remove_file(dir.path().join(".builtin-catalog-v17")).unwrap();
-
-    let mut full = auto_review_profile();
-    full.name = "Auto Paper Review".to_string();
-    std::fs::write(
-        dir.path().join("auto-review.json"),
-        serde_json::to_string_pretty(&full).unwrap(),
-    )
-    .unwrap();
-
-    let mut replayed_quick = quick_auto_review_profile();
-    replayed_quick.steps = configure_artifact_flow(
-        replayed_quick.steps,
-        &replayed_quick.extraction.input_mode,
-        builtin_primary_readers("auto-review-quick"),
-    );
-    std::fs::write(
-        dir.path().join("auto-review-quick.json"),
-        serde_json::to_string_pretty(&replayed_quick).unwrap(),
-    )
-    .unwrap();
-
-    migrate_builtin_catalog(dir.path()).unwrap();
-
-    let renamed: ProfileData = serde_json::from_str(
-        &std::fs::read_to_string(dir.path().join("auto-review.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(renamed.name, "Automatic Paper Review (Full)");
-    let healed_quick: ProfileData = serde_json::from_str(
-        &std::fs::read_to_string(dir.path().join("auto-review-quick.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        serde_json::to_value(healed_quick).unwrap(),
-        serde_json::to_value(quick_auto_review_profile()).unwrap()
-    );
-}
-
-#[test]
 fn fresh_installs_record_every_catalog_marker() {
     let dir = tempfile::tempdir().unwrap();
     super::migrations::record_fresh_install_markers(dir.path()).unwrap();
@@ -1367,6 +1137,74 @@ fn fresh_installs_record_every_catalog_marker() {
     // auto_validate's context), so its marker in particular must be present.
     assert!(dir.path().join(".builtin-catalog-v6").exists());
     assert!(dir.path().join(".builtin-catalog-v15").exists());
-    assert!(dir.path().join(".builtin-catalog-v16").exists());
-    assert!(dir.path().join(".builtin-catalog-v17").exists());
+    assert!(dir.path().join(".modular-auto-review-contract-v1").exists());
+    assert!(dir.path().join(".compact-auto-review-prompt-v1").exists());
+}
+
+#[test]
+fn stale_builtin_auto_review_contract_is_replaced_before_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut stale = auto_review_profile();
+    stale.steps[0].prompt.push_str("\nKeep this user edit.");
+    stale.orientation_prompt = "Retired router prompt".to_string();
+    stale.orientation_schema.as_mut().unwrap()["x-pipeline-contract"] =
+        serde_json::json!("auto-review-v2");
+    let path = dir.path().join("auto-review.json");
+    fs::write(&path, serde_json::to_vec_pretty(&stale).unwrap()).unwrap();
+
+    refresh_builtin_auto_review_contracts(dir.path()).unwrap();
+
+    let repaired: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    validate_profile_data(&repaired).unwrap();
+    assert_eq!(
+        repaired
+            .orientation_schema
+            .as_ref()
+            .and_then(|schema| schema.get("x-pipeline-contract"))
+            .and_then(serde_json::Value::as_str),
+        Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
+    );
+    assert_eq!(
+        repaired.orientation_prompt,
+        crate::auto_review::orientation_prompt()
+    );
+    assert!(repaired.steps[0].prompt.ends_with("Keep this user edit."));
+}
+
+#[test]
+fn current_builtin_auto_review_contract_is_left_byte_for_byte_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut current = auto_review_profile();
+    current.steps[0]
+        .prompt
+        .push_str("\nKeep this current-contract edit.");
+    let bytes = serde_json::to_vec_pretty(&current).unwrap();
+    let path = dir.path().join("auto-review.json");
+    fs::write(&path, &bytes).unwrap();
+
+    refresh_builtin_auto_review_contracts(dir.path()).unwrap();
+
+    assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
+fn expanded_builtin_auto_review_prompt_is_compacted_without_touching_custom_prompts() {
+    let dir = tempfile::tempdir().unwrap();
+    let template = crate::auto_review::orientation_prompt();
+    let mut stock = auto_review_profile();
+    stock.orientation_prompt = crate::auto_review::expand_orientation_prompt(&template);
+    let stock_path = dir.path().join("auto-review.json");
+    fs::write(&stock_path, serde_json::to_vec_pretty(&stock).unwrap()).unwrap();
+
+    let mut custom = quick_auto_review_profile();
+    custom.orientation_prompt = "Custom compact router {paper_text}".to_string();
+    let custom_bytes = serde_json::to_vec_pretty(&custom).unwrap();
+    let custom_path = dir.path().join("auto-review-quick.json");
+    fs::write(&custom_path, &custom_bytes).unwrap();
+
+    compact_builtin_auto_review_prompts(dir.path()).unwrap();
+
+    let compacted: ProfileData = serde_json::from_slice(&fs::read(&stock_path).unwrap()).unwrap();
+    assert_eq!(compacted.orientation_prompt, template);
+    assert_eq!(fs::read(custom_path).unwrap(), custom_bytes);
 }

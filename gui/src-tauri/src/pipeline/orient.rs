@@ -4,6 +4,33 @@ use crate::models::ExtractionResult;
 const MAX_PAPER_TEXT: usize = 250_000;
 const MAX_RETRIES: usize = 2;
 
+fn stock_survey_name(profile_prompt: &str) -> Option<&'static str> {
+    let trimmed = profile_prompt.trim();
+    if trimmed.is_empty()
+        || Some(trimmed) == crate::prompts::compiled_default("orientation").map(str::trim)
+    {
+        Some("orientation")
+    } else if Some(trimmed)
+        == crate::prompts::compiled_default("orientation_generic").map(str::trim)
+    {
+        Some("orientation_generic")
+    } else if Some(trimmed) == crate::prompts::compiled_default("orientation_folder").map(str::trim)
+    {
+        Some("orientation_folder")
+    } else {
+        None
+    }
+}
+
+fn effective_stock_survey_name(profile_prompt: &str, input_mode: &str) -> Option<&'static str> {
+    let name = stock_survey_name(profile_prompt)?;
+    if input_mode == "folder" && matches!(name, "orientation" | "orientation_generic") {
+        Some("orientation_folder")
+    } else {
+        Some(name)
+    }
+}
+
 /// Pick the survey template for a run, given the profile's survey prompt and
 /// the effective input mode.
 ///
@@ -15,10 +42,12 @@ const MAX_RETRIES: usize = 2;
 /// resolves it), matching the previous behavior for document inputs.
 pub fn resolve_survey_template(profile_prompt: &str, input_mode: &str) -> Option<String> {
     let trimmed = profile_prompt.trim();
-    let is_stock = trimmed.is_empty()
-        || Some(trimmed) == crate::prompts::compiled_default("orientation").map(str::trim)
-        || Some(trimmed) == crate::prompts::compiled_default("orientation_generic").map(str::trim);
-    if input_mode == "folder" && is_stock {
+    if input_mode == "folder"
+        && matches!(
+            stock_survey_name(profile_prompt),
+            Some("orientation" | "orientation_generic")
+        )
+    {
         return crate::prompts::load_prompt("orientation_folder").ok();
     }
     if trimmed.is_empty() {
@@ -26,6 +55,33 @@ pub fn resolve_survey_template(profile_prompt: &str, input_mode: &str) -> Option
     } else {
         Some(profile_prompt.to_string())
     }
+}
+
+/// Resolve the schema together with the stock prompt variant. Explicit custom
+/// schemas remain authoritative. When a stock paper or generic prompt adapts
+/// to folder mode, its unmodified stock schema adapts with it; a user-edited
+/// schema is preserved as an intentional custom contract.
+pub fn resolve_survey_schema(
+    profile_prompt: &str,
+    configured_schema: Option<&serde_json::Value>,
+    input_mode: &str,
+) -> Option<serde_json::Value> {
+    let configured_name = stock_survey_name(profile_prompt);
+    let effective_name = effective_stock_survey_name(profile_prompt, input_mode);
+    if let Some(schema) = configured_schema {
+        let should_adapt = input_mode == "folder"
+            && matches!(configured_name, Some("orientation" | "orientation_generic"))
+            && configured_name
+                .and_then(crate::orientation_contract::schema_for_prompt_name)
+                .as_ref()
+                == Some(schema);
+        return if should_adapt {
+            Some(crate::orientation_contract::folder_schema())
+        } else {
+            Some(schema.clone())
+        };
+    }
+    effective_name.and_then(crate::orientation_contract::schema_for_prompt_name)
 }
 
 /// Build the survey (orientation map) by calling the LLM and validating that the
@@ -47,10 +103,20 @@ pub async fn build_orientation_map(
     output_schema: Option<&serde_json::Value>,
     source_read_root: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    if let Some(schema) = output_schema {
-        crate::pipeline::structured::validate_schema(schema)
-            .map_err(|error| format!("Invalid orientation schema: {error}"))?;
-    }
+    let terminal_schema = output_schema
+        .map(|schema| {
+            crate::auto_review::validate_schema_settings(schema)
+                .map_err(|error| format!("Invalid orientation schema setting: {error}"))?;
+            let resolved =
+                crate::auto_review::resolve_schema_catalogs(schema).map_err(|error| {
+                    format!("Invalid orientation schema catalog reference: {error}")
+                })?;
+            crate::pipeline::structured::provider_schema(&resolved)
+                .map_err(|error| format!("Invalid orientation schema: {error}"))?;
+            Ok::<serde_json::Value, String>(resolved)
+        })
+        .transpose()?
+        .unwrap_or_else(|| serde_json::json!({"type": "object"}));
     let truncated = extraction.text.len() > MAX_PAPER_TEXT;
     let paper_text = if truncated {
         // Find a valid UTF-8 char boundary at or before MAX_PAPER_TEXT
@@ -81,9 +147,24 @@ pub async fn build_orientation_map(
             template_owned.as_str()
         }
     };
+    // Auto Review profiles store a compact template. Expand its catalog
+    // placeholders only for the provider call so the workflow editor remains
+    // readable and saved profiles never duplicate the manifest catalog.
+    let expanded_template;
+    let template = if output_schema
+        .and_then(|schema| schema.get("x-pipeline-contract"))
+        .and_then(serde_json::Value::as_str)
+        == Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
+    {
+        expanded_template = crate::auto_review::expand_orientation_prompt(template);
+        expanded_template.as_str()
+    } else {
+        template
+    };
     let base_prompt = substitute_input_text(template, paper_text)?;
-    let base_prompt =
+    let mut base_prompt =
         crate::auto_review::apply_agent_count_instruction(base_prompt, output_schema)?;
+    append_quality_note_instruction(&mut base_prompt, &quality_notes, output_schema)?;
 
     let mut prompt = base_prompt.clone();
     let mut last_error = String::new();
@@ -95,7 +176,6 @@ pub async fn build_orientation_map(
         .map_err(|error| format!("Could not resolve the orientation model: {error}"))?;
     let effort = settings.orientation_effort(&provider);
     let timeout = (settings.step_timeout_secs / 2).max(60);
-
     for attempt in 0..=MAX_RETRIES {
         let mut request = OwnedRequest::new(
             app,
@@ -110,6 +190,7 @@ pub async fn build_orientation_map(
         request.model_policy = Some(resolution.selection.label());
         request.effort = (!effort.trim().is_empty()).then(|| effort.clone());
         request.model_resolved = true;
+        request.output_schema = Some(terminal_schema.clone());
         request.settings = std::sync::Arc::new(settings.clone());
         if let Some(root) = source_read_root {
             request.tools = vec!["Read".to_string()];
@@ -143,21 +224,24 @@ pub async fn build_orientation_map(
                 continue;
             }
         };
-        let cleaned = strip_json_fences(&raw);
+        // Every orientation uses native structured output, including custom
+        // surveys that only require an arbitrary top-level object.
+        let cleaned = raw.trim();
 
-        match serde_json::from_str::<serde_json::Value>(&cleaned) {
-            Ok(mut value) if value.is_object() => {
-                append_quality_notes(&mut value, &quality_notes);
+        match serde_json::from_str::<serde_json::Value>(cleaned) {
+            Ok(value) if value.is_object() => {
                 if let Some(schema) = output_schema {
-                    let validation = crate::pipeline::structured::validate(schema, &value)
-                        .and_then(|()| {
-                            crate::auto_review::validate_contract_for_schema(schema, &value)
-                        });
+                    let validation =
+                        crate::pipeline::structured::validate(&terminal_schema, &value)
+                            .and_then(|()| {
+                                crate::auto_review::validate_contract_for_schema(schema, &value)
+                            })
+                            .and_then(|()| validate_quality_notes(&value, &quality_notes, schema));
                     if let Err(error) = validation {
                         last_error = format!("orientation did not satisfy its schema: {error}");
                         if attempt < MAX_RETRIES {
                             prompt = format!(
-                                "Your previous response was valid JSON but did not satisfy the required orientation schema. Error: {error}\nPlease try again. Return ONLY one complete JSON object with every required field, no markdown fences.\n\n"
+                                "Your previous structured response failed orientation validation: {error}\nCorrect the response so it satisfies the supplied schema and the task requirements.\n\n"
                             );
                             crate::safety::push_str_limited(
                                 &mut prompt,
@@ -174,7 +258,7 @@ pub async fn build_orientation_map(
             Ok(_) => {
                 last_error = "top-level JSON value is not an object".to_string();
                 if attempt < MAX_RETRIES {
-                    prompt = "Your previous response was not a JSON object. Please try again. Return ONLY a single JSON object, no markdown fences.\n\n".to_string();
+                    prompt = "Your previous structured response did not satisfy the supplied object-root schema. Correct it and complete the task again.\n\n".to_string();
                     crate::safety::push_str_limited(
                         &mut prompt,
                         &base_prompt,
@@ -187,7 +271,7 @@ pub async fn build_orientation_map(
                 last_error = format!("{e}");
                 if attempt < MAX_RETRIES {
                     prompt = format!(
-                        "Your previous response was not valid JSON. Error: {e}\nPlease try again. Return ONLY valid JSON, no markdown fences.\n\n"
+                        "Pipeline could not decode your previous structured response: {e}\nCorrect it so it satisfies the supplied schema and complete the task again.\n\n"
                     );
                     crate::safety::push_str_limited(
                         &mut prompt,
@@ -206,27 +290,83 @@ pub async fn build_orientation_map(
     ))
 }
 
-/// Append extraction-quality warnings to the survey's `extraction_quality_notes`
-/// array (creating it if the survey schema doesn't have one), so garbled-input
-/// warnings reach the steps regardless of survey shape.
-fn append_quality_notes(survey: &mut serde_json::Value, notes: &[String]) {
-    if notes.is_empty() {
-        return;
-    }
-    let Some(obj) = survey.as_object_mut() else {
-        return;
+fn schema_accepts_quality_notes(schema: &serde_json::Value) -> bool {
+    let Some(node) = schema.pointer("/properties/extraction_quality_notes") else {
+        return false;
     };
-    let entry = obj
-        .entry("extraction_quality_notes")
-        .or_insert_with(|| serde_json::Value::Array(vec![]));
-    if let Some(arr) = entry.as_array_mut() {
-        for note in notes {
-            arr.push(serde_json::json!({
+    node.get("type").and_then(serde_json::Value::as_str) == Some("array")
+        && node
+            .get("items")
+            .and_then(|items| items.get("type"))
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|item_type| item_type == "object")
+}
+
+fn quality_note_values(notes: &[String]) -> Vec<serde_json::Value> {
+    notes
+        .iter()
+        .map(|note| {
+            serde_json::json!({
                 "page_range": "global",
                 "description": note,
-            }));
+            })
+        })
+        .collect()
+}
+
+/// Put immutable host diagnostics into the model's contract before generation.
+/// The host never mutates a returned artifact after schema validation.
+fn append_quality_note_instruction(
+    prompt: &mut String,
+    notes: &[String],
+    schema: Option<&serde_json::Value>,
+) -> Result<(), String> {
+    if notes.is_empty() {
+        return Ok(());
+    }
+    let values = quality_note_values(notes);
+    let instruction = if schema.is_some_and(schema_accepts_quality_notes) {
+        format!(
+            "\n\nHOST EXTRACTION QUALITY NOTES\nThe host detected the following immutable extraction diagnostics. Include every object exactly once in the top-level `extraction_quality_notes` array. Do not alter their text. You may add other notes.\n{}\n",
+            serde_json::to_string_pretty(&values)
+                .map_err(|error| format!("Could not serialize extraction diagnostics: {error}"))?
+        )
+    } else {
+        format!(
+            "\n\nHOST EXTRACTION QUALITY NOTES\nUse these extraction diagnostics as context, but do not add fields forbidden by the requested schema:\n{}\n",
+            serde_json::to_string_pretty(&values)
+                .map_err(|error| format!("Could not serialize extraction diagnostics: {error}"))?
+        )
+    };
+    crate::safety::push_str_limited(
+        prompt,
+        &instruction,
+        crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+        "Orientation prompt",
+    )
+}
+
+fn validate_quality_notes(
+    survey: &serde_json::Value,
+    notes: &[String],
+    schema: &serde_json::Value,
+) -> Result<(), String> {
+    if notes.is_empty() || !schema_accepts_quality_notes(schema) {
+        return Ok(());
+    }
+    let returned = survey
+        .get("extraction_quality_notes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "$.extraction_quality_notes: expected an array".to_string())?;
+    for expected in quality_note_values(notes) {
+        if !returned.iter().any(|candidate| candidate == &expected) {
+            return Err(format!(
+                "$.extraction_quality_notes is missing immutable host diagnostic {}",
+                expected["description"]
+            ));
         }
     }
+    Ok(())
 }
 
 /// Extract a JSON object from LLM output that may contain preamble text or markdown fences.
@@ -236,6 +376,7 @@ fn append_quality_notes(survey: &mut serde_json::Value, notes: &[String]) {
 /// echoed `{}`, a schema fragment), so of all valid top-level objects the
 /// largest non-empty one wins — the real survey always contains any object
 /// nested inside it, and an empty object is never an acceptable survey.
+#[cfg(test)]
 fn strip_json_fences(raw: &str) -> String {
     let trimmed = raw.trim();
 
@@ -379,35 +520,41 @@ mod tests {
         assert_eq!(strip_json_fences(input), r#"{"valid": true}"#);
     }
 
-    // ── append_quality_notes ───────────────────────────────────────
+    // ── extraction quality notes ──────────────────────────────────
 
     #[test]
-    fn quality_notes_appended_to_existing_array() {
-        let mut survey = serde_json::json!({
-            "extraction_quality_notes": [{"page_range": "p. 3", "description": "garbled"}]
+    fn quality_notes_are_required_by_compatible_schemas_without_host_mutation() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"extraction_quality_notes": {"type": "array"}}
         });
-        append_quality_notes(&mut survey, &["math broken".to_string()]);
-        let notes = survey["extraction_quality_notes"].as_array().unwrap();
-        assert_eq!(notes.len(), 2);
-        assert_eq!(notes[1]["page_range"], "global");
-        assert_eq!(notes[1]["description"], "math broken");
+        let notes = ["math broken".to_string()];
+        let good = serde_json::json!({
+            "extraction_quality_notes": [
+                {"page_range": "p. 3", "description": "garbled"},
+                {"page_range": "global", "description": "math broken"}
+            ]
+        });
+        assert!(validate_quality_notes(&good, &notes, &schema).is_ok());
+        let bad = serde_json::json!({"extraction_quality_notes": []});
+        assert!(validate_quality_notes(&bad, &notes, &schema).is_err());
     }
 
     #[test]
-    fn quality_notes_create_key_on_custom_survey() {
-        // Custom (non-paper) survey schemas still receive extraction warnings.
-        let mut survey = serde_json::json!({"overview": "a codebase"});
-        append_quality_notes(&mut survey, &["ligatures mangled".to_string()]);
-        let notes = survey["extraction_quality_notes"].as_array().unwrap();
-        assert_eq!(notes.len(), 1);
-        assert_eq!(survey["overview"], "a codebase");
-    }
-
-    #[test]
-    fn quality_notes_noop_when_empty() {
-        let mut survey = serde_json::json!({"overview": "x"});
-        append_quality_notes(&mut survey, &[]);
-        assert!(survey.get("extraction_quality_notes").is_none());
+    fn quality_note_instruction_respects_schema_shape() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"extraction_quality_notes": {"type": "array"}}
+        });
+        let mut prompt = "Survey".to_string();
+        append_quality_note_instruction(
+            &mut prompt,
+            &["ligatures mangled".to_string()],
+            Some(&schema),
+        )
+        .unwrap();
+        assert!(prompt.contains("Include every object exactly once"));
+        assert!(prompt.contains("ligatures mangled"));
     }
 
     // ── resolve_survey_template ────────────────────────────────────
@@ -447,6 +594,40 @@ mod tests {
         let resolved = resolve_survey_template(paper, "folder").expect("folder survey should load");
         let folder = crate::prompts::load_prompt("orientation_folder").unwrap();
         assert_eq!(resolved, folder);
+    }
+
+    #[test]
+    fn stock_prompt_resolution_keeps_schema_in_lockstep() {
+        assert_eq!(
+            resolve_survey_schema("", None, "document"),
+            Some(crate::orientation_contract::paper_schema())
+        );
+        assert_eq!(
+            resolve_survey_schema("", None, "folder"),
+            Some(crate::orientation_contract::folder_schema())
+        );
+
+        let generic_prompt = crate::prompts::compiled_default("orientation_generic").unwrap();
+        let generic_schema = crate::orientation_contract::generic_schema();
+        assert_eq!(
+            resolve_survey_schema(generic_prompt, Some(&generic_schema), "folder"),
+            Some(crate::orientation_contract::folder_schema())
+        );
+    }
+
+    #[test]
+    fn custom_prompt_and_schema_remain_authoritative() {
+        let prompt = "Survey this input using the supplied contract. {input_text}";
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["custom"],
+            "properties": {"custom": {"type": "string"}}
+        });
+        assert_eq!(resolve_survey_schema(prompt, None, "folder"), None);
+        assert_eq!(
+            resolve_survey_schema(prompt, Some(&schema), "folder"),
+            Some(schema)
+        );
     }
 
     #[test]

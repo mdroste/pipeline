@@ -14,6 +14,9 @@ describe("WorkflowGalleryPage", () => {
       if (command === "create_profile") {
         return Promise.resolve({ id: "revision-response-check", name: args?.name, step_count: 2, builtin: false });
       }
+      if (command === "get_orientation_defaults") {
+        return Promise.resolve({ schema: { type: "object", required: ["metadata"] } });
+      }
       if (command === "save_pipeline_config") return Promise.resolve();
       if (command === "switch_profile") return Promise.resolve((invoke.mock.calls.find(([name]) => name === "save_pipeline_config")?.[1] as { config: unknown }).config);
       return Promise.reject(new Error(`unexpected command: ${command}`));
@@ -30,7 +33,10 @@ describe("WorkflowGalleryPage", () => {
 
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_pipeline_config", {
       profileId: "revision-response-check",
-      config: expect.objectContaining({ steps: expect.any(Array) }),
+      config: expect.objectContaining({
+        steps: expect.any(Array),
+        orientation_schema: { type: "object", required: ["metadata"] },
+      }),
     }));
     expect(invoke).toHaveBeenCalledWith("switch_profile", { id: "revision-response-check" });
     expect(onInstalled).toHaveBeenCalledWith(expect.objectContaining({ steps: expect.any(Array) }));
@@ -54,6 +60,9 @@ describe("WorkflowGalleryPage", () => {
           step_count: 2,
           builtin: false,
         });
+      }
+      if (command === "get_orientation_defaults") {
+        return Promise.resolve({ schema: { type: "object", required: ["metadata"] } });
       }
       if (command === "save_pipeline_config") return Promise.resolve();
       if (command === "switch_profile") return Promise.resolve({ steps: [] });

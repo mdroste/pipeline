@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_architecture_design_human_centered",
+  "label": "Architecture, Planning & Design — Human-Centered & Product Design",
+  "order": 270,
+  "group": {
+    "id": "architecture_design",
+    "label": "Architecture, Planning & Design"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Industrial, product, service, interaction, participatory, or human-centered design where design knowledge is the contribution.",
+    "exclusions": "the central contribution is HCI evaluation, mechanical engineering, or marketing without a material design inquiry or artifact claim."
+  }
+}

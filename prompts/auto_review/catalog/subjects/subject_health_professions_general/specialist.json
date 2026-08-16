@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_health_professions_general",
+  "label": "Health Professions — General",
+  "order": 275,
+  "group": {
+    "id": "health_professions",
+    "label": "Health Professions"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Nursing, rehabilitation, pharmacy, oral health, nutrition, or allied-health research spanning several professions or outside the listed specialties.",
+    "exclusions": "a listed health-profession lens or a medicine-and-health specialist clearly contains the care process and outcome."
+  }
+}

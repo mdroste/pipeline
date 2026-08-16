@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_linguistics_social_historical",
+  "label": "Linguistics — Social, Historical & Computational",
+  "order": 220,
+  "group": {
+    "id": "linguistics",
+    "label": "Linguistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Sociolinguistics, language variation and change, historical linguistics, documentation, corpus or computational linguistics with a linguistic contribution.",
+    "exclusions": "the contribution is chiefly sociology, history, or computer science without a linguistic account of language structure or use."
+  }
+}

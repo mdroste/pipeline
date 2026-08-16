@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_reinforcement_learning",
+  "label": "Computer Science — Reinforcement Learning & Decision-Making",
+  "order": 55,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Reinforcement learning, sequential decision-making, bandits, learned planning, or agentic control as the central contribution.",
+    "exclusions": "supervised or generative learning without a sequential decision problem, or classical control theory without learning."
+  }
+}

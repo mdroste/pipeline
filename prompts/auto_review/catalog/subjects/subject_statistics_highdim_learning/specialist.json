@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_highdim_learning",
+  "label": "Statistics — High-Dimensional & Learning",
+  "order": 40,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "High-dimensional inference, sparsity, statistical learning theory, prediction, or modern nonparametrics.",
+    "exclusions": "the central contribution is a computer-science algorithm or application benchmark rather than statistical understanding."
+  }
+}

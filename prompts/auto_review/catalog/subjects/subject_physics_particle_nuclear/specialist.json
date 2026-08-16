@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_particle_nuclear",
+  "label": "Physics — Particle & Nuclear",
+  "order": 2,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Particle, high-energy, nuclear, hadronic, accelerator, or fundamental-interaction research spanning the narrower specialties in this catalog.",
+    "exclusions": "astrophysical use of particle models is central but laboratory or nuclear physics is not, or a listed high-energy-particle or nuclear-hadronic specialist clearly carries the contribution."
+  }
+}

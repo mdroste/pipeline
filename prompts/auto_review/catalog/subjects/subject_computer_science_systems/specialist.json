@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_systems",
+  "label": "Computer Science — Systems & Networks (General)",
+  "order": 60,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Operating systems, computer networks, storage, mobile, edge, or high-performance systems spanning several systems areas or outside the listed distributed-systems specialty.",
+    "exclusions": "the contribution is a hardware circuit or an application whose systems layer is conventional, or distributed state, coordination, replication, consensus, or fault tolerance clearly carries the contribution."
+  }
+}

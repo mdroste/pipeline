@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_architecture_design_built_environment",
+  "label": "Architecture, Planning & Design — Architecture & Built Environment",
+  "order": 267,
+  "group": {
+    "id": "architecture_design",
+    "label": "Architecture, Planning & Design"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Architectural design and theory, building science, housing design, interiors, heritage conservation, or built-environment research.",
+    "exclusions": "the contribution is structural engineering or art history without a material architectural performance, use, or design argument."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_family_life_course",
+  "label": "Sociology — Family & Life Course",
+  "order": 129,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Family formation and change, households, marriage, fertility, parenting, kinship, aging, intergenerational relations, or life-course transitions.",
+    "exclusions": "family variables are only demographic controls, or the contribution is a household economic model without a sociological institution, relationship, or meaning structure."
+  }
+}

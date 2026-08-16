@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_galactic_extragalactic",
+  "label": "Physics — Galactic & Extragalactic Astronomy",
+  "order": 11,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Galaxy formation and evolution, interstellar and circumgalactic media, active galactic nuclei, or large galaxy surveys.",
+    "exclusions": "cosmological parameter inference or individual stellar and exoplanetary systems carry the contribution."
+  }
+}

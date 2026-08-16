@@ -1,1 +1,0 @@
-Review the assignment or sampling mechanism, inclusion probabilities, balance, interference, adaptivity, stopping, weighting, design-based estimand, and variance calculation. Determine whether the proposed design identifies the target under its operational constraints.

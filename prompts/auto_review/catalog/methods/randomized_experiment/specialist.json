@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "randomized_experiment",
+  "label": "Method — Randomized Experiment",
+  "order": 19,
+  "group": {
+    "id": "experiments",
+    "label": "Experiments & Trials"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Random assignment, encouragement, or a randomized intervention supports a central conclusion.",
+    "exclusions": "natural experiments, simulation experiments, or laboratory work without randomized assignment of the focal intervention."
+  }
+}

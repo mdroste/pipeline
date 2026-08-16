@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_networks",
+  "label": "Sociology — Social Networks",
+  "order": 126,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Social networks, diffusion, relational inequality, social capital, peer structure, or network organizations.",
+    "exclusions": "graphs are purely technological or biological and social relations are not the substantive object."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_neuroscience_systems_circuits",
+  "label": "Neuroscience — Systems & Circuits",
+  "order": 193,
+  "group": {
+    "id": "neuroscience",
+    "label": "Neuroscience"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Systems and circuit neuroscience: in vivo recording, circuit manipulation, population coding, or sensory, motor, and state control in animals.",
+    "exclusions": "human task-based cognition, or a purely computational model without new physiological evidence."
+  }
+}

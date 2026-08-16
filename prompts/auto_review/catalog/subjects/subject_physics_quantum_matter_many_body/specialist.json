@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_quantum_matter_many_body",
+  "label": "Physics — Quantum Matter & Many-Body",
+  "order": 6,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Quantum many-body systems, strongly correlated matter, topological phases, superconductivity, quantum magnetism, or nonequilibrium quantum matter.",
+    "exclusions": "the work is principally classical soft matter, materials characterization, or a quantum-information protocol without a many-body phase or collective phenomenon."
+  }
+}

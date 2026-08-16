@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "health_economic_evaluation",
+  "label": "Method — Health Economic Evaluation",
+  "order": 75,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Cost-effectiveness, cost-utility, or budget-impact analysis carries a central health-economic claim.",
+    "exclusions": "clinical effectiveness without economic modeling, or general welfare analysis outside health covered by economic roles."
+  }
+}

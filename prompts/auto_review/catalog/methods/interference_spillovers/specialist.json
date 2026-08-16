@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "interference_spillovers",
+  "label": "Method — Interference & Spillovers",
+  "order": 17,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Spillovers, network interference, displacement, or general-equilibrium contamination materially shape the causal estimand or its interpretation.",
+    "exclusions": "interference is implausible at the design's scale, or spillovers are mentioned only as a limitation."
+  }
+}

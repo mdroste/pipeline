@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_earth_environment_general",
+  "label": "Earth & Environment — General",
+  "order": 102,
+  "group": {
+    "id": "earth_environment",
+    "label": "Earth & Environmental Science"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Earth, planetary, or environmental research spanning several systems or outside the listed specialties.",
+    "exclusions": "a listed Earth or environmental subfield clearly owns the principal process and evidence."
+  }
+}

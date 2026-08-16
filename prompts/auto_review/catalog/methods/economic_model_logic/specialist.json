@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "economic_model_logic",
+  "label": "Method — Economic Model Logic",
+  "order": 1,
+  "group": {
+    "id": "formal_conceptual",
+    "label": "Formal Theory & Conceptual Analysis"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Economic assumptions, equilibrium, incentives, mechanisms, comparative statics, incidence, or welfare carry central claims.",
+    "exclusions": "non-economic formal models or empirical economics with no material model-based mechanism."
+  }
+}

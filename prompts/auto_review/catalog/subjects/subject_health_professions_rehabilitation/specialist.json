@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_health_professions_rehabilitation",
+  "label": "Health Professions — Rehabilitation, Disability & Occupational Therapy",
+  "order": 277,
+  "group": {
+    "id": "health_professions",
+    "label": "Health Professions"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Physical, occupational, speech, vocational, or multidisciplinary rehabilitation; disability and functioning research.",
+    "exclusions": "the contribution is basic motor science or acute medical treatment without a rehabilitation, participation, or functioning claim."
+  }
+}

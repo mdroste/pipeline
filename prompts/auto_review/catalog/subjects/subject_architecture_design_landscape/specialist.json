@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_architecture_design_landscape",
+  "label": "Architecture, Planning & Design — Landscape Architecture",
+  "order": 269,
+  "group": {
+    "id": "architecture_design",
+    "label": "Architecture, Planning & Design"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Landscape architecture, ecological design, public space, site planning, or landscape performance.",
+    "exclusions": "the work is ecosystem science or geography without a designed landscape, site, or public-space claim."
+  }
+}

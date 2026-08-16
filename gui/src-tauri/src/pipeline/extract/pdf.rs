@@ -959,6 +959,7 @@ pub(super) fn rebuild_from_sections(
 }
 
 /// Strip a wrapping code fence (```markdown … ```) if the model emitted one.
+#[cfg(test)]
 pub(super) fn strip_markdown_fence(text: &str) -> &str {
     let t = text.trim();
     if !t.starts_with("```") {
@@ -1063,9 +1064,10 @@ pub(super) async fn request_llm_pages(
         format!("pages {start} through {end}")
     };
     let prompt = format!(
-        "{} Transcribe ONLY {span} to well-formatted Markdown.\n\nRequirements:\n{}",
+        "{} Transcribe ONLY {span} to well-formatted Markdown.\n\nRequirements:\n{}\n\n{}",
         source_line(attach, &prompt_path),
-        extraction_requirements()
+        extraction_requirements(),
+        crate::output::text_artifact_output_format(None, "Markdown transcription")
     );
     let label = format!("LLM PDF extraction (pages {start}-{end})");
     let mut request = crate::pipeline::call::OwnedRequest::new(
@@ -1081,9 +1083,10 @@ pub(super) async fn request_llm_pages(
     }
     request.pdf_attachment = attach.then_some(path);
     request.max_output_tokens = Some(EXTRACTION_MAX_OUTPUT_TOKENS);
+    request.output_schema = Some(crate::output::text_artifact_schema());
     request.settings = settings;
     let raw = crate::pipeline::call::execute_text(request).await?;
-    let text = strip_markdown_fence(&raw).to_string();
+    let text = crate::output::extract_text_artifact(&raw)?;
     let (_, sections) = parse_page_sections(&text)
         .ok_or_else(|| format!("LLM response for pages {start}-{end} contained no page markers"))?;
     let missing: Vec<u32> = (start..=end)
@@ -1147,7 +1150,7 @@ pub(super) async fn run_llm_ranges(
         match result {
             Ok(Ok(range_sections)) => sections.extend(range_sections),
             Ok(Err(error)) => {
-                if error.to_ascii_lowercase().contains("cancelled") {
+                if crate::commands::is_pipeline_cancellation_error(&error) {
                     tasks.abort_all();
                     return Err(error);
                 }

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_environmental",
+  "label": "History — Environmental & Climate History",
+  "order": 155,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Environmental, climate, energy, resource, agricultural, disaster, or human-animal history grounded in historical sources.",
+    "exclusions": "the central contribution is environmental science, current policy analysis, or ecological reconstruction without a historiographic argument about human-environment relations."
+  }
+}

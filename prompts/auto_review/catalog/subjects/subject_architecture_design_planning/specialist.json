@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_architecture_design_planning",
+  "label": "Architecture, Planning & Design — Urban & Regional Planning",
+  "order": 268,
+  "group": {
+    "id": "architecture_design",
+    "label": "Architecture, Planning & Design"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Urban and regional planning, land use, transportation planning, housing, infrastructure governance, or community development.",
+    "exclusions": "the central contribution is urban economics, geography, or civil engineering without a planning institution, process, or intervention."
+  }
+}

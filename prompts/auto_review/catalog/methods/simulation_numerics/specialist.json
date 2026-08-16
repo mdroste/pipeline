@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "simulation_numerics",
+  "label": "Method — Simulation & Numerics",
+  "order": 47,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Monte Carlo evidence, numerical approximation, simulation accuracy, or synthetic experiments outside a listed narrower computational role are central.",
+    "exclusions": "numerical implementation is routine, or finite-element/discretization, optimization/control, or inverse-problem behavior fully covers the material numerical claim."
+  }
+}

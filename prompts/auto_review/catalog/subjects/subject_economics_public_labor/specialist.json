@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_public_labor",
+  "label": "Economics — Public, Labor & Education (General)",
+  "order": 171,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Economic research that genuinely spans public finance, labor, education, family, or personnel economics and is not well represented by one listed field.",
+    "exclusions": "a listed public-finance, labor, or education field clearly contains the main contribution, or the paper has no economic behavior or policy-incidence object."
+  }
+}

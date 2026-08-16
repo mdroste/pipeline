@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "quantitative_computation",
+  "label": "Method — Quantitative Computation",
+  "order": 42,
+  "group": {
+    "id": "computational_modeling",
+    "label": "Computation, Simulation & Modeling"
+  },
+  "level": "family",
+  "routing": {
+    "description": "Calibration, numerical solution of quantitative models, dynamic computation, or model counterfactuals support central results outside a narrower computational role.",
+    "exclusions": "routine data processing, or a claim fully covered by optimization/control, inverse-problem/data-assimilation, finite-element/discretization, or simulation-numerics review."
+  }
+}

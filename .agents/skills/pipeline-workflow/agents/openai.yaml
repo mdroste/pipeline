@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pipeline Workflow"
+  short_description: "Create, validate, and run portable Pipeline workflows"
+  default_prompt: "Create a Pipeline workflow for the user's document-processing request, validate it, show the preflight plan, and run it only when requested."

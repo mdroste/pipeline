@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_cardiometabolic",
+  "label": "Medicine & Health — Cardiovascular, Metabolic & Renal",
+  "order": 116,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Cardiovascular medicine, endocrinology and diabetes, obesity and metabolism, nephrology, hypertension, or integrated cardiometabolic and renal disease.",
+    "exclusions": "the central contribution is basic physiology or a population risk association without a patient-facing cardiometabolic diagnosis, prognosis, prevention, or treatment claim."
+  }
+}

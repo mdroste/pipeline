@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "metascience_replication",
+  "label": "Method — Metascience & Large-Scale Replication",
+  "order": 102,
+  "group": {
+    "id": "synthesis_meta",
+    "label": "Synthesis, Evaluation & Meta-research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Multi-lab replication projects, reproducibility assessments, or meta-research about literatures and scientific practice carry central claims.",
+    "exclusions": "a paper replicating one identified study, which the replication genre reviews, or a standard systematic review of substantive findings."
+  }
+}

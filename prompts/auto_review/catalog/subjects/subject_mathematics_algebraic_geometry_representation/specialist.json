@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_algebraic_geometry_representation",
+  "label": "Mathematics — Algebraic Geometry & Representation Theory",
+  "order": 32,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Algebraic geometry, schemes and stacks, representation theory, Lie theory, homological algebra, or interactions among these structures.",
+    "exclusions": "the principal objects are elementary algebraic or number-theoretic and do not require geometric, categorical, or representation-theoretic structure."
+  }
+}

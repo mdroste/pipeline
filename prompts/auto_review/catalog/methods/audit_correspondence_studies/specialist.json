@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "audit_correspondence_studies",
+  "label": "Method — Audit & Correspondence Studies",
+  "order": 23,
+  "group": {
+    "id": "experiments",
+    "label": "Experiments & Trials"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Matched fictitious applications, testers, or solicitations measure discrimination or differential treatment as a central claim.",
+    "exclusions": "observational disparity estimates without a manipulated signal, or a general field experiment not built on matched signals."
+  }
+}

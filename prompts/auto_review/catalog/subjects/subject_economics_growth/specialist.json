@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_growth",
+  "label": "Economics — Growth & Long-Run Development",
+  "order": 159,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Economic growth, productivity, innovation, structural transformation, development accounting, or long-run aggregate change.",
+    "exclusions": "short-run business-cycle dynamics or local development interventions without a long-run growth or structural-transformation claim."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_corporate_securities_bankruptcy",
+  "label": "Law — Corporate, Securities & Bankruptcy",
+  "order": 228,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Corporate law, securities regulation, mergers, fiduciary duties, shareholder and creditor governance, insolvency, bankruptcy, or business associations.",
+    "exclusions": "the contribution is corporate finance or accounting without a material legal-authority, doctrinal, institutional, or enforcement claim."
+  }
+}

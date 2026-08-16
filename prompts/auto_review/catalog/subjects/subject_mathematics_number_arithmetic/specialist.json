@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_number_arithmetic",
+  "label": "Mathematics — Number Theory & Arithmetic Geometry",
+  "order": 21,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Analytic, algebraic, or arithmetic number theory; Diophantine geometry; automorphic forms; arithmetic statistics; or Galois representations.",
+    "exclusions": "algebraic geometry or representation theory carries the result without a material arithmetic question, or number theory is only an application of a broader analytic method."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_robotics",
+  "label": "Computer Science — Robotics & Autonomous Systems",
+  "order": 65,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Robotics, autonomous agents, planning, control software, embodied AI, or multi-agent systems.",
+    "exclusions": "the primary contribution is mechanical hardware or control theory without a computational autonomy claim."
+  }
+}

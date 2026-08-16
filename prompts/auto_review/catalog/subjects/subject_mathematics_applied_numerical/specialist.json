@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_applied_numerical",
+  "label": "Mathematics — Applied & Numerical",
+  "order": 30,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Applied mathematics, numerical analysis, inverse problems, scientific computing, or approximation theory.",
+    "exclusions": "the work is principally an engineering application or software benchmark without mathematical analysis."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_neuroscience_cellular_molecular",
+  "label": "Neuroscience — Cellular & Molecular",
+  "order": 192,
+  "group": {
+    "id": "neuroscience",
+    "label": "Neuroscience"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Molecular, cellular, synaptic, or developmental neuroscience centered on mechanisms within and between neurons and glia.",
+    "exclusions": "the contribution is systems-level recording, human cognition, or general cell biology without a neural mechanism claim."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_logic_foundations",
+  "label": "Mathematics — Logic & Foundations",
+  "order": 29,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Mathematical logic, set theory, model theory, proof theory, computability, or foundations.",
+    "exclusions": "formal verification is used only as a computer-science implementation tool."
+  }
+}

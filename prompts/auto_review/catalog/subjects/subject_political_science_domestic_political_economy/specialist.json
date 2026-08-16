@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_political_science_domestic_political_economy",
+  "label": "Political Science — Domestic Political Economy",
+  "order": 142,
+  "group": {
+    "id": "political_science",
+    "label": "Political Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Domestic distributive politics, taxation and redistribution, business-state relations, regulation, labor and welfare politics, or political determinants of economic policy.",
+    "exclusions": "the main contribution is international political economy or a purely economic incidence result without political actors, institutions, or coalition formation."
+  }
+}

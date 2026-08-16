@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_environmental_energy",
+  "label": "Economics — Environmental & Energy",
+  "order": 183,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Pollution, climate, natural resources, electricity and energy markets, environmental valuation, regulation, or adaptation studied through economic behavior and welfare.",
+    "exclusions": "environmental science or energy engineering without an economic behavioral, market, policy-incidence, or welfare claim."
+  }
+}

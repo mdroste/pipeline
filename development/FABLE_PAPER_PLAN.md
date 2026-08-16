@@ -1,5 +1,12 @@
 # Auto Paper Review — improvement plan
 
+> Historical planning snapshot from 2026-08-12. The implementation and
+> compatibility assumptions below have been superseded. Current Auto Review
+> architecture is documented in `CLAUDE.md` and
+> `docs/auto-review-catalog.md`; the pre-release codebase now has one modular
+> manifest catalog and one `auto-review-v1` contract, with no retired Auto
+> schema migration path.
+
 Written 2026-08-12. Goal: make **Auto Paper Review** a detail-oriented academic
 auditing tool whose final report reads like a careful referee's, with every
 finding anchored, verified, and annotatable. Items are ordered by expected

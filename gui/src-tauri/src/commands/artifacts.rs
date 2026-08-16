@@ -264,7 +264,8 @@ pub async fn draft_calibration(app: AppHandle) -> Result<serde_json::Value, Stri
         "A reviewer rejected the following issues from past reviews as not worth flagging:\n\n{list}\n\n\
          Write 2–4 sentences to append to a review-consolidation prompt that instruct the reviewer to stop \
          flagging issues of these kinds in future. Identify the shared patterns concretely (topic, severity, \
-         or type) rather than listing the specific items. Output only the sentences — no preamble, no headings."
+         or type) rather than listing the specific items.\n\n{}",
+        output::text_artifact_output_format(None, "calibration text")
     );
     let timeout = settings.step_timeout_secs.max(60);
     let bus = crate::emit::from_app(app);
@@ -275,9 +276,10 @@ pub async fn draft_calibration(app: AppHandle) -> Result<serde_json::Value, Stri
         prompt,
         timeout,
     );
+    request.output_schema = Some(output::text_artifact_schema());
     request.settings = std::sync::Arc::new(settings);
     let raw = crate::pipeline::call::execute_text(request).await?;
-    let addendum = output::strip_to_report(&raw);
+    let addendum = output::extract_text_artifact(&raw)?;
 
     Ok(serde_json::json!({
         "addendum": addendum.trim(),

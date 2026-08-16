@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_neuroscience_cognitive",
+  "label": "Neuroscience — Cognitive & Human",
+  "order": 194,
+  "group": {
+    "id": "neuroscience",
+    "label": "Neuroscience"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Human cognitive, perceptual, affective, or social neuroscience linking brain measurement to mental constructs.",
+    "exclusions": "behavior-only psychology without neural data, or clinical treatment studies of neurological disease."
+  }
+}

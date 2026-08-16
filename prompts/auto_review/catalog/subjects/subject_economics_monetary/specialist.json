@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_monetary",
+  "label": "Economics — Monetary Economics & Banking",
+  "order": 158,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Monetary economics, central banking, inflation, nominal rigidities, money and payments, or bank and intermediary transmission of monetary policy.",
+    "exclusions": "asset-pricing or corporate-finance work without a central monetary, banking-system, or aggregate nominal mechanism."
+  }
+}

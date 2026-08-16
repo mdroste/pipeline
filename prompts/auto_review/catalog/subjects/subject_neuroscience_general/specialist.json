@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_neuroscience_general",
+  "label": "Neuroscience — General",
+  "order": 191,
+  "group": {
+    "id": "neuroscience",
+    "label": "Neuroscience"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Neuroscience research spanning several areas or outside the listed neuroscience subfields.",
+    "exclusions": "a listed neuroscience subfield clearly carries the main contribution."
+  }
+}

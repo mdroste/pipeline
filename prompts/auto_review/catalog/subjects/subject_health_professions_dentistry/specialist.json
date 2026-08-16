@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_health_professions_dentistry",
+  "label": "Health Professions — Dentistry & Oral Health",
+  "order": 279,
+  "group": {
+    "id": "health_professions",
+    "label": "Health Professions"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Dentistry, oral medicine, dental materials in clinical use, oral epidemiology, prevention, or oral-health services.",
+    "exclusions": "the main contribution is materials engineering or general epidemiology without an oral-health mechanism, procedure, or care claim."
+  }
+}

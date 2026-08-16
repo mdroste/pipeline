@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "clinical_study",
+  "label": "Method — Clinical Study & Diagnostic Validity",
+  "order": 68,
+  "group": {
+    "id": "health_clinical",
+    "label": "Health & Clinical Research"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Patient cohorts, diagnostic or prognostic models, clinical interventions, medical endpoints, or translational claims are central.",
+    "exclusions": "nonclinical laboratory biology or population research with no patient-facing or diagnostic inference."
+  }
+}

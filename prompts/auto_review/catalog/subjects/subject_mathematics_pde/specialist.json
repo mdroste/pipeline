@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_pde",
+  "label": "Mathematics — PDE & Calculus of Variations",
+  "order": 26,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Partial differential equations, calculus of variations, geometric flows, or continuum mathematical models.",
+    "exclusions": "the equation is only a numerical test problem or routine applied model without a mathematical PDE contribution."
+  }
+}

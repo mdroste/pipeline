@@ -36,6 +36,7 @@ export interface RunManifest {
   input_mode: string;
   profile_id?: string;
   profile_name: string;
+  specialist_catalog_revision?: string;
   provider: string;
   artifacts: ArtifactEntry[];
   page_artifacts?: PageArtifactIndex | null;

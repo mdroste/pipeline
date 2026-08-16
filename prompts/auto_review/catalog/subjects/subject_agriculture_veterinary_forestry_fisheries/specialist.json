@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_agriculture_veterinary_forestry_fisheries",
+  "label": "Agriculture & Veterinary Science — Forestry, Fisheries & Aquaculture",
+  "order": 259,
+  "group": {
+    "id": "agriculture_veterinary",
+    "label": "Agriculture & Veterinary Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Forestry, silviculture, fisheries science, aquaculture, rangelands, or renewable biological-resource management.",
+    "exclusions": "the central contribution is conservation biology or environmental policy without a managed harvest, production, or resource-system claim."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_sociology_science_knowledge_professions",
+  "label": "Sociology — Science, Knowledge & Professions",
+  "order": 131,
+  "group": {
+    "id": "sociology",
+    "label": "Sociology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Sociology of science and knowledge, expertise, professions, classification, evaluation, intellectual fields, or knowledge-producing organizations.",
+    "exclusions": "the contribution is philosophy or history of science without a sociological claim about actors, institutions, authority, or social organization."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_amo_quantum",
+  "label": "Physics — AMO & Quantum Optics",
+  "order": 7,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Atomic, molecular, optical, photonic, ultracold-matter, or quantum-optics research.",
+    "exclusions": "the paper is chiefly about quantum algorithms or information protocols rather than a physical AMO platform."
+  }
+}

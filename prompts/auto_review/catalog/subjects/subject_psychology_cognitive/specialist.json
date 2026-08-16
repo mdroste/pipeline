@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_psychology_cognitive",
+  "label": "Psychology — Cognitive",
+  "order": 186,
+  "group": {
+    "id": "psychology",
+    "label": "Psychology & Cognitive Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Cognition, perception, memory, attention, language, learning, or computational cognition.",
+    "exclusions": "the primary contribution is a neural mechanism, social process, or NLP system rather than cognition."
+  }
+}

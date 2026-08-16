@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "quantile_distributional_effects",
+  "label": "Method — Quantile & Distributional Effects",
+  "order": 36,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Quantile treatment effects, distribution regression, or distributional decompositions carry a central claim about effects beyond the mean.",
+    "exclusions": "quantile regression used incidentally, or inequality description without an effect or decomposition claim."
+  }
+}

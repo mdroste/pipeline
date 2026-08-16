@@ -137,6 +137,13 @@ fn codex_web_search_override(allowed_tools: &[&str]) -> String {
     format!("web_search=\"{mode}\"")
 }
 
+fn append_codex_output_schema(cmd_args: &mut Vec<String>, schema_path: Option<&str>) {
+    if let Some(path) = schema_path {
+        cmd_args.push("--output-schema".to_string());
+        cmd_args.push(path.to_string());
+    }
+}
+
 /// Call `codex exec` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
 #[allow(clippy::too_many_arguments)]
@@ -189,6 +196,7 @@ pub async fn call_codex(
             let mut primer_overrides = overrides.clone();
             primer_overrides.shared_context = None;
             primer_overrides.write_dir = None;
+            primer_overrides.output_schema = None;
             let primer_label = format!("{label} · cache warm-up");
             match call_codex_inner(
                 app,
@@ -218,7 +226,7 @@ pub async fn call_codex(
                     // A cancelled warm-up says nothing about the CLI's
                     // session support; leave the slot empty so a later unit
                     // can warm the shared session again.
-                    if !error.to_ascii_lowercase().contains("cancelled") {
+                    if !crate::commands::is_pipeline_cancellation_error(&error) {
                         *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
                     }
                     Err(error)
@@ -308,7 +316,7 @@ pub async fn call_codex(
             // A cancelled warm-up or fork must not disable caching for the
             // remaining units, and dispatching a fallback call mid-cancel
             // would spawn a fresh Codex process; propagate it instead.
-            if error.to_ascii_lowercase().contains("cancelled") {
+            if crate::commands::is_pipeline_cancellation_error(&error) {
                 return Err(error);
             }
             let mut base = slot.lock().await;
@@ -510,6 +518,16 @@ async fn call_codex_inner(
     // empty output. Sandboxing is enforced independently via --sandbox, so
     // skipping the git-repo check costs nothing.
     cmd_args.push("--skip-git-repo-check".to_string());
+    let prepared_output_schema = overrides
+        .output_schema
+        .map(crate::pipeline::structured::prepare_provider_schema_file)
+        .transpose()?;
+    append_codex_output_schema(
+        &mut cmd_args,
+        prepared_output_schema
+            .as_ref()
+            .map(|schema| schema.path.as_str()),
+    );
 
     // Determine sandbox mode: workspace-write only when the step may write
     // AND we have an artifact dir to confine writes to (the caller sets the
@@ -992,6 +1010,16 @@ mod tests {
             "web_search=\"disabled\""
         );
         assert_eq!(codex_web_search_override(&[]), "web_search=\"disabled\"");
+    }
+
+    #[test]
+    fn codex_cli_receives_native_output_schema_file() {
+        let mut args = vec!["exec".to_string()];
+        append_codex_output_schema(&mut args, Some("/tmp/output-schema.json"));
+        assert_eq!(
+            args,
+            vec!["exec", "--output-schema", "/tmp/output-schema.json"]
+        );
     }
 
     #[test]

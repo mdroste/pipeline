@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_agriculture_veterinary_general",
+  "label": "Agriculture & Veterinary Science — General",
+  "order": 255,
+  "group": {
+    "id": "agriculture_veterinary",
+    "label": "Agriculture & Veterinary Science"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Agricultural, food, forestry, fisheries, animal, or veterinary research spanning several systems or outside the listed specialties.",
+    "exclusions": "a listed agricultural, food, animal, veterinary, forestry, or rural-systems lens clearly contains the main contribution."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_history_intellectual_global",
+  "label": "History — Intellectual, Religious & Global",
+  "order": 152,
+  "group": {
+    "id": "history",
+    "label": "History"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Intellectual and religious history, histories of ideas and knowledge, or global, connected, and transnational history outside the listed thematic specialties.",
+    "exclusions": "the paper is purely philosophical or literary without a historical intervention, or science and medicine, empire and colonialism, or environmental and climate history clearly carries the contribution."
+  }
+}

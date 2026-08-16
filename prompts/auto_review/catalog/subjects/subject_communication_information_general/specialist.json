@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_communication_information_general",
+  "label": "Communication & Information — General",
+  "order": 261,
+  "group": {
+    "id": "communication_information",
+    "label": "Communication & Information"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Communication, journalism, information, or knowledge-institution research spanning several areas or outside the listed specialties.",
+    "exclusions": "a listed communication, information, risk-communication, or interpersonal lens clearly contains the central process."
+  }
+}

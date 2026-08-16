@@ -166,23 +166,23 @@ pub(super) fn finalize_run(
                 }
             })
             .collect::<String>();
-        let header = format!(
-            "# {}\n\n**Phase**: {} · **Agent**: {}\n\n---\n\n",
-            output.step_label,
-            output.phase,
-            if output.agent.is_empty() {
-                "default"
-            } else {
-                &output.agent
-            },
-        );
-        let rel = format!("artifacts/{:02}_{}.md", i + 1, slug);
-        if let Err(e) = w.add_text(
-            &rel,
-            &output.step_label,
-            "step",
-            &format!("{}{}", header, output.raw_text),
-        ) {
+        let (extension, contents) = if output.structured_json {
+            ("json", output.raw_text.clone())
+        } else {
+            let header = format!(
+                "# {}\n\n**Phase**: {} · **Agent**: {}\n\n---\n\n",
+                output.step_label,
+                output.phase,
+                if output.agent.is_empty() {
+                    "default"
+                } else {
+                    &output.agent
+                },
+            );
+            ("md", format!("{}{}", header, output.raw_text))
+        };
+        let rel = format!("artifacts/{:02}_{}.{}", i + 1, slug, extension);
+        if let Err(e) = w.add_text(&rel, &output.step_label, "step", &contents) {
             let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({ "line": format!("WARNING: {e}") }),
@@ -197,6 +197,18 @@ pub(super) fn finalize_run(
             "pipeline:log",
             serde_json::json!({ "line": format!("WARNING: {e}") }),
         );
+    }
+    if let Some(findings) = report.products.findings.as_ref() {
+        if let Err(error) = serde_json::to_string_pretty(findings)
+            .map_err(|error| format!("Failed to serialize findings: {error}"))
+            .and_then(|json| w.add_text("findings.json", "Findings", "product", &json))
+            .and_then(|()| crate::runs::sync_run_file(&w.dir().join("findings.json")))
+        {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!("WARNING: {error}") }),
+            );
+        }
     }
     // Structured report, so a re-run can reload prior step outputs. It must be
     // fsynced before the checkpoint directory below is removed.

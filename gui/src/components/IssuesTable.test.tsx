@@ -183,4 +183,36 @@ describe("IssuesTable annotation lifecycle", () => {
       ),
     });
   });
+
+  it("shows the original source path and opens its durable run artifact", async () => {
+    const user = userEvent.setup();
+    const onOpenEvidence = vi.fn();
+    const evidence = {
+      sourcePath: "chapters/model.tex",
+      artifactPath: "context/source-evidence/chapters/model.tex",
+      lineStart: 42,
+      lineEnd: 44,
+    };
+    render(
+      <IssuesTable
+        issues={[{
+          ...issues[0],
+          title: "Source invariant",
+          section: "Correctness",
+          evidence: [evidence],
+        }]}
+        runId=""
+        onOpenEvidence={onOpenEvidence}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Source invariant/i }));
+    const button = screen.getByRole("button", {
+      name: "View chapters/model.tex:42–44 evidence",
+    });
+    expect(button).toBeVisible();
+    expect(screen.queryByText(/context\/source-evidence/)).not.toBeInTheDocument();
+    await user.click(button);
+    expect(onOpenEvidence).toHaveBeenCalledWith(evidence);
+  });
 });

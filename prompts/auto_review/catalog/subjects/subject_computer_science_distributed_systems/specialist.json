@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_computer_science_distributed_systems",
+  "label": "Computer Science — Distributed & Cloud Systems",
+  "order": 67,
+  "group": {
+    "id": "computer_science",
+    "label": "Computer Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Distributed systems, cloud platforms, consensus, replication, distributed storage, fault tolerance, edge systems, or large-scale service infrastructure.",
+    "exclusions": "the contribution is a local operating-system or networking mechanism without distributed state, failure, or coordination semantics."
+  }
+}

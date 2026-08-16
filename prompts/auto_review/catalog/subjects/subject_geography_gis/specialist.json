@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_geography_gis",
+  "label": "Geography — GIS & Remote Sensing",
+  "order": 207,
+  "group": {
+    "id": "geography",
+    "label": "Geography"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Geographic information science, cartography, spatial data infrastructure, remote sensing, or geocomputation.",
+    "exclusions": "GIS is a routine tool and no geographic measurement, representation, or spatial-method contribution is made."
+  }
+}

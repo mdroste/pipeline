@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "geospatial_remote_sensing",
+  "label": "Method — Geospatial & Remote Sensing",
+  "order": 82,
+  "group": {
+    "id": "lab_instrumentation",
+    "label": "Laboratory & Instrumentation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "GIS construction, spatial resolution, remote-sensing retrievals, map projections, geolocation, or geographic measurement materially support results.",
+    "exclusions": "a paper that merely includes a map or location fixed effects, or a claim whose material issue is spatial statistical dependence rather than geospatial measurement."
+  }
+}

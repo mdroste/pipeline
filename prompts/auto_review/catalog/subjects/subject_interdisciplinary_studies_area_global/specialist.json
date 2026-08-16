@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_interdisciplinary_studies_area_global",
+  "label": "Interdisciplinary Studies — Area & Global",
+  "order": 285,
+  "group": {
+    "id": "interdisciplinary_studies",
+    "label": "Interdisciplinary Studies"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Regional, area, transnational, postcolonial, development, or global studies integrating language, history, institutions, and contemporary evidence.",
+    "exclusions": "the contribution fits a specific history, politics, economics, geography, literature, or anthropology subfield without material interdisciplinary regional synthesis."
+  }
+}

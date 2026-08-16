@@ -168,6 +168,10 @@ export function usePipeline() {
   const [reviewRouting, setReviewRouting] = useState<ReviewRoutingSummary | null>(null);
   const [providerLimitNotices, setProviderLimitNotices] = useState<ProviderLimitNotice[]>([]);
   const stageSequence = useRef(0);
+  // Tauri events and invoke responses travel over separate channels. Once the
+  // command has reached a terminal state, ignore any earlier stage event that
+  // was still queued for delivery instead of regressing the finished view.
+  const terminalState = useRef(false);
 
   // Buffer incoming log lines in a ref to avoid O(n) array copies per event.
   // A periodic timer flushes the buffer into state in a single update.
@@ -192,7 +196,7 @@ export function usePipeline() {
           mergeStepLabels?: string[];
           skipped?: boolean;
         }>("pipeline:stage", (event) => {
-          if (!mounted) return;
+          if (!mounted || terminalState.current) return;
           const {
             stage,
             id,
@@ -460,6 +464,7 @@ export function usePipeline() {
       if (!mounted) return;
       const message = e instanceof Error ? e.message : String(e);
       console.error("Failed to register Tauri event listeners:", e);
+      terminalState.current = true;
       setState({
         kind: "error",
         message: `Failed to register event listeners: ${message}. Reload the window to retry.`,
@@ -490,6 +495,7 @@ export function usePipeline() {
       expectedProfileSnapshotId?: string,
       runParallelOverrides?: RunParallelOverrides | null,
     ) => {
+      terminalState.current = false;
       setState({ kind: "extracting" });
       setLogs([]);
       // Also drop any lines still buffered from a previous run's dying
@@ -512,6 +518,7 @@ export function usePipeline() {
           expectedProfileSnapshotId: expectedProfileSnapshotId ?? null,
           ...(runParallelOverrides ? { runParallelOverrides } : {}),
         });
+        terminalState.current = true;
         setState({
           kind: "done",
           markdown: result.markdown,
@@ -524,6 +531,7 @@ export function usePipeline() {
         ));
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
+        terminalState.current = true;
         setState((prev) => ({
           kind: "error" as const,
           message,
@@ -539,6 +547,7 @@ export function usePipeline() {
 
   const rerunPipeline = useCallback(
     async (runId: string, opts?: { fromStep?: string; onlyFailed?: boolean }) => {
+      terminalState.current = false;
       setState({ kind: "extracting" });
       setLogs([]);
       // Also drop any lines still buffered from a previous run's dying
@@ -557,6 +566,7 @@ export function usePipeline() {
           fromStep: opts?.fromStep ?? null,
           onlyFailed: opts?.onlyFailed ?? false,
         });
+        terminalState.current = true;
         setState({
           kind: "done",
           markdown: result.markdown,
@@ -569,6 +579,7 @@ export function usePipeline() {
         ));
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
+        terminalState.current = true;
         setState((prev) => ({
           kind: "error" as const,
           message,
@@ -591,6 +602,7 @@ export function usePipeline() {
   }, []);
 
   const reset = useCallback(() => {
+    terminalState.current = true;
     setState({ kind: "idle" });
     stageSequence.current = 0;
     setStageHistory([]);

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_multivariate_functional",
+  "label": "Statistics — Multivariate & Functional Data",
+  "order": 47,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Multivariate analysis, covariance and precision estimation, dimension reduction, functional data, tensor data, compositional data, or repeated high-structure measurements.",
+    "exclusions": "the main contribution is generic machine-learning prediction or a low-dimensional regression with several outcomes."
+  }
+}

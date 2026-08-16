@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "conceptual_argument",
+  "label": "Method — Conceptual Argument",
+  "order": 2,
+  "group": {
+    "id": "formal_conceptual",
+    "label": "Formal Theory & Conceptual Analysis"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Conceptual, synthetic, normative, or argumentative reasoning carries the central contribution.",
+    "exclusions": "the central claims instead turn on formal proof, measured evidence, experiments, or source interpretation."
+  }
+}

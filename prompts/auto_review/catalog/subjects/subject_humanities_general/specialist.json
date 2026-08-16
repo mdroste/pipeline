@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_humanities_general",
+  "label": "Humanities — General",
+  "order": 246,
+  "group": {
+    "id": "humanities",
+    "label": "Humanities"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Humanities scholarship spanning several traditions or outside the listed literary, religious, visual, media, or digital fields.",
+    "exclusions": "a listed humanities specialty clearly contains the primary objects and scholarly conversation."
+  }
+}

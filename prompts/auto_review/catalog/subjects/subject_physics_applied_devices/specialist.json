@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_applied_devices",
+  "label": "Physics — Applied Physics & Devices",
+  "order": 18,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Applied physics of electronic, magnetic, thermal, nano-, sensor, or energy-conversion devices where a physical transport or transduction mechanism is central.",
+    "exclusions": "engineering integration, reliability, or product performance is the main contribution and the underlying physics is standard."
+  }
+}

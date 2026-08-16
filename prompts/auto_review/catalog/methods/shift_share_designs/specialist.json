@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "shift_share_designs",
+  "label": "Method — Shift-Share & Exposure Designs",
+  "order": 11,
+  "group": {
+    "id": "causal_inference",
+    "label": "Causal Inference & Policy Evaluation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "A shift-share or Bartik-style interaction of aggregate shocks with local exposure shares identifies a central causal effect.",
+    "exclusions": "an ordinary excluded instrument without exposure-share structure, or exposure used only as a descriptive covariate."
+  }
+}

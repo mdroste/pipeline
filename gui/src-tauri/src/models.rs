@@ -127,9 +127,6 @@ pub struct ReviewPlan {
     pub methods: Vec<String>,
     #[serde(default)]
     pub subject_specialist_ids: Vec<String>,
-    /// Legacy Auto Review v1 field selection, retained for saved reports.
-    #[serde(default)]
-    pub field_specialist_id: String,
     #[serde(default)]
     pub method_specialist_ids: Vec<String>,
     #[serde(default)]
@@ -377,6 +374,10 @@ pub struct StepOutput {
     pub agent: String,
     #[serde(default)]
     pub raw_text: String,
+    /// True when `raw_text` is a schema-validated, standalone JSON artifact.
+    /// This controls persistence/export and schema-aware rerun reuse.
+    #[serde(default)]
+    pub structured_json: bool,
     /// Wall-clock time the step's LLM call took, in seconds. 0 for old reports.
     #[serde(default)]
     pub duration_secs: u64,
@@ -432,6 +433,77 @@ pub struct StepOutput {
     pub skipped: bool,
 }
 
+// --- Published run products ---
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FindingEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_start: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_end: Option<u32>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub node_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub asset_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub artifact_path: String,
+    /// Root-relative path in a selected source tree. Unlike `artifact_path`,
+    /// this is the human-facing locator; completed runs best-effort snapshot
+    /// cited files and add the corresponding `artifact_path` separately.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_path: String,
+    /// Optional content fingerprint supplied by a deterministic producer.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub quote: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Finding {
+    pub id: String,
+    /// Stable producer key when a workflow has one (rule id, check id, etc.).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_key: String,
+    pub title: String,
+    /// Input-neutral grouping used as a report section or source location.
+    #[serde(default, skip_serializing_if = "String::is_empty", alias = "section")]
+    pub category: String,
+    /// Optional high/medium/low priority. Array order remains authoritative.
+    #[serde(default, skip_serializing_if = "String::is_empty", alias = "severity")]
+    pub priority: String,
+    pub body: String,
+    #[serde(default)]
+    pub evidence: Vec<FindingEvidence>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FindingSet {
+    #[serde(default)]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub source_step_id: String,
+    #[serde(default)]
+    pub source_step_label: String,
+    #[serde(default)]
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunProducts {
+    #[serde(default)]
+    pub schema_version: u32,
+    /// Step whose terminal response is the human-facing primary result.
+    #[serde(default)]
+    pub primary_step_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub findings: Option<FindingSet>,
+}
+
 fn default_phase() -> String {
     "parallel".to_string()
 }
@@ -485,6 +557,10 @@ pub struct PipelineReport {
     /// Steps that failed during execution (e.g. timeout).
     #[serde(default)]
     pub failed_steps: Vec<StepFailure>,
+    /// Typed, public products of this run. Raw step outputs remain immutable
+    /// provenance and are never replaced by these normalized views.
+    #[serde(default)]
+    pub products: RunProducts,
     /// Legacy: individual referee reports (for reading old saved reports).
     #[serde(default)]
     pub referee_reports: Vec<RefereeReport>,
@@ -535,6 +611,15 @@ impl PipelineReport {
     /// report. Parallel-only workflows still fall back to their last output.
     pub fn final_output(&self) -> Option<&str> {
         if !self.step_outputs.is_empty() {
+            if !self.products.primary_step_id.is_empty() {
+                return self.step_outputs.iter().rev().find_map(|output| {
+                    let matches = !output.skipped
+                        && !output.raw_text.trim().is_empty()
+                        && output.step_id.split('/').next().unwrap_or(&output.step_id)
+                            == self.products.primary_step_id;
+                    matches.then_some(output.raw_text.as_str())
+                });
+            }
             if let Some(output) =
                 self.step_outputs.iter().rev().find(|s| {
                     s.phase == "sequential" && !s.skipped && !s.raw_text.trim().is_empty()
@@ -759,6 +844,7 @@ mod tests {
             orientation: serde_json::to_value(empty_orientation()).unwrap(),
             step_outputs,
             failed_steps: vec![],
+            products: Default::default(),
             referee_reports: referees,
             editor,
             report_date: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
@@ -835,6 +921,33 @@ mod tests {
         ];
         let report = make_report(outputs, vec![], None);
         assert_eq!(report.final_output(), Some("sequential text"));
+    }
+
+    #[test]
+    fn final_output_honors_the_published_primary_step() {
+        let outputs = vec![
+            StepOutput {
+                step_id: "published".into(),
+                step_label: "Published".into(),
+                phase: "sequential".into(),
+                raw_text: "published text".into(),
+                ..Default::default()
+            },
+            StepOutput {
+                step_id: "later".into(),
+                step_label: "Later".into(),
+                phase: "sequential".into(),
+                raw_text: "later text".into(),
+                ..Default::default()
+            },
+        ];
+        let mut report = make_report(outputs, vec![], None);
+        report.products.schema_version = 1;
+        report.products.primary_step_id = "published".into();
+        assert_eq!(report.final_output(), Some("published text"));
+
+        report.products.primary_step_id = "missing".into();
+        assert_eq!(report.final_output(), None);
     }
 
     #[test]

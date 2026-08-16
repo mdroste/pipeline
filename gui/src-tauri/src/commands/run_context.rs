@@ -7,6 +7,10 @@ pub(super) struct RunSnapshot {
     pub(super) profile_name: String,
     pub(super) config_fingerprint: String,
     pub(super) fingerprint: String,
+    pub(super) workflow_source: String,
+    pub(super) workflow_fingerprint: String,
+    pub(super) workflow_json: String,
+    pub(super) specialist_catalog_revision: String,
 }
 
 /// One-report override for Parallel steps and, when selected, their Merge
@@ -97,29 +101,77 @@ pub(super) fn load_run_snapshot() -> Result<RunSnapshot, String> {
 pub(super) fn load_run_snapshot_for_profile(
     profile_id: Option<&str>,
 ) -> Result<RunSnapshot, String> {
+    load_run_snapshot_for_workflow(profile_id, None)
+}
+
+/// Capture either an installed profile or an ephemeral portable workflow.
+/// The two sources are intentionally exclusive and neither path changes the
+/// persisted active profile.
+pub(super) fn load_run_snapshot_for_workflow(
+    profile_id: Option<&str>,
+    workflow: Option<&crate::commands::HeadlessWorkflow>,
+) -> Result<RunSnapshot, String> {
+    if profile_id.is_some() && workflow.is_some() {
+        return Err(
+            "Select either an installed profile or a workflow document, not both".to_string(),
+        );
+    }
     let mut settings = crate::settings::load_persisted_required().map_err(|e| {
         format!("Cannot start run because settings could not be loaded safely: {e}")
     })?;
-    let selected_profile = profile_id
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| settings.active_profile.clone());
-    let (config, profile_name) = pipeline_config::load_required_profile_for(&selected_profile)?;
+    let (selected_profile, document, workflow_source) = if let Some(workflow) = workflow {
+        let short = workflow
+            .document
+            .fingerprint
+            .strip_prefix("sha256:")
+            .unwrap_or(&workflow.document.fingerprint)
+            .chars()
+            .take(16)
+            .collect::<String>();
+        (
+            format!("ephemeral-{short}"),
+            workflow.document.clone(),
+            workflow.source.clone(),
+        )
+    } else {
+        let selected = profile_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| settings.active_profile.clone());
+        let document = pipeline_config::load_required_workflow_for(&selected)?;
+        let source = format!("profile:{selected}");
+        (selected, document, source)
+    };
+    let config = document.config.clone();
+    let profile_name = document.name.clone();
     pipeline_config::validate_enabled_sequential_step(&config.steps)?;
     crate::auto_review::validate_auto_review_preflight(&config)?;
     // The snapshot and run manifest should identify the selected profile, but
     // a one-off CLI run must not rewrite the desktop app's settings.json.
     settings.active_profile = selected_profile;
     let fingerprint_settings = settings_for_snapshot_fingerprint(&settings);
-    let fingerprint = stable_snapshot_fingerprint(&(&fingerprint_settings, &config))
-        .map_err(|e| format!("Could not fingerprint run configuration: {e}"))?;
+    let specialist_catalog_revision = if crate::auto_review::uses_auto_review_contract(&config) {
+        crate::auto_review::catalog_revision().to_string()
+    } else {
+        String::new()
+    };
+    let fingerprint = stable_snapshot_fingerprint(&(
+        &fingerprint_settings,
+        &config,
+        specialist_catalog_revision.as_str(),
+    ))
+    .map_err(|e| format!("Could not fingerprint run configuration: {e}"))?;
     Ok(RunSnapshot {
         settings,
         config,
         profile_name,
         config_fingerprint: fingerprint.clone(),
         fingerprint,
+        workflow_source,
+        workflow_fingerprint: document.fingerprint,
+        workflow_json: document.canonical_json,
+        specialist_catalog_revision,
     })
 }
 

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_contract_organizations",
+  "label": "Economics — Contract Theory & Organizational Economics",
+  "order": 166,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Principal-agent problems, moral hazard, adverse selection, incomplete contracts, relational contracts, property rights, authority, delegation, or firm boundaries.",
+    "exclusions": "the paper studies general strategic information without a contractual or organizational relationship, or workplace evidence has no contract-theoretic or organizational-design mechanism."
+  }
+}

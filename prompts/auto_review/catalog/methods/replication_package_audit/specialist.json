@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "replication_package_audit",
+  "label": "Method — Replication-Package Audit",
+  "order": 114,
+  "group": {
+    "id": "integrity_governance",
+    "label": "Reproducibility, Integrity & Governance"
+  },
+  "level": "method",
+  "routing": {
+    "description": "The paper describes or includes a data-and-code package whose completeness, documentation, and traceability from source inputs to headline exhibits can be audited.",
+    "exclusions": "papers without a reviewable computational package, software presented as the contribution, or a computational-correctness question about algorithms, dependencies, numerical behavior, or failure handling that is better covered by reproducibility and research-software review."
+  }
+}

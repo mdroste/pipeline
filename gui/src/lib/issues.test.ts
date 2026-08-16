@@ -36,6 +36,23 @@ describe("issues parsing", () => {
     expect(issues.map((i) => i.id)).toEqual(["1", "2"]);
   });
 
+  it("parses the canonical findings envelope", () => {
+    const issues = parseIssues(JSON.stringify({
+      findings: [{
+        id: "support-condition",
+        title: "Support condition is missing",
+        priority: "major",
+        category: "Correctness",
+        body: "Details",
+      }],
+    }))!;
+    expect(issues[0]).toMatchObject({
+      id: "support-condition",
+      severity: "high",
+      section: "Correctness",
+    });
+  });
+
   it("normalizes bounded evidence links and drops unsafe artifact paths", () => {
     const issues = parseIssues(JSON.stringify({
       issues: [{
@@ -117,5 +134,67 @@ describe("issues parsing", () => {
     const issues = detectReportIssues(report)!;
     expect(issues).toHaveLength(1);
     expect(issues[0].title).toBe("X");
+  });
+
+  it("uses the canonical published findings product", () => {
+    const report = {
+      products: {
+        schema_version: 1,
+        primary_step_id: "validate",
+        findings: {
+          schema_version: 1,
+          source_step_id: "validate",
+          source_step_label: "Validate",
+          findings: [{
+            id: "missing-support",
+            title: "Support condition is missing",
+            category: "Correctness",
+            priority: "major",
+            body: "The proposition needs an additional restriction.",
+            evidence: [{ source_path: "chapters/model.tex", line_start: 42 }],
+          }],
+        },
+      },
+      step_outputs: [{
+        step_id: "legacy",
+        step_label: "Legacy",
+        phase: "sequential",
+        agent: "",
+        raw_text: '{"issues":[{"title":"Wrong fallback"}]}',
+      }],
+    } as unknown as PipelineReport;
+
+    expect(detectReportIssues(report)).toEqual([{
+      id: "missing-support",
+      title: "Support condition is missing",
+      severity: "high",
+      section: "Correctness",
+      body: "The proposition needs an additional restriction.",
+      evidence: [{ sourcePath: "chapters/model.tex", lineStart: 42 }],
+    }]);
+  });
+
+  it("does not infer a different product when a current report publishes no findings", () => {
+    const report = {
+      products: {
+        schema_version: 1,
+        primary_step_id: "validate",
+        findings: {
+          schema_version: 1,
+          source_step_id: "validate",
+          source_step_label: "Validate",
+          findings: [],
+        },
+      },
+      step_outputs: [{
+        step_id: "legacy",
+        step_label: "Legacy",
+        phase: "sequential",
+        agent: "",
+        raw_text: '{"issues":[{"title":"Wrong fallback"}]}',
+      }],
+    } as unknown as PipelineReport;
+
+    expect(detectReportIssues(report)).toEqual([]);
   });
 });

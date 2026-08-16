@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_business_supply_chain_operations",
+  "label": "Business — Supply Chain & Operations Management",
+  "order": 245,
+  "group": {
+    "id": "business",
+    "label": "Business & Management"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Supply chains, sourcing, inventory, logistics, service operations, capacity, procurement, resilience, or operational process design.",
+    "exclusions": "the contribution is abstract optimization, transportation engineering, or an information system without a material managerial operating decision."
+  }
+}

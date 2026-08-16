@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_statistics_spatial",
+  "label": "Statistics — Spatial",
+  "order": 42,
+  "group": {
+    "id": "statistics",
+    "label": "Statistics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Spatial statistics, point processes, geostatistics, spatial fields, or areal data methodology.",
+    "exclusions": "space is merely a location label and the paper has no spatial model or spatial inferential contribution."
+  }
+}

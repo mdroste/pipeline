@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_education_learning",
+  "label": "Education — Learning, Curriculum & Instruction",
+  "order": 223,
+  "group": {
+    "id": "education",
+    "label": "Education"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Learning sciences, pedagogy, curriculum, classroom instruction, teacher practice, or educational technology.",
+    "exclusions": "the contribution is a general cognitive theory or technology with no educational learning claim."
+  }
+}

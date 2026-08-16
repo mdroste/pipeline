@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "process_tracing",
+  "label": "Method — Process Tracing",
+  "order": 89,
+  "group": {
+    "id": "qualitative_interpretive",
+    "label": "Qualitative & Interpretive"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Within-case sequences, causal-process observations, hoop or smoking-gun tests, or mechanism-centered case reconstruction substantiate a central causal explanation.",
+    "exclusions": "chronological narrative without explicit mechanism tests, cross-case covariation alone, or archival source criticism with no within-case causal inference."
+  }
+}

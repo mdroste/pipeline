@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_statistical_complex",
+  "label": "Physics — Statistical & Complex Systems",
+  "order": 8,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Statistical mechanics, nonlinear dynamics, complex systems, networks in physics, or nonequilibrium phenomena.",
+    "exclusions": "network analysis is primarily social or computational and lacks a physical statistical-mechanics claim."
+  }
+}

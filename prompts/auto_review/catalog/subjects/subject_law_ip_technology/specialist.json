@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_law_ip_technology",
+  "label": "Law — Intellectual Property & Technology",
+  "order": 230,
+  "group": {
+    "id": "law",
+    "label": "Law"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Patent, copyright, trademark, trade-secret, privacy, data, cyber, platform, artificial-intelligence, or telecommunications law.",
+    "exclusions": "technology is only the application setting and the contribution contains no material claim about legal rights, governance, liability, jurisdiction, or enforcement."
+  }
+}

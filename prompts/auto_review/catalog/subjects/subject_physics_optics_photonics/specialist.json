@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_optics_photonics",
+  "label": "Physics — Optics & Photonics",
+  "order": 17,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Classical optics, photonics, lasers, imaging physics, metamaterials, nonlinear optics, or light propagation and detection.",
+    "exclusions": "atomic or molecular quantum-state control is central, or the contribution is primarily an engineered device without a material optical-physics claim."
+  }
+}

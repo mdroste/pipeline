@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "sensor_signal_processing",
+  "label": "Method — Sensors & Signal Processing",
+  "order": 80,
+  "group": {
+    "id": "lab_instrumentation",
+    "label": "Laboratory & Instrumentation"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Sensor calibration, filtering, detection, spectral or waveform analysis, feature extraction, synchronization, or signal reconstruction materially supports a result.",
+    "exclusions": "standard instrument outputs are accepted without a signal-processing claim, or image and remote-sensing pipelines are the central methodological object."
+  }
+}

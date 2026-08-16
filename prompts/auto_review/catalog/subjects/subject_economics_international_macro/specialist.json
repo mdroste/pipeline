@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_economics_international_macro",
+  "label": "Economics — International Macroeconomics",
+  "order": 160,
+  "group": {
+    "id": "economics",
+    "label": "Economics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Open-economy macroeconomics, exchange rates, international risk sharing, sovereign debt, global imbalances, capital flows, or cross-border monetary transmission.",
+    "exclusions": "trade in goods or firm export behavior without an aggregate external-balance, currency, sovereign, or international financial mechanism."
+  }
+}

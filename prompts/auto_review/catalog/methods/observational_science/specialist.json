@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "observational_science",
+  "label": "Method — Observational Science & Instrumentation",
+  "order": 78,
+  "group": {
+    "id": "lab_instrumentation",
+    "label": "Laboratory & Instrumentation"
+  },
+  "level": "family",
+  "routing": {
+    "description": "Instrument-derived observational data, field measurements, surveys of natural systems, detection pipelines, or observational selection functions support claims outside a narrower instrument or population role.",
+    "exclusions": "designed laboratory interventions, social-science causal identification, or evidence fully covered by epidemiologic, geospatial, imaging, sensor, or materials-characterization review."
+  }
+}

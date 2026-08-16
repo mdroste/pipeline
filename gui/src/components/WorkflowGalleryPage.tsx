@@ -59,6 +59,16 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
       const name = uniqueProfileName(item.name, profiles);
       created = await invoke<ProfileSummary>("create_profile", { name });
       const config = cloneGalleryConfig(item);
+      if (!config.orientation_schema) {
+        const surveyName = config.extraction?.input_mode === "folder"
+          ? "orientation_folder"
+          : "orientation";
+        const defaults = await invoke<{ schema: Record<string, unknown> }>(
+          "get_orientation_defaults",
+          { name: surveyName },
+        );
+        config.orientation_schema = defaults.schema;
+      }
       await invoke("save_pipeline_config", { config, profileId: created.id });
       const activeConfig = await invoke<PipelineConfig>("switch_profile", { id: created.id });
       setProfiles((current) => [...current, created!]);

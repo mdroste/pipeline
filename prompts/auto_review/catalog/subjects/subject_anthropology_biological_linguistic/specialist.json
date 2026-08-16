@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_anthropology_biological_linguistic",
+  "label": "Anthropology — Biological & Human Evolution",
+  "order": 199,
+  "group": {
+    "id": "anthropology",
+    "label": "Anthropology & Archaeology"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Biological anthropology, human evolution, primatology, paleoanthropology, human biological variation, or biocultural adaptation.",
+    "exclusions": "the main result is general evolutionary biology without an anthropological human context, or language ideology, discourse, interaction, multilingualism, or other linguistic-anthropological practice clearly carries the contribution."
+  }
+}

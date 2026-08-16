@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_social_work_policy_general",
+  "label": "Social Work & Social Policy — General",
+  "order": 271,
+  "group": {
+    "id": "social_work_policy",
+    "label": "Social Work & Social Policy"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Social work, human services, welfare, or community-intervention research spanning several areas or outside the listed specialties.",
+    "exclusions": "a listed practice, welfare-policy, or community-organization lens clearly contains the intervention and outcome."
+  }
+}

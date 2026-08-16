@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 pub mod auto_review;
 pub mod commands;
 pub mod deps;
@@ -5,8 +7,10 @@ pub mod document_bundle;
 pub mod emit;
 pub mod engines;
 pub mod env;
+pub mod findings;
 pub mod model_catalog;
 pub mod models;
+pub mod orientation_contract;
 pub mod output;
 pub mod pipeline;
 pub mod pipeline_config;
@@ -121,11 +125,13 @@ pub fn run() {
             commands::config::get_pipeline_config,
             commands::config::get_run_setup,
             commands::config::get_auto_review_catalog,
+            commands::config::resolve_orientation_schema_catalogs,
             commands::config::get_auto_review_specialist_step,
             commands::config::get_execution_plan,
             commands::config::save_pipeline_config,
             commands::config::get_default_parallel_template,
             commands::config::get_default_prompt,
+            commands::config::get_orientation_defaults,
             commands::config::get_auto_review_orientation_prompt,
             commands::config::get_auto_review_orientation_defaults,
             commands::config::reset_pipeline_config,

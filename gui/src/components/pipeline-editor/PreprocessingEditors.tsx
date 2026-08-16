@@ -1,10 +1,9 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ExtractionConfig } from "../../lib/types";
 import { ADAPTIVE_AGENT_COUNT_KEY } from "../../lib/autoReview";
 import PromptEditor from "../PromptEditor";
 import { MemoizedExtraInputsEditor as ExtraInputsEditor } from "./ProfileSettingsEditors";
-import { outputSchemaError } from "./utils";
 
 const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   { value: "", label: "Inherit from global Settings", hint: "Use whatever PDF extractor is configured globally." },
@@ -109,26 +108,20 @@ function ExtractionEditor({
 function OrientationEditor({
   prompt,
   schema,
+  inputMode,
   autoReview = false,
   onPromptChange,
   onSchemaChange,
 }: {
   prompt: string;
   schema?: Record<string, unknown> | null;
+  inputMode: string;
   autoReview?: boolean;
   onPromptChange: (p: string) => void;
   onSchemaChange: (schema: Record<string, unknown> | null) => void;
 }) {
   const resetRequest = useRef(0);
   const mounted = useRef(true);
-  const [schemaText, setSchemaText] = useState(
-    schema ? JSON.stringify(schema, null, 2) : "",
-  );
-  const [schemaError, setSchemaError] = useState<string | null>(null);
-  useEffect(() => {
-    setSchemaText(schema ? JSON.stringify(schema, null, 2) : "");
-    setSchemaError(null);
-  }, [schema]);
   useEffect(() => () => {
     mounted.current = false;
     resetRequest.current += 1;
@@ -137,14 +130,40 @@ function OrientationEditor({
   const insertDefault = async (name: string) => {
     const request = ++resetRequest.current;
     try {
-      const template = await invoke<string>("get_default_prompt", { name });
+      const defaults = await invoke<{
+        prompt: string;
+        schema: Record<string, unknown>;
+      }>("get_orientation_defaults", { name });
       if (mounted.current && request === resetRequest.current) {
-        onPromptChange(template);
+        onPromptChange(defaults.prompt);
+        onSchemaChange(defaults.schema);
       }
     } catch (error) {
       if (mounted.current && request === resetRequest.current) {
         alert(
           `Failed to load the default orientation prompt: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+  };
+
+  const useDefault = async () => {
+    const request = ++resetRequest.current;
+    const name = inputMode === "folder" ? "orientation_folder" : "orientation";
+    try {
+      const defaults = await invoke<{
+        schema: Record<string, unknown>;
+      }>("get_orientation_defaults", { name });
+      if (mounted.current && request === resetRequest.current) {
+        onPromptChange("");
+        onSchemaChange(defaults.schema);
+      }
+    } catch (error) {
+      if (mounted.current && request === resetRequest.current) {
+        alert(
+          `Failed to load the default orientation schema: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -188,27 +207,6 @@ function OrientationEditor({
     }
   };
 
-  const changeSchema = (next: string) => {
-    setSchemaText(next);
-    if (!next.trim()) {
-      setSchemaError(null);
-      onSchemaChange(null);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(next) as Record<string, unknown>;
-      const error = outputSchemaError(parsed);
-      if (error) {
-        setSchemaError(error);
-        return;
-      }
-      setSchemaError(null);
-      onSchemaChange(parsed);
-    } catch (error) {
-      setSchemaError(error instanceof Error ? error.message : "invalid JSON");
-    }
-  };
-
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-3">
@@ -234,6 +232,9 @@ function OrientationEditor({
           </span>
           <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
             Runs before every workflow
+          </span>
+          <span className="ml-auto rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+            {schema ? "Schema configured" : "Object-only schema"} · Schemas tab
           </span>
         </div>
       </div>
@@ -284,7 +285,7 @@ function OrientationEditor({
               </button>
               <button
                 type="button"
-                onClick={() => changePrompt("")}
+                onClick={() => void useDefault()}
                 disabled={prompt.trim() === ""}
                 className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100
                            disabled:opacity-40 disabled:hover:text-gray-600 dark:disabled:hover:text-gray-400 transition-colors"
@@ -301,10 +302,16 @@ function OrientationEditor({
           <PromptEditor
             value={prompt}
             onChange={changePrompt}
-            context={{ kind: "orientation" }}
+            context={{ kind: "orientation", autoReview }}
             ariaLabel="Orientation map prompt"
           />
         </div>
+        {autoReview && (
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
+            Catalog placeholders are populated from the live specialist manifests only when the
+            workflow runs. The saved prompt stays compact; browse the Catalog tabs to inspect roles.
+          </p>
+        )}
         {prompt.trim() === "" && (
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
             Empty — using the bundled default: <span className="font-mono">prompts/orientation.md</span>{" "}
@@ -313,28 +320,6 @@ function OrientationEditor({
             Stock prompts adapt to the input mode; a customized prompt is used as-is.
           </p>
         )}
-        <div className="mt-4 shrink-0 border-t border-gray-200 pt-4 dark:border-gray-700">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Output JSON schema (optional)
-          </label>
-          <p className="mt-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
-            When set, Pipeline validates the orientation map and retries malformed or incomplete
-            routing output before any review step runs.
-          </p>
-          <textarea
-            aria-label="Orientation output JSON schema"
-            value={schemaText}
-            onChange={(event) => changeSchema(event.target.value)}
-            rows={7}
-            placeholder='{ "type": "object", "required": ["metadata"] }'
-            className="mt-2 w-full resize-y rounded-lg border border-gray-300 bg-white px-2 py-1.5 font-mono text-xs text-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
-          />
-          {schemaError && (
-            <p role="alert" className="mt-1 text-[10px] text-red-600 dark:text-red-400">
-              Invalid schema: {schemaError}
-            </p>
-          )}
-        </div>
       </div>
     </div>
   );

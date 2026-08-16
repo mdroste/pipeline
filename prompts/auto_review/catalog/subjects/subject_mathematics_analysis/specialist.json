@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_mathematics_analysis",
+  "label": "Mathematics — Analysis",
+  "order": 25,
+  "group": {
+    "id": "mathematics",
+    "label": "Mathematics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Real, complex, functional, harmonic, operator, or variational analysis not primarily organized around a PDE.",
+    "exclusions": "the principal contribution is a differential-equation existence, regularity, or dynamics result."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_chemistry_inorganic_materials",
+  "label": "Chemistry — Inorganic & Materials",
+  "order": 98,
+  "group": {
+    "id": "chemistry",
+    "label": "Chemistry"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Inorganic, organometallic, solid-state, coordination, or materials chemistry.",
+    "exclusions": "the contribution is primarily device engineering or condensed-matter physics rather than chemical composition and bonding."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "research_ethics_governance",
+  "label": "Method — Research Ethics & Governance",
+  "order": 110,
+  "group": {
+    "id": "integrity_governance",
+    "label": "Reproducibility, Integrity & Governance"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Consent, participant or animal welfare, community authority, data governance, conflicts, dual-use risk, or responsible deployment materially affects the validity or permissible scope of the research claim.",
+    "exclusions": "ethics approval is routine, adequately documented, and not material to interpreting or disseminating the central findings."
+  }
+}

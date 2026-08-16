@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_interdisciplinary_studies_gender_sexuality",
+  "label": "Interdisciplinary Studies — Gender & Sexuality",
+  "order": 283,
+  "group": {
+    "id": "interdisciplinary_studies",
+    "label": "Interdisciplinary Studies"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Gender, sexuality, feminist, queer, masculinity, or intersectional studies across social-scientific and humanistic traditions.",
+    "exclusions": "gender or sexuality appears only as a demographic covariate and no category, institution, identity, representation, or power relation is central."
+  }
+}

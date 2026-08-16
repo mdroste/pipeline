@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_medicine_health_services",
+  "label": "Medicine & Health — Services & Global Health",
+  "order": 115,
+  "group": {
+    "id": "medicine_health",
+    "label": "Medicine & Health"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Health services, implementation, delivery systems, quality, cost, access, policy, or global health.",
+    "exclusions": "the central contribution is a biomedical treatment effect under tightly controlled clinical conditions."
+  }
+}

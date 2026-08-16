@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_psychology_development_clinical",
+  "label": "Psychology — Developmental & Clinical",
+  "order": 188,
+  "group": {
+    "id": "psychology",
+    "label": "Psychology & Cognitive Science"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Developmental, educational, clinical, health, or psychopathology research focused on psychological processes.",
+    "exclusions": "the central object is clinical treatment efficacy or biological development rather than psychological theory."
+  }
+}

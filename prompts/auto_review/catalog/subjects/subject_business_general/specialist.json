@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_business_general",
+  "label": "Business — General",
+  "order": 234,
+  "group": {
+    "id": "business",
+    "label": "Business & Management"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Business or management research spanning several functions or outside the listed specialties.",
+    "exclusions": "a listed strategy, operations, accounting-finance, or marketing lens clearly contains the contribution."
+  }
+}

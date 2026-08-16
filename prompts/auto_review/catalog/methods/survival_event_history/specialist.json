@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "method",
+  "id": "survival_event_history",
+  "label": "Method — Survival & Event-History Analysis",
+  "order": 29,
+  "group": {
+    "id": "statistical_inference",
+    "label": "Statistical Modeling & Inference"
+  },
+  "level": "method",
+  "routing": {
+    "description": "Time-to-event, hazard, duration, recurrent-event, competing-risk, multistate, or event-history methods support a central conclusion.",
+    "exclusions": "a binary endpoint is observed at a fixed horizon with negligible censoring, or event timing appears only as a descriptive summary."
+  }
+}

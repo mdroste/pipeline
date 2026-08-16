@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_biology_general",
+  "label": "Biology — General",
+  "order": 83,
+  "group": {
+    "id": "biology",
+    "label": "Biological Science"
+  },
+  "level": "discipline",
+  "routing": {
+    "description": "Biological research spanning several levels of organization or outside the listed biological subfields.",
+    "exclusions": "a listed biological specialty clearly contains the mechanism and evidence."
+  }
+}

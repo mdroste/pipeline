@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "subject",
+  "id": "subject_physics_condensed_materials",
+  "label": "Physics — Condensed Matter & Materials",
+  "order": 5,
+  "group": {
+    "id": "physics",
+    "label": "Physics"
+  },
+  "level": "subfield",
+  "routing": {
+    "description": "Condensed-matter, soft-matter, mesoscopic, many-body, or materials-physics research spanning several regimes or outside the narrower listed specialties.",
+    "exclusions": "the primary contribution is materials synthesis or engineering performance rather than physical mechanism, or quantum many-body theory clearly carries the contribution."
+  }
+}
