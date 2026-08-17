@@ -200,14 +200,31 @@ pub struct StepConfig {
     pub for_each: Option<ForEach>,
 }
 
-/// Fan-out configuration for a step: run its prompt once per matching file.
+/// Fan-out configuration for a step: run its prompt once per matching file,
+/// or once per element of an upstream structured artifact.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForEach {
     /// Glob relative to the input root (e.g. "chapters/*.tex", "**/*.py").
+    /// Empty when `artifact` supplies the items instead.
+    #[serde(default)]
     pub glob: String,
     /// Hard cap on the number of items, to bound cost. Defaults to 20.
     #[serde(default = "default_for_each_max")]
     pub max: u32,
+    /// Fan out over the elements of an upstream step's canonical JSON
+    /// artifact instead of files. Adds a dataflow edge on that step; each
+    /// element binds `{item}` in the prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ForEachArtifact>,
+}
+
+/// An upstream array to fan out over: a producing step plus an RFC 6901 JSON
+/// pointer into its canonical artifact (empty pointer = the artifact root).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForEachArtifact {
+    pub step: String,
+    #[serde(default)]
+    pub pointer: String,
 }
 
 fn default_for_each_max() -> u32 {
@@ -648,11 +665,12 @@ pub struct ProfileSummary {
 /// context caching; v5 centralizes parser tuning in global Settings; v6
 /// replaces implicit step inputs with explicit artifact context and order
 /// dependencies; v7 adds validated orientation schemas and array-membership
-/// survey conditions; v8 adds explicit published run products. v1
+/// survey conditions; v8 adds explicit published run products; v9 adds live
+/// output-schema references, findings lineage, and artifact fan-out. v1
 /// (unversioned) profiles read fine because every added field is
 /// `#[serde(default)]`; exports are tagged so future format changes can
 /// migrate or reject gracefully.
-pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const CURRENT_SCHEMA_VERSION: u32 = 9;
 
 fn default_schema_version() -> u32 {
     1

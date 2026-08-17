@@ -87,7 +87,7 @@ const macroSpecialist: StepConfig = {
 };
 
 const adaptiveCatalog: AutoReviewCatalog = {
-  contract: "auto-review-v1",
+  contract: "auto-review-v2",
   revision: "sha256:test-catalog",
   subjectCount: 1,
   methodCount: 1,
@@ -943,7 +943,7 @@ describe("PipelinePage", () => {
     const user = userEvent.setup();
     const config = makeConfig();
     config.orientation_schema = {
-      "x-pipeline-contract": "auto-review-v1",
+      "x-pipeline-contract": "auto-review-v2",
       "x-pipeline-catalog-policy": "live",
       type: "object",
       properties: {
@@ -1010,7 +1010,7 @@ describe("PipelinePage", () => {
   it("shows compact Auto Review slots and their direct synthesis contract", async () => {
     const user = userEvent.setup();
     const config = makeConfig();
-    config.orientation_schema = { "x-pipeline-contract": "auto-review-v1" };
+    config.orientation_schema = { "x-pipeline-contract": "auto-review-v2" };
     config.orientation_prompt = [
       "SUBJECT SPECIALIST CATALOG",
       "{subject_catalog}",
@@ -1060,7 +1060,7 @@ describe("PipelinePage", () => {
     await waitFor(() => {
       const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
       expect(saveCall?.[1].config.orientation_schema).toMatchObject({
-        "x-pipeline-contract": "auto-review-v1",
+        "x-pipeline-contract": "auto-review-v2",
         "x-pipeline-adaptive-agent-count": 4,
       });
     });
@@ -1070,7 +1070,7 @@ describe("PipelinePage", () => {
     const user = userEvent.setup();
     const config = makeConfig();
     config.orientation_schema = {
-      "x-pipeline-contract": "auto-review-v1",
+      "x-pipeline-contract": "auto-review-v2",
       properties: {
         review_plan: {
           properties: {

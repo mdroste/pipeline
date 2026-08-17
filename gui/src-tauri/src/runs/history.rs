@@ -11,6 +11,18 @@ fn resumable_status(status: &str) -> bool {
     matches!(status, "partial" | "failed" | "cancelled" | "interrupted")
 }
 
+fn captured_workflow_config(dir: &Path) -> Option<crate::pipeline_config::PipelineConfig> {
+    let json = read_utf8_at_most(
+        &dir.join("context").join("workflow.json"),
+        MAX_REPORT_BYTES,
+        "Workflow snapshot",
+    )
+    .ok()?;
+    crate::pipeline_config::parse_workflow_document_strict(&json)
+        .ok()
+        .map(|workflow| workflow.config)
+}
+
 /// Resolve the exact document text used to restart a run. Current manifests
 /// require the canonical `document.md`; version-0 manifests require the old
 /// raw extraction because their `document.md` may contain a bundle preamble.
@@ -161,7 +173,11 @@ pub(super) fn recover_resumable_run_dir(
             .unwrap_or_default()
             .to_string(),
     };
-    crate::findings::ensure_legacy_products(&mut report);
+    if let Some(config) = captured_workflow_config(dir) {
+        report.products = crate::findings::build_run_products(&config, &report.step_outputs);
+    } else {
+        crate::findings::ensure_legacy_products(&mut report);
+    }
     let report_json = serde_json::to_vec_pretty(&report)
         .map_err(|error| format!("Failed to serialize recovered report: {error}"))?;
     write_text_atomic(dir, "report.json", &report_json)?;

@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { parseIssues, extractJson, severityRank, detectReportIssues } from "./issues";
+import {
+  parseIssues,
+  extractJson,
+  severityRank,
+  detectReportIssues,
+  renderSpecialistMarkdown,
+  renderStructuredMarkdown,
+} from "./issues";
 import type { PipelineReport } from "./types";
 
 describe("issues parsing", () => {
@@ -151,6 +158,7 @@ describe("issues parsing", () => {
             category: "Correctness",
             priority: "major",
             body: "The proposition needs an additional restriction.",
+            sources: ["technical", "econometrics"],
             evidence: [{ source_path: "chapters/model.tex", line_start: 42 }],
           }],
         },
@@ -170,6 +178,7 @@ describe("issues parsing", () => {
       severity: "high",
       section: "Correctness",
       body: "The proposition needs an additional restriction.",
+      sources: ["technical", "econometrics"],
       evidence: [{ sourcePath: "chapters/model.tex", lineStart: 42 }],
     }]);
   });
@@ -196,5 +205,50 @@ describe("issues parsing", () => {
     } as unknown as PipelineReport;
 
     expect(detectReportIssues(report)).toEqual([]);
+  });
+});
+
+describe("renderSpecialistMarkdown", () => {
+  it("renders specialist findings back to the referee format", () => {
+    const text = JSON.stringify({
+      findings: [{
+        title: "Sign error",
+        in_the_paper: "Claim",
+        problem: "Analysis",
+        consequence: "Effect",
+        what_would_help: "Fix",
+        evidence: [{ page: 12, quote: "the sign flips" }],
+      }],
+    });
+    const markdown = renderSpecialistMarkdown(text);
+    expect(markdown).toContain("**#1. Sign error**");
+    expect(markdown).toContain("- **The problem:** Analysis");
+    expect(markdown).toContain("p. 12 · “the sign flips”");
+  });
+
+  it("renders an empty specialist report as the sentinel sentence", () => {
+    expect(renderSpecialistMarkdown('{"findings": []}')).toBe("No material issues identified.");
+  });
+
+  it("rejects canonical findings and prose", () => {
+    expect(renderSpecialistMarkdown('{"findings":[{"id":"a","title":"T","body":"B"}]}')).toBeNull();
+    expect(renderSpecialistMarkdown("plain report text")).toBeNull();
+  });
+});
+
+describe("renderStructuredMarkdown", () => {
+  it("renders arrays of objects as tables and objects as sections", () => {
+    const markdown = renderStructuredMarkdown(JSON.stringify({
+      summary: "Two entries",
+      rows: [{ name: "a", value: 1 }, { name: "b", value: 2 }],
+    }));
+    expect(markdown).toContain("**summary**: Two entries");
+    expect(markdown).toContain("| name | value |");
+    expect(markdown).toContain("| a | 1 |");
+  });
+
+  it("returns null for non-object payloads", () => {
+    expect(renderStructuredMarkdown("[1,2]")).toBeNull();
+    expect(renderStructuredMarkdown("prose")).toBeNull();
   });
 });

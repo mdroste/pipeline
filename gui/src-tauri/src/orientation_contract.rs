@@ -62,6 +62,7 @@ pub fn paper_schema() -> Value {
             },
             "sections": {
                 "type": "array",
+                "maxItems": 100,
                 "description": "Every major section in document order.",
                 "items": {
                     "type": "object",
@@ -76,6 +77,7 @@ pub fn paper_schema() -> Value {
             },
             "formal_results": {
                 "type": "array",
+                "maxItems": 150,
                 "description": "Every explicit proposition, theorem, lemma, corollary, definition, and assumption.",
                 "items": {
                     "type": "object",
@@ -91,6 +93,7 @@ pub fn paper_schema() -> Value {
             },
             "tables_figures": {
                 "type": "array",
+                "maxItems": 100,
                 "description": "Every numbered or substantively important table and figure.",
                 "items": {
                     "type": "object",
@@ -106,6 +109,7 @@ pub fn paper_schema() -> Value {
             },
             "notation": {
                 "type": "array",
+                "maxItems": 200,
                 "description": "Every symbol explicitly defined by the paper.",
                 "items": {
                     "type": "object",
@@ -123,11 +127,13 @@ pub fn paper_schema() -> Value {
             },
             "key_references": {
                 "type": "array",
+                "maxItems": 50,
                 "description": "References central to the paper's stated positioning.",
                 "items": {"type": "string"}
             },
             "extraction_quality_notes": {
                 "type": "array",
+                "maxItems": 50,
                 "description": "Garbled, incomplete, truncated, or otherwise unreliable portions of the extracted input.",
                 "items": {
                     "type": "object",

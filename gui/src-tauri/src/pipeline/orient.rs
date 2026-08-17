@@ -229,7 +229,10 @@ pub async fn build_orientation_map(
         let cleaned = raw.trim();
 
         match serde_json::from_str::<serde_json::Value>(cleaned) {
-            Ok(value) if value.is_object() => {
+            Ok(mut value) if value.is_object() => {
+                // Strict transports return null for absent optional fields;
+                // strip them before host validation, like canonicalize does.
+                crate::pipeline::structured::strip_optional_nulls(&terminal_schema, &mut value);
                 if let Some(schema) = output_schema {
                     let validation =
                         crate::pipeline::structured::validate(&terminal_schema, &value)

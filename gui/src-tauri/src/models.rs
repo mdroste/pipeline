@@ -469,6 +469,9 @@ pub struct Finding {
     /// Stable producer key when a workflow has one (rule id, check id, etc.).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub source_key: String,
+    /// Report ids of the reviewer analyses that support this finding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
     pub title: String,
     /// Input-neutral grouping used as a report section or source location.
     #[serde(default, skip_serializing_if = "String::is_empty", alias = "section")]

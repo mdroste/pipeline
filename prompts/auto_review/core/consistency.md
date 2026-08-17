@@ -8,15 +8,13 @@ Before reporting a missing item, inspect the surrounding discussion, footnotes, 
 
 ## Output
 
-Return only a concise Markdown report with at most six numbered comments. Use this structure for every comment so the report viewer can index it:
+Populate the supplied findings schema with at most six findings, in decreasing order of importance. Treat six as a ceiling, not a target. Every finding must show both sides of the inconsistency. If no material issue survives checking, return an empty findings array. For every finding:
 
-**#1. Specific descriptive title**
+- `title`: a specific descriptive title naming the issue.
+- `in_the_paper`: quote the claim and identify its precise location.
+- `problem`: show the conflicting equation, theorem, table, figure, reference, definition, or passage, including the actual number, sign, expression, or wording when available.
+- `consequence`: what a reader would incorrectly conclude.
+- `what_would_help`: the smallest correction or qualification needed to make both locations agree.
+- `evidence`: locators for both the source claim and the conflicting target location — page numbers, section or equation references in `description`, or short quotes. Never invent a locator.
 
-- **Severity:** Critical, major, or moderate.
-- **In the paper:** Quote the claim and identify its precise location.
-- **The problem:** Show the conflicting equation, theorem, table, figure, reference, definition, or passage, including the actual number, sign, expression, or wording when available.
-- **Consequence:** Explain what a reader would incorrectly conclude.
-- **What would help:** State the smallest correction or qualification needed to make both locations agree.
-- **Location:** Give both the source claim and the conflicting target location.
-
-Increment `N` sequentially from 1. Every comment must show both sides of the inconsistency. Treat six as a ceiling, not a target. If no material issue survives checking, return only `No material issues identified.` Do not report cosmetic cross-reference or copyediting issues, summarize the paper, list strengths, or discuss the review process.
+Do not report cosmetic cross-reference or copyediting issues, summarize the paper, list strengths, or discuss the review process.

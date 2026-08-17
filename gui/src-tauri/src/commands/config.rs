@@ -333,6 +333,43 @@ pub async fn get_auto_review_orientation_defaults() -> Result<AutoReviewOrientat
     })
 }
 
+/// The canonical published-findings contract, served from the binary so the
+/// editor's insertable template cannot drift from host validation.
+#[tauri::command]
+pub async fn get_findings_output_schema() -> serde_json::Value {
+    crate::findings::output_schema()
+}
+
+/// What providers actually receive for a portable schema: live references and
+/// catalogs resolved, host-only keywords removed, plus the projected size
+/// against the CLI transport ceiling and the effective OpenAI strict mode.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSchemaPreview {
+    pub projected: serde_json::Value,
+    pub bytes: usize,
+    pub limit: usize,
+    pub openai_strict: bool,
+}
+
+#[tauri::command]
+pub async fn preview_provider_schema(
+    schema: serde_json::Value,
+) -> Result<ProviderSchemaPreview, String> {
+    let resolved = crate::pipeline::structured::resolve_schema_reference(&schema)?;
+    let resolved = crate::auto_review::resolve_schema_catalogs(&resolved)?;
+    let projected = crate::pipeline::structured::provider_schema(&resolved)?;
+    let bytes = serde_json::to_vec(&projected)
+        .map_err(|error| format!("Failed to serialize provider schema: {error}"))?
+        .len();
+    Ok(ProviderSchemaPreview {
+        openai_strict: crate::pipeline::api_openai::strict_capable(&projected),
+        projected,
+        bytes,
+        limit: crate::pipeline::structured::MAX_PROVIDER_SCHEMA_BYTES,
+    })
+}
+
 #[tauri::command]
 pub async fn reset_pipeline_config() -> Result<PipelineConfig, String> {
     Ok(pipeline_config::reset_defaults())

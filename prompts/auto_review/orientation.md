@@ -45,6 +45,7 @@ Inventory rules:
 - List every explicitly defined symbol in `notation`; do not invent definitions.
 - Record the paper's own contribution claim in `stated_contribution`.
 - Flag garbled or incomplete extraction rather than treating it as an error in the paper.
+- If the paper contains more entries than an inventory array's schema bound allows, keep the entries most relevant to the main claims and record the overflow in `extraction_quality_notes`.
 
 <paper>
 {paper_text}

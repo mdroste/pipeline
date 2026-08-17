@@ -111,6 +111,13 @@ fn structured_response_format(
     })))
 }
 
+/// Whether a provider-projected schema qualifies for OpenAI's strict
+/// constrained decoding (every declared object property required). Used by
+/// the editor's projection preview to badge the effective mode.
+pub(crate) fn strict_capable(schema: &serde_json::Value) -> bool {
+    openai_strict_schema(schema.clone()).is_some()
+}
+
 fn openai_strict_schema(mut schema: serde_json::Value) -> Option<serde_json::Value> {
     let object = schema.as_object_mut()?;
     match object.get("type").and_then(serde_json::Value::as_str) {

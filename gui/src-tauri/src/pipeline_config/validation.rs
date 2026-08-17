@@ -130,17 +130,51 @@ pub(super) fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String>
             }
         }
         if let Some(for_each) = &step.for_each {
-            if for_each.glob.trim().is_empty() || for_each.glob.len() > 1024 {
-                return Err(format!(
-                    "Step '{}' fan-out glob must contain 1–1024 bytes",
-                    step.id
-                ));
-            }
-            if for_each.glob.contains('\\') {
-                return Err(format!(
-                    "Step '{}' has an invalid fan-out glob; use '/' as the path separator",
-                    step.id
-                ));
+            if let Some(artifact) = &for_each.artifact {
+                if !for_each.glob.trim().is_empty() {
+                    return Err(format!(
+                        "Step '{}' fan-out must use either a glob or an upstream artifact, not both",
+                        step.id
+                    ));
+                }
+                let target = artifact.step.trim();
+                if target.is_empty() || target == step.id {
+                    return Err(format!(
+                        "Step '{}' fan-out artifact must name another step in this workflow",
+                        step.id
+                    ));
+                }
+                if !steps.iter().any(|candidate| candidate.id == target) {
+                    return Err(format!(
+                        "Step '{}' fans out over unknown step '{}'",
+                        step.id, target
+                    ));
+                }
+                if !artifact.pointer.is_empty() && !artifact.pointer.starts_with('/') {
+                    return Err(format!(
+                        "Step '{}' fan-out pointer must be an RFC 6901 JSON pointer starting with '/'",
+                        step.id
+                    ));
+                }
+                if artifact.pointer.len() > 512 {
+                    return Err(format!(
+                        "Step '{}' fan-out pointer must contain at most 512 bytes",
+                        step.id
+                    ));
+                }
+            } else {
+                if for_each.glob.trim().is_empty() || for_each.glob.len() > 1024 {
+                    return Err(format!(
+                        "Step '{}' fan-out glob must contain 1–1024 bytes",
+                        step.id
+                    ));
+                }
+                if for_each.glob.contains('\\') {
+                    return Err(format!(
+                        "Step '{}' has an invalid fan-out glob; use '/' as the path separator",
+                        step.id
+                    ));
+                }
             }
             if !(1..=MAX_FAN_OUT_ITEMS).contains(&for_each.max) {
                 return Err(format!(
@@ -169,8 +203,33 @@ pub(super) fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String>
                     MAX_OUTPUT_SCHEMA_BYTES / 1024 / 1024
                 ));
             }
-            crate::pipeline::structured::provider_schema(schema)
+            // Live contract references resolve before the provider preflight,
+            // so an unknown reference fails at save rather than dispatch.
+            let resolved = crate::pipeline::structured::resolve_schema_reference(schema)
                 .map_err(|e| format!("Step '{}' output schema is invalid: {e}", step.id))?;
+            crate::pipeline::structured::provider_schema(&resolved)
+                .map_err(|e| format!("Step '{}' output schema is invalid: {e}", step.id))?;
+            if let Some(target) = schema.get(crate::pipeline::structured::PRESERVE_FINDINGS_KEY) {
+                let target = target.as_str().unwrap_or_default().trim();
+                if target.is_empty()
+                    || target == step.id
+                    || !steps.iter().any(|candidate| candidate.id == target)
+                {
+                    return Err(format!(
+                        "Step '{}' preserves findings from '{}', which is not another step in this workflow",
+                        step.id, target
+                    ));
+                }
+                if !step
+                    .artifact_dependencies()
+                    .any(|dependency| dependency == target)
+                {
+                    return Err(format!(
+                        "Step '{}' preserves findings from '{}', but does not select that step as an artifact source",
+                        step.id, target
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -518,6 +577,14 @@ impl StepConfig {
                 ArtifactSelector::Step { step, .. } => Some(step.as_str()),
                 _ => None,
             })
+            .chain(
+                // Fanning out over an upstream artifact is dataflow: the step
+                // becomes ready only after its item source completes.
+                self.for_each
+                    .as_ref()
+                    .and_then(|for_each| for_each.artifact.as_ref())
+                    .map(|artifact| artifact.step.as_str()),
+            )
     }
 }
 

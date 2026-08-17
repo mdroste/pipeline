@@ -388,6 +388,7 @@ mod tests {
             for_each: Some(crate::pipeline_config::ForEach {
                 glob: "**/*".to_string(),
                 max: 1_000,
+                artifact: None,
             }),
             ..Default::default()
         };
@@ -421,6 +422,7 @@ mod tests {
             for_each: Some(crate::pipeline_config::ForEach {
                 glob: "**/*".to_string(),
                 max: 5,
+                artifact: None,
             }),
             ..Default::default()
         };

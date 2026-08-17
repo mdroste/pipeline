@@ -1,7 +1,12 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ExportControls from "./ExportControls";
-import { detectReportIssues, type IssueEvidence } from "../lib/issues";
+import {
+  detectReportIssues,
+  renderSpecialistMarkdown,
+  renderStructuredMarkdown,
+  type IssueEvidence,
+} from "../lib/issues";
 import { renderSurvey } from "../lib/surveyMarkdown";
 import {
   buildRunProvenance,
@@ -403,7 +408,14 @@ function LocalSources({
     ...report.step_outputs.map((step) => ({
       id: `step:${step.step_id}`,
       label: step.step_label,
-      markdown: `# ${step.step_label}\n\n**Phase:** ${step.phase} · **Agent:** ${step.agent || "default"}\n\n---\n\n${step.raw_text}`,
+      // Specialist findings artifacts render back to their readable referee
+      // form; other structured artifacts get a generic schema-aware view.
+      // The raw JSON stays inspectable in the artifact explorer.
+      markdown: `# ${step.step_label}\n\n**Phase:** ${step.phase} · **Agent:** ${step.agent || "default"}\n\n---\n\n${
+        renderSpecialistMarkdown(step.raw_text)
+        ?? (step.structured_json ? renderStructuredMarkdown(step.raw_text) : null)
+        ?? step.raw_text
+      }`,
     })),
   ];
   const [selected, setSelected] = useState(options[0]?.id ?? "");

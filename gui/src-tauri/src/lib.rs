@@ -133,6 +133,8 @@ pub fn run() {
             commands::config::get_default_prompt,
             commands::config::get_orientation_defaults,
             commands::config::get_auto_review_orientation_prompt,
+            commands::config::get_findings_output_schema,
+            commands::config::preview_provider_schema,
             commands::config::get_auto_review_orientation_defaults,
             commands::config::reset_pipeline_config,
             // Profile management

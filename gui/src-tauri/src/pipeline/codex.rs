@@ -518,10 +518,16 @@ async fn call_codex_inner(
     // empty output. Sandboxing is enforced independently via --sandbox, so
     // skipping the git-repo check costs nothing.
     cmd_args.push("--skip-git-repo-check".to_string());
+    // Codex submits this file to OpenAI's strict Responses API, which
+    // requires additionalProperties:false and all-required objects; the
+    // strict projection widens optional fields to nullable and the host
+    // strips the nulls back out. Inexpressible (yet valid) schemas proceed
+    // without a native constraint rather than triggering a provider 400.
     let prepared_output_schema = overrides
         .output_schema
-        .map(crate::pipeline::structured::prepare_provider_schema_file)
-        .transpose()?;
+        .map(crate::pipeline::structured::prepare_codex_schema_file)
+        .transpose()?
+        .flatten();
     append_codex_output_schema(
         &mut cmd_args,
         prepared_output_schema

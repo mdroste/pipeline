@@ -91,6 +91,7 @@ fn unsupported_sequential_multi_unit_shapes_are_rejected() {
         for_each: Some(ForEach {
             glob: "*.tex".to_string(),
             max: 10,
+            artifact: None,
         }),
         ..Default::default()
     };
@@ -161,6 +162,52 @@ fn published_outputs_require_a_runnable_sequential_producer() {
         validate_profile_data(&profile).unwrap_err(),
         "Published primary report step 'final' must be Sequential"
     );
+}
+
+#[test]
+fn findings_lineage_requires_a_dataflow_edge_to_its_source() {
+    let source = StepConfig {
+        id: "source".into(),
+        label: "Source".into(),
+        phase: Phase::Parallel,
+        enabled: true,
+        output_schema: Some(crate::findings::output_schema()),
+        ..Default::default()
+    };
+    let mut final_step = StepConfig {
+        id: "final".into(),
+        label: "Final".into(),
+        phase: Phase::Sequential,
+        enabled: true,
+        after: vec!["source".into()],
+        output_schema: Some(serde_json::json!({
+            "type": "object",
+            crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v1",
+            crate::pipeline::structured::PRESERVE_FINDINGS_KEY: "source",
+        })),
+        ..Default::default()
+    };
+    let mut profile = ProfileData::new(
+        "Lineage",
+        vec![source, final_step.clone()],
+        MergeConfig::default(),
+    );
+    profile.outputs.primary_step = "final".into();
+    profile.outputs.findings_step = "final".into();
+
+    let error = validate_profile_data(&profile).unwrap_err();
+    assert!(
+        error.contains("does not select that step as an artifact source"),
+        "{error}"
+    );
+
+    final_step.context.include.push(ArtifactSelector::Step {
+        step: "source".into(),
+        parts: vec![StepArtifactPart::Report],
+        glob: String::new(),
+    });
+    profile.steps[1] = final_step;
+    validate_profile_data(&profile).unwrap();
 }
 
 // ── validate_dependencies ──────────────────────────────────────
@@ -1055,6 +1102,7 @@ fn profile_validation_bounds_fan_out_cost() {
         for_each: Some(ForEach {
             glob: "**/*".to_string(),
             max: MAX_FAN_OUT_ITEMS + 1,
+            artifact: None,
         }),
         ..Default::default()
     };
@@ -1075,6 +1123,7 @@ fn profile_validation_rejects_backslash_fan_out_glob() {
         for_each: Some(ForEach {
             glob: "tables\\*.csv".to_string(),
             max: 4,
+            artifact: None,
         }),
         ..Default::default()
     };
@@ -1137,6 +1186,10 @@ fn fresh_installs_record_every_catalog_marker() {
     // auto_validate's context), so its marker in particular must be present.
     assert!(dir.path().join(".builtin-catalog-v6").exists());
     assert!(dir.path().join(".builtin-catalog-v15").exists());
+    assert!(dir
+        .path()
+        .join(".structured-auto-review-contract-v2")
+        .exists());
     assert!(dir.path().join(".modular-auto-review-contract-v1").exists());
     assert!(dir.path().join(".compact-auto-review-prompt-v1").exists());
 }
@@ -1148,7 +1201,7 @@ fn stale_builtin_auto_review_contract_is_replaced_before_validation() {
     stale.steps[0].prompt.push_str("\nKeep this user edit.");
     stale.orientation_prompt = "Retired router prompt".to_string();
     stale.orientation_schema.as_mut().unwrap()["x-pipeline-contract"] =
-        serde_json::json!("auto-review-v2");
+        serde_json::json!("auto-review-v99");
     let path = dir.path().join("auto-review.json");
     fs::write(&path, serde_json::to_vec_pretty(&stale).unwrap()).unwrap();
 
@@ -1169,6 +1222,43 @@ fn stale_builtin_auto_review_contract_is_replaced_before_validation() {
         crate::auto_review::orientation_prompt()
     );
     assert!(repaired.steps[0].prompt.ends_with("Keep this user edit."));
+}
+
+#[test]
+fn pre_v2_builtin_auto_review_suite_is_archived_and_recreated() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut stale = auto_review_profile();
+    stale.steps[0].prompt = "Old Markdown reviewer prompt".to_string();
+    stale.steps[0].output_schema = None;
+    stale.orientation_schema.as_mut().unwrap()["x-pipeline-contract"] =
+        serde_json::json!("auto-review-v1");
+    let path = dir.path().join("auto-review.json");
+    fs::write(&path, serde_json::to_vec_pretty(&stale).unwrap()).unwrap();
+
+    super::migrations::refresh_stale_auto_review_suites(dir.path()).unwrap();
+
+    // The user's copy is preserved in the archive; the active file is the
+    // current structured suite.
+    assert!(dir
+        .path()
+        .join(".retired-builtins/auto-review.json")
+        .exists());
+    let replaced: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    validate_profile_data(&replaced).unwrap();
+    assert_eq!(
+        replaced
+            .orientation_schema
+            .as_ref()
+            .and_then(|schema| schema.get("x-pipeline-contract"))
+            .and_then(serde_json::Value::as_str),
+        Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
+    );
+    assert!(replaced.steps[0].output_schema.is_some());
+
+    // A current-contract suite is left byte-for-byte unchanged.
+    let bytes = fs::read(&path).unwrap();
+    super::migrations::refresh_stale_auto_review_suites(dir.path()).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), bytes);
 }
 
 #[test]

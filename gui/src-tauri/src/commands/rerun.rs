@@ -154,20 +154,26 @@ pub(super) fn incompatible_reuse_ids(
         .filter(|step| step.enabled)
         .filter_map(|step| {
             let compatible = by_base.get(step.id.as_str()).is_some_and(|prior| {
+                // A live schema reference must resolve before a cached
+                // artifact can be judged against it; an unresolvable
+                // reference simply reruns the step.
+                let resolved_schema = step
+                    .output_schema
+                    .as_ref()
+                    .map(crate::pipeline::structured::resolve_schema_reference);
                 !prior.is_empty()
-                    && prior
-                        .iter()
-                        .all(|output| match step.output_schema.as_ref() {
-                            Some(schema) => {
-                                output.structured_json
-                                    && crate::pipeline::structured::canonicalize(
-                                        schema,
-                                        &output.raw_text,
-                                    )
-                                    .is_ok()
-                            }
-                            None => !output.structured_json && !output.raw_text.trim().is_empty(),
-                        })
+                    && prior.iter().all(|output| match resolved_schema.as_ref() {
+                        Some(Ok(schema)) => {
+                            output.structured_json
+                                && crate::pipeline::structured::canonicalize(
+                                    schema,
+                                    &output.raw_text,
+                                )
+                                .is_ok()
+                        }
+                        Some(Err(_)) => false,
+                        None => !output.structured_json && !output.raw_text.trim().is_empty(),
+                    })
             });
             (!compatible).then(|| step.id.clone())
         })

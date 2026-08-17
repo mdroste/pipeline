@@ -383,6 +383,12 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                       {issue.body}
                     </ReactMarkdown>
                   </div>
+                  {issue.sources && issue.sources.length > 0 && (
+                    <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                      <span className="font-semibold uppercase tracking-[0.1em] text-[10px]">Reviewers:</span>{" "}
+                      {issue.sources.join(", ")}
+                    </p>
+                  )}
                   {issue.evidence && issue.evidence.length > 0 && (
                     <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900/70">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">Evidence</p>

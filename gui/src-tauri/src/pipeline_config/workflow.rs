@@ -211,7 +211,15 @@ fn validate_step(value: &serde_json::Value, path: &str) -> Result<(), String> {
         validate_condition(condition, &format!("{path}.run_if"))?;
     }
     if let Some(fan_out) = value.get("for_each") {
-        reject_unknown(fan_out, &format!("{path}.for_each"), &["glob", "max"])?;
+        let fan_out_path = format!("{path}.for_each");
+        reject_unknown(fan_out, &fan_out_path, &["glob", "max", "artifact"])?;
+        if let Some(artifact) = fan_out.get("artifact") {
+            reject_unknown(
+                artifact,
+                &format!("{fan_out_path}.artifact"),
+                &["step", "pointer"],
+            )?;
+        }
     }
     Ok(())
 }
@@ -391,7 +399,7 @@ pub fn workflow_template() -> Result<WorkflowDocument, String> {
 pub fn workflow_json_schema() -> serde_json::Value {
     serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://pipeline.local/schemas/workflow-v8.json",
+        "$id": "https://pipeline.local/schemas/workflow-v9.json",
         "title": "Pipeline portable workflow",
         "type": "object",
         "additionalProperties": false,
@@ -420,7 +428,24 @@ pub fn workflow_json_schema() -> serde_json::Value {
                         "if": { "required": ["x-pipeline-adaptive-agent-count"] },
                         "then": {
                             "required": ["x-pipeline-contract"],
-                            "properties": { "x-pipeline-contract": { "const": "auto-review-v1" } }
+                            "properties": { "x-pipeline-contract": { "const": crate::auto_review::AUTO_REVIEW_CONTRACT } }
+                        }
+                    },
+                    {
+                        "if": { "required": [crate::pipeline::structured::SCHEMA_REFERENCE_KEY] },
+                        "then": {
+                            "not": {
+                                "anyOf": [
+                                    { "required": ["enum"] },
+                                    { "required": ["minItems"] },
+                                    { "required": ["maxItems"] },
+                                    { "required": ["minLength"] },
+                                    { "required": ["uniqueItems"] },
+                                    { "required": ["required"] },
+                                    { "required": ["properties"] },
+                                    { "required": ["items"] }
+                                ]
+                            }
                         }
                     }
                 ],
@@ -429,16 +454,19 @@ pub fn workflow_json_schema() -> serde_json::Value {
                     "enum": { "type": "array", "minItems": 1, "uniqueItems": true },
                     "minItems": { "type": "integer", "minimum": 0 },
                     "maxItems": { "type": "integer", "minimum": 0 },
+                    "minLength": { "type": "integer", "minimum": 0 },
                     "uniqueItems": { "type": "boolean" },
                     "title": { "type": "string" },
                     "description": { "type": "string" },
                     "required": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
                     "properties": { "type": "object", "additionalProperties": { "$ref": "#/$defs/schemaNode" } },
                     "items": { "$ref": "#/$defs/schemaNode" },
-                    "x-pipeline-contract": { "const": "auto-review-v1" },
+                    "x-pipeline-contract": { "const": crate::auto_review::AUTO_REVIEW_CONTRACT },
                     "x-pipeline-catalog": { "enum": ["auto-review.subjects", "auto-review.methods", "auto-review.genres"] },
                     "x-pipeline-catalog-policy": { "const": "live" },
-                    "x-pipeline-adaptive-agent-count": { "type": "integer", "minimum": 0 }
+                    "x-pipeline-adaptive-agent-count": { "type": "integer", "minimum": 0 },
+                    "x-pipeline-preserve-findings-from": { "type": "string", "minLength": 1 },
+                    "x-pipeline-schema": { "const": "findings-v1" }
                 }
             },
             "artifactSchema": {
@@ -500,7 +528,7 @@ pub fn workflow_json_schema() -> serde_json::Value {
                     "context": { "type": "object", "additionalProperties": false, "properties": { "include": { "type": "array", "items": { "$ref": "#/$defs/selector" } } } },
                     "run_if": { "$ref": "#/$defs/condition" },
                     "output_schema": { "oneOf": [{ "$ref": "#/$defs/stepArtifactSchema" }, { "type": "null" }] },
-                    "for_each": { "type": "object", "additionalProperties": false, "required": ["glob"], "properties": { "glob": { "type": "string" }, "max": { "type": "integer", "minimum": 1, "maximum": MAX_FAN_OUT_ITEMS } } }
+                    "for_each": { "type": "object", "additionalProperties": false, "properties": { "glob": { "type": "string" }, "max": { "type": "integer", "minimum": 1, "maximum": MAX_FAN_OUT_ITEMS }, "artifact": { "type": "object", "additionalProperties": false, "required": ["step"], "properties": { "step": { "type": "string" }, "pointer": { "type": "string" } } } } }
                 }
             },
             "merge": { "type": "object", "additionalProperties": false, "required": ["enabled", "prompt"], "properties": { "enabled": { "type": "boolean" }, "prompt": { "type": "string" }, "agents": { "type": "array", "maxItems": 1, "items": { "$ref": "#/$defs/agent" } } } },
@@ -583,6 +611,14 @@ mod tests {
             schema.pointer("/$defs/schemaNode/additionalProperties"),
             Some(&serde_json::json!(false))
         );
+        assert_eq!(
+            schema.pointer("/$defs/schemaNode/properties/minLength/type"),
+            Some(&serde_json::json!("integer"))
+        );
+        assert_eq!(
+            schema.pointer("/$defs/schemaNode/properties/x-pipeline-schema/const"),
+            Some(&serde_json::json!("findings-v1"))
+        );
 
         let validator = jsonschema::draft202012::options().build(&schema).unwrap();
         let mut workflow: serde_json::Value =
@@ -599,5 +635,10 @@ mod tests {
             "items": {"type": "string"}
         });
         assert!(validator.validate(&workflow).is_err());
+
+        let auto_review = WorkflowDocument::from_profile_data(auto_review_profile()).unwrap();
+        let auto_review: serde_json::Value =
+            serde_json::from_str(&auto_review.canonical_json).unwrap();
+        validator.validate(&auto_review).unwrap();
     }
 }

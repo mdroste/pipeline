@@ -557,6 +557,62 @@ fn abrupt_run_recovery_builds_report_from_step_checkpoints() {
 }
 
 #[test]
+fn abrupt_auto_review_recovery_does_not_publish_a_specialist_checkpoint() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "structured_recovery").unwrap();
+    writer
+        .add_text(DOCUMENT_TEXT_PATH, "Readable document", "document", "paper")
+        .unwrap();
+    let mut workflow: serde_json::Value = serde_json::from_str(
+        &crate::pipeline_config::workflow_template()
+            .unwrap()
+            .canonical_json,
+    )
+    .unwrap();
+    workflow["outputs"]["findings_step"] = serde_json::json!("synthesis");
+    workflow["steps"][1]["output_schema"] = serde_json::json!({
+        "type": "object",
+        crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v1",
+    });
+    let workflow =
+        crate::pipeline_config::parse_workflow_document_strict(&workflow.to_string()).unwrap();
+    writer
+        .add_text(
+            "context/workflow.json",
+            "Workflow snapshot",
+            "context",
+            &workflow.canonical_json,
+        )
+        .unwrap();
+    let run_dir = writer.dir().to_path_buf();
+    let checkpoint_dir = run_dir.join("artifacts/checkpoints");
+    fs::create_dir_all(&checkpoint_dir).unwrap();
+    let specialist = crate::models::StepOutput {
+        step_id: "analysis/codex".into(),
+        step_label: "Independent analysis".into(),
+        phase: "parallel".into(),
+        structured_json: true,
+        raw_text: r#"{"findings":[{"title":"T","in_the_paper":"Claim","problem":"Problem","consequence":"Consequence","what_would_help":"Fix","evidence":[]}]}"#.into(),
+        ..Default::default()
+    };
+    fs::write(
+        checkpoint_dir.join("0000_analysis_codex.json"),
+        serde_json::to_vec_pretty(&specialist).unwrap(),
+    )
+    .unwrap();
+    std::mem::forget(writer);
+
+    let mut manifest: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert!(recover_resumable_run_dir(&run_dir, &mut manifest).unwrap());
+
+    let report: crate::models::PipelineReport =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("report.json")).unwrap()).unwrap();
+    assert_eq!(report.products.primary_step_id, "synthesis");
+    assert!(report.products.findings.is_none());
+}
+
+#[test]
 fn cancelled_run_becomes_resumable_from_its_last_checkpoint() {
     let temp = tempfile::tempdir().unwrap();
     let mut writer = RunWriter::create_in(temp.path(), "def456_run").unwrap();

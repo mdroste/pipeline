@@ -2,7 +2,7 @@
 // Kept separate from PipelinePage.tsx so the rules can be unit-tested or reused
 // by future UI surfaces (e.g. a step-test runner) without lifting the whole page.
 
-import type { StepConfig } from "./types";
+import type { PipelineConfig, StepConfig } from "./types";
 
 // ── Placeholder catalog ─────────────────────────────────────────────
 
@@ -115,6 +115,103 @@ export function findUnknownPlaceholders(
   return hits;
 }
 
+// ── Cross-step interface lint ───────────────────────────────────────
+//
+// Schemas make step interfaces checkable: `{step:<id>}` tokens, run_if
+// references, and survey_path pointers can all be verified against the
+// workflow's declared contracts before any model runs. These are advisory
+// warnings — save-time validation stays with the backend.
+
+export interface WorkflowLintWarning {
+  stepId: string;
+  message: string;
+}
+
+/** Walk an RFC 6901 pointer through a portable schema's declared structure.
+ *  Returns false only when the schema declares properties that provably do
+ *  not contain the pointer's next segment; unknown/open shapes pass. */
+function pointerResolvesInSchema(pointer: string, schema: unknown): boolean {
+  if (!pointer.startsWith("/")) return false;
+  let current = schema;
+  for (const raw of pointer.slice(1).split("/")) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return true;
+    const node = current as Record<string, unknown>;
+    // A catalog/live reference or an open object cannot be checked further.
+    if (node["x-pipeline-schema"] !== undefined) return true;
+    const segment = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (node.type === "array" || node.items !== undefined) {
+      if (!/^\d+$/.test(segment) && segment !== "-") return false;
+      current = node.items;
+      continue;
+    }
+    const properties = node.properties;
+    if (!properties || typeof properties !== "object" || Array.isArray(properties)) return true;
+    const child = (properties as Record<string, unknown>)[segment];
+    if (child === undefined) return false;
+    current = child;
+  }
+  return true;
+}
+
+export function lintCrossStepReferences(config: PipelineConfig): WorkflowLintWarning[] {
+  const warnings: WorkflowLintWarning[] = [];
+  const ids = new Set(config.steps.map((step) => step.id));
+  const enabled = new Set(config.steps.filter((step) => step.enabled).map((step) => step.id));
+  const withSchema = new Set(
+    config.steps.filter((step) => !!step.output_schema).map((step) => step.id),
+  );
+
+  for (const step of config.steps.filter((step) => step.enabled)) {
+    for (const match of step.prompt.matchAll(/\{step:([^}]*)\}/g)) {
+      const reference = match[1].trim();
+      const id = reference.split("#")[0].trim();
+      if (!id) {
+        warnings.push({ stepId: step.id, message: "prompt contains an empty {step:} reference" });
+      } else if (!ids.has(id)) {
+        warnings.push({ stepId: step.id, message: `prompt references unknown step '{step:${id}}'` });
+      } else if (!enabled.has(id)) {
+        warnings.push({ stepId: step.id, message: `prompt references disabled step '{step:${id}}'` });
+      }
+      const pointer = reference.includes("#") ? reference.split("#")[1].trim() : null;
+      if (pointer && !pointer.startsWith("/")) {
+        warnings.push({
+          stepId: step.id,
+          message: `'{step:${reference}}' pointer must start with '/' (RFC 6901)`,
+        });
+      }
+    }
+    const condition = step.run_if;
+    if (condition?.kind === "output_matches") {
+      if (!ids.has(condition.step)) {
+        warnings.push({ stepId: step.id, message: `run_if watches unknown step '${condition.step}'` });
+      } else if (!enabled.has(condition.step)) {
+        warnings.push({ stepId: step.id, message: `run_if watches disabled step '${condition.step}'` });
+      } else if (withSchema.has(condition.step)) {
+        warnings.push({
+          stepId: step.id,
+          message: `run_if matches against step '${condition.step}', whose output is canonical JSON — anchor the pattern to JSON text, not prose`,
+        });
+      }
+    }
+    if (condition?.kind === "survey_path" && config.orientation_schema) {
+      if (!pointerResolvesInSchema(condition.pointer, config.orientation_schema)) {
+        warnings.push({
+          stepId: step.id,
+          message: `run_if survey pointer '${condition.pointer}' does not exist in the orientation schema`,
+        });
+      }
+    }
+    const artifact = step.for_each?.artifact;
+    if (artifact && ids.has(artifact.step) && !withSchema.has(artifact.step)) {
+      warnings.push({
+        stepId: step.id,
+        message: `fans out over step '${artifact.step}', which returns Markdown rather than a structured artifact`,
+      });
+    }
+  }
+  return warnings;
+}
+
 // ── Wave structure ──────────────────────────────────────────────────
 //
 // Mirrors executor readiness: explicit `after` edges and selected upstream
@@ -145,6 +242,7 @@ export function computeWaves(steps: StepConfig[], includeDisabled = false): Wave
       ...(step.context?.include ?? [])
         .filter((selector) => selector.kind === "step")
         .map((selector) => selector.step),
+      ...(step.for_each?.artifact?.step ? [step.for_each.artifact.step] : []),
     ].filter((id) => eligibleIds.has(id))),
   );
   const waves: Wave[] = [];

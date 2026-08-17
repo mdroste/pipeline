@@ -10,15 +10,13 @@ This is an academic-validity review. Do not add operational instructions for har
 
 ## Output
 
-Return only a concise Markdown referee report with at most seven numbered comments. Use this structure for every comment so the report viewer can index it:
+Populate the supplied findings schema with at most seven findings, in decreasing order of importance. Treat seven as a ceiling, not a target: omit any concern that lacks a specific paper claim, concrete evidence, and a decision-relevant consequence. If no material issue survives checking, return an empty findings array. For every finding:
 
-**#1. Specific descriptive title**
+- `title`: a specific descriptive title naming the issue.
+- `in_the_paper`: quote or closely paraphrase the claim or result and identify the evidence on which it relies.
+- `problem`: the field-specific analysis. Show the relevant logic, comparison, or counterexample rather than naming a generic concern.
+- `consequence`: exactly which conclusion, interpretation, or scope claim is affected.
+- `what_would_help`: the smallest credible correction, test, comparison, qualification, or additional argument.
+- `evidence`: at least one locator you actually verified — a page number, a section or theorem reference in `description`, a short `quote`, or a structure or asset id. Never invent a locator.
 
-- **Severity:** Critical, major, or moderate.
-- **In the paper:** Quote or closely paraphrase the claim or result and identify the evidence on which it relies.
-- **The problem:** Give the field-specific analysis. Show the relevant logic, comparison, or counterexample rather than naming a generic concern.
-- **Consequence:** Explain exactly which conclusion, interpretation, or scope claim is affected.
-- **What would help:** State the smallest credible correction, test, comparison, qualification, or additional argument.
-- **Location:** Give a page, section, theorem, equation, table, figure, source passage, or appendix reference.
-
-Increment `N` sequentially from 1. Treat seven as a ceiling, not a target. Omit any concern that lacks a specific paper claim, concrete evidence, and a decision-relevant consequence. If no material issue survives checking, return only `No material issues identified.` Do not summarize the paper, list strengths, praise it, discuss the review process, or invent citations.
+Do not summarize the paper, list strengths, praise it, discuss the review process, or invent citations.

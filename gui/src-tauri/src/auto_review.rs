@@ -20,7 +20,12 @@ const CORE_EXPOSITION: &str = include_str!("../../../prompts/auto_review/core/ex
 const SYNTHESIS: &str = include_str!("../../../prompts/auto_review/synthesis.md");
 const VALIDATE: &str = include_str!("../../../prompts/auto_review/validate.md");
 
-pub const AUTO_REVIEW_CONTRACT: &str = "auto-review-v1";
+/// v2: specialist and core reviewer steps return the structured specialist
+/// findings schema, the consolidated findings contract carries `sources` and
+/// typed category/priority enums, and `review_plan` drops its unconsumed
+/// free-text `methods` array. This pre-release contract intentionally has no
+/// migration path; stale built-in profiles are archived and recreated.
+pub const AUTO_REVIEW_CONTRACT: &str = "auto-review-v2";
 pub const ADAPTIVE_AGENT_COUNT_KEY: &str = "x-pipeline-adaptive-agent-count";
 pub const CATALOG_REFERENCE_KEY: &str = "x-pipeline-catalog";
 pub const CATALOG_POLICY_KEY: &str = "x-pipeline-catalog-policy";
@@ -308,7 +313,6 @@ fn validate_auto_review_schema_contract(schema: &serde_json::Value) -> Result<()
             "primary_domain",
             "subject",
             "paper_forms",
-            "methods",
             "subject_specialist_ids",
             "method_specialist_ids",
             "genre",
@@ -320,7 +324,6 @@ fn validate_auto_review_schema_contract(schema: &serde_json::Value) -> Result<()
         ("primary_domain", "string"),
         ("subject", "string"),
         ("paper_forms", "array"),
-        ("methods", "array"),
         ("subject_specialist_ids", "array"),
         ("method_specialist_ids", "array"),
         ("genre", "string"),
@@ -793,6 +796,174 @@ fn base_step(id: &str, label: &str, prompt: String, tools: &[&str]) -> StepConfi
     }
 }
 
+/// The structured output contract shared by every core reviewer and
+/// materialized specialist. The item fields are the referee comment structure
+/// the earlier Markdown format enforced through prose; evidence is captured
+/// as typed locators at the source, where the reviewer has the page open.
+/// An empty findings array replaces the former sentinel sentence.
+pub fn specialist_schema() -> serde_json::Value {
+    let mut evidence = crate::findings::evidence_schema();
+    evidence["minItems"] = serde_json::json!(1);
+    serde_json::json!({
+        "type": "object",
+        "title": "Referee findings",
+        "description": "Independent referee findings from one reviewer pass. An empty findings array means no material issue survived checking.",
+        "required": ["findings"],
+        "properties": {
+            "findings": {
+                "type": "array",
+                "maxItems": 7,
+                "description": "Material, well-supported findings in decreasing order of importance.",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "title", "in_the_paper", "problem", "consequence",
+                        "what_would_help", "evidence"
+                    ],
+                    "properties": {
+                        "title": {"type": "string", "minLength": 1, "description": "Specific descriptive title naming the issue."},
+                        "in_the_paper": {"type": "string", "description": "Quote or close paraphrase of the claim or result and the evidence it relies on."},
+                        "problem": {"type": "string", "description": "The specific analysis, in Markdown: the logic, comparison, calculation, or counterexample rather than a generic concern."},
+                        "consequence": {"type": "string", "description": "Exactly which conclusion, interpretation, or scope claim is affected."},
+                        "what_would_help": {"type": "string", "description": "The smallest credible correction, test, comparison, qualification, or additional argument."},
+                        "evidence": evidence
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Structural check for the specialist findings contract, keyed on the item
+/// fields rather than a marker so user copies of specialist steps keep their
+/// readable rendering.
+pub fn is_specialist_schema(schema: &serde_json::Value) -> bool {
+    schema
+        .pointer("/properties/findings/items/required")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|required| {
+            ["problem", "what_would_help"].iter().all(|key| {
+                required
+                    .iter()
+                    .any(|candidate| candidate.as_str() == Some(key))
+            })
+        })
+}
+
+const SPECIALIST_EMPTY_REPORT: &str = "No material issues identified.";
+const MAX_RENDERED_QUOTE_CHARS: usize = 300;
+
+fn evidence_citation(evidence: &serde_json::Value) -> Option<String> {
+    let object = evidence.as_object()?;
+    let text = |key: &str| {
+        object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let mut parts = Vec::new();
+    if let Some(page) = object.get("page").and_then(serde_json::Value::as_u64) {
+        if page > 0 {
+            parts.push(format!("p. {page}"));
+        }
+    }
+    if let Some(path) = text("source_path") {
+        let lines = match (
+            object.get("line_start").and_then(serde_json::Value::as_u64),
+            object.get("line_end").and_then(serde_json::Value::as_u64),
+        ) {
+            (Some(start), Some(end)) if end > start => format!(":{start}–{end}"),
+            (Some(start), _) => format!(":{start}"),
+            _ => String::new(),
+        };
+        parts.push(format!("{path}{lines}"));
+    }
+    if let Some(description) = text("description") {
+        parts.push(description.to_string());
+    }
+    for (key, label) in [("node_id", "node"), ("asset_id", "asset")] {
+        if let Some(id) = text(key) {
+            parts.push(format!("{label} {id}"));
+        }
+    }
+    if let Some(quote) = text("quote") {
+        let mut quote = quote.split_whitespace().collect::<Vec<_>>().join(" ");
+        if quote.chars().count() > MAX_RENDERED_QUOTE_CHARS {
+            quote = quote.chars().take(MAX_RENDERED_QUOTE_CHARS).collect();
+            quote.push('…');
+        }
+        parts.push(format!("“{quote}”"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// Deterministic readable rendering of a specialist findings artifact — the
+/// exact referee-report format the earlier Markdown prompts specified. Returns
+/// None when the value is not specialist-shaped.
+pub fn specialist_report_markdown(value: &serde_json::Value) -> Option<String> {
+    let findings = value.as_object()?.get("findings")?.as_array()?;
+    if findings.is_empty() {
+        return Some(SPECIALIST_EMPTY_REPORT.to_string());
+    }
+    let mut markdown = String::new();
+    for (index, finding) in findings.iter().enumerate() {
+        let object = finding.as_object()?;
+        let field = |key: &str| {
+            object
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        };
+        // Every specialist field is schema-required; a value without the
+        // distinctive fields is not a specialist artifact.
+        if !object.contains_key("problem") || !object.contains_key("what_would_help") {
+            return None;
+        }
+        if index > 0 {
+            markdown.push('\n');
+        }
+        markdown.push_str(&format!("**#{}. {}**\n\n", index + 1, field("title")));
+        for (key, label) in [
+            ("in_the_paper", "In the paper"),
+            ("problem", "The problem"),
+            ("consequence", "Consequence"),
+            ("what_would_help", "What would help"),
+        ] {
+            let text = field(key);
+            if !text.is_empty() {
+                markdown.push_str(&format!("- **{label}:** {text}\n"));
+            }
+        }
+        let citations = object
+            .get("evidence")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(evidence_citation)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !citations.is_empty() {
+            markdown.push_str(&format!("- **Location:** {}\n", citations.join("; ")));
+        }
+    }
+    Some(markdown.trim_end().to_string())
+}
+
+/// Render one specialist step output for downstream sequential context. The
+/// `Report id` line gives consolidation a stable identifier to carry into each
+/// finding's `sources`.
+pub fn specialist_context_text(step_id: &str, raw_text: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(raw_text.trim()).ok()?;
+    let report = specialist_report_markdown(&value)?;
+    let base_id = step_id.split('/').next().unwrap_or(step_id);
+    Some(format!("Report id: {base_id}\n\n{report}"))
+}
+
 /// The saved Full profile is deliberately only a stable five-step skeleton.
 /// Selected specialist steps are materialized from the allowlist after the
 /// orientation call, so a profile never contains the whole catalog.
@@ -817,6 +988,12 @@ pub fn steps() -> Vec<StepConfig> {
             &["WebSearch"],
         ),
     ];
+    for step in &mut steps {
+        step.output_schema = Some(specialist_schema());
+    }
+    // Both terminal steps reference the live canonical findings contract
+    // (`structured::SCHEMA_REFERENCE_KEY`), so saved profiles stay compact and
+    // pick up host contract improvements without a migration.
     let mut synthesis = base_step(
         "auto_synthesis",
         "Consolidate Feedback",
@@ -824,7 +1001,10 @@ pub fn steps() -> Vec<StepConfig> {
         &["WebSearch"],
     );
     synthesis.phase = Phase::Sequential;
-    synthesis.output_schema = Some(crate::findings::output_schema());
+    synthesis.output_schema = Some(serde_json::json!({
+        "type": "object",
+        crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v1",
+    }));
     steps.push(synthesis);
     let mut validate = base_step(
         "auto_validate",
@@ -833,7 +1013,14 @@ pub fn steps() -> Vec<StepConfig> {
         &["WebSearch"],
     );
     validate.phase = Phase::Sequential;
-    validate.output_schema = Some(crate::findings::output_schema());
+    // Validation filters and repairs the consolidated product; the host
+    // enforces that every surviving finding keeps its exact input id and
+    // relative order (see `structured::PRESERVE_FINDINGS_KEY`).
+    validate.output_schema = Some(serde_json::json!({
+        "type": "object",
+        crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v1",
+        crate::pipeline::structured::PRESERVE_FINDINGS_KEY: "auto_synthesis",
+    }));
     steps.push(validate);
     steps
 }
@@ -848,25 +1035,25 @@ pub fn quick_steps() -> Vec<StepConfig> {
 }
 
 fn current_specialist_step(id: &str) -> Option<StepConfig> {
-    if let Some(specialist) = SUBJECTS.iter().find(|specialist| specialist.id == id) {
-        return Some(base_step(
+    let mut step = if let Some(specialist) = SUBJECTS.iter().find(|specialist| specialist.id == id)
+    {
+        base_step(
             specialist.id,
             specialist.label,
             subject_prompt(specialist),
             &["WebSearch"],
-        ));
-    }
-    METHODS
-        .iter()
-        .find(|specialist| specialist.id == id)
-        .map(|specialist| {
-            base_step(
-                specialist.id,
-                specialist.label,
-                method_prompt(specialist),
-                &["WebSearch"],
-            )
-        })
+        )
+    } else {
+        let specialist = METHODS.iter().find(|specialist| specialist.id == id)?;
+        base_step(
+            specialist.id,
+            specialist.label,
+            method_prompt(specialist),
+            &["WebSearch"],
+        )
+    };
+    step.output_schema = Some(specialist_schema());
+    Some(step)
 }
 
 /// Return an owned copy of a current adaptive-review specialist for manual
@@ -1132,7 +1319,7 @@ pub fn orientation_schema() -> serde_json::Value {
                 "type": "object",
                 "description": "Bounded paper classification and specialist plan.",
                 "required": [
-                    "primary_domain", "subject", "paper_forms", "methods",
+                    "primary_domain", "subject", "paper_forms",
                     "subject_specialist_ids", "method_specialist_ids",
                     "genre", "selection_notes", "routing_uncertainty"
                 ],
@@ -1152,13 +1339,6 @@ pub fn orientation_schema() -> serde_json::Value {
                                 "interpretive", "historical", "clinical", "engineering_design"
                             ]
                         }
-                    },
-                    "methods": {
-                        "type": "array",
-                        "description": "Methods central to the paper's claims.",
-                        "minItems": 1,
-                        "uniqueItems": true,
-                        "items": {"type": "string"}
                     },
                     "subject_specialist_ids": {
                         "type": "array",
@@ -1575,18 +1755,22 @@ mod tests {
     fn assert_report_output_fields(prompt: &str, label: &str) {
         for required in [
             "## Output",
-            "**#1. Specific descriptive title**",
-            "**Severity:**",
-            "**In the paper:**",
-            "**The problem:**",
-            "**Consequence:**",
-            "**What would help:**",
-            "**Location:**",
-            "Increment `N` sequentially from 1.",
-            "No material issues identified.",
+            "Populate the supplied findings schema",
+            "`title`",
+            "`in_the_paper`",
+            "`problem`",
+            "`consequence`",
+            "`what_would_help`",
+            "`evidence`",
+            "return an empty findings array",
+            "Never invent a locator",
         ] {
             assert!(prompt.contains(required), "{label} is missing {required}");
         }
+        assert!(
+            !prompt.contains("Severity"),
+            "{label} still asks for a severity label"
+        );
     }
 
     #[test]
@@ -1604,7 +1788,9 @@ mod tests {
         assert!(SYNTHESIS.contains("never use an ordinal"));
         assert!(VALIDATE.contains("{last_output}"));
         assert!(VALIDATE.contains("retain its exact input `id`"));
-        assert!(VALIDATE.contains("Do not add new findings"));
+        assert!(VALIDATE.contains("do not add new findings"));
+        assert!(SYNTHESIS.contains("`sources`"));
+        assert!(VALIDATE.contains("`sources`"));
     }
 
     #[test]
@@ -1694,6 +1880,54 @@ mod tests {
         assert!(validate_profile_contract_identity(&steps(), None)
             .unwrap_err()
             .contains("require x-pipeline-contract"));
+    }
+
+    #[test]
+    fn specialist_artifacts_round_trip_to_the_referee_format() {
+        let artifact = serde_json::json!({"findings": [{
+            "title": "Sign error in Proposition 2",
+            "in_the_paper": "Claim",
+            "problem": "Analysis",
+            "consequence": "Effect",
+            "what_would_help": "Fix",
+            "evidence": [
+                {"page": 12, "description": "Proposition 2", "quote": "the sign flips"},
+                {"source_path": "model.tex", "line_start": 4, "line_end": 9}
+            ]
+        }]});
+        crate::pipeline::structured::validate(&specialist_schema(), &artifact).unwrap();
+        let markdown = specialist_report_markdown(&artifact).unwrap();
+        assert!(markdown.starts_with("**#1. Sign error in Proposition 2**"));
+        for field in [
+            "- **In the paper:** Claim",
+            "- **The problem:** Analysis",
+            "- **Consequence:** Effect",
+            "- **What would help:** Fix",
+        ] {
+            assert!(markdown.contains(field), "missing {field}");
+        }
+        assert!(markdown.contains("p. 12 · Proposition 2 · “the sign flips”"));
+        assert!(markdown.contains("model.tex:4–9"));
+
+        // Empty findings render the human sentinel; the model never emits it.
+        assert_eq!(
+            specialist_report_markdown(&serde_json::json!({"findings": []})).unwrap(),
+            "No material issues identified."
+        );
+        // Canonical consolidated findings are not specialist-shaped.
+        assert!(specialist_report_markdown(
+            &serde_json::json!({"findings": [{"id": "a", "title": "T", "body": "B"}]})
+        )
+        .is_none());
+        // Schema rejects a finding with no evidence locator at all.
+        assert!(crate::pipeline::structured::validate(
+            &specialist_schema(),
+            &serde_json::json!({"findings": [{
+                "title": "T", "in_the_paper": "P", "problem": "Q",
+                "consequence": "C", "what_would_help": "H", "evidence": []
+            }]})
+        )
+        .is_err());
     }
 
     #[test]

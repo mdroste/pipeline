@@ -85,7 +85,7 @@ export interface StepConfig {
   run_if?: RunCondition | null;
   /** Optional JSON-shape contract the step's output must satisfy (with retry). */
   output_schema?: Record<string, unknown> | null;
-  /** Fan-out: run this step once per file matching the glob, with {item} bound. */
+  /** Fan-out: run once per matching file or upstream JSON-array item, with {item} bound. */
   for_each?: ForEach | null;
 }
 
@@ -93,6 +93,14 @@ export interface StepConfig {
 export interface ForEach {
   glob: string;
   max: number;
+  /** Fan out over an upstream artifact's array elements instead of files. */
+  artifact?: ForEachArtifact | null;
+}
+
+/** Upstream array source for artifact fan-out (mirrors ForEachArtifact). */
+export interface ForEachArtifact {
+  step: string;
+  pointer?: string;
 }
 
 export interface MergeConfig {
@@ -282,6 +290,8 @@ export interface FindingEvidence {
 export interface Finding {
   id: string;
   source_key?: string;
+  /** Report ids of the reviewer analyses that support this finding. */
+  sources?: string[];
   title: string;
   category?: string;
   priority?: string;

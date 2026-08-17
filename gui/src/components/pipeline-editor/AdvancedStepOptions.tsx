@@ -23,7 +23,9 @@ function AdvancedStepOptions({
   section?: "all" | "inputs" | "execution";
   onChange: (patch: Partial<StepConfig>) => void;
 }) {
-  const hasAny = !!(step.context.include.length || step.after?.length || step.run_if);
+  const hasAny = !!(
+    step.context.include.length || step.after?.length || step.run_if || step.for_each
+  );
   const [open, setOpen] = useState(
     section !== "all" || !!step.run_if,
   );
@@ -249,33 +251,101 @@ function AdvancedStepOptions({
                   onChange({ for_each: e.target.checked ? { glob: "*", max: 20 } : null })
                 }
               />
-              Fan out (run once per matching file)
+              Fan out (run once per item)
             </label>
             {step.for_each && (
               <div className="space-y-1.5 pl-4">
-                <input
-                  type="text"
-                  aria-label="Fan-out file pattern"
-                  value={step.for_each.glob}
-                  onChange={(e) => onChange({ for_each: { glob: e.target.value, max: step.for_each!.max } })}
-                  placeholder="glob, e.g. chapters/*.tex or **/*.py"
+                <select
+                  aria-label="Fan-out source type"
+                  value={step.for_each.artifact ? "artifact" : "files"}
+                  onChange={(e) => onChange({
+                    for_each: e.target.value === "artifact"
+                      ? {
+                          glob: "",
+                          max: step.for_each!.max,
+                          artifact: { step: otherSteps[0]?.id ?? "", pointer: "" },
+                        }
+                      : { glob: "*", max: step.for_each!.max, artifact: null },
+                  })}
                   className={inputClass}
-                />
+                >
+                  <option value="files">Matching files</option>
+                  <option value="artifact" disabled={otherSteps.length === 0}>
+                    Upstream JSON array
+                  </option>
+                </select>
+                {step.for_each.artifact ? (
+                  <>
+                    <select
+                      aria-label="Fan-out artifact source"
+                      value={step.for_each.artifact.step}
+                      onChange={(e) => onChange({
+                        for_each: {
+                          ...step.for_each!,
+                          glob: "",
+                          artifact: { ...step.for_each!.artifact!, step: e.target.value },
+                        },
+                      })}
+                      className={inputClass}
+                    >
+                      {!otherSteps.some(({ id }) => id === step.for_each!.artifact!.step) && (
+                        <option value={step.for_each.artifact.step} disabled>
+                          {step.for_each.artifact.step} (unavailable)
+                        </option>
+                      )}
+                      {otherSteps.map(({ id, label }) => (
+                        <option key={id} value={id}>{label}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      aria-label="Fan-out JSON pointer"
+                      value={step.for_each.artifact.pointer ?? ""}
+                      onChange={(e) => onChange({
+                        for_each: {
+                          ...step.for_each!,
+                          glob: "",
+                          artifact: { ...step.for_each!.artifact!, pointer: e.target.value },
+                        },
+                      })}
+                      placeholder="JSON pointer, e.g. /findings"
+                      className={inputClass}
+                    />
+                  </>
+                ) : (
+                  <input
+                    type="text"
+                    aria-label="Fan-out file pattern"
+                    value={step.for_each.glob}
+                    onChange={(e) => onChange({
+                      for_each: { ...step.for_each!, glob: e.target.value, artifact: null },
+                    })}
+                    placeholder="glob, e.g. chapters/*.tex or **/*.py"
+                    className={inputClass}
+                  />
+                )}
                 <label className="flex items-center gap-2 text-[10px] text-gray-500">
-                  Max files
+                  {step.for_each.artifact ? "Max items" : "Max files"}
                   <input
                     type="number"
+                    aria-label="Maximum fan-out items"
                     min={1}
                     value={step.for_each.max}
                     onChange={(e) =>
-                      onChange({ for_each: { glob: step.for_each!.glob, max: Math.max(1, parseInt(e.target.value, 10) || 1) } })
+                      onChange({
+                        for_each: {
+                          ...step.for_each!,
+                          max: Math.max(1, parseInt(e.target.value, 10) || 1),
+                        },
+                      })
                     }
                     className={`${inputClass} w-20`}
                   />
                 </label>
                 <p className="text-[10px] text-gray-600 dark:text-gray-400">
-                  Bind <code className="font-mono">{"{item}"}</code> in the prompt to each file. Outputs
-                  are merged (enable merge) or read together downstream via{" "}
+                  Bind <code className="font-mono">{"{item}"}</code> in the prompt to each{" "}
+                  {step.for_each.artifact ? "array item" : "file"}. Outputs are merged (enable merge)
+                  or read together downstream via{" "}
                   <code className="font-mono">{"{step:" + step.id + "}"}</code>.
                 </p>
               </div>

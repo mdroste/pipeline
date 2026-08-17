@@ -18,53 +18,89 @@ use std::sync::LazyLock;
 pub const FINDING_SCHEMA_VERSION: u32 = 1;
 const MAX_FINDINGS: usize = 1_000;
 const MAX_EVIDENCE: usize = 50;
+const MAX_SOURCES: usize = 8;
 const MAX_TITLE_BYTES: usize = 1_000;
 const MAX_BODY_BYTES: usize = 20_000;
 const MAX_REFERENCE_BYTES: usize = 1_000;
 const MAX_LINE: u32 = 10_000_000;
 
+/// Canonical report sections used by the Automatic Paper Review consolidation
+/// contract. The schema enum is the source of truth; prompts reference these
+/// labels rather than restating them as free text.
+pub const CATEGORIES: [&str; 4] = [
+    "Correctness and Internal Consistency",
+    "Methodological and Evidentiary Concerns",
+    "Contribution and Scope",
+    "Exposition and Organization",
+];
+
 static MARKDOWN_FINDING_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\*\*#([0-9]+)\.\s+(.+?)\*\*\s*$").expect("legacy finding-title regex is invalid")
 });
+
+/// The shared evidence-locator array contract. Descriptions carry the locator
+/// semantics so any profile adopting the schema gets the same guidance the
+/// stock prompts rely on.
+pub fn evidence_schema() -> Value {
+    serde_json::json!({
+        "type": "array",
+        "maxItems": MAX_EVIDENCE,
+        "description": "Locators supporting the finding. Use only references present in the supplied material; never invent a locator.",
+        "items": {
+            "type": "object",
+            "properties": {
+                "page": {"type": "integer", "description": "1-based page number in the rendered document."},
+                "line_start": {"type": "integer", "description": "1-based first line of a cited source range."},
+                "line_end": {"type": "integer", "description": "1-based last line of the range; at least line_start."},
+                "node_id": {"type": "string", "description": "DocumentBundle node id from the structure index."},
+                "asset_id": {"type": "string", "description": "DocumentBundle asset id of a cited figure, table, or page render."},
+                "artifact_path": {"type": "string", "description": "Path relative to the saved run's artifacts."},
+                "source_path": {"type": "string", "description": "Path relative to the selected source root."},
+                "source_hash": {"type": "string", "description": "Content fingerprint of the cited source file, when known."},
+                "description": {"type": "string", "description": "Human-readable location, such as 'Section 4.2, Theorem 3'."},
+                "quote": {"type": "string", "description": "Short verbatim quote from the cited location."}
+            }
+        }
+    })
+}
 
 /// The host-owned schema used by Automatic Paper Review and available to any
 /// profile that explicitly publishes findings.
 pub fn output_schema() -> Value {
     serde_json::json!({
         "type": "object",
+        "title": "Consolidated findings",
         "required": ["findings"],
         "properties": {
             "findings": {
                 "type": "array",
                 "maxItems": 40,
+                "description": "Findings in decreasing order of centrality to the main claims; array order conveys importance.",
                 "items": {
                     "type": "object",
                     "required": ["id", "title", "category", "body", "evidence"],
                     "properties": {
-                        "id": {"type": "string"},
-                        "source_key": {"type": "string"},
-                        "title": {"type": "string"},
-                        "category": {"type": "string"},
-                        "priority": {"type": "string"},
-                        "body": {"type": "string"},
-                        "evidence": {
+                        "id": {"type": "string", "minLength": 1, "description": "Stable descriptive identifier preserved across consolidation and validation; never an ordinal."},
+                        "source_key": {"type": "string", "description": "Stable producer key (rule id, check id) when a deterministic producer supplies one."},
+                        "sources": {
                             "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "page": {"type": "integer"},
-                                    "line_start": {"type": "integer"},
-                                    "line_end": {"type": "integer"},
-                                    "node_id": {"type": "string"},
-                                    "asset_id": {"type": "string"},
-                                    "artifact_path": {"type": "string"},
-                                    "source_path": {"type": "string"},
-                                    "source_hash": {"type": "string"},
-                                    "description": {"type": "string"},
-                                    "quote": {"type": "string"}
-                                }
-                            }
-                        }
+                            "maxItems": MAX_SOURCES,
+                            "description": "Report ids of the reviewer analyses supporting this finding.",
+                            "items": {"type": "string"}
+                        },
+                        "title": {"type": "string", "minLength": 1, "description": "Specific one-line title."},
+                        "category": {
+                            "type": "string",
+                            "enum": CATEGORIES,
+                            "description": "Exactly one canonical report section."
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["high", "medium", "low"],
+                            "description": "Optional coarse priority; array order remains the authoritative ranking."
+                        },
+                        "body": {"type": "string", "description": "Markdown preserving the paper evidence, the problem, its consequence, and what would address it."},
+                        "evidence": evidence_schema()
                     }
                 }
             }
@@ -118,7 +154,7 @@ pub fn ensure_legacy_products(report: &mut PipelineReport) {
         .rev()
         .filter(|output| usable(output))
         .find_map(|output| {
-            parse_structured_output(output).or_else(|| parse_legacy_markdown_output(output))
+            parse_legacy_structured_output(output).or_else(|| parse_legacy_markdown_output(output))
         });
     report.products = RunProducts {
         schema_version: FINDING_SCHEMA_VERSION,
@@ -137,7 +173,7 @@ pub fn canonical_findings(report: &PipelineReport) -> Option<FindingSet> {
         .rev()
         .filter(|output| usable(output))
         .find_map(|output| {
-            parse_structured_output(output).or_else(|| parse_legacy_markdown_output(output))
+            parse_legacy_structured_output(output).or_else(|| parse_legacy_markdown_output(output))
         })
 }
 
@@ -168,6 +204,28 @@ fn base_step_id(step_id: &str) -> &str {
 
 fn parse_structured_output(output: &StepOutput) -> Option<FindingSet> {
     let value = crate::pipeline::structured::extract_json(&output.raw_text)?;
+    parse_value(&value, &output.step_id, &output.step_label)
+}
+
+/// Legacy inference has no workflow contract to identify the published step.
+/// Do not mistake the distinctive per-reviewer Auto Review artifact for the
+/// consolidated product when a run stopped before synthesis or validation.
+fn parse_legacy_structured_output(output: &StepOutput) -> Option<FindingSet> {
+    let value = crate::pipeline::structured::extract_json(&output.raw_text)?;
+    let specialist = value
+        .get("findings")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            !items.is_empty()
+                && items.iter().all(|item| {
+                    item.as_object().is_some_and(|object| {
+                        object.contains_key("problem") && object.contains_key("what_would_help")
+                    })
+                })
+        });
+    if specialist {
+        return None;
+    }
     parse_value(&value, &output.step_id, &output.step_label)
 }
 
@@ -225,6 +283,17 @@ pub fn parse_value(
             first(object, &["source_key", "sourceKey", "rule_id", "ruleId"]),
             MAX_REFERENCE_BYTES,
         );
+        let sources = match object.get("sources") {
+            Some(Value::Array(values)) => values
+                .iter()
+                .take(MAX_SOURCES)
+                .filter_map(|value| {
+                    let source = bounded_value(Some(value), MAX_REFERENCE_BYTES);
+                    (!source.is_empty()).then_some(source)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         let category = bounded_value(
             first(
                 object,
@@ -257,6 +326,7 @@ pub fn parse_value(
         findings.push(Finding {
             id,
             source_key,
+            sources,
             title: if title.is_empty() {
                 bounded_text(&body, MAX_TITLE_BYTES)
             } else {
@@ -409,32 +479,49 @@ fn parse_legacy_markdown_output(output: &StepOutput) -> Option<FindingSet> {
     })
 }
 
-/// Deterministic human presentation of a canonical findings product. Array
-/// order carries importance; display numbers are deliberately not identities.
+/// Deterministic human presentation of a canonical findings product. Findings
+/// are grouped under their category in order of first appearance, so
+/// centrality-ordered arrays never repeat section headers; within a category,
+/// array order carries importance. Display numbers follow the rendered order
+/// and are deliberately not identities.
 pub fn render_markdown(findings: &FindingSet) -> String {
     if findings.findings.is_empty() {
         return "No findings.".to_string();
     }
-    let mut markdown = String::new();
-    let mut current_category = String::new();
-    for (index, finding) in findings.findings.iter().enumerate() {
-        let category = if finding.category.trim().is_empty() {
+    fn category_of(finding: &Finding) -> &str {
+        let category = finding.category.trim();
+        if category.is_empty() {
             "Findings"
         } else {
-            finding.category.trim()
-        };
-        if category != current_category {
-            if !markdown.is_empty() {
-                markdown.push('\n');
-            }
-            markdown.push_str("## ");
-            markdown.push_str(category);
-            markdown.push_str("\n\n");
-            current_category = category.to_string();
+            category
         }
-        markdown.push_str(&format!("**#{}. {}**\n\n", index + 1, finding.title.trim()));
-        markdown.push_str(finding.body.trim());
+    }
+    let mut categories: Vec<&str> = Vec::new();
+    for finding in &findings.findings {
+        let category = category_of(finding);
+        if !categories.contains(&category) {
+            categories.push(category);
+        }
+    }
+    let mut markdown = String::new();
+    let mut number = 0usize;
+    for category in categories {
+        if !markdown.is_empty() {
+            markdown.push('\n');
+        }
+        markdown.push_str("## ");
+        markdown.push_str(category);
         markdown.push_str("\n\n");
+        for finding in findings
+            .findings
+            .iter()
+            .filter(|finding| category_of(finding) == category)
+        {
+            number += 1;
+            markdown.push_str(&format!("**#{}. {}**\n\n", number, finding.title.trim()));
+            markdown.push_str(finding.body.trim());
+            markdown.push_str("\n\n");
+        }
     }
     markdown.trim().to_string()
 }
@@ -532,6 +619,104 @@ mod tests {
     #[test]
     fn narrative_markdown_is_not_misclassified() {
         assert!(parse_legacy_markdown_output(&output("## Summary\n\nOrdinary prose.")).is_none());
+    }
+
+    #[test]
+    fn interleaved_categories_render_grouped_without_duplicate_headers() {
+        let set = FindingSet {
+            schema_version: FINDING_SCHEMA_VERSION,
+            findings: vec![
+                Finding {
+                    id: "sign".into(),
+                    title: "Sign error".into(),
+                    category: CATEGORIES[0].into(),
+                    body: "A".into(),
+                    ..Default::default()
+                },
+                Finding {
+                    id: "power".into(),
+                    title: "Underpowered design".into(),
+                    category: CATEGORIES[1].into(),
+                    body: "B".into(),
+                    ..Default::default()
+                },
+                Finding {
+                    id: "ref".into(),
+                    title: "Broken cross-reference".into(),
+                    category: CATEGORIES[0].into(),
+                    body: "C".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let markdown = render_markdown(&set);
+        // One header per category, first-appearance order, renumbered in
+        // rendered order.
+        assert_eq!(markdown.matches("## Correctness").count(), 1);
+        assert!(
+            markdown.find("## Correctness").unwrap() < markdown.find("## Methodological").unwrap()
+        );
+        assert!(markdown.contains("**#2. Broken cross-reference**"));
+        assert!(markdown.contains("**#3. Underpowered design**"));
+    }
+
+    #[test]
+    fn sources_are_parsed_and_bounded() {
+        let parsed = parse_structured_output(&output(
+            r#"{"findings":[{"id":"a","title":"T","category":"Contribution and Scope","body":"B","sources":["auto_exposition","economics_econometrics"],"evidence":[]}]}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            parsed.findings[0].sources,
+            vec!["auto_exposition", "economics_econometrics"]
+        );
+    }
+
+    #[test]
+    fn legacy_products_do_not_promote_structured_specialist_reports() {
+        let mut report = PipelineReport {
+            orientation: Value::Null,
+            step_outputs: vec![output(
+                r#"{"findings":[{"title":"T","in_the_paper":"Claim","problem":"Problem","consequence":"Consequence","what_would_help":"Fix","evidence":[]}]}"#,
+            )],
+            failed_steps: Vec::new(),
+            products: RunProducts::default(),
+            referee_reports: Vec::new(),
+            editor: None,
+            report_date: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            paper_hash: String::new(),
+        };
+        report.step_outputs[0].phase = "parallel".into();
+        report.step_outputs[0].structured_json = true;
+
+        ensure_legacy_products(&mut report);
+
+        assert!(report.products.findings.is_none());
+    }
+
+    #[test]
+    fn canonical_schema_is_portable_and_matches_its_own_product() {
+        let schema = output_schema();
+        crate::pipeline::structured::provider_schema(&schema).unwrap();
+        let product = serde_json::json!({"findings": [{
+            "id": "sign-error", "title": "Sign error",
+            "category": CATEGORIES[0], "priority": "high",
+            "sources": ["auto_consistency"],
+            "body": "Body", "evidence": [{"page": 4, "quote": "q"}]
+        }]});
+        crate::pipeline::structured::validate(&schema, &product).unwrap();
+        // Unknown categories and empty ids are rejected by the contract.
+        let bad_category = serde_json::json!({"findings": [{
+            "id": "x", "title": "T", "category": "Novel Category",
+            "body": "B", "evidence": []
+        }]});
+        assert!(crate::pipeline::structured::validate(&schema, &bad_category).is_err());
+        let empty_id = serde_json::json!({"findings": [{
+            "id": "", "title": "T", "category": CATEGORIES[0],
+            "body": "B", "evidence": []
+        }]});
+        assert!(crate::pipeline::structured::validate(&schema, &empty_id).is_err());
     }
 
     #[test]

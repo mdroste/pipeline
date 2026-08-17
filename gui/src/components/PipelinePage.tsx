@@ -14,6 +14,7 @@ import type {
   ArtifactSelector,
 } from "../lib/types";
 import { PROVIDERS } from "../lib/providers";
+import { lintCrossStepReferences } from "../lib/pipelineHelpers";
 import WaveDiagram, { type WaveSelection } from "./WaveDiagram";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 import ResizeHandle from "./ResizeHandle";
@@ -1015,6 +1016,7 @@ export default function PipelinePage({
   const autoReview = isAutoReview(config);
   const adaptiveAgentCount = getAdaptiveAgentCount(config);
   const adaptiveAgentRange = getAdaptiveAgentRange(config);
+  const crossStepWarnings = lintCrossStepReferences(config);
   const browseSpecialists = (kind: AdaptiveSlotKind) => {
     setCatalogTab(kind === "subject" ? "subjects" : "methods");
   };
@@ -1132,6 +1134,32 @@ export default function PipelinePage({
           </div>
         </div>
 
+        {crossStepWarnings.length > 0 && (
+          <div className="mx-4 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+              Cross-step references
+            </p>
+            <ul className="mt-1 space-y-0.5">
+              {crossStepWarnings.slice(0, 6).map((warning, index) => (
+                <li key={`${warning.stepId}-${index}`} className="text-[11px] leading-snug text-amber-800 dark:text-amber-200">
+                  <button
+                    type="button"
+                    className="font-medium underline underline-offset-2"
+                    onClick={() => setEditing(warning.stepId)}
+                  >
+                    {warning.stepId}
+                  </button>
+                  : {warning.message}
+                </li>
+              ))}
+              {crossStepWarnings.length > 6 && (
+                <li className="text-[11px] text-amber-700 dark:text-amber-300">
+                  +{crossStepWarnings.length - 6} more
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
         <div className="px-4 pb-2">
           <div
             role="tablist"

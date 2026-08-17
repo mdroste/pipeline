@@ -880,6 +880,19 @@ pub async fn execute_steps(
     let enabled: Vec<&StepConfig> = config.steps.iter().filter(|s| s.enabled).collect();
     let deps = resolve_dependencies(&enabled);
 
+    // Producer steps whose structured artifact renders back to a readable
+    // referee report when it enters downstream sequential context.
+    let specialist_steps: std::collections::HashSet<String> = config
+        .steps
+        .iter()
+        .filter(|step| {
+            step.output_schema
+                .as_ref()
+                .is_some_and(crate::auto_review::is_specialist_schema)
+        })
+        .map(|step| step.id.clone())
+        .collect();
+
     // Ids that have completed (including skipped) so dependents can start.
     let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut remaining: Vec<usize> = (0..enabled.len()).collect();
@@ -1039,14 +1052,12 @@ pub async fn execute_steps(
                     .ok();
                 }
                 if has_multi_agent && config.merge.enabled {
-                    let output_schemas = to_run
-                        .iter()
-                        .filter_map(|step| {
-                            step.output_schema
-                                .clone()
-                                .map(|schema| (step.id.clone(), schema))
-                        })
-                        .collect::<std::collections::BTreeMap<_, _>>();
+                    let mut output_schemas = std::collections::BTreeMap::new();
+                    for step in &to_run {
+                        if let Some(schema) = effective_output_schema(step)? {
+                            output_schemas.insert(step.id.clone(), schema);
+                        }
+                    }
                     match merge::merge_step_outputs(
                         app,
                         wave_outputs.clone(),
@@ -1101,6 +1112,13 @@ pub async fn execute_steps(
                         }
                     }
                 }
+                wave_outputs = collapse_findings_fan_out(
+                    app,
+                    &to_run,
+                    &all_outputs,
+                    wave_outputs,
+                    &output_budget,
+                );
                 remove_checkpoints_from(write_dir, all_outputs.len()).await;
                 checkpoint_outputs(app, write_dir, all_outputs.len(), &wave_outputs).await;
                 all_outputs.extend(wave_outputs);
@@ -1211,6 +1229,7 @@ pub async fn execute_steps(
             write_dir,
             settings,
             shared_context,
+            &specialist_steps,
         )
         .await
         {
@@ -1600,6 +1619,10 @@ struct StepCallRequest<'a> {
     report_rel: &'a str,
     report_nonce: &'a str,
     output_schema: Option<&'a serde_json::Value>,
+    /// Ordered finding ids from the upstream artifact named by the schema's
+    /// `x-pipeline-preserve-findings-from` marker. When present, the response
+    /// must keep its findings' ids as an ordered subsequence of these.
+    preserved_finding_ids: Option<Vec<String>>,
     command_model: Option<&'a str>,
     display_model: &'a str,
     model_policy: &'a str,
@@ -1664,6 +1687,77 @@ async fn finish_response_capture(
             )}),
         );
     }
+}
+
+/// Ordered finding ids of a canonical `{findings: [...]}` artifact. Returns
+/// None when the text is not findings-shaped JSON.
+fn finding_ids(text: &str) -> Option<Vec<String>> {
+    let value = serde_json::from_str::<serde_json::Value>(text.trim()).ok()?;
+    let findings = value.get("findings")?.as_array()?;
+    Some(
+        findings
+            .iter()
+            .map(|finding| {
+                finding
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect(),
+    )
+}
+
+fn preserved_finding_ids(
+    step_id: &str,
+    output_schema: Option<&serde_json::Value>,
+    prior_outputs: &[StepOutput],
+) -> Result<Option<Vec<String>>, String> {
+    let Some(target) = output_schema
+        .and_then(|schema| schema.get(crate::pipeline::structured::PRESERVE_FINDINGS_KEY))
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+    let output = prior_outputs
+        .iter()
+        .rev()
+        .find(|output| {
+            !output.skipped
+                && output.step_id.split('/').next().unwrap_or(&output.step_id) == target
+        })
+        .ok_or_else(|| {
+            format!(
+                "Step '{step_id}' preserves findings from '{target}', but that required artifact is unavailable"
+            )
+        })?;
+    let ids = finding_ids(&output.raw_text).ok_or_else(|| {
+        format!(
+            "Step '{step_id}' preserves findings from '{target}', but that artifact is not canonical findings JSON"
+        )
+    })?;
+    Ok(Some(ids))
+}
+
+/// Host-owned lineage invariant for findings-filtering steps: every returned
+/// finding must keep its exact input id, in the input's relative order, with
+/// no additions. This is the contract the validate prompt states; enforcing it
+/// here keeps id lineage (annotations, the Projects ledger) intact even when a
+/// model renumbers or invents findings.
+fn check_finding_lineage(expected: &[String], canonical: &str) -> Result<(), String> {
+    let Some(actual) = finding_ids(canonical) else {
+        return Err("the response is not a findings artifact, so its finding ids cannot be verified against the upstream product".to_string());
+    };
+    let mut remaining = expected.iter();
+    for id in &actual {
+        if !remaining.any(|candidate| candidate == id) {
+            return Err(format!(
+                "finding id '{id}' does not continue the upstream findings product in order; \
+                 keep every surviving finding's exact input id and original order, and do not add findings"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Execute one logical step call, including retries, report-file handoff, and
@@ -1923,7 +2017,16 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             }
         };
         let text = if let Some(schema) = request.output_schema {
-            match crate::pipeline::structured::canonicalize(schema, &text) {
+            let checked =
+                crate::pipeline::structured::canonicalize(schema, &text).and_then(|canonical| {
+                    match request.preserved_finding_ids.as_deref() {
+                        Some(expected) => {
+                            check_finding_lineage(expected, &canonical).map(|()| canonical)
+                        }
+                        None => Ok(canonical),
+                    }
+                });
+            match checked {
                 Ok(canonical) => canonical,
                 Err(reason) => {
                     finish_response_capture(
@@ -2103,7 +2206,13 @@ fn build_parallel_prompt(
 /// suffix ("" for a single plain run).
 struct Unit {
     agent: String,
+    /// File fan-out: the matched path, staged into the unit's artifact view.
     item: Option<String>,
+    /// Artifact fan-out: the element text bound directly to `{item}`.
+    inline_item: Option<String>,
+    /// Ordered finding ids this unit's response must preserve (artifact
+    /// fan-out over a findings product with the preserve-findings marker).
+    lineage_ids: Option<Vec<String>>,
     suffix: String,
     display: String,
     /// Suffix shared by all agents analyzing the same logical item. Empty for
@@ -2290,12 +2399,12 @@ fn enforce_merge_output_schemas(
                         .strip_prefix(&step.id)
                         .is_some_and(|rest| rest.starts_with('/'))
             })
-            .and_then(|step| step.output_schema.as_ref())
+            .and_then(|step| effective_output_schema(step).ok().flatten())
         else {
             continue;
         };
         let reason = if output.calls.iter().any(|call| call.role == "merge") {
-            match crate::pipeline::structured::check(schema, &output.raw_text) {
+            match crate::pipeline::structured::check(&schema, &output.raw_text) {
                 Ok(()) => continue,
                 Err(reason) => reason,
             }
@@ -2349,6 +2458,7 @@ fn build_units(
     step: &StepConfig,
     settings: &crate::settings::Settings,
     source_path: &str,
+    artifact_source: Option<&str>,
     app: &crate::emit::EventBus,
 ) -> Result<Vec<Unit>, String> {
     let agents: Vec<String> = if step.agents.is_empty() {
@@ -2359,6 +2469,9 @@ fn build_units(
     let multi = agents.len() > 1;
 
     let units = if let Some(fe) = &step.for_each {
+        if let Some(source) = &fe.artifact {
+            return build_artifact_units(step, source, fe, artifact_source, agents, multi, app);
+        }
         // No-input profiles and runs whose source staging failed have an
         // empty source root; fan_out_root("") would resolve to the process
         // cwd, so treat this as zero matches instead of scanning it.
@@ -2425,6 +2538,8 @@ fn build_units(
                     display: base.clone(),
                     agent,
                     item: Some(path.clone()),
+                    inline_item: None,
+                    lineage_ids: None,
                     merge_agents: multi,
                 })
             })
@@ -2437,12 +2552,319 @@ fn build_units(
                 display: capitalize(&a),
                 agent: a,
                 item: None,
+                inline_item: None,
+                lineage_ids: None,
                 item_suffix: String::new(),
                 merge_agents: multi,
             })
             .collect::<Vec<_>>()
     };
     Ok(units)
+}
+
+/// Deterministic composite-key suffix for the Nth artifact fan-out element.
+/// Indexes rather than element content key the units, so reassembly can align
+/// unit outputs with their source elements even when elements collide.
+fn artifact_item_suffix(index: usize) -> String {
+    format!("item_{:03}", index + 1)
+}
+
+/// Deterministically reassemble a findings-preserving artifact fan-out. Each
+/// unit judged exactly one upstream element, so the step's product is the
+/// ordered concatenation of unit results — no merge model involved. An
+/// element whose unit failed or returned an unusable product keeps its
+/// original, unvalidated finding rather than silently disappearing.
+fn collapse_findings_fan_out(
+    app: &crate::emit::EventBus,
+    steps: &[&StepConfig],
+    upstream_outputs: &[StepOutput],
+    mut outputs: Vec<StepOutput>,
+    output_budget: &Arc<OutputBudget>,
+) -> Vec<StepOutput> {
+    for step in steps {
+        let Some(for_each) = &step.for_each else {
+            continue;
+        };
+        let Some(source) = &for_each.artifact else {
+            continue;
+        };
+        let Ok(Some(schema)) = effective_output_schema(step) else {
+            continue;
+        };
+        if schema
+            .get(crate::pipeline::structured::PRESERVE_FINDINGS_KEY)
+            .and_then(serde_json::Value::as_str)
+            != Some(source.step.as_str())
+        {
+            continue;
+        }
+        let Some(source_text) = upstream_outputs
+            .iter()
+            .rev()
+            .find(|output| {
+                !output.skipped
+                    && output.step_id.split('/').next().unwrap_or(&output.step_id) == source.step
+            })
+            .map(|output| output.raw_text.clone())
+        else {
+            continue;
+        };
+        let Ok(elements) =
+            artifact_fan_out_elements(step, source, for_each, Some(&source_text), app)
+        else {
+            continue;
+        };
+        if elements.is_empty() {
+            continue;
+        }
+
+        let (units, mut kept): (Vec<StepOutput>, Vec<StepOutput>) =
+            outputs.into_iter().partition(|output| {
+                output.step_id.split('/').next().unwrap_or(&output.step_id) == step.id
+            });
+
+        let mut combined = Vec::new();
+        let mut unvalidated = 0usize;
+        for (index, element) in elements.iter().enumerate() {
+            let key = format!("{}/{}", step.id, artifact_item_suffix(index));
+            // Exact key first (single agent, or a merged multi-agent group);
+            // otherwise the lexically first per-agent unit for determinism.
+            let unit = units
+                .iter()
+                .filter(|unit| {
+                    !unit.skipped
+                        && (unit.step_id == key
+                            || unit
+                                .step_id
+                                .strip_prefix(&key)
+                                .is_some_and(|rest| rest.starts_with('/')))
+                })
+                .min_by(|a, b| a.step_id.cmp(&b.step_id));
+            let unit_findings = unit.and_then(|unit| {
+                serde_json::from_str::<serde_json::Value>(unit.raw_text.trim())
+                    .ok()?
+                    .get("findings")?
+                    .as_array()
+                    .cloned()
+            });
+            match unit_findings {
+                Some(findings) => combined.extend(findings),
+                None => {
+                    if element.is_object() {
+                        combined.push(element.clone());
+                        unvalidated += 1;
+                    }
+                }
+            }
+        }
+        if unvalidated > 0 {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "WARNING: {unvalidated} of {} fan-out unit(s) for step '{}' produced no usable verdict; their original findings are kept unvalidated.",
+                    elements.len(),
+                    step.label
+                )}),
+            );
+        }
+        let combined_value = serde_json::json!({ "findings": combined });
+        let raw_text = match serde_json::to_string_pretty(&combined_value) {
+            Ok(text) => text,
+            Err(error) => {
+                let _ = app.emit_event(
+                    "pipeline:log",
+                    serde_json::json!({ "line": format!(
+                        "WARNING: could not assemble fan-out findings for step '{}' ({error}); keeping per-unit outputs.",
+                        step.label
+                    )}),
+                );
+                kept.extend(units);
+                outputs = kept;
+                continue;
+            }
+        };
+
+        let mut assembled = StepOutput {
+            step_id: step.id.clone(),
+            step_label: step.label.clone(),
+            phase: "parallel".to_string(),
+            raw_text,
+            structured_json: true,
+            ..Default::default()
+        };
+        for unit in &units {
+            assembled.duration_secs = assembled.duration_secs.saturating_add(unit.duration_secs);
+            assembled.input_tokens = assembled.input_tokens.saturating_add(unit.input_tokens);
+            assembled.output_tokens = assembled.output_tokens.saturating_add(unit.output_tokens);
+            assembled.cached_input_tokens = assembled
+                .cached_input_tokens
+                .saturating_add(unit.cached_input_tokens);
+            assembled.cache_write_input_tokens = assembled
+                .cache_write_input_tokens
+                .saturating_add(unit.cache_write_input_tokens);
+            assembled.model_round_trips = assembled
+                .model_round_trips
+                .saturating_add(unit.model_round_trips);
+            assembled.tool_calls.add_counts(unit.tool_calls);
+            assembled.attempt_count = assembled.attempt_count.saturating_add(unit.attempt_count);
+            assembled.calls.extend(unit.calls.iter().cloned());
+        }
+        if let Some(first) = units.first() {
+            assembled.agent = first.agent.clone();
+            assembled.provider = first.provider.clone();
+            assembled.model = first.model.clone();
+            assembled.model_transport = first.model_transport.clone();
+            assembled.model_policy = first.model_policy.clone();
+            assembled.model_source = first.model_source.clone();
+            assembled.model_catalog_updated_at = first.model_catalog_updated_at.clone();
+        }
+        if let Err(error) = output_budget.reserve(&assembled) {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "WARNING: assembled fan-out findings for step '{}' exceed the run output budget ({error}); keeping per-unit outputs.",
+                    step.label
+                )}),
+            );
+            kept.extend(units);
+            outputs = kept;
+            continue;
+        }
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": format!(
+                "Assembled {} finding(s) from {} fan-out unit(s) for step '{}'.",
+                combined_value["findings"].as_array().map_or(0, Vec::len),
+                elements.len(),
+                step.label
+            )}),
+        );
+        kept.push(assembled);
+        outputs = kept;
+    }
+    outputs
+}
+
+/// Expand an artifact fan-out into one unit per upstream array element.
+fn build_artifact_units(
+    step: &StepConfig,
+    source: &crate::pipeline_config::ForEachArtifact,
+    fe: &crate::pipeline_config::ForEach,
+    artifact_source: Option<&str>,
+    agents: Vec<String>,
+    multi: bool,
+    app: &crate::emit::EventBus,
+) -> Result<Vec<Unit>, String> {
+    let elements = artifact_fan_out_elements(step, source, fe, artifact_source, app)?;
+    // Per-element lineage applies when this step's own contract preserves the
+    // findings of exactly the step it fans out over.
+    let preserves_source = effective_output_schema(step)?
+        .as_ref()
+        .and_then(|schema| schema.get(crate::pipeline::structured::PRESERVE_FINDINGS_KEY))
+        .and_then(serde_json::Value::as_str)
+        == Some(source.step.as_str());
+    let mut units = Vec::new();
+    for (index, element) in elements.iter().enumerate() {
+        let element_id = element
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty());
+        let display = element_id.map_or_else(|| format!("item {}", index + 1), str::to_string);
+        let item_text = match element {
+            serde_json::Value::String(text) => text.clone(),
+            other => serde_json::to_string_pretty(other).map_err(|error| {
+                format!("Fan-out element {index} cannot be serialized: {error}")
+            })?,
+        };
+        let lineage_ids = (preserves_source && element_id.is_some())
+            .then(|| vec![element_id.unwrap_or_default().to_string()]);
+        let suffix = artifact_item_suffix(index);
+        for agent in &agents {
+            units.push(Unit {
+                suffix: if multi {
+                    format!("{suffix}/{agent}")
+                } else {
+                    suffix.clone()
+                },
+                item_suffix: suffix.clone(),
+                display: display.clone(),
+                agent: agent.clone(),
+                item: None,
+                inline_item: Some(item_text.clone()),
+                lineage_ids: lineage_ids.clone(),
+                merge_agents: multi,
+            });
+        }
+    }
+    Ok(units)
+}
+
+/// The bounded element list an artifact fan-out expands over. Also used at
+/// reassembly time, so both sides of a fan-out agree on order and cap.
+fn artifact_fan_out_elements(
+    step: &StepConfig,
+    source: &crate::pipeline_config::ForEachArtifact,
+    fe: &crate::pipeline_config::ForEach,
+    artifact_source: Option<&str>,
+    app: &crate::emit::EventBus,
+) -> Result<Vec<serde_json::Value>, String> {
+    let Some(text) = artifact_source else {
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": format!(
+                "WARNING: fan-out step '{}' has no artifact from step '{}'; treating it as zero items",
+                step.label, source.step
+            )}),
+        );
+        return Ok(Vec::new());
+    };
+    let value = serde_json::from_str::<serde_json::Value>(text.trim()).map_err(|error| {
+        format!(
+            "Fan-out step '{}' needs structured JSON from step '{}': {error}",
+            step.label, source.step
+        )
+    })?;
+    let target = if source.pointer.is_empty() {
+        &value
+    } else {
+        value.pointer(&source.pointer).ok_or_else(|| {
+            format!(
+                "Fan-out step '{}' found no value at '{}' in the artifact from step '{}'",
+                step.label, source.pointer, source.step
+            )
+        })?
+    };
+    let elements = target.as_array().ok_or_else(|| {
+        format!(
+            "Fan-out step '{}' expects an array at '{}' in the artifact from step '{}'",
+            step.label, source.pointer, source.step
+        )
+    })?;
+    let max = fe.max.max(1) as usize;
+    if elements.len() > max {
+        let _ = app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": format!(
+                "Fan-out step '{}' was bounded by its item cap at {max} of {} elements",
+                step.label,
+                elements.len()
+            )}),
+        );
+    }
+    Ok(elements.iter().take(max).cloned().collect())
+}
+
+/// A step's dispatch-time output schema, with any live `x-pipeline-schema`
+/// contract reference resolved. Saved profiles keep only the reference.
+fn effective_output_schema(step: &StepConfig) -> Result<Option<serde_json::Value>, String> {
+    step.output_schema
+        .as_ref()
+        .map(|schema| {
+            crate::pipeline::structured::resolve_schema_reference(schema)
+                .map_err(|error| format!("Step '{}' output schema is invalid: {error}", step.id))
+        })
+        .transpose()
 }
 
 /// Run all parallel steps in a wave concurrently.
@@ -2477,9 +2899,32 @@ async fn run_parallel_wave(
         let settings_owned = settings.clone();
         let source_owned = source_path.to_string();
         let app_owned = app.clone();
+        // Artifact fan-out reads its completed upstream product here, before
+        // unit discovery moves onto a blocking thread.
+        let artifact_source_owned = step
+            .for_each
+            .as_ref()
+            .and_then(|for_each| for_each.artifact.as_ref())
+            .and_then(|source| {
+                prior_outputs
+                    .iter()
+                    .rev()
+                    .find(|output| {
+                        !output.skipped
+                            && output.step_id.split('/').next().unwrap_or(&output.step_id)
+                                == source.step
+                    })
+                    .map(|output| output.raw_text.clone())
+            });
         let units = crate::commands::await_or_cancel(
             tokio::task::spawn_blocking(move || {
-                build_units(&step_owned, &settings_owned, &source_owned, &app_owned)
+                build_units(
+                    &step_owned,
+                    &settings_owned,
+                    &source_owned,
+                    artifact_source_owned.as_deref(),
+                    &app_owned,
+                )
             }),
             Some(&step.id),
         )
@@ -2511,8 +2956,14 @@ async fn run_parallel_wave(
             let agent_name = unit.agent.clone();
             let model_selection = step.model_selection_for(settings, &agent_name);
             let effort_override = step.effort_for(settings, &agent_name);
-            let output_schema = step.output_schema.clone();
-            let fan_out_item = unit.item.clone();
+            let output_schema = effective_output_schema(step)?;
+            // Artifact fan-out records the element's display id, not the
+            // element text, so manifests stay compact.
+            let fan_out_item = unit
+                .item
+                .clone()
+                .or_else(|| unit.inline_item.is_some().then(|| unit.display.clone()));
+            let unit_lineage_ids = unit.lineage_ids.clone();
             let merge_group = if unit.merge_agents {
                 if unit.item_suffix.is_empty() {
                     id.clone()
@@ -2554,9 +3005,11 @@ async fn run_parallel_wave(
                     run_artifact_dir: write_dir,
                 },
             )?;
+            // File fan-out stages the matched file into the artifact view and
+            // binds its path; artifact fan-out binds the element text itself.
             let item_path = match unit.item.as_deref() {
                 Some(item) => resolved.stage_current_item(item)?,
-                None => String::new(),
+                None => unit.inline_item.clone().unwrap_or_default(),
             };
             let shared_context = prepare_selected_shared_context(
                 app,
@@ -2742,6 +3195,7 @@ async fn run_parallel_wave(
                     report_rel: &report_rel,
                     report_nonce: &report_nonce,
                     output_schema: output_schema.as_ref(),
+                    preserved_finding_ids: unit_lineage_ids.clone(),
                     command_model: resolution.command_model.as_deref(),
                     display_model: &resolution.resolved_model,
                     model_policy: &model_policy,
@@ -2955,12 +3409,47 @@ fn expand_template(
     Ok(out)
 }
 
+/// A step output's contribution to a prompt: the whole artifact, or — for
+/// `{step:<id>#/json/pointer}` references — the selected slice of its
+/// canonical JSON. String slices insert verbatim; other values insert as
+/// pretty JSON. Unresolvable pointers become a readable parenthesized notice.
+fn step_ref_text(output: &StepOutput, pointer: Option<&str>) -> String {
+    let Some(pointer) = pointer else {
+        return output.raw_text.clone();
+    };
+    if pointer.is_empty() {
+        return output.raw_text.clone();
+    }
+    if !pointer.starts_with('/') {
+        return format!(
+            "(invalid JSON pointer '{pointer}' for step '{}'; pointers start with '/')",
+            output.step_id
+        );
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(output.raw_text.trim()) else {
+        return format!(
+            "(step '{}' output is not structured JSON, so '{pointer}' cannot be selected)",
+            output.step_id
+        );
+    };
+    match value.pointer(pointer) {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(slice) => serde_json::to_string_pretty(slice).unwrap_or_else(|_| slice.to_string()),
+        None => format!("(step '{}' has no value at '{pointer}')", output.step_id),
+    }
+}
+
 fn append_step_ref(
     out: &mut String,
     id: &str,
     prior_outputs: &[StepOutput],
     limit: usize,
 ) -> Result<(), String> {
+    // `{step:<id>#/json/pointer}` selects into a structured artifact.
+    let (id, pointer) = match id.split_once('#') {
+        Some((id, pointer)) => (id.trim(), Some(pointer.trim())),
+        None => (id, None),
+    };
     if id.is_empty() {
         return crate::safety::push_str_limited(
             out,
@@ -2971,7 +3460,12 @@ fn append_step_ref(
     }
     // Exact id match wins (covers both "technical" and "technical/claude").
     if let Some(o) = prior_outputs.iter().find(|o| o.step_id == id) {
-        return crate::safety::push_str_limited(out, &o.raw_text, limit, "Sequential prompt");
+        return crate::safety::push_str_limited(
+            out,
+            &step_ref_text(o, pointer),
+            limit,
+            "Sequential prompt",
+        );
     }
     // Otherwise, gather all step outputs whose base id (before any '/') matches.
     let matches: Vec<&StepOutput> = prior_outputs
@@ -2989,7 +3483,7 @@ fn append_step_ref(
     if matches.len() == 1 {
         return crate::safety::push_str_limited(
             out,
-            &matches[0].raw_text,
+            &step_ref_text(matches[0], pointer),
             limit,
             "Sequential prompt",
         );
@@ -2998,12 +3492,8 @@ fn append_step_ref(
         if index > 0 {
             crate::safety::push_str_limited(out, "\n\n---\n\n", limit, "Sequential prompt")?;
         }
-        for value in [
-            "### ",
-            output.step_label.as_str(),
-            "\n\n",
-            output.raw_text.as_str(),
-        ] {
+        let text = step_ref_text(output, pointer);
+        for value in ["### ", output.step_label.as_str(), "\n\n", text.as_str()] {
             crate::safety::push_str_limited(out, value, limit, "Sequential prompt")?;
         }
     }
@@ -3055,6 +3545,33 @@ fn substitute_run_context(
     substitute_placeholders(&t, "{input:", inputs)
 }
 
+/// Replace specialist-schema JSON artifacts with their deterministic readable
+/// rendering (plus a stable `Report id` line) when building sequential
+/// context. Keyed by the producing step's schema, so canonical findings JSON
+/// — for example a consolidation product feeding validation — passes through
+/// verbatim.
+fn specialist_context_outputs(
+    outputs: &[StepOutput],
+    specialist_steps: &std::collections::HashSet<String>,
+) -> Vec<StepOutput> {
+    outputs
+        .iter()
+        .map(|output| {
+            let base_id = output.step_id.split('/').next().unwrap_or(&output.step_id);
+            if !output.skipped && specialist_steps.contains(base_id) {
+                if let Some(rendered) =
+                    crate::auto_review::specialist_context_text(&output.step_id, &output.raw_text)
+                {
+                    let mut rendered_output = output.clone();
+                    rendered_output.raw_text = rendered;
+                    return rendered_output;
+                }
+            }
+            output.clone()
+        })
+        .collect()
+}
+
 /// Run a single sequential step.
 #[allow(clippy::too_many_arguments)]
 async fn run_sequential_step(
@@ -3066,6 +3583,7 @@ async fn run_sequential_step(
     write_dir: Option<&str>,
     settings: &crate::settings::Settings,
     shared_context: Option<Arc<super::context_cache::PreparedContext>>,
+    specialist_steps: &std::collections::HashSet<String>,
 ) -> Result<StepOutput, String> {
     let _ = app.emit_event(
         "pipeline:pass",
@@ -3075,11 +3593,19 @@ async fn run_sequential_step(
         }),
     );
 
+    let output_schema = effective_output_schema(step)?;
+
+    // The lineage baseline reads the untransformed upstream artifact; the
+    // prompt context below may render specialist JSON into readable reports.
+    let preserved_finding_ids =
+        preserved_finding_ids(&step.id, output_schema.as_ref(), &artifacts.prior_outputs)?;
+
+    let prior_outputs = specialist_context_outputs(&artifacts.prior_outputs, specialist_steps);
     let base_prompt = expand_template(
         &step.prompt,
         &artifacts.orientation_path,
         survey_hint,
-        &artifacts.prior_outputs,
+        &prior_outputs,
         &artifacts.paper_text_path,
         &artifacts.document_bundle_path,
         &artifacts.source_path,
@@ -3139,7 +3665,7 @@ async fn run_sequential_step(
         &output_format_block(
             task_write_dir.as_deref(),
             &report_nonce,
-            step.output_schema.as_ref(),
+            output_schema.as_ref(),
         ),
         crate::safety::MAX_EXPANDED_PROMPT_BYTES,
         "Sequential prompt",
@@ -3195,7 +3721,8 @@ async fn run_sequential_step(
         write_dir: task_write_dir.as_deref(),
         report_rel,
         report_nonce: &report_nonce,
-        output_schema: step.output_schema.as_ref(),
+        output_schema: output_schema.as_ref(),
+        preserved_finding_ids,
         command_model: resolution.command_model.as_deref(),
         display_model: &resolution.resolved_model,
         model_policy: &model_policy,
@@ -3714,6 +4241,127 @@ mod tests {
         assert_eq!(base_id("technical/claude"), "technical");
     }
 
+    // ── structured references and lineage ──────────────────────────
+
+    fn findings_output(id: &str, text: &str) -> StepOutput {
+        StepOutput {
+            step_id: id.into(),
+            step_label: id.into(),
+            phase: "sequential".into(),
+            raw_text: text.into(),
+            structured_json: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn step_pointer_references_select_into_structured_artifacts() {
+        let output = findings_output(
+            "extract",
+            r#"{"findings":[{"id":"a","title":"First"}],"note":"n"}"#,
+        );
+        assert_eq!(step_ref_text(&output, None), output.raw_text);
+        assert_eq!(step_ref_text(&output, Some("/note")), "n");
+        assert_eq!(step_ref_text(&output, Some("/findings/0/title")), "First");
+        assert!(step_ref_text(&output, Some("/missing")).contains("no value at '/missing'"));
+        assert!(step_ref_text(&output, Some("bad")).contains("start with '/'"));
+        let prose = findings_output("prose", "just text");
+        assert!(step_ref_text(&prose, Some("/x")).contains("not structured JSON"));
+    }
+
+    #[test]
+    fn finding_lineage_requires_an_ordered_id_subsequence() {
+        let expected = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let keep_all = r#"{"findings":[{"id":"a"},{"id":"b"},{"id":"c"}]}"#;
+        let drop_middle = r#"{"findings":[{"id":"a"},{"id":"c"}]}"#;
+        let reordered = r#"{"findings":[{"id":"c"},{"id":"a"}]}"#;
+        let invented = r#"{"findings":[{"id":"a"},{"id":"new"}]}"#;
+        assert!(check_finding_lineage(&expected, keep_all).is_ok());
+        assert!(check_finding_lineage(&expected, drop_middle).is_ok());
+        assert!(check_finding_lineage(&expected, reordered).is_err());
+        assert!(check_finding_lineage(&expected, invented).is_err());
+        assert!(check_finding_lineage(&expected, "not json").is_err());
+    }
+
+    #[test]
+    fn finding_lineage_baseline_fails_closed_when_the_source_is_unavailable() {
+        let schema = serde_json::json!({
+            "type": "object",
+            crate::pipeline::structured::PRESERVE_FINDINGS_KEY: "source",
+        });
+        let error = preserved_finding_ids("validate", Some(&schema), &[]).unwrap_err();
+        assert!(
+            error.contains("required artifact is unavailable"),
+            "{error}"
+        );
+
+        let source = findings_output("source", r#"{"findings":[{"id":"stable"}]}"#);
+        assert_eq!(
+            preserved_finding_ids("validate", Some(&schema), &[source]).unwrap(),
+            Some(vec!["stable".to_string()])
+        );
+    }
+
+    #[test]
+    fn specialist_artifacts_render_for_sequential_context() {
+        let mut specialist_steps = std::collections::HashSet::new();
+        specialist_steps.insert("auto_exposition".to_string());
+        let specialist = StepOutput {
+            step_id: "auto_exposition".into(),
+            step_label: "Exposition".into(),
+            raw_text: r#"{"findings":[{"title":"T","in_the_paper":"P","problem":"Q","consequence":"C","what_would_help":"H","evidence":[{"page":3}]}]}"#.into(),
+            structured_json: true,
+            ..Default::default()
+        };
+        let synthesis = findings_output("auto_synthesis", r#"{"findings":[]}"#);
+        let rendered =
+            specialist_context_outputs(&[specialist, synthesis.clone()], &specialist_steps);
+        assert!(rendered[0]
+            .raw_text
+            .starts_with("Report id: auto_exposition"));
+        assert!(rendered[0].raw_text.contains("**#1. T**"));
+        assert!(rendered[0].raw_text.contains("- **Location:** p. 3"));
+        // Canonical findings JSON passes through verbatim for validation.
+        assert_eq!(rendered[1].raw_text, synthesis.raw_text);
+    }
+
+    #[test]
+    fn artifact_fan_out_expands_bounded_elements_with_lineage() {
+        let mut step = make_step("verify", Phase::Parallel);
+        step.output_schema = Some(serde_json::json!({
+            "type": "object",
+            crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v1",
+            crate::pipeline::structured::PRESERVE_FINDINGS_KEY: "auto_synthesis",
+        }));
+        step.for_each = Some(crate::pipeline_config::ForEach {
+            glob: String::new(),
+            max: 2,
+            artifact: Some(crate::pipeline_config::ForEachArtifact {
+                step: "auto_synthesis".into(),
+                pointer: "/findings".into(),
+            }),
+        });
+        let artifact = r#"{"findings":[{"id":"first","title":"A"},{"id":"second","title":"B"},{"id":"third","title":"C"}]}"#;
+        let settings = crate::settings::Settings::default();
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        let units = build_units(&step, &settings, "", Some(artifact), &bus).unwrap();
+        // The cap bounds expansion; suffixes are deterministic by index and
+        // each unit carries its element's lineage id.
+        assert_eq!(units.len(), 2);
+        assert_eq!(units[0].suffix, "item_001");
+        assert_eq!(units[1].suffix, "item_002");
+        assert_eq!(units[0].display, "first");
+        assert!(units[0]
+            .inline_item
+            .as_deref()
+            .is_some_and(|item| item.contains("\"A\"")));
+        assert_eq!(units[0].lineage_ids, Some(vec!["first".to_string()]));
+
+        // A missing upstream artifact degrades to zero units with a warning.
+        let missing = build_units(&step, &settings, "", None, &bus).unwrap();
+        assert!(missing.is_empty());
+    }
+
     // ── build_units (non-fan-out) ──────────────────────────────────
 
     #[test]
@@ -3721,7 +4369,7 @@ mod tests {
         let step = make_step("s", Phase::Parallel);
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-        let units = build_units(&step, &settings, "/tmp/x.pdf", &bus).unwrap();
+        let units = build_units(&step, &settings, "/tmp/x.pdf", None, &bus).unwrap();
         assert_eq!(units.len(), 1);
         assert_eq!(units[0].suffix, ""); // bare step id, no composite key
         assert_eq!(units[0].agent, settings.preferred_provider);
@@ -3733,7 +4381,7 @@ mod tests {
         step.agents = vec!["claude".into(), "antigravity".into()];
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-        let units = build_units(&step, &settings, "/tmp/x.pdf", &bus).unwrap();
+        let units = build_units(&step, &settings, "/tmp/x.pdf", None, &bus).unwrap();
         assert_eq!(units.len(), 2);
         assert_eq!(units[0].suffix, "claude");
         assert_eq!(units[1].suffix, "antigravity");
@@ -3752,10 +4400,12 @@ mod tests {
         step.for_each = Some(crate::pipeline_config::ForEach {
             glob: "**/*.md".into(),
             max: 10,
+            artifact: None,
         });
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-        let units = build_units(&step, &settings, temp.path().to_str().unwrap(), &bus).unwrap();
+        let units =
+            build_units(&step, &settings, temp.path().to_str().unwrap(), None, &bus).unwrap();
 
         assert_eq!(units.len(), 4);
         assert_eq!(units.iter().filter(|u| u.agent == "claude").count(), 2);
@@ -3772,11 +4422,12 @@ mod tests {
         step.for_each = Some(crate::pipeline_config::ForEach {
             glob: "**/*.md".into(),
             max: 10,
+            artifact: None,
         });
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
         // An empty source root must not fall back to scanning the process cwd.
-        let units = build_units(&step, &settings, "", &bus).unwrap();
+        let units = build_units(&step, &settings, "", None, &bus).unwrap();
         assert!(units.is_empty());
     }
 
@@ -3903,6 +4554,7 @@ mod tests {
         fan.for_each = Some(crate::pipeline_config::ForEach {
             glob: "**/*.does-not-exist".into(),
             max: 20,
+            artifact: None,
         });
         let mut downstream = make_step("downstream", Phase::Sequential);
         downstream.after = vec!["fan".into()];
@@ -3911,11 +4563,15 @@ mod tests {
         let settings = crate::settings::Settings::default();
         let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
 
-        assert!(
-            build_units(&steps[0], &settings, temp.path().to_str().unwrap(), &bus)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(build_units(
+            &steps[0],
+            &settings,
+            temp.path().to_str().unwrap(),
+            None,
+            &bus
+        )
+        .unwrap()
+        .is_empty());
 
         let deps = resolve_dependencies(&refs);
         let mut done = std::collections::HashSet::new();
@@ -3930,6 +4586,7 @@ mod tests {
         fan.for_each = Some(crate::pipeline_config::ForEach {
             glob: "**/*.does-not-exist".into(),
             max: 20,
+            artifact: None,
         });
         let settings = crate::settings::Settings::default();
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(1));

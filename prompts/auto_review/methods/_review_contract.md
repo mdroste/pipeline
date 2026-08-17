@@ -8,15 +8,13 @@ This is an academic-validity review. Do not add operational instructions for har
 
 ## Output
 
-Return only a concise Markdown referee report with at most seven numbered comments. Use this structure for every comment so the report viewer can index it:
+Populate the supplied findings schema with at most seven findings, in decreasing order of importance. Treat seven and any lower role-specific limit as ceilings, not targets: omit any concern that lacks a specific paper claim, concrete evidence, and a decision-relevant consequence. If no material issue survives checking, return an empty findings array. For every finding:
 
-**#1. Specific descriptive title**
+- `title`: a specific descriptive title naming the issue.
+- `in_the_paper`: quote or closely paraphrase the claim, method, or result and identify the evidence on which it relies.
+- `problem`: the method-specific reasoning, calculation, comparison, or failure mode rather than a generic concern.
+- `consequence`: exactly which result, interpretation, or scope claim is affected.
+- `what_would_help`: the smallest credible correction, diagnostic, reanalysis, validation, qualification, or additional evidence.
+- `evidence`: at least one locator you actually verified — a page number, a section, theorem, equation, table, dataset, or protocol reference in `description`, a short `quote`, or a structure or asset id. Never invent a locator.
 
-- **Severity:** Critical, major, or moderate.
-- **In the paper:** Quote or closely paraphrase the claim, method, or result and identify the evidence on which it relies.
-- **The problem:** Show the method-specific reasoning, calculation, comparison, or failure mode rather than naming a generic concern.
-- **Consequence:** Explain exactly which result, interpretation, or scope claim is affected.
-- **What would help:** State the smallest credible correction, diagnostic, reanalysis, validation, qualification, or additional evidence.
-- **Location:** Give a page, section, theorem, equation, table, figure, dataset, source passage, protocol, or appendix reference.
-
-Increment `N` sequentially from 1. Treat seven and any lower role-specific limit as ceilings, not targets. Omit any concern that lacks a specific paper claim, concrete evidence, and a decision-relevant consequence. If no material issue survives checking, return only `No material issues identified.` Do not summarize the paper, list strengths, praise it, discuss the review process, or invent citations.
+Do not summarize the paper, list strengths, praise it, discuss the review process, or invent citations.

@@ -56,6 +56,25 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         )?;
     }
 
+    // The v2 structured Auto Review contract replaces the whole built-in
+    // suite (specialist output schemas, `sources`, host-enforced id lineage).
+    // This must run before the older orientation-pair refresh below, so a
+    // pre-v2 store is archived and recreated once rather than half-upgraded.
+    let structured_auto_review_marker = profiles.join(".structured-auto-review-contract-v2");
+    if !structured_auto_review_marker.exists() {
+        refresh_stale_auto_review_suites(profiles)?;
+        fs::write(
+            &structured_auto_review_marker,
+            b"structured-specialist-auto-review\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the structured Auto Review migration '{}': {error}",
+                structured_auto_review_marker.display()
+            )
+        })?;
+    }
+
     // The modular manifest catalog deliberately starts a new, single Auto
     // Review contract. Development builds may already have written a built-in
     // profile with the retired hard-coded-catalog contract; such a profile is
@@ -297,9 +316,56 @@ const CATALOG_MIGRATION_MARKERS: &[&str] = &[
     ".builtin-catalog-v9",
     ".builtin-catalog-v10",
     ".builtin-catalog-v15",
+    ".structured-auto-review-contract-v2",
     ".modular-auto-review-contract-v1",
     ".compact-auto-review-prompt-v1",
 ];
+
+/// The v2 Auto Review contract changes the whole step suite (structured
+/// specialist output, consolidated `sources`, host-enforced id lineage), not
+/// just the orientation pair, so a stale built-in profile cannot be upgraded
+/// field-by-field. Archive the user's copy beside the other retired profiles
+/// and write the current definition; the archived file preserves any edits.
+pub(super) fn refresh_stale_auto_review_suites(profiles: &Path) -> Result<(), String> {
+    for (id, replacement) in [
+        ("auto-review", auto_review_profile()),
+        ("auto-review-quick", quick_auto_review_profile()),
+    ] {
+        let path = profiles.join(format!("{id}.json"));
+        if !path.exists() {
+            continue;
+        }
+        let content = read_profile_file(&path)
+            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+        let profile: ProfileData = serde_json::from_str(&content)
+            .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+        let has_auto_review_skeleton = profile.steps.iter().any(|step| {
+            matches!(
+                step.id.as_str(),
+                "auto_contribution"
+                    | "auto_consistency"
+                    | "auto_exposition"
+                    | "auto_synthesis"
+                    | "auto_validate"
+            )
+        });
+        let current_contract = profile.orientation_schema.as_ref().is_some_and(|schema| {
+            schema
+                .get("x-pipeline-contract")
+                .and_then(serde_json::Value::as_str)
+                == Some(crate::auto_review::AUTO_REVIEW_CONTRACT)
+        });
+        if !has_auto_review_skeleton || current_contract {
+            continue;
+        }
+        archive_retired_profile(profiles, id)?;
+        let json = serde_json::to_string_pretty(&replacement)
+            .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+        restore_profile_bytes(&path, json.as_bytes())
+            .map_err(|error| format!("Failed to write '{}': {error}", path.display()))?;
+    }
+    Ok(())
+}
 
 pub(super) fn refresh_builtin_auto_review_contracts(profiles: &Path) -> Result<(), String> {
     for (id, replacement) in [

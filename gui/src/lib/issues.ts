@@ -20,6 +20,8 @@ export interface Issue {
   severity: string;
   section: string;
   body: string;
+  /** Report ids of the reviewer analyses that support this issue. */
+  sources?: string[];
   evidence?: IssueEvidence[];
 }
 
@@ -257,10 +259,20 @@ function parseIssueCandidate(json: unknown): Issue[] | null {
       severity: normalizeSeverity(obj.priority ?? obj.severity),
       section: String(obj.category ?? obj.section ?? "").trim(),
       body,
+      sources: parseSources(obj.sources),
       evidence: parseEvidence(obj.evidence),
     });
   }
   return issues;
+}
+
+function parseSources(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const sources = value
+    .slice(0, 8)
+    .map((entry) => boundedString(entry, 500))
+    .filter((entry): entry is string => !!entry);
+  return sources.length ? sources : undefined;
 }
 
 /** Interpret `text` as a structured finding list, or null if it isn't one.
@@ -286,6 +298,7 @@ export function detectReportIssues(report: PipelineReport): Issue[] | null {
       severity: normalizeSeverity(finding.priority),
       section: finding.category ?? "",
       body: finding.body ?? "",
+      sources: parseSources(finding.sources),
       evidence: parseEvidence(finding.evidence ?? []),
     }));
   }
@@ -296,6 +309,139 @@ export function detectReportIssues(report: PipelineReport): Issue[] | null {
     if (issues) return issues;
   }
   return null;
+}
+
+function specialistCitation(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const object = value as Record<string, unknown>;
+  const parts: string[] = [];
+  const page = Number(object.page);
+  if (Number.isInteger(page) && page > 0) parts.push(`p. ${page}`);
+  const sourcePath = boundedString(object.source_path, 1_000);
+  if (sourcePath) {
+    const start = Number(object.line_start);
+    const end = Number(object.line_end);
+    const lines = Number.isInteger(start) && start > 0
+      ? Number.isInteger(end) && end > start ? `:${start}–${end}` : `:${start}`
+      : "";
+    parts.push(`${sourcePath}${lines}`);
+  }
+  const description = boundedString(object.description);
+  if (description) parts.push(description);
+  const nodeId = boundedString(object.node_id, 500);
+  if (nodeId) parts.push(`node ${nodeId}`);
+  const assetId = boundedString(object.asset_id, 500);
+  if (assetId) parts.push(`asset ${assetId}`);
+  const quote = boundedString(object.quote, 300);
+  if (quote) parts.push(`“${quote}”`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+/** Render a specialist findings artifact (the structured referee-report
+ *  contract used by Automatic Paper Review reviewer passes) back to its
+ *  readable Markdown form. Returns null when `text` is not one. Mirrors the
+ *  backend renderer in auto_review.rs. */
+export function renderSpecialistMarkdown(text: string): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text.trim());
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const findings = (value as Record<string, unknown>).findings;
+  if (!Array.isArray(findings)) return null;
+  if (findings.length === 0) return "No material issues identified.";
+
+  const blocks: string[] = [];
+  for (let index = 0; index < findings.length; index++) {
+    const finding = findings[index];
+    if (!finding || typeof finding !== "object" || Array.isArray(finding)) return null;
+    const object = finding as Record<string, unknown>;
+    if (!("problem" in object) || !("what_would_help" in object)) return null;
+    const field = (key: string) => boundedString(object[key], 50_000) ?? "";
+    let block = `**#${index + 1}. ${field("title")}**\n\n`;
+    for (const [key, label] of [
+      ["in_the_paper", "In the paper"],
+      ["problem", "The problem"],
+      ["consequence", "Consequence"],
+      ["what_would_help", "What would help"],
+    ] as const) {
+      const value = field(key);
+      if (value) block += `- **${label}:** ${value}\n`;
+    }
+    const citations = Array.isArray(object.evidence)
+      ? object.evidence.map(specialistCitation).filter((entry): entry is string => !!entry)
+      : [];
+    if (citations.length) block += `- **Location:** ${citations.join("; ")}\n`;
+    blocks.push(block.trimEnd());
+  }
+  return blocks.join("\n\n");
+}
+
+const MAX_TABLE_ROWS = 100;
+const MAX_TABLE_COLUMNS = 12;
+const MAX_CELL_CHARS = 300;
+
+function tableCell(value: unknown): string {
+  const text = value === undefined || value === null
+    ? ""
+    : typeof value === "string"
+      ? value
+      : JSON.stringify(value);
+  const flattened = text.replace(/\s+/g, " ").trim();
+  const bounded = flattened.length > MAX_CELL_CHARS ? `${flattened.slice(0, MAX_CELL_CHARS)}…` : flattened;
+  return bounded.replace(/\|/g, "\\|");
+}
+
+function renderJsonValue(value: unknown, depth: number): string {
+  if (depth > 4) return `\`${tableCell(value)}\``;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "_(empty)_";
+    // Array of objects → table over the union of keys (bounded).
+    if (value.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry))) {
+      const keys: string[] = [];
+      for (const entry of value.slice(0, MAX_TABLE_ROWS)) {
+        for (const key of Object.keys(entry as Record<string, unknown>)) {
+          if (!keys.includes(key) && keys.length < MAX_TABLE_COLUMNS) keys.push(key);
+        }
+      }
+      const header = `| ${keys.join(" | ")} |\n| ${keys.map(() => "---").join(" | ")} |`;
+      const rows = value.slice(0, MAX_TABLE_ROWS).map((entry) =>
+        `| ${keys.map((key) => tableCell((entry as Record<string, unknown>)[key])).join(" | ")} |`);
+      const overflow = value.length > MAX_TABLE_ROWS
+        ? `\n\n_(${value.length - MAX_TABLE_ROWS} more rows in the raw artifact)_`
+        : "";
+      return `${header}\n${rows.join("\n")}${overflow}`;
+    }
+    return value.slice(0, MAX_TABLE_ROWS).map((entry) => `- ${tableCell(entry)}`).join("\n");
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, child]) => {
+        const rendered = renderJsonValue(child, depth + 1);
+        return rendered.includes("\n")
+          ? `**${key}**\n\n${rendered}`
+          : `**${key}**: ${rendered}`;
+      })
+      .join("\n\n");
+  }
+  if (typeof value === "string") return value;
+  return `\`${JSON.stringify(value)}\``;
+}
+
+/** Generic readable rendering of a structured step artifact: arrays of
+ *  objects become tables, plain arrays become lists, objects become labeled
+ *  sections. Returns null when `text` is not a JSON object. */
+export function renderStructuredMarkdown(text: string): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text.trim());
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return renderJsonValue(value, 0);
 }
 
 /** Sort rank for a severity string (lower = more severe / shown first). */

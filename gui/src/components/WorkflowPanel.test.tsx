@@ -71,7 +71,7 @@ const profiles: ProfileSummary[] = [
 ];
 
 const catalog: AutoReviewCatalog = {
-  contract: "auto-review-v1",
+  contract: "auto-review-v2",
   revision: "sha256:test-catalog",
   subjectCount: 2,
   methodCount: 1,
@@ -213,7 +213,7 @@ describe("WorkflowPanel", () => {
 
   it("opens a searchable catalog modal instead of expanding Auto specialists inline", async () => {
     const autoConfig = makeConfig();
-    autoConfig.orientation_schema = { "x-pipeline-contract": "auto-review-v1" };
+    autoConfig.orientation_schema = { "x-pipeline-contract": "auto-review-v2" };
     autoConfig.steps[0].run_if = {
       kind: "survey_path",
       pointer: "/review_plan/method_specialist_ids",
@@ -248,7 +248,7 @@ describe("WorkflowPanel", () => {
   it("shows the Quick profile's narrower adaptive range", async () => {
     const quickConfig = makeConfig();
     quickConfig.orientation_schema = {
-      "x-pipeline-contract": "auto-review-v1",
+      "x-pipeline-contract": "auto-review-v2",
       properties: {
         review_plan: {
           properties: {
