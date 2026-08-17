@@ -42,6 +42,9 @@ const ANTIGRAVITY_AUTH_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Parse agy's bare `X.Y.Z` version output and gate on the minimum release.
 /// Unparseable output is unknown, not evidence either way.
+/// Retained (test-covered) while Google subscription dispatch is disabled;
+/// the startup check no longer probes agy.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn antigravity_version_supported(version: &str) -> Option<bool> {
     let mut parts = version.trim().split('.');
     let mut parsed = [0u64; 3];
@@ -112,6 +115,9 @@ fn check_codex_auth(command: &ResolvedCommand) -> Option<bool> {
 /// fast with a "please sign in" diagnostic. A `-p` probe would instead start
 /// an interactive OAuth wait (~60s stall printing a login URL), so print mode
 /// is never used for probing.
+/// Retained (test-covered) while Google subscription dispatch is disabled;
+/// the startup check no longer probes agy.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn check_antigravity_auth(command: &ResolvedCommand) -> Option<bool> {
     let mut process = command.command(["models"]);
     configure_probe_command(&mut process);
@@ -392,7 +398,6 @@ fn check_all_for(
     let has_google_key = !settings.google_api_key.trim().is_empty();
     let claude_api_mode = settings.model_transport("claude") == "api";
     let codex_api_mode = settings.model_transport("codex") == "api";
-    let antigravity_api_mode = settings.model_transport("antigravity") == "api";
     let local_base_url = settings.local_base_url.clone();
     let local_api_key = settings.local_api_key.clone();
 
@@ -420,19 +425,9 @@ fn check_all_for(
             (command.is_some(), version, path, auth)
         });
 
-        let antigravity_h = s.spawn(move || {
-            let ProbeResult {
-                command,
-                version,
-                path,
-            } = probe("agy", &["--version"]);
-            let auth = command.as_ref().and_then(check_antigravity_auth);
-            let version_supported = command
-                .is_some()
-                .then(|| antigravity_version_supported(&version))
-                .flatten();
-            (command.is_some(), version, path, auth, version_supported)
-        });
+        // The agy CLI is not probed: Google subscription dispatch is disabled
+        // (see Settings::model_transport), so agy is never invoked — not even
+        // for its signed-in `agy models` readiness check.
 
         // Poppler binaries are normally bundled, with a system fallback.
         let pdftoppm_h = s.spawn(|| find_on_path("pdftoppm"));
@@ -564,81 +559,25 @@ fn check_all_for(
             cli_auth_status: cli_auth_status(found, codex_auth),
         };
 
-        let (found, ver, path, antigravity_auth, antigravity_version_ok) = antigravity_h
-            .join()
-            .unwrap_or_else(|_| (false, String::new(), String::new(), None, None));
-        let antigravity_cli_usable = found && antigravity_version_ok == Some(true);
-        let antigravity_install = cli_setup_recommendation(
-            "Antigravity CLI",
-            "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-            false,
-            cfg!(target_os = "windows"),
-        );
-        let (antigravity_hint, antigravity_help_url) = if antigravity_api_mode && has_google_key {
-            ("API key configured — CLI not required.".to_string(), None)
-        } else if antigravity_api_mode {
-            (
-                "Antigravity API mode is selected, but no Google AI API key is configured. Add one in Settings → API Keys or switch to Subscription mode."
-                    .to_string(),
-                None,
-            )
-        } else if found && antigravity_version_ok == Some(false) {
-            (
-                "The installed Antigravity CLI predates the required 1.1.12 release. Run `agy update`, then run the dependency check again."
-                    .to_string(),
-                None,
-            )
-        } else if found && antigravity_version_ok.is_none() {
-            (
-                "Could not verify the Antigravity CLI version. Run `agy update`, then run the dependency check again."
-                    .to_string(),
-                None,
-            )
-        } else if found && antigravity_auth == Some(false) {
-            (
-                "Antigravity CLI is installed but not signed in. Run `agy` in a terminal to sign in, then refresh this check."
-                    .to_string(),
-                None,
-            )
-        } else if found && antigravity_auth.is_none() {
-            (
-                "Antigravity CLI is installed, but sign-in could not be verified. Run `agy` in a terminal to sign in, then refresh this check."
-                    .to_string(),
-                None,
-            )
+        // Google is API-only: subscription (agy CLI) dispatch is disabled
+        // because Google's Antigravity terms do not permit third-party
+        // software to use an Antigravity sign-in. Readiness is the key alone.
+        let antigravity_hint = if has_google_key {
+            "API key configured — CLI not required.".to_string()
         } else {
-            // A fresh install lands in ~/.local/bin, which the cached
-            // login-shell PATH may not include until the app restarts.
-            (
-                format!(
-                    "{} Then restart Pipeline so the new `agy` command is visible on its PATH.",
-                    antigravity_install.0
-                ),
-                antigravity_install.1,
-            )
+            "Google runs through the Gemini API. Add a Google AI API key in Settings → API Keys."
+                .to_string()
         };
         let antigravity = DepStatus {
             name: "Antigravity CLI".into(),
-            found: if antigravity_api_mode {
-                has_google_key
-            } else {
-                antigravity_cli_usable
-            },
-            version: if antigravity_api_mode {
-                "direct API".into()
-            } else {
-                ver
-            },
-            path,
+            found: has_google_key,
+            version: "direct API".into(),
+            path: String::new(),
             required: required_providers.contains("antigravity"),
             hint: antigravity_hint,
-            help_url: antigravity_help_url,
-            authenticated: if antigravity_api_mode {
-                Some(has_google_key)
-            } else {
-                antigravity_auth
-            },
-            cli_auth_status: cli_auth_status(found, antigravity_auth),
+            help_url: None,
+            authenticated: Some(has_google_key),
+            cli_auth_status: None,
         };
 
         // Classify a found binary as bundled (under our resource dir) or system.

@@ -52,11 +52,11 @@ fn direct_pdf_attachment_follows_the_matching_cloud_access_mode() {
     settings.codex_access_mode = "api".to_string();
     assert!(provider_uses_direct_api(&settings));
 
+    // Google subscription dispatch is disabled: Antigravity is direct API
+    // regardless of access mode or stored key.
     settings.preferred_provider = "antigravity".to_string();
-    assert!(!provider_uses_direct_api(&settings));
+    assert!(provider_uses_direct_api(&settings));
     settings.google_api_key = "configured".to_string();
-    assert!(!provider_uses_direct_api(&settings));
-    settings.antigravity_access_mode = "api".to_string();
     assert!(provider_uses_direct_api(&settings));
 
     settings.preferred_provider = "local".to_string();

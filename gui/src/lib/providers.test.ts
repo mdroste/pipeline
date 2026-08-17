@@ -37,6 +37,15 @@ describe("provider model utilities", () => {
     expect(providerTransport(api, "claude")).toBe("api");
   });
 
+  it("forces the Google provider to the API transport", () => {
+    // Google subscription dispatch (the agy CLI) is disabled; a stored
+    // subscription mode from an older build is ignored.
+    expect(providerTransport(settings(), "antigravity")).toBe("api");
+    expect(
+      providerTransport(settings({ google_api_key: "configured" }), "antigravity"),
+    ).toBe("api");
+  });
+
   it("round-trips select values and preserves inherit", () => {
     for (const value of ["automatic", "role:fast", "pinned:model-v2"]) {
       expect(encodeModelSelection(decodeModelSelection(value))).toBe(value);

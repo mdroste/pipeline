@@ -48,12 +48,9 @@ export function providerTransport(settings: Settings, provider: string): "cli" |
     if (settings.codex_access_mode) return settings.codex_access_mode === "api" ? "api" : "cli";
     return settings.openai_api_key ? "api" : "cli";
   }
-  if (provider === "antigravity") {
-    if (settings.antigravity_access_mode) {
-      return settings.antigravity_access_mode === "api" ? "api" : "cli";
-    }
-    return settings.google_api_key ? "api" : "cli";
-  }
+  // Google subscription dispatch (the agy CLI) is disabled; mirrors
+  // Settings::model_transport in the backend.
+  if (provider === "antigravity") return "api";
   if (settings.claude_access_mode) return settings.claude_access_mode === "api" ? "api" : "cli";
   return settings.anthropic_api_key ? "api" : "cli";
 }

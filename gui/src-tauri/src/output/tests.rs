@@ -252,7 +252,9 @@ fn provider_api_mode_follows_explicit_access_modes() {
     s.claude_access_mode = "api".into();
     assert!(provider_in_api_mode(&s, "claude"));
     assert!(provider_in_api_mode(&s, "")); // empty provider = Anthropic
-    assert!(!provider_in_api_mode(&s, "antigravity"));
+
+    // Google subscription dispatch is disabled; Antigravity is always API.
+    assert!(provider_in_api_mode(&s, "antigravity"));
 }
 
 fn metric_output(

@@ -47,7 +47,9 @@ describe("DepsCheck", () => {
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     expect(screen.getByRole("region", { name: "Model access" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "PDF parsing" })).toBeInTheDocument();
-    expect(screen.getByText(/Use at least one: GPT \(Codex\), Claude, or Antigravity CLI \(agy\)/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Use at least one: the Claude or Codex CLI with a signed-in subscription/),
+    ).toBeInTheDocument();
     expect(screen.getByText("signed in")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });

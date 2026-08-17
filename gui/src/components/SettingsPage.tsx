@@ -801,11 +801,16 @@ function AccessModeSelector({
   provider,
   value,
   onChange,
+  subscriptionDisabledNote,
 }: {
   provider: string;
   value: AccessMode;
   onChange: (mode: AccessMode) => void;
+  /** When set, the Subscription option is shown but not selectable and this
+      note replaces the mode description. */
+  subscriptionDisabledNote?: string;
 }) {
+  const effectiveValue = subscriptionDisabledNote ? "api" : value;
   return (
     <div>
       <div className="mb-1.5 text-sm font-medium text-gray-700 dark:text-neutral-300">
@@ -816,31 +821,39 @@ function AccessModeSelector({
         aria-label={`${provider} connection mode`}
         className="inline-flex rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-neutral-600 dark:bg-neutral-900"
       >
-        {(["subscription", "api"] as const).map((mode) => (
-          <label
-            key={mode}
-            className={`cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-              value === mode
-                ? "bg-white text-gray-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100"
-                : "text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-200"
-            }`}
-          >
-            <input
-              type="radio"
-              name={`${provider.toLowerCase().replaceAll(" ", "-")}-access-mode`}
-              value={mode}
-              checked={value === mode}
-              onChange={() => onChange(mode)}
-              className="sr-only"
-            />
-            {mode === "subscription" ? "Subscription" : "API"}
-          </label>
-        ))}
+        {(["subscription", "api"] as const).map((mode) => {
+          const disabled = mode === "subscription" && !!subscriptionDisabledNote;
+          return (
+            <label
+              key={mode}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                disabled
+                  ? "cursor-not-allowed text-gray-300 dark:text-neutral-600"
+                  : effectiveValue === mode
+                    ? "cursor-pointer bg-white text-gray-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100"
+                    : "cursor-pointer text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-200"
+              }`}
+            >
+              <input
+                type="radio"
+                name={`${provider.toLowerCase().replaceAll(" ", "-")}-access-mode`}
+                value={mode}
+                checked={effectiveValue === mode}
+                disabled={disabled}
+                onChange={() => onChange(mode)}
+                className="sr-only"
+              />
+              {mode === "subscription" ? "Subscription" : "API"}
+            </label>
+          );
+        })}
       </div>
       <p className="mt-1.5 text-[11px] leading-4 text-gray-500 dark:text-neutral-400">
-        {value === "subscription"
-          ? "Uses the provider CLI and its signed-in subscription. The saved API key is not used."
-          : "Uses direct, token-metered API calls with the key below. The provider CLI is not required."}
+        {subscriptionDisabledNote
+          ? subscriptionDisabledNote
+          : effectiveValue === "subscription"
+            ? "Uses the provider CLI and its signed-in subscription. The saved API key is not used."
+            : "Uses direct, token-metered API calls with the key below. The provider CLI is not required."}
       </p>
     </div>
   );
@@ -929,24 +942,25 @@ function ApiKeysSection({
             provider="Antigravity"
             value={settings.antigravity_access_mode}
             onChange={(mode) => setSettings({ ...settings, antigravity_access_mode: mode })}
+            subscriptionDisabledNote="Subscription mode is disabled: Google's Antigravity terms do not permit third-party software to use an Antigravity sign-in. Google runs on the Gemini API with the key below."
           />
           <Field
             label="Gemini API Key"
-            help="Stored encrypted and used only when Antigravity is in API mode."
+            help="Stored encrypted. Required — Antigravity always runs through the Gemini API."
           >
             <input
               aria-label="Gemini API Key"
               type="password"
               value={settings.google_api_key}
               onChange={(e) => setSettings({ ...settings, google_api_key: e.target.value })}
-              placeholder="AI... (optional, enables direct API)"
+              placeholder="AI..."
               className={`${inputClass} font-mono`}
               autoComplete="off"
             />
           </Field>
-          {settings.antigravity_access_mode === "api" && !settings.google_api_key.trim() && (
+          {!settings.google_api_key.trim() && (
             <p className="text-xs text-amber-700 dark:text-amber-300">
-              Enter a Google AI API key before running Antigravity in API mode.
+              Enter a Google AI API key before running Antigravity.
             </p>
           )}
         </section>

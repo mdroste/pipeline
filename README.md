@@ -12,8 +12,8 @@ parts of the source each step may read, which providers to use, and which
 outputs feed later steps. Pipeline handles extraction, scheduling, validation,
 and storage; the models handle the review itself.
 
-Pipeline runs on macOS, Windows, and Linux. It can use the Claude Code, Codex,
-or Antigravity CLI with an existing subscription; the Anthropic, OpenAI, or Google
+Pipeline runs on macOS, Windows, and Linux. It can use the Claude Code or
+Codex CLI with an existing subscription; the Anthropic, OpenAI, or Google
 API; or a local OpenAI-compatible server such as Ollama. Pipeline does not run
 a hosted service.
 
@@ -30,21 +30,25 @@ pip, or another language runtime.
 
 ### Model providers
 
-The default provider path uses a signed-in command-line client. This lets a
-Pipeline run use a supported subscription without a separate API key.
+For Claude and OpenAI, the default provider path uses a signed-in
+command-line client. This lets a Pipeline run use a supported subscription
+without a separate API key.
 
 - **Claude:** Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
   with `npm install -g @anthropic-ai/claude-code`, then sign in.
 - **OpenAI:** Install the [Codex CLI](https://github.com/openai/codex) with
   `npm install -g @openai/codex`, then sign in.
-- **Google:** Install the [Antigravity CLI](https://antigravity.google/docs/cli)
-  with `curl -fsSL https://antigravity.google/cli/install.sh | bash`
-  (PowerShell installer on Windows), then run `agy` once to sign in.
+- **Google:** Enter a [Gemini API key](https://aistudio.google.com/apikey)
+  under Settings → API Keys. There is no subscription path for Google:
+  Google's [Antigravity terms](https://antigravity.google/terms) do not permit
+  third-party software to use an Antigravity sign-in, and Google recommends an
+  API key for third-party tools, so Pipeline always calls the Gemini API
+  directly.
 
-You can instead enter Anthropic, OpenAI, or Google API keys under Settings →
-API Keys and explicitly select API mode for that provider. A stored key is
-ignored while Subscription mode is selected. API keys are encrypted before
-they are written to disk. Settings also accepts a
+For Claude and OpenAI you can instead enter Anthropic or OpenAI API keys under
+Settings → API Keys and explicitly select API mode for that provider. A stored
+key is ignored while Subscription mode is selected. API keys are encrypted
+before they are written to disk. Settings also accepts a
 local OpenAI-compatible endpoint; Ollama is the default, and LM Studio,
 llama.cpp, and vLLM can be used by changing the URL.
 

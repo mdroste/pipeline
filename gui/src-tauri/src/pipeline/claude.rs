@@ -1398,7 +1398,7 @@ pub async fn call_llm(
             }
             "antigravity" if transport == "api" => {
                 if settings.google_api_key.trim().is_empty() {
-                    return Err("Antigravity API mode is selected, but no Google AI API key is configured. Add the key in Settings → API Keys or switch Antigravity to Subscription mode.".to_string());
+                    return Err("No Google AI API key is configured. Antigravity runs only through the Gemini API — add the key in Settings → API Keys.".to_string());
                 }
                 return super::api_google::call_google_api(
                     app,

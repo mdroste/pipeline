@@ -127,11 +127,12 @@ function HelpContent({
             badgeColor="text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/30"
             title="An AI provider"
           >
-            Sign in with the Claude Code, Codex, or Antigravity CLI; add an
+            Sign in with the Claude Code or Codex CLI; add an
             Anthropic, OpenAI, or Google API key in Settings; or connect a
-            local OpenAI-compatible server. A CLI subscription works without
-            an API key. The status button in the lower-left corner shows what
-            Pipeline found.
+            local OpenAI-compatible server. A Claude or ChatGPT CLI
+            subscription works without an API key; Google always uses a
+            Gemini API key. The status button in the lower-left corner shows
+            what Pipeline found.
             <NavLink
               onClick={onNavigate && (() => onNavigate("settings"))}
               label="Open Settings"

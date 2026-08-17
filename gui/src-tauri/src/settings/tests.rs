@@ -432,6 +432,26 @@ fn access_mode_controls_transport_and_provider_defaults_are_automatic() {
 }
 
 #[test]
+fn antigravity_is_api_only() {
+    // Google subscription dispatch (the agy CLI) is disabled: Google's
+    // Antigravity terms do not permit third-party software to use an
+    // Antigravity sign-in.
+    let settings = Settings::default();
+    assert_eq!(settings.antigravity_access_mode, "api");
+    assert_eq!(settings.model_transport("antigravity"), "api");
+
+    // A stored subscription choice from an older build still loads, is
+    // dispatched over the API, and normalizes to an explicit "api".
+    let legacy: Settings =
+        serde_json::from_str(r#"{"antigravity_access_mode":"subscription"}"#).unwrap();
+    assert_eq!(legacy.model_transport("antigravity"), "api");
+    assert!(legacy.validate().is_err());
+    let normalized = legacy.normalized();
+    assert_eq!(normalized.antigravity_access_mode, "api");
+    assert!(normalized.validate().is_ok());
+}
+
+#[test]
 fn legacy_key_presence_migrates_to_explicit_api_mode() {
     let legacy: Settings = serde_json::from_str(r#"{"openai_api_key":"secret"}"#).unwrap();
     assert!(legacy.codex_access_mode.is_empty());
@@ -448,9 +468,9 @@ fn role_defaults_preserve_legacy_fallbacks_and_transport_specific_policies() {
         r#"{
             "preferred_provider":"antigravity",
             "default_sequential_model_overrides": {
-                "antigravity:cli": {"mode":"pinned","model":"legacy-merge-model"}
+                "antigravity:api": {"mode":"pinned","model":"legacy-merge-model"}
             },
-            "default_sequential_effort_overrides": {"antigravity:cli":"high"}
+            "default_sequential_effort_overrides": {"antigravity:api":"high"}
         }"#,
     )
     .unwrap();

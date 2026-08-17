@@ -301,7 +301,7 @@ export default function DepsCheck({
                   Model access
                 </h3>
                 <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Use at least one: GPT (Codex), Claude, or Antigravity CLI (agy) — or configure a provider API key in Settings.
+                  Use at least one: the Claude or Codex CLI with a signed-in subscription, or a provider API key in Settings. Google runs through the Gemini API only.
                 </p>
               </div>
               <SectionStatus ready={modelAccessReady} />

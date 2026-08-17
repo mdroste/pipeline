@@ -46,8 +46,10 @@ the selected provider:
 
 In API mode, Pipeline sends this material directly to the configured Anthropic,
 OpenAI, Google, or OpenAI-compatible endpoint. In CLI mode, Pipeline launches
-the installed Claude, Codex, or Antigravity CLI; that CLI and its account settings
-control transmission, retention, training, and tool behavior. Pipeline cannot
+the installed Claude or Codex CLI; that CLI and its account settings
+control transmission, retention, training, and tool behavior. Google requests
+always use the Gemini API directly; Pipeline does not launch the Antigravity
+CLI. Pipeline cannot
 override a provider's policies. A “local” OpenAI-compatible endpoint is local
 only if the configured URL actually points to a service controlled by the user.
 

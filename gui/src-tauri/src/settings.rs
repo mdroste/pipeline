@@ -307,6 +307,9 @@ pub struct Settings {
     #[serde(default)]
     pub codex_access_mode: String,
 
+    /// Google is API-only: Google's Antigravity terms do not permit
+    /// third-party software to use an Antigravity sign-in, so subscription
+    /// mode is disabled and any stored value normalizes to "api".
     #[serde(default)]
     pub antigravity_access_mode: String,
 
@@ -531,7 +534,7 @@ impl Default for Settings {
             max_saved_run_bytes: default_max_saved_run_bytes(),
             claude_access_mode: "subscription".to_string(),
             codex_access_mode: "subscription".to_string(),
-            antigravity_access_mode: "subscription".to_string(),
+            antigravity_access_mode: "api".to_string(),
             anthropic_api_key: String::new(),
             openai_api_key: String::new(),
             google_api_key: String::new(),
@@ -594,13 +597,20 @@ impl Settings {
         for (provider, mode) in [
             ("Claude", self.claude_access_mode.as_str()),
             ("ChatGPT", self.codex_access_mode.as_str()),
-            ("Antigravity", self.antigravity_access_mode.as_str()),
         ] {
             if !matches!(mode, "" | "subscription" | "api") {
                 return Err(format!(
                     "Invalid {provider} access mode '{mode}'; choose subscription or api"
                 ));
             }
+        }
+        if !matches!(self.antigravity_access_mode.as_str(), "" | "api") {
+            return Err(
+                "Antigravity subscription mode is disabled: Google's Antigravity terms do not \
+                 permit third-party software to use an Antigravity sign-in. Use API mode with a \
+                 Gemini API key."
+                    .to_string(),
+            );
         }
         if !matches!(
             self.pdf_extractor.as_str(),
@@ -765,13 +775,10 @@ impl Settings {
             {
                 "api"
             }
-            "antigravity" if self.antigravity_access_mode == "api" => "api",
-            "antigravity"
-                if self.antigravity_access_mode.is_empty()
-                    && !self.google_api_key.trim().is_empty() =>
-            {
-                "api"
-            }
+            // Google subscription dispatch (the agy CLI) is disabled: Google's
+            // Antigravity terms do not permit third-party software to use an
+            // Antigravity sign-in, and accounts have been suspended for it.
+            "antigravity" => "api",
             "claude" | "" if self.claude_access_mode == "api" => "api",
             "claude" | ""
                 if self.claude_access_mode.is_empty()
@@ -971,6 +978,8 @@ impl Settings {
     /// Migrate the pre-mode behavior exactly once. An absent mode follows the
     /// old rule (stored key => API, otherwise subscription); an explicit mode
     /// is never changed merely because a credential is entered or cleared.
+    /// Antigravity is the exception: subscription mode is disabled, so any
+    /// stored value is coerced to "api" and older settings files keep loading.
     fn normalize_access_modes(&mut self) {
         if self.claude_access_mode.trim().is_empty() {
             self.claude_access_mode = if self.anthropic_api_key.trim().is_empty() {
@@ -988,14 +997,7 @@ impl Settings {
             }
             .to_string();
         }
-        if self.antigravity_access_mode.trim().is_empty() {
-            self.antigravity_access_mode = if self.google_api_key.trim().is_empty() {
-                "subscription"
-            } else {
-                "api"
-            }
-            .to_string();
-        }
+        self.antigravity_access_mode = "api".to_string();
     }
 
     /// Drop provider ids this build does not support from the surviving

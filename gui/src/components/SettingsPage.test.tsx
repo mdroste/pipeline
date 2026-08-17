@@ -186,6 +186,24 @@ describe("SettingsPage", () => {
     expect(screen.getByText(/Enter an Anthropic API key/)).toBeVisible();
   });
 
+  it("locks Antigravity to API mode with the subscription option disabled", async () => {
+    const user = userEvent.setup();
+    // The fixture's legacy "subscription" value must render as API.
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: "API Keys" }));
+    const modes = screen.getByRole("radiogroup", { name: "Antigravity connection mode" });
+    const subscription = modes.querySelector<HTMLInputElement>('input[value="subscription"]');
+    const api = modes.querySelector<HTMLInputElement>('input[value="api"]');
+    expect(subscription).toBeDisabled();
+    expect(subscription).not.toBeChecked();
+    expect(api).toBeChecked();
+    expect(
+      screen.getByText(/Google's Antigravity terms do not permit third-party software/),
+    ).toBeVisible();
+  });
+
   it("moves execution controls to Workflow", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());

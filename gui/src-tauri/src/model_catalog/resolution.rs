@@ -117,8 +117,14 @@ pub async fn resolve(
             _ => false,
         };
         if !key_present {
+            // Antigravity has no subscription alternative to point at.
+            let remedy = if provider == "antigravity" {
+                "Add the key in Settings → API Keys."
+            } else {
+                "Add the key in Settings → API Keys or switch to Subscription mode."
+            };
             return Err(format!(
-                "{provider} API mode is selected, but its API key is missing. Add the key in Settings → API Keys or switch to Subscription mode."
+                "{provider} API mode is selected, but its API key is missing. {remedy}"
             ));
         }
     }
