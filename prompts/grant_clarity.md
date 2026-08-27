@@ -7,7 +7,7 @@ You have a survey (JSON) that maps the proposal's structure.
 ## What to check
 
 ### The twenty-minute test
-Can a non-specialist extract, from the first page alone: the question, why it matters, the approach, and what is new? Flag every place the front matter forces a specialist's background: undefined jargon, unexplained acronyms, literature shorthand ("we extend the BLP framework") without a plain statement of what is done.
+Can a non-specialist extract, from the first page alone: the question, why it matters, the approach, and what is new? Flag undefined jargon, acronyms, or literature shorthand only when they materially obscure one of those elements.
 
 ### Signposting
 Does each aim map to visible sections for design, data, and output? Flag structural mismatches — aims introduced then never revisited, methods sections whose connection to an aim is left implicit, key information (sample sizes, timeline) findable only by hunting.
@@ -27,9 +27,4 @@ Report only clarity failures that would cost the proposal support in a panel dis
 
 ## Output
 
-Produce up to 8 numbered comments, most damaging first. For each:
-
-- **Title**: Specific header (e.g., "Abstract pitches labor-supply effects; Aims 1–2 measure only firm outcomes")
-- **Location**: Section/page.
-- **The problem**: What the twenty-minute reader misses or misreads.
-- **What would fix it**: The concrete revision.
+Populate the supplied reviewer-findings schema with at most eight findings, most damaging first. For each, provide a specific title; `in_the_paper`; the exact `problem`; its funding-relevant `consequence`; and the smallest `what_would_help`. Evidence items use a concrete page, line, node, asset, source path, URL, DOI, query, or call locator, plus `evidence_type`, `verification_status: unverified`, and a useful description. Never invent a locator. Return an empty findings array when no material issue survives checking.

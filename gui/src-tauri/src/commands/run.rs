@@ -69,6 +69,8 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .map(|v| (v.key.clone(), v.default.clone()))
         .collect();
     variables.extend(provided_vars);
+    validate_runtime_bindings(&config, &variables, &provided_inputs, true)?;
+    let durable_variables = durable_variables(&config, &variables);
     crate::safety::validate_runtime_context(&variables, "Run variables")?;
     crate::safety::validate_runtime_context(&provided_inputs, "Named input paths")?;
     crate::safety::validate_run_budget(&config, &settings)?;
@@ -95,6 +97,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         "none" => "none",
         _ => "document",
     };
+    preflight_run_storage(paper)?;
     let input_processing_label = executor::input_processing_label(input_interpretation);
     let preprocessing_log = start_preprocessing_log();
     let preprocessing_message = if input_mode == "none" {
@@ -175,41 +178,31 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             workflow_fingerprint: workflow_fingerprint.clone(),
             specialist_catalog_revision: specialist_catalog_revision.clone(),
             provider: settings.preferred_provider.clone(),
-            variables: variables.clone(),
+            variables: durable_variables.clone(),
             ..Default::default()
         },
         preprocessing_log.as_deref(),
-    );
+    )?;
     if run_writer.is_some() {
         if let Some(path) = preprocessing_log.as_ref() {
             let _ = std::fs::remove_file(path);
         }
     }
     if let Some(w) = run_writer.as_mut() {
-        if let Err(e) = w.add_text(
+        w.add_text(
             "context/workflow.json",
             "Workflow snapshot",
             "context",
             &workflow_json,
-        ) {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!("WARNING: {e}") }),
-            );
-        }
-        if let Err(e) = w.add_text(
+        )
+        .map_err(|error| format!("Could not save the workflow snapshot: {error}"))?;
+        w.add_text(
             crate::runs::DOCUMENT_TEXT_PATH,
             "Readable document",
             "document",
             &extraction.text,
-        ) {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: {e}")
-                }),
-            );
-        }
+        )
+        .map_err(|error| format!("Could not save the extracted document: {error}"))?;
         if extraction.method == "paddleocr-vl-full" {
             match crate::pipeline::extract::read_paddle_structure_json_for_method(
                 &extraction.paper_hash,
@@ -525,21 +518,29 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         &orientation_json,
         "orientation",
     )?;
-    if let Some(w) = run_writer.as_mut() {
-        if let Err(e) = w.add_text(
+    run_writer
+        .as_mut()
+        .ok_or_else(|| "Durable run workspace disappeared before orientation".to_string())?
+        .add_text(
             "context/orientation.json",
             "Orientation map",
             "context",
             &orientation_json,
-        ) {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: {e}")
-                }),
-            );
-        }
-    }
+        )
+        .map_err(|error| format!("Could not save the orientation map: {error}"))?;
+    let orientation_sampling = orient::orientation_sample(&extraction.text);
+    let sampling_json = serde_json::to_string_pretty(&orientation_sampling)
+        .map_err(|error| format!("Could not serialize orientation coverage: {error}"))?;
+    run_writer
+        .as_mut()
+        .ok_or_else(|| "Durable run workspace disappeared before orientation".to_string())?
+        .add_text(
+            "context/orientation_sampling.json",
+            "Orientation sampling coverage",
+            "context",
+            &sampling_json,
+        )
+        .map_err(|error| format!("Could not save orientation sampling coverage: {error}"))?;
     let orient_bytes = orientation_json.len();
     app.emit_event(
         "pipeline:log",
@@ -581,31 +582,25 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
                 .and_then(|json| bundle.to_jsonl().map(|jsonl| (json, jsonl)))
             {
                 Ok((json, jsonl)) => {
-                    if let Some(w) = run_writer.as_mut() {
-                        for result in [
-                            w.add_text(
-                                "context/document_bundle.json",
-                                "Document bundle",
-                                "document",
-                                &json,
-                            ),
-                            w.add_text(
-                                "context/blocks.jsonl",
-                                "Document blocks",
-                                "document",
-                                &jsonl,
-                            ),
-                        ] {
-                            if let Err(error) = result {
-                                let _ = app.emit_event(
-                                    "pipeline:log",
-                                    serde_json::json!({
-                                        "line": format!("WARNING: {error}")
-                                    }),
-                                );
-                            }
-                        }
-                    }
+                    let writer = run_writer.as_mut().ok_or_else(|| {
+                        "Durable run workspace disappeared before document bundling".to_string()
+                    })?;
+                    writer
+                        .add_text(
+                            "context/document_bundle.json",
+                            "Document bundle",
+                            "document",
+                            &json,
+                        )
+                        .map_err(|error| format!("Could not save the document bundle: {error}"))?;
+                    writer
+                        .add_text(
+                            "context/blocks.jsonl",
+                            "Document blocks",
+                            "document",
+                            &jsonl,
+                        )
+                        .map_err(|error| format!("Could not save document blocks: {error}"))?;
                     bundle_json = Some(json);
                 }
                 Err(error) => {
@@ -683,26 +678,31 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             }
         };
         extra_sources.insert(slot.key.clone(), path.to_string());
-        if let Some(writer) = run_writer.as_mut() {
-            let _ = writer.record_extra_input_source(&slot.key, path);
-        }
+        run_writer
+            .as_mut()
+            .ok_or_else(|| "Durable run workspace disappeared before named inputs".to_string())?
+            .record_extra_input_source(&slot.key, path)
+            .map_err(|error| format!("Could not record named input '{}': {error}", slot.key))?;
         let ex = match slot.mode.as_str() {
             "folder" => extract::ingest_folder_async(path).await?,
             _ => extract::extract(app, path, &config.extraction).await?,
         };
-        if let Some(w) = run_writer.as_mut() {
-            let rel_path = extra_input_artifact_path(input_index, &slot.key);
-            let label = if slot.label.is_empty() {
-                &slot.key
-            } else {
-                &slot.label
-            };
-            if w.add_text(&rel_path, label, "context", &ex.text).is_ok()
-                && w.record_extra_input(&slot.key, &rel_path).is_ok()
-            {
-                persisted_inputs.insert(slot.key.clone(), rel_path);
-            }
-        }
+        let rel_path = extra_input_artifact_path(input_index, &slot.key);
+        let label = if slot.label.is_empty() {
+            &slot.key
+        } else {
+            &slot.label
+        };
+        let writer = run_writer
+            .as_mut()
+            .ok_or_else(|| "Durable run workspace disappeared before named inputs".to_string())?;
+        writer
+            .add_text(&rel_path, label, "context", &ex.text)
+            .map_err(|error| format!("Could not save named input '{}': {error}", slot.key))?;
+        writer
+            .record_extra_input(&slot.key, &rel_path)
+            .map_err(|error| format!("Could not index named input '{}': {error}", slot.key))?;
+        persisted_inputs.insert(slot.key.clone(), rel_path);
         let (tf, p) = write_run_input_file(
             run_input_dir.path(),
             "pipeline_input_",
@@ -757,11 +757,21 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             );
         }
     }
+    let quality = output::build_report_quality(
+        &extraction,
+        document_bundle.as_ref(),
+        &orientation_sampling,
+        &execution_config,
+        &result.outputs,
+        &result.failed_steps,
+        &products,
+    );
     let report = PipelineReport {
         orientation,
         step_outputs: result.outputs,
         failed_steps: result.failed_steps,
         products,
+        quality,
         referee_reports: vec![],
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -782,7 +792,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     let elapsed = pipeline_start.elapsed();
     let markdown = output::render_markdown(&report, diff_text.as_deref(), elapsed, &settings);
 
-    Ok(complete_run(
+    complete_run(
         app,
         run_writer,
         &report,
@@ -799,10 +809,10 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             workflow_source,
             workflow_fingerprint,
             specialist_catalog_revision,
-            variables,
+            variables: durable_variables,
             extra_inputs: persisted_inputs,
             extra_input_sources: extra_sources,
             parent_run_id: None,
         },
-    ))
+    )
 }

@@ -472,7 +472,13 @@ export default function PipelineProgress({
   stages = groupAdjacentSequentialStages(stages);
 
   return (
-    <div className="space-y-1">
+    <div
+      className="space-y-1"
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+      aria-busy={running}
+    >
       <div className="flex items-baseline justify-between mb-2">
         <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Progress</h3>
         {runElapsed && (

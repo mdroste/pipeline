@@ -7,6 +7,7 @@
 
 use crate::models::{
     Finding, FindingEvidence, FindingSet, PipelineReport, RunProducts, StepOutput,
+    ValidationDisposition,
 };
 use crate::pipeline_config::PipelineConfig;
 use regex::Regex;
@@ -15,10 +16,10 @@ use std::collections::HashSet;
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 
-pub const FINDING_SCHEMA_VERSION: u32 = 1;
+pub const FINDING_SCHEMA_VERSION: u32 = 2;
 const MAX_FINDINGS: usize = 1_000;
 const MAX_EVIDENCE: usize = 50;
-const MAX_SOURCES: usize = 8;
+const MAX_SOURCES: usize = 100;
 const MAX_TITLE_BYTES: usize = 1_000;
 const MAX_BODY_BYTES: usize = 20_000;
 const MAX_REFERENCE_BYTES: usize = 1_000;
@@ -41,7 +42,7 @@ static MARKDOWN_FINDING_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// The shared evidence-locator array contract. Descriptions carry the locator
 /// semantics so any profile adopting the schema gets the same guidance the
 /// stock prompts rely on.
-pub fn evidence_schema() -> Value {
+pub fn legacy_evidence_schema() -> Value {
     serde_json::json!({
         "type": "array",
         "maxItems": MAX_EVIDENCE,
@@ -66,7 +67,7 @@ pub fn evidence_schema() -> Value {
 
 /// The host-owned schema used by Automatic Paper Review and available to any
 /// profile that explicitly publishes findings.
-pub fn output_schema() -> Value {
+pub fn legacy_output_schema() -> Value {
     serde_json::json!({
         "type": "object",
         "title": "Consolidated findings",
@@ -100,12 +101,218 @@ pub fn output_schema() -> Value {
                             "description": "Optional coarse priority; array order remains the authoritative ranking."
                         },
                         "body": {"type": "string", "description": "Markdown preserving the paper evidence, the problem, its consequence, and what would address it."},
+                        "evidence": legacy_evidence_schema()
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Strict v2 evidence contract. JSON Schema supplies the portable structural
+/// constraints; [`validate_v2_semantics`] enforces that each object carries a
+/// real locator instead of accepting a description-only placeholder.
+pub fn evidence_schema() -> Value {
+    serde_json::json!({
+        "type": "array",
+        "minItems": 1,
+        "maxItems": MAX_EVIDENCE,
+        "description": "Evidence locators supporting the finding. Every item needs a typed locator and begins unverified; only Pipeline's host verifier may promote it.",
+        "items": {
+            "type": "object",
+            "required": ["evidence_type", "verification_status", "description"],
+            "properties": {
+                "evidence_type": {"type": "string", "enum": ["document", "source", "external", "call"]},
+                "verification_status": {"type": "string", "enum": ["unverified"]},
+                "page": {"type": "integer", "description": "1-based rendered page."},
+                "line_start": {"type": "integer", "description": "1-based source line."},
+                "line_end": {"type": "integer", "description": "Last source line, at least line_start."},
+                "node_id": {"type": "string", "minLength": 1},
+                "asset_id": {"type": "string", "minLength": 1},
+                "artifact_path": {"type": "string", "minLength": 1},
+                "source_path": {"type": "string", "minLength": 1},
+                "source_hash": {"type": "string", "minLength": 1},
+                "url": {"type": "string", "minLength": 1},
+                "doi": {"type": "string", "minLength": 1},
+                "publisher": {"type": "string", "minLength": 1},
+                "accessed_at": {"type": "string", "minLength": 1},
+                "query_id": {"type": "string", "minLength": 1},
+                "call_id": {"type": "string", "minLength": 1},
+                "description": {"type": "string", "minLength": 1},
+                "quote": {"type": "string", "minLength": 1}
+            }
+        }
+    })
+}
+
+/// Host-owned findings-v2 contract for the stock paper taxonomy.
+pub fn output_schema() -> Value {
+    output_schema_for_taxonomy(&CATEGORIES.map(str::to_string))
+}
+
+/// Build a strict findings-v2 contract with a workflow-declared taxonomy.
+/// The declaration is retained as a host-only schema marker and must exactly
+/// match the taxonomy returned in the artifact.
+pub fn output_schema_for_taxonomy(taxonomy: &[String]) -> Value {
+    let taxonomy = taxonomy
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "type": "object",
+        "title": "Canonical findings v2",
+        crate::pipeline::structured::FINDINGS_VERSION_KEY: FINDING_SCHEMA_VERSION,
+        crate::pipeline::structured::FINDINGS_TAXONOMY_KEY: taxonomy,
+        "required": ["schema_version", "taxonomy", "findings"],
+        "properties": {
+            "schema_version": {"type": "integer", "enum": [FINDING_SCHEMA_VERSION]},
+            "taxonomy": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {"type": "string", "enum": taxonomy}
+            },
+            "findings": {
+                "type": "array",
+                "maxItems": 40,
+                "description": "Findings in canonical global rank order.",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "rank", "id", "title", "category", "severity",
+                        "confidence", "verification_status", "reviewer_ids",
+                        "problem", "consequence", "recommended_action", "evidence"
+                    ],
+                    "properties": {
+                        "rank": {"type": "integer", "description": "Canonical 1-based global rank, equal to array position."},
+                        "id": {"type": "string", "minLength": 1, "description": "Stable descriptive identity; never an ordinal."},
+                        "source_key": {"type": "string", "minLength": 1},
+                        "reviewer_ids": {"type": "array", "minItems": 1, "maxItems": MAX_SOURCES, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+                        "source_call_ids": {"type": "array", "maxItems": MAX_SOURCES, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+                        "title": {"type": "string", "minLength": 1},
+                        "category": {"type": "string", "enum": taxonomy},
+                        "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "verification_status": {"type": "string", "enum": ["unverified"]},
+                        "problem": {"type": "string", "minLength": 1},
+                        "consequence": {"type": "string", "minLength": 1},
+                        "recommended_action": {"type": "string", "minLength": 1},
                         "evidence": evidence_schema()
                     }
                 }
             }
         }
     })
+}
+
+pub fn validation_output_schema_for_taxonomy(taxonomy: &[String]) -> Value {
+    let mut schema = output_schema_for_taxonomy(taxonomy);
+    schema[crate::pipeline::structured::VALIDATION_LEDGER_KEY] =
+        Value::String("required".to_string());
+    let required = schema["required"]
+        .as_array_mut()
+        .expect("findings-v2 required fields");
+    required.push(Value::String("validation_dispositions".to_string()));
+    schema["properties"]["validation_dispositions"] = serde_json::json!({
+        "type": "array",
+        "description": "Exactly one machine-readable disposition for every input finding id, in input order.",
+        "items": {
+            "type": "object",
+            "required": ["finding_id", "disposition", "reason"],
+            "properties": {
+                "finding_id": {"type": "string", "minLength": 1},
+                "disposition": {"type": "string", "enum": [
+                    "retained", "revised", "merged_into",
+                    "rejected_false_positive", "unverified_missing_evidence",
+                    "deferred_manual_review"
+                ]},
+                "reason": {"type": "string", "minLength": 1},
+                "merged_into": {"type": "string", "minLength": 1},
+                "before_hash": {"type": "string", "minLength": 1},
+                "after_hash": {"type": "string", "minLength": 1}
+            }
+        }
+    });
+    schema
+}
+
+/// Cross-field findings-v2 invariants that the deliberately small portable
+/// schema dialect cannot express.
+pub fn validate_v2_semantics(schema: &Value, value: &Value) -> Result<(), String> {
+    if schema
+        .get(crate::pipeline::structured::FINDINGS_VERSION_KEY)
+        .and_then(Value::as_u64)
+        != Some(FINDING_SCHEMA_VERSION as u64)
+    {
+        return Ok(());
+    }
+    let expected_taxonomy = schema
+        .get(crate::pipeline::structured::FINDINGS_TAXONOMY_KEY)
+        .and_then(Value::as_array)
+        .ok_or("findings-v2 schema is missing its taxonomy")?;
+    if value.get("taxonomy").and_then(Value::as_array) != Some(expected_taxonomy) {
+        return Err("$.taxonomy must exactly match the workflow-declared taxonomy".to_string());
+    }
+    let findings = value
+        .get("findings")
+        .and_then(Value::as_array)
+        .ok_or("$.findings must be an array")?;
+    let mut ids = HashSet::new();
+    for (index, finding) in findings.iter().enumerate() {
+        let object = finding
+            .as_object()
+            .ok_or_else(|| format!("$.findings[{index}] must be an object"))?;
+        let rank = object.get("rank").and_then(Value::as_u64).unwrap_or(0);
+        if rank != (index + 1) as u64 {
+            return Err(format!(
+                "$.findings[{index}].rank must be {} to preserve canonical global order",
+                index + 1
+            ));
+        }
+        let id = object.get("id").and_then(Value::as_str).unwrap_or_default();
+        if !ids.insert(id) {
+            return Err(format!(
+                "$.findings[{index}].id duplicates stable id '{id}'"
+            ));
+        }
+        let evidence = object
+            .get("evidence")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("$.findings[{index}].evidence must be an array"))?;
+        for (evidence_index, locator) in evidence.iter().enumerate() {
+            let locator = locator.as_object().ok_or_else(|| {
+                format!("$.findings[{index}].evidence[{evidence_index}] must be an object")
+            })?;
+            let has_locator = [
+                "page",
+                "line_start",
+                "node_id",
+                "asset_id",
+                "artifact_path",
+                "source_path",
+                "url",
+                "doi",
+                "query_id",
+                "call_id",
+            ]
+            .iter()
+            .any(|key| {
+                locator.get(*key).is_some_and(|value| match value {
+                    Value::String(text) => !text.trim().is_empty(),
+                    Value::Number(number) => number.as_u64().is_some_and(|number| number > 0),
+                    _ => false,
+                })
+            });
+            if !has_locator {
+                return Err(format!(
+                    "$.findings[{index}].evidence[{evidence_index}] needs a concrete page, line, node, asset, path, URL, DOI, query, or call locator"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Resolve the products declared by a concrete execution config. Profiles
@@ -121,20 +328,53 @@ pub fn build_run_products(config: &PipelineConfig, outputs: &[StepOutput]) -> Ru
         configured_primary.to_string()
     };
 
-    let findings = if config.outputs.findings_step.trim().is_empty() {
+    let findings_output = if config.outputs.findings_step.trim().is_empty() {
         outputs
             .iter()
             .rev()
             .filter(|output| usable(output))
-            .find_map(parse_structured_output)
+            .find(|output| parse_structured_output(output).is_some())
     } else {
-        declared_output(outputs, &config.outputs.findings_step).and_then(parse_structured_output)
+        declared_output(outputs, &config.outputs.findings_step)
     };
+    let findings = findings_output.and_then(parse_structured_output);
+    let validation_dispositions = findings_output
+        .map(parse_validation_dispositions)
+        .unwrap_or_default();
+    let named = config
+        .outputs
+        .named
+        .iter()
+        .filter_map(|spec| {
+            let output = declared_output(outputs, &spec.step)?;
+            let content = if output.structured_json || spec.viewer == "json" {
+                crate::pipeline::structured::extract_json(&output.raw_text)
+                    .unwrap_or_else(|| Value::String(output.raw_text.clone()))
+            } else {
+                Value::String(output.raw_text.clone())
+            };
+            Some(crate::models::NamedRunProduct {
+                key: spec.key.clone(),
+                source_step_id: output.step_id.clone(),
+                media_type: spec.media_type.clone(),
+                viewer: spec.viewer.clone(),
+                export_policy: spec.export_policy.clone(),
+                sensitivity: spec.sensitivity.clone(),
+                content,
+            })
+        })
+        .collect();
 
+    let product_version = findings
+        .as_ref()
+        .map(|findings| findings.schema_version)
+        .unwrap_or(FINDING_SCHEMA_VERSION);
     RunProducts {
-        schema_version: FINDING_SCHEMA_VERSION,
+        schema_version: product_version,
         primary_step_id,
         findings,
+        validation_dispositions,
+        named,
     }
 }
 
@@ -157,10 +397,41 @@ pub fn ensure_legacy_products(report: &mut PipelineReport) {
             parse_legacy_structured_output(output).or_else(|| parse_legacy_markdown_output(output))
         });
     report.products = RunProducts {
-        schema_version: FINDING_SCHEMA_VERSION,
+        schema_version: 1,
         primary_step_id,
         findings,
+        validation_dispositions: Vec::new(),
+        named: Vec::new(),
     };
+}
+
+fn parse_validation_dispositions(output: &StepOutput) -> Vec<ValidationDisposition> {
+    let Some(value) = crate::pipeline::structured::extract_json(&output.raw_text) else {
+        return Vec::new();
+    };
+    value
+        .get("validation_dispositions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let item = item.as_object()?;
+            let finding_id = bounded_value(item.get("finding_id"), MAX_REFERENCE_BYTES);
+            let disposition = bounded_value(item.get("disposition"), MAX_REFERENCE_BYTES);
+            let reason = bounded_value(item.get("reason"), MAX_BODY_BYTES);
+            if finding_id.is_empty() || disposition.is_empty() || reason.is_empty() {
+                return None;
+            }
+            Some(ValidationDisposition {
+                finding_id,
+                disposition,
+                reason,
+                merged_into: bounded_value(item.get("merged_into"), MAX_REFERENCE_BYTES),
+                before_hash: bounded_value(item.get("before_hash"), MAX_REFERENCE_BYTES),
+                after_hash: bounded_value(item.get("after_hash"), MAX_REFERENCE_BYTES),
+            })
+        })
+        .collect()
 }
 
 pub fn canonical_findings(report: &PipelineReport) -> Option<FindingSet> {
@@ -234,6 +505,23 @@ pub fn parse_value(
     source_step_id: &str,
     source_step_label: &str,
 ) -> Option<FindingSet> {
+    let schema_version = value
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .and_then(|version| u32::try_from(version).ok())
+        .unwrap_or(1);
+    let strict_v2 = schema_version == FINDING_SCHEMA_VERSION;
+    let taxonomy = value
+        .get("taxonomy")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let items = value
         .as_array()
         .or_else(|| value.get("findings").and_then(Value::as_array))
@@ -249,7 +537,7 @@ pub fn parse_value(
             first(object, &["title", "summary", "message", "name"]),
             MAX_TITLE_BYTES,
         );
-        let body = bounded_value(
+        let mut body = bounded_value(
             first(
                 object,
                 &[
@@ -266,18 +554,38 @@ pub fn parse_value(
         if title.is_empty() && body.is_empty() {
             return None;
         }
+        let problem = bounded_value(object.get("problem"), MAX_BODY_BYTES);
+        let consequence = bounded_value(object.get("consequence"), MAX_BODY_BYTES);
+        let recommended_action = bounded_value(
+            first(object, &["recommended_action", "what_would_help"]),
+            MAX_BODY_BYTES,
+        );
+        if body.is_empty() && strict_v2 {
+            body = format!(
+                "**Problem.** {problem}\n\n**Consequence.** {consequence}\n\n**Recommended action.** {recommended_action}"
+            );
+        }
         let mut id = bounded_value(
             first(object, &["id", "issue_id", "issueId", "fingerprint", "key"]),
             MAX_REFERENCE_BYTES,
         );
+        if strict_v2 && id.is_empty() {
+            return None;
+        }
         if id.is_empty() {
             id = (index + 1).to_string();
         }
-        let base_id = id.clone();
-        let mut suffix = 2usize;
-        while !used_ids.insert(id.clone()) {
-            id = bounded_text(&format!("{base_id}#{suffix}"), MAX_REFERENCE_BYTES);
-            suffix += 1;
+        if strict_v2 {
+            if id.is_empty() || !used_ids.insert(id.clone()) {
+                return None;
+            }
+        } else {
+            let base_id = id.clone();
+            let mut suffix = 2usize;
+            while !used_ids.insert(id.clone()) {
+                id = bounded_text(&format!("{base_id}#{suffix}"), MAX_REFERENCE_BYTES);
+                suffix += 1;
+            }
         }
         let source_key = bounded_value(
             first(object, &["source_key", "sourceKey", "rule_id", "ruleId"]),
@@ -294,6 +602,11 @@ pub fn parse_value(
                 .collect(),
             _ => Vec::new(),
         };
+        let reviewer_ids = string_array(
+            object.get("reviewer_ids").or_else(|| object.get("sources")),
+            MAX_SOURCES,
+        );
+        let source_call_ids = string_array(object.get("source_call_ids"), MAX_SOURCES);
         let category = bounded_value(
             first(
                 object,
@@ -314,6 +627,9 @@ pub fn parse_value(
             first(object, &["priority", "severity", "level"]),
             100,
         ));
+        let confidence = bounded_value(object.get("confidence"), 100);
+        let verification_status =
+            bounded_value(object.get("verification_status"), MAX_REFERENCE_BYTES);
         let evidence = match object.get("evidence") {
             Some(Value::Array(values)) => values
                 .iter()
@@ -324,9 +640,13 @@ pub fn parse_value(
             _ => parse_evidence(item).into_iter().collect(),
         };
         findings.push(Finding {
+            rank: bounded_u32(object.get("rank"), MAX_FINDINGS as u32)
+                .unwrap_or((index + 1) as u32),
             id,
             source_key,
             sources,
+            reviewer_ids,
+            source_call_ids,
             title: if title.is_empty() {
                 bounded_text(&body, MAX_TITLE_BYTES)
             } else {
@@ -334,14 +654,20 @@ pub fn parse_value(
             },
             category,
             priority,
+            confidence,
+            verification_status,
+            problem,
+            consequence,
+            recommended_action,
             body,
             evidence,
         });
     }
     Some(FindingSet {
-        schema_version: FINDING_SCHEMA_VERSION,
+        schema_version: if strict_v2 { FINDING_SCHEMA_VERSION } else { 1 },
         source_step_id: bounded_text(source_step_id, MAX_REFERENCE_BYTES),
         source_step_label: bounded_text(source_step_label, MAX_TITLE_BYTES),
+        taxonomy,
         findings,
     })
 }
@@ -379,6 +705,12 @@ fn parse_evidence(value: &Value) -> Option<FindingEvidence> {
         first(object, &["source_hash", "sourceHash"]),
         MAX_REFERENCE_BYTES,
     );
+    let url = bounded_value(object.get("url"), MAX_BODY_BYTES);
+    let doi = bounded_value(object.get("doi"), MAX_REFERENCE_BYTES);
+    let publisher = bounded_value(object.get("publisher"), MAX_REFERENCE_BYTES);
+    let accessed_at = bounded_value(object.get("accessed_at"), MAX_REFERENCE_BYTES);
+    let query_id = bounded_value(object.get("query_id"), MAX_REFERENCE_BYTES);
+    let call_id = bounded_value(object.get("call_id"), MAX_REFERENCE_BYTES);
     let description = bounded_value(
         first(object, &["description", "label", "location"]),
         MAX_BODY_BYTES,
@@ -392,12 +724,18 @@ fn parse_evidence(value: &Value) -> Option<FindingEvidence> {
         && artifact_path.is_empty()
         && source_path.is_empty()
         && source_hash.is_empty()
+        && url.is_empty()
+        && doi.is_empty()
+        && query_id.is_empty()
+        && call_id.is_empty()
         && description.is_empty()
         && quote.is_empty()
     {
         return None;
     }
     Some(FindingEvidence {
+        evidence_type: bounded_value(object.get("evidence_type"), 100),
+        verification_status: bounded_value(object.get("verification_status"), 100),
         page,
         line_start,
         line_end,
@@ -406,9 +744,28 @@ fn parse_evidence(value: &Value) -> Option<FindingEvidence> {
         artifact_path,
         source_path,
         source_hash,
+        url,
+        doi,
+        publisher,
+        accessed_at,
+        query_id,
+        call_id,
         description,
         quote,
     })
+}
+
+fn string_array(value: Option<&Value>, maximum: usize) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(maximum)
+        .filter_map(|value| {
+            let value = bounded_value(Some(value), MAX_REFERENCE_BYTES);
+            (!value.is_empty()).then_some(value)
+        })
+        .collect()
 }
 
 fn parse_legacy_markdown_output(output: &StepOutput) -> Option<FindingSet> {
@@ -472,9 +829,10 @@ fn parse_legacy_markdown_output(output: &StepOutput) -> Option<FindingSet> {
         return None;
     }
     Some(FindingSet {
-        schema_version: FINDING_SCHEMA_VERSION,
+        schema_version: 1,
         source_step_id: output.step_id.clone(),
         source_step_label: output.step_label.clone(),
+        taxonomy: Vec::new(),
         findings,
     })
 }
@@ -682,6 +1040,7 @@ mod tests {
             )],
             failed_steps: Vec::new(),
             products: RunProducts::default(),
+            quality: Default::default(),
             referee_reports: Vec::new(),
             editor: None,
             report_date: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
@@ -699,11 +1058,15 @@ mod tests {
     fn canonical_schema_is_portable_and_matches_its_own_product() {
         let schema = output_schema();
         crate::pipeline::structured::provider_schema(&schema).unwrap();
-        let product = serde_json::json!({"findings": [{
-            "id": "sign-error", "title": "Sign error",
-            "category": CATEGORIES[0], "priority": "high",
-            "sources": ["auto_consistency"],
-            "body": "Body", "evidence": [{"page": 4, "quote": "q"}]
+        let product = serde_json::json!({
+          "schema_version": 2, "taxonomy": CATEGORIES,
+          "findings": [{
+            "rank": 1, "id": "sign-error", "title": "Sign error",
+            "category": CATEGORIES[0], "severity": "high", "confidence": "high",
+            "verification_status": "unverified", "reviewer_ids": ["auto_consistency"],
+            "problem": "The sign is reversed.", "consequence": "The proposition fails.",
+            "recommended_action": "Correct the derivation.",
+            "evidence": [{"evidence_type": "document", "verification_status": "unverified", "page": 4, "description": "Proposition 2", "quote": "q"}]
         }]});
         crate::pipeline::structured::validate(&schema, &product).unwrap();
         // Unknown categories and empty ids are rejected by the contract.

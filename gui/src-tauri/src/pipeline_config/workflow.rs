@@ -193,6 +193,7 @@ fn validate_step(value: &serde_json::Value, path: &str) -> Result<(), String> {
             "effort",
             "effort_overrides",
             "after",
+            "dependency_policy",
             "context",
             "run_if",
             "output_schema",
@@ -201,6 +202,13 @@ fn validate_step(value: &serde_json::Value, path: &str) -> Result<(), String> {
     )?;
     if let Some(overrides) = value.get("model_overrides") {
         validate_model_map(overrides, &format!("{path}.model_overrides"))?;
+    }
+    if let Some(policy) = value.get("dependency_policy") {
+        reject_unknown(
+            policy,
+            &format!("{path}.dependency_policy"),
+            &["required", "quorum", "minimum_successes"],
+        )?;
     }
     if let Some(context) = value.get("context") {
         let context_path = format!("{path}.context");
@@ -252,7 +260,26 @@ fn validate_strict_shape(value: &serde_json::Value) -> Result<(), String> {
         reject_unknown(merge, "$.merge", &["enabled", "prompt", "agents"])?;
     }
     if let Some(outputs) = value.get("outputs") {
-        reject_unknown(outputs, "$.outputs", &["primary_step", "findings_step"])?;
+        reject_unknown(
+            outputs,
+            "$.outputs",
+            &["primary_step", "findings_step", "named"],
+        )?;
+        each_array(outputs, "named", "$.outputs", |product, path| {
+            reject_unknown(
+                product,
+                path,
+                &[
+                    "key",
+                    "step",
+                    "media_type",
+                    "viewer",
+                    "export_policy",
+                    "sensitivity",
+                    "schema",
+                ],
+            )
+        })?;
     }
     if let Some(cache) = value.get("context_cache") {
         reject_unknown(cache, "$.context_cache", &["enabled"])?;
@@ -264,15 +291,47 @@ fn validate_strict_shape(value: &serde_json::Value) -> Result<(), String> {
             &["method", "input_mode", "extra_inputs"],
         )?;
         each_array(extraction, "extra_inputs", "$.extraction", |slot, path| {
-            reject_unknown(slot, path, &["key", "label", "mode", "required"])
+            reject_unknown(
+                slot,
+                path,
+                &[
+                    "key",
+                    "label",
+                    "mode",
+                    "required",
+                    "extensions",
+                    "mime_types",
+                    "max_bytes",
+                    "sensitivity",
+                ],
+            )
         })?;
     }
     each_array(value, "variables", "$", |variable, path| {
         reject_unknown(
             variable,
             path,
-            &["key", "label", "kind", "default", "choices"],
+            &[
+                "key",
+                "label",
+                "kind",
+                "default",
+                "choices",
+                "required",
+                "secret",
+                "validation",
+            ],
         )
+        .and_then(|()| {
+            if let Some(validation) = variable.get("validation") {
+                reject_unknown(
+                    validation,
+                    &format!("{path}.validation"),
+                    &["min_length", "max_length", "pattern"],
+                )?;
+            }
+            Ok(())
+        })
     })?;
     Ok(())
 }
@@ -376,6 +435,7 @@ pub fn workflow_template() -> Result<WorkflowDocument, String> {
         outputs: OutputConfig {
             primary_step: "synthesis".into(),
             findings_step: String::new(),
+            named: Vec::new(),
         },
         context_cache: ContextCacheConfig::default(),
         use_orientation: true,
@@ -399,7 +459,7 @@ pub fn workflow_template() -> Result<WorkflowDocument, String> {
 pub fn workflow_json_schema() -> serde_json::Value {
     serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://pipeline.local/schemas/workflow-v9.json",
+        "$id": "https://pipeline.local/schemas/workflow-v11.json",
         "title": "Pipeline portable workflow",
         "type": "object",
         "additionalProperties": false,
@@ -465,8 +525,11 @@ pub fn workflow_json_schema() -> serde_json::Value {
                     "x-pipeline-catalog": { "enum": ["auto-review.subjects", "auto-review.methods", "auto-review.genres"] },
                     "x-pipeline-catalog-policy": { "const": "live" },
                     "x-pipeline-adaptive-agent-count": { "type": "integer", "minimum": 0 },
+                    "x-pipeline-findings-version": { "type": "integer", "minimum": 1 },
+                    "x-pipeline-findings-taxonomy": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+                    "x-pipeline-validation-ledger": { "type": "string", "minLength": 1 },
                     "x-pipeline-preserve-findings-from": { "type": "string", "minLength": 1 },
-                    "x-pipeline-schema": { "const": "findings-v1" }
+                    "x-pipeline-schema": { "enum": ["findings-v1", "findings-v2", "findings-v2-validation"] }
                 }
             },
             "artifactSchema": {
@@ -525,6 +588,7 @@ pub fn workflow_json_schema() -> serde_json::Value {
                     "model_overrides": { "type": "object", "additionalProperties": { "$ref": "#/$defs/modelSelection" } },
                     "effort": { "type": "string" }, "effort_overrides": { "type": "object", "additionalProperties": { "type": "string" } },
                     "after": { "type": "array", "items": { "type": "string" } },
+                    "dependency_policy": { "type": "object", "additionalProperties": false, "properties": { "required": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }, "quorum": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }, "minimum_successes": { "type": "integer", "minimum": 0 } } },
                     "context": { "type": "object", "additionalProperties": false, "properties": { "include": { "type": "array", "items": { "$ref": "#/$defs/selector" } } } },
                     "run_if": { "$ref": "#/$defs/condition" },
                     "output_schema": { "oneOf": [{ "$ref": "#/$defs/stepArtifactSchema" }, { "type": "null" }] },
@@ -532,11 +596,13 @@ pub fn workflow_json_schema() -> serde_json::Value {
                 }
             },
             "merge": { "type": "object", "additionalProperties": false, "required": ["enabled", "prompt"], "properties": { "enabled": { "type": "boolean" }, "prompt": { "type": "string" }, "agents": { "type": "array", "maxItems": 1, "items": { "$ref": "#/$defs/agent" } } } },
-            "outputs": { "type": "object", "additionalProperties": false, "properties": { "primary_step": { "type": "string" }, "findings_step": { "type": "string" } } },
+            "outputs": { "type": "object", "additionalProperties": false, "properties": { "primary_step": { "type": "string" }, "findings_step": { "type": "string" }, "named": { "type": "array", "items": { "$ref": "#/$defs/namedProduct" } } } },
+            "namedProduct": { "type": "object", "additionalProperties": false, "required": ["key", "step"], "properties": { "key": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,64}$" }, "step": { "type": "string" }, "media_type": { "type": "string" }, "viewer": { "enum": ["", "text", "markdown", "json", "artifact"] }, "export_policy": { "enum": ["", "full", "redacted", "disabled"] }, "sensitivity": { "enum": ["", "public", "internal", "confidential", "secret"] }, "schema": { "oneOf": [{ "$ref": "#/$defs/artifactSchema" }, { "type": "null" }] } } },
             "contextCache": { "type": "object", "additionalProperties": false, "properties": { "enabled": { "type": "boolean" } } },
-            "inputSlot": { "type": "object", "additionalProperties": false, "required": ["key"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "mode": { "enum": ["document", "folder"] }, "required": { "type": "boolean" } } },
+            "inputSlot": { "type": "object", "additionalProperties": false, "required": ["key"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "mode": { "enum": ["document", "folder"] }, "required": { "type": "boolean" }, "extensions": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9]+$" } }, "mime_types": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[^/]+/[^/]+$" } }, "max_bytes": { "type": "integer", "minimum": 0, "maximum": 268435456 }, "sensitivity": { "enum": ["", "public", "internal", "confidential", "secret"] } } },
             "extraction": { "type": "object", "additionalProperties": false, "properties": { "method": { "enum": ["", "auto", "llm", "paddleocr-vl-full", "pdftotext"] }, "input_mode": { "enum": ["", "document", "folder", "none"] }, "extra_inputs": { "type": "array", "maxItems": MAX_EXTRA_INPUTS, "items": { "$ref": "#/$defs/inputSlot" } } } },
-            "variable": { "type": "object", "additionalProperties": false, "required": ["key"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "kind": { "enum": ["text", "choice", "file"] }, "default": { "type": "string" }, "choices": { "type": "array", "items": { "type": "string" } } } }
+            "variableValidation": { "type": "object", "additionalProperties": false, "properties": { "min_length": { "type": "integer", "minimum": 0 }, "max_length": { "type": "integer", "minimum": 0, "maximum": 1048576 }, "pattern": { "type": "string" } } },
+            "variable": { "type": "object", "additionalProperties": false, "required": ["key"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "kind": { "enum": ["text", "choice", "file"] }, "default": { "type": "string" }, "choices": { "type": "array", "items": { "type": "string" } }, "required": { "type": "boolean" }, "secret": { "type": "boolean" }, "validation": { "$ref": "#/$defs/variableValidation" } } }
         }
     })
 }
@@ -616,8 +682,12 @@ mod tests {
             Some(&serde_json::json!("integer"))
         );
         assert_eq!(
-            schema.pointer("/$defs/schemaNode/properties/x-pipeline-schema/const"),
-            Some(&serde_json::json!("findings-v1"))
+            schema.pointer("/$defs/schemaNode/properties/x-pipeline-schema/enum"),
+            Some(&serde_json::json!([
+                "findings-v1",
+                "findings-v2",
+                "findings-v2-validation"
+            ]))
         );
 
         let validator = jsonschema::draft202012::options().build(&schema).unwrap();

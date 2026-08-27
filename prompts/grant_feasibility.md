@@ -27,9 +27,4 @@ Report only feasibility concerns a panel would weigh (CRITICAL: an aim that the 
 
 ## Output
 
-Produce up to 8 numbered comments, most damaging first. For each:
-
-- **Title**: Specific header (e.g., "Aim 1 requires linked administrative data whose approval process alone exceeds Year 1")
-- **The proposal says**: Quote with section/page.
-- **The concern**: The concrete failure path.
-- **What would fix it**: The contingency, calculation, or revision that resolves it.
+Populate the supplied reviewer-findings schema with at most eight findings, most damaging first. For each, provide a specific title; `in_the_paper`; the exact `problem`; its funding-relevant `consequence`; and the smallest `what_would_help`. Evidence items use a concrete page, line, node, asset, source path, URL, DOI, query, or call locator, plus `evidence_type`, `verification_status: unverified`, and a useful description. Never invent a locator. Return an empty findings array when no material issue survives checking.

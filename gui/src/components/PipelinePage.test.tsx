@@ -10,11 +10,14 @@ import type {
 } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
+const confirmDialog = vi.hoisted(() => vi.fn());
+const notify = vi.hoisted(() => vi.fn());
 const dialogMocks = vi.hoisted(() => ({
   save: vi.fn(),
   open: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("./DialogService", () => ({ confirmDialog, notify }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: dialogMocks.save,
   open: dialogMocks.open,
@@ -130,9 +133,15 @@ async function addBlankStep(
   await user.click(screen.getByRole("button", { name: "Create step" }));
 }
 
+async function useAdvancedEditor(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Advanced" }));
+}
+
 describe("PipelinePage", () => {
   beforeEach(() => {
     invoke.mockReset();
+    confirmDialog.mockReset();
+    notify.mockReset();
     dialogMocks.save.mockReset();
     dialogMocks.open.mockReset();
     dialogMocks.save.mockResolvedValue(null);
@@ -166,7 +175,6 @@ describe("PipelinePage", () => {
 
   it("surfaces import and export dialog plugin failures", async () => {
     const user = userEvent.setup();
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await screen.findByRole("combobox", { name: "Active workflow profile" });
@@ -174,7 +182,7 @@ describe("PipelinePage", () => {
     dialogMocks.open.mockRejectedValueOnce(new Error("picker unavailable"));
     await user.click(screen.getByRole("button", { name: "Import" }));
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith("Import failed: picker unavailable");
+      expect(notify).toHaveBeenCalledWith("Import failed: picker unavailable");
     });
 
     // The backend now owns the save dialog, so an export failure surfaces from
@@ -192,12 +200,10 @@ describe("PipelinePage", () => {
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     await user.click(screen.getByRole("button", { name: /Export profile/ }));
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith(
+      expect(notify).toHaveBeenCalledWith(
         "Export failed: save picker unavailable",
       );
     });
-
-    alertSpy.mockRestore();
   });
 
   it("serializes profile mutations while a switch is pending", async () => {
@@ -243,7 +249,7 @@ describe("PipelinePage", () => {
 
   it("invalidates a pending reset when the editor unmounts", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    confirmDialog.mockResolvedValueOnce(true);
     let finishReset!: (config: PipelineConfig) => void;
     const resetResult = new Promise<PipelineConfig>((resolve) => {
       finishReset = resolve;
@@ -267,12 +273,11 @@ describe("PipelinePage", () => {
     await act(async () => finishReset(makeConfig()));
 
     expect(onProfileChange).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
   it("keeps profile controls locked through deletion and fallback activation", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    confirmDialog.mockResolvedValueOnce(true);
     let finishDelete!: () => void;
     const deleteResult = new Promise<void>((resolve) => {
       finishDelete = resolve;
@@ -319,7 +324,6 @@ describe("PipelinePage", () => {
     });
     expect(invoke).toHaveBeenCalledWith("delete_profile", { id: "custom" });
     expect(invoke).toHaveBeenCalledWith("switch_profile", { id: "auto-review" });
-    confirmSpy.mockRestore();
   });
 
   it("disables Save until the config is dirty", async () => {
@@ -391,6 +395,7 @@ describe("PipelinePage", () => {
     await user.click(screen.getByRole("radio", { name: /After earlier steps/ }));
     await user.click(screen.getByRole("radio", { name: /Structured issues/ }));
     await user.click(screen.getByRole("button", { name: "Create step" }));
+    await useAdvancedEditor(user);
 
     expect(screen.getByRole("textbox", { name: "Step label" })).toHaveValue("Identification audit");
     expect(screen.getByTestId("step-summary")).toHaveTextContent(
@@ -432,6 +437,7 @@ describe("PipelinePage", () => {
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Consolidate Issues");
+    await useAdvancedEditor(user);
 
     await user.click(screen.getAllByRole("button", { name: "Consolidate Issues" })[0]);
     await user.click(screen.getByRole("tab", { name: "Execution rules" }));
@@ -543,6 +549,7 @@ describe("PipelinePage", () => {
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
+    await useAdvancedEditor(user);
 
     await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
     await user.click(screen.getByRole("tab", { name: "Inputs & dependencies" }));
@@ -570,6 +577,7 @@ describe("PipelinePage", () => {
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Consolidate Issues");
+    await useAdvancedEditor(user);
 
     await user.click(screen.getAllByRole("button", { name: "Consolidate Issues" })[0]);
     await user.click(screen.getByRole("tab", { name: "Execution rules" }));
@@ -653,7 +661,7 @@ describe("PipelinePage", () => {
   });
 
   it("makes dependency rewrites explicit and reversible", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    confirmDialog.mockResolvedValueOnce(true);
     mockLoad(makeConfig());
     const user = userEvent.setup();
     render(<PipelinePage onClose={() => {}} />);
@@ -661,14 +669,13 @@ describe("PipelinePage", () => {
 
     const enabled = screen.getByRole("switch", { name: "Enable Technical" });
     await user.click(enabled);
-    expect(confirmSpy).toHaveBeenCalledWith(
+    expect(confirmDialog.mock.calls[0][0]).toBe(
       "Disabling this step removes dependencies or artifact access from 1 downstream step. Continue?",
     );
     expect(screen.getByRole("button", { name: "Undo" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Undo" }));
     expect(enabled).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    confirmSpy.mockRestore();
   });
 
   it("does not let an async prompt reset overwrite edits made while it loads", async () => {
@@ -720,7 +727,6 @@ describe("PipelinePage", () => {
       }
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     const user = userEvent.setup();
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
@@ -728,21 +734,19 @@ describe("PipelinePage", () => {
     await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
     await user.click(screen.getByRole("button", { name: "Reset to generic" }));
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith(
+      expect(notify).toHaveBeenCalledWith(
         "Failed to reset the parallel context template: parallel template unavailable",
       );
     });
 
-    alertSpy.mockClear();
+    notify.mockClear();
     await user.click(screen.getByRole("button", { name: "Orientation map" }));
     await user.click(screen.getByRole("button", { name: "Insert generic survey" }));
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith(
+      expect(notify).toHaveBeenCalledWith(
         "Failed to load the default orientation prompt: orientation prompt unavailable",
       );
     });
-
-    alertSpy.mockRestore();
   });
 
   it("applies stock orientation prompts and schemas as one contract", async () => {
@@ -863,6 +867,7 @@ describe("PipelinePage", () => {
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
+    await useAdvancedEditor(user);
 
     await user.click(screen.getByRole("tab", { name: "Schemas" }));
     expect(screen.getByRole("tab", { name: "Schemas" })).toHaveAttribute("aria-selected", "true");
@@ -910,6 +915,7 @@ describe("PipelinePage", () => {
     mockLoad(config);
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
+    await useAdvancedEditor(user);
 
     await user.click(screen.getByRole("tab", { name: "Schemas" }));
     await user.click(screen.getByRole("button", { name: "Technical output schema" }));
@@ -979,6 +985,7 @@ describe("PipelinePage", () => {
     });
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
+    await useAdvancedEditor(user);
 
     await user.click(screen.getByRole("tab", { name: "Schemas" }));
     expect(screen.getByText("Catalog-backed")).toBeInTheDocument();

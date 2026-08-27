@@ -498,6 +498,55 @@ pub(super) fn validate_profile_data(profile: &ProfileData) -> Result<(), String>
                 variable.key
             ));
         }
+        if variable.kind == "choice"
+            && !variable.default.is_empty()
+            && !variable.choices.contains(&variable.default)
+        {
+            return Err(format!(
+                "Variable '{}' default is not one of its declared choices",
+                variable.key
+            ));
+        }
+        if variable.secret && variable.kind == "file" {
+            return Err(format!(
+                "Variable '{}' cannot be both a secret and a file path",
+                variable.key
+            ));
+        }
+        if variable.secret && !variable.default.is_empty() {
+            return Err(format!(
+                "Secret variable '{}' cannot have a saved default; supply it when the workflow runs",
+                variable.key
+            ));
+        }
+        let validation = &variable.validation;
+        if validation
+            .min_length
+            .zip(validation.max_length)
+            .is_some_and(|(minimum, maximum)| minimum > maximum)
+        {
+            return Err(format!(
+                "Variable '{}' minimum length exceeds its maximum length",
+                variable.key
+            ));
+        }
+        if validation
+            .max_length
+            .is_some_and(|maximum| maximum > 1_048_576)
+        {
+            return Err(format!(
+                "Variable '{}' maximum length exceeds the 1 MB safety limit",
+                variable.key
+            ));
+        }
+        if !validation.pattern.is_empty() {
+            regex::Regex::new(&validation.pattern).map_err(|error| {
+                format!(
+                    "Variable '{}' has an invalid validation pattern: {error}",
+                    variable.key
+                )
+            })?;
+        }
     }
 
     let mut input_keys = std::collections::HashSet::new();
@@ -525,8 +574,108 @@ pub(super) fn validate_profile_data(profile: &ProfileData) -> Result<(), String>
                 input.mode, input.key
             ));
         }
+        if input.extensions.len() > 100
+            || input.extensions.iter().any(|extension| {
+                extension.is_empty()
+                    || extension.starts_with('.')
+                    || !extension
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric())
+            })
+        {
+            return Err(format!(
+                "Named input '{}' has invalid extensions; use lowercase names without a leading dot",
+                input.key
+            ));
+        }
+        if input
+            .extensions
+            .iter()
+            .any(|extension| *extension != extension.to_ascii_lowercase())
+        {
+            return Err(format!(
+                "Named input '{}' extensions must be lowercase",
+                input.key
+            ));
+        }
+        if input.mime_types.len() > 100
+            || input
+                .mime_types
+                .iter()
+                .any(|mime| !mime.contains('/') || mime.len() > 255)
+        {
+            return Err(format!(
+                "Named input '{}' has an invalid MIME type declaration",
+                input.key
+            ));
+        }
+        if input.max_bytes > 256 * 1024 * 1024 {
+            return Err(format!(
+                "Named input '{}' maximum size exceeds Pipeline's input safety limit",
+                input.key
+            ));
+        }
+        if !matches!(
+            input.sensitivity.as_str(),
+            "" | "public" | "internal" | "confidential" | "secret"
+        ) {
+            return Err(format!(
+                "Named input '{}' has unsupported sensitivity '{}'",
+                input.key, input.sensitivity
+            ));
+        }
+    }
+
+    let prompt_surfaces = profile
+        .steps
+        .iter()
+        .map(|step| (format!("step '{}' prompt", step.id), step.prompt.as_str()))
+        .chain([
+            (
+                "orientation prompt".to_string(),
+                profile.orientation_prompt.as_str(),
+            ),
+            (
+                "parallel context template".to_string(),
+                profile.parallel_context_template.as_str(),
+            ),
+            ("merge prompt".to_string(), profile.merge.prompt.as_str()),
+        ]);
+    for (surface, text) in prompt_surfaces {
+        for key in placeholder_keys(text, "{var:", &surface)? {
+            if !variable_keys.contains(key.as_str()) {
+                return Err(format!(
+                    "{surface} references undeclared variable '{{var:{key}}}'"
+                ));
+            }
+        }
+        for key in placeholder_keys(text, "{input:", &surface)? {
+            if !input_keys.contains(key.as_str()) {
+                return Err(format!(
+                    "{surface} references undeclared named input '{{input:{key}}}'"
+                ));
+            }
+        }
     }
     Ok(())
+}
+
+fn placeholder_keys(text: &str, needle: &str, surface: &str) -> Result<Vec<String>, String> {
+    let mut keys = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(needle) {
+        let after = &rest[start + needle.len()..];
+        let end = after
+            .find('}')
+            .ok_or_else(|| format!("{surface} contains an unterminated {needle} placeholder"))?;
+        let key = after[..end].trim();
+        if key.is_empty() {
+            return Err(format!("{surface} contains an empty {needle} placeholder"));
+        }
+        keys.push(key.to_string());
+        rest = &after[end + 1..];
+    }
+    Ok(keys)
 }
 
 fn validate_published_outputs(profile: &ProfileData) -> Result<(), String> {
@@ -554,6 +703,75 @@ fn validate_published_outputs(profile: &ProfileData) -> Result<(), String> {
             return Err(format!(
                 "Published findings step '{step_id}' must define an output JSON schema"
             ));
+        }
+    }
+    let mut product_keys = std::collections::HashSet::new();
+    for product in &profile.outputs.named {
+        if product.key.is_empty()
+            || product.key.len() > 64
+            || !product
+                .key
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            return Err(format!("Invalid named product key '{}'", product.key));
+        }
+        if !product_keys.insert(product.key.as_str()) {
+            return Err(format!("Duplicate named product key '{}'", product.key));
+        }
+        let step = profile
+            .steps
+            .iter()
+            .find(|step| step.id == product.step)
+            .ok_or_else(|| {
+                format!(
+                    "Named product '{}' references unknown step '{}'",
+                    product.key, product.step
+                )
+            })?;
+        if !step.enabled {
+            return Err(format!(
+                "Named product '{}' references disabled step '{}'",
+                product.key, product.step
+            ));
+        }
+        if !matches!(
+            product.viewer.as_str(),
+            "" | "text" | "markdown" | "json" | "artifact"
+        ) {
+            return Err(format!(
+                "Named product '{}' has unsupported viewer '{}'",
+                product.key, product.viewer
+            ));
+        }
+        if !matches!(
+            product.export_policy.as_str(),
+            "" | "full" | "redacted" | "disabled"
+        ) {
+            return Err(format!(
+                "Named product '{}' has unsupported export policy '{}'",
+                product.key, product.export_policy
+            ));
+        }
+        if !matches!(
+            product.sensitivity.as_str(),
+            "" | "public" | "internal" | "confidential" | "secret"
+        ) {
+            return Err(format!(
+                "Named product '{}' has unsupported sensitivity '{}'",
+                product.key, product.sensitivity
+            ));
+        }
+        if let Some(schema) = product.schema.as_ref() {
+            crate::pipeline::structured::provider_schema(schema).map_err(|error| {
+                format!("Named product '{}' schema is invalid: {error}", product.key)
+            })?;
+            if step.output_schema.is_none() {
+                return Err(format!(
+                    "Named product '{}' declares a schema but step '{}' has no output schema",
+                    product.key, product.step
+                ));
+            }
         }
     }
     Ok(())
@@ -586,6 +804,16 @@ impl StepConfig {
                     .map(|artifact| artifact.step.as_str()),
             )
     }
+
+    /// Dependencies whose successful completion is part of this step's
+    /// execution contract. They also establish scheduling edges.
+    pub fn policy_dependencies(&self) -> impl Iterator<Item = &str> {
+        self.dependency_policy
+            .required
+            .iter()
+            .chain(self.dependency_policy.quorum.iter())
+            .map(String::as_str)
+    }
 }
 
 /// Compute each enabled step's dependency set. `after` contributes order-only
@@ -600,6 +828,7 @@ pub(crate) fn resolve_dependencies(
                 .iter()
                 .map(String::as_str)
                 .chain(step.artifact_dependencies())
+                .chain(step.policy_dependencies())
                 .map(str::to_string)
                 .collect()
         })
@@ -625,6 +854,7 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
             .iter()
             .map(String::as_str)
             .chain(s.artifact_dependencies())
+            .chain(s.policy_dependencies())
         {
             if dep == s.id {
                 return Err(format!("Step '{}' lists itself as a dependency.", s.id));
@@ -641,6 +871,45 @@ pub fn validate_dependencies(steps: &[StepConfig]) -> Result<(), String> {
                     s.id, dep
                 ));
             }
+        }
+
+        let mut required = HashSet::new();
+        for dependency in &s.dependency_policy.required {
+            if !required.insert(dependency.as_str()) {
+                return Err(format!(
+                    "Step '{}' lists required dependency '{}' more than once.",
+                    s.id, dependency
+                ));
+            }
+        }
+        let mut quorum = HashSet::new();
+        for dependency in &s.dependency_policy.quorum {
+            if !quorum.insert(dependency.as_str()) {
+                return Err(format!(
+                    "Step '{}' lists quorum dependency '{}' more than once.",
+                    s.id, dependency
+                ));
+            }
+            if required.contains(dependency.as_str()) {
+                return Err(format!(
+                    "Step '{}' lists dependency '{}' as both required and quorum.",
+                    s.id, dependency
+                ));
+            }
+        }
+        let minimum = s.dependency_policy.minimum_successes as usize;
+        if quorum.is_empty() && minimum != 0 {
+            return Err(format!(
+                "Step '{}' sets a quorum minimum without quorum dependencies.",
+                s.id
+            ));
+        }
+        if !quorum.is_empty() && (minimum == 0 || minimum > quorum.len()) {
+            return Err(format!(
+                "Step '{}' quorum minimum must be between 1 and {}.",
+                s.id,
+                quorum.len()
+            ));
         }
     }
 

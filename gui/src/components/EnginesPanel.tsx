@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirmDialog } from "./DialogService";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { EngineStatus } from "../lib/types";
 import InfoButton from "./InfoButton";
@@ -161,7 +162,10 @@ export default function EnginesPanel({
   };
 
   const uninstall = async (id: string) => {
-    if (!window.confirm("Uninstall this engine? Its managed runtime, packages, and model files will be removed.")) {
+    if (!(await confirmDialog(
+      "Uninstall this engine? Its managed runtime, packages, and model files will be removed.",
+      { title: "Uninstall engine", confirmLabel: "Uninstall", destructive: true },
+    ))) {
       return;
     }
     setBusy(id);

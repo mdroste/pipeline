@@ -1,17 +1,149 @@
 use super::*;
 
+fn fingerprint_discovery_value(domain: &[u8], value: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(domain);
+    digest.update(b"\0");
+    digest.update(value.as_bytes());
+    format!("{:x}", digest.finalize())
+}
+
+fn normalized_discovery_endpoint(provider: &str, transport: &str, settings: &Settings) -> String {
+    if provider != "local" {
+        return format!("{provider}:{transport}:provider-default");
+    }
+    let raw = settings.local_base_url.trim().trim_end_matches('/');
+    reqwest::Url::parse(raw)
+        .map(|mut url| {
+            url.set_fragment(None);
+            let scheme = url.scheme().to_ascii_lowercase();
+            let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+            let port = url
+                .port()
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
+            let path = url.path().trim_end_matches('/');
+            format!("{scheme}://{host}{port}{path}")
+        })
+        .unwrap_or_else(|_| raw.to_ascii_lowercase())
+}
+
+pub(super) fn discovery_key(provider: &str, transport: &str, settings: &Settings) -> DiscoveryKey {
+    let endpoint = normalized_discovery_endpoint(provider, transport, settings);
+    DiscoveryKey {
+        provider: provider.to_string(),
+        transport: transport.to_string(),
+        endpoint_fingerprint: fingerprint_discovery_value(
+            b"pipeline discovery endpoint v1",
+            &endpoint,
+        ),
+        credential_fingerprint: catalog_credential_fingerprint(provider, transport, settings),
+        catalog_revision: format!("{}:{}", CACHE_SCHEMA_VERSION, bundled_policy_fingerprint()),
+    }
+}
+
+pub(super) async fn single_flight_discovery<F, Fut>(
+    key: DiscoveryKey,
+    operation: F,
+) -> Result<ModelCatalog, String>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<ModelCatalog, String>> + Send + 'static,
+{
+    let registry = DISCOVERY_FLIGHTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let (flight, leader) = {
+        let mut flights = registry
+            .lock()
+            .map_err(|_| "Model discovery coordination is unavailable".to_string())?;
+        flights.retain(|_, flight| flight.started_at.elapsed() < DISCOVERY_FLIGHT_TTL);
+        if let Some(flight) = flights.get(&key) {
+            (Arc::clone(flight), false)
+        } else {
+            if flights.len() >= MAX_DISCOVERY_FLIGHTS {
+                return Err(format!(
+                    "Too many distinct model catalogs are being discovered at once (limit {MAX_DISCOVERY_FLIGHTS})"
+                ));
+            }
+            let flight = Arc::new(DiscoveryFlight {
+                result: Mutex::new(None),
+                completed: tokio::sync::Notify::new(),
+                started_at: std::time::Instant::now(),
+            });
+            flights.insert(key.clone(), Arc::clone(&flight));
+            (flight, true)
+        }
+    };
+
+    if leader {
+        let coordinated_flight = Arc::clone(&flight);
+        let completed_key = key.clone();
+        tokio::spawn(async move {
+            // Run the fallible operation in its own task so even a panic or a
+            // cancelled initiating caller releases every follower.
+            let result = match tokio::spawn(operation()).await {
+                Ok(result) => result,
+                Err(error) => Err(format!("Model discovery task failed: {error}")),
+            };
+            if let Ok(mut slot) = coordinated_flight.result.lock() {
+                *slot = Some(result);
+            }
+            if let Some(registry) = DISCOVERY_FLIGHTS.get() {
+                if let Ok(mut flights) = registry.lock() {
+                    if flights
+                        .get(&completed_key)
+                        .is_some_and(|current| Arc::ptr_eq(current, &coordinated_flight))
+                    {
+                        flights.remove(&completed_key);
+                    }
+                }
+            }
+            coordinated_flight.completed.notify_waiters();
+        });
+    }
+
+    loop {
+        // Register before checking the slot to avoid missing the notification
+        // between a check and the await.
+        let notified = flight.completed.notified();
+        let result = flight
+            .result
+            .lock()
+            .map_err(|_| "Model discovery coordination is unavailable".to_string())?
+            .clone();
+        if let Some(result) = result {
+            return result;
+        }
+        let Some(remaining) = DISCOVERY_FLIGHT_TTL.checked_sub(flight.started_at.elapsed()) else {
+            if let Ok(mut flights) = registry.lock() {
+                if flights
+                    .get(&key)
+                    .is_some_and(|current| Arc::ptr_eq(current, &flight))
+                {
+                    flights.remove(&key);
+                }
+            }
+            return Err("Model discovery coordination expired; try again".to_string());
+        };
+        if tokio::time::timeout(remaining, notified).await.is_err() {
+            if let Ok(mut flights) = registry.lock() {
+                if flights
+                    .get(&key)
+                    .is_some_and(|current| Arc::ptr_eq(current, &flight))
+                {
+                    flights.remove(&key);
+                }
+            }
+            return Err("Model discovery coordination expired; try again".to_string());
+        }
+    }
+}
+
 pub async fn discover(
     provider: &str,
     settings: &Settings,
     refresh: bool,
 ) -> Result<ModelCatalog, String> {
-    // A parallel wave can reach resolution simultaneously. Serialize the
-    // initial refresh so only one CLI/API probe runs; followers consume the
-    // cache written by the leader.
-    let _guard = DISCOVERY_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await;
     let provider = if provider.is_empty() {
         "claude"
     } else {
@@ -39,6 +171,18 @@ pub async fn discover(
             }
         }
     }
+    let key = discovery_key(provider, transport, settings);
+    let provider = provider.to_string();
+    let settings = settings.clone();
+    single_flight_discovery(key, move || async move {
+        discover_uncached(&provider, &settings).await
+    })
+    .await
+}
+
+async fn discover_uncached(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
+    let transport = settings.model_transport(provider);
+    let cacheable = provider != "local" && transport == "api";
     let policy = bundled_policy();
     let live = if transport == "cli" {
         cli_catalog(provider).await

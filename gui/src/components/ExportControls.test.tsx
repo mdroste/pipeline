@@ -6,231 +6,148 @@ import type { PipelineReport } from "../lib/types";
 
 const openDialog = vi.hoisted(() => vi.fn());
 const invoke = vi.hoisted(() => vi.fn());
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: openDialog }));
+const confirmDialog = vi.hoisted(() => vi.fn());
+const notify = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("./DialogService", () => ({ confirmDialog, notify }));
 
 const fakeReport: PipelineReport = {
-  orientation: {
-    metadata: {
-      title: "t",
-      authors: [],
-      date: null,
-      paper_type: "theory",
-      page_count: null,
-      has_appendix: false,
-      has_online_appendix: false,
-    },
-    sections: [],
-    formal_results: [],
-    tables_figures: [],
-    notation: [],
-    stated_contribution: "",
-    key_references: [],
-    extraction_quality_notes: [],
-  },
+  orientation: {},
   step_outputs: [],
-  report_date: "2026-04-16",
+  report_date: "2026-08-23",
   paper_hash: "abc",
 };
+
+async function openMenu() {
+  await userEvent.setup().click(screen.getByRole("button", { name: /Export/ }));
+}
 
 describe("ExportControls", () => {
   beforeEach(() => {
     openDialog.mockReset();
     invoke.mockReset();
+    confirmDialog.mockReset();
+    notify.mockReset();
   });
 
-  it("hides the core-files export when report or extracted text is missing", () => {
-    render(<ExportControls markdown="# hi" />);
-    expect(screen.getByRole("button", { name: "Save MD" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save PDF" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Export core files" })).not.toBeInTheDocument();
-  });
-
-  it("shows the core-files export even when extraction produced empty text", () => {
-    render(<ExportControls markdown="# hi" report={fakeReport} extractedText="" />);
-    expect(screen.getByRole("button", { name: "Export core files" })).toBeInTheDocument();
-  });
-
-  it("shows the core-files export when report and extracted text are provided", () => {
-    render(<ExportControls markdown="# hi" report={fakeReport} extractedText="text" />);
-    expect(screen.getByRole("button", { name: "Export core files" })).toBeInTheDocument();
-  });
-
-  it("offers a complete export instead of the core package for a saved run", () => {
-    render(
-      <ExportControls
-        runId="saved-run"
-        markdown="# hi"
-        report={fakeReport}
-        extractedText="text"
-      />,
-    );
-    expect(screen.getByRole("button", { name: "Export complete report" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Export core files" })).not.toBeInTheDocument();
-  });
-
-  it("invokes save_report_md with the markdown and a suggested name (no webview path)", async () => {
-    invoke.mockResolvedValueOnce("/tmp/out.md");
-
+  it("uses one export menu and accurately labels the print-dialog flow", async () => {
     render(<ExportControls markdown="# report" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save MD" }));
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    await openMenu();
+    expect(screen.getByRole("menuitem", { name: "Save Markdown…" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Print / save as PDF…" })).toBeVisible();
+  });
 
-    expect(invoke).toHaveBeenCalledTimes(1);
+  it("saves Markdown without accepting a webview-controlled path", async () => {
+    invoke.mockResolvedValueOnce("/tmp/report.md");
+    render(<ExportControls markdown="# report" />);
+    await openMenu();
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Save Markdown…" }));
     const [command, args] = invoke.mock.calls[0];
     expect(command).toBe("save_report_md");
     expect(args.markdown).toBe("# report");
     expect(args.suggestedName).toMatch(/^PIPELINE_REPORT_.*\.md$/);
-    // The webview must not pass a filesystem path — the backend owns the dialog.
     expect(args).not.toHaveProperty("path");
   });
 
-  it("treats a cancelled save (backend returns null) without error", async () => {
-    invoke.mockResolvedValueOnce(null);
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ExportControls markdown="# report" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save MD" }));
-
-    expect(invoke).toHaveBeenCalledTimes(1);
-    expect(alertSpy).not.toHaveBeenCalled();
-    alertSpy.mockRestore();
-  });
-
-  it("invokes print_report_html when 'Save PDF' is clicked", async () => {
+  it("opens the native print view with clean content and provenance", async () => {
     invoke.mockResolvedValueOnce(undefined);
-
-    render(<ExportControls markdown="# report" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save PDF" }));
-
+    render(<ExportControls markdown="# raw" pdfMarkdown="## Clean" provenanceMarkdown="# Provenance" />);
+    await openMenu();
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Print / save as PDF…" }));
     expect(invoke).toHaveBeenCalledWith("print_report_html", {
-      markdown: "# report",
-      provenanceMarkdown: null,
+      markdown: "## Clean",
+      provenanceMarkdown: "# Provenance",
     });
   });
 
-  it("uses the clean report body and provenance masthead for PDF", async () => {
+  it("offers safe, forensic, and custom packages only for saved runs", async () => {
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    await openMenu();
+    expect(screen.getByRole("menuitem", { name: /Shareable report/ })).toHaveTextContent("No source or raw responses");
+    expect(screen.getByRole("menuitem", { name: /Forensic archive/ })).toHaveTextContent("Sensitive");
+    expect(screen.getByRole("menuitem", { name: "Custom selection…" })).toBeVisible();
+  });
+
+  it("exports the safe shareable selection by default and displays its checksum", async () => {
+    openDialog.mockResolvedValueOnce("/tmp/exports");
+    invoke.mockResolvedValueOnce({
+      exportedPath: "/tmp/exports/pipeline-shareable-saved-run",
+      fileCount: 7,
+      bytes: 2048,
+      checksum: "a".repeat(64),
+      mode: "shareable",
+      sensitivity: "shareable",
+    });
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    await openMenu();
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: /Shareable report/ }));
+    expect(confirmDialog).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith("export_run_package", {
+      runId: "saved-run",
+      destination: "/tmp/exports",
+      mode: "shareable",
+      selection: {
+        report: true,
+        verifiedFindings: true,
+        provenance: true,
+        workflow: false,
+        sourceDocuments: false,
+        rawResponses: false,
+        logs: false,
+        supportingArtifacts: false,
+      },
+    });
+    expect(await screen.findByText(/shareable package ready/i)).toBeVisible();
+    expect(screen.getByText(/SHA-256 a{64}/)).toBeVisible();
+  });
+
+  it("requires explicit confirmation for a forensic archive", async () => {
+    confirmDialog.mockResolvedValueOnce(false);
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    await openMenu();
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: /Forensic archive/ }));
+    expect(confirmDialog.mock.calls[0][0]).toMatch(/source documents, raw model responses, logs/i);
+    expect(openDialog).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("marks sensitive custom choices and confirms them", async () => {
+    confirmDialog.mockResolvedValueOnce(false);
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    await openMenu();
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Custom selection…" }));
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: "Source documents · Sensitive" }));
+    expect(screen.getByText(/selection is sensitive/i)).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Export selected items…" }));
+    expect(confirmDialog).toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("reveals only the exact completed package path returned by the backend", async () => {
+    openDialog.mockResolvedValueOnce("/tmp/exports");
+    invoke
+      .mockResolvedValueOnce({ exportedPath: "/tmp/exports/package", fileCount: 1, bytes: 10, checksum: "abc", mode: "shareable", sensitivity: "shareable" })
+      .mockResolvedValueOnce(undefined);
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    await openMenu();
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: /Shareable report/ }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Reveal in folder" }));
+    expect(invoke).toHaveBeenLastCalledWith("reveal_export_in_folder", { path: "/tmp/exports/package" });
+  });
+
+  it("keeps an unsaved core package inside the same menu", async () => {
+    openDialog.mockResolvedValueOnce("/tmp/core");
     invoke.mockResolvedValueOnce(undefined);
-
-    render(
-      <ExportControls
-        markdown="# raw report"
-        pdfMarkdown="## First issue"
-        provenanceMarkdown={"# Referee report\n\n## Run provenance"}
-      />,
-    );
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save PDF" }));
-
-    expect(invoke).toHaveBeenCalledWith("print_report_html", {
-      markdown: "## First issue",
-      provenanceMarkdown: "# Referee report\n\n## Run provenance",
-    });
-  });
-
-  it("alerts with the backend error message on save failure", async () => {
-    invoke.mockRejectedValueOnce(new Error("disk full"));
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ExportControls markdown="# report" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Save MD" }));
-
-    expect(alertSpy).toHaveBeenCalledWith("Failed to save: disk full");
-    alertSpy.mockRestore();
-  });
-
-  it("confirms overwrite scope before exporting core files", async () => {
-    openDialog.mockResolvedValueOnce("/tmp/artifacts");
-    invoke.mockResolvedValueOnce(undefined);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ExportControls markdown="# r" report={fakeReport} extractedText="text" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Export core files" }));
-
-    expect(openDialog).toHaveBeenCalledWith({
-      directory: true,
-      multiple: false,
-      title: "Choose folder for core report files",
-    });
-    expect(confirmSpy.mock.calls[0][0]).toContain(
-      "Existing files and earlier exports will not be replaced.",
-    );
-    expect(confirmSpy.mock.calls[0][0]).toContain("document.md");
-    expect(confirmSpy.mock.calls[0][0]).not.toContain("extracted_text.md");
+    render(<ExportControls markdown="# report" report={fakeReport} extractedText="text" />);
+    await openMenu();
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Export unsaved core package…" }));
     expect(invoke).toHaveBeenCalledWith("save_all_artifacts", {
-      dir: "/tmp/artifacts",
-      markdown: "# r",
+      dir: "/tmp/core",
+      markdown: "# report",
       extractedText: "text",
       report: fakeReport,
     });
-    expect(alertSpy).toHaveBeenCalledWith(
-      "Core report files exported to a new pipeline-core-export folder. Existing files were not replaced.",
-    );
-    confirmSpy.mockRestore();
-    alertSpy.mockRestore();
-  });
-
-  it("does not export core files when overwrite confirmation is declined", async () => {
-    openDialog.mockResolvedValueOnce("/tmp/artifacts");
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-
-    render(<ExportControls markdown="# r" report={fakeReport} extractedText="text" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Export core files" }));
-
-    expect(invoke).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
-  });
-
-  it("surfaces core-export folder-picker failures", async () => {
-    openDialog.mockRejectedValueOnce(new Error("folder dialog unavailable"));
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ExportControls markdown="# r" report={fakeReport} extractedText="text" />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Export core files" }));
-
-    expect(alertSpy).toHaveBeenCalledWith(
-      "Failed to export core report files: folder dialog unavailable",
-    );
-    expect(invoke).not.toHaveBeenCalled();
-    alertSpy.mockRestore();
-  });
-
-  it("exports a complete saved run into the chosen parent directory", async () => {
-    openDialog.mockResolvedValueOnce("/tmp/exports");
-    invoke.mockResolvedValueOnce({
-      exportedPath: "/tmp/exports/pipeline-run-saved-run",
-      fileCount: 24,
-      bytes: 1_500_000,
-    });
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    render(<ExportControls runId="saved-run" markdown="# r" />);
-    await userEvent.setup().click(
-      screen.getByRole("button", { name: "Export complete report" }),
-    );
-
-    expect(openDialog).toHaveBeenCalledWith({
-      directory: true,
-      multiple: false,
-      title: "Choose parent folder for complete report export",
-    });
-    expect(invoke).toHaveBeenCalledWith("export_run_artifacts", {
-      runId: "saved-run",
-      destination: "/tmp/exports",
-    });
-    expect(alertSpy).toHaveBeenCalledWith(
-      "Complete report exported to /tmp/exports/pipeline-run-saved-run (24 files, 1.5 MB).",
-    );
-    alertSpy.mockRestore();
-  });
-
-  it("does not invoke complete-run export when folder selection is cancelled", async () => {
-    openDialog.mockResolvedValueOnce(null);
-
-    render(<ExportControls runId="saved-run" markdown="# r" />);
-    await userEvent.setup().click(
-      screen.getByRole("button", { name: "Export complete report" }),
-    );
-
-    expect(invoke).not.toHaveBeenCalled();
   });
 });

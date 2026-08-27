@@ -193,6 +193,7 @@ pub(super) async fn rerun_run_inner(
     let _settings_snapshot = crate::settings::freeze_for_run(settings.clone());
 
     let parent = crate::runs::load_manifest(parent_run_id)?;
+    preflight_run_storage(std::path::Path::new(&parent.input_path))?;
     let report_json = read_run_file(parent_run_id, "report.json")
         .map_err(|_| "This run predates re-run support (no report.json). Re-run is only available for runs created after upgrading.".to_string())?;
     let parent_report: PipelineReport = serde_json::from_str(&report_json)
@@ -242,6 +243,13 @@ pub(super) async fn rerun_run_inner(
         "Re-run named input paths",
     )?;
     crate::safety::validate_runtime_context(&parent.extra_inputs, "Re-run captured input paths")?;
+    validate_runtime_bindings(
+        &config,
+        &parent.variables,
+        &parent.extra_input_sources,
+        true,
+    )?;
+    let durable_variables = durable_variables(&config, &parent.variables);
     crate::safety::validate_run_budget(&config, &settings)?;
 
     // Keep all reconstructed model-readable inputs in one private root.
@@ -435,21 +443,25 @@ pub(super) async fn rerun_run_inner(
             workflow_fingerprint: workflow_fingerprint.clone(),
             specialist_catalog_revision: specialist_catalog_revision.clone(),
             provider: settings.preferred_provider.clone(),
-            variables: parent.variables.clone(),
+            variables: durable_variables.clone(),
             parent_run_id: Some(parent_run_id.to_string()),
             ..Default::default()
         },
         None,
-    );
+    )?;
     if let Some(writer) = run_writer.as_mut() {
-        let _ = writer.add_text(
-            "context/workflow.json",
-            "Workflow snapshot",
-            "context",
-            &workflow_json,
-        );
+        writer
+            .add_text(
+                "context/workflow.json",
+                "Workflow snapshot",
+                "context",
+                &workflow_json,
+            )
+            .map_err(|error| format!("Could not save the workflow snapshot: {error}"))?;
         for (key, path) in &extra_input_sources {
-            let _ = writer.record_extra_input_source(key, path);
+            writer
+                .record_extra_input_source(key, path)
+                .map_err(|error| format!("Could not record named input '{key}': {error}"))?;
         }
     }
     let resumed_extraction = crate::models::ExtractionResult {
@@ -459,22 +471,36 @@ pub(super) async fn rerun_run_inner(
         paper_hash: parent_report.paper_hash.clone(),
         quality_notes: Vec::new(),
     };
+    let orientation_sampling = orient::orientation_sample(&document_text);
     let mut rerun_bundle_json = None;
+    let mut report_bundle = None;
     let mut rerun_document_text = document_text.clone();
     if let Some(w) = run_writer.as_mut() {
-        let _ = w.add_text(
+        w.add_text(
             crate::runs::DOCUMENT_TEXT_PATH,
             "Readable document",
             "document",
             &document_text,
-        );
-        let orient_json = serde_json::to_string_pretty(&orientation_value).unwrap_or_default();
-        let _ = w.add_text(
+        )
+        .map_err(|error| format!("Could not save the restored document: {error}"))?;
+        let orient_json = serde_json::to_string_pretty(&orientation_value)
+            .map_err(|error| format!("Could not serialize the orientation map: {error}"))?;
+        w.add_text(
             "context/orientation.json",
             "Orientation map",
             "context",
             &orient_json,
-        );
+        )
+        .map_err(|error| format!("Could not save the orientation map: {error}"))?;
+        let sampling_json = serde_json::to_string_pretty(&orientation_sampling)
+            .map_err(|error| format!("Could not serialize orientation coverage: {error}"))?;
+        w.add_text(
+            "context/orientation_sampling.json",
+            "Orientation sampling coverage",
+            "context",
+            &sampling_json,
+        )
+        .map_err(|error| format!("Could not save orientation sampling coverage: {error}"))?;
 
         // Prefer the parent's canonical bundle so a partial re-run keeps the
         // exact document model it was based on. Copy its visual assets into
@@ -531,19 +557,22 @@ pub(super) async fn rerun_run_inner(
                     .and_then(|json| bundle.to_jsonl().map(|jsonl| (json, jsonl)))
                 {
                     Ok((json, jsonl)) => {
-                        let _ = w.add_text(
+                        w.add_text(
                             "context/document_bundle.json",
                             "Document bundle",
                             "document",
                             &json,
-                        );
-                        let _ = w.add_text(
+                        )
+                        .map_err(|error| format!("Could not save the document bundle: {error}"))?;
+                        w.add_text(
                             "context/blocks.jsonl",
                             "Document blocks",
                             "document",
                             &jsonl,
-                        );
+                        )
+                        .map_err(|error| format!("Could not save document blocks: {error}"))?;
                         rerun_bundle_json = Some(json);
+                        report_bundle = Some(bundle.clone());
                     }
                     Err(error) => {
                         let _ = app.emit_event(
@@ -616,18 +645,21 @@ pub(super) async fn rerun_run_inner(
         let content = read_run_file(parent_run_id, parent_rel)
             .map_err(|e| format!("Cannot restore named input '{}': {e}", slot.key))?;
         let rel_path = extra_input_artifact_path(input_index, &slot.key);
-        if let Some(w) = run_writer.as_mut() {
-            let label = if slot.label.is_empty() {
-                &slot.key
-            } else {
-                &slot.label
-            };
-            if w.add_text(&rel_path, label, "context", &content).is_ok()
-                && w.record_extra_input(&slot.key, &rel_path).is_ok()
-            {
-                persisted_inputs.insert(slot.key.clone(), rel_path);
-            }
-        }
+        let label = if slot.label.is_empty() {
+            &slot.key
+        } else {
+            &slot.label
+        };
+        let writer = run_writer
+            .as_mut()
+            .ok_or_else(|| "Durable run workspace disappeared before named inputs".to_string())?;
+        writer
+            .add_text(&rel_path, label, "context", &content)
+            .map_err(|error| format!("Could not save named input '{}': {error}", slot.key))?;
+        writer
+            .record_extra_input(&slot.key, &rel_path)
+            .map_err(|error| format!("Could not index named input '{}': {error}", slot.key))?;
+        persisted_inputs.insert(slot.key.clone(), rel_path);
         let (temp, path) = write_run_input_file(
             run_input_dir.path(),
             "pipeline_input_",
@@ -679,11 +711,21 @@ pub(super) async fn rerun_run_inner(
             );
         }
     }
+    let quality = output::build_report_quality(
+        &resumed_extraction,
+        report_bundle.as_ref(),
+        &orientation_sampling,
+        &execution_config,
+        &result.outputs,
+        &result.failed_steps,
+        &products,
+    );
     let report = PipelineReport {
         orientation: orientation_value,
         step_outputs: result.outputs,
         failed_steps: result.failed_steps,
         products,
+        quality,
         referee_reports: vec![],
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -692,7 +734,7 @@ pub(super) async fn rerun_run_inner(
     let elapsed = start.elapsed();
     let markdown = output::render_markdown(&report, None, elapsed, &settings);
 
-    Ok(complete_run(
+    complete_run(
         app,
         run_writer,
         &report,
@@ -709,10 +751,10 @@ pub(super) async fn rerun_run_inner(
             workflow_source,
             workflow_fingerprint,
             specialist_catalog_revision,
-            variables,
+            variables: durable_variables,
             extra_inputs: persisted_inputs,
             extra_input_sources,
             parent_run_id: Some(parent_run_id.to_string()),
         },
-    ))
+    )
 }

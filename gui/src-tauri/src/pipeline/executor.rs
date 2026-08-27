@@ -82,6 +82,10 @@ async fn checkpoint_output(
             .map_err(|error| format!("Failed to sync step checkpoint: {error}"))?;
         temp.persist(&destination)
             .map_err(|error| format!("Failed to publish step checkpoint: {}", error.error))?;
+        #[cfg(unix)]
+        std::fs::File::open(&directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("Failed to sync checkpoint directory: {error}"))?;
         Ok(())
     })
     .await
@@ -89,24 +93,22 @@ async fn checkpoint_output(
 }
 
 async fn checkpoint_outputs(
-    app: &crate::emit::EventBus,
+    _app: &crate::emit::EventBus,
     write_dir: Option<&str>,
     start: usize,
     outputs: &[StepOutput],
-) {
+) -> Result<(), String> {
     for (offset, output) in outputs.iter().enumerate() {
-        if let Err(error) = checkpoint_output(write_dir, start + offset, output).await {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!(
-                        "WARNING: could not checkpoint completed step '{}': {error}",
-                        output.step_label
-                    )
-                }),
-            );
-        }
+        checkpoint_output(write_dir, start + offset, output)
+            .await
+            .map_err(|error| {
+                format!(
+                    "Could not durably checkpoint completed step '{}': {error}",
+                    output.step_label
+                )
+            })?;
     }
+    Ok(())
 }
 
 /// Remove checkpoint files at or above the given ordinal. Runs before a
@@ -114,16 +116,19 @@ async fn checkpoint_outputs(
 /// cannot linger next to the final ordering and double-load in recovery.
 /// Failure checkpoints (`failure_*.json`) have no numeric prefix and are
 /// never touched.
-async fn remove_checkpoints_from(write_dir: Option<&str>, start: usize) {
+async fn remove_checkpoints_from(write_dir: Option<&str>, start: usize) -> Result<(), String> {
     let Some(write_dir) = write_dir else {
-        return;
+        return Ok(());
     };
     let directory = std::path::PathBuf::from(write_dir).join("checkpoints");
-    let _ = tokio::task::spawn_blocking(move || {
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            return;
+    tokio::task::spawn_blocking(move || {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("Failed to read checkpoint directory: {error}")),
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("Failed to inspect checkpoint: {error}"))?;
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
                 continue;
@@ -136,11 +141,15 @@ async fn remove_checkpoints_from(write_dir: Option<&str>, start: usize) {
                 continue;
             };
             if ordinal >= start {
-                let _ = std::fs::remove_file(entry.path());
+                std::fs::remove_file(entry.path()).map_err(|error| {
+                    format!("Failed to replace provisional checkpoint: {error}")
+                })?;
             }
         }
+        Ok(())
     })
-    .await;
+    .await
+    .map_err(|error| format!("Checkpoint cleanup task failed: {error}"))?
 }
 
 async fn checkpoint_failure(write_dir: Option<&str>, failure: &StepFailure) -> Result<(), String> {
@@ -167,6 +176,10 @@ async fn checkpoint_failure(write_dir: Option<&str>, failure: &StepFailure) -> R
             .map_err(|error| format!("Failed to sync failure checkpoint: {error}"))?;
         temp.persist(&destination)
             .map_err(|error| format!("Failed to publish failure checkpoint: {}", error.error))?;
+        #[cfg(unix)]
+        std::fs::File::open(&directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("Failed to sync checkpoint directory: {error}"))?;
         Ok(())
     })
     .await
@@ -174,23 +187,21 @@ async fn checkpoint_failure(write_dir: Option<&str>, failure: &StepFailure) -> R
 }
 
 async fn checkpoint_failures(
-    app: &crate::emit::EventBus,
+    _app: &crate::emit::EventBus,
     write_dir: Option<&str>,
     failures: &[StepFailure],
-) {
+) -> Result<(), String> {
     for failure in failures {
-        if let Err(error) = checkpoint_failure(write_dir, failure).await {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!(
-                        "WARNING: could not checkpoint failed step '{}': {error}",
-                        failure.step_label
-                    )
-                }),
-            );
-        }
+        checkpoint_failure(write_dir, failure)
+            .await
+            .map_err(|error| {
+                format!(
+                    "Could not durably checkpoint failed step '{}': {error}",
+                    failure.step_label
+                )
+            })?;
     }
+    Ok(())
 }
 
 /// Runtime inventory from which a step's private, selector-filtered artifact
@@ -895,6 +906,9 @@ pub async fn execute_steps(
 
     // Ids that have completed (including skipped) so dependents can start.
     let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Ids that produced a complete successful result. Unlike `done`, this
+    // excludes skipped, failed, partially failed fan-out, and blocked steps.
+    let mut successful: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut remaining: Vec<usize> = (0..enabled.len()).collect();
     let mut schedule_index = 0usize;
     let mut parallel_number = 0usize;
@@ -962,6 +976,22 @@ pub async fn execute_steps(
             let mut to_run: Vec<&StepConfig> = Vec::new();
             for &i in &ready_parallel {
                 let step = enabled[i];
+                if let Some(error) = dependency_policy_failure(step, &successful) {
+                    let failure = StepFailure {
+                        step_id: step.id.clone(),
+                        step_label: step.label.clone(),
+                        phase: "parallel".to_string(),
+                        error,
+                    };
+                    let _ = app.emit_event(
+                        "pipeline:pass",
+                        serde_json::json!({"name": step.id, "status": "error"}),
+                    );
+                    checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await?;
+                    failed_steps.push(failure);
+                    done.insert(step.id.clone());
+                    continue;
+                }
                 // Resume: a preloaded step reuses the parent run's output.
                 if let Some(cached) = preloaded.get(&step.id) {
                     for output in cached {
@@ -978,7 +1008,7 @@ pub async fn execute_steps(
                             all_outputs.len(),
                             std::slice::from_ref(output),
                         )
-                        .await;
+                        .await?;
                         all_outputs.push(output.clone());
                     }
                     let _ = app.emit_event(
@@ -986,6 +1016,9 @@ pub async fn execute_steps(
                         serde_json::json!({"name": step.id, "status": "done"}),
                     );
                     done.insert(step.id.clone());
+                    if !cached.is_empty() {
+                        successful.insert(step.id.clone());
+                    }
                     continue;
                 }
                 if let Some(cond) = &step.run_if {
@@ -1032,8 +1065,20 @@ pub async fn execute_steps(
                 // failed unit and a fan-out with zero matching units both lack
                 // a StepOutput, so deriving completion from outputs alone
                 // leaves their dependents permanently blocked.
+                let failed_bases = wave_failures
+                    .iter()
+                    .map(|failure| base_id(&failure.step_id))
+                    .collect::<std::collections::HashSet<_>>();
+                for step in &to_run {
+                    let produced = wave_outputs
+                        .iter()
+                        .any(|output| !output.skipped && base_id(&output.step_id) == step.id);
+                    if produced && !failed_bases.contains(step.id.as_str()) {
+                        successful.insert(step.id.clone());
+                    }
+                }
                 mark_steps_done(&mut done, &to_run);
-                checkpoint_failures(app, write_dir, &wave_failures).await;
+                checkpoint_failures(app, write_dir, &wave_failures).await?;
                 failed_steps.extend(wave_failures);
 
                 let has_multi_agent = wave_outputs.iter().any(|o| !o.merge_group.is_empty());
@@ -1119,8 +1164,8 @@ pub async fn execute_steps(
                     wave_outputs,
                     &output_budget,
                 );
-                remove_checkpoints_from(write_dir, all_outputs.len()).await;
-                checkpoint_outputs(app, write_dir, all_outputs.len(), &wave_outputs).await;
+                remove_checkpoints_from(write_dir, all_outputs.len()).await?;
+                checkpoint_outputs(app, write_dir, all_outputs.len(), &wave_outputs).await?;
                 all_outputs.extend(wave_outputs);
             } else if planned_merge {
                 app.emit_event(
@@ -1160,6 +1205,23 @@ pub async fn execute_steps(
         )
         .ok();
 
+        if let Some(error) = dependency_policy_failure(step, &successful) {
+            let failure = StepFailure {
+                step_id: step.id.clone(),
+                step_label: step.label.clone(),
+                phase: "sequential".to_string(),
+                error,
+            };
+            let _ = app.emit_event(
+                "pipeline:pass",
+                serde_json::json!({"name": step.id, "status": "error"}),
+            );
+            checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await?;
+            failed_steps.push(failure);
+            done.insert(step.id.clone());
+            continue;
+        }
+
         // Resume: a preloaded step reuses the parent run's output.
         if let Some(cached) = preloaded.get(&step.id) {
             for output in cached {
@@ -1176,7 +1238,7 @@ pub async fn execute_steps(
                     all_outputs.len(),
                     std::slice::from_ref(output),
                 )
-                .await;
+                .await?;
                 all_outputs.push(output.clone());
             }
             let _ = app.emit_event(
@@ -1184,6 +1246,9 @@ pub async fn execute_steps(
                 serde_json::json!({"name": step.id, "status": "done"}),
             );
             done.insert(step.id.clone());
+            if !cached.is_empty() {
+                successful.insert(step.id.clone());
+            }
             continue;
         }
 
@@ -1241,12 +1306,13 @@ pub async fn execute_steps(
                     all_outputs.len(),
                     std::slice::from_ref(&output),
                 )
-                .await;
+                .await?;
                 let _ = app.emit_event(
                     "pipeline:pass",
                     serde_json::json!({"name": step.id, "status": "done"}),
                 );
                 done.insert(step.id.clone());
+                successful.insert(step.id.clone());
                 all_outputs.push(output);
             }
             Err(e) => {
@@ -1264,7 +1330,7 @@ pub async fn execute_steps(
                     phase: "sequential".to_string(),
                     error: e,
                 };
-                checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await;
+                checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await?;
                 failed_steps.push(failure);
                 break;
             }
@@ -1287,6 +1353,54 @@ fn ready_indices(
         .copied()
         .filter(|&i| deps[i].iter().all(|d| done.contains(d)))
         .collect()
+}
+
+fn dependency_policy_failure(
+    step: &StepConfig,
+    successful: &std::collections::HashSet<String>,
+) -> Option<String> {
+    let missing_required = step
+        .dependency_policy
+        .required
+        .iter()
+        .filter(|dependency| !successful.contains(dependency.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let quorum_succeeded = step
+        .dependency_policy
+        .quorum
+        .iter()
+        .filter(|dependency| successful.contains(dependency.as_str()))
+        .count();
+    let quorum_minimum = step.dependency_policy.minimum_successes as usize;
+    if missing_required.is_empty() && quorum_succeeded >= quorum_minimum {
+        return None;
+    }
+
+    let mut reasons = Vec::new();
+    if !missing_required.is_empty() {
+        reasons.push(format!(
+            "required dependencies did not succeed: {}",
+            missing_required.join(", ")
+        ));
+    }
+    if quorum_succeeded < quorum_minimum {
+        let missing_quorum = step
+            .dependency_policy
+            .quorum
+            .iter()
+            .filter(|dependency| !successful.contains(dependency.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        reasons.push(format!(
+            "dependency quorum was not met ({quorum_succeeded}/{quorum_minimum}); unavailable: {}",
+            missing_quorum.join(", ")
+        ));
+    }
+    Some(format!(
+        "Step was blocked because {}; partial upstream reports remain available for resume.",
+        reasons.join("; ")
+    ))
 }
 
 fn mark_steps_done(done: &mut std::collections::HashSet<String>, steps: &[&StepConfig]) {
@@ -1622,13 +1736,19 @@ struct StepCallRequest<'a> {
     /// Ordered finding ids from the upstream artifact named by the schema's
     /// `x-pipeline-preserve-findings-from` marker. When present, the response
     /// must keep its findings' ids as an ordered subsequence of these.
-    preserved_finding_ids: Option<Vec<String>>,
+    preserved_finding_ids: Option<Vec<PreservedFinding>>,
     command_model: Option<&'a str>,
     display_model: &'a str,
     model_policy: &'a str,
     effort: &'a str,
     settings: &'a crate::settings::Settings,
     shared_context: Option<Arc<super::context_cache::PreparedContext>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreservedFinding {
+    id: String,
+    before_hash: String,
 }
 
 struct StepCallResult {
@@ -1708,11 +1828,51 @@ fn finding_ids(text: &str) -> Option<Vec<String>> {
     )
 }
 
+fn normalized_finding_hash(value: &serde_json::Value) -> Result<String, String> {
+    use sha2::{Digest as _, Sha256};
+
+    fn sort(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                object.remove("rank");
+                let mut entries = std::mem::take(object).into_iter().collect::<Vec<_>>();
+                entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                for (key, mut child) in entries {
+                    sort(&mut child);
+                    object.insert(key, child);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(sort),
+            _ => {}
+        }
+    }
+
+    let mut normalized = value.clone();
+    sort(&mut normalized);
+    let bytes = serde_json::to_vec(&normalized)
+        .map_err(|error| format!("could not hash finding: {error}"))?;
+    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
+fn finding_lineage(text: &str) -> Option<Vec<PreservedFinding>> {
+    let value = serde_json::from_str::<serde_json::Value>(text.trim()).ok()?;
+    let findings = value.get("findings")?.as_array()?;
+    findings
+        .iter()
+        .map(|finding| {
+            Some(PreservedFinding {
+                id: finding.get("id")?.as_str()?.to_string(),
+                before_hash: normalized_finding_hash(finding).ok()?,
+            })
+        })
+        .collect()
+}
+
 fn preserved_finding_ids(
     step_id: &str,
     output_schema: Option<&serde_json::Value>,
     prior_outputs: &[StepOutput],
-) -> Result<Option<Vec<String>>, String> {
+) -> Result<Option<Vec<PreservedFinding>>, String> {
     let Some(target) = output_schema
         .and_then(|schema| schema.get(crate::pipeline::structured::PRESERVE_FINDINGS_KEY))
         .and_then(serde_json::Value::as_str)
@@ -1731,7 +1891,7 @@ fn preserved_finding_ids(
                 "Step '{step_id}' preserves findings from '{target}', but that required artifact is unavailable"
             )
         })?;
-    let ids = finding_ids(&output.raw_text).ok_or_else(|| {
+    let ids = finding_lineage(&output.raw_text).ok_or_else(|| {
         format!(
             "Step '{step_id}' preserves findings from '{target}', but that artifact is not canonical findings JSON"
         )
@@ -1744,11 +1904,11 @@ fn preserved_finding_ids(
 /// no additions. This is the contract the validate prompt states; enforcing it
 /// here keeps id lineage (annotations, the Projects ledger) intact even when a
 /// model renumbers or invents findings.
-fn check_finding_lineage(expected: &[String], canonical: &str) -> Result<(), String> {
+fn check_finding_lineage(expected: &[PreservedFinding], canonical: &str) -> Result<(), String> {
     let Some(actual) = finding_ids(canonical) else {
         return Err("the response is not a findings artifact, so its finding ids cannot be verified against the upstream product".to_string());
     };
-    let mut remaining = expected.iter();
+    let mut remaining = expected.iter().map(|finding| &finding.id);
     for id in &actual {
         if !remaining.any(|candidate| candidate == id) {
             return Err(format!(
@@ -1758,6 +1918,112 @@ fn check_finding_lineage(expected: &[String], canonical: &str) -> Result<(), Str
         }
     }
     Ok(())
+}
+
+fn check_validation_dispositions(
+    expected: &[PreservedFinding],
+    canonical: &str,
+) -> Result<String, String> {
+    let mut value = serde_json::from_str::<serde_json::Value>(canonical)
+        .map_err(|error| format!("validation artifact is not valid JSON: {error}"))?;
+    let output_findings = value
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("validation artifact has no findings array")?;
+    let output_by_id = output_findings
+        .iter()
+        .filter_map(|finding| Some((finding.get("id")?.as_str()?.to_string(), finding.clone())))
+        .collect::<std::collections::HashMap<_, _>>();
+    let dispositions = value
+        .get_mut("validation_dispositions")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or("validation artifact has no validation_dispositions array")?;
+    if dispositions.len() != expected.len() {
+        return Err(format!(
+            "validation ledger must contain exactly one disposition for each of {} input findings; it contains {}",
+            expected.len(),
+            dispositions.len()
+        ));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for (index, (entry, input)) in dispositions.iter_mut().zip(expected).enumerate() {
+        let entry = entry
+            .as_object_mut()
+            .ok_or_else(|| format!("validation_dispositions[{index}] must be an object"))?;
+        let id = entry
+            .get("finding_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if id != input.id {
+            return Err(format!(
+                "validation_dispositions[{index}].finding_id must be '{}' to cover every input finding in order",
+                input.id
+            ));
+        }
+        if !seen.insert(id.to_string()) {
+            return Err(format!("validation ledger repeats finding id '{id}'"));
+        }
+        let disposition = entry
+            .get("disposition")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let output = output_by_id.get(id);
+        match disposition {
+            "retained" | "revised" => {
+                let output = output.ok_or_else(|| {
+                    format!("finding '{id}' is marked {disposition} but is absent from findings")
+                })?;
+                let after_hash = normalized_finding_hash(output)?;
+                if disposition == "retained" && after_hash != input.before_hash {
+                    return Err(format!(
+                        "finding '{id}' changed but is marked retained; use revised"
+                    ));
+                }
+                if disposition == "revised" && after_hash == input.before_hash {
+                    return Err(format!(
+                        "finding '{id}' is unchanged but is marked revised; use retained"
+                    ));
+                }
+                entry.insert(
+                    "after_hash".to_string(),
+                    serde_json::Value::String(after_hash),
+                );
+            }
+            "merged_into" => {
+                if output.is_some() {
+                    return Err(format!(
+                        "finding '{id}' is marked merged_into but still appears in findings"
+                    ));
+                }
+                let target = entry
+                    .get("merged_into")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                if target == id || !output_by_id.contains_key(target) {
+                    return Err(format!(
+                        "finding '{id}' must merge into a different surviving finding id"
+                    ));
+                }
+            }
+            "rejected_false_positive"
+            | "unverified_missing_evidence"
+            | "deferred_manual_review" => {
+                if output.is_some() {
+                    return Err(format!(
+                        "finding '{id}' is marked {disposition} but still appears in findings"
+                    ));
+                }
+            }
+            _ => return Err(format!("finding '{id}' has an unsupported disposition")),
+        }
+        entry.insert(
+            "before_hash".to_string(),
+            serde_json::Value::String(input.before_hash.clone()),
+        );
+    }
+    serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("failed to publish validation ledger: {error}"))
 }
 
 /// Execute one logical step call, including retries, report-file handoff, and
@@ -2020,6 +2286,14 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             let checked =
                 crate::pipeline::structured::canonicalize(schema, &text).and_then(|canonical| {
                     match request.preserved_finding_ids.as_deref() {
+                        Some(expected)
+                            if schema
+                                .get(crate::pipeline::structured::VALIDATION_LEDGER_KEY)
+                                .is_some() =>
+                        {
+                            check_finding_lineage(expected, &canonical)?;
+                            check_validation_dispositions(expected, &canonical)
+                        }
                         Some(expected) => {
                             check_finding_lineage(expected, &canonical).map(|()| canonical)
                         }
@@ -2212,7 +2486,7 @@ struct Unit {
     inline_item: Option<String>,
     /// Ordered finding ids this unit's response must preserve (artifact
     /// fan-out over a findings product with the preserve-findings marker).
-    lineage_ids: Option<Vec<String>>,
+    lineage_ids: Option<Vec<PreservedFinding>>,
     suffix: String,
     display: String,
     /// Suffix shared by all agents analyzing the same logical item. Empty for
@@ -2777,8 +3051,17 @@ fn build_artifact_units(
                 format!("Fan-out element {index} cannot be serialized: {error}")
             })?,
         };
-        let lineage_ids = (preserves_source && element_id.is_some())
-            .then(|| vec![element_id.unwrap_or_default().to_string()]);
+        let lineage_ids = if preserves_source {
+            match element_id {
+                Some(id) => Some(vec![PreservedFinding {
+                    id: id.to_string(),
+                    before_hash: normalized_finding_hash(element)?,
+                }]),
+                None => None,
+            }
+        } else {
+            None
+        };
         let suffix = artifact_item_suffix(index);
         for agent in &agents {
             units.push(Unit {
@@ -3272,7 +3555,7 @@ async fn run_parallel_wave(
                     prior_outputs.len() + results.len(),
                     std::slice::from_ref(&report.1),
                 )
-                .await;
+                .await?;
                 results.push(report);
             }
             Ok(Err(failure)) => failures.push(failure),
@@ -3500,8 +3783,10 @@ fn append_step_ref(
     Ok(())
 }
 
-/// Replace `{<prefix>key}` placeholders using `map`. Unknown keys become an
-/// empty string. `prefix` includes the trailing colon, e.g. "{var:".
+/// Replace `{<prefix>key}` placeholders using `map`. A declared optional
+/// value that was not supplied remains visible rather than silently becoming
+/// an empty string; undeclared placeholders are rejected during workflow
+/// validation. `needle` includes the trailing colon, e.g. "{var:".
 fn substitute_placeholders(
     text: &str,
     needle: &str,
@@ -3518,9 +3803,10 @@ fn substitute_placeholders(
         let after = &rest[start + needle.len()..];
         if let Some(end) = after.find('}') {
             let key = after[..end].trim();
+            let missing = format!("(optional value '{key}' not supplied)");
             crate::safety::push_str_limited(
                 &mut out,
-                map.get(key).map(|s| s.as_str()).unwrap_or(""),
+                map.get(key).map(|s| s.as_str()).unwrap_or(&missing),
                 limit,
                 "Run prompt",
             )?;
@@ -3772,6 +4058,29 @@ mod tests {
             phase,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn required_and_quorum_dependencies_block_incomplete_synthesis() {
+        let mut step = make_step("synthesis", Phase::Sequential);
+        step.dependency_policy.required = vec!["core-a".into(), "core-b".into()];
+        step.dependency_policy.quorum = vec!["specialist-a".into(), "specialist-b".into()];
+        step.dependency_policy.minimum_successes = 1;
+
+        let successful = ["core-a".to_string(), "specialist-a".to_string()]
+            .into_iter()
+            .collect();
+        let error = dependency_policy_failure(&step, &successful).unwrap();
+        assert!(error.contains("core-b"), "{error}");
+
+        let successful = [
+            "core-a".to_string(),
+            "core-b".to_string(),
+            "specialist-a".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert!(dependency_policy_failure(&step, &successful).is_none());
     }
 
     #[test]
@@ -4271,8 +4580,8 @@ mod tests {
 
     #[test]
     fn finding_lineage_requires_an_ordered_id_subsequence() {
-        let expected = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let keep_all = r#"{"findings":[{"id":"a"},{"id":"b"},{"id":"c"}]}"#;
+        let expected = finding_lineage(keep_all).unwrap();
         let drop_middle = r#"{"findings":[{"id":"a"},{"id":"c"}]}"#;
         let reordered = r#"{"findings":[{"id":"c"},{"id":"a"}]}"#;
         let invented = r#"{"findings":[{"id":"a"},{"id":"new"}]}"#;
@@ -4281,6 +4590,33 @@ mod tests {
         assert!(check_finding_lineage(&expected, reordered).is_err());
         assert!(check_finding_lineage(&expected, invented).is_err());
         assert!(check_finding_lineage(&expected, "not json").is_err());
+    }
+
+    #[test]
+    fn validation_ledger_covers_every_input_and_receives_host_hashes() {
+        let input =
+            r#"{"findings":[{"rank":1,"id":"a","problem":"P"},{"rank":2,"id":"b","problem":"Q"}]}"#;
+        let expected = finding_lineage(input).unwrap();
+        let output = r#"{
+          "findings":[{"rank":1,"id":"a","problem":"P"}],
+          "validation_dispositions":[
+            {"finding_id":"a","disposition":"retained","reason":"Confirmed"},
+            {"finding_id":"b","disposition":"rejected_false_positive","reason":"Appendix resolves it"}
+          ]
+        }"#;
+        let checked = check_validation_dispositions(&expected, output).unwrap();
+        assert!(checked.contains("before_hash"));
+        assert!(checked.contains("after_hash"));
+
+        let incomplete = r#"{
+          "findings":[{"rank":1,"id":"a","problem":"P"}],
+          "validation_dispositions":[
+            {"finding_id":"a","disposition":"retained","reason":"Confirmed"}
+          ]
+        }"#;
+        assert!(check_validation_dispositions(&expected, incomplete)
+            .unwrap_err()
+            .contains("exactly one disposition"));
     }
 
     #[test]
@@ -4296,10 +4632,10 @@ mod tests {
         );
 
         let source = findings_output("source", r#"{"findings":[{"id":"stable"}]}"#);
-        assert_eq!(
-            preserved_finding_ids("validate", Some(&schema), &[source]).unwrap(),
-            Some(vec!["stable".to_string()])
-        );
+        let preserved = preserved_finding_ids("validate", Some(&schema), &[source])
+            .unwrap()
+            .unwrap();
+        assert_eq!(preserved[0].id, "stable");
     }
 
     #[test]
@@ -4355,7 +4691,14 @@ mod tests {
             .inline_item
             .as_deref()
             .is_some_and(|item| item.contains("\"A\"")));
-        assert_eq!(units[0].lineage_ids, Some(vec!["first".to_string()]));
+        assert_eq!(
+            units[0]
+                .lineage_ids
+                .as_ref()
+                .and_then(|lineage| lineage.first())
+                .map(|finding| finding.id.as_str()),
+            Some("first")
+        );
 
         // A missing upstream artifact degrades to zero units with a warning.
         let missing = build_units(&step, &settings, "", None, &bus).unwrap();
@@ -4667,7 +5010,7 @@ mod tests {
     // ── substitution ───────────────────────────────────────────────
 
     #[test]
-    fn substitute_replaces_known_and_blanks_unknown() {
+    fn substitute_replaces_known_and_marks_optional_missing() {
         let mut vars = std::collections::HashMap::new();
         vars.insert("journal".to_string(), "AER".to_string());
         let out = substitute_placeholders(
@@ -4676,7 +5019,10 @@ mod tests {
             &vars,
         )
         .unwrap();
-        assert_eq!(out, "Review for AER; persona .");
+        assert_eq!(
+            out,
+            "Review for AER; persona (optional value 'persona' not supplied)."
+        );
     }
 
     #[test]

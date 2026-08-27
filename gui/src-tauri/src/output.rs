@@ -415,9 +415,11 @@ fn strip_preamble(text: &str) -> String {
     result.trim().to_string()
 }
 
+mod quality;
 mod render;
 mod summary;
 
+pub use quality::build_report_quality;
 pub(crate) use render::capitalize;
 pub use render::render_markdown;
 pub use summary::model_price;

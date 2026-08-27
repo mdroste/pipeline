@@ -6,8 +6,10 @@ import type { EngineStatus, ModelCatalog, Settings } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());
+const confirmDialog = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));
+vi.mock("./DialogService", () => ({ confirmDialog, notify: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
 }));
@@ -109,6 +111,7 @@ function catalog(
 describe("SettingsPage", () => {
   beforeEach(() => {
     invoke.mockReset();
+    confirmDialog.mockReset();
     openUrl.mockReset();
     openUrl.mockResolvedValue(undefined);
   });
@@ -810,7 +813,7 @@ describe("SettingsPage", () => {
       if (cmd === "purge_runs") return Promise.resolve(3);
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    confirmDialog.mockResolvedValueOnce(true);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
@@ -828,13 +831,12 @@ describe("SettingsPage", () => {
         previewToken: "confirmed-plan",
       });
     });
-    expect(confirmSpy.mock.calls[0][0]).toContain(
-      "permanently delete 3 completed reports (2.5 GB)",
+    expect(confirmDialog.mock.calls[0][0]).toContain(
+      "move 3 completed reports (2.5 GB)",
     );
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Removed 3 completed reports.",
+      "Moved 3 completed reports to Trash.",
     );
-    confirmSpy.mockRestore();
   });
 
   it("does not ask for destructive confirmation when the preview is empty", async () => {
@@ -858,7 +860,6 @@ describe("SettingsPage", () => {
       }
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
-    const confirmSpy = vi.spyOn(window, "confirm");
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
@@ -867,9 +868,8 @@ describe("SettingsPage", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "No completed reports were beyond the configured limits.",
     );
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(confirmDialog).not.toHaveBeenCalled();
     expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
-    confirmSpy.mockRestore();
   });
 
   it("does not purge when the exact preview is not confirmed", async () => {
@@ -893,14 +893,13 @@ describe("SettingsPage", () => {
       }
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    confirmDialog.mockResolvedValueOnce(false);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await user.click(await screen.findByRole("button", { name: "General" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
-    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
-    confirmSpy.mockRestore();
   });
 
   it("stops safely and shows an error when purge preview fails", async () => {
@@ -924,7 +923,7 @@ describe("SettingsPage", () => {
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The purge preview could not be loaded; no reports were deleted: history index unavailable",
+      "The retention preview could not be loaded; no reports were moved: history index unavailable",
     );
     expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
   });

@@ -286,6 +286,7 @@ fn report_with(outputs: Vec<crate::models::StepOutput>) -> PipelineReport {
         step_outputs: outputs,
         failed_steps: vec![],
         products: Default::default(),
+        quality: Default::default(),
         referee_reports: vec![],
         editor: None,
         report_date: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
@@ -324,8 +325,11 @@ fn empty_published_findings_render_as_a_human_result_not_raw_json() {
             schema_version: 1,
             source_step_id: "Validate".into(),
             source_step_label: "Validate".into(),
+            taxonomy: Vec::new(),
             findings: Vec::new(),
         }),
+        validation_dispositions: Vec::new(),
+        named: Vec::new(),
     };
 
     let markdown = render_markdown(&report, None, Duration::from_secs(1), &Settings::default());
@@ -349,6 +353,7 @@ fn a_separate_findings_product_does_not_replace_the_primary_report() {
             schema_version: 1,
             source_step_id: "findings".into(),
             source_step_label: "Findings".into(),
+            taxonomy: Vec::new(),
             findings: vec![crate::models::Finding {
                 id: "finding".into(),
                 title: "Finding".into(),
@@ -357,6 +362,8 @@ fn a_separate_findings_product_does_not_replace_the_primary_report() {
                 ..Default::default()
             }],
         }),
+        validation_dispositions: Vec::new(),
+        named: Vec::new(),
     };
 
     let markdown = render_markdown(&report, None, Duration::from_secs(1), &Settings::default());

@@ -2,6 +2,25 @@ import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { InputInterpretation, PrimaryInputSelection } from "../lib/types";
 
+const RECENT_INPUTS_KEY = "pipeline.recentInputs.v1";
+
+function loadRecentInputs(): PrimaryInputSelection[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_INPUTS_KEY) ?? "[]") as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is PrimaryInputSelection => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as Partial<PrimaryInputSelection>;
+      return Array.isArray(candidate.paths)
+        && candidate.paths.every((path) => typeof path === "string")
+        && typeof candidate.interpretation === "string"
+        && (candidate.selectionKind === "file" || candidate.selectionKind === "folder");
+    }).slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
 interface Props {
   onPathChange: (path: string | null) => void;
   onSelectionChange?: (selection: PrimaryInputSelection | null) => void;
@@ -18,6 +37,28 @@ export default function PaperSelector({
   const [selection, setSelection] = useState<PrimaryInputSelection | null>(null);
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  const [recentInputs, setRecentInputs] = useState<PrimaryInputSelection[]>(loadRecentInputs);
+
+  const applySelection = (next: PrimaryInputSelection) => {
+    setSelection(next);
+    onPathChange(next.paths[0] ?? null);
+    onSelectionChange?.(next);
+    const key = `${next.selectionKind}:${next.interpretation}:${next.paths.join("\0")}`;
+    const updated = [next, ...recentInputs.filter((item) => `${item.selectionKind}:${item.interpretation}:${item.paths.join("\0")}` !== key)].slice(0, 5);
+    setRecentInputs(updated);
+    try {
+      localStorage.setItem(RECENT_INPUTS_KEY, JSON.stringify(updated));
+    } catch {
+      // Recent choices are a convenience; selection itself remains valid.
+    }
+  };
+
+  const clearSelection = () => {
+    setSelection(null);
+    setPickerError(null);
+    onPathChange(null);
+    onSelectionChange?.(null);
+  };
 
   const handleFile = async () => {
     setPickerError(null);
@@ -34,9 +75,7 @@ export default function PaperSelector({
           interpretation: paths.length > 1 ? "batch" : "document",
           selectionKind: "file",
         };
-        setSelection(next);
-        onPathChange(paths[0] ?? null);
-        onSelectionChange?.(next);
+        applySelection(next);
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -60,9 +99,7 @@ export default function PaperSelector({
           interpretation: inputMode === "folder" ? "source_tree" : "latex_project",
           selectionKind: "folder",
         };
-        setSelection(next);
-        onPathChange(path as string);
-        onSelectionChange?.(next);
+        applySelection(next);
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -82,8 +119,26 @@ export default function PaperSelector({
   const selectedPath = selection?.paths[0] ?? null;
   const selectedName = selectedPath?.split(/[/\\]/).pop();
 
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (disabled) return;
+    const paths = Array.from(event.dataTransfer.files)
+      .map((file) => (file as File & { path?: string }).path)
+      .filter((path): path is string => Boolean(path));
+    if (paths.length === 0) {
+      setPickerError("This drag did not provide local file paths. Use Select files instead.");
+      return;
+    }
+    setPickerError(null);
+    applySelection({
+      paths,
+      interpretation: paths.length > 1 ? "batch" : "document",
+      selectionKind: "file",
+    });
+  };
+
   return (
-    <div>
+    <div onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
         Inputs
       </label>
@@ -123,11 +178,35 @@ export default function PaperSelector({
           )}
         </button>
       </div>
+      <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Drop local files here, or use the file and folder pickers.</p>
+      {!selection && recentInputs.length > 0 && (
+        <label className="mt-2 block text-xs text-gray-600 dark:text-gray-300">
+          Recent input
+          <select
+            aria-label="Choose a recent input"
+            defaultValue=""
+            disabled={disabled}
+            onChange={(event) => {
+              const index = Number(event.target.value);
+              if (Number.isInteger(index) && recentInputs[index]) applySelection(recentInputs[index]);
+              event.target.value = "";
+            }}
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
+          >
+            <option value="">Choose recent…</option>
+            {recentInputs.map((item, index) => <option key={`${item.paths.join("|")}-${index}`} value={index}>{item.paths.length === 1 ? item.paths[0] : `${item.paths.length} files`}</option>)}
+          </select>
+        </label>
+      )}
       {selectedPath && (
         <div className="mt-2 space-y-1.5">
           <p className="text-xs text-gray-500 truncate" title={selectedPath}>
             {selection?.paths.length === 1 ? selectedPath : selection?.paths.join(", ")}
           </p>
+          <div className="flex gap-2 text-xs">
+            <button type="button" onClick={selection?.selectionKind === "folder" ? handleDir : handleFile} disabled={disabled || picking} className="text-gray-600 underline underline-offset-2 dark:text-gray-300">Replace</button>
+            <button type="button" onClick={clearSelection} disabled={disabled} className="text-red-600 underline underline-offset-2 dark:text-red-400">Clear</button>
+          </div>
           <label className="block text-xs font-medium text-gray-600 dark:text-gray-300">
             Use this {selection?.selectionKind === "folder" ? "folder" : "selection"} as
             <select

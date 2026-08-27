@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Console from "./Console";
@@ -53,6 +53,32 @@ const REQUEST: LlmRequestDetails = {
 };
 
 describe("Console", () => {
+  it("collapses when its active run reaches a terminal state", () => {
+    const { rerender } = render(<Console logs={[log("done")]} usage={EMPTY_USAGE} active />);
+    expect(screen.getByRole("separator", { name: "Resize console" })).toBeVisible();
+    rerender(<Console logs={[log("done")]} usage={EMPTY_USAGE} active={false} />);
+    expect(screen.queryByRole("separator", { name: "Resize console" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Completed run console/ })).toBeVisible();
+  });
+
+  it("surfaces clipboard failures instead of reporting a false success", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(false),
+    });
+    render(<Console logs={[log("copy me")]} usage={EMPTY_USAGE} />);
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Clipboard access failed");
+    expect(screen.getByRole("button", { name: "Copy" })).toBeVisible();
+    Reflect.deleteProperty(navigator, "clipboard");
+    Reflect.deleteProperty(document, "execCommand");
+  });
+
   it("renders all lines by default", () => {
     render(
       <Console

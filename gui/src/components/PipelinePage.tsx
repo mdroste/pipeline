@@ -19,6 +19,7 @@ import WaveDiagram, { type WaveSelection } from "./WaveDiagram";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 import ResizeHandle from "./ResizeHandle";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
+import { confirmDialog, notify } from "./DialogService";
 import PromptDialog from "./pipeline-editor/PromptDialog";
 import AddStepDialog, { type AddStepDraft } from "./pipeline-editor/AddStepDialog";
 import {
@@ -93,19 +94,22 @@ export default function PipelinePage({
   const [profileMutationPending, setProfileMutationPending] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [navigatorView, setNavigatorView] = useState<"steps" | "overview" | "schemas">("steps");
+  const [editorMode, setEditorMode] = useState<"basic" | "advanced">("basic");
+  const [, setHistoryVersion] = useState(0);
   const [catalogTab, setCatalogTab] = useState<"subjects" | "methods" | null>(null);
-  const [undoRewrite, setUndoRewrite] = useState<{
-    before: PipelineConfig;
-    after: string;
-    dirtyBefore: boolean;
-    editingBefore: EditingMode;
-    message: string;
-  } | null>(null);
   const configRef = useRef<PipelineConfig | null>(config);
   const activeProfileRef = useRef(activeProfile);
   const profileMutationRequestRef = useRef(0);
   const profileMutationActiveRef = useRef(false);
   const promptResetRequestRef = useRef(0);
+  const undoHistoryRef = useRef<PipelineConfig[]>([]);
+  const redoHistoryRef = useRef<PipelineConfig[]>([]);
+  const lastConfigRef = useRef<PipelineConfig | null>(null);
+  const savedConfigRef = useRef<PipelineConfig | null>(null);
+  const applyingHistoryRef = useRef(false);
+  const saveShortcutRef = useRef<() => void>(() => {});
+  const undoShortcutRef = useRef<() => void>(() => {});
+  const redoShortcutRef = useRef<() => void>(() => {});
   configRef.current = config;
   activeProfileRef.current = activeProfile;
 
@@ -146,9 +150,34 @@ export default function PipelinePage({
       invoke<ProfileSummary[]>("list_profiles"),
       invoke<string>("get_active_profile"),
     ])
-      .then(([c, p, a]) => {
+      .then(async ([c, p, a]) => {
         if (!live) return;
-        setConfig(normalizeConfig(c));
+        const normalized = normalizeConfig(c);
+        const draftKey = `pipeline.workflowDraft.${a}`;
+        let restored = normalized;
+        const savedDraft = window.localStorage.getItem(draftKey);
+        if (savedDraft) {
+          try {
+            const candidate = normalizeConfig(JSON.parse(savedDraft) as PipelineConfig);
+            if (JSON.stringify(candidate) !== JSON.stringify(normalized)
+              && await confirmDialog(
+                "Pipeline found an unsaved draft for this workflow. Restore it?",
+                { title: "Recover workflow draft", confirmLabel: "Restore draft" },
+              )) {
+              restored = candidate;
+              setDirty(true);
+            }
+          } catch {
+            window.localStorage.removeItem(draftKey);
+          }
+        }
+        applyingHistoryRef.current = true;
+        undoHistoryRef.current = [];
+        redoHistoryRef.current = [];
+        setHistoryVersion((version) => version + 1);
+        lastConfigRef.current = restored;
+        savedConfigRef.current = normalized;
+        setConfig(restored);
         setProfiles(p);
         setActiveProfile(a);
         setLoading(false);
@@ -165,6 +194,31 @@ export default function PipelinePage({
       live = false;
     };
   }, [loadAttempt]);
+
+  useEffect(() => {
+    if (!config) return;
+    if (applyingHistoryRef.current) {
+      applyingHistoryRef.current = false;
+      lastConfigRef.current = config;
+      return;
+    }
+    const previous = lastConfigRef.current;
+    if (previous && JSON.stringify(previous) !== JSON.stringify(config)) {
+      undoHistoryRef.current = [...undoHistoryRef.current.slice(-99), previous];
+      redoHistoryRef.current = [];
+      setHistoryVersion((version) => version + 1);
+    }
+    lastConfigRef.current = config;
+  }, [config]);
+
+  useEffect(() => {
+    const key = `pipeline.workflowDraft.${activeProfile}`;
+    if (dirty && config) {
+      window.localStorage.setItem(key, JSON.stringify(config));
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  }, [activeProfile, config, dirty]);
 
   useEffect(() => {
     let live = true;
@@ -223,7 +277,14 @@ export default function PipelinePage({
   const switchProfileForMutation = async (id: string, request: number) => {
     const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
     if (!profileMutationIsCurrent(request)) return false;
-    setConfig(normalizeConfig(newConfig));
+    const normalized = normalizeConfig(newConfig);
+    applyingHistoryRef.current = true;
+    undoHistoryRef.current = [];
+    redoHistoryRef.current = [];
+    setHistoryVersion((version) => version + 1);
+    lastConfigRef.current = normalized;
+    savedConfigRef.current = normalized;
+    setConfig(normalized);
     setActiveProfile(id);
     setEditing(null);
     setSchemaDraftValid(true);
@@ -256,6 +317,25 @@ export default function PipelinePage({
       setEditing(null);
     }
   }, [isStepEditing, editingStep]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "s") {
+        event.preventDefault();
+        saveShortcutRef.current();
+      } else if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        redoShortcutRef.current();
+      } else if (key === "z") {
+        event.preventDefault();
+        undoShortcutRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   if (loading) {
     return (
@@ -299,14 +379,14 @@ export default function PipelinePage({
 
   const handleSwitchProfile = async (id: string) => {
     if (id === activeProfileRef.current) return;
-    if (dirty && !confirm("You have unsaved changes. Switch profile and discard them?")) return;
+    if (dirty && !(await confirmDialog("You have unsaved changes. Switch workflow and discard them?", { destructive: true }))) return;
     const request = beginProfileMutation();
     if (request === null) return;
     try {
       await switchProfileForMutation(id, request);
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
-        alert(`Failed to switch profile: ${e instanceof Error ? e.message : String(e)}`);
+        notify(`Failed to switch workflow: ${e instanceof Error ? e.message : String(e)}`);
       }
     } finally {
       finishProfileMutation(request);
@@ -318,7 +398,7 @@ export default function PipelinePage({
       title: "New profile name",
       defaultValue: "",
       onSubmit: async (name) => {
-        if (dirty && !confirm("Create this profile and discard the current unsaved changes?")) {
+        if (dirty && !(await confirmDialog("Create this workflow and discard the current unsaved changes?", { destructive: true }))) {
           return;
         }
         const request = beginProfileMutation();
@@ -330,7 +410,7 @@ export default function PipelinePage({
           await switchProfileForMutation(summary.id, request);
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
-            alert(`Failed to create profile: ${e instanceof Error ? e.message : String(e)}`);
+            notify(`Failed to create workflow: ${e instanceof Error ? e.message : String(e)}`);
           }
         } finally {
           finishProfileMutation(request);
@@ -344,7 +424,7 @@ export default function PipelinePage({
       title: "Name for the duplicate",
       defaultValue: "",
       onSubmit: async (name) => {
-        if (dirty && !confirm("Duplicate this profile and discard the current unsaved changes?")) {
+        if (dirty && !(await confirmDialog("Duplicate this workflow and discard the current unsaved changes?", { destructive: true }))) {
           return;
         }
         const request = beginProfileMutation();
@@ -360,7 +440,7 @@ export default function PipelinePage({
           await switchProfileForMutation(summary.id, request);
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
-            alert(`Failed to duplicate profile: ${e instanceof Error ? e.message : String(e)}`);
+            notify(`Failed to duplicate workflow: ${e instanceof Error ? e.message : String(e)}`);
           }
         } finally {
           finishProfileMutation(request);
@@ -387,7 +467,7 @@ export default function PipelinePage({
           await refreshProfiles(request);
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
-            alert(`Failed to rename profile: ${e instanceof Error ? e.message : String(e)}`);
+            notify(`Failed to rename workflow: ${e instanceof Error ? e.message : String(e)}`);
           }
         } finally {
           finishProfileMutation(request);
@@ -399,11 +479,14 @@ export default function PipelinePage({
   const handleDeleteProfile = async () => {
     const profile = activeProfileRef.current;
     if (profiles.find((candidate) => candidate.id === profile)?.builtin) {
-      alert("Cannot delete a built-in profile.");
+      notify("Built-in workflows cannot be deleted.", "info");
       return;
     }
     const current = profiles.find((candidate) => candidate.id === profile);
-    if (!confirm(`Delete profile "${current?.name ?? profile}"? This cannot be undone.`)) return;
+    if (!(await confirmDialog(
+      `Delete workflow “${current?.name ?? profile}”? This cannot be undone.`,
+      { title: "Delete workflow", confirmLabel: "Delete", destructive: true },
+    ))) return;
     const request = beginProfileMutation();
     if (request === null) return;
     try {
@@ -413,7 +496,7 @@ export default function PipelinePage({
       await switchProfileForMutation("auto-review", request);
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
-        alert(`Failed to delete profile: ${e instanceof Error ? e.message : String(e)}`);
+        notify(`Failed to delete workflow: ${e instanceof Error ? e.message : String(e)}`);
       }
     } finally {
       finishProfileMutation(request);
@@ -485,7 +568,7 @@ export default function PipelinePage({
     setDirty(true);
   };
 
-  const updateExtraction = (patch: Partial<ExtractionConfig>) => {
+  const updateExtraction = async (patch: Partial<ExtractionConfig>) => {
     const previous = config.extraction ?? DEFAULT_EXTRACTION;
     const extraction = { ...previous, ...patch };
     const previousInputs = previous.extra_inputs ?? [];
@@ -520,27 +603,19 @@ export default function PipelinePage({
     });
     if (
       removedSelectors > 0 &&
-      !window.confirm(
+      !(await confirmDialog(
         `This change removes ${removedSelectors} artifact access rule${removedSelectors === 1 ? "" : "s"} from workflow steps. Continue?`,
-      )
+        { destructive: true },
+      ))
     ) {
       return;
     }
     const nextConfig = { ...config, extraction, steps };
-    if (removedSelectors > 0) {
-      setUndoRewrite({
-        before: config,
-        after: JSON.stringify(nextConfig),
-        dirtyBefore: dirty,
-        editingBefore: editing,
-        message: "Artifact access rules were updated.",
-      });
-    }
     setConfig(nextConfig);
     setDirty(true);
   };
 
-  const updateStepEnabled = (id: string, enabled: boolean) => {
+  const updateStepEnabled = async (id: string, enabled: boolean) => {
     const affected = enabled
       ? []
       : config.steps.filter((step) =>
@@ -552,9 +627,10 @@ export default function PipelinePage({
         );
     if (
       affected.length > 0 &&
-      !window.confirm(
+      !(await confirmDialog(
         `Disabling this step removes dependencies or artifact access from ${affected.length} downstream step${affected.length === 1 ? "" : "s"}. Continue?`,
-      )
+        { destructive: true },
+      ))
     ) {
       return;
     }
@@ -584,15 +660,6 @@ export default function PipelinePage({
         };
       }),
     };
-    if (affected.length > 0) {
-      setUndoRewrite({
-        before: config,
-        after: JSON.stringify(nextConfig),
-        dirtyBefore: dirty,
-        editingBefore: editing,
-        message: "Downstream connections were removed.",
-      });
-    }
     setConfig(nextConfig);
     setDirty(true);
   };
@@ -611,13 +678,16 @@ export default function PipelinePage({
         activeProfileRef.current === profileToSave &&
         JSON.stringify(configRef.current) === savedSnapshot;
       setSaved(isCurrentVersion);
-      if (isCurrentVersion) setDirty(false);
+      if (isCurrentVersion) {
+        savedConfigRef.current = configToSave;
+        setDirty(false);
+      }
       await refreshProfiles();
       onProfileChange?.();
       if (isCurrentVersion) setTimeout(() => setSaved(false), 2000);
       return isCurrentVersion;
     } catch (e) {
-      alert(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);
+      notify(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);
       return false;
     }
     finally { setSaving(false); }
@@ -627,16 +697,41 @@ export default function PipelinePage({
     await persistCurrentConfig();
   };
 
+  const undo = () => {
+    const previous = undoHistoryRef.current.pop();
+    if (!previous || !configRef.current) return;
+    redoHistoryRef.current.push(configRef.current);
+    setHistoryVersion((version) => version + 1);
+    applyingHistoryRef.current = true;
+    setConfig(previous);
+    setDirty(JSON.stringify(previous) !== JSON.stringify(savedConfigRef.current));
+  };
+
+  const redo = () => {
+    const next = redoHistoryRef.current.pop();
+    if (!next || !configRef.current) return;
+    undoHistoryRef.current.push(configRef.current);
+    setHistoryVersion((version) => version + 1);
+    applyingHistoryRef.current = true;
+    setConfig(next);
+    setDirty(JSON.stringify(next) !== JSON.stringify(savedConfigRef.current));
+  };
+  saveShortcutRef.current = () => {
+    if (dirty && schemaDraftValid && !saving) void handleSave();
+  };
+  undoShortcutRef.current = undo;
+  redoShortcutRef.current = redo;
+
   const saveBeforeExport = async (what: string): Promise<boolean> => {
     if (!dirty) return true;
-    if (!window.confirm(
+    if (!(await confirmDialog(
       `Exporting ${what} requires saving this profile's unsaved edits first. Save and continue?`,
-    )) {
+    ))) {
       return false;
     }
     const currentSaved = await persistCurrentConfig();
     if (!currentSaved) {
-      alert("Export cancelled because the workflow changed while it was being saved.");
+      notify("Export cancelled because the workflow changed while it was being saved.", "info");
     }
     return currentSaved;
   };
@@ -663,7 +758,7 @@ export default function PipelinePage({
         request === promptResetRequestRef.current &&
         activeProfileRef.current === profile
       ) {
-        alert(
+        notify(
           `Failed to reset the parallel context template: ${
             error instanceof Error ? error.message : String(error)
           }`,
@@ -673,7 +768,10 @@ export default function PipelinePage({
   };
 
   const handleReset = async () => {
-    if (!confirm("Reset this profile to defaults? All customizations will be lost.")) return;
+    if (!(await confirmDialog(
+      "Reset this workflow to defaults? All customizations will be lost.",
+      { title: "Reset workflow", confirmLabel: "Reset", destructive: true },
+    ))) return;
     const request = beginProfileMutation();
     if (request === null) return;
     const profile = activeProfileRef.current;
@@ -684,6 +782,7 @@ export default function PipelinePage({
         activeProfileRef.current !== profile
       ) return;
       setConfig(normalizeConfig(d)); setEditing(null); setDirty(false);
+      savedConfigRef.current = normalizeConfig(d);
       setSchemaDraftValid(true);
       setSchemaEditorEpoch((current) => current + 1);
       await refreshProfiles(request);
@@ -694,7 +793,7 @@ export default function PipelinePage({
       onProfileChange?.();
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
-        alert(`Failed to reset: ${e instanceof Error ? e.message : String(e)}`);
+        notify(`Failed to reset: ${e instanceof Error ? e.message : String(e)}`);
       }
     } finally {
       finishProfileMutation(request);
@@ -712,7 +811,7 @@ export default function PipelinePage({
     try {
       await invoke("export_item", { json: JSON.stringify(envelope, null, 2), suggestedName });
     } catch (e) {
-      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+      notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -722,7 +821,7 @@ export default function PipelinePage({
       if (!(await saveBeforeExport("the profile"))) return;
       await invoke("export_profile", { id: activeProfile, suggestedName });
     } catch (e) {
-      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+      notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -731,7 +830,7 @@ export default function PipelinePage({
       if (!(await saveBeforeExport("the settings bundle"))) return;
       await invoke("export_bundle", { suggestedName: "pipeline-settings-backup.json" });
     } catch (e) {
-      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+      notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -755,12 +854,12 @@ export default function PipelinePage({
           const fanOut = step.for_each ? `; fan-out up to ${step.for_each.max} items` : "";
           const logicalCalls = (step.for_each?.max ?? 1) * agents;
           const attempts = logicalCalls * ((settings?.max_retries ?? 0) + 1);
-          if (!confirm(
+          if (!(await confirmDialog(
             `Import step “${step.label}”?\n\n` +
             `Tools: ${step.tools?.join(", ") || "none"}\n` +
             `Agents: ${step.agents?.join(", ") || "profile default"}${fanOut}\n` +
             `Maximum provider attempts from this step: ${attempts}`,
-          )) return;
+          ))) return;
           const id = config.steps.some((s) => s.id === step.id)
             ? `${step.id}_${Date.now()}`
             : step.id;
@@ -787,23 +886,23 @@ export default function PipelinePage({
               }, 0)
             : 0;
           const maxAttempts = logicalCalls * ((settings?.max_retries ?? 0) + 1) + mergeCalls;
-          if (!confirm(
+          if (!(await confirmDialog(
             `Import and activate profile “${envelope.name}”?\n\n` +
             `${enabled.length} enabled steps; up to ${maxAttempts} provider attempts per report (including retries and merges).\n` +
             `Tools: ${tools.join(", ") || "none"}\n` +
             `Agents: ${agents.join(", ") || "profile default"}\n\n` +
             "Review the imported prompts in the editor before generating a report.",
-          )) return;
+          ))) return;
           const summary = await invoke<ProfileSummary>("import_profile", { path });
           await refreshProfiles();
           await handleSwitchProfile(summary.id);
           break;
         }
         case "bundle": {
-          if (!confirm(
+          if (!(await confirmDialog(
             `Import ${envelope.profiles.length} profiles plus provider/settings configuration?\n\n` +
             "Existing profiles with the same ID will be overwritten. API-key fields and the active profile may change. Review the active profile before running it.",
-          )) return;
+          ))) return;
           await invoke("import_bundle", { path });
           const [c, p, a] = await Promise.all([
             invoke<PipelineConfig>("get_pipeline_config"),
@@ -821,7 +920,7 @@ export default function PipelinePage({
         }
       }
     } catch (e) {
-      alert(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
+      notify(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -945,7 +1044,7 @@ export default function PipelinePage({
     setDirty(true);
   };
 
-  const removeStep = (id: string) => {
+  const removeStep = async (id: string) => {
     const step = config.steps.find((candidate) => candidate.id === id);
     const affected = config.steps.filter((candidate) =>
       (candidate.after ?? []).includes(id) ||
@@ -957,7 +1056,10 @@ export default function PipelinePage({
     const consequence = affected.length > 0
       ? ` It will also remove references from ${affected.length} downstream step${affected.length === 1 ? "" : "s"}.`
       : "";
-    if (!window.confirm(`Remove “${step?.label ?? id}”?${consequence}`)) return;
+    if (!(await confirmDialog(
+      `Remove “${step?.label ?? id}”?${consequence}`,
+      { title: "Remove step", confirmLabel: "Remove", destructive: true },
+    ))) return;
     const nextConfig = {
       ...config,
       outputs: {
@@ -980,13 +1082,6 @@ export default function PipelinePage({
             : step.run_if,
         })),
     };
-    setUndoRewrite({
-      before: config,
-      after: JSON.stringify(nextConfig),
-      dirtyBefore: dirty,
-      editingBefore: editing,
-      message: `“${step?.label ?? id}” and its connections were removed.`,
-    });
     setConfig(nextConfig);
     if (editing === id) setEditing(null);
     setDirty(true);
@@ -1023,26 +1118,6 @@ export default function PipelinePage({
 
   return (
     <div className="flex h-full relative">
-      {undoRewrite && JSON.stringify(config) === undoRewrite.after && (
-        <div
-          role="status"
-          className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-gray-900 px-4 py-2 text-xs text-white shadow-xl dark:bg-gray-100 dark:text-gray-900"
-        >
-          <span>{undoRewrite.message}</span>
-          <button
-            type="button"
-            onClick={() => {
-              setConfig(undoRewrite.before);
-              setDirty(undoRewrite.dirtyBefore);
-              setEditing(undoRewrite.editingBefore);
-              setUndoRewrite(null);
-            }}
-            className="font-semibold underline underline-offset-2"
-          >
-            Undo
-          </button>
-        </div>
-      )}
       {/* Prompt dialog */}
       {promptDialog && (
         <PromptDialog
@@ -1072,12 +1147,30 @@ export default function PipelinePage({
       >
         {/* Header */}
         <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Workflow Editor</h2>
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Workflow Editor</h2>
+            <div className="mt-2 inline-flex rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800" aria-label="Editor detail level">
+              {(["basic", "advanced"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={editorMode === mode}
+                  onClick={() => {
+                    setEditorMode(mode);
+                    if (mode === "basic" && navigatorView === "schemas") setNavigatorView("steps");
+                  }}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${editorMode === mode ? "bg-white shadow-sm dark:bg-gray-700" : "text-gray-500 dark:text-gray-400"}`}
+                >
+                  {mode === "basic" ? "Basic" : "Advanced"}
+                </button>
+              ))}
+            </div>
+          </div>
           {showBack && (
-            <button onClick={() => {
-              if (dirty && !confirm("You have unsaved changes. Leave and discard them?")) return;
+            <button onClick={() => void (async () => {
+              if (dirty && !(await confirmDialog("You have unsaved changes. Leave and discard them?", { destructive: true }))) return;
               onClose();
-            }} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">Back</button>
+            })()} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">Back</button>
           )}
         </div>
 
@@ -1166,7 +1259,7 @@ export default function PipelinePage({
             aria-label="Workflow navigator view"
             className="grid grid-cols-3 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800"
           >
-            {(["steps", "overview", "schemas"] as const).map((view) => (
+            {(editorMode === "advanced" ? ["steps", "overview", "schemas"] as const : ["steps", "overview"] as const).map((view) => (
               <button
                 key={view}
                 type="button"
@@ -1445,6 +1538,13 @@ export default function PipelinePage({
               Reset
             </button>
           </div>
+          <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
+            <span>{!schemaDraftValid ? "Cannot save: fix the invalid schema draft." : dirty ? "Unsaved draft is recoverable." : "All changes saved."}</span>
+            <span className="flex gap-2">
+              <button type="button" onClick={undo} disabled={undoHistoryRef.current.length === 0} className="underline disabled:opacity-30">Undo</button>
+              <button type="button" onClick={redo} disabled={redoHistoryRef.current.length === 0} className="underline disabled:opacity-30">Redo</button>
+            </span>
+          </div>
           {/* Export/Import */}
           <div className="flex gap-2 relative">
             <div className="flex-1 relative">
@@ -1605,6 +1705,7 @@ export default function PipelinePage({
             settings={settings}
             catalogs={catalogs}
             conditionStepIds={conditionStepIds}
+            advanced={editorMode === "advanced"}
             onUpdate={updateStep}
             onPhaseChange={updateStepPhase}
             onOutputRoleChange={updateOutputRole}

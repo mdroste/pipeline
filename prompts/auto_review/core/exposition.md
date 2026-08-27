@@ -6,13 +6,6 @@ Use the detected subject and paper form when judging conventions. Ask whether th
 
 ## Output
 
-Populate the supplied findings schema with at most six findings, in decreasing order of importance. Treat six as a ceiling, not a target. If no material issue survives checking, return an empty findings array. For every finding:
-
-- `title`: a specific descriptive title naming the issue.
-- `in_the_paper`: quote or closely paraphrase the passage, definition, roadmap, table, or figure at issue.
-- `problem`: the concrete misunderstanding or evaluation cost created for the paper's intended scholarly audience.
-- `consequence`: which main result, mechanism, evidentiary step, or scope condition becomes difficult to understand or assess.
-- `what_would_help`: a specific reordering, definition, caption, roadmap, consolidation, or deletion.
-- `evidence`: at least one locator for the passage at issue — a page number, a section, figure, or table reference in `description`, or a short `quote`. Never invent a locator.
+Populate the supplied findings schema with at most six findings, in decreasing order of importance. Treat six as a ceiling, not a target. Every finding must identify a verified passage or display, the concrete misunderstanding or evaluation cost it creates, the main result or condition thereby obscured, and a specific revision. Never invent a locator. If no material issue survives checking, return an empty findings array.
 
 Do not report vague claims that writing is dense or unclear, copyedit prose, summarize the paper, praise it, or discuss the review process.

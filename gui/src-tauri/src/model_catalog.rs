@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -21,7 +21,29 @@ const MAX_DISCOVERY_VERSION_BYTES: usize = 64 * 1024;
 const MAX_DISCOVERY_LINE_BYTES: usize = 1024 * 1024;
 const BUNDLED_POLICY: &str = include_str!("../../../model-policy.json");
 
-static DISCOVERY_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+const MAX_DISCOVERY_FLIGHTS: usize = 64;
+const DISCOVERY_FLIGHT_TTL: Duration = Duration::from_secs(15 * 60);
+
+/// A non-secret identity for one discovery context. Credentials and endpoints
+/// are reduced to one-way fingerprints before they can reach this process-wide
+/// registry, so the registry can neither retain nor accidentally log secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DiscoveryKey {
+    provider: String,
+    transport: String,
+    endpoint_fingerprint: String,
+    credential_fingerprint: String,
+    catalog_revision: String,
+}
+
+struct DiscoveryFlight {
+    result: Mutex<Option<Result<ModelCatalog, String>>>,
+    completed: tokio::sync::Notify,
+    started_at: std::time::Instant,
+}
+
+static DISCOVERY_FLIGHTS: OnceLock<Mutex<HashMap<DiscoveryKey, Arc<DiscoveryFlight>>>> =
+    OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelCatalogEntry {
@@ -197,10 +219,6 @@ fn catalog_credential_fingerprint(provider: &str, transport: &str, settings: &Se
     digest.update(transport.as_bytes());
     digest.update(b"\0");
     digest.update(credential.as_bytes());
-    if provider == "local" {
-        digest.update(b"\0");
-        digest.update(settings.local_base_url.as_bytes());
-    }
     format!("{:x}", digest.finalize())
 }
 
@@ -631,6 +649,8 @@ use discovery::{
     populate_antigravity_models, populate_claude_models, provider_discovery_error,
     read_discovery_output,
 };
+#[cfg(test)]
+use resolution::{discovery_key, single_flight_discovery};
 
 #[cfg(test)]
 mod tests;

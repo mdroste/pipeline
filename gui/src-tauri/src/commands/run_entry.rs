@@ -27,11 +27,15 @@ pub(super) fn complete_run(
     elapsed: std::time::Duration,
     settings: &crate::settings::Settings,
     completion: RunCompletion,
-) -> serde_json::Value {
-    let status = if report.failed_steps.is_empty() {
-        "done"
+) -> Result<serde_json::Value, String> {
+    let status = if report.quality.status.trim().is_empty() {
+        if report.failed_steps.is_empty() {
+            "done".to_string()
+        } else {
+            "partial".to_string()
+        }
     } else {
-        "partial"
+        report.quality.status.clone()
     };
     let meta = crate::runs::RunFinishMeta {
         input_path: completion.input_path,
@@ -44,7 +48,7 @@ pub(super) fn complete_run(
         workflow_fingerprint: completion.workflow_fingerprint,
         specialist_catalog_revision: completion.specialist_catalog_revision,
         provider: settings.preferred_provider.clone(),
-        status: status.to_string(),
+        status: status.clone(),
         duration_secs: elapsed.as_secs(),
         usage: crate::pipeline::logging::run_usage(),
         step_count: report.all_outputs().len() as u32,
@@ -58,7 +62,11 @@ pub(super) fn complete_run(
         extra_input_sources: completion.extra_input_sources,
         parent_run_id: completion.parent_run_id,
     };
-    let run_id = writer.and_then(|writer| finalize_run(app, writer, report, markdown, meta));
+    let writer = writer.ok_or_else(|| {
+        "The run completed model work but has no durable workspace; partial checkpoints were preserved where possible."
+            .to_string()
+    })?;
+    let run_id = finalize_run(app, writer, report, markdown, meta)?;
     enforce_retention(
         app,
         settings.max_saved_runs as usize,
@@ -75,13 +83,13 @@ pub(super) fn complete_run(
     )
     .ok();
 
-    serde_json::json!({
+    Ok(serde_json::json!({
         "report": report,
         "markdown": markdown,
         "extracted_text": extracted_text,
         "run_id": run_id,
         "status": status,
-    })
+    }))
 }
 
 // Tauri exposes these launch fields as separate command arguments to keep the
@@ -108,6 +116,7 @@ pub async fn run_pipeline(
     crate::safety::validate_runtime_context(&variables, "Run variables")?;
     crate::safety::validate_runtime_context(&extra_inputs, "Named input paths")?;
     let snapshot = bind_parallel_overrides(load_run_snapshot()?, run_parallel_overrides.as_ref())?;
+    validate_runtime_bindings(&snapshot.config, &variables, &extra_inputs, true)?;
     validate_primary_input_selection(
         &snapshot.config,
         Some(&paper_path),
@@ -197,6 +206,12 @@ async fn prepare_headless_run(
     crate::safety::validate_runtime_context(&options.extra_inputs, "Named input paths")?;
     let snapshot =
         load_run_snapshot_for_workflow(options.profile_id.as_deref(), options.workflow.as_ref())?;
+    validate_runtime_bindings(
+        &snapshot.config,
+        &options.variables,
+        &options.extra_inputs,
+        true,
+    )?;
     validate_primary_input_selection(
         &snapshot.config,
         Some(&options.input_path),

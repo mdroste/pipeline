@@ -180,6 +180,7 @@ pub(super) fn bind_runtime_snapshot(
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
 ) -> Result<RunSnapshot, String> {
+    validate_runtime_bindings(&snapshot.config, variables, extra_inputs, false)?;
     let variables = variables
         .iter()
         .collect::<std::collections::BTreeMap<_, _>>();
@@ -194,6 +195,119 @@ pub(super) fn bind_runtime_snapshot(
         stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), variables, extra_inputs))
             .map_err(|error| format!("Could not fingerprint runtime options: {error}"))?;
     Ok(snapshot)
+}
+
+pub(super) fn validate_runtime_bindings(
+    config: &PipelineConfig,
+    variables: &std::collections::HashMap<String, String>,
+    extra_inputs: &std::collections::HashMap<String, String>,
+    require_required: bool,
+) -> Result<(), String> {
+    let declared_variables = config
+        .variables
+        .iter()
+        .map(|spec| (spec.key.as_str(), spec))
+        .collect::<std::collections::HashMap<_, _>>();
+    for key in variables.keys() {
+        if !declared_variables.contains_key(key.as_str()) {
+            return Err(format!("Run supplied undeclared variable '{key}'"));
+        }
+    }
+    for spec in &config.variables {
+        let value = variables
+            .get(&spec.key)
+            .map(String::as_str)
+            .unwrap_or(&spec.default);
+        let label = if spec.label.trim().is_empty() {
+            spec.key.as_str()
+        } else {
+            spec.label.as_str()
+        };
+        if require_required && spec.required && value.trim().is_empty() {
+            return Err(format!("Missing required variable '{label}'"));
+        }
+        if require_required && spec.secret && value == "[redacted secret; re-enter to rerun]" {
+            return Err(format!(
+                "Secret variable '{label}' must be entered again before this run"
+            ));
+        }
+        if value.is_empty() {
+            continue;
+        }
+        let length = value.chars().count() as u32;
+        if spec
+            .validation
+            .min_length
+            .is_some_and(|minimum| length < minimum)
+        {
+            return Err(format!(
+                "Variable '{label}' must contain at least {} characters",
+                spec.validation.min_length.unwrap_or_default()
+            ));
+        }
+        if spec
+            .validation
+            .max_length
+            .is_some_and(|maximum| length > maximum)
+        {
+            return Err(format!(
+                "Variable '{label}' must contain at most {} characters",
+                spec.validation.max_length.unwrap_or_default()
+            ));
+        }
+        if !spec.validation.pattern.is_empty()
+            && !regex::Regex::new(&spec.validation.pattern)
+                .map_err(|error| format!("Variable '{label}' validation is invalid: {error}"))?
+                .is_match(value)
+        {
+            return Err(format!(
+                "Variable '{label}' does not match its required format"
+            ));
+        }
+        if spec.kind == "choice" && !spec.choices.iter().any(|choice| choice == value) {
+            return Err(format!(
+                "Variable '{label}' is not one of its allowed choices"
+            ));
+        }
+    }
+
+    let declared_inputs = config
+        .extraction
+        .extra_inputs
+        .iter()
+        .map(|slot| slot.key.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for key in extra_inputs.keys() {
+        if !declared_inputs.contains(key.as_str()) {
+            return Err(format!("Run supplied undeclared named input '{key}'"));
+        }
+    }
+    Ok(())
+}
+
+/// Values safe to retain in manifests. Secret values are deliberately not
+/// recoverable; a re-run must ask for them again.
+pub(super) fn durable_variables(
+    config: &PipelineConfig,
+    variables: &std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, String> {
+    variables
+        .iter()
+        .map(|(key, value)| {
+            let secret = config
+                .variables
+                .iter()
+                .any(|spec| spec.key == *key && spec.secret);
+            (
+                key.clone(),
+                if secret {
+                    "[redacted secret; re-enter to rerun]".to_string()
+                } else {
+                    value.clone()
+                },
+            )
+        })
+        .collect()
 }
 
 pub(super) fn bind_parallel_overrides(
@@ -483,19 +597,42 @@ pub(super) fn validate_named_input_paths(
                 ));
             }
             "document" => {
-                let supported = std::path::Path::new(path)
+                let extension = std::path::Path::new(path)
                     .extension()
                     .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| {
-                        matches!(
-                            extension.to_ascii_lowercase().as_str(),
-                            "pdf" | "tex" | "docx"
-                        )
-                    });
+                    .map(str::to_ascii_lowercase)
+                    .unwrap_or_default();
+                let supported = matches!(extension.as_str(), "pdf" | "tex" | "docx");
                 if !supported {
                     return Err(format!(
                         "Named input '{label}' must be a PDF, TeX, or DOCX document"
                     ));
+                }
+                if !slot.extensions.is_empty() && !slot.extensions.contains(&extension) {
+                    return Err(format!(
+                        "Named input '{label}' does not accept .{extension}; allowed extensions: {}",
+                        slot.extensions.join(", ")
+                    ));
+                }
+                if slot.max_bytes > 0 && metadata.len() > slot.max_bytes {
+                    return Err(format!(
+                        "Named input '{label}' is {} bytes; its workflow limit is {} bytes",
+                        metadata.len(),
+                        slot.max_bytes
+                    ));
+                }
+                if !slot.mime_types.is_empty() {
+                    let mime = match extension.as_str() {
+                        "pdf" => "application/pdf",
+                        "tex" => "application/x-tex",
+                        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        _ => "application/octet-stream",
+                    };
+                    if !slot.mime_types.iter().any(|allowed| allowed == mime) {
+                        return Err(format!(
+                            "Named input '{label}' has MIME type '{mime}', which this workflow does not accept"
+                        ));
+                    }
                 }
             }
             _ => {}

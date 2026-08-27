@@ -1,39 +1,58 @@
 use super::*;
 
-/// Create the optional persistent workspace shared by fresh runs and re-runs.
-/// Persistence remains best-effort; execution falls back to stdout when the
-/// run or artifact directory cannot be created.
+const MIN_RUN_HEADROOM_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Verify that the durable run store is writable before extraction or model
+/// work begins. A source-size multiplier covers temporary extraction assets;
+/// the fixed floor protects no-input and small-document runs.
+pub(super) fn preflight_run_storage(input: &std::path::Path) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let root = crate::runs::runs_dir()?;
+    let source_bytes = input
+        .metadata()
+        .ok()
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let required = MIN_RUN_HEADROOM_BYTES.max(source_bytes.saturating_mul(4));
+    if let Ok(available) = fs2::available_space(&root) {
+        if available < required {
+            return Err(format!(
+                "Pipeline needs at least {:.1} GB of free space to prepare and durably save this run; {:.1} GB is available.",
+                required as f64 / 1_000_000_000.0,
+                available as f64 / 1_000_000_000.0,
+            ));
+        }
+    }
+
+    let mut probe = tempfile::NamedTempFile::new_in(&root)
+        .map_err(|error| format!("Run history is not writable: {error}"))?;
+    probe
+        .write_all(b"pipeline-run-storage-probe\n")
+        .map_err(|error| format!("Run history is not writable: {error}"))?;
+    probe
+        .flush()
+        .and_then(|()| probe.as_file().sync_all())
+        .map_err(|error| format!("Run history cannot be durably synced: {error}"))?;
+    Ok(())
+}
+
+/// Create the required persistent workspace shared by fresh runs and re-runs.
+/// A run never falls back to an unsaved execution path.
 pub(super) fn create_run_workspace(
     app: &crate::emit::EventBus,
     paper_hash: &str,
     pending_meta: crate::runs::RunFinishMeta,
     preprocessing_log: Option<&std::path::Path>,
-) -> (Option<crate::runs::RunWriter>, Option<String>) {
-    let mut writer = match crate::runs::RunWriter::create_unique(paper_hash) {
-        Ok(writer) => Some(writer),
-        Err(error) => {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: could not create run directory: {error}")
-                }),
-            );
-            None
-        }
-    };
+) -> Result<(Option<crate::runs::RunWriter>, Option<String>), String> {
+    let mut writer = crate::runs::RunWriter::create_unique(paper_hash)
+        .map_err(|error| format!("Could not create the durable run workspace: {error}"))?;
+    writer
+        .set_pending_meta(pending_meta)
+        .map_err(|error| format!("Could not initialize the durable run manifest: {error}"))?;
 
-    if let Some(writer) = writer.as_mut() {
-        if let Err(error) = writer.set_pending_meta(pending_meta) {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: could not update pending run manifest: {error}")
-                }),
-            );
-        }
-    }
-
-    if let Some(writer) = writer.as_ref() {
+    {
         let logs_dir = writer.dir().join("logs");
         let log_path = logs_dir.join("run.log");
         let opened = std::fs::create_dir_all(&logs_dir).and_then(|()| {
@@ -58,26 +77,15 @@ pub(super) fn create_run_workspace(
         }
     }
 
-    let artifact_dir = writer.as_ref().and_then(|writer| {
-        let dir = writer.dir().join("artifacts");
-        match std::fs::create_dir_all(&dir) {
-            Ok(()) => Some(
-                crate::pipeline::claude::normalize_cli_root(&dir.to_string_lossy())
-                    .unwrap_or_else(|| dir.to_string_lossy().replace('\\', "/")),
-            ),
-            Err(error) => {
-                let _ = app.emit_event(
-                    "pipeline:log",
-                    serde_json::json!({
-                        "line": format!("WARNING: could not create artifact dir, steps will use stdout output: {error}")
-                    }),
-                );
-                None
-            }
-        }
-    });
+    let dir = writer.dir().join("artifacts");
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create the durable artifact directory: {error}"))?;
+    let artifact_dir = Some(
+        crate::pipeline::claude::normalize_cli_root(&dir.to_string_lossy())
+            .unwrap_or_else(|| dir.to_string_lossy().replace('\\', "/")),
+    );
     crate::pipeline::api_common::reset_write_budget();
-    (writer, artifact_dir)
+    Ok((Some(writer), artifact_dir))
 }
 
 /// Begin mirroring logs before extraction has produced a paper hash/run
@@ -151,7 +159,7 @@ pub(super) fn finalize_run(
     report: &PipelineReport,
     markdown: &str,
     meta: crate::runs::RunFinishMeta,
-) -> Option<String> {
+) -> Result<String, String> {
     let outputs = report.all_outputs();
     for (i, output) in outputs.iter().enumerate() {
         let slug = output
@@ -182,52 +190,63 @@ pub(super) fn finalize_run(
             ("md", format!("{}{}", header, output.raw_text))
         };
         let rel = format!("artifacts/{:02}_{}.{}", i + 1, slug, extension);
-        if let Err(e) = w.add_text(&rel, &output.step_label, "step", &contents) {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!("WARNING: {e}") }),
-            );
-        }
+        w.add_text(&rel, &output.step_label, "step", &contents)
+            .map_err(|error| {
+                format!(
+                    "Could not durably save step '{}': {error}",
+                    output.step_label
+                )
+            })?;
     }
-    if let Err(e) = w
-        .add_text("report.md", "Report", "report", markdown)
+    w.add_text("report.md", "Report", "report", markdown)
         .and_then(|()| crate::runs::sync_run_file(&w.dir().join("report.md")))
-    {
-        let _ = app.emit_event(
-            "pipeline:log",
-            serde_json::json!({ "line": format!("WARNING: {e}") }),
-        );
-    }
+        .map_err(|error| format!("Could not durably save report.md: {error}"))?;
     if let Some(findings) = report.products.findings.as_ref() {
-        if let Err(error) = serde_json::to_string_pretty(findings)
+        serde_json::to_string_pretty(findings)
             .map_err(|error| format!("Failed to serialize findings: {error}"))
             .and_then(|json| w.add_text("findings.json", "Findings", "product", &json))
             .and_then(|()| crate::runs::sync_run_file(&w.dir().join("findings.json")))
-        {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!("WARNING: {error}") }),
-            );
-        }
+            .map_err(|error| format!("Could not durably save findings.json: {error}"))?;
+    }
+    for product in &report.products.named {
+        let extension = if product.viewer == "json" || !product.content.is_string() {
+            "json"
+        } else if product.viewer == "markdown" {
+            "md"
+        } else {
+            "txt"
+        };
+        let contents = if extension == "json" {
+            serde_json::to_string_pretty(&product.content).map_err(|error| {
+                format!("Failed to serialize product '{}': {error}", product.key)
+            })?
+        } else {
+            product.content.as_str().unwrap_or_default().to_string()
+        };
+        let rel_path = format!("products/{}.{}", product.key, extension);
+        w.add_text(&rel_path, &product.key, "product", &contents)
+            .and_then(|()| crate::runs::sync_run_file(&w.dir().join(&rel_path)))
+            .map_err(|error| {
+                format!(
+                    "Could not durably save named product '{}': {error}",
+                    product.key
+                )
+            })?;
     }
     // Structured report, so a re-run can reload prior step outputs. It must be
     // fsynced before the checkpoint directory below is removed.
-    let report_json_durable = serde_json::to_string_pretty(report)
+    serde_json::to_string_pretty(report)
         .map_err(|error| format!("Failed to serialize report data: {error}"))
         .and_then(|json| w.add_text("report.json", "Report data", "context", &json))
         .and_then(|()| crate::runs::sync_run_file(&w.dir().join("report.json")))
-        .map_err(|error| {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!("WARNING: {error}") }),
-            );
-        })
-        .is_ok();
+        .map_err(|error| format!("Could not durably save report.json: {error}"))?;
     // Structured checkpoints are only needed until report.json is durable.
     // Keep the final artifact tree uncluttered; interrupted runs retain their
     // checkpoint directory for recovery and inspection.
-    if report_json_durable {
-        let _ = std::fs::remove_dir_all(w.dir().join("artifacts").join("checkpoints"));
+    let checkpoint_dir = w.dir().join("artifacts").join("checkpoints");
+    if checkpoint_dir.exists() {
+        std::fs::remove_dir_all(&checkpoint_dir)
+            .map_err(|error| format!("Could not retire completed step checkpoints: {error}"))?;
     }
     let preserved_responses = w.register_unlisted("artifacts/agent-responses", "agent_response");
     if preserved_responses > 0 {
@@ -274,18 +293,9 @@ pub(super) fn finalize_run(
     crate::pipeline::logging::set_log_sink(None);
     let _ = w.register_existing("logs/run.log", "Console log", "context");
 
-    match w.finish(meta) {
-        Ok(manifest) => Some(manifest.run_id),
-        Err(e) => {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: could not write run manifest: {e}")
-                }),
-            );
-            None
-        }
-    }
+    w.finish(meta)
+        .map(|manifest| manifest.run_id)
+        .map_err(|error| format!("Could not publish the final run manifest: {error}"))
 }
 
 /// Purge old runs beyond the retention cap (0 = keep all), logging how many.
@@ -298,7 +308,7 @@ pub(super) fn enforce_retention(app: &crate::emit::EventBus, keep: usize, max_by
             let _ = app.emit_event(
                 "pipeline:log",
                 serde_json::json!({
-                    "line": format!("Removed {n} old run(s) to satisfy history retention limits")
+                    "line": format!("Moved {n} old run(s) to Trash to satisfy history retention limits")
                 }),
             );
         }

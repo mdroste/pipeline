@@ -1,24 +1,21 @@
-You are validating a consolidated findings product on an academic paper. Verify every finding against the paper and return the filtered product containing only findings that hold up.
-
-STEP 1 — PREPARE THE PAPER EVIDENCE (do this before verification):
-If the complete paper text and orientation map are already present in shared context, use them directly and do not read their staged files again. Otherwise read the orientation map and the complete paper text. Retrieve independent bounded ranges in batches or one tool turn when supported, and continue sequentially until the entire paper has been covered if batching is unavailable or incomplete.
-
-STEP 2 — VERIFY ALL FINDINGS:
-Check every finding in the consolidated product below against the complete paper evidence.
+You are validating a consolidated findings product on an academic paper. Check every finding against the complete paper, including relevant appendices and supplied supplementary material, and return only findings that hold up.
 
 CONSOLIDATED FINDINGS:
 {last_output}
 
-Common false positives to catch:
+Check common false positives: allegedly missing material found in surrounding text, footnotes, appendices, or supplements; tensions resolved by context; misquotation; an alternative valid derivation; and extraction artifacts. Inspect rendered pages or assets for claims about tables, figures, equations, or notation. When search is available, verify external literature claims against primary papers, publisher pages, or stable working-paper pages and retain the stable URL or DOI; otherwise use the paper's citations.
 
-- **"Missing" items that exist elsewhere**: Check the appendix, online appendix, footnotes, and supplementary material.
-- **"Contradictions" from partial reading**: The paper may resolve tensions in surrounding text.
-- **Misquoted or paraphrased claims**: If the actual text differs, determine whether the exact wording still supports the underlying concern. Correct an immaterial error; drop the finding if its substance depends on the misattribution.
-- **"Wrong" derivations using a different valid approach**: The paper may use an alternative technique the reviewer did not consider.
-- **Extraction artifacts mistaken for errors**: Apparent notation errors from PDF extraction are not author errors. Check the orientation map's extraction quality notes.
-- **Claims about tables, figures, or equations**: Inspect the relevant rendered page or document asset when available. Do not rely on possibly garbled extracted text when the visual evidence can resolve the claim.
-- **External literature claims**: If web search is available, verify claims about other work against primary papers, publisher pages, or stable working-paper pages, and keep any stable URL or DOI. If search is unavailable, judge them against the paper's own citations without discussing tool availability.
+Classify each finding privately as verified, repairable, or unsupported. Keep verified findings. Repair an incorrect quotation, locator, numerical detail, or scope when the underlying issue remains valid; otherwise drop it.
 
-Classify each finding privately as verified, repairable, or unsupported. Keep verified findings. When the underlying issue is valid but a quotation, page number, table entry, numerical detail, locator, or scope is wrong, correct that detail and narrow any overstatement rather than dropping the finding. Drop unsupported findings.
+Populate the supplied findings schema in the same order after removals. Set `schema_version` to `2`, reproduce the supplied taxonomy exactly, and assign surviving findings contiguous `rank` values starting at 1. Every surviving finding must retain its exact input `id`; do not replace identifiers, and do not add new findings. Preserve each finding's title, category, reviewer and call lineage, problem, consequence, recommended action, and evidence, repairing those fields only when the paper evidence requires it. Model-returned verification fields remain `unverified`; Pipeline records the validation disposition separately. Do not add verdict prose, praise, a preamble, a recommendation, or a summary.
 
-Populate the supplied findings schema in the same order after removals. Every surviving finding must retain its exact input `id`; do not renumber or replace identifiers, and do not add new findings. Preserve each finding's `title`, `category`, `sources`, `body`, and `evidence`, repairing those fields only when the paper evidence requires it. Do not add verdicts, validation notes, praise, a preamble, a recommendation, or a summary.
+Return `validation_dispositions` with exactly one entry for every input finding, in the original input order. Each entry contains the exact `finding_id`, one disposition, and a specific non-empty `reason`:
+
+- `retained` when the finding is unchanged;
+- `revised` when any substantive field or locator was repaired;
+- `merged_into` when it was combined into another surviving stable ID (also set `merged_into` to that ID);
+- `rejected_false_positive` when paper evidence disproves it;
+- `unverified_missing_evidence` when it cannot be supported by a concrete locator.
+- `deferred_manual_review` when resolution requires human subject-matter judgment rather than more evidence retrieval.
+
+Pipeline computes before/after hashes and rejects incomplete or inconsistent ledgers. Do not invent hash values.

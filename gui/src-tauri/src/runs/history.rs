@@ -1,10 +1,8 @@
 use super::*;
 
-/// Identity marker for a run whose deletion started. `delete_run` renames
-/// `manifest.json` to this name before removing anything else, so a deletion
-/// interrupted partway (e.g. a file locked by another Windows process) leaves
-/// a directory that recovery finishes deleting instead of resurrecting as a
-/// synthetic "failed" run.
+/// Legacy identity marker for a run whose permanent deletion started in an
+/// older Pipeline release. Current user and retention deletion moves the whole
+/// run to recoverable Trash; startup recovery still honors old tombstones.
 pub(super) const DELETE_TOMBSTONE: &str = "manifest.deleting.json";
 
 fn resumable_status(status: &str) -> bool {
@@ -60,7 +58,7 @@ pub(super) fn recover_resumable_run_dir(
 ) -> Result<bool, String> {
     if !matches!(
         manifest.status.as_str(),
-        "running" | "partial" | "failed" | "cancelled" | "interrupted" | "done"
+        "running" | "partial" | "failed" | "cancelled" | "interrupted" | "done" | "degraded"
     ) {
         return Ok(false);
     }
@@ -83,7 +81,7 @@ pub(super) fn recover_resumable_run_dir(
     // possibly-good report.md along with the unreadable report.json (for
     // example one over the read cap, or damaged by an external tool). Leave
     // completed runs untouched rather than destroying delivered output.
-    if manifest.status == "done" {
+    if matches!(manifest.status.as_str(), "done" | "degraded") {
         if recovered_response_index {
             write_manifest(dir, manifest)?;
         }
@@ -161,6 +159,15 @@ pub(super) fn recover_resumable_run_dir(
         step_outputs: outputs,
         failed_steps,
         products: Default::default(),
+        quality: crate::models::ReportQuality {
+            schema_version: 1,
+            status: "partial".to_string(),
+            limitations: vec![
+                "This report was reconstructed from durable checkpoints after an interrupted run."
+                    .to_string(),
+            ],
+            ..Default::default()
+        },
         referee_reports: Vec::new(),
         editor: None,
         report_date: chrono::DateTime::parse_from_rfc3339(&manifest.created)
@@ -589,9 +596,26 @@ pub fn update_run_meta(run_id: &str, title: &str, tags: &[String]) -> Result<(),
     write_manifest(&dir, &manifest)
 }
 
-/// Delete a run directory and everything under it. The run id is validated and
-/// the resolved path is confirmed to sit inside the runs directory before any
-/// removal, so a crafted id can't escape the sandbox.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrashedRun {
+    pub run_id: String,
+    pub deleted_at: String,
+    pub title: String,
+    pub input_name: String,
+}
+
+fn trash_runs_dir() -> Result<PathBuf, String> {
+    let runs = runs_dir()?;
+    let pipeline = runs
+        .parent()
+        .ok_or_else(|| "Cannot resolve Pipeline storage directory".to_string())?;
+    let trash = pipeline.join("trash").join("runs");
+    fs::create_dir_all(&trash).map_err(|error| format!("Cannot create run Trash: {error}"))?;
+    Ok(trash)
+}
+
+/// Move a completed run into recoverable Trash. The move is atomic because
+/// Trash lives beside the run store on the same filesystem.
 pub fn delete_run(run_id: &str) -> Result<(), String> {
     validate_run_id(run_id)?;
     let manifest = load_manifest(run_id)?;
@@ -608,31 +632,116 @@ pub fn delete_run(run_id: &str) -> Result<(), String> {
     if !canonical.starts_with(&base) || canonical == base {
         return Err("Invalid run id".into());
     }
-    // Delete with identity last: tombstone the manifest first, then remove the
-    // contents, then the tombstone and directory. Any failure leaves the
-    // tombstone in place for recovery to finish the deletion.
-    let tombstone = canonical.join(DELETE_TOMBSTONE);
-    fs::rename(canonical.join("manifest.json"), &tombstone)
-        .map_err(|e| format!("Failed to delete run: {e}"))?;
-    let entries = fs::read_dir(&canonical).map_err(|e| format!("Failed to delete run: {e}"))?;
-    let mut failure = None;
-    for entry in entries.flatten() {
-        if entry.file_name().to_str() == Some(DELETE_TOMBSTONE) {
+    let trash = trash_runs_dir()?;
+    let destination = trash.join(run_id);
+    if destination.exists() {
+        return Err(
+            "A trashed copy of this run already exists; restore or permanently delete it first"
+                .to_string(),
+        );
+    }
+    fs::rename(&canonical, &destination)
+        .map_err(|error| format!("Failed to move run to Trash: {error}"))?;
+    sync_directory(&base)?;
+    sync_directory(&trash)?;
+    Ok(())
+}
+
+pub fn list_trashed_runs() -> Result<Vec<TrashedRun>, String> {
+    let trash = trash_runs_dir()?;
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&trash)
+        .map_err(|error| format!("Cannot list run Trash: {error}"))?
+        .flatten()
+    {
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
             continue;
         }
-        let removed = if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            fs::remove_dir_all(entry.path())
-        } else {
-            fs::remove_file(entry.path())
+        let Some(run_id) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
         };
-        if let Err(e) = removed {
-            failure.get_or_insert(format!("Failed to delete run: {e}"));
+        if validate_run_id(&run_id).is_err() {
+            continue;
         }
+        let deleted_at = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .map(chrono::DateTime::<chrono::Local>::from)
+            .map(|time| time.to_rfc3339())
+            .unwrap_or_default();
+        let manifest = read_utf8_at_most(
+            &entry.path().join("manifest.json"),
+            MAX_MANIFEST_BYTES,
+            "Trashed run manifest",
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str::<RunManifest>(&json).ok());
+        let title = manifest
+            .as_ref()
+            .map(|value| value.title.clone())
+            .unwrap_or_default();
+        let input_name = manifest
+            .as_ref()
+            .and_then(|value| Path::new(&value.input_path).file_name())
+            .and_then(|value| value.to_str())
+            .unwrap_or("Report")
+            .to_string();
+        entries.push(TrashedRun {
+            run_id,
+            deleted_at,
+            title,
+            input_name,
+        });
     }
-    if let Some(error) = failure {
-        return Err(error);
+    entries.sort_by(|left, right| right.deleted_at.cmp(&left.deleted_at));
+    Ok(entries)
+}
+
+pub fn restore_trashed_run(run_id: &str) -> Result<(), String> {
+    validate_run_id(run_id)?;
+    let trash = trash_runs_dir()?;
+    let source = trash.join(run_id);
+    let canonical = source
+        .canonicalize()
+        .map_err(|_| "Trashed run not found".to_string())?;
+    if canonical.parent() != Some(trash.as_path()) || !canonical.is_dir() {
+        return Err("Invalid trashed run id".to_string());
     }
-    fs::remove_file(&tombstone).map_err(|e| format!("Failed to delete run: {e}"))?;
-    fs::remove_dir(&canonical).map_err(|e| format!("Failed to delete run: {e}"))?;
+    let root = runs_dir()?;
+    let destination = root.join(run_id);
+    if destination.exists() {
+        return Err("A run with this id already exists in History".to_string());
+    }
+    crate::safety::open_regular_file(&canonical.join("manifest.json"))
+        .map_err(|_| "Trashed run has no valid manifest".to_string())?;
+    fs::rename(&canonical, &destination)
+        .map_err(|error| format!("Failed to restore run from Trash: {error}"))?;
+    sync_directory(&root)?;
+    sync_directory(&trash)
+}
+
+/// Deliberate, irreversible deletion of a run that is already in Trash.
+pub fn permanently_delete_trashed_run(run_id: &str) -> Result<(), String> {
+    validate_run_id(run_id)?;
+    let trash = trash_runs_dir()?
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve run Trash: {error}"))?;
+    let source = trash.join(run_id);
+    let canonical = source
+        .canonicalize()
+        .map_err(|_| "Trashed run not found".to_string())?;
+    if canonical.parent() != Some(trash.as_path()) {
+        return Err("Invalid trashed run id".to_string());
+    }
+    fs::remove_dir_all(&canonical)
+        .map_err(|error| format!("Failed to permanently delete trashed run: {error}"))?;
+    sync_directory(&trash)
+}
+
+fn sync_directory(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("Failed to sync '{}': {error}", path.display()))?;
     Ok(())
 }

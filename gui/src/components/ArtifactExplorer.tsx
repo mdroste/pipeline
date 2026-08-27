@@ -1471,7 +1471,7 @@ export default function ArtifactExplorer({
       {/* Tree */}
       {navigationOpen ? (
         <nav
-          style={{ width: treeWidth }}
+          style={{ width: treeWidth, maxWidth: "42vw" }}
           className="relative shrink-0 border-r border-gray-200 dark:border-gray-800"
         >
           <div className="h-full space-y-4 overflow-y-auto p-3">

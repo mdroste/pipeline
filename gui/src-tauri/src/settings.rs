@@ -469,7 +469,7 @@ fn default_max_retries() -> u32 {
 }
 
 fn default_max_saved_run_bytes() -> u64 {
-    5_000_000_000
+    0
 }
 
 fn default_profile() -> String {

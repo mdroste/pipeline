@@ -25,6 +25,421 @@ pub struct ExportRunArtifactsResult {
     pub bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportMode {
+    Shareable,
+    Forensic,
+    Custom,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExportSelection {
+    pub report: bool,
+    pub verified_findings: bool,
+    pub provenance: bool,
+    pub workflow: bool,
+    pub source_documents: bool,
+    pub raw_responses: bool,
+    pub logs: bool,
+    pub supporting_artifacts: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPackageResult {
+    pub exported_path: String,
+    pub file_count: u64,
+    pub bytes: u64,
+    /// SHA-256 of `checksums.sha256`, which commits to every exported payload
+    /// file and the export manifest without creating a circular checksum.
+    pub checksum: String,
+    pub mode: String,
+    pub sensitivity: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ExportFileRecord {
+    pub(super) path: String,
+    pub(super) bytes: u64,
+    pub(super) sha256: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportManifest {
+    schema_version: u32,
+    run_id: String,
+    created_at: String,
+    mode: String,
+    sensitivity: String,
+    includes_source_material: bool,
+    includes_raw_responses: bool,
+    includes_logs: bool,
+    includes_supporting_artifacts: bool,
+    payload_checksum: String,
+    files: Vec<ExportFileRecord>,
+}
+
+static RECENT_EXPORT_PATHS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::VecDeque<std::path::PathBuf>>,
+> = std::sync::OnceLock::new();
+
+pub(super) fn record_export_path(path: &std::path::Path) {
+    let Ok(path) = path.canonicalize() else {
+        return;
+    };
+    let paths = RECENT_EXPORT_PATHS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()));
+    if let Ok(mut paths) = paths.lock() {
+        paths.retain(|existing| existing != &path);
+        paths.push_front(path);
+        paths.truncate(16);
+    }
+}
+
+fn full_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn safe_export_relative_path(relative: &str) -> Result<std::path::PathBuf, String> {
+    let path = std::path::Path::new(relative);
+    if relative.is_empty()
+        || relative.contains('\\')
+        || !path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("Invalid run artifact path '{relative}'"));
+    }
+    Ok(path.to_path_buf())
+}
+
+pub(super) fn copy_export_file(
+    source_root: &std::path::Path,
+    destination_root: &std::path::Path,
+    relative: &str,
+) -> Result<(), String> {
+    let relative = safe_export_relative_path(relative)?;
+    let source = source_root.join(&relative);
+    let mut input = crate::safety::open_regular_file(&source)
+        .map_err(|error| format!("Could not export '{}': {error}", relative.display()))?;
+    let target = destination_root.join(&relative);
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("Export path has no parent: {}", target.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create '{}': {error}", parent.display()))?;
+    let mut output = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&target)
+        .map_err(|error| format!("Could not create '{}': {error}", target.display()))?;
+    std::io::copy(&mut input, &mut output)
+        .map_err(|error| format!("Could not copy '{}': {error}", relative.display()))?;
+    Ok(())
+}
+
+fn write_export_json(
+    destination_root: &std::path::Path,
+    relative: &str,
+    value: &impl serde::Serialize,
+) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|error| format!("Could not serialize {relative}: {error}"))?;
+    let target = destination_root.join(safe_export_relative_path(relative)?);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create export directory: {error}"))?;
+    }
+    std::fs::write(&target, bytes)
+        .map_err(|error| format!("Could not write '{}': {error}", target.display()))
+}
+
+fn verified_status(status: &str) -> bool {
+    matches!(status, "verified" | "verified_with_normalization")
+}
+
+pub(super) fn write_shareable_products(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+    manifest: &crate::runs::RunManifest,
+    include_findings: bool,
+    include_provenance: bool,
+) -> Result<(), String> {
+    let report_json = std::fs::read_to_string(source.join("report.json"))
+        .map_err(|error| format!("Could not read structured report: {error}"))?;
+    let report: crate::models::PipelineReport = serde_json::from_str(&report_json)
+        .map_err(|error| format!("Could not parse structured report: {error}"))?;
+    if include_findings {
+        let mut findings = report.products.findings.unwrap_or_default();
+        findings.findings = findings
+            .findings
+            .into_iter()
+            .filter_map(|mut finding| {
+                finding
+                    .evidence
+                    .retain(|evidence| verified_status(&evidence.verification_status));
+                if verified_status(&finding.verification_status) || !finding.evidence.is_empty() {
+                    for evidence in &mut finding.evidence {
+                        // Internal artifact addresses are not portable and can
+                        // reveal the run layout. Human citations remain.
+                        evidence.artifact_path.clear();
+                    }
+                    Some(finding)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        write_export_json(destination, "verified-findings.json", &findings)?;
+        write_export_json(destination, "quality.json", &report.quality)?;
+        let limitations = if report.quality.limitations.is_empty() {
+            "# Limitations\n\nNo deterministic limitations were recorded. Shareable exports still omit unverified findings, source documents, raw model responses, and logs by default.\n".to_string()
+        } else {
+            format!(
+                "# Limitations\n\n{}\n\nShareable exports omit unverified findings, source documents, raw model responses, and logs by default.\n",
+                report
+                    .quality
+                    .limitations
+                    .iter()
+                    .map(|item| format!("- {item}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
+        std::fs::write(destination.join("limitations.md"), limitations)
+            .map_err(|error| format!("Could not write limitations: {error}"))?;
+    }
+    if include_provenance {
+        let provenance = serde_json::json!({
+            "schemaVersion": 1,
+            "runId": manifest.run_id,
+            "created": manifest.created,
+            "input": {
+                "mode": manifest.input_mode,
+                "interpretation": manifest.input_interpretation,
+                "contentHash": manifest.input_identity.content_hash,
+            },
+            "profile": { "id": manifest.profile_id, "name": manifest.profile_name },
+            "workflow": {
+                "fingerprint": manifest.workflow_fingerprint,
+                "specialistCatalogRevision": manifest.specialist_catalog_revision,
+            },
+            "provider": manifest.provider,
+            "status": manifest.status,
+            "durationSeconds": manifest.duration_secs,
+            "usage": manifest.usage,
+            "quality": report.quality,
+            "redactions": [
+                "absolute input paths", "run variables", "credential material",
+                "raw model responses", "logs", "source documents"
+            ],
+        });
+        write_export_json(destination, "provenance.json", &provenance)?;
+    }
+    Ok(())
+}
+
+fn custom_artifact_selected(
+    artifact: &crate::runs::ArtifactEntry,
+    selection: &ExportSelection,
+) -> bool {
+    let path = artifact.rel_path.as_str();
+    if path == "report.md" || path == "findings.json" || path == "manifest.json" {
+        return false;
+    }
+    if path == "context/workflow.json" {
+        return selection.workflow;
+    }
+    if path == "report.json" || artifact.group == "step" || artifact.group == "agent_response" {
+        return selection.raw_responses;
+    }
+    if path.starts_with("logs/") {
+        return selection.logs;
+    }
+    if artifact.group == "document"
+        || artifact.group == "pages"
+        || artifact.group == "figures"
+        || path.starts_with("context/source-evidence/")
+        || path == crate::runs::DOCUMENT_TEXT_PATH
+    {
+        return selection.source_documents;
+    }
+    selection.supporting_artifacts
+        && matches!(artifact.group.as_str(), "product" | "files" | "context")
+}
+
+pub(super) fn write_custom_payload(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+    manifest: &crate::runs::RunManifest,
+    selection: &ExportSelection,
+) -> Result<(), String> {
+    if selection.report {
+        copy_export_file(source, destination, "report.md")?;
+    }
+    if selection.verified_findings || selection.provenance {
+        write_shareable_products(
+            source,
+            destination,
+            manifest,
+            selection.verified_findings,
+            selection.provenance,
+        )?;
+    }
+    for artifact in &manifest.artifacts {
+        if custom_artifact_selected(artifact, selection) {
+            copy_export_file(source, destination, &artifact.rel_path)?;
+        }
+    }
+    if selection.source_documents {
+        if let Some(pages) = &manifest.page_artifacts {
+            for page in 1..=pages.count {
+                let relative = format!(
+                    "artifacts/pages/page-{page:0width$}.{}",
+                    pages.extension,
+                    width = pages.digit_width as usize
+                );
+                copy_export_file(source, destination, &relative)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn enumerate_export_files(
+    root: &std::path::Path,
+) -> Result<Vec<ExportFileRecord>, String> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut paths = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory)
+            .map_err(|error| format!("Could not inspect export: {error}"))?
+        {
+            let entry = entry.map_err(|error| format!("Could not inspect export: {error}"))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("Could not inspect export: {error}"))?;
+            if kind.is_symlink() {
+                return Err(format!(
+                    "Export contains a symbolic link: {}",
+                    entry.path().display()
+                ));
+            }
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file() {
+                paths.push(entry.path());
+            }
+        }
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            use sha2::{Digest as _, Sha256};
+            use std::io::Read as _;
+            let mut file = crate::safety::open_regular_file(&path)
+                .map_err(|error| format!("Could not checksum '{}': {error}", path.display()))?;
+            let mut digest = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            let mut byte_count = 0u64;
+            loop {
+                let read = file
+                    .read(&mut buffer)
+                    .map_err(|error| format!("Could not checksum '{}': {error}", path.display()))?;
+                if read == 0 {
+                    break;
+                }
+                byte_count = byte_count.saturating_add(read as u64);
+                digest.update(&buffer[..read]);
+            }
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| "Export path escaped its package".to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            Ok(ExportFileRecord {
+                path: relative,
+                bytes: byte_count,
+                sha256: format!("{:x}", digest.finalize()),
+            })
+        })
+        .collect()
+}
+
+pub(super) fn finalize_export_metadata(
+    root: &std::path::Path,
+    run_id: &str,
+    mode: ExportMode,
+    selection: &ExportSelection,
+) -> Result<(u64, u64, String, String), String> {
+    let files = enumerate_export_files(root)?;
+    let ledger = files
+        .iter()
+        .map(|file| format!("{}  {}", file.sha256, file.path))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let payload_checksum = full_sha256(ledger.as_bytes());
+    let includes_source_material = mode == ExportMode::Forensic || selection.source_documents;
+    let includes_raw_responses = mode == ExportMode::Forensic || selection.raw_responses;
+    let includes_logs = mode == ExportMode::Forensic || selection.logs;
+    let includes_supporting_artifacts =
+        mode == ExportMode::Forensic || selection.supporting_artifacts;
+    let sensitivity = if includes_source_material
+        || includes_raw_responses
+        || includes_logs
+        || includes_supporting_artifacts
+    {
+        "sensitive"
+    } else {
+        "shareable"
+    };
+    let mode_label = match mode {
+        ExportMode::Shareable => "shareable",
+        ExportMode::Forensic => "forensic",
+        ExportMode::Custom => "custom",
+    };
+    let manifest = ExportManifest {
+        schema_version: 1,
+        run_id: run_id.to_string(),
+        created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        mode: mode_label.to_string(),
+        sensitivity: sensitivity.to_string(),
+        includes_source_material,
+        includes_raw_responses,
+        includes_logs,
+        includes_supporting_artifacts,
+        payload_checksum,
+        files,
+    };
+    write_export_json(root, "export-manifest.json", &manifest)?;
+    let all_files = enumerate_export_files(root)?;
+    let checksums = format!(
+        "{}\n",
+        all_files
+            .iter()
+            .map(|file| format!("{}  {}", file.sha256, file.path))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    std::fs::write(root.join("checksums.sha256"), checksums.as_bytes())
+        .map_err(|error| format!("Could not write checksums: {error}"))?;
+    let checksum = full_sha256(checksums.as_bytes());
+    let final_files = enumerate_export_files(root)?;
+    let bytes = final_files.iter().map(|file| file.bytes).sum();
+    Ok((
+        final_files.len() as u64,
+        bytes,
+        checksum,
+        sensitivity.to_string(),
+    ))
+}
+
 pub(super) fn create_export_stage(
     destination: &std::path::Path,
 ) -> Result<tempfile::TempDir, String> {
@@ -175,6 +590,30 @@ pub async fn export_run_artifacts(
     run_id: String,
     destination: String,
 ) -> Result<ExportRunArtifactsResult, String> {
+    let result = export_run_package(
+        run_id,
+        destination,
+        ExportMode::Forensic,
+        ExportSelection::default(),
+    )
+    .await?;
+    Ok(ExportRunArtifactsResult {
+        exported_path: result.exported_path,
+        file_count: result.file_count,
+        bytes: result.bytes,
+    })
+}
+
+/// Export a durable run under an explicit disclosure contract. Shareable is
+/// intentionally allowlist-only; forensic is intentionally complete and
+/// labelled sensitive; custom copies exactly the selected artifact classes.
+#[tauri::command]
+pub async fn export_run_package(
+    run_id: String,
+    destination: String,
+    mode: ExportMode,
+    selection: ExportSelection,
+) -> Result<ExportPackageResult, String> {
     tokio::task::spawn_blocking(move || {
         crate::runs::validate_run_id(&run_id)?;
         let manifest = crate::runs::load_manifest(&run_id)?;
@@ -203,17 +642,95 @@ pub async fn export_run_artifacts(
             );
         }
         let stage = create_export_stage(&destination)?;
-        let (file_count, bytes) = copy_export_tree(&source, stage.path())?;
-        let exported =
-            finish_export_stage(&stage, &destination, &format!("pipeline-run-{run_id}"))?;
-        Ok(ExportRunArtifactsResult {
+        match mode {
+            ExportMode::Shareable => {
+                copy_export_file(&source, stage.path(), "report.md")?;
+                write_shareable_products(&source, stage.path(), &manifest, true, true)?;
+            }
+            ExportMode::Forensic => {
+                copy_export_tree(&source, stage.path())?;
+            }
+            ExportMode::Custom => {
+                if !selection.report
+                    && !selection.verified_findings
+                    && !selection.provenance
+                    && !selection.workflow
+                    && !selection.source_documents
+                    && !selection.raw_responses
+                    && !selection.logs
+                    && !selection.supporting_artifacts
+                {
+                    return Err("Select at least one item for a custom export".to_string());
+                }
+                write_custom_payload(&source, stage.path(), &manifest, &selection)?;
+            }
+        }
+        let (file_count, bytes, checksum, sensitivity) =
+            finalize_export_metadata(stage.path(), &run_id, mode, &selection)?;
+        let mode_label = match mode {
+            ExportMode::Shareable => "shareable",
+            ExportMode::Forensic => "forensic",
+            ExportMode::Custom => "custom",
+        };
+        let exported = finish_export_stage(
+            &stage,
+            &destination,
+            &format!("pipeline-{mode_label}-{run_id}"),
+        )?;
+        record_export_path(&exported);
+        Ok(ExportPackageResult {
             exported_path: exported.to_string_lossy().to_string(),
             file_count,
             bytes,
+            checksum,
+            mode: mode_label.to_string(),
+            sensitivity,
         })
     })
     .await
     .map_err(|error| format!("Run export task failed: {error}"))?
+}
+
+pub(super) fn validated_recent_export(path: &str) -> Result<std::path::PathBuf, String> {
+    let canonical = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve the exported package: {error}"))?;
+    let paths = RECENT_EXPORT_PATHS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()));
+    let paths = paths
+        .lock()
+        .map_err(|_| "Recent export registry is unavailable".to_string())?;
+    if !paths.iter().any(|recent| recent == &canonical) {
+        return Err("Pipeline can reveal only a package exported in this app session".to_string());
+    }
+    Ok(canonical)
+}
+
+#[tauri::command]
+pub fn reveal_export_in_folder(path: String) -> Result<(), String> {
+    let path = validated_recent_export(&path)?;
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg("-R").arg(&path);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer.exe");
+        command.arg(format!("/select,{}", path.display()));
+        command
+    };
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(path.parent().unwrap_or(&path));
+        command
+    };
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not reveal the exported package: {error}"))
 }
 
 /// Legacy in-memory export retained for older frontend builds. It now stages

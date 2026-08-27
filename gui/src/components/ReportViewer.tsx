@@ -442,6 +442,9 @@ const ReportMarkdown = memo(function ReportMarkdown({
 function ReportViewerContent({ markdown }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentsOpen, setContentsOpen] = useState(true);
+  const [fontScale, setFontScale] = useState(100);
+  const [wideReading, setWideReading] = useState(false);
+  const [relaxedLeading, setRelaxedLeading] = useState(true);
   const [contentsWidth, setContentsWidth] = usePersistentPanelWidth(
     "pipeline.ui.reportContentsWidth",
     240,
@@ -578,12 +581,28 @@ function ReportViewerContent({ markdown }: Props) {
       )}
 
       {/* Report content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="relative flex-1 overflow-y-auto">
+        <div className="sticky right-3 top-2 z-10 ml-auto mr-3 flex w-fit items-center gap-1 rounded-lg border border-gray-200 bg-white/95 p-1 text-xs shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
+          <button aria-label="Decrease report text size" onClick={() => setFontScale((value) => Math.max(85, value - 5))} className="rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">A−</button>
+          <button aria-label="Reset report text size" onClick={() => setFontScale(100)} className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">{fontScale}%</button>
+          <button aria-label="Increase report text size" onClick={() => setFontScale((value) => Math.min(130, value + 5))} className="rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">A+</button>
+          <button aria-pressed={wideReading} onClick={() => setWideReading((value) => !value)} className="rounded border-l border-gray-200 px-2 py-1 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800">{wideReading ? "Comfort width" : "Wide text"}</button>
+          <button aria-pressed={relaxedLeading} onClick={() => setRelaxedLeading((value) => !value)} className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">{relaxedLeading ? "Compact lines" : "Relaxed lines"}</button>
+        </div>
         {/* Key on the content so a change fully remounts this subtree. The
             find bar mutates these DOM nodes (wrapping matches in <mark>); a
             remount lets React discard the mutated tree wholesale instead of
             diffing against it, which otherwise throws or shows stale text. */}
-        <div key={normalizedMarkdown} className="report-content" ref={contentRef}>
+        <div
+          key={normalizedMarkdown}
+          className="report-content"
+          ref={contentRef}
+          style={{
+            fontSize: `${fontScale}%`,
+            lineHeight: relaxedLeading ? 1.75 : 1.5,
+            maxWidth: wideReading ? "68rem" : "52rem",
+          }}
+        >
           {previewTruncated && (
             <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
               This unusually large response is truncated in the interactive preview. The saved artifact remains unchanged.

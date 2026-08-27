@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { notify } from "../DialogService";
 import type { ExtractionConfig } from "../../lib/types";
 import { ADAPTIVE_AGENT_COUNT_KEY } from "../../lib/autoReview";
 import PromptEditor from "../PromptEditor";
@@ -140,7 +141,7 @@ function OrientationEditor({
       }
     } catch (error) {
       if (mounted.current && request === resetRequest.current) {
-        alert(
+        notify(
           `Failed to load the default orientation prompt: ${
             error instanceof Error ? error.message : String(error)
           }`,
@@ -162,7 +163,7 @@ function OrientationEditor({
       }
     } catch (error) {
       if (mounted.current && request === resetRequest.current) {
-        alert(
+        notify(
           `Failed to load the default orientation schema: ${
             error instanceof Error ? error.message : String(error)
           }`,
@@ -198,7 +199,7 @@ function OrientationEditor({
       }
     } catch (error) {
       if (mounted.current && request === resetRequest.current) {
-        alert(
+        notify(
           `Failed to load the adaptive router prompt and schema: ${
             error instanceof Error ? error.message : String(error)
           }`,

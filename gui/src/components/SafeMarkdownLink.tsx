@@ -3,6 +3,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
+import { notify } from "./DialogService";
 
 type SafeMarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   node?: unknown;
@@ -40,7 +41,7 @@ function openFromDesktop(
   event.preventDefault();
   void openExternal(href).catch((error) => {
     console.error("Could not open external Markdown link:", error);
-    window.alert(
+    notify(
       `Could not open the external link: ${
         error instanceof Error ? error.message : String(error)
       }`,

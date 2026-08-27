@@ -43,6 +43,7 @@ pub async fn start_batch(
     let inputs = extra_inputs.unwrap_or_default();
     crate::safety::validate_runtime_context(&vars, "Batch variables")?;
     crate::safety::validate_runtime_context(&inputs, "Batch named input paths")?;
+    validate_runtime_bindings(&snapshot.config, &vars, &inputs, true)?;
     validate_named_input_paths(&snapshot.config, &inputs, true)?;
     let dependency_input = paths
         .iter()

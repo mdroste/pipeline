@@ -299,7 +299,13 @@ pub(super) fn write_builtin_if_missing(path: &Path, profile: &ProfileData) -> Re
 
 /// Stock Grant Proposal Review — document input, panel-reviewer framing.
 pub(super) fn grant_review_profile() -> ProfileData {
-    generic_profile(
+    const GRANT_TAXONOMY: [&str; 4] = [
+        "Aims and Significance",
+        "Feasibility and Design",
+        "Internal Consistency",
+        "Panel Readability",
+    ];
+    let mut profile = generic_profile(
         "Grant Proposal Review",
         vec![
             prompt_step(
@@ -337,10 +343,62 @@ pub(super) fn grant_review_profile() -> ProfileData {
                 &[],
                 "grant_synthesis",
             ),
+            prompt_step(
+                "grant_validate",
+                "Validate Feedback",
+                Phase::Sequential,
+                &["WebSearch"],
+                "grant_validate",
+            ),
         ],
         ExtractionConfig::default(),
-        &[],
-    )
+        &["grant_validate"],
+    );
+    for step in &mut profile.steps {
+        if step.phase == Phase::Parallel {
+            step.output_schema = Some(crate::auto_review::specialist_schema());
+        }
+    }
+    if let Some(synthesis) = profile
+        .steps
+        .iter_mut()
+        .find(|step| step.id == "grant_synthesis")
+    {
+        synthesis.output_schema = Some(serde_json::json!({
+            "type": "object",
+            crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v2",
+            crate::pipeline::structured::FINDINGS_TAXONOMY_KEY: GRANT_TAXONOMY,
+        }));
+        synthesis.dependency_policy.required = vec![
+            "grant_aims".into(),
+            "grant_feasibility".into(),
+            "grant_clarity".into(),
+            "grant_consistency".into(),
+        ];
+    }
+    if let Some(validate) = profile
+        .steps
+        .iter_mut()
+        .find(|step| step.id == "grant_validate")
+    {
+        validate.context.include.retain(|selector| match selector {
+            ArtifactSelector::Step { step, .. } => step == "grant_synthesis",
+            _ => true,
+        });
+        validate.output_schema = Some(serde_json::json!({
+            "type": "object",
+            crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v2-validation",
+            crate::pipeline::structured::FINDINGS_TAXONOMY_KEY: GRANT_TAXONOMY,
+            crate::pipeline::structured::PRESERVE_FINDINGS_KEY: "grant_synthesis",
+        }));
+        validate.dependency_policy.required = vec!["grant_synthesis".into()];
+    }
+    profile.outputs.primary_step = "grant_validate".to_string();
+    profile.outputs.findings_step = "grant_validate".to_string();
+    profile.orientation_prompt = prompts::load_prompt("orientation_grant").unwrap_or_default();
+    profile.orientation_schema =
+        crate::orientation_contract::schema_for_prompt_name("orientation_grant");
+    profile
 }
 
 /// Built-in profiles created on first run.

@@ -9,6 +9,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog }));
 describe("PaperSelector", () => {
   beforeEach(() => {
     openDialog.mockReset();
+    localStorage.clear();
   });
 
   it("renders the default placeholder when nothing is selected", () => {
@@ -132,5 +133,20 @@ describe("PaperSelector", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not open the file picker: dialog plugin unavailable",
     );
+  });
+
+  it("can clear, replace, and reuse recent selections", async () => {
+    const onPathChange = vi.fn();
+    openDialog.mockResolvedValueOnce("/papers/first.pdf");
+    render(<PaperSelector onPathChange={onPathChange} disabled={false} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /select file/i }));
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    expect(onPathChange).toHaveBeenLastCalledWith(null);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Choose a recent input" }), "0");
+    expect(onPathChange).toHaveBeenLastCalledWith("/papers/first.pdf");
+    openDialog.mockResolvedValueOnce("/papers/replacement.pdf");
+    await user.click(screen.getByRole("button", { name: "Replace" }));
+    expect(onPathChange).toHaveBeenLastCalledWith("/papers/replacement.pdf");
   });
 });

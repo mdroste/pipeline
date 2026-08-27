@@ -5,7 +5,9 @@ import EnginesPanel from "./EnginesPanel";
 import type { EngineStatus } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
+const confirmDialog = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("./DialogService", () => ({ confirmDialog, notify: vi.fn() }));
 
 type Handler = (event: { payload: unknown }) => void;
 const handlers = vi.hoisted(() => new Map<string, Handler>());
@@ -35,6 +37,7 @@ function engine(overrides: Partial<EngineStatus> = {}): EngineStatus {
 describe("EnginesPanel", () => {
   beforeEach(() => {
     invoke.mockReset();
+    confirmDialog.mockReset();
     handlers.clear();
     listen.mockReset();
     listen.mockImplementation((name: string, cb: Handler) => {
@@ -258,17 +261,16 @@ describe("EnginesPanel", () => {
 
   it("uninstall asks for confirmation and skips when declined", async () => {
     invoke.mockResolvedValue([engine({ installed: true, version: "3.7.0" })]);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    confirmDialog.mockResolvedValueOnce(false);
     render(<EnginesPanel />);
     await userEvent.click(
       await screen.findByRole("button", { name: "Uninstall" }),
     );
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(confirmDialog).toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalledWith(
       "uninstall_engine",
       expect.anything(),
     );
-    confirmSpy.mockRestore();
   });
 
   it("uninstall proceeds when confirmed", async () => {
@@ -277,7 +279,7 @@ describe("EnginesPanel", () => {
         return Promise.resolve([engine({ installed: true })]);
       return Promise.resolve();
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    confirmDialog.mockResolvedValueOnce(true);
     render(<EnginesPanel />);
     await userEvent.click(
       await screen.findByRole("button", { name: "Uninstall" }),
@@ -287,7 +289,6 @@ describe("EnginesPanel", () => {
         engineId: "paddleocr-vl-parser",
       }),
     );
-    confirmSpy.mockRestore();
   });
 
   it("fails closed and cleans partial registrations when a listener is unavailable", async () => {

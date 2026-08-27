@@ -48,6 +48,20 @@ pub fn render_markdown(
     md.push_str(RUN_DETAILS_END);
     md.push_str("\n\n");
 
+    let quality_status = if report.quality.status.trim().is_empty() {
+        if report.failed_steps.is_empty() {
+            "done"
+        } else {
+            "partial"
+        }
+    } else {
+        report.quality.status.as_str()
+    };
+    md.push_str(&format!(
+        "> **Quality status:** {}. Coverage and limitations are reported below.\n\n",
+        capitalize(quality_status)
+    ));
+
     // Warning for failed steps
     if !report.failed_steps.is_empty() {
         let labels: Vec<&str> = report
@@ -116,6 +130,8 @@ pub fn render_markdown(
         md.push_str("\n\n");
     }
 
+    render_quality_section(&mut md, report, quality_status);
+
     // Per-step timing / tokens / cost, when the run recorded any.
     if let Some(summary) = render_run_summary(report, settings) {
         md.push_str(RUN_DETAILS_START);
@@ -128,6 +144,99 @@ pub fn render_markdown(
 
     md.push_str("---\n");
     md
+}
+
+fn render_quality_section(md: &mut String, report: &PipelineReport, quality_status: &str) {
+    let quality = &report.quality;
+    md.push_str("---\n\n## Quality and limitations\n\n");
+    md.push_str(&format!(
+        "**Final status:** {}  \n",
+        capitalize(quality_status)
+    ));
+    if quality.schema_version == 0 {
+        md.push_str(
+            "This report predates the deterministic quality ledger; only preserved failure metadata is available.\n\n",
+        );
+        return;
+    }
+
+    md.push_str(&format!(
+        "**Extraction coverage:** {} input bytes via {}; {} pages, {} blocks, and {} assets recovered.  \n",
+        quality.input_bytes,
+        safe_inline(&quality.extraction_method),
+        quality.recovered_pages,
+        quality.recovered_blocks,
+        quality.recovered_assets
+    ));
+    md.push_str(&format!(
+        "**Orientation coverage:** {} bytes included; {} omitted.  \n",
+        quality.orientation_included_bytes, quality.orientation_omitted_bytes
+    ));
+    md.push_str(&format!(
+        "**Reviewer coverage:** {} completed, {} failed or blocked, {} skipped.  \n",
+        quality.completed_steps.len(),
+        quality.failed_steps.len(),
+        quality.skipped_steps.len()
+    ));
+    md.push_str(&format!(
+        "**Evidence:** {} verified, {} partially verified, {} unverified; {} manual-review item(s).  \n",
+        quality.verified_evidence,
+        quality.partially_verified_evidence,
+        quality.unverified_evidence,
+        quality.manual_review_items
+    ));
+    md.push_str(&format!(
+        "**Schema retries:** {}.  \n",
+        quality.schema_retry_events
+    ));
+    if !quality.requested_capabilities.is_empty() {
+        md.push_str(&format!(
+            "**Declared capabilities:** {}.  \n",
+            safe_join(&quality.requested_capabilities)
+        ));
+    }
+    if !quality.observed_capabilities.is_empty() {
+        md.push_str(&format!(
+            "**Observed tool classes:** {}.  \n",
+            safe_join(&quality.observed_capabilities)
+        ));
+    }
+    if !quality.external_providers.is_empty() {
+        md.push_str(&format!(
+            "**External providers:** {}.  \n",
+            safe_join(&quality.external_providers)
+        ));
+    }
+    md.push_str(&format!(
+        "**Reproducibility hash:** `{}`\n\n",
+        safe_inline(&quality.reproducibility_hash)
+    ));
+
+    if quality.limitations.is_empty() {
+        md.push_str("No deterministic limitations were recorded.\n\n");
+    } else {
+        md.push_str("### Recorded limitations\n\n");
+        for limitation in &quality.limitations {
+            md.push_str(&format!("- {}\n", safe_inline(limitation)));
+        }
+        md.push('\n');
+    }
+}
+
+fn safe_inline(value: &str) -> String {
+    value
+        .replace(['\r', '\n'], " ")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('|', "\\|")
+}
+
+fn safe_join(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| safe_inline(value))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(crate) fn capitalize(s: &str) -> String {

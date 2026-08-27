@@ -54,6 +54,10 @@ pub(super) fn write_text_atomic(dir: &Path, name: &str, content: &[u8]) -> Resul
         .map_err(|error| format!("Failed to sync recovery temp file: {error}"))?;
     temp.persist(destination)
         .map_err(|error| format!("Failed to publish recovered file: {}", error.error))?;
+    #[cfg(unix)]
+    fs::File::open(dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("Failed to sync recovery directory: {error}"))?;
     Ok(())
 }
 

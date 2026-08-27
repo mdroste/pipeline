@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import FlappyBirdGame from "./FlappyBirdGame";
 import type { AppPage } from "./NavRail";
+import type { ProfileSummary } from "../lib/types";
+import { REPORT_WORKSPACE_TABS } from "../lib/productMetadata";
 
 interface Props {
   onClose: () => void;
@@ -63,7 +66,18 @@ export default function AboutPage({
   initialSection,
 }: Props) {
   const [gameOpen, setGameOpen] = useState(false);
+  const [builtinProfiles, setBuiltinProfiles] = useState<ProfileSummary[]>([]);
   useKonamiCode(() => setGameOpen(true));
+
+  useEffect(() => {
+    let live = true;
+    void invoke<ProfileSummary[]>("list_profiles")
+      .then((profiles) => {
+        if (live) setBuiltinProfiles(profiles.filter((profile) => profile.builtin));
+      })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, []);
 
   return (
     <>
@@ -86,6 +100,7 @@ export default function AboutPage({
           onNavigate={onNavigate}
           onOpenPdfSettings={onOpenPdfSettings}
           initialSection={initialSection}
+          builtinProfiles={builtinProfiles}
         />
         <AboutFooter />
       </div>
@@ -98,10 +113,12 @@ function HelpContent({
   onNavigate,
   onOpenPdfSettings,
   initialSection,
+  builtinProfiles,
 }: {
   onNavigate?: (page: AppPage) => void;
   onOpenPdfSettings?: () => void;
   initialSection?: "privacy";
+  builtinProfiles: ProfileSummary[];
 }) {
   const privacyRef = useRef<HTMLDetailsElement>(null);
 
@@ -190,18 +207,17 @@ function HelpContent({
             steps run at the same time.
           </p>
           <div className="space-y-1.5">
-            <BuiltinRow
-              name="Automatic Paper Review (Full)"
-              description="Assembles 2–6 subject and method specialists alongside contribution, consistency, and exposition reviews."
-            />
-            <BuiltinRow
-              name="Automatic Paper Review (Quick)"
-              description="Assembles 2–4 subject and method specialists alongside consistency and exposition reviews, omitting the contribution and literature pass."
-            />
-            <BuiltinRow
-              name="Grant Proposal Review"
-              description="Reviews aims and novelty, feasibility, readability, and internal consistency."
-            />
+            {(builtinProfiles.length > 0 ? builtinProfiles : [
+              { id: "auto-review", name: "Automatic Paper Review (Full)", step_count: 5, builtin: true },
+              { id: "auto-review-quick", name: "Automatic Paper Review (Quick)", step_count: 4, builtin: true },
+              { id: "grant-review", name: "Grant Proposal Review", step_count: 4, builtin: true },
+            ]).map((profile) => (
+              <BuiltinRow
+                key={profile.id}
+                name={profile.name}
+                description={`${profile.step_count} configured review step${profile.step_count === 1 ? "" : "s"}. Open Workflows for the current prompts, providers, inputs, and outputs.`}
+              />
+            ))}
           </div>
           <div>
             <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-2">
@@ -231,14 +247,13 @@ function HelpContent({
 
         <Collapsible title="Reading your report">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            A finished report opens in a workspace with three tabs. Report is
-            the consolidated write-up. Issues lists structured findings you can
-            accept, reject, or annotate; evidence links open the cited page or
-            file. Sources holds the material saved with the report.
+            A finished report can expose {REPORT_WORKSPACE_TABS.length} views: {REPORT_WORKSPACE_TABS.map((tab) => tab.label).join(", ")}.
+            {" "}{REPORT_WORKSPACE_TABS.map((tab) => `${tab.label} contains ${tab.description} (${tab.availability}).`).join(" ")}
           </p>
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Save the report as Markdown or PDF, or export everything — sources,
-            page images, figures, step reports, and logs.
+            Use Export for a safe shareable package, a clearly marked sensitive
+            forensic archive, a custom selection, Markdown, or the system print
+            dialog for saving PDF.
           </p>
         </Collapsible>
 

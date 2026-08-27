@@ -66,7 +66,8 @@ export default function VariablePrompt({ variables, inputSlots = [], onSubmit, o
     }
   };
 
-  const missingRequired = inputSlots.some((s) => s.required && !inputs[s.key]);
+  const missingRequired = inputSlots.some((s) => s.required && !inputs[s.key])
+    || variables.some((variable) => variable.required && !(values[variable.key] ?? "").trim());
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -93,6 +94,7 @@ export default function VariablePrompt({ variables, inputSlots = [], onSubmit, o
             <div key={v.key}>
               <label htmlFor={`${idPrefix}-variable-${v.key}`} className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                 {v.label || v.key}
+                {v.required && <span className="text-red-600 dark:text-red-400"> *</span>}
               </label>
               {v.kind === "choice" && v.choices && v.choices.length > 0 ? (
                 <select
@@ -125,6 +127,8 @@ export default function VariablePrompt({ variables, inputSlots = [], onSubmit, o
               ) : (
                 <input
                   id={`${idPrefix}-variable-${v.key}`}
+                  type={v.secret ? "password" : "text"}
+                  aria-required={v.required || undefined}
                   value={values[v.key] ?? ""}
                   onChange={(e) => set(v.key, e.target.value)}
                   className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"

@@ -4,6 +4,189 @@ use crate::models::ExtractionResult;
 const MAX_PAPER_TEXT: usize = 250_000;
 const MAX_RETRIES: usize = 2;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct OrientationSampleRange {
+    pub byte_start: usize,
+    pub byte_end: usize,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct OrientationSample {
+    pub schema_version: u32,
+    pub original_bytes: usize,
+    pub included_bytes: usize,
+    pub omitted_bytes: usize,
+    pub truncated: bool,
+    pub ranges: Vec<OrientationSampleRange>,
+    #[serde(skip)]
+    pub text: String,
+}
+
+fn char_boundary_before(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn normalize_sample_ranges(mut ranges: Vec<OrientationSampleRange>) -> Vec<OrientationSampleRange> {
+    ranges.sort_by_key(|range| range.byte_start);
+    let mut normalized: Vec<OrientationSampleRange> = Vec::new();
+    for range in ranges {
+        if let Some(previous) = normalized.last_mut() {
+            if range.byte_start <= previous.byte_end {
+                previous.byte_end = previous.byte_end.max(range.byte_end);
+                for reason in range.reasons {
+                    if !previous.reasons.contains(&reason) {
+                        previous.reasons.push(reason);
+                    }
+                }
+                continue;
+            }
+        }
+        normalized.push(range);
+    }
+    normalized
+}
+
+/// Deterministically sample a long document across its beginning, section
+/// starts, evenly spaced interior positions, and tail. The range ledger is
+/// persisted with the run so routing coverage is inspectable and reproducible.
+pub fn orientation_sample(text: &str) -> OrientationSample {
+    if text.len() <= MAX_PAPER_TEXT {
+        return OrientationSample {
+            schema_version: 1,
+            original_bytes: text.len(),
+            included_bytes: text.len(),
+            omitted_bytes: 0,
+            truncated: false,
+            ranges: vec![OrientationSampleRange {
+                byte_start: 0,
+                byte_end: text.len(),
+                reasons: vec!["complete_document".to_string()],
+            }],
+            text: text.to_string(),
+        };
+    }
+
+    let range = |start: usize, end: usize, reason: String| OrientationSampleRange {
+        byte_start: char_boundary_before(text, start),
+        byte_end: char_boundary_before(text, end).max(char_boundary_before(text, start)),
+        reasons: vec![reason],
+    };
+    let mut ranges = vec![
+        range(0, 50_000, "document_start".to_string()),
+        range(
+            text.len().saturating_sub(40_000),
+            text.len(),
+            "document_tail".to_string(),
+        ),
+    ];
+
+    let mut headings = Vec::new();
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let keyword_heading = [
+            "abstract",
+            "introduction",
+            "background",
+            "method",
+            "methods",
+            "data",
+            "results",
+            "discussion",
+            "conclusion",
+            "conclusions",
+            "appendix",
+            "references",
+        ]
+        .iter()
+        .any(|keyword| {
+            lower == *keyword
+                || lower.ends_with(&format!(" {keyword}"))
+                || lower.starts_with(&format!("{keyword} "))
+                || lower.starts_with(&format!("{keyword}:"))
+        });
+        let markdown_heading = trimmed.starts_with('#') && trimmed.len() <= 240;
+        if (markdown_heading || keyword_heading) && !trimmed.is_empty() {
+            headings.push((offset, trimmed.chars().take(120).collect::<String>()));
+        }
+        offset += line.len();
+    }
+    if headings.len() > 24 {
+        headings = (0..24)
+            .map(|index| {
+                let selected = index * (headings.len() - 1) / 23;
+                headings[selected].clone()
+            })
+            .collect();
+        headings.dedup_by_key(|(offset, _)| *offset);
+    }
+    for (offset, heading) in headings {
+        let candidate = range(
+            offset,
+            offset.saturating_add(6_000),
+            format!("section_start:{heading}"),
+        );
+        let mut proposed = ranges.clone();
+        proposed.push(candidate);
+        let proposed = normalize_sample_ranges(proposed);
+        let bytes = proposed
+            .iter()
+            .map(|range| range.byte_end.saturating_sub(range.byte_start))
+            .sum::<usize>();
+        if bytes <= MAX_PAPER_TEXT {
+            ranges = proposed;
+        }
+    }
+    for (index, fraction) in [1usize, 2, 3, 4].into_iter().enumerate() {
+        let center = text.len().saturating_mul(fraction) / 5;
+        let candidate = range(
+            center.saturating_sub(2_500),
+            center.saturating_add(2_500),
+            format!("stratified_interior_{}", index + 1),
+        );
+        let mut proposed = ranges.clone();
+        proposed.push(candidate);
+        let proposed = normalize_sample_ranges(proposed);
+        let bytes = proposed
+            .iter()
+            .map(|range| range.byte_end.saturating_sub(range.byte_start))
+            .sum::<usize>();
+        if bytes <= MAX_PAPER_TEXT {
+            ranges = proposed;
+        }
+    }
+    let ranges = normalize_sample_ranges(ranges);
+    let included_bytes = ranges
+        .iter()
+        .map(|range| range.byte_end.saturating_sub(range.byte_start))
+        .sum();
+    let mut sampled = String::with_capacity(included_bytes + ranges.len() * 100);
+    for sample in &ranges {
+        sampled.push_str(&format!(
+            "\n\n[PIPELINE ORIENTATION SAMPLE bytes {}..{}; {}]\n",
+            sample.byte_start,
+            sample.byte_end,
+            sample.reasons.join(" | ")
+        ));
+        sampled.push_str(&text[sample.byte_start..sample.byte_end]);
+    }
+    OrientationSample {
+        schema_version: 1,
+        original_bytes: text.len(),
+        included_bytes,
+        omitted_bytes: text.len().saturating_sub(included_bytes),
+        truncated: true,
+        ranges,
+        text: sampled,
+    }
+}
+
 fn stock_survey_name(profile_prompt: &str) -> Option<&'static str> {
     let trimmed = profile_prompt.trim();
     if trimmed.is_empty()
@@ -14,6 +197,9 @@ fn stock_survey_name(profile_prompt: &str) -> Option<&'static str> {
         == crate::prompts::compiled_default("orientation_generic").map(str::trim)
     {
         Some("orientation_generic")
+    } else if Some(trimmed) == crate::prompts::compiled_default("orientation_grant").map(str::trim)
+    {
+        Some("orientation_grant")
     } else if Some(trimmed) == crate::prompts::compiled_default("orientation_folder").map(str::trim)
     {
         Some("orientation_folder")
@@ -117,23 +303,17 @@ pub async fn build_orientation_map(
         })
         .transpose()?
         .unwrap_or_else(|| serde_json::json!({"type": "object"}));
-    let truncated = extraction.text.len() > MAX_PAPER_TEXT;
-    let paper_text = if truncated {
-        // Find a valid UTF-8 char boundary at or before MAX_PAPER_TEXT
-        let mut boundary = MAX_PAPER_TEXT;
-        while boundary > 0 && !extraction.text.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        &extraction.text[..boundary]
-    } else {
-        &extraction.text
-    };
+    let sample = orientation_sample(&extraction.text);
+    let paper_text = sample.text.as_str();
 
     let mut quality_notes = extraction.quality_notes.clone();
-    if truncated {
+    if sample.truncated {
         quality_notes.push(format!(
-            "Survey built from the first {MAX_PAPER_TEXT} of {} characters; the survey may not cover the end of the input.",
-            extraction.text.len()
+            "Orientation used a deterministic section-aware sample of {} / {} bytes across {} ranges (including the document tail); {} bytes were omitted. See context/orientation_sampling.json.",
+            sample.included_bytes,
+            sample.original_bytes,
+            sample.ranges.len(),
+            sample.omitted_bytes,
         ));
     }
 
@@ -558,6 +738,33 @@ mod tests {
         .unwrap();
         assert!(prompt.contains("Include every object exactly once"));
         assert!(prompt.contains("ligatures mangled"));
+    }
+
+    #[test]
+    fn long_document_sampling_includes_sections_and_tail_with_a_bounded_ledger() {
+        let mut text = "# Abstract\nStart evidence.\n".to_string();
+        text.push_str(&"middle filler\n".repeat(12_000));
+        text.push_str("# Methods\nMETHOD_SENTINEL\n");
+        text.push_str(&"more filler\n".repeat(12_000));
+        text.push_str("# Appendix A\nAPPENDIX_SENTINEL\n");
+        text.push_str(&"tail filler\n".repeat(8_000));
+        text.push_str("TAIL_SENTINEL");
+
+        let sample = orientation_sample(&text);
+        assert!(sample.truncated);
+        assert!(sample.included_bytes <= MAX_PAPER_TEXT);
+        assert!(sample.text.contains("METHOD_SENTINEL"));
+        assert!(sample.text.contains("APPENDIX_SENTINEL"));
+        assert!(sample.text.contains("TAIL_SENTINEL"));
+        assert!(sample.omitted_bytes > 0);
+    }
+
+    #[test]
+    fn short_document_sampling_is_lossless() {
+        let sample = orientation_sample("é complete document");
+        assert!(!sample.truncated);
+        assert_eq!(sample.text, "é complete document");
+        assert_eq!(sample.ranges.len(), 1);
     }
 
     // ── resolve_survey_template ────────────────────────────────────

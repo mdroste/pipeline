@@ -584,8 +584,8 @@ fn read_utf8_at_most(path: &Path, limit: usize, label: &str) -> Result<String, S
 }
 
 /// Accumulates artifacts for a run and writes the manifest at the end.
-/// All writes are best-effort from the pipeline's perspective — callers log
-/// failures but never fail the run because persistence failed.
+/// Required artifacts are published atomically. Callers must propagate write
+/// failures rather than reporting a run as complete without durable results.
 pub struct RunWriter {
     dir: PathBuf,
     run_id: String,
@@ -699,8 +699,15 @@ impl RunWriter {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create {rel_path} parent: {e}"))?;
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| format!("Invalid artifact path: {rel_path}"))?;
+            persistence::write_text_atomic(parent, name, bytes)
+                .map_err(|e| format!("Failed to durably write {rel_path}: {e}"))?;
+        } else {
+            return Err(format!("Invalid artifact path: {rel_path}"));
         }
-        fs::write(&path, bytes).map_err(|e| format!("Failed to write {rel_path}: {e}"))?;
         self.artifacts.push(ArtifactEntry {
             rel_path: rel_path.to_string(),
             label: label.to_string(),
@@ -1165,7 +1172,9 @@ mod retention;
 pub use artifacts::{read_artifact, read_page_artifact, read_pdf_artifact_page};
 pub(crate) use history::captured_document_rel_path;
 pub use history::{
-    delete_run, list_runs, load_latest_report_for_input, recover_resumable_runs, update_run_meta,
+    delete_run, list_runs, list_trashed_runs, load_latest_report_for_input,
+    permanently_delete_trashed_run, recover_resumable_runs, restore_trashed_run, update_run_meta,
+    TrashedRun,
 };
 pub use persistence::load_manifest;
 pub use retention::{

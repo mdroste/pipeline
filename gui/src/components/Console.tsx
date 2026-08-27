@@ -4,6 +4,8 @@ import type { LlmRequestDetails, LogEntry, UsageState } from "../hooks/usePipeli
 interface Props {
   logs: LogEntry[];
   usage: UsageState;
+  /** True only while the foreground or batch run that owns these logs is active. */
+  active?: boolean;
 }
 
 type LevelFilter = "all" | "warn" | "error";
@@ -116,7 +118,7 @@ function RequestDetails({
   copyText,
 }: {
   request: LlmRequestDetails;
-  copyText: (text: string) => Promise<void>;
+  copyText: (text: string) => Promise<boolean>;
 }) {
   const [showPrompt, setShowPrompt] = useState(false);
   const toolText = request.tools.length > 0 ? request.tools.join(", ") : "None";
@@ -259,7 +261,7 @@ function RequestDetails({
 /** The pipeline console: session filter, text search, level filter, timestamps,
  *  per-line copy, jump-to-error, auto-scroll that pauses when scrolled up, and
  *  copy of the visible lines. */
-export default function Console({ logs, usage }: Props) {
+export default function Console({ logs, usage, active = true }: Props) {
   const [open, setOpen] = useState(true);
   const [height, setHeight] = useState(DEFAULT_CONSOLE_HEIGHT);
   const [selectedSession, setSelectedSession] = useState<number | "master">("master");
@@ -267,6 +269,7 @@ export default function Console({ logs, usage }: Props) {
   const [level, setLevel] = useState<LevelFilter>("all");
   const [showTimestamps, setShowTimestamps] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   // Auto-follow the tail unless the user scrolls up.
   const [follow, setFollow] = useState(true);
   const [showFirstError, setShowFirstError] = useState(false);
@@ -274,8 +277,14 @@ export default function Console({ logs, usage }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const previousActiveRef = useRef(active);
 
   useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    if (previousActiveRef.current && !active) setOpen(false);
+    previousActiveRef.current = active;
+  }, [active]);
 
   const stopResizing = useCallback(() => {
     document.body.style.cursor = "";
@@ -437,6 +446,8 @@ export default function Console({ logs, usage }: Props) {
     async (text: string) => {
       try {
         await navigator.clipboard.writeText(text);
+        setCopyError(null);
+        return true;
       } catch {
         // Fallback for webviews without async clipboard access.
         const ta = document.createElement("textarea");
@@ -445,21 +456,29 @@ export default function Console({ logs, usage }: Props) {
         ta.style.opacity = "0";
         document.body.appendChild(ta);
         ta.select();
+        let copied = false;
         try {
-          document.execCommand("copy");
+          copied = document.execCommand("copy");
         } catch {
-          /* give up silently */
+          copied = false;
         }
         document.body.removeChild(ta);
+        if (!copied) {
+          setCopyError("Clipboard access failed. Select the text and copy it manually.");
+          return false;
+        }
+        setCopyError(null);
+        return true;
       }
     },
     []
   );
 
   const copyAll = useCallback(async () => {
-    await copyText(visibleText());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (await copyText(visibleText())) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   }, [copyText, visibleText]);
 
   return (
@@ -492,7 +511,7 @@ export default function Console({ logs, usage }: Props) {
             className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-sm transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-200"
           >
             <span>{open ? "▼" : "▲"}</span>
-            <span>Console</span>
+            <span>{active ? "Active run console" : "Completed run console"}</span>
           </button>
           {sessions.length > 0 && (
             <select
@@ -537,6 +556,7 @@ export default function Console({ logs, usage }: Props) {
           {open && (
             <>
               <input
+                aria-label="Search active run console"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search…"
@@ -548,6 +568,7 @@ export default function Console({ logs, usage }: Props) {
                   <button
                     key={lv}
                     onClick={() => setLevel(lv)}
+                    aria-pressed={level === lv}
                     className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
                       level === lv
                         ? "bg-gray-700 text-white dark:bg-gray-600 dark:text-gray-100"
@@ -606,6 +627,8 @@ export default function Console({ logs, usage }: Props) {
           {open && (
             <button
               onClick={() => setShowTimestamps((v) => !v)}
+              aria-label="Show console timestamps"
+              aria-pressed={showTimestamps}
               className={`cursor-pointer rounded border border-gray-300 px-1.5 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 dark:border-gray-700 ${
                 showTimestamps
                   ? "bg-gray-700 text-white dark:bg-gray-600 dark:text-gray-100"
@@ -627,6 +650,12 @@ export default function Console({ logs, usage }: Props) {
         </div>
       </div>
 
+      {copyError && (
+        <div role="alert" className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {copyError}
+        </div>
+      )}
+
       {open && (
         <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto px-4 py-2 min-h-0 relative">
           {activeRequest && (
@@ -636,17 +665,14 @@ export default function Console({ logs, usage }: Props) {
               copyText={copyText}
             />
           )}
+          {visibleLogs.length > renderedLogs.length && (
+            <div role="status" className="mb-1 font-mono text-xs text-gray-400 dark:text-gray-600">
+              Showing {renderedLogs.length} of {visibleLogs.length} matching lines. Copy includes all.
+            </div>
+          )}
           <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
-            {visibleLogs.length > renderedLogs.length && (
-              <div
-                role="status"
-                className="mb-1 text-gray-400 dark:text-gray-600"
-              >
-                Showing {renderedLogs.length} of {visibleLogs.length} matching lines. Copy includes all.
-              </div>
-            )}
             {renderedLogs.map((entry, i) => (
-              <div
+              <span
                 key={i}
                 data-error={isError(entry) ? "1" : undefined}
                 className={`group flex gap-2 ${logLineClass(entry)}`}
@@ -656,15 +682,15 @@ export default function Console({ logs, usage }: Props) {
                 )}
                 <span className="flex-1 min-w-0">{entry.line}</span>
                 <button
-                  onClick={() => copyText(entry.line)}
+                  onClick={() => void copyText(entry.line)}
                   className="shrink-0 select-none text-gray-400 opacity-0 transition-opacity hover:text-gray-900 focus:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 group-hover:opacity-100 dark:text-gray-500 dark:hover:text-gray-200"
                   title="Copy this line"
                 >
                   ⧉
                 </button>
-              </div>
+              </span>
             ))}
-            <div ref={endRef} />
+            <span ref={endRef} className="block" />
           </pre>
           {!follow && (
             <button

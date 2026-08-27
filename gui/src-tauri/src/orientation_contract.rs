@@ -12,6 +12,7 @@ pub fn schema_for_prompt_name(name: &str) -> Option<Value> {
     match name.trim_end_matches(".md") {
         "orientation" => Some(paper_schema()),
         "orientation_generic" => Some(generic_schema()),
+        "orientation_grant" => Some(generic_schema()),
         "orientation_folder" => Some(folder_schema()),
         _ => None,
     }
@@ -326,6 +327,10 @@ mod tests {
             Some(generic_schema())
         );
         assert_eq!(
+            schema_for_prompt_name("orientation_grant"),
+            Some(generic_schema())
+        );
+        assert_eq!(
             schema_for_prompt_name("orientation_folder"),
             Some(folder_schema())
         );
@@ -334,7 +339,12 @@ mod tests {
 
     #[test]
     fn stock_prompts_leave_serialization_to_the_schema() {
-        for name in ["orientation", "orientation_generic", "orientation_folder"] {
+        for name in [
+            "orientation",
+            "orientation_generic",
+            "orientation_grant",
+            "orientation_folder",
+        ] {
             let prompt = crate::prompts::compiled_default(name).unwrap();
             assert!(!prompt.contains("JSON object"), "{name}");
             assert!(!prompt.contains("Return ONLY"), "{name}");

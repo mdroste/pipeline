@@ -179,6 +179,35 @@ function ExtraInputsEditor({
               />
               required
             </label>
+            <input
+              aria-label={`Allowed extensions for ${s.label || s.key || i + 1}`}
+              value={(s.extensions ?? []).join(", ")}
+              onChange={(e) => update(i, {
+                extensions: e.target.value.split(",").map((value) => value.trim().toLowerCase().replace(/^\./, "")).filter(Boolean),
+              })}
+              placeholder="extensions: pdf, docx"
+              className={`${inputClass} min-w-[10rem] flex-1`}
+            />
+            <input
+              type="number"
+              min={0}
+              aria-label={`Maximum bytes for ${s.label || s.key || i + 1}`}
+              value={s.max_bytes || ""}
+              onChange={(e) => update(i, { max_bytes: Number(e.target.value) || 0 })}
+              placeholder="max bytes"
+              className={`${inputClass} w-28`}
+            />
+            <select
+              aria-label={`Sensitivity for ${s.label || s.key || i + 1}`}
+              value={s.sensitivity ?? ""}
+              onChange={(e) => update(i, { sensitivity: e.target.value as InputSlot["sensitivity"] })}
+              className={inputClass}
+            >
+              <option value="">internal</option>
+              <option value="public">public</option>
+              <option value="confidential">confidential</option>
+              <option value="secret">secret</option>
+            </select>
             <button
               type="button"
               onClick={() => remove(i)}
@@ -263,6 +292,23 @@ function VariablesEditor({
               placeholder="default"
               className={`${inputClass} w-24`}
             />
+            <label className="flex items-center gap-1 text-[10px] text-gray-500">
+              <input
+                type="checkbox"
+                checked={!!v.required}
+                onChange={(e) => update(i, { required: e.target.checked })}
+              />
+              required
+            </label>
+            <label className="flex items-center gap-1 text-[10px] text-gray-500">
+              <input
+                type="checkbox"
+                checked={!!v.secret}
+                disabled={v.kind === "file"}
+                onChange={(e) => update(i, { secret: e.target.checked })}
+              />
+              secret
+            </label>
             <button
               type="button"
               onClick={() => remove(i)}
@@ -280,6 +326,33 @@ function VariablesEditor({
                 className={`${inputClass} w-full`}
               />
             )}
+            <div className="grid w-full grid-cols-[6rem_6rem_1fr] gap-1.5">
+              <input
+                type="number"
+                min={0}
+                aria-label={`Minimum length for ${v.label || v.key || i + 1}`}
+                value={v.validation?.min_length ?? ""}
+                onChange={(e) => update(i, { validation: { ...v.validation, min_length: e.target.value === "" ? undefined : Number(e.target.value) } })}
+                placeholder="min length"
+                className={inputClass}
+              />
+              <input
+                type="number"
+                min={0}
+                aria-label={`Maximum length for ${v.label || v.key || i + 1}`}
+                value={v.validation?.max_length ?? ""}
+                onChange={(e) => update(i, { validation: { ...v.validation, max_length: e.target.value === "" ? undefined : Number(e.target.value) } })}
+                placeholder="max length"
+                className={inputClass}
+              />
+              <input
+                aria-label={`Validation pattern for ${v.label || v.key || i + 1}`}
+                value={v.validation?.pattern ?? ""}
+                onChange={(e) => update(i, { validation: { ...v.validation, pattern: e.target.value } })}
+                placeholder="optional regular expression"
+                className={`${inputClass} font-mono`}
+              />
+            </div>
           </div>
         ))}
       </div>

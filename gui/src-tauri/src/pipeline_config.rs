@@ -153,6 +153,30 @@ pub struct StepContext {
     pub include: Vec<ArtifactSelector>,
 }
 
+/// Success requirements evaluated after dependency steps reach a terminal
+/// state. `after` remains order-only; selected artifacts remain optional
+/// unless named here. Every `required` step must succeed, and at least
+/// `minimum_successes` members of `quorum` must succeed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DependencyPolicy {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quorum: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub minimum_successes: u32,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+impl DependencyPolicy {
+    fn is_empty(&self) -> bool {
+        self.required.is_empty() && self.quorum.is_empty() && self.minimum_successes == 0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepConfig {
     pub id: String,
@@ -182,6 +206,9 @@ pub struct StepConfig {
     /// add their own data dependency automatically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub after: Vec<String>,
+    /// Required and quorum success semantics for terminal dependencies.
+    #[serde(default, skip_serializing_if = "DependencyPolicy::is_empty")]
+    pub dependency_policy: DependencyPolicy,
     /// Exact artifacts made available to this step.
     #[serde(default)]
     pub context: StepContext,
@@ -278,6 +305,7 @@ impl Default for StepConfig {
             effort: String::new(),
             effort_overrides: std::collections::HashMap::new(),
             after: Vec::new(),
+            dependency_policy: DependencyPolicy::default(),
             context: StepContext::default(),
             run_if: None,
             output_schema: None,
@@ -376,6 +404,41 @@ pub struct VarSpec {
     /// Options for `kind == "choice"`.
     #[serde(default)]
     pub choices: Vec<String>,
+    /// A required variable must resolve to a non-empty supplied/default value
+    /// before any extraction or provider work begins.
+    #[serde(default)]
+    pub required: bool,
+    /// Secret values are accepted at runtime but must not be written verbatim
+    /// to durable manifests or user-facing previews.
+    #[serde(default)]
+    pub secret: bool,
+    #[serde(default)]
+    pub validation: VarValidation,
+}
+
+impl Default for VarSpec {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            label: String::new(),
+            kind: default_var_kind(),
+            default: String::new(),
+            choices: Vec::new(),
+            required: false,
+            secret: false,
+            validation: VarValidation::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VarValidation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_length: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pattern: String,
 }
 
 fn default_var_kind() -> String {
@@ -394,6 +457,34 @@ pub struct InputSlot {
     pub mode: String,
     #[serde(default)]
     pub required: bool,
+    /// Lowercase extensions without a leading dot. Empty accepts Pipeline's
+    /// normal document set for document inputs.
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    /// Optional accepted MIME declarations used for compatibility/preflight.
+    #[serde(default)]
+    pub mime_types: Vec<String>,
+    /// Zero uses Pipeline's global input limit.
+    #[serde(default)]
+    pub max_bytes: u64,
+    /// `public`, `internal`, `confidential`, or `secret` (empty = internal).
+    #[serde(default)]
+    pub sensitivity: String,
+}
+
+impl Default for InputSlot {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            label: String::new(),
+            mode: default_slot_mode(),
+            required: false,
+            extensions: Vec::new(),
+            mime_types: Vec::new(),
+            max_bytes: 0,
+            sensitivity: String::new(),
+        }
+    }
 }
 
 fn default_slot_mode() -> String {
@@ -438,6 +529,27 @@ pub struct OutputConfig {
     pub primary_step: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub findings_step: String,
+    /// Additional typed products published by the workflow.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub named: Vec<NamedProductSpec>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NamedProductSpec {
+    pub key: String,
+    pub step: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub media_type: String,
+    /// `text`, `markdown`, `json`, or `artifact`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub viewer: String,
+    /// `full`, `redacted`, or `disabled`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub export_policy: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sensitivity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
 }
 
 /// Combined config returned to callers.
@@ -666,11 +778,13 @@ pub struct ProfileSummary {
 /// replaces implicit step inputs with explicit artifact context and order
 /// dependencies; v7 adds validated orientation schemas and array-membership
 /// survey conditions; v8 adds explicit published run products; v9 adds live
-/// output-schema references, findings lineage, and artifact fan-out. v1
+/// output-schema references, findings lineage, and artifact fan-out; v10 adds
+/// required and quorum dependency-success policies; v11 adds validated,
+/// secret-aware variables, constrained named inputs, and named products. v1
 /// (unversioned) profiles read fine because every added field is
 /// `#[serde(default)]`; exports are tagged so future format changes can
 /// migrate or reject gracefully.
-pub const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 11;
 
 fn default_schema_version() -> u32 {
     1

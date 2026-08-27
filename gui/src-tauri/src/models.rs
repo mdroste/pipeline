@@ -437,6 +437,13 @@ pub struct StepOutput {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FindingEvidence {
+    /// `document`, `source`, `external`, or `call`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub evidence_type: String,
+    /// Host-authored status. Model-produced v2 artifacts may only claim
+    /// `unverified`; later evidence verification can promote the record.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub verification_status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -458,6 +465,18 @@ pub struct FindingEvidence {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub source_hash: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub doi: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub publisher: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub accessed_at: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub query_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub call_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub quote: String,
@@ -465,6 +484,9 @@ pub struct FindingEvidence {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Finding {
+    /// Canonical 1-based global rank. Display grouping never changes it.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub rank: u32,
     pub id: String,
     /// Stable producer key when a workflow has one (rule id, check id, etc.).
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -472,6 +494,12 @@ pub struct Finding {
     /// Report ids of the reviewer analyses that support this finding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
+    /// Stable reviewer/producer ids contributing to this finding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviewer_ids: Vec<String>,
+    /// Durable call identifiers supporting the finding when available.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_call_ids: Vec<String>,
     pub title: String,
     /// Input-neutral grouping used as a report section or source location.
     #[serde(default, skip_serializing_if = "String::is_empty", alias = "section")]
@@ -479,6 +507,16 @@ pub struct Finding {
     /// Optional high/medium/low priority. Array order remains authoritative.
     #[serde(default, skip_serializing_if = "String::is_empty", alias = "severity")]
     pub priority: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub confidence: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub verification_status: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub problem: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub consequence: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub recommended_action: String,
     pub body: String,
     #[serde(default)]
     pub evidence: Vec<FindingEvidence>,
@@ -492,8 +530,27 @@ pub struct FindingSet {
     pub source_step_id: String,
     #[serde(default)]
     pub source_step_label: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub taxonomy: Vec<String>,
     #[serde(default)]
     pub findings: Vec<Finding>,
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ValidationDisposition {
+    pub finding_id: String,
+    pub disposition: String,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub merged_into: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub before_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub after_hash: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -505,6 +562,82 @@ pub struct RunProducts {
     pub primary_step_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub findings: Option<FindingSet>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validation_dispositions: Vec<ValidationDisposition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub named: Vec<NamedRunProduct>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NamedRunProduct {
+    pub key: String,
+    pub source_step_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub media_type: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub viewer: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub export_policy: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sensitivity: String,
+    pub content: serde_json::Value,
+}
+
+/// Host-authored quality ledger. Unlike report prose, these fields are
+/// derived deterministically from the extraction, execution, and validated
+/// product artifacts and therefore remain stable across providers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReportQuality {
+    #[serde(default)]
+    pub schema_version: u32,
+    /// `done`, `degraded`, `partial`, `failed`, `cancelled`, or `unsaved`.
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub extraction_method: String,
+    #[serde(default)]
+    pub input_bytes: u64,
+    #[serde(default)]
+    pub orientation_included_bytes: u64,
+    #[serde(default)]
+    pub orientation_omitted_bytes: u64,
+    #[serde(default)]
+    pub recovered_pages: u32,
+    #[serde(default)]
+    pub recovered_blocks: u32,
+    #[serde(default)]
+    pub recovered_assets: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extraction_notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completed_steps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_steps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_steps: Vec<String>,
+    /// Capabilities declared on enabled workflow steps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requested_capabilities: Vec<String>,
+    /// Capability classes observed in provider telemetry. Absence means
+    /// "not observed", not necessarily "unavailable".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observed_capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_providers: Vec<String>,
+    #[serde(default)]
+    pub schema_retry_events: u32,
+    #[serde(default)]
+    pub verified_evidence: u32,
+    #[serde(default)]
+    pub partially_verified_evidence: u32,
+    #[serde(default)]
+    pub unverified_evidence: u32,
+    #[serde(default)]
+    pub manual_review_items: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limitations: Vec<String>,
+    #[serde(default)]
+    pub reproducibility_hash: String,
 }
 
 fn default_phase() -> String {
@@ -564,6 +697,9 @@ pub struct PipelineReport {
     /// provenance and are never replaced by these normalized views.
     #[serde(default)]
     pub products: RunProducts,
+    /// Deterministic extraction/execution/evidence quality metadata.
+    #[serde(default)]
+    pub quality: ReportQuality,
     /// Legacy: individual referee reports (for reading old saved reports).
     #[serde(default)]
     pub referee_reports: Vec<RefereeReport>,
@@ -848,6 +984,7 @@ mod tests {
             step_outputs,
             failed_steps: vec![],
             products: Default::default(),
+            quality: Default::default(),
             referee_reports: referees,
             editor,
             report_date: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),

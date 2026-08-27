@@ -116,6 +116,10 @@ export interface InputSlot {
   /** "document" | "folder". */
   mode?: string;
   required?: boolean;
+  extensions?: string[];
+  mime_types?: string[];
+  max_bytes?: number;
+  sensitivity?: "" | "public" | "internal" | "confidential" | "secret";
 }
 
 /** Run-time meaning assigned to the primary file-system selection. */
@@ -150,6 +154,13 @@ export interface VarSpec {
   kind?: string;
   default?: string;
   choices?: string[];
+  required?: boolean;
+  secret?: boolean;
+  validation?: {
+    min_length?: number;
+    max_length?: number;
+    pattern?: string;
+  };
 }
 
 /** Optional, profile-scoped reuse of each step's selected primary text/survey. */
@@ -179,6 +190,17 @@ export interface PipelineConfig {
 export interface OutputConfig {
   primary_step?: string;
   findings_step?: string;
+  named?: NamedProductSpec[];
+}
+
+export interface NamedProductSpec {
+  key: string;
+  step: string;
+  media_type?: string;
+  viewer?: "" | "text" | "markdown" | "json" | "artifact";
+  export_policy?: "" | "full" | "redacted" | "disabled";
+  sensitivity?: "" | "public" | "internal" | "confidential" | "secret";
+  schema?: Record<string, unknown> | null;
 }
 
 /** Provider-neutral breakdown of model-issued tool calls. */
@@ -267,6 +289,7 @@ export interface PipelineReport {
   step_outputs: StepOutput[];
   failed_steps?: StepFailure[];
   products?: RunProducts;
+  quality?: ReportQuality;
   // Legacy fields for old saved reports
   referee_reports?: RefereeReport[];
   editor?: EditorSynthesis | null;
@@ -275,6 +298,8 @@ export interface PipelineReport {
 }
 
 export interface FindingEvidence {
+  evidence_type?: string;
+  verification_status?: string;
   page?: number;
   line_start?: number;
   line_end?: number;
@@ -283,18 +308,32 @@ export interface FindingEvidence {
   artifact_path?: string;
   source_path?: string;
   source_hash?: string;
+  url?: string;
+  doi?: string;
+  publisher?: string;
+  accessed_at?: string;
+  query_id?: string;
+  call_id?: string;
   description?: string;
   quote?: string;
 }
 
 export interface Finding {
+  rank?: number;
   id: string;
   source_key?: string;
   /** Report ids of the reviewer analyses that support this finding. */
   sources?: string[];
+  reviewer_ids?: string[];
+  source_call_ids?: string[];
   title: string;
   category?: string;
   priority?: string;
+  confidence?: string;
+  verification_status?: string;
+  problem?: string;
+  consequence?: string;
+  recommended_action?: string;
   body: string;
   evidence?: FindingEvidence[];
 }
@@ -303,6 +342,7 @@ export interface FindingSet {
   schema_version: number;
   source_step_id: string;
   source_step_label: string;
+  taxonomy?: string[];
   findings: Finding[];
 }
 
@@ -310,6 +350,48 @@ export interface RunProducts {
   schema_version: number;
   primary_step_id: string;
   findings?: FindingSet | null;
+  validation_dispositions?: ValidationDisposition[];
+  named?: NamedRunProduct[];
+}
+
+export interface NamedRunProduct extends Omit<NamedProductSpec, "step" | "schema"> {
+  source_step_id: string;
+  content: unknown;
+}
+
+export interface ValidationDisposition {
+  finding_id: string;
+  disposition: string;
+  reason: string;
+  merged_into?: string;
+  before_hash?: string;
+  after_hash?: string;
+}
+
+export interface ReportQuality {
+  schema_version: number;
+  status: string;
+  extraction_method: string;
+  input_bytes: number;
+  orientation_included_bytes: number;
+  orientation_omitted_bytes: number;
+  recovered_pages: number;
+  recovered_blocks: number;
+  recovered_assets: number;
+  extraction_notes?: string[];
+  completed_steps?: string[];
+  failed_steps?: string[];
+  skipped_steps?: string[];
+  requested_capabilities?: string[];
+  observed_capabilities?: string[];
+  external_providers?: string[];
+  schema_retry_events: number;
+  verified_evidence: number;
+  partially_verified_evidence: number;
+  unverified_evidence: number;
+  manual_review_items: number;
+  limitations?: string[];
+  reproducibility_hash: string;
 }
 
 export interface OrientationMap {
@@ -484,6 +566,14 @@ export interface RunsDiskUsage {
   bytes: number;
 }
 
+/** A recoverable run currently held outside History. */
+export interface TrashedRun {
+  run_id: string;
+  deleted_at: string;
+  title: string;
+  input_name: string;
+}
+
 /** Local metadata grouping immutable runs into one continuing body of work. */
 export interface Project {
   schema_version: number;
@@ -498,6 +588,11 @@ export interface Project {
 export interface ProjectsResponse {
   projects: Project[];
   warnings: string[];
+}
+
+export interface TrashedProject {
+  project: Project;
+  deleted_at: string;
 }
 
 export type ProjectIssueStatus = "open" | "addressed" | "dismissed" | "regressed";

@@ -39,6 +39,46 @@ html.theme-transitioning *::after {
   transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, fill 0.3s ease, stroke 0.3s ease !important;
 }
 
+/* Respect platform accessibility preferences across both authored CSS and
+   utility-class animation/scroll behavior. */
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid CanvasText !important;
+    outline-offset: 2px;
+  }
+
+  button,
+  input,
+  select,
+  textarea,
+  dialog {
+    border: 1px solid CanvasText !important;
+  }
+
+  [aria-current="page"],
+  [aria-selected="true"],
+  [aria-pressed="true"] {
+    forced-color-adjust: none;
+    background: Highlight !important;
+    color: HighlightText !important;
+  }
+}
+
 /* Keep native console controls and scrollbars in step with the app theme. */
 .console-panel {
   color-scheme: light;
@@ -76,7 +116,7 @@ html.theme-transitioning *::after {
   border-radius: 0.25rem;
   color: theme("colors.gray.500");
   hyphens: auto;
-  text-align: justify;
+  text-align: left;
   text-decoration: none;
   transition: color 0.15s, background-color 0.15s;
   line-height: 1.4;
@@ -145,7 +185,13 @@ html.theme-transitioning *::after {
   color: theme("colors.gray.800");
   hyphens: auto;
   line-height: 1.7;
-  text-align: justify;
+  text-align: left;
+}
+
+@media (max-width: 640px) {
+  .report-content {
+    padding: 1.5rem 1rem 3rem;
+  }
 }
 
 .dark .report-content {

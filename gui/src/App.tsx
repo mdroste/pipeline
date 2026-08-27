@@ -39,6 +39,7 @@ import type {
 } from "./lib/types";
 import type { ExecutionPlanStage } from "./lib/pipelineHelpers";
 import type { ArtifactSelectionTarget } from "./components/ArtifactExplorer";
+import { confirmDialog, notify } from "./components/DialogService";
 
 interface RunProfileSnapshot {
   profileId: string;
@@ -217,6 +218,7 @@ function App() {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [closeProtectionUnavailable, setCloseProtectionUnavailable] = useState(false);
   const unsavedRef = useRef({ workflowDirty, settingsDirty });
+  const allowCloseRef = useRef(false);
   unsavedRef.current = { workflowDirty, settingsDirty };
   const [navRailWidth, setNavRailWidth] = usePersistentPanelWidth(
     "pipeline.ui.navRailWidth",
@@ -317,11 +319,18 @@ function App() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     getCurrentWindow()
-      .onCloseRequested((event) => {
+      .onCloseRequested(async (event) => {
+        if (allowCloseRef.current) return;
         const unsaved = unsavedRef.current;
         if (!unsaved.workflowDirty && !unsaved.settingsDirty) return;
-        if (!window.confirm("You have unsaved changes. Quit and discard them?")) {
-          event.preventDefault();
+        event.preventDefault();
+        if (await confirmDialog("You have unsaved changes. Quit and discard them?", {
+          title: "Quit Pipeline?",
+          confirmLabel: "Discard and quit",
+          destructive: true,
+        })) {
+          allowCloseRef.current = true;
+          await getCurrentWindow().close();
         }
       })
       .then((stopListening) => {
@@ -662,19 +671,25 @@ function App() {
     }
   };
 
-  const confirmLeaveCurrentPage = (nextPage: AppPage) => {
+  const confirmLeaveCurrentPage = async (nextPage: AppPage) => {
     if (nextPage === page) return true;
     if (page === "pipeline" && workflowDirty) {
-      return window.confirm("You have unsaved workflow changes. Leave and discard them?");
+      return confirmDialog("You have unsaved workflow changes. Leave and discard them?", {
+        confirmLabel: "Discard and leave",
+        destructive: true,
+      });
     }
     if (page === "settings" && settingsDirty) {
-      return window.confirm("You have unsaved settings changes. Leave and discard them?");
+      return confirmDialog("You have unsaved settings changes. Leave and discard them?", {
+        confirmLabel: "Discard and leave",
+        destructive: true,
+      });
     }
     return true;
   };
 
-  const handleNewRun = () => {
-    if (!confirmLeaveCurrentPage("main")) return;
+  const handleNewRun = async () => {
+    if (!(await confirmLeaveCurrentPage("main"))) return;
     if (isRunning) {
       setPage("main");
       return;
@@ -692,8 +707,8 @@ function App() {
     setPage("main");
   };
 
-  const handleNavigate = (nextPage: AppPage) => {
-    if (!confirmLeaveCurrentPage(nextPage)) return;
+  const handleNavigate = async (nextPage: AppPage) => {
+    if (!(await confirmLeaveCurrentPage(nextPage))) return;
     if (page === "settings") void checkDependencies();
     if (nextPage === "settings" && page !== "settings") {
       setSettingsInitialSection("llm");
@@ -708,8 +723,8 @@ function App() {
     setPage(nextPage);
   };
 
-  const openPaddleInstallSettings = () => {
-    if (!confirmLeaveCurrentPage("settings")) return;
+  const openPaddleInstallSettings = async () => {
+    if (!(await confirmLeaveCurrentPage("settings"))) return;
     setSettingsInitialSection("extraction");
     setSettingsTargetId("paddleocr-local-engine");
     setSettingsNavigationKey((key) => key + 1);
@@ -733,14 +748,14 @@ function App() {
         <DepsCheck
           report={depsReport}
           onDismiss={() => setShowDeps(false)}
-          onOpenPdfSettings={() => {
-            if (!confirmLeaveCurrentPage("settings")) return;
+          onOpenPdfSettings={() => void (async () => {
+            if (!(await confirmLeaveCurrentPage("settings"))) return;
             setShowDeps(false);
             setSettingsInitialSection("extraction");
             setSettingsTargetId("paddleocr-local-engine");
             setSettingsNavigationKey((key) => key + 1);
             setPage("settings");
-          }}
+          })()}
         />
       )}
 
@@ -858,13 +873,13 @@ function App() {
           {page === "main" && providerLimitNotices.length > 0 && (
             <ProviderLimitBanner
               notices={providerLimitNotices}
-              onOpenSettings={() => {
-                if (!confirmLeaveCurrentPage("settings")) return;
+              onOpenSettings={() => void (async () => {
+                if (!(await confirmLeaveCurrentPage("settings"))) return;
                 setSettingsInitialSection("llm");
                 setSettingsTargetId("usage-limit-fallback");
                 setSettingsNavigationKey((key) => key + 1);
                 setPage("settings");
-              }}
+              })()}
             />
           )}
           <div className="flex-1 overflow-auto">
@@ -923,7 +938,7 @@ function App() {
                     // rerunPipeline resets the live progress/log state before
                     // the backend guard rejects the second run, so starting it
                     // here would trash the active run's UI.
-                    window.alert(
+                    notify(
                       "A report is already being generated. Wait for it to finish or cancel it first.",
                     );
                     return;
@@ -1054,7 +1069,7 @@ function App() {
             </Suspense>
           </div>
 
-          {logs.length > 0 && <Console logs={logs} usage={usage} />}
+          {logs.length > 0 && <Console logs={logs} usage={usage} active={isRunning} />}
         </main>
       </div>
     </div>

@@ -339,9 +339,7 @@ describe("ReportWorkspace", () => {
       runId: "saved_run",
       relPath: "report.md",
     });
-    expect(
-      screen.getByRole("button", { name: "Export complete report" }),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /Export/ })).toBeVisible();
   });
 
   it("keeps preserved agent reports reachable when canonical report files are malformed", async () => {
@@ -407,7 +405,7 @@ describe("ReportWorkspace", () => {
     expect(screen.getByText(/analysis survived/)).toBeVisible();
   });
 
-  it("preloads Sources metadata and the readable document for an open report", async () => {
+  it("keeps source bytes lazy until an artifact is selected", async () => {
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_run_manifest") {
         return Promise.resolve({ run_id: "saved_run", artifacts: [] });
@@ -434,7 +432,13 @@ describe("ReportWorkspace", () => {
     );
 
     expect(invoke).toHaveBeenCalledWith("get_run_manifest", { runId: "saved_run" });
-    expect(invoke).toHaveBeenCalledWith("read_artifact", {
+    expect(invoke).not.toHaveBeenCalledWith("read_artifact", {
+      runId: "saved_run",
+      relPath: "context/document.md",
+    });
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Sources" }));
+    await screen.findByText("Select an artifact to preview it.");
+    expect(invoke).not.toHaveBeenCalledWith("read_artifact", {
       runId: "saved_run",
       relPath: "context/document.md",
     });

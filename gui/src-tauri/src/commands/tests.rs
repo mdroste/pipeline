@@ -94,12 +94,14 @@ fn named_input_validation_matches_backend_extraction_contract() {
             label: "Appendix".to_string(),
             mode: "document".to_string(),
             required: true,
+            ..Default::default()
         },
         crate::pipeline_config::InputSlot {
             key: "sources".to_string(),
             label: "Sources".to_string(),
             mode: "folder".to_string(),
             required: false,
+            ..Default::default()
         },
     ];
 
@@ -169,16 +171,30 @@ fn headless_run_future_stays_behind_scheduler_boundary() {
 
 #[test]
 fn runtime_snapshot_identity_is_order_stable_and_value_sensitive() {
-    let snapshot = || RunSnapshot {
-        settings: crate::settings::Settings::default(),
-        config: empty_test_config(),
-        profile_name: "test".to_string(),
-        config_fingerprint: "profile-base".to_string(),
-        fingerprint: "profile-base".to_string(),
-        workflow_source: String::new(),
-        workflow_fingerprint: String::new(),
-        workflow_json: String::new(),
-        specialist_catalog_revision: String::new(),
+    let snapshot = || {
+        let mut config = empty_test_config();
+        config.variables = ["alpha", "beta"]
+            .into_iter()
+            .map(|key| crate::pipeline_config::VarSpec {
+                key: key.to_string(),
+                ..Default::default()
+            })
+            .collect();
+        config.extraction.extra_inputs = vec![crate::pipeline_config::InputSlot {
+            key: "rubric".to_string(),
+            ..Default::default()
+        }];
+        RunSnapshot {
+            settings: crate::settings::Settings::default(),
+            config,
+            profile_name: "test".to_string(),
+            config_fingerprint: "profile-base".to_string(),
+            fingerprint: "profile-base".to_string(),
+            workflow_source: String::new(),
+            workflow_fingerprint: String::new(),
+            workflow_json: String::new(),
+            specialist_catalog_revision: String::new(),
+        }
     };
     let variables_a = std::collections::HashMap::from([
         ("alpha".to_string(), "one".to_string()),
@@ -485,6 +501,218 @@ fn directory_export_is_complete_and_does_not_replace_existing_output() {
     );
 }
 
+fn export_test_manifest() -> crate::runs::RunManifest {
+    serde_json::from_value(serde_json::json!({
+        "run_id": "export-test-run",
+        "created": "2026-08-23T12:00:00Z",
+        "input_path": "/Users/private/TOPSECRET-paper.pdf",
+        "input_mode": "document",
+        "profile_id": "review",
+        "profile_name": "Review",
+        "provider": "codex",
+        "status": "done",
+        "variables": { "private_note": "TOPSECRET-variable" },
+        "artifacts": [
+            { "rel_path": "report.md", "label": "Report", "kind": "markdown", "bytes": 1, "sha256": "a", "group": "report" },
+            { "rel_path": "report.json", "label": "Report data", "kind": "json", "bytes": 1, "sha256": "b", "group": "context" },
+            { "rel_path": "context/document.md", "label": "Document", "kind": "markdown", "bytes": 1, "sha256": "c", "group": "document" },
+            { "rel_path": "artifacts/01_review.md", "label": "Review", "kind": "markdown", "bytes": 1, "sha256": "d", "group": "step" },
+            { "rel_path": "logs/run.log", "label": "Log", "kind": "text", "bytes": 1, "sha256": "e", "group": "context" }
+        ]
+    }))
+    .unwrap()
+}
+
+fn write_export_test_run(source: &std::path::Path) {
+    std::fs::create_dir_all(source.join("context")).unwrap();
+    std::fs::create_dir_all(source.join("artifacts")).unwrap();
+    std::fs::create_dir_all(source.join("logs")).unwrap();
+    std::fs::write(source.join("report.md"), "# Safe rendered report\n").unwrap();
+    std::fs::write(source.join("context/document.md"), "TOPSECRET-source-bytes").unwrap();
+    std::fs::write(
+        source.join("artifacts/01_review.md"),
+        "TOPSECRET-raw-response",
+    )
+    .unwrap();
+    std::fs::write(source.join("logs/run.log"), "TOPSECRET-log").unwrap();
+    std::fs::write(source.join("manifest.json"), "TOPSECRET-manifest").unwrap();
+    let report = PipelineReport {
+        orientation: serde_json::Value::Null,
+        step_outputs: Vec::new(),
+        failed_steps: Vec::new(),
+        products: crate::models::RunProducts {
+            schema_version: 1,
+            findings: Some(crate::models::FindingSet {
+                schema_version: 1,
+                findings: vec![
+                    crate::models::Finding {
+                        id: "verified".into(),
+                        title: "Verified finding".into(),
+                        verification_status: "verified".into(),
+                        evidence: vec![crate::models::FindingEvidence {
+                            verification_status: "verified_with_normalization".into(),
+                            page: Some(4),
+                            quote: "Supported statement".into(),
+                            artifact_path: "context/document.md".into(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                    crate::models::Finding {
+                        id: "unverified".into(),
+                        title: "TOPSECRET-unverified-finding".into(),
+                        verification_status: "unverified".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        quality: crate::models::ReportQuality {
+            status: "done".into(),
+            verified_evidence: 1,
+            unverified_evidence: 1,
+            limitations: vec!["One item remains unverified.".into()],
+            ..Default::default()
+        },
+        referee_reports: Vec::new(),
+        editor: None,
+        report_date: chrono::Local::now().date_naive(),
+        paper_hash: "test".into(),
+    };
+    std::fs::write(
+        source.join("report.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn shareable_export_has_an_exact_safe_allowlist_and_no_secret_payloads() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    write_export_test_run(source.path());
+    let manifest = export_test_manifest();
+
+    copy_export_file(source.path(), destination.path(), "report.md").unwrap();
+    write_shareable_products(source.path(), destination.path(), &manifest, true, true).unwrap();
+    finalize_export_metadata(
+        destination.path(),
+        &manifest.run_id,
+        ExportMode::Shareable,
+        &ExportSelection::default(),
+    )
+    .unwrap();
+
+    let files = enumerate_export_files(destination.path()).unwrap();
+    let paths = files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        [
+            "checksums.sha256",
+            "export-manifest.json",
+            "limitations.md",
+            "provenance.json",
+            "quality.json",
+            "report.md",
+            "verified-findings.json",
+        ]
+    );
+    let exported_text = files
+        .iter()
+        .map(|file| std::fs::read_to_string(destination.path().join(&file.path)).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!exported_text.contains("TOPSECRET"));
+    assert!(exported_text.contains("Verified finding"));
+    assert!(!exported_text.contains("context/document.md"));
+    assert!(!destination.path().join("report.json").exists());
+    assert!(!destination.path().join("logs/run.log").exists());
+}
+
+#[test]
+fn custom_export_copies_only_explicit_artifact_classes() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    write_export_test_run(source.path());
+    let manifest = export_test_manifest();
+    let selection = ExportSelection {
+        report: true,
+        source_documents: true,
+        ..Default::default()
+    };
+    write_custom_payload(source.path(), destination.path(), &manifest, &selection).unwrap();
+    let paths = enumerate_export_files(destination.path())
+        .unwrap()
+        .into_iter()
+        .map(|file| file.path)
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["context/document.md", "report.md"]);
+    assert!(!destination.path().join("report.json").exists());
+    assert!(!destination.path().join("artifacts/01_review.md").exists());
+    assert!(!destination.path().join("logs/run.log").exists());
+}
+
+#[test]
+fn forensic_export_enumerates_the_complete_run_and_labels_it_sensitive() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    write_export_test_run(source.path());
+    copy_export_tree(source.path(), destination.path()).unwrap();
+    finalize_export_metadata(
+        destination.path(),
+        "export-test-run",
+        ExportMode::Forensic,
+        &ExportSelection::default(),
+    )
+    .unwrap();
+    let paths = enumerate_export_files(destination.path())
+        .unwrap()
+        .into_iter()
+        .map(|file| file.path)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        [
+            "artifacts/01_review.md",
+            "checksums.sha256",
+            "context/document.md",
+            "export-manifest.json",
+            "logs/run.log",
+            "manifest.json",
+            "report.json",
+            "report.md",
+        ]
+    );
+    let export_manifest =
+        std::fs::read_to_string(destination.path().join("export-manifest.json")).unwrap();
+    assert!(export_manifest.contains(r#""sensitivity": "sensitive""#));
+    assert!(export_manifest.contains(r#""includesSourceMaterial": true"#));
+    assert!(export_manifest.contains(r#""includesRawResponses": true"#));
+    assert!(export_manifest.contains(r#""includesLogs": true"#));
+    assert_eq!(
+        std::fs::read_to_string(destination.path().join("manifest.json")).unwrap(),
+        "TOPSECRET-manifest"
+    );
+}
+
+#[test]
+fn reveal_validation_accepts_only_the_exact_recent_export() {
+    let root = tempfile::tempdir().unwrap();
+    let exported = root.path().join("package");
+    std::fs::create_dir(&exported).unwrap();
+    record_export_path(&exported);
+    assert_eq!(
+        validated_recent_export(&exported.to_string_lossy()).unwrap(),
+        exported.canonicalize().unwrap()
+    );
+    assert!(validated_recent_export(&root.path().to_string_lossy()).is_err());
+}
+
 #[test]
 fn core_export_writes_only_the_canonical_document_name() {
     let destination = tempfile::tempdir().unwrap();
@@ -493,6 +721,7 @@ fn core_export_writes_only_the_canonical_document_name() {
         step_outputs: Vec::new(),
         failed_steps: Vec::new(),
         products: Default::default(),
+        quality: Default::default(),
         referee_reports: Vec::new(),
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -532,9 +761,13 @@ fn core_export_includes_the_canonical_findings_product() {
                 schema_version: 1,
                 source_step_id: "final".into(),
                 source_step_label: "Final".into(),
+                taxonomy: Vec::new(),
                 findings: Vec::new(),
             }),
+            validation_dispositions: Vec::new(),
+            named: Vec::new(),
         },
+        quality: Default::default(),
         referee_reports: Vec::new(),
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -575,6 +808,7 @@ fn core_export_writes_structured_step_artifacts_as_standalone_json() {
         }],
         failed_steps: Vec::new(),
         products: Default::default(),
+        quality: Default::default(),
         referee_reports: Vec::new(),
         editor: None,
         report_date: chrono::Local::now().date_naive(),
@@ -691,6 +925,7 @@ fn resume_starts_at_the_first_missing_step_after_recovery() {
             error: "cancelled".into(),
         }],
         products: Default::default(),
+        quality: Default::default(),
         referee_reports: Vec::new(),
         editor: None,
         report_date: chrono::Local::now().date_naive(),

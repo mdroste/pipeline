@@ -197,4 +197,31 @@ describe("HistoryPage", () => {
     expect(screen.getByText("Fresh result")).toBeInTheDocument();
     expect(screen.queryByText("Stale result")).not.toBeInTheDocument();
   });
+
+  it("filters by status and provider, sorts by name, and paginates large histories", async () => {
+    const runs = Array.from({ length: 27 }, (_, index) => run({
+      run_id: `run-${index}`,
+      title: `Report ${String(index).padStart(2, "0")}`,
+      provider: index % 2 === 0 ? "codex" : "claude",
+      status: index % 3 === 0 ? "partial" : "done",
+      created: `2026-08-${String((index % 23) + 1).padStart(2, "0")}T12:00:00Z`,
+    }));
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs") return Promise.resolve(runs);
+      if (command === "runs_disk_usage") return Promise.resolve({ count: runs.length, bytes: 1024 });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} />);
+
+    expect(await screen.findByText("Page 1 of 2")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText("Page 2 of 2")).toBeVisible();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by status" }), "partial");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by provider" }), "codex");
+    expect(screen.getByText("5 matching")).toBeVisible();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sort reports" }), "name");
+    const reportButtons = screen.getAllByRole("button", { name: /^Report \d+$/ });
+    expect(reportButtons[0]).toHaveTextContent("Report 00");
+  });
 });

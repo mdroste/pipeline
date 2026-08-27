@@ -3,12 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import SafeMarkdownLink, { safeExternalHref } from "./SafeMarkdownLink";
 
 const openExternal = vi.hoisted(() => vi.fn());
+const notify = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: openExternal }));
+vi.mock("./DialogService", () => ({ notify }));
 
 describe("SafeMarkdownLink", () => {
   beforeEach(() => {
     openExternal.mockReset();
     openExternal.mockResolvedValue(undefined);
+    notify.mockReset();
   });
 
   it.each([
@@ -59,7 +62,6 @@ describe("SafeMarkdownLink", () => {
   });
 
   it("reports a shell failure instead of silently dropping the click", async () => {
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
     openExternal.mockRejectedValueOnce(new Error("viewer unavailable"));
     render(
       <SafeMarkdownLink href="https://example.com/paper">
@@ -70,11 +72,10 @@ describe("SafeMarkdownLink", () => {
     fireEvent.click(screen.getByRole("link", { name: "External source" }));
 
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith(
+      expect(notify).toHaveBeenCalledWith(
         "Could not open the external link: viewer unavailable",
       );
     });
-    alertSpy.mockRestore();
   });
 
   it("rejects malformed absolute URLs before rendering", () => {

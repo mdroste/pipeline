@@ -8,6 +8,8 @@ const startPipeline = vi.hoisted(() => vi.fn());
 const onCloseRequested = vi.hoisted(() => vi.fn());
 const setWindowTheme = vi.hoisted(() => vi.fn());
 const listen = vi.hoisted(() => vi.fn());
+const confirmDialog = vi.hoisted(() => vi.fn());
+const notify = vi.hoisted(() => vi.fn());
 const workflowInputMode = vi.hoisted(() => ({ value: "document" }));
 let systemIsDark = false;
 let systemThemeListener: ((event: MediaQueryListEvent) => void) | undefined;
@@ -45,6 +47,7 @@ vi.mock("@tauri-apps/api/app", () => ({
   getVersion: () => Promise.resolve("test"),
 }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
+vi.mock("./components/DialogService", () => ({ confirmDialog, notify }));
 vi.mock("./hooks/usePipeline", () => ({
   usePipeline: () => ({
     state: { kind: "idle" },
@@ -213,6 +216,8 @@ describe("App run options", () => {
   beforeEach(() => {
     invoke.mockReset();
     listen.mockReset();
+    confirmDialog.mockReset();
+    notify.mockReset();
     listen.mockResolvedValue(vi.fn());
     startPipeline.mockReset();
     onCloseRequested.mockReset();
@@ -782,24 +787,24 @@ describe("App run options", () => {
 
   it("blocks in-app navigation away from unsaved settings", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    confirmDialog.mockResolvedValueOnce(false);
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(await screen.findByRole("button", { name: "Make settings dirty" }));
     await user.click(screen.getByRole("button", { name: "History" }));
 
-    expect(confirmSpy).toHaveBeenCalledWith(
+    expect(confirmDialog).toHaveBeenCalledWith(
       "You have unsaved settings changes. Leave and discard them?",
+      expect.anything(),
     );
     expect(screen.getByText("Settings workspace")).toBeVisible();
     expect(screen.queryByText("History workspace")).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
   });
 
   it("blocks native window close while workflow changes are unsaved", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    confirmDialog.mockResolvedValueOnce(false);
     render(<App />);
 
     await waitFor(() => expect(onCloseRequested).toHaveBeenCalledTimes(1));
@@ -812,11 +817,11 @@ describe("App run options", () => {
     ) => void;
     closeHandler(event);
 
-    expect(confirmSpy).toHaveBeenCalledWith(
+    expect(confirmDialog).toHaveBeenCalledWith(
       "You have unsaved changes. Quit and discard them?",
+      expect.anything(),
     );
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
-    confirmSpy.mockRestore();
   });
 
   it("warns when native window-close protection cannot be registered", async () => {

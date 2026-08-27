@@ -41,6 +41,12 @@ pub struct ProjectsResponse {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TrashedProject {
+    pub project: Project,
+    pub deleted_at: String,
+}
+
 fn projects_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
     let dir = home.join(".pipeline").join("projects");
@@ -58,6 +64,12 @@ fn ensure_projects_dir(dir: &Path) -> Result<(), String> {
             .map_err(|error| format!("Failed to secure projects directory: {error}"))?;
     }
     Ok(())
+}
+
+fn project_trash_dir(dir: &Path) -> Result<PathBuf, String> {
+    let trash = dir.join(".trash");
+    ensure_projects_dir(&trash)?;
+    Ok(trash)
 }
 
 fn validate_project_id(id: &str) -> Result<(), String> {
@@ -112,8 +124,12 @@ fn lock_projects(dir: &Path) -> Result<fs::File, String> {
 }
 
 fn load_project_from(dir: &Path, id: &str) -> Result<Project, String> {
-    let path = project_path(dir, id)?;
-    let file = crate::safety::open_regular_file(&path)
+    load_project_path(&project_path(dir, id)?, id)
+}
+
+fn load_project_path(path: &Path, id: &str) -> Result<Project, String> {
+    validate_project_id(id)?;
+    let file = crate::safety::open_regular_file(path)
         .map_err(|error| format!("Failed to open project '{id}': {error}"))?;
     let size = file
         .metadata()
@@ -136,6 +152,14 @@ fn load_project_from(dir: &Path, id: &str) -> Result<Project, String> {
     }
     validate_project(&project)?;
     Ok(project)
+}
+
+fn sync_dir(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("Failed to sync project storage: {error}"))?;
+    Ok(())
 }
 
 fn validate_project(project: &Project) -> Result<(), String> {
@@ -225,13 +249,14 @@ fn create_project_in(dir: &Path, name: &str, description: &str) -> Result<Projec
         }
     };
     let mut id = base.clone();
+    let trash = project_trash_dir(dir)?;
     for suffix in 1..=10_000u32 {
-        if !project_path(dir, &id)?.exists() {
+        if !project_path(dir, &id)?.exists() && !trash.join(&id).exists() {
             break;
         }
         id = format!("{base}-{suffix}");
     }
-    if project_path(dir, &id)?.exists() {
+    if project_path(dir, &id)?.exists() || trash.join(&id).exists() {
         return Err("Could not allocate a unique project id".to_string());
     }
     let now = chrono::Local::now().to_rfc3339();
@@ -326,11 +351,148 @@ pub fn set_project_run(
 #[tauri::command]
 pub fn delete_project(id: String) -> Result<(), String> {
     let dir = projects_dir()?;
-    let _lock = lock_projects(&dir)?;
-    let path = project_path(&dir, &id)?;
-    let _ = load_project_from(&dir, &id)?;
-    ledger::delete_ledger_from(&dir, &id)?;
-    fs::remove_file(path).map_err(|error| format!("Failed to delete project: {error}"))
+    delete_project_in(&dir, &id)
+}
+
+fn delete_project_in(dir: &Path, id: &str) -> Result<(), String> {
+    let _lock = lock_projects(dir)?;
+    let source = project_path(dir, id)?;
+    let _ = load_project_from(dir, id)?;
+    let trash = project_trash_dir(dir)?
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve project Trash: {error}"))?;
+    let destination = trash.join(id);
+    if destination.exists() {
+        return Err(
+            "A trashed copy of this project already exists; restore or permanently delete it first"
+                .to_string(),
+        );
+    }
+    fs::create_dir(&destination)
+        .map_err(|error| format!("Failed to create project Trash entry: {error}"))?;
+    if let Err(error) = fs::rename(&source, destination.join("project.json")) {
+        let _ = fs::remove_dir(&destination);
+        return Err(format!("Failed to move project to Trash: {error}"));
+    }
+    let ledger_path = ledger::ledger_path(dir, id)?;
+    if ledger_path.exists() {
+        if let Err(error) = fs::rename(&ledger_path, destination.join("ledger.json")) {
+            let _ = fs::rename(destination.join("project.json"), &source);
+            let _ = fs::remove_dir(&destination);
+            return Err(format!(
+                "Failed to move the project issue ledger to Trash: {error}"
+            ));
+        }
+    }
+    sync_dir(dir)?;
+    sync_dir(&trash)?;
+    Ok(())
+}
+
+fn list_trashed_projects_from(dir: &Path) -> Result<Vec<TrashedProject>, String> {
+    let trash = project_trash_dir(dir)?;
+    let mut projects = Vec::new();
+    for entry in fs::read_dir(&trash)
+        .map_err(|error| format!("Failed to list project Trash: {error}"))?
+        .flatten()
+    {
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let Some(id) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if validate_project_id(&id).is_err() {
+            continue;
+        }
+        let Ok(project) = load_project_path(&entry.path().join("project.json"), &id) else {
+            continue;
+        };
+        let deleted_at = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .map(chrono::DateTime::<chrono::Local>::from)
+            .map(|time| time.to_rfc3339())
+            .unwrap_or_default();
+        projects.push(TrashedProject {
+            project,
+            deleted_at,
+        });
+    }
+    projects.sort_by(|left, right| right.deleted_at.cmp(&left.deleted_at));
+    Ok(projects)
+}
+
+#[tauri::command]
+pub fn list_trashed_projects() -> Result<Vec<TrashedProject>, String> {
+    list_trashed_projects_from(&projects_dir()?)
+}
+
+fn restore_trashed_project_in(dir: &Path, id: &str) -> Result<(), String> {
+    validate_project_id(id)?;
+    let _lock = lock_projects(dir)?;
+    let trash = project_trash_dir(dir)?
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve project Trash: {error}"))?;
+    let source = trash.join(id);
+    let canonical = source
+        .canonicalize()
+        .map_err(|_| "Trashed project not found".to_string())?;
+    if canonical.parent() != Some(trash.as_path()) || !canonical.is_dir() {
+        return Err("Invalid trashed project id".to_string());
+    }
+    let project = load_project_path(&canonical.join("project.json"), id)?;
+    let destination = project_path(dir, id)?;
+    if destination.exists() {
+        return Err("A project with this id already exists".to_string());
+    }
+    fs::rename(canonical.join("project.json"), &destination)
+        .map_err(|error| format!("Failed to restore project: {error}"))?;
+    let trashed_ledger = canonical.join("ledger.json");
+    if trashed_ledger.exists() {
+        let ledger_destination = ledger::ledger_path(dir, id)?;
+        if let Some(parent) = ledger_destination.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("Failed to prepare project ledger restore: {error}"))?;
+        }
+        if let Err(error) = fs::rename(&trashed_ledger, &ledger_destination) {
+            let _ = fs::rename(&destination, canonical.join("project.json"));
+            return Err(format!("Failed to restore project issue ledger: {error}"));
+        }
+    }
+    fs::remove_dir(&canonical)
+        .map_err(|error| format!("Failed to finish project restore: {error}"))?;
+    validate_project(&project)?;
+    sync_dir(dir)?;
+    sync_dir(&trash)
+}
+
+#[tauri::command]
+pub fn restore_trashed_project(id: String) -> Result<(), String> {
+    restore_trashed_project_in(&projects_dir()?, &id)
+}
+
+fn permanently_delete_trashed_project_in(dir: &Path, id: &str) -> Result<(), String> {
+    validate_project_id(id)?;
+    let _lock = lock_projects(dir)?;
+    let trash = project_trash_dir(dir)?
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve project Trash: {error}"))?;
+    let source = trash.join(id);
+    let canonical = source
+        .canonicalize()
+        .map_err(|_| "Trashed project not found".to_string())?;
+    if canonical.parent() != Some(trash.as_path()) || !canonical.is_dir() {
+        return Err("Invalid trashed project id".to_string());
+    }
+    fs::remove_dir_all(&canonical)
+        .map_err(|error| format!("Failed to permanently delete trashed project: {error}"))?;
+    sync_dir(&trash)
+}
+
+#[tauri::command]
+pub fn permanently_delete_trashed_project(id: String) -> Result<(), String> {
+    permanently_delete_trashed_project_in(&projects_dir()?, &id)
 }
 
 #[cfg(test)]
@@ -373,5 +535,43 @@ mod tests {
         assert!(create_project_in(root.path(), "", "").is_err());
         assert!(create_project_in(root.path(), &"x".repeat(201), "").is_err());
         assert!(set_project_run_in(root.path(), "bad/id", "run", true, false).is_err());
+    }
+
+    #[test]
+    fn deleted_projects_and_ledgers_can_be_restored_from_trash() {
+        let root = tempfile::tempdir().unwrap();
+        let project = create_project_in(root.path(), "Restorable", "Kept").unwrap();
+        fs::create_dir_all(root.path().join("ledgers")).unwrap();
+        fs::write(
+            ledger::ledger_path(root.path(), &project.id).unwrap(),
+            b"ledger-placeholder",
+        )
+        .unwrap();
+
+        delete_project_in(root.path(), &project.id).unwrap();
+        assert!(list_projects_from(root.path()).unwrap().projects.is_empty());
+        let trashed = list_trashed_projects_from(root.path()).unwrap();
+        assert_eq!(trashed.len(), 1);
+        assert_eq!(trashed[0].project.name, "Restorable");
+
+        restore_trashed_project_in(root.path(), &project.id).unwrap();
+        assert_eq!(list_projects_from(root.path()).unwrap().projects.len(), 1);
+        assert!(ledger::ledger_path(root.path(), &project.id)
+            .unwrap()
+            .exists());
+        assert!(list_trashed_projects_from(root.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn new_projects_do_not_reuse_ids_reserved_by_trash() {
+        let root = tempfile::tempdir().unwrap();
+        let original = create_project_in(root.path(), "Shared name", "First").unwrap();
+        delete_project_in(root.path(), &original.id).unwrap();
+
+        let replacement = create_project_in(root.path(), "Shared name", "Second").unwrap();
+        assert_eq!(original.id, "shared-name");
+        assert_eq!(replacement.id, "shared-name-1");
+        restore_trashed_project_in(root.path(), &original.id).unwrap();
+        assert_eq!(list_projects_from(root.path()).unwrap().projects.len(), 2);
     }
 }

@@ -94,6 +94,132 @@ fn discovery_output_is_bounded_but_fully_drained() {
         });
 }
 
+fn test_catalog(source: &str) -> ModelCatalog {
+    ModelCatalog {
+        provider: "test".into(),
+        source: source.into(),
+        ..Default::default()
+    }
+}
+
+fn test_discovery_key(provider: &str) -> DiscoveryKey {
+    DiscoveryKey {
+        provider: provider.into(),
+        transport: "api".into(),
+        endpoint_fingerprint: "endpoint-fingerprint".into(),
+        credential_fingerprint: "credential-fingerprint".into(),
+        catalog_revision: "catalog-revision".into(),
+    }
+}
+
+#[test]
+fn identical_discovery_keys_share_one_operation() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let first_calls = Arc::clone(&calls);
+        let first_release = Arc::clone(&release);
+        let first = tokio::spawn(single_flight_discovery(
+            test_discovery_key("same-key"),
+            move || async move {
+                first_calls.fetch_add(1, Ordering::SeqCst);
+                let _ = started_tx.send(());
+                first_release.notified().await;
+                Ok(test_catalog("shared"))
+            },
+        ));
+        started_rx.await.unwrap();
+        let second_calls = Arc::clone(&calls);
+        let second = tokio::spawn(single_flight_discovery(
+            test_discovery_key("same-key"),
+            move || async move {
+                second_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(test_catalog("duplicate"))
+            },
+        ));
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        release.notify_one();
+        let first = first.await.unwrap().unwrap();
+        let second = second.await.unwrap().unwrap();
+        assert_eq!(first.source, "shared");
+        assert_eq!(second.source, "shared");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    });
+}
+
+#[test]
+fn different_discovery_keys_run_in_parallel() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let gate = Arc::new(tokio::sync::Barrier::new(2));
+        let first_gate = Arc::clone(&gate);
+        let first = tokio::spawn(single_flight_discovery(
+            test_discovery_key("provider-a"),
+            move || async move {
+                first_gate.wait().await;
+                Ok(test_catalog("a"))
+            },
+        ));
+        let second_gate = Arc::clone(&gate);
+        let second = tokio::spawn(single_flight_discovery(
+            test_discovery_key("provider-b"),
+            move || async move {
+                second_gate.wait().await;
+                Ok(test_catalog("b"))
+            },
+        ));
+        let first = first.await.unwrap().unwrap();
+        let second = second.await.unwrap().unwrap();
+        assert_eq!(first.source, "a");
+        assert_eq!(second.source, "b");
+    });
+}
+
+#[test]
+fn discovery_key_is_context_bound_without_retaining_secrets() {
+    let first = Settings {
+        local_base_url: "HTTP://LOCALHOST:11434/v1/".into(),
+        local_api_key: "one-very-secret-key".into(),
+        ..Default::default()
+    };
+    let equivalent = Settings {
+        local_base_url: "http://localhost:11434/v1".into(),
+        local_api_key: first.local_api_key.clone(),
+        ..Default::default()
+    };
+    let other_endpoint = Settings {
+        local_base_url: "http://localhost:22445/v1".into(),
+        local_api_key: first.local_api_key.clone(),
+        ..Default::default()
+    };
+    let other_credential = Settings {
+        local_base_url: first.local_base_url.clone(),
+        local_api_key: "another-very-secret-key".into(),
+        ..Default::default()
+    };
+    let first_key = discovery_key("local", "api", &first);
+    assert_eq!(first_key, discovery_key("local", "api", &equivalent));
+    assert_ne!(first_key, discovery_key("local", "api", &other_endpoint));
+    assert_ne!(first_key, discovery_key("local", "api", &other_credential));
+    let mut newer_catalog = first_key.clone();
+    newer_catalog.catalog_revision.push_str(":next");
+    assert_ne!(first_key, newer_catalog);
+    let debug = format!("{first_key:?}");
+    assert!(!debug.contains(&first.local_api_key));
+    assert!(!debug.contains(&first.local_base_url));
+}
+
 #[test]
 fn antigravity_models_parse_json_document_shapes() {
     // Array wrappers and both snake/camel field spellings must resolve.

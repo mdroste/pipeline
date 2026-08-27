@@ -117,6 +117,45 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
         })?;
     }
 
+    // Remove instructions duplicated by host wrappers and structured schemas,
+    // and give Grant Review a proposal-specific survey. Update only exact
+    // prior stock prompts; workflow-local edits remain untouched.
+    let prompt_parsimony_marker = profiles.join(".prompt-parsimony-v1");
+    if !prompt_parsimony_marker.exists() {
+        refresh_parsimonious_prompt_defaults(profiles)?;
+        fs::write(
+            &prompt_parsimony_marker,
+            b"parsimonious-review-prompts-and-grant-survey\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the prompt-parsimony migration '{}': {error}",
+                prompt_parsimony_marker.display()
+            )
+        })?;
+    }
+
+    // Grant Review now shares the same typed findings and validation contract
+    // as Auto Review. A legacy grant suite cannot be upgraded safely one field
+    // at a time because its terminal output was free-form and it had no
+    // validation step. Preserve the old file in the retired-builtins archive,
+    // then install the current definition. Profiles that merely reuse the
+    // built-in id but do not have the grant-review skeleton are left alone.
+    let structured_grant_review_marker = profiles.join(".structured-grant-review-contract-v1");
+    if !structured_grant_review_marker.exists() {
+        refresh_stale_grant_review_suite(profiles)?;
+        fs::write(
+            &structured_grant_review_marker,
+            b"typed-validated-grant-review\n",
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to record the structured Grant Review migration '{}': {error}",
+                structured_grant_review_marker.display()
+            )
+        })?;
+    }
+
     // Artifact access is part of the workflow definition, not an ambient
     // executor default. Refresh every shipped profile into the explicit
     // producer/role format. This must run before migrations that load and
@@ -319,7 +358,52 @@ const CATALOG_MIGRATION_MARKERS: &[&str] = &[
     ".structured-auto-review-contract-v2",
     ".modular-auto-review-contract-v1",
     ".compact-auto-review-prompt-v1",
+    ".prompt-parsimony-v1",
+    ".structured-grant-review-contract-v1",
 ];
+
+/// Replace a legacy built-in Grant Review suite with its typed, validated
+/// successor. The archived copy keeps any user edits recoverable.
+pub(super) fn refresh_stale_grant_review_suite(profiles: &Path) -> Result<(), String> {
+    let id = "grant-review";
+    let path = profiles.join(format!("{id}.json"));
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = read_profile_file(&path)
+        .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+    let profile: ProfileData = serde_json::from_str(&content)
+        .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+    let has_legacy_skeleton = [
+        "grant_significance",
+        "grant_approach",
+        "grant_investigators",
+        "grant_clarity",
+        "grant_synthesis",
+    ]
+    .iter()
+    .all(|step_id| profile.steps.iter().any(|step| step.id == *step_id));
+    let is_current = profile.steps.iter().any(|step| step.id == "grant_validate")
+        && profile
+            .steps
+            .iter()
+            .find(|step| step.id == "grant_validate")
+            .and_then(|step| step.output_schema.as_ref())
+            .and_then(|schema| schema.get("x-pipeline-schema-ref"))
+            .and_then(serde_json::Value::as_str)
+            == Some("findings-v2-validation");
+    if !has_legacy_skeleton || is_current {
+        return Ok(());
+    }
+
+    archive_retired_profile(profiles, id)?;
+    let replacement = grant_review_profile();
+    validate_profile_data(&replacement)?;
+    let json = serde_json::to_string_pretty(&replacement)
+        .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+    restore_profile_bytes(&path, json.as_bytes())
+        .map_err(|error| format!("Failed to write '{}': {error}", path.display()))
+}
 
 /// The v2 Auto Review contract changes the whole step suite (structured
 /// specialist output, consolidated `sources`, host-enforced id lineage), not
@@ -446,6 +530,118 @@ pub(super) fn compact_builtin_auto_review_prompts(profiles: &Path) -> Result<(),
     Ok(())
 }
 
+/// Refresh the prompt-bearing fields changed by the prompt-parsimony audit.
+/// Digest matching is intentionally per field: a user may customize other
+/// parts of a built-in workflow while retaining a stock prompt.
+pub(super) fn refresh_parsimonious_prompt_defaults(profiles: &Path) -> Result<(), String> {
+    const OLD_AUTO_ORIENTATION: &str =
+        "e0b2d3d953d5d78930916600797e1774b0d581e499225d4fc105be826cb58436";
+    const OLD_AUTO_CONTRIBUTION: &str =
+        "6853ad3d426a84b59a16db96b9b5ad1cfe57e1ba4276bfdb6a2d97fd3de23e10";
+    const OLD_AUTO_CONSISTENCY: &str =
+        "b3e3f19325e773e221ea5552d472dfdf3f75833ed68f29f0066d71d94a5245f5";
+    const OLD_AUTO_EXPOSITION: &str =
+        "2f06472360fe849b7a7a9839a5243ef2195afb1f0d6f19e2bf0a7e1616691b4b";
+    const OLD_AUTO_VALIDATE: &str =
+        "054e15ab830b0bce611fcef0d64fe84d325889a69a32e7424f306ad2c75b67ba";
+    const OLD_GENERIC_ORIENTATION: &str =
+        "eb32d99a757c30776d0171cde277fdbc71cd1188625c27ab84a94208b30cc972";
+    const OLD_GRANT_CLARITY: &str =
+        "5247ba38f4fb752ff31311f81167f13c7e97a4d9d61c9c123fad371113027cce";
+    const OLD_GRANT_CONSISTENCY: &str =
+        "efa397ef674b57f0bb609e675d65e1e0220827923662f63d46550be3df671ac5";
+
+    for (id, replacement) in [
+        ("auto-review", auto_review_profile()),
+        ("auto-review-quick", quick_auto_review_profile()),
+    ] {
+        let path = profiles.join(format!("{id}.json"));
+        if !path.exists() {
+            continue;
+        }
+        let content = read_profile_file(&path)
+            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+        let mut profile: ProfileData = serde_json::from_str(&content)
+            .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+        let mut changed = false;
+
+        if prompt_digest(&profile.orientation_prompt) == OLD_AUTO_ORIENTATION {
+            profile.orientation_prompt = replacement.orientation_prompt.clone();
+            changed = true;
+        }
+        for step in &mut profile.steps {
+            let old_digest = match step.id.as_str() {
+                "auto_contribution" => Some(OLD_AUTO_CONTRIBUTION),
+                "auto_consistency" => Some(OLD_AUTO_CONSISTENCY),
+                "auto_exposition" => Some(OLD_AUTO_EXPOSITION),
+                "auto_validate" => Some(OLD_AUTO_VALIDATE),
+                _ => None,
+            };
+            if old_digest.is_some_and(|digest| prompt_digest(&step.prompt) == digest) {
+                if let Some(new_step) = replacement
+                    .steps
+                    .iter()
+                    .find(|candidate| candidate.id == step.id)
+                {
+                    step.prompt = new_step.prompt.clone();
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            validate_profile_data(&profile)?;
+            let json = serde_json::to_string_pretty(&profile)
+                .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+            restore_profile_bytes(&path, json.as_bytes())
+                .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+        }
+    }
+
+    let path = profiles.join("grant-review.json");
+    if path.exists() {
+        let content = read_profile_file(&path)
+            .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
+        let mut profile: ProfileData = serde_json::from_str(&content)
+            .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
+        let replacement = grant_review_profile();
+        let stock_schema = Some(crate::orientation_contract::generic_schema());
+        let mut changed = false;
+        if prompt_digest(&profile.orientation_prompt) == OLD_GENERIC_ORIENTATION
+            && profile.orientation_schema == stock_schema
+        {
+            profile.orientation_prompt = replacement.orientation_prompt.clone();
+            profile.orientation_schema = replacement.orientation_schema.clone();
+            changed = true;
+        }
+        for step in &mut profile.steps {
+            let old_digest = match step.id.as_str() {
+                "grant_clarity" => Some(OLD_GRANT_CLARITY),
+                "grant_consistency" => Some(OLD_GRANT_CONSISTENCY),
+                _ => None,
+            };
+            if old_digest.is_some_and(|digest| prompt_digest(&step.prompt) == digest) {
+                if let Some(new_step) = replacement
+                    .steps
+                    .iter()
+                    .find(|candidate| candidate.id == step.id)
+                {
+                    step.prompt = new_step.prompt.clone();
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            validate_profile_data(&profile)?;
+            let json = serde_json::to_string_pretty(&profile)
+                .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
+            restore_profile_bytes(&path, json.as_bytes())
+                .map_err(|error| format!("Failed to update '{}': {error}", path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
 pub(super) fn record_fresh_install_markers(profiles: &Path) -> Result<(), String> {
     for marker in CATALOG_MIGRATION_MARKERS {
         let path = profiles.join(marker);
@@ -515,6 +711,7 @@ pub(super) fn migrate_shipped_prompt_defaults(profile: &mut ProfileData) -> bool
     const OLD_EDITOR_ISSUES: &str =
         "01079fa2f1a5c0c44ba88861966b8383bbb5a4ac3b47b0e95ac3a8256bb36eeb";
     const OLD_MERGE: &str = "cd90280a68b6818ba075f293f3ec54629568dd2d3e13dc891bcfb3164cdb9b18";
+    const ACADEMIC_MERGE: &str = "320a872359321270bd37632bd8c08720d558bdd81c0f8da29ec9fb5f68a09aea";
     let mut changed = false;
     for step in &mut profile.steps {
         let replacement = match prompt_digest(&step.prompt).as_str() {
@@ -527,7 +724,10 @@ pub(super) fn migrate_shipped_prompt_defaults(profile: &mut ProfileData) -> bool
             changed = true;
         }
     }
-    if prompt_digest(&profile.merge.prompt) == OLD_MERGE {
+    if matches!(
+        prompt_digest(&profile.merge.prompt).as_str(),
+        OLD_MERGE | ACADEMIC_MERGE
+    ) {
         if let Some(replacement) = prompts::compiled_default("merge") {
             profile.merge.prompt = replacement.to_string();
             changed = true;

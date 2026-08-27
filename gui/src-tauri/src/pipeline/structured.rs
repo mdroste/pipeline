@@ -32,6 +32,9 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "x-pipeline-catalog",
     "x-pipeline-catalog-policy",
     "x-pipeline-adaptive-agent-count",
+    FINDINGS_VERSION_KEY,
+    FINDINGS_TAXONOMY_KEY,
+    VALIDATION_LEDGER_KEY,
     PRESERVE_FINDINGS_KEY,
     SCHEMA_REFERENCE_KEY,
 ];
@@ -39,9 +42,12 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
 /// Root-only marker resolving to a live host-owned contract at dispatch, the
 /// way catalog references resolve to live enums. A profile stores only the
 /// reference, so host contract improvements reach saved workflows without a
-/// migration. Currently `findings-v1` (the canonical published-findings
-/// contract).
+/// migration. `findings-v1` remains readable for legacy workflows;
+/// `findings-v2` is the strict release contract.
 pub const SCHEMA_REFERENCE_KEY: &str = "x-pipeline-schema";
+pub const FINDINGS_VERSION_KEY: &str = "x-pipeline-findings-version";
+pub const FINDINGS_TAXONOMY_KEY: &str = "x-pipeline-findings-taxonomy";
+pub const VALIDATION_LEDGER_KEY: &str = "x-pipeline-validation-ledger";
 
 /// Resolve a step schema's live contract reference, carrying every other root
 /// `x-pipeline-*` marker (for example the preserve-findings lineage marker)
@@ -59,7 +65,35 @@ pub fn resolve_schema_reference(schema: &serde_json::Value) -> Result<serde_json
         .as_str()
         .ok_or_else(|| format!("$.{SCHEMA_REFERENCE_KEY}: expected a string"))?;
     let mut resolved = match reference {
-        "findings-v1" => crate::findings::output_schema(),
+        "findings-v1" => crate::findings::legacy_output_schema(),
+        "findings-v2" => {
+            let taxonomy = schema
+                .get(FINDINGS_TAXONOMY_KEY)
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| crate::findings::CATEGORIES.map(str::to_string).to_vec());
+            crate::findings::output_schema_for_taxonomy(&taxonomy)
+        }
+        "findings-v2-validation" => {
+            let taxonomy = schema
+                .get(FINDINGS_TAXONOMY_KEY)
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| crate::findings::CATEGORIES.map(str::to_string).to_vec());
+            crate::findings::validation_output_schema_for_taxonomy(&taxonomy)
+        }
         other => {
             return Err(format!(
                 "$.{SCHEMA_REFERENCE_KEY}: unknown Pipeline schema reference '{other}'"
@@ -479,6 +513,7 @@ fn validate_schema_at(schema: &serde_json::Value, path: &str, depth: usize) -> R
         "x-pipeline-catalog-policy",
         PRESERVE_FINDINGS_KEY,
         SCHEMA_REFERENCE_KEY,
+        VALIDATION_LEDGER_KEY,
     ] {
         if object.get(keyword).is_some_and(|value| !value.is_string()) {
             return Err(format!("{path}.{keyword}: expected a string"));
@@ -489,6 +524,9 @@ fn validate_schema_at(schema: &serde_json::Value, path: &str, depth: usize) -> R
             "x-pipeline-contract",
             "x-pipeline-catalog-policy",
             "x-pipeline-adaptive-agent-count",
+            FINDINGS_VERSION_KEY,
+            FINDINGS_TAXONOMY_KEY,
+            VALIDATION_LEDGER_KEY,
             PRESERVE_FINDINGS_KEY,
             SCHEMA_REFERENCE_KEY,
         ] {
@@ -556,6 +594,37 @@ fn validate_schema_at(schema: &serde_json::Value, path: &str, depth: usize) -> R
         return Err(format!(
             "{path}.x-pipeline-adaptive-agent-count: expected a non-negative integer"
         ));
+    }
+    if object
+        .get(FINDINGS_VERSION_KEY)
+        .is_some_and(|value| value.as_u64().is_none())
+    {
+        return Err(format!(
+            "{path}.{FINDINGS_VERSION_KEY}: expected a non-negative integer"
+        ));
+    }
+    if let Some(taxonomy) = object.get(FINDINGS_TAXONOMY_KEY) {
+        let taxonomy = taxonomy
+            .as_array()
+            .ok_or_else(|| format!("{path}.{FINDINGS_TAXONOMY_KEY}: expected an array"))?;
+        if taxonomy.is_empty()
+            || taxonomy
+                .iter()
+                .any(|value| value.as_str().is_none_or(|value| value.trim().is_empty()))
+        {
+            return Err(format!(
+                "{path}.{FINDINGS_TAXONOMY_KEY}: expected non-empty strings"
+            ));
+        }
+        let unique = taxonomy
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        if unique.len() != taxonomy.len() {
+            return Err(format!(
+                "{path}.{FINDINGS_TAXONOMY_KEY}: taxonomy values must be unique"
+            ));
+        }
     }
 
     if let Some(values) = object.get("enum") {
@@ -666,7 +735,8 @@ fn validate_schema_at(schema: &serde_json::Value, path: &str, depth: usize) -> R
 /// a human-readable reason on the first violation.
 pub fn validate(schema: &serde_json::Value, value: &serde_json::Value) -> Result<(), String> {
     validate_schema(schema)?;
-    validate_at(schema, value, "$")
+    validate_at(schema, value, "$")?;
+    crate::findings::validate_v2_semantics(schema, value)
 }
 
 fn validate_at(
@@ -1059,36 +1129,36 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .any(|key| key == "priority"));
+            .any(|key| key == "source_key"));
         assert_eq!(
-            item["properties"]["priority"]["type"],
+            item["properties"]["source_key"]["type"],
             serde_json::json!(["string", "null"])
         );
-        assert!(item["properties"]["priority"]["enum"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(serde_json::Value::is_null));
 
         // A strict-transport response spelling absence as null canonicalizes
         // cleanly against the original contract, with the nulls removed.
-        let response = serde_json::json!({"findings": [{
-            "id": "a", "source_key": null, "sources": null,
+        let response = serde_json::json!({
+          "schema_version": 2, "taxonomy": crate::findings::CATEGORIES,
+          "findings": [{
+            "rank": 1, "id": "a", "source_key": null,
+            "reviewer_ids": ["reviewer"], "source_call_ids": null,
             "title": "T", "category": crate::findings::CATEGORIES[0],
-            "priority": null, "body": "B",
-            "evidence": [{"page": 3, "line_start": null, "line_end": null,
+            "severity": "high", "confidence": "high", "verification_status": "unverified",
+            "problem": "Problem", "consequence": "Consequence", "recommended_action": "Fix",
+            "evidence": [{"evidence_type": "document", "verification_status": "unverified",
+                          "page": 3, "line_start": null, "line_end": null,
                           "node_id": null, "asset_id": null, "artifact_path": null,
                           "source_path": null, "source_hash": null,
-                          "description": null, "quote": null}]
+                          "url": null, "doi": null, "publisher": null, "accessed_at": null,
+                          "query_id": null, "call_id": null,
+                          "description": "page 3", "quote": null}]
         }]});
         let canonical = canonicalize(&schema, &response.to_string()).unwrap();
         assert!(!canonical.contains("null"));
         assert!(canonical.contains("\"page\": 3"));
         // A required field may not hide behind null.
-        let broken = serde_json::json!({"findings": [{
-            "id": null, "title": "T", "category": crate::findings::CATEGORIES[0],
-            "body": "B", "evidence": []
-        }]});
+        let mut broken = response;
+        broken["findings"][0]["id"] = serde_json::Value::Null;
         assert!(canonicalize(&schema, &broken.to_string()).is_err());
     }
 

@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import type { KeyboardEvent } from "react";
 import type {
   MergeConfig,
   ModelCatalog,
@@ -204,6 +205,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
   settings,
   catalogs,
   conditionStepIds,
+  advanced,
   onUpdate,
   onPhaseChange,
   onOutputRoleChange,
@@ -213,6 +215,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
   settings: Settings | null;
   catalogs: Record<string, ModelCatalog>;
   conditionStepIds: string[];
+  advanced: boolean;
   onUpdate: (id: string, patch: Partial<StepConfig>) => void;
   onPhaseChange: (id: string, phase: Phase) => void;
   onOutputRoleChange: (
@@ -232,12 +235,40 @@ export const StepEditorPanel = memo(function StepEditorPanel({
     .filter((candidate) => candidate.enabled)
     .map((candidate) => candidate.id);
   const summary = describeStep(step, config);
-  const tabs = [
-    ["prompt", "Prompt"],
-    ["inputs", "Inputs & dependencies"],
-    ["execution", "Execution rules"],
-    ["model", "Model & agents"],
-  ] as const;
+  const tabs: Array<["prompt" | "inputs" | "execution" | "model", string]> = advanced
+    ? [
+        ["prompt", "Prompt"],
+        ["inputs", "Inputs & dependencies"],
+        ["execution", "Execution rules"],
+        ["model", "Model & agents"],
+      ]
+    : [
+        ["prompt", "Prompt"],
+        ["inputs", "Inputs"],
+      ];
+
+  useEffect(() => {
+    if (!advanced && (activeTab === "execution" || activeTab === "model")) {
+      setActiveTab("prompt");
+    }
+  }, [activeTab, advanced]);
+
+  const handleTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    current: typeof tabs[number][0],
+  ) => {
+    const index = tabs.findIndex(([id]) => id === current);
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+    else if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    const id = tabs[next][0];
+    setActiveTab(id);
+    document.getElementById(`step-tab-${id}`)?.focus();
+  };
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -281,7 +312,9 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             id={`step-tab-${id}`}
             aria-selected={activeTab === id}
             aria-controls={`step-panel-${id}`}
+            tabIndex={activeTab === id ? 0 : -1}
             onClick={() => setActiveTab(id)}
+            onKeyDown={(event) => handleTabKeyDown(event, id)}
             className={`shrink-0 rounded-t-lg border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
               activeTab === id
                 ? "border-gray-900 text-gray-900 dark:border-gray-100 dark:text-gray-100"

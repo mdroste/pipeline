@@ -149,18 +149,42 @@ fn retention_plan_from_sized_runs(
     sized: &[(RunSummary, u64)],
     keep: usize,
     max_bytes: u64,
-) -> RetentionPlan {
+) -> Result<RetentionPlan, String> {
+    let projects = crate::projects::list_projects()?;
+    let project_runs = projects
+        .projects
+        .iter()
+        .flat_map(|project| project.run_ids.iter().cloned())
+        .collect::<std::collections::HashSet<_>>();
     let state = sized
         .iter()
         .map(|(summary, bytes)| {
+            // Fail closed around user state: project membership, annotations,
+            // explicit keep/pin tags, and every recoverable/nonterminal run
+            // make a run ineligible for automatic retention.
+            let annotated = read_annotations(&summary.run_id)
+                .ok()
+                .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                .and_then(|value| value.as_object().map(|object| !object.is_empty()))
+                .unwrap_or(true);
+            let explicitly_kept = summary.tags.iter().any(|tag| {
+                matches!(
+                    tag.trim().to_ascii_lowercase().as_str(),
+                    "pinned" | "pin" | "keep" | "retain" | "retained"
+                )
+            });
             (
                 summary.run_id.clone(),
-                summary.status.is_empty() || summary.status == "running",
+                !matches!(summary.status.as_str(), "done" | "degraded")
+                    || summary.resumable
+                    || project_runs.contains(&summary.run_id)
+                    || annotated
+                    || explicitly_kept,
                 *bytes,
             )
         })
         .collect::<Vec<_>>();
-    retention_plan_from_state(&state, keep, max_bytes)
+    Ok(retention_plan_from_state(&state, keep, max_bytes))
 }
 
 /// Calculate the exact completed-run set selected by the current retention
@@ -170,7 +194,7 @@ pub fn preview_purge_runs_with_limits(
     max_bytes: u64,
 ) -> Result<RunPurgePreview, String> {
     let sized = sized_runs_for_retention()?;
-    Ok(retention_plan_from_sized_runs(&sized, keep, max_bytes).preview)
+    Ok(retention_plan_from_sized_runs(&sized, keep, max_bytes)?.preview)
 }
 
 /// Read a run's annotations (per-issue accept/reject/note), or "{}" if none.
@@ -242,7 +266,7 @@ pub fn purge_runs_with_limits(keep: usize, max_bytes: u64) -> Result<usize, Stri
         return Ok(0);
     }
     let sized = sized_runs_for_retention()?;
-    let plan = retention_plan_from_sized_runs(&sized, keep, max_bytes);
+    let plan = retention_plan_from_sized_runs(&sized, keep, max_bytes)?;
     let mut removed = 0usize;
     for run_id in plan.candidates {
         if delete_run(&run_id).is_ok() {
@@ -264,7 +288,7 @@ pub fn purge_runs_with_expected_preview(
         return Err("A purge preview is required before deleting run history".to_string());
     }
     let sized = sized_runs_for_retention()?;
-    let plan = retention_plan_from_sized_runs(&sized, keep, max_bytes);
+    let plan = retention_plan_from_sized_runs(&sized, keep, max_bytes)?;
     if plan.preview.preview_token != expected_preview_token {
         return Err(
             "Run history changed after the preview. Review the updated deletion summary before purging."

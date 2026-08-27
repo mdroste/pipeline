@@ -822,10 +822,10 @@ pub fn specialist_schema() -> serde_json::Value {
                     ],
                     "properties": {
                         "title": {"type": "string", "minLength": 1, "description": "Specific descriptive title naming the issue."},
-                        "in_the_paper": {"type": "string", "description": "Quote or close paraphrase of the claim or result and the evidence it relies on."},
-                        "problem": {"type": "string", "description": "The specific analysis, in Markdown: the logic, comparison, calculation, or counterexample rather than a generic concern."},
-                        "consequence": {"type": "string", "description": "Exactly which conclusion, interpretation, or scope claim is affected."},
-                        "what_would_help": {"type": "string", "description": "The smallest credible correction, test, comparison, qualification, or additional argument."},
+                        "in_the_paper": {"type": "string", "minLength": 1, "description": "Quote or close paraphrase of the claim or result and the evidence it relies on."},
+                        "problem": {"type": "string", "minLength": 1, "description": "The specific analysis, in Markdown: the logic, comparison, calculation, or counterexample rather than a generic concern."},
+                        "consequence": {"type": "string", "minLength": 1, "description": "Exactly which conclusion, interpretation, or scope claim is affected."},
+                        "what_would_help": {"type": "string", "minLength": 1, "description": "The smallest credible correction, test, comparison, qualification, or additional argument."},
                         "evidence": evidence
                     }
                 }
@@ -1003,7 +1003,8 @@ pub fn steps() -> Vec<StepConfig> {
     synthesis.phase = Phase::Sequential;
     synthesis.output_schema = Some(serde_json::json!({
         "type": "object",
-        crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v1",
+        crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v2",
+        crate::pipeline::structured::FINDINGS_TAXONOMY_KEY: crate::findings::CATEGORIES,
     }));
     steps.push(synthesis);
     let mut validate = base_step(
@@ -1018,7 +1019,8 @@ pub fn steps() -> Vec<StepConfig> {
     // relative order (see `structured::PRESERVE_FINDINGS_KEY`).
     validate.output_schema = Some(serde_json::json!({
         "type": "object",
-        crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v1",
+        crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v2-validation",
+        crate::pipeline::structured::FINDINGS_TAXONOMY_KEY: crate::findings::CATEGORIES,
         crate::pipeline::structured::PRESERVE_FINDINGS_KEY: "auto_synthesis",
     }));
     steps.push(validate);
@@ -1170,6 +1172,12 @@ pub fn materialize_config(
             "Auto Review needs at least one enabled parallel core step to define specialist artifact access"
                 .to_string()
         })?;
+    let core_ids = materialized
+        .steps
+        .iter()
+        .filter(|step| step.enabled && step.phase == Phase::Parallel)
+        .map(|step| step.id.clone())
+        .collect::<Vec<_>>();
     let mut selected_steps = Vec::with_capacity(selected_ids.len());
     for id in &selected_ids {
         let mut step = specialist_step(id)
@@ -1205,13 +1213,23 @@ pub fn materialize_config(
         .iter_mut()
         .find(|step| step.id == "auto_synthesis")
         .ok_or_else(|| "Auto Review needs the 'auto_synthesis' step".to_string())?;
-    for id in selected_ids {
+    synthesis.dependency_policy.required = core_ids;
+    synthesis.dependency_policy.quorum = selected_ids.iter().map(|id| (*id).to_string()).collect();
+    synthesis.dependency_policy.minimum_successes =
+        std::cmp::min(2, synthesis.dependency_policy.quorum.len()) as u32;
+    for id in &selected_ids {
         synthesis.context.include.push(ArtifactSelector::Step {
-            step: id.to_string(),
+            step: (*id).to_string(),
             parts: vec![StepArtifactPart::Report],
             glob: String::new(),
         });
     }
+    let validate = materialized
+        .steps
+        .iter_mut()
+        .find(|step| step.id == "auto_validate")
+        .ok_or_else(|| "Auto Review needs the 'auto_validate' step".to_string())?;
+    validate.dependency_policy.required = vec!["auto_synthesis".to_string()];
 
     // A validated non-article genre classification becomes shared context:
     // the host-owned genre paragraph is injected into every enabled step —
@@ -1756,17 +1774,15 @@ mod tests {
         for required in [
             "## Output",
             "Populate the supplied findings schema",
-            "`title`",
-            "`in_the_paper`",
-            "`problem`",
-            "`consequence`",
-            "`what_would_help`",
-            "`evidence`",
             "return an empty findings array",
-            "Never invent a locator",
+            "invent a locator",
         ] {
             assert!(prompt.contains(required), "{label} is missing {required}");
         }
+        assert!(
+            !prompt.contains("- `title`:"),
+            "{label} duplicates the structured schema field descriptions"
+        );
         assert!(
             !prompt.contains("Severity"),
             "{label} still asks for a severity label"
@@ -1789,8 +1805,20 @@ mod tests {
         assert!(VALIDATE.contains("{last_output}"));
         assert!(VALIDATE.contains("retain its exact input `id`"));
         assert!(VALIDATE.contains("do not add new findings"));
-        assert!(SYNTHESIS.contains("`sources`"));
-        assert!(VALIDATE.contains("`sources`"));
+        assert!(SYNTHESIS.contains("`reviewer_ids`"));
+        assert!(VALIDATE.contains("reviewer and call lineage"));
+    }
+
+    #[test]
+    fn shared_prompt_layers_stay_compact() {
+        let words = |prompt: &str| prompt.split_whitespace().count();
+        assert!(words(ORIENTATION_TEMPLATE) <= 750);
+        assert!(words(SUBJECT_REVIEW_BASE) <= 300);
+        assert!(words(METHOD_REVIEW_BASE) <= 250);
+        assert!(words(CORE_CONTRIBUTION) <= 275);
+        assert!(words(CORE_CONSISTENCY) <= 225);
+        assert!(words(CORE_EXPOSITION) <= 200);
+        assert!(words(VALIDATE) <= 400);
     }
 
     #[test]
@@ -1891,8 +1919,8 @@ mod tests {
             "consequence": "Effect",
             "what_would_help": "Fix",
             "evidence": [
-                {"page": 12, "description": "Proposition 2", "quote": "the sign flips"},
-                {"source_path": "model.tex", "line_start": 4, "line_end": 9}
+                {"evidence_type": "document", "verification_status": "unverified", "page": 12, "description": "Proposition 2", "quote": "the sign flips"},
+                {"evidence_type": "source", "verification_status": "unverified", "source_path": "model.tex", "line_start": 4, "line_end": 9, "description": "model source"}
             ]
         }]});
         crate::pipeline::structured::validate(&specialist_schema(), &artifact).unwrap();

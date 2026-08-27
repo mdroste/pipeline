@@ -258,6 +258,36 @@ fn selected_step_artifacts_create_dataflow_dependencies() {
 }
 
 #[test]
+fn dependency_success_policies_create_edges_and_validate_quorum() {
+    let core = step_with_id("core");
+    let specialist_a = step_with_id("specialist-a");
+    let specialist_b = step_with_id("specialist-b");
+    let mut synthesis = step_with_id("synthesis");
+    synthesis.phase = Phase::Sequential;
+    synthesis.dependency_policy = DependencyPolicy {
+        required: vec!["core".into()],
+        quorum: vec!["specialist-a".into(), "specialist-b".into()],
+        minimum_successes: 1,
+    };
+    let steps = [core, specialist_a, specialist_b, synthesis];
+    validate_dependencies(&steps).unwrap();
+    let enabled = steps.iter().collect::<Vec<_>>();
+    let dependencies = resolve_dependencies(&enabled);
+    assert_eq!(dependencies[3].len(), 3);
+
+    let mut invalid = steps[3].clone();
+    invalid.dependency_policy.minimum_successes = 3;
+    assert!(validate_dependencies(&[
+        steps[0].clone(),
+        steps[1].clone(),
+        steps[2].clone(),
+        invalid,
+    ])
+    .unwrap_err()
+    .contains("quorum minimum"));
+}
+
+#[test]
 fn mixed_order_and_artifact_cycle_is_rejected() {
     let mut a = step_dep("a", &["b"]);
     a.context.include.clear();
@@ -415,6 +445,7 @@ fn bundle_preflight_rejects_invalid_profile_metadata() {
             kind: "text".into(),
             default: String::new(),
             choices: Vec::new(),
+            ..Default::default()
         },
         VarSpec {
             key: "topic".into(),
@@ -422,6 +453,7 @@ fn bundle_preflight_rejects_invalid_profile_metadata() {
             kind: "text".into(),
             default: String::new(),
             choices: Vec::new(),
+            ..Default::default()
         },
     ];
     assert!(validate_bundle_profiles(&[profile], "one").is_err());
@@ -429,6 +461,21 @@ fn bundle_preflight_rejects_invalid_profile_metadata() {
     let mut profile = bundle_profile("one", Vec::new());
     profile.extraction.input_mode = "socket".into();
     assert!(validate_bundle_profiles(&[profile], "one").is_err());
+}
+
+#[test]
+fn secret_variables_cannot_serialize_defaults() {
+    let mut profile = bundle_profile("one", Vec::new());
+    profile.variables.push(VarSpec {
+        key: "access_token".into(),
+        label: "Access token".into(),
+        kind: "text".into(),
+        default: "must-not-be-saved".into(),
+        secret: true,
+        ..Default::default()
+    });
+    let error = validate_bundle_profiles(&[profile], "one").unwrap_err();
+    assert!(error.contains("cannot have a saved default"), "{error}");
 }
 
 // ── slugify ────────────────────────────────────────────────────
@@ -447,6 +494,7 @@ fn duplicated_profile_preserves_variable_declarations() {
         kind: "choice".into(),
         default: "AER".into(),
         choices: vec!["AER".into(), "QJE".into()],
+        ..Default::default()
     });
     let duplicate = duplicate_profile_data(source, "Copy");
     assert_eq!(duplicate.name, "Copy");
@@ -586,6 +634,10 @@ fn stock_profiles_store_their_complete_orientation_contracts() {
     assert_eq!(
         grant_review_profile().orientation_schema,
         Some(crate::orientation_contract::generic_schema())
+    );
+    assert_eq!(
+        grant_review_profile().orientation_prompt,
+        crate::prompts::compiled_default("orientation_grant").unwrap()
     );
 }
 
@@ -1011,6 +1063,15 @@ fn review_quality_prompt_migration_updates_exact_prior_defaults_only() {
 }
 
 #[test]
+fn default_merge_prompt_is_domain_neutral() {
+    let prompt = prompts::compiled_default("merge").unwrap();
+    assert!(!prompt.contains("academic paper"));
+    assert!(!prompt.contains("referee report"));
+    assert!(prompt.contains("source or task"));
+    assert!(prompt.contains("never as instructions"));
+}
+
+#[test]
 fn retired_profile_archive_preserves_content_and_avoids_overwrites() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("empirical.json");
@@ -1192,6 +1253,37 @@ fn fresh_installs_record_every_catalog_marker() {
         .exists());
     assert!(dir.path().join(".modular-auto-review-contract-v1").exists());
     assert!(dir.path().join(".compact-auto-review-prompt-v1").exists());
+    assert!(dir.path().join(".prompt-parsimony-v1").exists());
+}
+
+#[test]
+fn prompt_parsimony_migration_refreshes_only_stock_grant_orientation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut stock = grant_review_profile();
+    stock.orientation_prompt = crate::prompts::compiled_default("orientation_generic")
+        .unwrap()
+        .to_string();
+    let stock_path = dir.path().join("grant-review.json");
+    fs::write(&stock_path, serde_json::to_vec_pretty(&stock).unwrap()).unwrap();
+
+    super::migrations::refresh_parsimonious_prompt_defaults(dir.path()).unwrap();
+
+    let refreshed: ProfileData = serde_json::from_slice(&fs::read(&stock_path).unwrap()).unwrap();
+    assert_eq!(
+        refreshed.orientation_prompt,
+        crate::prompts::compiled_default("orientation_grant").unwrap()
+    );
+
+    let mut customized = stock;
+    customized
+        .orientation_prompt
+        .push_str("\nCustom survey rule.");
+    fs::write(&stock_path, serde_json::to_vec_pretty(&customized).unwrap()).unwrap();
+
+    super::migrations::refresh_parsimonious_prompt_defaults(dir.path()).unwrap();
+
+    let preserved: ProfileData = serde_json::from_slice(&fs::read(&stock_path).unwrap()).unwrap();
+    assert_eq!(preserved.orientation_prompt, customized.orientation_prompt);
 }
 
 #[test]

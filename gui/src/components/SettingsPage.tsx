@@ -1,5 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirmDialog } from "./DialogService";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type {
   DepsReport,
@@ -304,8 +305,8 @@ export default function SettingsPage({
     if (settings) enqueueSave(settings, true);
   };
 
-  const handleClose = () => {
-    if (savePending && !window.confirm("Settings changes have not finished saving. Leave anyway?")) {
+  const handleClose = async () => {
+    if (savePending && !(await confirmDialog("Settings changes have not finished saving. Leave anyway?"))) {
       return;
     }
     onClose();
@@ -1580,14 +1581,15 @@ function RunRetention({
         await loadUsage();
         return;
       }
-      const confirmed = window.confirm(
-        "Purge report history?\n\n" +
-        `This will permanently delete ${preview.delete_count} completed report${
+      const confirmed = await confirmDialog(
+        "Move reports to Trash?\n\n" +
+        `This will move ${preview.delete_count} completed report${
           preview.delete_count === 1 ? "" : "s"
         } (${fmtBytes(preview.delete_bytes)}). ` +
         `${preview.remaining_count} report${preview.remaining_count === 1 ? "" : "s"} ` +
         `(${fmtBytes(preview.remaining_bytes)}) will remain.\n\n` +
-        "Deleted report artifacts cannot be recovered.",
+        "Reports remain recoverable from Trash until deliberately deleted there.",
+        { title: "Apply retention policy", confirmLabel: "Move to Trash", destructive: true },
       );
       if (!confirmed) return;
 
@@ -1600,14 +1602,14 @@ function RunRetention({
       setPurgeResult(
         removed === 0
           ? "No completed reports were beyond the configured limits."
-          : `Removed ${removed} completed report${removed === 1 ? "" : "s"}.`,
+          : `Moved ${removed} completed report${removed === 1 ? "" : "s"} to Trash.`,
       );
       await loadUsage();
     } catch (error) {
       setPurgeError(
         `${purgeStarted
-          ? "Report history could not be purged"
-          : "The purge preview could not be loaded; no reports were deleted"}: ${
+          ? "Report history could not be moved to Trash"
+          : "The retention preview could not be loaded; no reports were moved"}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

@@ -152,7 +152,7 @@ fn ensure_ledger_dir(projects_dir: &Path) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn ledger_path(projects_dir: &Path, project_id: &str) -> Result<PathBuf, String> {
+pub(super) fn ledger_path(projects_dir: &Path, project_id: &str) -> Result<PathBuf, String> {
     super::validate_project_id(project_id)?;
     Ok(ledger_dir(projects_dir).join(format!("{project_id}.json")))
 }

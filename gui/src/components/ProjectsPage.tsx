@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Project, ProjectsResponse, RunSummary } from "../lib/types";
+import type { Project, ProjectsResponse, RunSummary, TrashedProject } from "../lib/types";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
+import { confirmDialog, notify } from "./DialogService";
 import type { ArtifactSelectionTarget } from "./ArtifactExplorer";
 
 interface Props {
@@ -42,6 +43,10 @@ export default function ProjectsPage({ onOpenRun }: Props) {
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [addRunId, setAddRunId] = useState("");
+  const [detailsStatus, setDetailsStatus] = useState<"saved" | "saving" | "unsaved">("saved");
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashedProjects, setTrashedProjects] = useState<TrashedProject[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
@@ -70,12 +75,59 @@ export default function ProjectsPage({ onOpenRun }: Props) {
     void refresh();
   }, []);
 
+  const refreshTrash = async () => {
+    setTrashLoading(true);
+    try {
+      setTrashedProjects(await invoke<TrashedProject[]>("list_trashed_projects"));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setTrashLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (trashOpen) void refreshTrash();
+  }, [trashOpen]);
+
   const selected = projects.find((project) => project.id === selectedId) ?? null;
+  const detailsDirty = Boolean(selected)
+    && (editName !== selected?.name || editDescription !== selected?.description);
   useEffect(() => {
     setEditName(selected?.name ?? "");
     setEditDescription(selected?.description ?? "");
     setAddRunId("");
+    setDetailsStatus("saved");
   }, [selected?.id]);
+
+  useEffect(() => {
+    if (!selected || !detailsDirty || !editName.trim() || pending) return undefined;
+    setDetailsStatus("unsaved");
+    const timer = window.setTimeout(() => {
+      setDetailsStatus("saving");
+      void invoke<Project>("update_project", {
+        id: selected.id,
+        name: editName,
+        description: editDescription,
+      }).then((updated) => {
+        replaceProject(updated);
+        setDetailsStatus("saved");
+      }).catch((caught) => {
+        setDetailsStatus("unsaved");
+        setError(caught instanceof Error ? caught.message : String(caught));
+      });
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [detailsDirty, editDescription, editName, pending, selected?.id]);
+
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      if (!detailsDirty) return;
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, [detailsDirty]);
 
   const runsById = useMemo(
     () => new Map(runs.map((run) => [run.run_id, run])),
@@ -128,11 +180,21 @@ export default function ProjectsPage({ onOpenRun }: Props) {
       replaceProject(updated);
       setEditName(updated.name);
       setEditDescription(updated.description);
+      setDetailsStatus("saved");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setPending(false);
     }
+  };
+
+  const selectProject = async (id: string) => {
+    if (id === selectedId) return;
+    if (detailsDirty) {
+      await saveProject();
+      if (!editName.trim()) return;
+    }
+    setSelectedId(id);
   };
 
   const setRunMembership = async (runId: string, included: boolean) => {
@@ -179,7 +241,10 @@ export default function ProjectsPage({ onOpenRun }: Props) {
 
   const deleteSelected = async () => {
     if (!selected || pending) return;
-    if (!window.confirm(`Delete the project “${selected.name}”? Its reports will be kept.`)) return;
+    if (!(await confirmDialog(
+      `Move the project “${selected.name}” to Trash? Its reports will be kept, and the project can be restored.`,
+      { title: "Move project to Trash", confirmLabel: "Move to Trash", destructive: true },
+    ))) return;
     setPending(true);
     setError(null);
     try {
@@ -187,6 +252,41 @@ export default function ProjectsPage({ onOpenRun }: Props) {
       const remaining = projects.filter((project) => project.id !== selected.id);
       setProjects(remaining);
       setSelectedId(remaining[0]?.id ?? null);
+      notify("Project moved to Trash.", "success");
+      if (trashOpen) void refreshTrash();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const restoreProject = async (entry: TrashedProject) => {
+    setPending(true);
+    setError(null);
+    try {
+      await invoke("restore_trashed_project", { id: entry.project.id });
+      notify("Project restored.", "success");
+      await Promise.all([refresh(), refreshTrash()]);
+      setSelectedId(entry.project.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const permanentlyDeleteProject = async (entry: TrashedProject) => {
+    if (!(await confirmDialog(
+      `Permanently delete the project “${entry.project.name}” and its issue history? Reports will remain. This cannot be undone.`,
+      { title: "Delete project forever", confirmLabel: "Delete forever", destructive: true },
+    ))) return;
+    setPending(true);
+    setError(null);
+    try {
+      await invoke("permanently_delete_trashed_project", { id: entry.project.id });
+      notify("Project permanently deleted.", "success");
+      await refreshTrash();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -246,7 +346,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
             <button
               type="button"
               key={project.id}
-              onClick={() => setSelectedId(project.id)}
+              onClick={() => void selectProject(project.id)}
               className={`mb-1 w-full rounded-lg px-3 py-2.5 text-left ${
                 project.id === selectedId
                   ? "bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
@@ -263,6 +363,35 @@ export default function ProjectsPage({ onOpenRun }: Props) {
             <p className="px-3 py-8 text-center text-xs leading-5 text-gray-500 dark:text-gray-400">
               Create a project, then add reports from your saved history.
             </p>
+          )}
+        </div>
+        <div className="border-t border-gray-200 p-2 dark:border-gray-800">
+          <button
+            type="button"
+            aria-expanded={trashOpen}
+            aria-controls="project-trash"
+            onClick={() => setTrashOpen((value) => !value)}
+            className="w-full rounded-lg px-3 py-2 text-left text-xs text-gray-600 hover:bg-white dark:text-gray-400 dark:hover:bg-gray-900"
+          >
+            Trash{trashedProjects.length ? ` (${trashedProjects.length})` : ""}
+          </button>
+          {trashOpen && (
+            <div id="project-trash" className="mt-1 space-y-1" aria-label="Project Trash">
+              {trashLoading ? (
+                <p className="px-3 py-2 text-xs text-gray-500">Loading Trash…</p>
+              ) : trashedProjects.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-gray-500">Trash is empty.</p>
+              ) : trashedProjects.map((entry) => (
+                <div key={entry.project.id} className="rounded-lg border border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-900">
+                  <p className="truncate text-xs font-medium text-gray-900 dark:text-gray-100">{entry.project.name}</p>
+                  <p className="mt-0.5 text-[10px] text-gray-500">Moved {formatDate(entry.deleted_at)}</p>
+                  <div className="mt-1 flex gap-2">
+                    <button type="button" disabled={pending} onClick={() => void restoreProject(entry)} className="text-[11px] text-gray-700 disabled:opacity-40 dark:text-gray-300">Restore</button>
+                    <button type="button" disabled={pending} onClick={() => void permanentlyDeleteProject(entry)} className="text-[11px] text-red-600 disabled:opacity-40 dark:text-red-400">Delete forever</button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </aside>
@@ -299,6 +428,9 @@ export default function ProjectsPage({ onOpenRun }: Props) {
                   rows={2}
                   className="mt-3 w-full resize-y rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300"
                 />
+                <p role="status" aria-live="polite" className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  {detailsStatus === "saving" ? "Saving…" : detailsStatus === "unsaved" ? "Unsaved changes" : "Saved"}
+                </p>
               </div>
               <div className="flex shrink-0 gap-2">
                 <button

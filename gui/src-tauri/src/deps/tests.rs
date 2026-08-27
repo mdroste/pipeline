@@ -242,6 +242,7 @@ fn selected_named_pdf_inputs_participate_in_readiness() {
                 label: String::new(),
                 mode: "document".to_string(),
                 required: false,
+                ..Default::default()
             }],
             ..Default::default()
         },

@@ -13,6 +13,7 @@ const DEFAULT_GRANT_FEASIBILITY: &str = include_str!("../../../prompts/grant_fea
 const DEFAULT_GRANT_CLARITY: &str = include_str!("../../../prompts/grant_clarity.md");
 const DEFAULT_GRANT_CONSISTENCY: &str = include_str!("../../../prompts/grant_consistency.md");
 const DEFAULT_GRANT_SYNTHESIS: &str = include_str!("../../../prompts/grant_synthesis.md");
+const DEFAULT_GRANT_VALIDATE: &str = include_str!("../../../prompts/grant_validate.md");
 // Pipeline-level prompts (wrap, merge, consolidate, validate):
 const DEFAULT_PARALLEL_CONTEXT: &str = include_str!("../../../prompts/parallel_context.md");
 const DEFAULT_PARALLEL_CONTEXT_GENERIC: &str =
@@ -25,6 +26,7 @@ const DEFAULT_VALIDATE_FEEDBACK: &str = include_str!("../../../prompts/validate_
 // Preprocessing prompts:
 const DEFAULT_ORIENTATION: &str = include_str!("../../../prompts/orientation.md");
 const DEFAULT_ORIENTATION_GENERIC: &str = include_str!("../../../prompts/orientation_generic.md");
+const DEFAULT_ORIENTATION_GRANT: &str = include_str!("../../../prompts/orientation_grant.md");
 const DEFAULT_ORIENTATION_FOLDER: &str = include_str!("../../../prompts/orientation_folder.md");
 
 /// Get the user prompts directory (~/.pipeline/prompts/).
@@ -45,6 +47,7 @@ fn default_content(name: &str) -> Option<&'static str> {
         "grant_clarity" => Some(DEFAULT_GRANT_CLARITY),
         "grant_consistency" => Some(DEFAULT_GRANT_CONSISTENCY),
         "grant_synthesis" => Some(DEFAULT_GRANT_SYNTHESIS),
+        "grant_validate" => Some(DEFAULT_GRANT_VALIDATE),
         "parallel_context" => Some(DEFAULT_PARALLEL_CONTEXT),
         "parallel_context_generic" => Some(DEFAULT_PARALLEL_CONTEXT_GENERIC),
         "merge" => Some(DEFAULT_MERGE),
@@ -53,6 +56,7 @@ fn default_content(name: &str) -> Option<&'static str> {
         "validate_feedback" => Some(DEFAULT_VALIDATE_FEEDBACK),
         "orientation" => Some(DEFAULT_ORIENTATION),
         "orientation_generic" => Some(DEFAULT_ORIENTATION_GENERIC),
+        "orientation_grant" => Some(DEFAULT_ORIENTATION_GRANT),
         "orientation_folder" => Some(DEFAULT_ORIENTATION_FOLDER),
         _ => None,
     }

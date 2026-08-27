@@ -22,7 +22,7 @@ graph rather than an implicit wave schedule:
   authority. Every agent/fan-out unit writes to its own producer directory.
 - An empty context is intentional isolation. There is no adjacency fallback.
 
-Profiles are schema v8 and all built-in/new profiles serialize this explicit
+Profiles are schema v11 and all built-in/new profiles serialize this explicit
 format. `Read` and `Write` are derived capabilities, not profile tool flags.
 
 ## The core insight: most of the architecture is already general

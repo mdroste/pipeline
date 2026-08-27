@@ -19,11 +19,11 @@ import {
 import {
   isPaperOrientation,
   type PipelineReport,
+  type ReportQuality,
   type RunSummary,
 } from "../lib/types";
+import { REPORT_WORKSPACE_TABS } from "../lib/productMetadata";
 import type {
-  ArtifactContent as ExplorerArtifactContent,
-  ArtifactExplorerPreload,
   ArtifactSelectionRequest,
   ArtifactSelectionTarget,
   RunManifest,
@@ -73,6 +73,10 @@ const TAB_PANEL_IDS: Record<WorkspaceTab, string> = {
   issues: "report-workspace-panel-issues",
   sources: "report-workspace-panel-sources",
 };
+
+const TAB_LABELS = Object.fromEntries(
+  REPORT_WORKSPACE_TABS.map((tab) => [tab.id, tab.label]),
+) as Record<WorkspaceTab, string>;
 
 function reportTitle(report: PipelineReport | null, summary?: RunSummary | null) {
   if (summary?.title) return summary.title;
@@ -265,7 +269,13 @@ function TabButton({
   );
 }
 
-function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
+function ProvenancePanel({
+  provenance,
+  quality,
+}: {
+  provenance: RunProvenance;
+  quality?: ReportQuality;
+}) {
   const fields = [
     ["Review subject", provenance.subject],
     ["Authors", provenance.authors.join(", ") || "—"],
@@ -277,6 +287,7 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
     ["Model", provenance.model_summary],
   ];
   const showCacheWrite = provenance.totals.cache_write_input_tokens > 0;
+  const status = quality?.status || provenance.status;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -294,11 +305,11 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
             </p>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-            provenance.status === "done"
+            status === "done"
               ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
               : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
           }`}>
-            {provenance.status === "done" ? "Completed" : provenance.status}
+            {status === "done" ? "Completed" : status}
           </span>
         </div>
 
@@ -314,6 +325,45 @@ function ProvenancePanel({ provenance }: { provenance: RunProvenance }) {
             </div>
           ))}
         </dl>
+
+        {quality && quality.schema_version > 0 && (
+          <section aria-labelledby="quality-ledger-heading" className="mt-10">
+            <h3 id="quality-ledger-heading" className="text-base font-semibold text-gray-950 dark:text-gray-50">
+              Quality and limitations
+            </h3>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Host-generated coverage and evidence accounting; it does not depend on model wording.
+            </p>
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                ["Extraction", `${quality.recovered_pages} pages · ${quality.recovered_blocks} blocks · ${quality.recovered_assets} assets`],
+                ["Orientation", `${quality.orientation_included_bytes.toLocaleString()} included · ${quality.orientation_omitted_bytes.toLocaleString()} omitted bytes`],
+                ["Reviewers", `${quality.completed_steps?.length ?? 0} completed · ${quality.failed_steps?.length ?? 0} failed · ${quality.skipped_steps?.length ?? 0} skipped`],
+                ["Evidence", `${quality.verified_evidence} verified · ${quality.partially_verified_evidence} partial · ${quality.unverified_evidence} unverified`],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</dt>
+                  <dd className="mt-1 text-sm text-gray-800 dark:text-gray-200">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            {(quality.limitations?.length ?? 0) > 0 ? (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                <p className="font-semibold">Recorded limitations</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {quality.limitations?.map((limitation, index) => (
+                    <li key={`${index}-${limitation}`}>{limitation}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">No deterministic limitations were recorded.</p>
+            )}
+            <p className="mt-3 break-all font-mono text-[11px] text-gray-500 dark:text-gray-400">
+              Reproducibility hash: {quality.reproducibility_hash || "Unavailable"}
+            </p>
+          </section>
+        )}
 
         <div className="mt-10">
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -466,14 +516,12 @@ export default function ReportWorkspace({
   const [reportError, setReportError] = useState<string | null>(null);
   const [markdownError, setMarkdownError] = useState<string | null>(null);
   const [outputView, setOutputView] = useState<OutputView>("clean");
-  const [artifactPreload, setArtifactPreload] = useState<ArtifactExplorerPreload | null>(null);
   const [runManifest, setRunManifest] = useState<RunManifest | null>(null);
   const [sourceRequest, setSourceRequest] = useState<ArtifactSelectionRequest | null>(
     initialSourceSelection ? { key: Date.now(), ...initialSourceSelection } : null,
   );
 
   useEffect(() => {
-    setArtifactPreload(null);
     setRunManifest(null);
     setSourceRequest(initialSourceSelection
       ? { key: Date.now(), ...initialSourceSelection }
@@ -481,27 +529,13 @@ export default function ReportWorkspace({
     if (!runId) return;
     let live = true;
 
-    // Sources are deliberately code-split and normally read artifacts only on
-    // selection. Warm the viewer code, its small manifest, and the one large
-    // text artifact readers commonly open first while they read the report.
-    // The promises are passed through so opening Sources never repeats I/O.
-    const manifest = invoke<RunManifest>("get_run_manifest", { runId });
-    const readableDocument = invoke<ExplorerArtifactContent>("read_artifact", {
-      runId,
-      relPath: "context/document.md",
-    });
-    void loadArtifactExplorer().catch((caught) => {
-      console.error("Failed to preload the artifact viewer:", caught);
-    });
-    // A missing historical artifact must not surface as an unhandled
-    // background error. ArtifactExplorer retries normally if it is selected.
-    void manifest
+    // The compact manifest supports provenance and evidence links. The source
+    // tree component and artifact bytes remain truly lazy until Sources opens.
+    void invoke<RunManifest>("get_run_manifest", { runId })
       .then((loaded) => {
         if (live) setRunManifest(loaded);
       })
       .catch(() => undefined);
-    void readableDocument.catch(() => undefined);
-    setArtifactPreload({ runId, manifest, readableDocument });
     return () => {
       live = false;
     };
@@ -608,7 +642,8 @@ export default function ReportWorkspace({
   }, [durationSecs, report, reportProblem, runId, runManifest, summary]);
   const title = reportTitle(report, summary);
   const loadProblem = [reportError, markdownError].filter(Boolean).join(" · ");
-  const reportedStatus = provenance?.status
+  const reportedStatus = report?.quality?.status
+    || provenance?.status
     || runManifest?.status
     || (report?.failed_steps?.length || loadProblem ? "partial" : "done");
   const status = reportProblem && reportedStatus === "done"
@@ -695,7 +730,13 @@ export default function ReportWorkspace({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className={`h-1.5 w-1.5 rounded-full ${
-                status === "done" ? "bg-emerald-500" : status === "partial" ? "bg-amber-500" : "bg-red-500"
+                status === "done"
+                  ? "bg-emerald-500"
+                  : status === "partial" || status === "degraded"
+                    ? "bg-amber-500"
+                    : status === "cancelled"
+                      ? "bg-gray-400"
+                      : "bg-red-500"
               }`} />
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
                 {status === "done" ? "Completed report" : `${status} report`}
@@ -789,7 +830,7 @@ export default function ReportWorkspace({
         <TabButton
           active={tab === "report"}
           id={TAB_IDS.report}
-          label="Report"
+          label={TAB_LABELS.report}
           panelId={TAB_PANEL_IDS.report}
           onClick={() => setTab("report")}
           onKeyDown={(event) => handleTabKeyDown(event, "report")}
@@ -798,7 +839,7 @@ export default function ReportWorkspace({
           <TabButton
             active={tab === "provenance"}
             id={TAB_IDS.provenance}
-            label="Provenance"
+            label={TAB_LABELS.provenance}
             panelId={TAB_PANEL_IDS.provenance}
             onClick={() => setTab("provenance")}
             onKeyDown={(event) => handleTabKeyDown(event, "provenance")}
@@ -809,7 +850,7 @@ export default function ReportWorkspace({
             active={tab === "issues"}
             count={issues.length}
             id={TAB_IDS.issues}
-            label="Issues"
+            label={TAB_LABELS.issues}
             panelId={TAB_PANEL_IDS.issues}
             onClick={() => setTab("issues")}
             onKeyDown={(event) => handleTabKeyDown(event, "issues")}
@@ -818,7 +859,7 @@ export default function ReportWorkspace({
         <TabButton
           active={tab === "sources"}
           id={TAB_IDS.sources}
-          label="Sources"
+          label={TAB_LABELS.sources}
           panelId={TAB_PANEL_IDS.sources}
           onClick={() => setTab("sources")}
           onKeyDown={(event) => handleTabKeyDown(event, "sources")}
@@ -853,7 +894,7 @@ export default function ReportWorkspace({
               aria-labelledby={TAB_IDS.provenance}
               className="h-full"
             >
-              <ProvenancePanel provenance={provenance} />
+              <ProvenancePanel provenance={provenance} quality={report?.quality} />
             </div>
           ) : tab === "sources" ? (
             <div
@@ -867,7 +908,6 @@ export default function ReportWorkspace({
                   runId={runId}
                   fallbackMarkdown={markdown}
                   deferInitialArtifact
-                  preload={artifactPreload}
                   selectionRequest={sourceRequest}
                 />
               ) : report ? (

@@ -115,7 +115,7 @@ describe("IssuesTable annotation lifecycle", () => {
     expect(screen.queryByText("saved ✓")).not.toBeInTheDocument();
   });
 
-  it("accurately surfaces an accepted-issues save failure", async () => {
+  it("accurately surfaces a decision-export save failure", async () => {
     invoke.mockImplementation((command: string) =>
       command === "save_text_file"
         ? Promise.reject(new Error("dialog plugin unavailable"))
@@ -127,10 +127,10 @@ describe("IssuesTable annotation lifecycle", () => {
     await user.click(
       screen.getByRole("button", { name: "accept issue: First issue" }),
     );
-    await user.click(screen.getByRole("button", { name: "Export accepted" }));
+    await user.click(screen.getByRole("button", { name: "Export all decisions" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Accepted-issues export failed: dialog plugin unavailable",
+      "Decision export failed: dialog plugin unavailable",
     );
   });
 
@@ -156,7 +156,7 @@ describe("IssuesTable annotation lifecycle", () => {
     });
   });
 
-  it("retains concrete evidence identifiers in accepted-issue exports", async () => {
+  it("retains concrete evidence identifiers and every decision in exports", async () => {
     invoke.mockResolvedValueOnce("/tmp/accepted.md");
     const user = userEvent.setup();
     render(
@@ -174,10 +174,10 @@ describe("IssuesTable annotation lifecycle", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "accept issue: First issue" }));
-    await user.click(screen.getByRole("button", { name: "Export accepted" }));
+    await user.click(screen.getByRole("button", { name: "Export all decisions" }));
 
     expect(invoke).toHaveBeenCalledWith("save_text_file", {
-      suggestedName: "accepted-issues.md",
+      suggestedName: "issue-decisions.md",
       content: expect.stringContaining(
         "p. 7, node paragraph-12, artifact artifacts/pages/page-7.png — Identification claim",
       ),

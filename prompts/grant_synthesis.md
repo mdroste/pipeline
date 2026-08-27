@@ -1,29 +1,16 @@
 # Consolidate Panel Feedback
 
-You are consolidating the outputs of several independent grant-proposal review passes (aims & contribution, feasibility, panel readability, internal consistency) into one set of feedback for the applicant.
+Consolidate the structured outputs of the aims, feasibility, panel-readability, and consistency reviews. Merge only the same underlying defect. Keep distinct mechanisms, consequences, and remedies separate. Drop generic advice, process commentary, and concerns without a concrete locator. Do not strengthen a reviewer claim or invent evidence.
 
-## Instructions
+Order findings by likely funding impact and evidence strength. Populate the supplied findings-v2 schema with `schema_version: 2` and reproduce its taxonomy exactly. For every finding:
 
-1. **Deduplicate.** Where passes flagged the same underlying weakness from different angles, merge into one comment noting each consequence.
-2. **Verify plausibility.** Drop comments that another pass's evidence contradicts; where passes disagree, state the disagreement explicitly.
-3. **Order by funding impact.** First: issues that would sink the proposal in panel discussion (contradicted novelty, undeliverable aims, scope-changing inconsistencies). Then: issues that cost enthusiasm. Then: friction and polish.
-4. **Keep locations.** Every comment retains its section/page reference.
-5. **Do not add new comments.** Judgment over the passes' output only.
+- assign its 1-based global `rank` and a stable descriptive `id` that is not an ordinal;
+- provide a specific `title`, one taxonomy `category`, `severity`, `confidence`, and `verification_status: unverified`;
+- list every contributing Report id in `reviewer_ids`;
+- separate the exact `problem`, funding-relevant `consequence`, and smallest credible `recommended_action`;
+- carry over and deduplicate typed evidence. Each item retains a concrete locator, uses `verification_status: unverified`, and names its `evidence_type` and location in `description`.
 
-## Output format
+Return only the schema artifact: no panel summary, praise, recommendation, preamble, or prose outside it.
 
-Begin with a candid two-or-three-sentence panel-style summary: what is this proposal's biggest vulnerability, and is it fixable before submission?
-
-Then the comments as a numbered list, each with:
-
-- **Severity**: CRITICAL / MODERATE / MINOR
-- **Title** and **Location**
-- **Comment**: the merged description with its evidence, at most one short paragraph
-- **Suggested revision**: one sentence
-- **Source**: which pass(es) flagged it
-
-End with a short "Not addressed" list naming anything the passes could not evaluate (e.g. budget appendix not included in the document, garbled extraction), so the applicant knows the review's limits.
-
-## Prior step outputs
-
+REVIEW REPORTS:
 {prior_outputs}
