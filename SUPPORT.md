@@ -1,9 +1,9 @@
 # Support policy
 
-Pipeline is a local desktop application. Support covers the latest published
-patch release on the official binary platforms below. Development builds,
-prereleases, older Pipeline releases, and source builds on other platforms are
-best effort.
+Pipeline is a local desktop agent orchestration suite. Support covers the
+latest published patch release on the official binary platforms below.
+Development builds, prereleases, older Pipeline releases, and source builds on
+other platforms are best effort.
 
 ## Supported release platforms
 

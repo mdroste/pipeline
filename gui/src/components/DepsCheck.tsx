@@ -16,7 +16,9 @@ type StatusTone = "success" | "warning" | "danger" | "neutral";
 const PROVIDER_DEPENDENCIES = new Set([
   "Claude CLI",
   "Codex CLI",
+  "Workflow ChatGPT",
   "Antigravity CLI",
+  "Local LLM server",
 ]);
 
 const BUNDLED_PDF_DEPENDENCIES = new Set([
@@ -90,12 +92,11 @@ const missingDependencyLabel = (dep: Dependency) => {
 function dependencyTone(
   dep: Dependency,
   group: DependencyGroup,
-  groupReady: boolean,
 ): StatusTone {
   if (dependencyAvailable(dep)) {
     return hasAuthWarning(dep) ? "warning" : "success";
   }
-  if (group === "models") return groupReady ? "neutral" : "danger";
+  if (group === "models") return dep.required ? "danger" : "neutral";
   return dep.required ? "danger" : "warning";
 }
 
@@ -126,30 +127,27 @@ function StatusIcon({ tone }: { tone: StatusTone }) {
 
 function authLabel(dep: Dependency) {
   if (hasConfiguredApiKey(dep)) return "API key configured";
+  if (dep.name === "Workflow ChatGPT" && dep.authenticated) return "signed in";
   if (dep.cli_auth_status === "signed_in") return "signed in";
-  if (
-    dep.cli_auth_status === "signed_out" ||
-    dep.cli_auth_status === "unknown"
-  ) return "not signed in";
+  if (dep.cli_auth_status === "signed_out") return "not signed in";
+  if (dep.cli_auth_status === "unknown") return "sign-in not verified";
   return null;
 }
 
 function DependencyRow({
   dep,
   group,
-  groupReady,
   onOpenPdfSettings,
 }: {
   dep: Dependency;
   group: DependencyGroup;
-  groupReady: boolean;
   onOpenPdfSettings?: () => void;
 }) {
   const available = dependencyAvailable(dep);
-  const tone = dependencyTone(dep, group, groupReady);
+  const tone = dependencyTone(dep, group);
   const styles = TONE_STYLES[tone];
   const status = authLabel(dep);
-  const unavailableAlternative = group === "models" && groupReady && !available;
+  const unavailableAlternative = group === "models" && !dep.required && !available;
   const badge = available
     ? status
     : dep.found && status
@@ -159,7 +157,7 @@ function DependencyRow({
         : group === "models"
           ? "set up"
           : missingDependencyLabel(dep);
-  const pdfSettingsLabel = "Settings → PDF Extraction";
+  const pdfSettingsLabel = "Settings → Review & workflows → PDF Extraction";
   const pdfSettingsIndex = dep.hint.indexOf(pdfSettingsLabel);
   const linksToPdfSettings =
     !available &&
@@ -248,13 +246,10 @@ export default function DepsCheck({
   const pdfTitleId = useId();
   const dialogRef = useModalDialog<HTMLDivElement>(onDismiss);
   const providerDeps = report.deps.filter(isProviderDependency);
-  const pdfDeps = report.deps.filter(
-    (dep) => !HIDDEN_DEPENDENCIES.has(dep.name) && !isProviderDependency(dep),
-  );
-  const localProvider = report.deps.find((dep) => dep.name === "Local LLM server");
-  const modelAccessReady = providerDeps.length === 0 || providerDeps.some(dependencyAvailable) || (
-    localProvider !== undefined && dependencyAvailable(localProvider)
-  );
+  const pdfDeps = report.deps.filter((dep) => !isProviderDependency(dep));
+  const visible = (dep: Dependency) => !HIDDEN_DEPENDENCIES.has(dep.name)
+    || (dep.required && !dependencyAvailable(dep) && !BUNDLED_PDF_DEPENDENCIES.has(dep.name));
+  const modelAccessReady = providerDeps.every((dep) => !dep.required || dependencyAvailable(dep));
   const bundledPdfUnavailable = report.deps.some(
     (dep) => BUNDLED_PDF_DEPENDENCIES.has(dep.name)
       && dep.required
@@ -266,7 +261,7 @@ export default function DepsCheck({
   const blockerMessage = !modelAccessReady && !pdfReady
     ? "Model access and PDF parsing need attention."
     : !modelAccessReady
-      ? "Set up at least one model provider or add an API key in Settings."
+      ? "Check the required model connections in Settings → Providers."
       : bundledPdfUnavailable
         ? "Bundled PDF tools are unavailable. Reinstall Pipeline."
         : !pdfReady
@@ -301,18 +296,17 @@ export default function DepsCheck({
                   Model access
                 </h3>
                 <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Use at least one: the Claude or Codex CLI with a signed-in subscription, or a provider API key in Settings. Google runs through the Gemini API only.
+                  Each provider selected by this workflow must be ready. ChatGPT uses the Workflow connection selected in Settings → Providers; Workspace has its own sign-in.
                 </p>
               </div>
               <SectionStatus ready={modelAccessReady} />
             </div>
             <div className="divide-y divide-gray-200/80 dark:divide-gray-700/80">
-              {providerDeps.map((dep) => (
+              {providerDeps.filter(visible).map((dep) => (
                 <DependencyRow
                   key={dep.name}
                   dep={dep}
                   group="models"
-                  groupReady={modelAccessReady}
                   onOpenPdfSettings={onOpenPdfSettings}
                 />
               ))}
@@ -332,12 +326,11 @@ export default function DepsCheck({
               <SectionStatus ready={pdfReady} />
             </div>
             <div className="divide-y divide-gray-200/80 dark:divide-gray-700/80">
-              {pdfDeps.map((dep) => (
+              {pdfDeps.filter(visible).map((dep) => (
                 <DependencyRow
                   key={dep.name}
                   dep={dep}
                   group="pdf"
-                  groupReady={pdfReady}
                   onOpenPdfSettings={onOpenPdfSettings}
                 />
               ))}

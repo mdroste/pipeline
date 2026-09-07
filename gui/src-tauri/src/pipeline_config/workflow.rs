@@ -184,6 +184,7 @@ fn validate_step(value: &serde_json::Value, path: &str) -> Result<(), String> {
             "id",
             "label",
             "prompt",
+            "system_prompt",
             "enabled",
             "phase",
             "tools",
@@ -580,7 +581,7 @@ pub fn workflow_json_schema() -> serde_json::Value {
                 "required": ["id", "label", "prompt", "enabled", "phase"],
                 "properties": {
                     "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" },
-                    "label": { "type": "string" }, "prompt": { "type": "string" },
+                    "label": { "type": "string" }, "prompt": { "type": "string" }, "system_prompt": { "type": "string" },
                     "enabled": { "type": "boolean" }, "phase": { "enum": ["parallel", "sequential"] },
                     "tools": { "type": "array", "uniqueItems": true, "items": { "enum": ALLOWED_TOOLS } },
                     "agents": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/agent" } },
@@ -626,6 +627,26 @@ mod tests {
         value["steps"][0]["agnet"] = serde_json::json!(["claude"]);
         let error = parse_workflow_document_strict(&value.to_string()).unwrap_err();
         assert!(error.contains("agnet"), "{error}");
+    }
+
+    #[test]
+    fn reviewer_instructions_are_portable_literal_and_fingerprinted() {
+        let template = workflow_template().unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&template.canonical_json).unwrap();
+        value["steps"][0]["system_prompt"] =
+            serde_json::json!("Review evidence. Literal {notation} is allowed.");
+        let parsed = parse_workflow_document_strict(&value.to_string()).unwrap();
+        assert_ne!(parsed.fingerprint, template.fingerprint);
+        let normalized: serde_json::Value = serde_json::from_str(&parsed.canonical_json).unwrap();
+        assert_eq!(
+            normalized["steps"][0]["system_prompt"],
+            value["steps"][0]["system_prompt"]
+        );
+        let schema = workflow_json_schema();
+        assert_eq!(
+            schema["$defs"]["step"]["properties"]["system_prompt"]["type"],
+            "string"
+        );
     }
 
     #[test]

@@ -10,6 +10,9 @@ fn fingerprint_discovery_value(domain: &[u8], value: &str) -> String {
 }
 
 fn normalized_discovery_endpoint(provider: &str, transport: &str, settings: &Settings) -> String {
+    if provider == "codex" && transport == "cli" {
+        return format!("codex:cli:{}", settings.codex_backend);
+    }
     if provider != "local" {
         return format!("{provider}:{transport}:provider-default");
     }
@@ -184,11 +187,14 @@ async fn discover_uncached(provider: &str, settings: &Settings) -> Result<ModelC
     let transport = settings.model_transport(provider);
     let cacheable = provider != "local" && transport == "api";
     let policy = bundled_policy();
-    let live = if transport == "cli" {
-        cli_catalog(provider).await
-    } else {
-        api_catalog(provider, settings).await
-    };
+    let live =
+        if provider == "codex" && transport == "cli" && settings.codex_backend == "app_server" {
+            crate::pipeline::codex_server::catalog().await
+        } else if transport == "cli" {
+            cli_catalog(provider).await
+        } else {
+            api_catalog(provider, settings).await
+        };
     match live {
         Ok(mut catalog) => {
             apply_policy(&mut catalog, &policy);

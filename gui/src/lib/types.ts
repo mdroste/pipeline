@@ -66,6 +66,8 @@ export interface StepConfig {
   id: string;
   label: string;
   prompt: string;
+  /** Literal trusted reviewer instructions; no template expansion. */
+  system_prompt?: string;
   enabled: boolean;
   phase: Phase;
   tools: string[];
@@ -750,8 +752,12 @@ export interface Settings {
   /** Max past runs to keep on disk; 0 = keep all. */
   max_saved_runs: number;
   max_saved_run_bytes: number;
-  /** Explicit cloud connection mode; subscription uses the provider CLI. */
+  /** Explicit cloud connection mode; Claude subscription uses its CLI. */
   claude_access_mode: "subscription" | "api";
+  /** Codex subscription uses App Server by default; CLI is an advanced option. */
+  codex_backend?: "legacy_cli" | "app_server";
+  /** Persisted one-time migration from the former legacy CLI default. */
+  codex_backend_preference_version?: number;
   codex_access_mode: "subscription" | "api";
   antigravity_access_mode: "subscription" | "api";
   anthropic_api_key: string;

@@ -6,7 +6,7 @@ export type Provider = (typeof PROVIDERS)[number];
 export const PROVIDER_LABELS: Record<Provider, string> = {
   claude: "Claude",
   codex: "ChatGPT",
-  antigravity: "Antigravity",
+  antigravity: "Gemini",
   local: "Local",
 };
 

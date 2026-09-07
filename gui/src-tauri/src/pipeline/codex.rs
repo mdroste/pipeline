@@ -572,10 +572,14 @@ async fn call_codex_inner(
         }
     }
 
-    // System prompt via config override
+    // Reviewer instructions use the supported developer layer. `instructions`
+    // is reserved/ignored by current Codex; quote literal text as a TOML string.
     if let Some(sys) = system_prompt {
         cmd_args.push("-c".to_string());
-        cmd_args.push(format!("instructions={}", sys));
+        cmd_args.push(format!(
+            "developer_instructions={}",
+            serde_json::to_string(sys).map_err(|error| error.to_string())?
+        ));
     }
 
     // Apply Codex settings (model, reasoning effort) with optional per-step overrides.

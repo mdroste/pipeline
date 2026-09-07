@@ -24,7 +24,7 @@ function AdvancedStepOptions({
   onChange: (patch: Partial<StepConfig>) => void;
 }) {
   const hasAny = !!(
-    step.context.include.length || step.after?.length || step.run_if || step.for_each
+    step.system_prompt || step.context.include.length || step.after?.length || step.run_if || step.for_each
   );
   const [open, setOpen] = useState(
     section !== "all" || !!step.run_if,
@@ -75,6 +75,15 @@ function AdvancedStepOptions({
 
           {section !== "inputs" && (
             <>
+
+          <div>
+            <label className="block text-xs font-medium mb-1" htmlFor={`system-prompt-${step.id}`}>Reviewer instructions</label>
+            <textarea id={`system-prompt-${step.id}`} rows={5} className={inputClass}
+              value={step.system_prompt ?? ""}
+              onChange={(event) => onChange({ system_prompt: event.target.value })}
+              placeholder="Optional role, evidence standards, and writing instructions" />
+            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Trusted instructions supplied separately from the task. Codex App Server uses developer instructions. Text is literal; variables are not expanded.</p>
+          </div>
 
           {/* Order-only dependencies */}
           <div>

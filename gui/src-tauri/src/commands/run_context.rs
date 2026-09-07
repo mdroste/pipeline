@@ -384,11 +384,62 @@ pub(super) async fn check_snapshot_dependencies(
     pipeline_config::apply_agent_defaults(&mut config, &settings);
     let input_path = input_path.map(str::to_string);
     let extra_inputs = extra_inputs.clone();
-    tokio::task::spawn_blocking(move || {
+    let native_codex =
+        settings.codex_backend == "app_server" && settings.model_transport("codex") == "cli";
+    let mut report = tokio::task::spawn_blocking(move || {
         crate::deps::check_snapshot(settings, config, diff, input_path, extra_inputs)
     })
     .await
-    .map_err(|error| format!("Dependency check failed: {error}"))
+    .map_err(|error| format!("Dependency check failed: {error}"))?;
+    if native_codex {
+        if let Some(codex) = report.deps.iter_mut().find(|dep| dep.name == "Codex CLI") {
+            apply_workflow_codex_status(
+                codex,
+                Box::pin(crate::pipeline::codex_server::workflow_codex_status()).await,
+            );
+        }
+        report.ready = report.deps.iter().all(crate::deps::dependency_ready);
+    }
+    Ok(report)
+}
+
+pub(super) fn apply_workflow_codex_status(
+    codex: &mut crate::deps::DepStatus,
+    status: Result<crate::pipeline::codex_server::connection::ConnectionStatus, String>,
+) {
+    use crate::agent_runtime::codex::AccountStatus;
+
+    codex.name = "Workflow ChatGPT".into();
+    // This account belongs to the managed Workflow connection. Ambient CLI
+    // authentication (and Workspace's separate account) cannot establish it.
+    codex.cli_auth_status = None;
+    codex.help_url = None;
+    match status {
+        Ok(status) => {
+            // A live App Server handshake supersedes the earlier version
+            // subprocess probe, which can fail even while this runtime works.
+            codex.found = true;
+            codex.authenticated = Some(
+                status.account.status == AccountStatus::Chatgpt
+                    && !status.login_in_progress
+                    && status.unresolved_attempts.is_empty(),
+            );
+            codex.version = status.version;
+            codex.hint = if !status.unresolved_attempts.is_empty() {
+                "Review the unresolved Workflow ChatGPT attempt in Settings → Providers → ChatGPT before another run.".into()
+            } else if status.login_in_progress {
+                "Complete Workflow ChatGPT sign-in in your browser, or cancel it in Settings → Providers → ChatGPT.".into()
+            } else if status.account.status != AccountStatus::Chatgpt {
+                "Sign in with a ChatGPT account in Settings → Providers → ChatGPT. Workspace and the legacy Codex CLI keep separate sign-ins.".into()
+            } else {
+                String::new()
+            };
+        }
+        Err(error) => {
+            codex.authenticated = Some(false);
+            codex.hint = error;
+        }
+    }
 }
 
 pub(super) fn require_snapshot_dependencies(

@@ -5,6 +5,30 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
+- Pipeline now presents two complementary agent-orchestration modes for
+  academic research. The new Workspace is a persistent ChatGPT client with
+  independent workspaces and conversations, isolated managed ChatGPT sign-in,
+  visible model/effort and quota controls, streamed responses, approvals,
+  durable drafts, and crash reconciliation. Its optional modular research
+  harness adds editable presets and recipes, immutable papers and sources,
+  bounded research tools, configured local LaTeX/Stata execution, structured
+  results, research memory, claims/evidence with explicit human confirmation,
+  and performance/evaluation records. Project Research tools add manuscript
+  editing/builds, referee responses, experiments, result links, literature, and
+  a Theory panel whose typed check receipts keep numerical evidence distinct
+  from proofs and whose derivation promotion is a reviewable change set.
+  Selective `.pwex` project exchange packages carry chosen research objects
+  and their dependencies to a coauthor without conversations, credentials,
+  or executable settings, import into a nonempty store with reviewable
+  conflicts, and sit beside a storage report with previewed, restorable
+  pruning and a Workflow-draft export for the Workflows page.
+  Whole-store `.pwrx` archives use bounded
+  inspection and explicit root remapping, and an optional immutable paper
+  handoff enters the existing Workflow launch preview without sharing runtime,
+  credentials, settings, or cancellation. Workflows remain the deterministic
+  graph engine for repeatable research and review tasks. Authenticated,
+  real-tool, packaged-app, and cross-platform Workspace qualification remains a
+  release gate.
 - A comprehensive default-workflow audit produced a batch of reliability
   fixes across platforms and input types:
   - GUI launches on macOS/Linux now resolve the login-shell PATH robustly:
@@ -105,20 +129,15 @@ the first public release was not maintained as a stable release series.
   every remaining step automatically uses a self-contained call; other fork
   failures retry the one call self-contained without disabling sharing. A
   cancelled warm-up is no longer cached as a permanent session failure.
-- Replaced the retired Gemini CLI with Google's Antigravity CLI (`agy`,
-  1.1.12 or newer required). Google retired Gemini CLI on 2026-06-18, so the
-  old transport no longer served requests. The provider is now named
-  `antigravity` in workflows and settings; the direct Google Gemini API mode
-  is unchanged and keeps the same `google_api_key`. The dependency check now
-  reports a deterministic signed-in/signed-out state for the Google CLI (via
-  `agy models`) instead of the old frequently-unverifiable probe, and blocks
-  a run before any step can stall on an interactive sign-in prompt. The
-  Antigravity CLI transport gains a reasoning-effort control (low/medium/
-  high) and per-call token accounting including thinking and cache-read
-  tokens. No migration is provided: profiles naming the removed `gemini`
-  agent must switch to `antigravity`, stale `gemini` entries in saved
+- Retired the Gemini CLI transport. The provider ID remains `antigravity` in
+  workflows and persisted settings for compatibility, but Google dispatch is
+  now always through the direct Gemini API and requires `google_api_key`;
+  legacy Subscription selections normalize to API mode and dependency checks
+  never probe or invoke `agy`. The sandboxed Antigravity CLI implementation
+  remains dormant and test-covered rather than user-selectable. Profiles
+  naming the older `gemini` agent must switch to `antigravity`, stale `gemini`
   settings are dropped on load, and the legacy `pro`/`flash`/`flash-lite`
-  model aliases no longer resolve.
+  aliases no longer resolve.
 
 ## 0.9.0 — 2026-08-10
 

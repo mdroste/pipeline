@@ -55,9 +55,11 @@ pub(super) fn antigravity_version_supported(version: &str) -> Option<bool> {
 }
 
 /// Check if Claude CLI is authenticated via `claude auth status`. Claude
-/// returns JSON even when the user is signed out (with a non-zero exit code),
-/// so parse the payload before considering process status. Execution or parse
-/// failures are unknown, not evidence that the user signed out.
+/// returns JSON even when the user is signed out, and documents exit 0 as
+/// signed in and exit 1 as signed out. Require both signals for a positive
+/// result: a stale `loggedIn: true` payload must not override the CLI's own
+/// failing status. Execution or parse failures are unknown, not evidence that
+/// the user signed out.
 pub(super) fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
     let mut process = command.command(["auth", "status"]);
     configure_probe_command(&mut process);
@@ -67,18 +69,21 @@ pub(super) fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str::<serde_json::Value>(stdout.trim())
+    let logged_in = serde_json::from_str::<serde_json::Value>(stdout.trim())
         .ok()
-        .and_then(|value| {
-            value
-                .get("loggedIn")
-                .and_then(|logged_in| logged_in.as_bool())
-        })
+        .and_then(|value| value.get("loggedIn").and_then(|value| value.as_bool()))?;
+    Some(logged_in && output.status.success())
 }
 
-/// Check if Codex CLI has credentials available.
-/// Codex uses OPENAI_API_KEY env var or its own login system.
-fn check_codex_auth(command: &ResolvedCommand) -> Option<bool> {
+/// Only the explicitly selected legacy subscription backend consults ambient
+/// CLI credentials. App Server and API mode own separate authentication.
+pub(super) fn check_codex_auth(
+    command: &ResolvedCommand,
+    settings: &crate::settings::Settings,
+) -> Option<bool> {
+    if settings.codex_backend != "legacy_cli" || settings.model_transport("codex") != "cli" {
+        return None;
+    }
     // Check env var first
     if std::env::var("OPENAI_API_KEY")
         .map(|k| !k.is_empty())
@@ -381,8 +386,8 @@ pub(super) fn required_providers(
 }
 
 /// Run all dependency checks against one already-loaded settings/profile
-/// snapshot. Provider CLIs are still probed in API mode so their own sign-in
-/// state can be reported separately if the user later switches transports.
+/// snapshot. Codex CLI sign-in is consulted only for the advanced legacy
+/// subscription connection; the managed account is checked by run preflight.
 fn check_all_for(
     settings: &crate::settings::Settings,
     config: Option<&crate::pipeline_config::PipelineConfig>,
@@ -403,8 +408,8 @@ fn check_all_for(
 
     // Run all independent probes in parallel.
     std::thread::scope(|s| {
-        // Probe each CLI and its own sign-in state even if a direct API key
-        // independently makes that provider ready.
+        // Claude still reports its CLI state independently of API readiness.
+        // Codex consults CLI login only for the legacy subscription backend.
         let claude_h = s.spawn(move || {
             let ProbeResult {
                 command,
@@ -421,7 +426,9 @@ fn check_all_for(
                 version,
                 path,
             } = probe("codex", &["--version"]);
-            let auth = command.as_ref().and_then(check_codex_auth);
+            let auth = command
+                .as_ref()
+                .and_then(|command| check_codex_auth(command, settings));
             (command.is_some(), version, path, auth)
         });
 
@@ -556,7 +563,11 @@ fn check_all_for(
             } else {
                 codex_auth
             },
-            cli_auth_status: cli_auth_status(found, codex_auth),
+            cli_auth_status: if settings.codex_backend == "legacy_cli" && !codex_api_mode {
+                cli_auth_status(found, codex_auth)
+            } else {
+                None
+            },
         };
 
         // Google is API-only: subscription (agy CLI) dispatch is disabled

@@ -90,9 +90,12 @@ describe("AboutPage", () => {
     expect(readFlappyHighScore()).toBe(7);
   });
 
-  it("explains workflow scheduling, scoped access, and provider data sharing", () => {
+  it("explains both orchestration modes, scoped access, and provider data sharing", () => {
     render(<AboutPage onClose={() => undefined} />);
 
+    expect(screen.getByText(/doing and reviewing academic research/i)).toBeInTheDocument();
+    expect(screen.getByText(/interactive orchestration mode/i)).toBeInTheDocument();
+    expect(screen.getByText("~/.pipeline/workbench/")).toBeInTheDocument();
     expect(screen.getByText(/prerequisites finish/i)).toBeInTheDocument();
     expect(screen.getByText(/reads only the material its workflow allows/i)).toBeInTheDocument();
     expect(screen.getByText(/plan and data-use terms/i)).toBeInTheDocument();

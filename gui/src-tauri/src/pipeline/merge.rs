@@ -295,6 +295,7 @@ pub async fn merge_step_outputs(
                 pass_key: &merge_key_done,
                 log_label: &log_label,
                 prompt: &prompt,
+                system_prompt: None,
                 tools: &[],
                 output_schema: Some(&terminal_schema),
                 timeout_secs: timeout,

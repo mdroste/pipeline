@@ -1,8 +1,11 @@
-# Generalizing Pipeline: from paper reviews to arbitrary LLM workflows
+# Workflow-engine generalization: implemented design record
 
 Original design notes, 2026-07-02. Generalization is now implemented. The
 sections below retain the original motivation; `CLAUDE.md` is authoritative
-for the current engine.
+for the current engine. Pipeline is now framed as an agent orchestration suite
+for doing and reviewing academic research: this document concerns its
+deterministic Workflow engine, while the interactive Workspace architecture is
+documented separately in `workbench_plan.md` and `docs/workbench/README.md`.
 
 ## Current artifact-access contract
 

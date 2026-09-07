@@ -42,7 +42,7 @@ npm test
 npm run build
 cd src-tauri
 cargo test --locked --all-targets
-cargo fmt --check
+cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
@@ -56,6 +56,11 @@ fail-closed release check merely to make CI pass.
 - Explain the user-visible behavior, risks, and validation performed.
 - Add regression tests for bug fixes and update user-facing documentation when
   behavior or requirements change.
+- Treat Pipeline as an academic-research agent orchestration suite. Preserve the
+  distinction between interactive Workspace harnesses/recipes and deterministic
+  Workflows; read `docs/workbench/README.md` before changing Workspace code.
+- Keep Workspace runtime, credentials, storage, cancellation, and lifecycle
+  independent from Workflow state except at the explicit immutable handoff.
 - Preserve backward compatibility for saved settings, profiles, and run
   manifests; new persisted fields need serde defaults and old-file coverage.
 - Keep dependency lockfiles synchronized with their manifests.

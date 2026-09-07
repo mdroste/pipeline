@@ -400,6 +400,27 @@ pub(crate) fn unregister_engine_child_pid(pid: u32) {
     unregister_process_job(pid);
 }
 
+/// Register an independently owned long-lived child for Windows job-object
+/// tracking without adding it to Pipeline's run cancellation registry.
+pub(crate) fn register_independent_child_pid(pid: u32) {
+    if pid > 0 {
+        register_process_job(pid);
+    }
+}
+
+/// Release independent process-tree tracking after the owner has reaped it.
+pub(crate) fn unregister_independent_child_pid(pid: u32) {
+    if pid > 0 {
+        unregister_process_job(pid);
+    }
+}
+
+/// Force-stop an independently owned process tree. It is deliberately absent
+/// from `CHILD_PIDS`, so ordinary Pipeline cancellation cannot reach it.
+pub(crate) fn kill_independent_process(pid: u32) {
+    kill_process(pid);
+}
+
 /// Cancel one pass: mark it cancelled (so it won't retry) and kill its
 /// subprocesses. Other passes in the wave keep running.
 #[tauri::command]

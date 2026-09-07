@@ -600,3 +600,59 @@ fn load_paths_heal_retired_providers_and_extractors() {
     assert_eq!(settings.sequential_agent(), "claude");
     assert_eq!(settings.pdf_extractor, "auto");
 }
+
+#[test]
+fn codex_app_server_is_default_and_rejects_unknown_backends() {
+    let mut settings = Settings::default();
+    assert_eq!(settings.codex_backend, "app_server");
+    let mut serialized = serde_json::to_value(&settings).unwrap();
+    serialized.as_object_mut().unwrap().remove("codex_backend");
+    assert_eq!(
+        serde_json::from_value::<Settings>(serialized)
+            .unwrap()
+            .codex_backend,
+        "app_server"
+    );
+    settings.codex_backend = "legacy_cli".into();
+    assert!(settings.validate().is_ok());
+    settings.codex_backend = "unknown".into();
+    assert!(settings.validate().is_err());
+}
+
+#[test]
+fn old_codex_defaults_migrate_once_and_advanced_legacy_choice_survives_reload() {
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    for backend in [None, Some("legacy_cli"), Some("app_server")] {
+        for mode in ["api", "subscription"] {
+            let mut raw = serde_json::json!({
+                "codex_access_mode": mode,
+                "openai_api_key": "test-preserved-key",
+                "default_parallel_model_overrides": {"codex:cli": {"mode": "pinned", "model": "test-model"}}
+            });
+            if let Some(backend) = backend {
+                raw["codex_backend"] = backend.into();
+            }
+            std::fs::write(temp.path(), serde_json::to_vec(&raw).unwrap()).unwrap();
+            let mut settings = load_raw_settings_required(temp.path()).unwrap();
+            assert_eq!(settings.codex_backend, "app_server");
+            assert_eq!(settings.codex_backend_preference_version, 1);
+            assert_eq!(settings.codex_access_mode, mode);
+            assert_eq!(settings.openai_api_key, "test-preserved-key");
+            assert_eq!(
+                settings.default_parallel_model_overrides["codex:cli"],
+                ModelSelection::Pinned {
+                    model: "test-model".into()
+                }
+            );
+
+            settings.codex_backend = "legacy_cli".into();
+            save_raw_unlocked(temp.path(), &settings).unwrap();
+            let reloaded = load_raw_settings_required(temp.path())
+                .unwrap()
+                .normalized();
+            assert_eq!(reloaded.codex_backend, "legacy_cli");
+            assert_eq!(reloaded.codex_backend_preference_version, 1);
+            assert_eq!(reloaded.codex_access_mode, mode);
+        }
+    }
+}

@@ -4,7 +4,7 @@ use super::*;
 /// copy, never the original path (macOS TCC: helper children reading the
 /// user's Documents/Desktop need their own folder permission; the in-process
 /// staging copy is covered by the file-picker grant).
-pub(super) fn extract_pdftotext(path: &Path) -> Result<String, String> {
+pub(crate) fn extract_pdftotext(path: &Path) -> Result<String, String> {
     let staging = tempfile::Builder::new()
         .prefix("pipeline_pdf_text_input_")
         .tempdir()
@@ -260,6 +260,46 @@ pub(super) fn paddle_char_count_is_suspicious(
     })
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct PdfPageTextBaseline {
+    pub(super) total_chars: usize,
+    pub(super) prose_chars: usize,
+}
+
+fn paddle_page_is_figure_related(page: &PaddleStructuredPage) -> bool {
+    let mut has_figure_region = false;
+    for block in &page.blocks {
+        match block.role.to_ascii_lowercase().as_str() {
+            "table" | "table_title" => return false,
+            "chart" | "image" | "figure" | "figure_title" | "chart_body" | "image_body"
+            | "picture" => has_figure_region = true,
+            _ => {}
+        }
+    }
+    has_figure_region
+}
+
+fn paddle_effective_baseline(
+    page: &PaddleStructuredPage,
+    baseline: PdfPageTextBaseline,
+) -> (usize, bool) {
+    let fragmented_visual_page = baseline.total_chars >= SUSPECT_BASELINE_MIN_CHARS
+        && baseline.prose_chars < baseline.total_chars / 2
+        && paddle_page_is_figure_related(page);
+    if fragmented_visual_page {
+        (baseline.prose_chars, true)
+    } else {
+        (baseline.total_chars, false)
+    }
+}
+
+fn fragmented_visual_baseline_note(page: u32, baseline: PdfPageTextBaseline) -> String {
+    format!(
+        "Page {page}: the PDF text layer is dominated by isolated figure labels; completeness was checked against {} prose-like characters rather than {} total characters.",
+        baseline.prose_chars, baseline.total_chars
+    )
+}
+
 pub(super) fn llm_extraction_cache_path(
     hash: &str,
     settings: &crate::settings::Settings,
@@ -377,7 +417,7 @@ pub(super) fn full_parser_extraction_from_structure(
     structure: &PaddleStructure,
     path: &Path,
     hash: &str,
-    baseline: Option<&[usize]>,
+    baseline: Option<&[PdfPageTextBaseline]>,
 ) -> Result<ExtractionResult, String> {
     if baseline.is_some_and(|pages| pages.len() > MAX_RENDERED_PDF_PAGES as usize) {
         return Err(format!(
@@ -400,6 +440,7 @@ pub(super) fn full_parser_extraction_from_structure(
         }
     }
     let mut restructured_empty_pages = Vec::new();
+    let mut fragmented_visual_notes = Vec::new();
     for (index, page) in structure.pages.iter().enumerate() {
         let expected = index as u32 + 1;
         if page.number != expected {
@@ -420,11 +461,30 @@ pub(super) fn full_parser_extraction_from_structure(
         let recognized_chars = page
             .source_text_chars
             .unwrap_or_else(|| paddle_substantive_chars(&rendered));
-        let baseline_chars = baseline.and_then(|pages| pages.get(index)).copied();
-        if paddle_char_count_is_suspicious(recognized_chars, baseline_chars) {
+        let page_baseline = baseline.and_then(|pages| pages.get(index)).copied();
+        let (baseline_chars, used_fragmented_visual_baseline) = page_baseline
+            .map(|value| paddle_effective_baseline(page, value))
+            .unwrap_or((0, false));
+        if paddle_char_count_is_suspicious(recognized_chars, Some(baseline_chars)) {
+            if used_fragmented_visual_baseline {
+                return Err(format!(
+                    "PaddleOCR-VL full parser returned incomplete output for page {expected} (recognized {recognized_chars} substantive characters; prose-like text baseline has {baseline_chars}; full text layer has {})",
+                    page_baseline.map_or(0, |value| value.total_chars)
+                ));
+            }
             return Err(format!(
-                "PaddleOCR-VL full parser returned incomplete output for page {expected} (recognized {recognized_chars} substantive characters; text layer has {})",
-                baseline_chars.unwrap_or_default()
+                "PaddleOCR-VL full parser returned incomplete output for page {expected} (recognized {recognized_chars} substantive characters; text layer has {baseline_chars})"
+            ));
+        }
+        if used_fragmented_visual_baseline
+            && paddle_char_count_is_suspicious(
+                recognized_chars,
+                page_baseline.map(|value| value.total_chars),
+            )
+        {
+            fragmented_visual_notes.push(fragmented_visual_baseline_note(
+                expected,
+                page_baseline.unwrap_or_default(),
             ));
         }
     }
@@ -440,6 +500,11 @@ pub(super) fn full_parser_extraction_from_structure(
         );
     }
     let mut quality_notes = structure.quality_notes.clone();
+    for note in fragmented_visual_notes {
+        if !quality_notes.contains(&note) {
+            quality_notes.push(note);
+        }
+    }
     if !restructured_empty_pages.is_empty() {
         quality_notes.push(format!(
             "PaddleOCR cross-page restructuring moved all recognized content from page(s) {} into adjacent structured blocks.",
@@ -481,12 +546,22 @@ pub(super) fn run_paddle_full_sidecar(
     assets: &Path,
     base_url: &str,
     api_key: &str,
-    baseline_chars: &[usize],
+    baselines: &[PdfPageTextBaseline],
     timeout: std::time::Duration,
 ) -> Result<BoundedOutput, String> {
     let boolean = |value: bool| if value { "true" } else { "false" };
-    let baseline_chars = serde_json::to_string(baseline_chars)
+    let baseline_chars = baselines
+        .iter()
+        .map(|baseline| baseline.total_chars)
+        .collect::<Vec<_>>();
+    let baseline_prose_chars = baselines
+        .iter()
+        .map(|baseline| baseline.prose_chars)
+        .collect::<Vec<_>>();
+    let baseline_chars = serde_json::to_string(&baseline_chars)
         .map_err(|error| format!("Failed to serialize PDF text-layer baseline: {error}"))?;
+    let baseline_prose_chars = serde_json::to_string(&baseline_prose_chars)
+        .map_err(|error| format!("Failed to serialize PDF prose-line baseline: {error}"))?;
     let mut command = StdCommand::new(&paths.python);
     let arguments: Vec<std::ffi::OsString> = vec![
         "-I".into(),
@@ -514,6 +589,8 @@ pub(super) fn run_paddle_full_sidecar(
         settings.paddle_page_retries.to_string().into(),
         "--baseline-chars".into(),
         baseline_chars.into(),
+        "--baseline-prose-chars".into(),
+        baseline_prose_chars.into(),
         "--layout-detection".into(),
         boolean(settings.paddle_full_layout_detection).into(),
         "--layout-threshold".into(),
@@ -590,7 +667,7 @@ pub(super) async fn extract_paddle_full(
     // enter the sidecar unbounded and unverified.
     let baseline = {
         let pdf = staged_pdf.clone();
-        tokio::task::spawn_blocking(move || pdftotext_page_baseline(&pdf))
+        tokio::task::spawn_blocking(move || pdftotext_page_metrics(&pdf))
             .await
             .map_err(|error| format!("pdftotext baseline task failed: {error}"))?
     }
@@ -665,7 +742,7 @@ pub(super) async fn extract_paddle_full(
     let assets = staged_assets.clone();
     let base_url = format!("{}/v1", server.base_url);
     let api_key = server.api_key.clone();
-    let baseline_chars = baseline.clone().unwrap_or_default();
+    let baselines = baseline.clone().unwrap_or_default();
     let timeout = total_timeout
         .checked_sub(started.elapsed())
         .filter(|remaining| !remaining.is_zero())
@@ -684,7 +761,7 @@ pub(super) async fn extract_paddle_full(
             &assets,
             &base_url,
             &api_key,
-            &baseline_chars,
+            &baselines,
             timeout,
         )
     })
@@ -808,7 +885,7 @@ pub(super) fn provider_uses_direct_api(settings: &crate::settings::Settings) -> 
 /// exit with its stderr (an encrypted PDF says "Incorrect password" here),
 /// or truncated output — so callers can surface it instead of a generic
 /// "could not build the page map".
-pub(super) fn pdftotext_page_baseline(path: &Path) -> Result<Vec<usize>, String> {
+pub(super) fn pdftotext_page_metrics(path: &Path) -> Result<Vec<PdfPageTextBaseline>, String> {
     let bin = find_command("pdftotext")
         .ok_or_else(|| "pdftotext is not available on PATH".to_string())?;
     let path_str = path
@@ -835,7 +912,7 @@ pub(super) fn pdftotext_page_baseline(path: &Path) -> Result<Vec<usize>, String>
         return Err("pdftotext baseline output exceeded the 50 MB safety limit".to_string());
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    let pages = baseline_page_lengths(&text);
+    let pages = baseline_page_metrics(&text);
     if pages.is_empty() {
         Err("pdftotext reported no pages".to_string())
     } else {
@@ -843,17 +920,58 @@ pub(super) fn pdftotext_page_baseline(path: &Path) -> Result<Vec<usize>, String>
     }
 }
 
+pub(super) fn pdftotext_page_baseline(path: &Path) -> Result<Vec<usize>, String> {
+    pdftotext_page_metrics(path)
+        .map(|pages| pages.into_iter().map(|page| page.total_chars).collect())
+}
+
 /// Split pdftotext output on form feeds and count substantive characters.
 /// `-layout` can emit thousands of alignment spaces on a sparse figure page;
 /// counting those as source text makes complete OCR look implausibly short.
+#[cfg(test)]
 pub(super) fn baseline_page_lengths(text: &str) -> Vec<usize> {
-    let mut pages: Vec<usize> = text
+    baseline_page_metrics(text)
+        .into_iter()
+        .map(|page| page.total_chars)
+        .collect()
+}
+
+/// Measure both the full text layer and ordinary prose-like lines. Plot
+/// labels are commonly emitted as thousands of isolated words; they are a
+/// useful visual annotation but not a sound completeness target for a
+/// layout-aware OCR parser that preserves the rendered page as visual evidence.
+pub(super) fn baseline_page_metrics(text: &str) -> Vec<PdfPageTextBaseline> {
+    let mut pages: Vec<PdfPageTextBaseline> = text
         .split('\u{0C}')
-        .map(|page| page.chars().filter(|value| !value.is_whitespace()).count())
+        .map(|page| {
+            let total_chars = page.chars().filter(|value| !value.is_whitespace()).count();
+            let prose_chars = page
+                .lines()
+                .map(|line| {
+                    let chars = line.chars().filter(|value| !value.is_whitespace()).count();
+                    let words = line.split_whitespace().count();
+                    let alphabetic_words = line
+                        .split_whitespace()
+                        .filter(|word| {
+                            word.chars().filter(|value| value.is_alphabetic()).count() >= 2
+                        })
+                        .count();
+                    if words >= 3 && alphabetic_words >= 2 && chars >= 12 {
+                        chars
+                    } else {
+                        0
+                    }
+                })
+                .sum();
+            PdfPageTextBaseline {
+                total_chars,
+                prose_chars,
+            }
+        })
         .collect();
     // pdftotext terminates every page with a form feed, leaving a trailing
     // empty segment.
-    if pages.last() == Some(&0) {
+    if pages.last().is_some_and(|page| page.total_chars == 0) {
         pages.pop();
     }
     pages
@@ -1154,7 +1272,9 @@ pub(super) async fn run_llm_ranges(
                     tasks.abort_all();
                     return Err(error);
                 }
-                if super::super::provider_error::is_usage_limit_error(&error) {
+                if super::super::provider_error::is_usage_limit_error(&error)
+                    || super::super::provider_error::is_non_retryable_error(&error)
+                {
                     tasks.abort_all();
                     return Err(error);
                 }

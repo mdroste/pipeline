@@ -22,6 +22,7 @@ pub struct Request<'a> {
     pub pass_key: &'a str,
     pub log_label: &'a str,
     pub prompt: &'a str,
+    pub system_prompt: Option<&'a str>,
     pub tools: &'a [String],
     pub output_schema: Option<&'a serde_json::Value>,
     pub timeout_secs: u64,
@@ -111,7 +112,7 @@ impl From<Request<'_>> for OwnedRequest {
             log_label: request.log_label.to_string(),
             prompt: request.prompt.to_string(),
             tools: request.tools.to_vec(),
-            system_prompt: None,
+            system_prompt: request.system_prompt.map(str::to_string),
             output_format: "text".to_string(),
             output_schema: request.output_schema.cloned(),
             timeout_secs: request.timeout_secs,
@@ -391,7 +392,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                 };
             }
         };
-        if !super::provider_error::is_usage_limit_error(&primary_error) {
+        if super::provider_error::is_non_retryable_error(&primary_error) || !super::provider_error::is_usage_limit_error(&primary_error) {
             return Result {
                 output: primary.output,
                 usage: primary.usage,
@@ -575,6 +576,7 @@ mod tests {
             pass_key: "size-test",
             log_label: "Size test",
             prompt: "",
+            system_prompt: None,
             tools: &[],
             output_schema: None,
             timeout_secs: 60,

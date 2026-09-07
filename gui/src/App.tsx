@@ -40,6 +40,8 @@ import type {
 import type { ExecutionPlanStage } from "./lib/pipelineHelpers";
 import type { ArtifactSelectionTarget } from "./components/ArtifactExplorer";
 import { confirmDialog, notify } from "./components/DialogService";
+import type { SettingsSection } from "./components/SettingsPage";
+import type { ReviewHandoff, WorkbenchEvent } from "./lib/workbenchTypes";
 
 interface RunProfileSnapshot {
   profileId: string;
@@ -104,6 +106,7 @@ function configForRunPreview(
 }
 
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
+const WorkspacePage = lazy(() => import("./components/WorkspacePage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
 const AboutPage = lazy(() => import("./components/AboutPage"));
 const HistoryPage = lazy(() => import("./components/HistoryPage"));
@@ -204,11 +207,32 @@ function App() {
   const [depsReport, setDepsReport] = useState<DepsReport | null>(null);
   const [depsLoading, setDepsLoading] = useState(true);
   const [depsError, setDepsError] = useState<string | null>(null);
-  const [page, setPage] = useState<AppPage>("main");
+  const [page, setPage] = useState<AppPage>(() =>
+    localStorage.getItem("pipeline.ui.page") === "workspace" ? "workspace" : "main",
+  );
+  const [workspaceActive, setWorkspaceActive] = useState(false);
+  const [workspaceAttention, setWorkspaceAttention] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<WorkbenchEvent>("workbench:event", ({ payload }) => {
+      if (payload.kind === "turnStarted") setWorkspaceActive(true);
+      if (payload.kind === "turnCompleted" || payload.kind === "connectionClosed") setWorkspaceActive(false);
+      if (payload.kind === "serverRequest") setWorkspaceAttention(true);
+      if (payload.kind === "serverRequestResolved" || payload.kind === "connectionClosed") setWorkspaceAttention(false);
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
   const [batchActive, setBatchActive] = useState(false);
-  const [settingsInitialSection, setSettingsInitialSection] = useState<
-    "llm" | "api-keys" | "workflow" | "extraction" | "general"
-  >("llm");
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>("workflow");
+
+  useEffect(() => {
+    localStorage.setItem("pipeline.ui.page", page === "workspace" ? "workspace" : "main");
+  }, [page]);
   const [settingsTargetId, setSettingsTargetId] = useState<string | undefined>();
   const [settingsNavigationKey, setSettingsNavigationKey] = useState(0);
   const [helpInitialSection, setHelpInitialSection] = useState<"privacy" | undefined>();
@@ -671,6 +695,36 @@ function App() {
     }
   };
 
+  const handleWorkspaceReviewHandoff = async (handoff: ReviewHandoff) => {
+    if (isRunning) {
+      setRunConfigError("A Review run is already active. The Workspace conversation remains usable; open this handoff after the Review run finishes.");
+      setPage("main");
+      return;
+    }
+    const selection: PrimaryInputSelection = {
+      paths: [handoff.stagedPath],
+      interpretation: handoff.inputInterpretation,
+      selectionKind: handoff.inputInterpretation === "source_tree" ? "folder" : "file",
+    };
+    setPage("main");
+    setPaperPath(handoff.stagedPath);
+    setInputSelection(selection);
+    setRunConfigError(null);
+    setPreparingRun(true);
+    try {
+      const setup = await loadRunSetup();
+      if (!setup) return;
+      const pending = { ...setup, paperPath: handoff.stagedPath, inputSelection: selection };
+      if (setup.variables.length > 0 || setup.inputSlots.length > 0) {
+        setPendingRun(pending);
+      } else {
+        await launch(pending);
+      }
+    } finally {
+      setPreparingRun(false);
+    }
+  };
+
   const confirmLeaveCurrentPage = async (nextPage: AppPage) => {
     if (nextPage === page) return true;
     if (page === "pipeline" && workflowDirty) {
@@ -711,7 +765,7 @@ function App() {
     if (!(await confirmLeaveCurrentPage(nextPage))) return;
     if (page === "settings") void checkDependencies();
     if (nextPage === "settings" && page !== "settings") {
-      setSettingsInitialSection("llm");
+      setSettingsInitialSection("workflow");
       setSettingsTargetId(undefined);
       setSettingsNavigationKey((key) => key + 1);
     }
@@ -815,6 +869,8 @@ function App() {
           hasCurrentRun={hasCurrentRun}
           hasActiveBatch={batchActive}
           runInProgress={isRunning}
+          workspaceActive={workspaceActive}
+          workspaceAttention={workspaceAttention}
           isMac={isMac}
           dependenciesReady={depsReport?.ready ?? null}
           dependenciesLoading={depsLoading}
@@ -824,8 +880,9 @@ function App() {
           onNewRun={handleNewRun}
           onNavigate={handleNavigate}
           onDependencies={() => {
-            if (depsReport) setShowDeps(true);
-            else void checkDependencies();
+            void checkDependencies().then((report) => {
+              if (report) setShowDeps(true);
+            });
           }}
         />
 
@@ -875,14 +932,14 @@ function App() {
               notices={providerLimitNotices}
               onOpenSettings={() => void (async () => {
                 if (!(await confirmLeaveCurrentPage("settings"))) return;
-                setSettingsInitialSection("llm");
+                setSettingsInitialSection("workflow");
                 setSettingsTargetId("usage-limit-fallback");
                 setSettingsNavigationKey((key) => key + 1);
                 setPage("settings");
               })()}
             />
           )}
-          <div className="flex-1 overflow-auto">
+          <div className={`min-h-0 flex-1 ${page === "settings" ? "overflow-hidden" : "overflow-auto"}`}>
             <Suspense
               fallback={(
                 <div className="flex items-center justify-center h-full text-gray-400">
@@ -890,7 +947,14 @@ function App() {
                 </div>
               )}
             >
-            {page === "pipeline" ? (
+            {page === "workspace" ? (
+              <WorkspacePage onOpenSettings={() => {
+                setSettingsInitialSection("workspace");
+                setSettingsTargetId(undefined);
+                setSettingsNavigationKey((key) => key + 1);
+                setPage("settings");
+              }} onReviewHandoff={(handoff) => void handleWorkspaceReviewHandoff(handoff)} />
+            ) : page === "pipeline" ? (
               <PipelinePage
                 onClose={() => {
                   setWorkflowDirty(false);

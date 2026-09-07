@@ -24,6 +24,9 @@ import InfoButton from "./InfoButton";
 import ResizeHandle from "./ResizeHandle";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import type { ThemePreference } from "../lib/theme";
+import WorkflowCodexConnection from "./WorkflowCodexConnection";
+import WorkspaceConnectionSettings from "./WorkspaceConnectionSettings";
+import "./SettingsPage.css";
 
 interface Props {
   onClose: () => void;
@@ -32,20 +35,70 @@ interface Props {
   theme: ThemePreference;
   onThemeChange: (theme: ThemePreference) => void;
   onSystemChange?: () => void;
-  initialSection?: Section;
+  initialSection?: SettingsSection;
   targetId?: string;
   navigationKey?: number;
   dependencies?: DepsReport | null;
 }
 
-type Section = "llm" | "api-keys" | "workflow" | "extraction" | "general";
+type Section = "general" | "providers" | "workflow";
+// Keep existing entry points (dependency repair and Workspace sign-in) working.
+export type SettingsSection = Section | "workspace" | "llm" | "api-keys" | "extraction";
+
+function resolveSection(section: SettingsSection): Section {
+  if (section === "workspace" || section === "api-keys") return "providers";
+  if (section === "llm" || section === "extraction") return "workflow";
+  return section;
+}
+
+const SECTION_INFO = {
+  general: {
+    title: "General",
+    description: "Appearance and diagnostic preferences for Pipeline.",
+    detail: "Appearance & diagnostics",
+    icon: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5",
+  },
+  providers: {
+    title: "Providers",
+    description: "Manage model connections, accounts, and API keys.",
+    detail: "Accounts & connections",
+    icon: "M8 3v4m8-4v4M6 7h12v3a6 6 0 0 1-12 0V7Zm6 9v5",
+  },
+  workflow: {
+    title: "Review & workflows",
+    description: "Defaults for paper reviews and every other workflow. Individual workflows can override these choices.",
+    detail: "Models, execution & history",
+    icon: "M6 3v12m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12-12v4m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 6v8M6 9h9",
+  },
+};
+
+const PROVIDER_LINKS = [
+  { id: "anthropic-provider", label: "Anthropic" },
+  { id: "openai-provider", label: "OpenAI" },
+  { id: "google-provider", label: "Google" },
+  { id: "local-provider", label: "Compatible server" },
+];
+
+const WORKFLOW_LINKS = [
+  { id: "workflow-models", label: "Models" },
+  { id: "workflow-execution", label: "Execution" },
+  { id: "workflow-extraction", label: "PDF Extraction" },
+  { id: "workflow-history", label: "Reports & history" },
+];
+
+function focusSettingsTarget(id: string) {
+  const target = document.getElementById(id);
+  if (target instanceof HTMLDetailsElement) target.open = true;
+  target?.focus({ preventScroll: true });
+  target?.scrollIntoView?.({ block: "start" });
+}
 
 const AUTOSAVE_DELAY_MS = 400;
 
 function catalogDiscoveryInputs(settings: Settings): Record<string, string> {
   return {
     claude: `${settings.claude_access_mode}\u0000${settings.anthropic_api_key}`,
-    codex: `${settings.codex_access_mode}\u0000${settings.openai_api_key}`,
+    codex: `${settings.codex_access_mode}\u0000${settings.codex_backend ?? "app_server"}\u0000${settings.openai_api_key}`,
     antigravity: `${settings.antigravity_access_mode}\u0000${settings.google_api_key}`,
     local: `${settings.local_base_url}\u0000${settings.local_api_key}`,
   };
@@ -58,7 +111,7 @@ export default function SettingsPage({
   theme,
   onThemeChange,
   onSystemChange,
-  initialSection = "llm",
+  initialSection = "workflow",
   targetId,
   navigationKey = 0,
 }: Props) {
@@ -68,7 +121,7 @@ export default function SettingsPage({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [section, setSection] = useState<Section>(initialSection);
+  const [section, setSection] = useState<Section>(resolveSection(initialSection));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
@@ -77,10 +130,11 @@ export default function SettingsPage({
   const [savedCatalogInputs, setSavedCatalogInputs] = useState<Record<string, string> | null>(null);
   const [navWidth, setNavWidth] = usePersistentPanelWidth(
     "pipeline.ui.settingsNavWidth",
+    224,
     192,
-    160,
     320,
   );
+  const contentRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<Settings | null>(settings);
   const savedCatalogInputsRef = useRef<Record<string, string> | null>(savedCatalogInputs);
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -101,16 +155,18 @@ export default function SettingsPage({
   }, [onDirtyChange, savePending]);
 
   useEffect(() => {
-    setSection(initialSection);
+    setSection(resolveSection(initialSection));
   }, [initialSection, navigationKey]);
 
   useEffect(() => {
-    if (loading || !targetId || section !== initialSection) return;
-    const frame = requestAnimationFrame(() => {
-      const target = document.getElementById(targetId);
-      target?.focus({ preventScroll: true });
-      target?.scrollIntoView({ block: "start" });
-    });
+    if (loading || section !== resolveSection(initialSection)) return;
+    const destination = targetId ?? ({
+      extraction: "workflow-extraction",
+      llm: "workflow-models",
+      workspace: "workspace-provider",
+    } as Partial<Record<SettingsSection, string>>)[initialSection];
+    if (!destination) return;
+    const frame = requestAnimationFrame(() => focusSettingsTarget(destination));
     return () => cancelAnimationFrame(frame);
   }, [initialSection, loading, navigationKey, section, targetId]);
 
@@ -227,6 +283,7 @@ export default function SettingsPage({
   }, [
     settings?.claude_access_mode,
     settings?.codex_access_mode,
+    settings?.codex_backend,
     settings?.antigravity_access_mode,
     settings?.anthropic_api_key,
     settings?.openai_api_key,
@@ -348,154 +405,48 @@ export default function SettingsPage({
     ]),
   ) as Record<string, boolean>;
 
-  const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
-    {
-      id: "llm",
-      label: "Models",
-      icon: (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z" />
-        </svg>
-      ),
-    },
-    {
-      id: "api-keys",
-      label: "API Keys",
-      icon: (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM12 9v12m-3-3h6" />
-        </svg>
-      ),
-    },
-    {
-      id: "workflow",
-      label: "Workflow",
-      icon: (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v12m0 0a3 3 0 100 6 3 3 0 000-6zm12-12v4m0 0a3 3 0 100 6 3 3 0 000-6zm0 6v10M6 9h12" />
-        </svg>
-      ),
-    },
-    {
-      id: "extraction",
-      label: "PDF Extraction",
-      icon: (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-        </svg>
-      ),
-    },
-    {
-      id: "general",
-      label: "General",
-      icon: (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      ),
-    },
-  ];
+  const selectSection = (next: Section) => {
+    setSection(next);
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  };
+  const pageInfo = SECTION_INFO[section];
 
   return (
-    <div data-testid="settings-page" className="flex h-full">
+    <div data-testid="settings-page" className="settings-shell">
       {/* Sidebar nav */}
       <div
         style={{ width: navWidth }}
-        className="relative flex shrink-0 flex-col border-r border-gray-200 bg-gray-50/50 p-4 dark:border-neutral-700 dark:bg-neutral-900/50"
+        className="settings-sidebar"
       >
-        <h2 className="text-sm font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider mb-4 px-2">
+        <h2 className="settings-sidebar-title">
           Settings
         </h2>
-        <nav className="space-y-1 flex-1">
-          {navItems.map((item) => (
+        <nav aria-label="Settings categories" className="space-y-1 flex-1">
+          {(["general", "providers", "workflow"] as const).map((id) => (
             <button
-              key={item.id}
-              onClick={() => setSection(item.id)}
-              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${
-                section === item.id
-                  ? "bg-gray-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
-                  : "text-gray-600 dark:text-neutral-400 hover:bg-gray-200/60 dark:hover:bg-neutral-800/60"
-              }`}
+              key={id}
+              type="button"
+              onClick={() => selectSection(id)}
+              aria-current={section === id ? "page" : undefined}
+              aria-label={SECTION_INFO[id].title}
+              className={`settings-nav-item ${section === id ? "is-active" : ""}`}
             >
-              {item.icon}
-              {item.label}
+              <svg aria-hidden="true" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d={SECTION_INFO[id].icon} />
+              </svg>
+              <span className="min-w-0">
+                <span className="block font-medium">{SECTION_INFO[id].title}</span>
+                <span className="settings-nav-detail">{SECTION_INFO[id].detail}</span>
+              </span>
             </button>
           ))}
         </nav>
-        {showBack && (
-          <button
-            onClick={handleClose}
-            className="flex items-center gap-2 px-2.5 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-            </svg>
-            Back
-          </button>
-        )}
-        <ResizeHandle
-          currentWidth={navWidth}
-          defaultWidth={192}
-          label="Resize settings navigation"
-          min={160}
-          max={320}
-          onResize={setNavWidth}
-        />
-      </div>
-
-      {/* Content area */}
-      <div className="flex-1 overflow-y-auto">
-        {warnings.length > 0 && (
-          <div className="mx-8 mt-6 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300">
-            {warnings.map((w, i) => (
-              <p key={i}>{w}</p>
-            ))}
-            <p className="mt-1 text-amber-700 dark:text-amber-300 text-xs">
-              Changing a setting will overwrite the current file with these values.
-            </p>
-          </div>
-        )}
-        <div className="p-8 max-w-2xl">
-          {section === "llm" && (
-            <LLMSection
-              settings={settings}
-              setSettings={setSettings}
-              catalogs={catalogs}
-              catalogBlocked={catalogBlocked}
-              catalogLoading={catalogLoading}
-              discoveryInputChanged={discoveryInputChanged}
-              loadCatalog={loadCatalog}
-            />
-          )}
-          {section === "api-keys" && (
-            <ApiKeysSection settings={settings} setSettings={setSettings} />
-          )}
-          {section === "workflow" && (
-            <WorkflowSection settings={settings} setSettings={setSettings} />
-          )}
-          {section === "extraction" && (
-            <ExtractionSection
-              settings={settings}
-              setSettings={setSettings}
-              onSystemChange={onSystemChange}
-            />
-          )}
-          {section === "general" && (
-            <GeneralSection
-              settings={settings}
-              setSettings={setSettings}
-              theme={theme}
-              onThemeChange={onThemeChange}
-            />
-          )}
-
           <div
-            className="mt-10 border-t border-gray-200 pt-6 text-sm dark:border-neutral-700"
+            className="settings-save-status"
             aria-live="polite"
           >
             {saveError ? (
-              <div role="alert" className="flex items-center gap-3 text-red-700 dark:text-red-400">
+              <div role="alert" className="flex flex-col items-start gap-2 text-red-700 dark:text-red-400">
                 <span>Could not save settings: {saveError}</span>
                 <button
                   type="button"
@@ -513,6 +464,102 @@ export default function SettingsPage({
               <span className="text-gray-500 dark:text-neutral-400">Changes save automatically.</span>
             )}
           </div>
+        {showBack && (
+          <button
+            onClick={handleClose}
+            className="flex items-center gap-2 px-2.5 py-2 text-sm text-gray-500 hover:text-gray-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+            </svg>
+            Back
+          </button>
+        )}
+        <ResizeHandle
+          currentWidth={navWidth}
+          defaultWidth={224}
+          label="Resize settings navigation"
+          min={192}
+          max={320}
+          onResize={setNavWidth}
+        />
+      </div>
+
+      {/* Content area */}
+      <div ref={contentRef} className="settings-content">
+        <header className="settings-page-header">
+          <div>
+            <p className="settings-eyebrow">Settings</p>
+            <h1>{pageInfo.title}</h1>
+            <p className="settings-page-description">{pageInfo.description}</p>
+          </div>
+
+        </header>
+        {section !== "general" && (
+          <nav aria-label={section === "workflow" ? "Review and workflow sections" : "Provider sections"} className="settings-jump-nav">
+            {(section === "workflow" ? WORKFLOW_LINKS : PROVIDER_LINKS).map((link) => (
+              <button type="button" key={link.id} onClick={() => focusSettingsTarget(link.id)}>{link.label}</button>
+            ))}
+          </nav>
+        )}
+        {warnings.length > 0 && (
+          <div className="mx-8 mt-6 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300">
+            {warnings.map((w, i) => (
+              <p key={i}>{w}</p>
+            ))}
+            <p className="mt-1 text-amber-700 dark:text-amber-300 text-xs">
+              Changing a setting will overwrite the current file with these values.
+            </p>
+          </div>
+        )}
+        <div className="settings-page-body">
+          {section === "providers" && (
+            <>
+              <ProvidersSection settings={settings} setSettings={setSettings}
+                onCodexAccountChange={() => void loadCatalog("codex", settings, true)}
+                onCodexStatusChange={onSystemChange} />
+              <SettingsCard id="local-provider">
+                <ProviderHeader name="OpenAI-compatible" description="Ollama, LM Studio, llama.cpp, or another compatible server." badge="Review & workflows" />
+                <LocalProviderSection
+                  settings={settings} setSettings={setSettings} catalogs={catalogs}
+                  catalogBlocked={catalogBlocked} catalogLoading={catalogLoading}
+                  discoveryInputChanged={discoveryInputChanged} loadCatalog={loadCatalog}
+                />
+              </SettingsCard>
+            </>
+          )}
+          {section === "workflow" && (
+            <>
+              <SettingsCard id="workflow-models">
+                <ModelDefaultsSection settings={settings} setSettings={setSettings} catalogs={catalogs} />
+                <button type="button" className="settings-text-link" onClick={() => selectSection("providers")}>Manage provider connections →</button>
+              </SettingsCard>
+              <SettingsCard id="workflow-execution">
+                <WorkflowSection settings={settings} setSettings={setSettings} />
+              </SettingsCard>
+              <SettingsCard id="workflow-extraction">
+                <ExtractionSection settings={settings} setSettings={setSettings} onSystemChange={onSystemChange} />
+              </SettingsCard>
+              <SettingsCard id="workflow-history">
+                <SectionHeader title="Reports & history" description="Compare revisions and manage saved reports and their artifacts." />
+                <div className="space-y-5">
+                  <Toggle
+                    label="Automatic revision reconciliation"
+                    description="When a matching completed report exists, add an AI comparison of addressed, remaining, and new concerns. This adds an LLM call to the report."
+                    checked={settings.auto_revision_reconciliation}
+                    onChange={(v) => setSettings({ ...settings, auto_revision_reconciliation: v })}
+                  />
+                  <RunRetention settings={settings} setSettings={setSettings} />
+                </div>
+              </SettingsCard>
+            </>
+          )}
+          {section === "general" && (
+            <SettingsCard id="general-preferences">
+              <GeneralSection settings={settings} setSettings={setSettings} theme={theme} onThemeChange={onThemeChange} />
+            </SettingsCard>
+          )}
+
         </div>
       </div>
     </div>
@@ -521,55 +568,26 @@ export default function SettingsPage({
 
 /* ── Section Components ──────────────────────────────────────────── */
 
-function LLMSection({
-  settings,
-  setSettings,
-  catalogs,
-  catalogBlocked,
-  catalogLoading,
-  discoveryInputChanged,
-  loadCatalog,
-}: {
+function ModelDefaultsSection({ settings, setSettings, catalogs }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
   catalogs: Record<string, ModelCatalog>;
-  catalogBlocked: Record<string, boolean>;
-  catalogLoading: Record<string, boolean>;
-  discoveryInputChanged: Record<string, boolean>;
-  loadCatalog: (provider: string, settings: Settings, refresh?: boolean) => Promise<void>;
 }) {
-  const localCatalog = catalogBlocked.local ? undefined : catalogs.local;
   const parallelAgents = defaultParallelAgents(settings);
   const mergeAgent = defaultMergeAgent(settings);
   const sequentialAgent = defaultSequentialAgent(settings);
   const orientationAgent = defaultOrientationAgent(settings);
   const usageLimitFallbackAgent = settings.usage_limit_fallback_agent || "";
-  const [externalLinkError, setExternalLinkError] = useState<string | null>(null);
-
-  const openOllamaSite = async () => {
-    setExternalLinkError(null);
-    try {
-      await openUrl("https://ollama.com");
-    } catch (error) {
-      setExternalLinkError(error instanceof Error ? error.message : String(error));
-    }
-  };
 
   return (
     <>
       <SectionHeader
-        title="Models"
-        help="Set role-level provider, model, and thinking defaults for workflow steps that remain at Default."
+        title="Model defaults"
+        description="Choose who handles each stage. Steps set to Default use these providers, models, and thinking levels."
       />
 
       <div className="space-y-0">
-        <section className="space-y-5 pb-8">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Default agents</h3>
-            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
-              Workflows can name their own agents. These choices fill only the steps left at Default.
-            </p>
-          </div>
+        <section className="space-y-5">
           <div className="divide-y divide-gray-200 dark:divide-neutral-800">
             <div className="pb-5">
               <AgentDefaultsControl
@@ -654,7 +672,7 @@ function LLMSection({
                 })}
               />
             </div>
-            <div id="usage-limit-fallback" className="scroll-mt-4 py-5">
+            <div id="usage-limit-fallback" tabIndex={-1} className="settings-anchor py-5">
               <label className="flex items-start gap-2.5 text-sm text-gray-800 dark:text-neutral-200">
                 <input
                   aria-label="Enable usage-limit fallback"
@@ -716,7 +734,7 @@ function LLMSection({
                 >
                   <option value="claude">Claude (Anthropic)</option>
                   <option value="codex">ChatGPT (OpenAI)</option>
-                  <option value="antigravity">Antigravity (Google)</option>
+                  <option value="antigravity">Gemini (Google)</option>
                   <option value="local">Local (Ollama / OpenAI-compatible)</option>
                 </select>
               </Field>
@@ -724,13 +742,39 @@ function LLMSection({
           </div>
         </section>
 
-        {/* Local (Ollama / OpenAI-compatible) */}
-        <section className="space-y-5 border-t border-gray-200 pt-8 dark:border-neutral-800">
+      </div>
+    </>
+  );
+}
+
+function LocalProviderSection({ settings, setSettings, catalogs, catalogBlocked, catalogLoading, discoveryInputChanged, loadCatalog }: {
+  settings: Settings;
+  setSettings: (s: Settings) => void;
+  catalogs: Record<string, ModelCatalog>;
+  catalogBlocked: Record<string, boolean>;
+  catalogLoading: Record<string, boolean>;
+  discoveryInputChanged: Record<string, boolean>;
+  loadCatalog: (provider: string, settings: Settings, refresh?: boolean) => Promise<void>;
+}) {
+  const localCatalog = catalogBlocked.local ? undefined : catalogs.local;
+  const [externalLinkError, setExternalLinkError] = useState<string | null>(null);
+
+  const openOllamaSite = async () => {
+    setExternalLinkError(null);
+    try {
+      await openUrl("https://ollama.com");
+    } catch (error) {
+      setExternalLinkError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  return (
+        <section className="space-y-5">
           <div className="flex items-center gap-1.5">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
               Local server
             </h3>
-            <InfoButton label="Local server">Runs against any local OpenAI-compatible server. With{" "}
+            <InfoButton label="Local server">Connect to an OpenAI-compatible server. With{" "}
             <a
               href="https://ollama.com"
               onClick={(e) => {
@@ -764,6 +808,11 @@ function LLMSection({
               spellCheck={false}
             />
           </Field>
+          <Field label="API Key" help="Optional bearer token for this endpoint. Stored encrypted.">
+            <input aria-label="Local API Key" type="password" value={settings.local_api_key}
+              onChange={(e) => setSettings({ ...settings, local_api_key: e.target.value })}
+              placeholder="Usually empty for local servers" className={`${inputClass} font-mono`} autoComplete="off" />
+          </Field>
           <Field label="Model">
             <select
               aria-label="Local Model"
@@ -791,8 +840,6 @@ function LLMSection({
           </Field>
         </section>
 
-      </div>
-    </>
   );
 }
 
@@ -827,7 +874,7 @@ function AccessModeSelector({
           return (
             <label
               key={mode}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-within:ring-2 focus-within:ring-blue-500 ${
                 disabled
                   ? "cursor-not-allowed text-gray-300 dark:text-neutral-600"
                   : effectiveValue === mode
@@ -853,140 +900,158 @@ function AccessModeSelector({
         {subscriptionDisabledNote
           ? subscriptionDisabledNote
           : effectiveValue === "subscription"
-            ? "Uses the provider CLI and its signed-in subscription. The saved API key is not used."
+            ? "Uses the provider’s native connection and signed-in subscription. The saved API key is not used."
             : "Uses direct, token-metered API calls with the key below. The provider CLI is not required."}
       </p>
     </div>
   );
 }
 
-function ApiKeysSection({
+function ProvidersSection({
   settings,
   setSettings,
+  onCodexAccountChange,
+  onCodexStatusChange,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
+  onCodexAccountChange: () => void;
+  onCodexStatusChange?: () => void;
 }) {
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   return (
     <>
-      <SectionHeader
-        title="API Keys"
-        description="Store provider credentials and choose explicitly between direct API calls and subscription-backed CLIs."
-      />
-
-      <div className="divide-y divide-gray-200 dark:divide-neutral-800">
-        <section className="space-y-4 pb-6">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
-            Claude (Anthropic)
-          </h3>
-          <AccessModeSelector
-            provider="Claude"
-            value={settings.claude_access_mode}
-            onChange={(mode) => setSettings({ ...settings, claude_access_mode: mode })}
-          />
-          <Field
-            label="API Key"
-            help="Stored encrypted and used only when Claude is in API mode."
-          >
-            <input
-              aria-label="Claude API Key"
-              type="password"
-              value={settings.anthropic_api_key}
-              onChange={(e) => setSettings({ ...settings, anthropic_api_key: e.target.value })}
-              placeholder="sk-ant-... (optional, enables direct API)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
+      <div className="space-y-5">
+        <SettingsCard id="anthropic-provider">
+          <ProviderHeader name="Anthropic" description="Claude through a subscription or the Anthropic API." badge="Review & workflows" />
+          <div className="space-y-4">
+            <AccessModeSelector
+              provider="Claude"
+              value={settings.claude_access_mode}
+              onChange={(mode) => setSettings({ ...settings, claude_access_mode: mode })}
             />
-          </Field>
-          {settings.claude_access_mode === "api" && !settings.anthropic_api_key.trim() && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">
-              Enter an Anthropic API key before running Claude in API mode.
-            </p>
-          )}
-        </section>
-
-        <section className="space-y-4 py-6">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
-            ChatGPT (OpenAI)
-          </h3>
-          <AccessModeSelector
-            provider="ChatGPT"
-            value={settings.codex_access_mode}
-            onChange={(mode) => setSettings({ ...settings, codex_access_mode: mode })}
-          />
-          <Field
-            label="API Key"
-            help="Stored encrypted and used only when ChatGPT is in API mode."
-          >
-            <input
-              aria-label="OpenAI API Key"
-              type="password"
-              value={settings.openai_api_key}
-              onChange={(e) => setSettings({ ...settings, openai_api_key: e.target.value })}
-              placeholder="sk-... (optional, enables direct API)"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-            />
-          </Field>
-          {settings.codex_access_mode === "api" && !settings.openai_api_key.trim() && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">
-              Enter an OpenAI API key before running ChatGPT in API mode.
-            </p>
-          )}
-        </section>
-
-        <section className="space-y-4 py-6">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
-            Antigravity (Google)
-          </h3>
-          <AccessModeSelector
-            provider="Antigravity"
-            value={settings.antigravity_access_mode}
-            onChange={(mode) => setSettings({ ...settings, antigravity_access_mode: mode })}
-            subscriptionDisabledNote="Subscription mode is disabled: Google's Antigravity terms do not permit third-party software to use an Antigravity sign-in. Google runs on the Gemini API with the key below."
-          />
-          <Field
-            label="Gemini API Key"
-            help="Stored encrypted. Required — Antigravity always runs through the Gemini API."
-          >
-            <input
-              aria-label="Gemini API Key"
-              type="password"
-              value={settings.google_api_key}
-              onChange={(e) => setSettings({ ...settings, google_api_key: e.target.value })}
-              placeholder="AI..."
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
-            />
-          </Field>
-          {!settings.google_api_key.trim() && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">
-              Enter a Google AI API key before running Antigravity.
-            </p>
-          )}
-        </section>
-
-        <section className="space-y-4 pt-6">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
-              Local server
-            </h3>
-            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
-              Optional bearer token for the OpenAI-compatible endpoint configured under Models.
-            </p>
+            <Field
+              label={settings.claude_access_mode === "api" ? "API Key" : "API Key · inactive in subscription mode"}
+              help="Stored encrypted and used only when Claude is in API mode."
+            >
+              <input
+                aria-label="Claude API Key"
+                type="password"
+                value={settings.anthropic_api_key}
+                onChange={(e) => setSettings({ ...settings, anthropic_api_key: e.target.value })}
+                placeholder="sk-ant-…"
+                className={`${inputClass} font-mono`}
+                autoComplete="off"
+              />
+            </Field>
+            {settings.claude_access_mode === "api" && !settings.anthropic_api_key.trim() && (
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Enter an Anthropic API key before running Claude in API mode.
+              </p>
+            )}
           </div>
-          <Field label="API Key">
-            <input
-              aria-label="Local API Key"
-              type="password"
-              value={settings.local_api_key}
-              onChange={(e) => setSettings({ ...settings, local_api_key: e.target.value })}
-              placeholder="usually empty for local servers"
-              className={`${inputClass} font-mono`}
-              autoComplete="off"
+        </SettingsCard>
+
+        <SettingsCard id="openai-provider">
+          <ProviderHeader name="OpenAI" description="ChatGPT subscriptions and OpenAI API access." badge="Workspace · Review & workflows" />
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium">Review & workflows</h3>
+            <AccessModeSelector
+              provider="ChatGPT"
+              value={settings.codex_access_mode}
+              onChange={(mode) => setSettings({ ...settings, codex_access_mode: mode })}
             />
-          </Field>
-        </section>
+            {settings.codex_access_mode !== "api" && (
+              <>
+                {settings.codex_backend === "legacy_cli" ? (
+                  <p className="text-xs text-gray-600 dark:text-neutral-400">
+                    The legacy Codex CLI connection is enabled. Manage it in Advanced connection settings.
+                  </p>
+                ) : (
+                  <WorkflowCodexConnection
+                    onAccountChange={onCodexAccountChange} onStatusChange={onCodexStatusChange} />
+                )}
+                <details className="settings-disclosure">
+                  <summary>Advanced connection settings <span>Compatibility</span></summary>
+                  <div className="space-y-3 pt-4">
+                    <Field label="Workflow connection" help="Use the legacy CLI only for compatibility troubleshooting. Pipeline never switches to it automatically.">
+                      <select aria-label="Workflow Codex backend" className={inputClass}
+                        value={settings.codex_backend ?? "app_server"}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          codex_backend: e.target.value as "legacy_cli" | "app_server",
+                          codex_backend_preference_version: 1,
+                        })}>
+                        <option value="app_server">Codex App Server (recommended)</option>
+                        <option value="legacy_cli">Legacy Codex CLI</option>
+                      </select>
+                    </Field>
+                    {settings.codex_backend === "legacy_cli" && (
+                      <p className="text-xs text-gray-600 dark:text-neutral-400">
+                        This uses your terminal's Codex account. Run <code>codex login</code> in a terminal to sign in.
+                        App Server keeps its own sign-in and can be restored above.
+                      </p>
+                    )}
+                  </div>
+                </details>
+              </>
+            )}
+            <Field
+              label={settings.codex_access_mode === "api" ? "API Key" : "API Key · inactive in subscription mode"}
+              help="Stored encrypted and used only when ChatGPT is in API mode."
+            >
+              <input
+                aria-label="OpenAI API Key"
+                type="password"
+                value={settings.openai_api_key}
+                onChange={(e) => setSettings({ ...settings, openai_api_key: e.target.value })}
+                placeholder="sk-…"
+                className={`${inputClass} font-mono`}
+                autoComplete="off"
+              />
+            </Field>
+            {settings.codex_access_mode === "api" && !settings.openai_api_key.trim() && (
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Enter an OpenAI API key before running ChatGPT in API mode.
+              </p>
+            )}
+          </div>
+          <details id="workspace-provider" tabIndex={-1} className="settings-disclosure settings-anchor mt-5" onToggle={(event) => { if (event.currentTarget.open) setWorkspaceLoaded(true); }}>
+            <summary>Workspace ChatGPT <span>Separate sign-in, models & usage</span></summary>
+            {workspaceLoaded && <div className="pt-5"><WorkspaceConnectionSettings embedded /></div>}
+          </details>
+        </SettingsCard>
+
+        <SettingsCard id="google-provider">
+          <ProviderHeader name="Google" description="Gemini models through the Google API." badge="Review & workflows" />
+          <div className="space-y-4">
+            <AccessModeSelector
+              provider="Gemini"
+              value={settings.antigravity_access_mode}
+              onChange={(mode) => setSettings({ ...settings, antigravity_access_mode: mode })}
+              subscriptionDisabledNote="Gemini connects through the Google API. A Google API key is required; subscription sign-in is unavailable."
+            />
+            <Field
+              label="Gemini API Key"
+              help="Stored encrypted. Required for Gemini API calls."
+            >
+              <input
+                aria-label="Gemini API Key"
+                type="password"
+                value={settings.google_api_key}
+                onChange={(e) => setSettings({ ...settings, google_api_key: e.target.value })}
+                placeholder="AI..."
+                className={`${inputClass} font-mono`}
+                autoComplete="off"
+              />
+            </Field>
+            {!settings.google_api_key.trim() && (
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Enter a Google AI API key before running Gemini.
+              </p>
+            )}
+          </div>
+        </SettingsCard>
       </div>
     </>
   );
@@ -1002,7 +1067,7 @@ function WorkflowSection({
   return (
     <>
       <SectionHeader
-        title="Workflow"
+        title="Execution"
         description="Control concurrency, time limits, and retry behavior across model calls."
       />
       <div className="space-y-5">
@@ -1128,7 +1193,7 @@ function ExtractionSection({
     <>
       <SectionHeader
         title="PDF Extraction"
-        help="These options apply to PDFs. Pipeline always extracts LaTeX source natively."
+        description="Choose how PDFs become readable input. LaTeX source is always extracted natively."
       />
 
       <div className="space-y-4">
@@ -1225,7 +1290,7 @@ function ExtractionSection({
         <div
           id="paddleocr-local-engine"
           tabIndex={-1}
-          className="scroll-mt-4 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
+          className="settings-anchor rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
         >
           <EnginesPanel
             onSystemChange={onSystemChange}
@@ -1234,7 +1299,9 @@ function ExtractionSection({
         </div>
 
         {paddleInstalled && (
-          <>
+          <details className="settings-disclosure">
+            <summary>Advanced parser settings <span>Performance & document structure</span></summary>
+            <div className="space-y-6 pt-5">
             <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
             <SubsectionHeader
               label="PaddleOCR-VL recognition server"
@@ -1436,7 +1503,8 @@ function ExtractionSection({
             />
               </div>
             </div>
-          </>
+            </div>
+          </details>
         )}
 
         <Toggle
@@ -1489,7 +1557,7 @@ function GeneralSection({
   return (
     <>
       <SectionHeader
-        title="General"
+        title="Appearance & diagnostics"
       />
 
       <div className="space-y-5">
@@ -1516,15 +1584,7 @@ function GeneralSection({
             setSettings({ ...settings, verbose_logging: v })
           }
         />
-        <Toggle
-          label="Automatic revision reconciliation"
-          description="When a matching completed report exists, add an AI comparison of addressed, remaining, and new concerns. This adds an LLM call to the report."
-          checked={settings.auto_revision_reconciliation}
-          onChange={(v) =>
-            setSettings({ ...settings, auto_revision_reconciliation: v })
-          }
-        />
-        <RunRetention settings={settings} setSettings={setSettings} />
+
       </div>
     </>
   );
@@ -1635,7 +1695,7 @@ function RunRetention({
           </span>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <input
           aria-label="Maximum saved reports"
           type="number"
@@ -1696,6 +1756,23 @@ function RunRetention({
 
 /* ── Shared UI Components ────────────────────────────────────────── */
 
+function SettingsCard({ id, children }: { id: string; children: React.ReactNode }) {
+  return <section id={id} tabIndex={-1} className="settings-card settings-anchor">{children}</section>;
+}
+
+function ProviderHeader({ name, description, badge }: { name: string; description: string; badge: string }) {
+  return (
+    <header className="settings-provider-header">
+      <div className="settings-provider-mark" aria-hidden="true">{name === "OpenAI-compatible" ? "<>" : name.slice(0, 1)}</div>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-base font-semibold">{name}</h2>
+        <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">{description}</p>
+        <span className="settings-scope">{badge}</span>
+      </div>
+    </header>
+  );
+}
+
 function CatalogStatus({
   blocked = false,
   catalog,
@@ -1744,9 +1821,9 @@ function SectionHeader({
   return (
     <div className="mb-6">
       <div className="flex items-center gap-1.5">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-neutral-100">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-neutral-100">
           {title}
-        </h3>
+        </h2>
         {help && <InfoButton label={title}>{help}</InfoButton>}
       </div>
       {description && (

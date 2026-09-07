@@ -87,6 +87,10 @@ function mockLoad(
     if (cmd === "get_settings") return Promise.resolve({ settings, warnings });
     if (cmd === "save_settings") return Promise.resolve();
     if (cmd === "list_engines") return Promise.resolve(engines);
+    if (cmd === "workflow_codex_status") return Promise.resolve({
+      account: { status: "signedOut", email: null, planType: null },
+      version: "0.153.4", epoch: 1, loginInProgress: false, unresolvedAttempts: [],
+    });
     return Promise.reject(new Error(`unexpected command: ${cmd}`));
   });
 }
@@ -116,7 +120,43 @@ describe("SettingsPage", () => {
     openUrl.mockResolvedValue(undefined);
   });
 
-  it("keeps role defaults on Models and removes provider configuration boxes", async () => {
+  it("defaults to managed sign-in and keeps legacy activation in advanced settings", async () => {
+    mockLoad(makeSettings());
+    const user = userEvent.setup();
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} initialSection="providers" />);
+    expect(await screen.findByRole("button", { name: "Sign in to ChatGPT" })).toBeVisible();
+    const selector = screen.getByLabelText("Workflow Codex backend");
+    expect(selector).toHaveValue("app_server");
+    expect(selector).not.toBeVisible();
+    expect(selector.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText(/Run.*codex login/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Advanced connection settings"));
+    expect(selector).toBeVisible();
+    await user.selectOptions(selector, "legacy_cli");
+    expect(screen.queryByRole("group", { name: "Workflow ChatGPT connection" })).not.toBeInTheDocument();
+    expect(screen.getByText("codex login")).toBeVisible();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
+      settings: expect.objectContaining({ codex_backend: "legacy_cli", codex_backend_preference_version: 1 }),
+    }));
+
+    await user.selectOptions(selector, "app_server");
+    expect(await screen.findByRole("group", { name: "Workflow ChatGPT connection" })).toBeVisible();
+    expect(screen.queryByText("codex login")).not.toBeInTheDocument();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
+      settings: expect.objectContaining({ codex_backend: "app_server", codex_backend_preference_version: 1 }),
+    }));
+  });
+
+  it("preserves an explicit advanced legacy choice without starting App Server", async () => {
+    mockLoad({ ...makeSettings(), codex_backend: "legacy_cli", codex_backend_preference_version: 1 });
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} initialSection="providers" />);
+    expect(await screen.findByText(/The legacy Codex CLI connection is enabled/)).toBeVisible();
+    expect(screen.getByLabelText("Workflow Codex backend")).toHaveValue("legacy_cli");
+    expect(invoke).not.toHaveBeenCalledWith("workflow_codex_status");
+  });
+
+  it("consolidates workflow settings while keeping connections on Providers", async () => {
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     expect(await screen.findByText("Preferred Provider")).toBeInTheDocument();
@@ -125,7 +165,7 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("combobox", { name: "Preferred Provider" })).toBeVisible();
     expect(screen.queryByText("Provider configuration")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Claude API Key")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Maximum Concurrent Agents")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Maximum Concurrent Agents")).toBeVisible();
     expect(screen.getByText("or more", { selector: "strong" }).closest("p")).toHaveTextContent(
       "Select one or more default model to use for parallel workflow steps.",
     );
@@ -144,9 +184,80 @@ describe("SettingsPage", () => {
       orientationDefaults.compareDocumentPosition(parallelDefaults)
       & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "API Keys" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Workflow" })).toBeVisible();
+    const navigation = screen.getByRole("navigation", { name: "Settings categories" });
+    expect(within(navigation).getAllByRole("button")).toHaveLength(3);
+    expect(within(navigation).getByRole("button", { name: "Providers" })).toBeVisible();
+    expect(within(navigation).getByRole("button", { name: "Review & workflows" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByLabelText("Maximum saved reports")).toBeVisible();
+    expect(screen.getByRole("radio", { name: /^LLM/ })).toBeVisible();
     expect(invoke).toHaveBeenCalledWith("get_settings");
+  });
+
+  it("refreshes dependency readiness when the Workflow ChatGPT account changes", async () => {
+    const settings = { ...makeSettings(), codex_backend: "app_server" as const };
+    let signedIn = false;
+    mockLoad(settings);
+    const load = invoke.getMockImplementation()!;
+    invoke.mockImplementation((cmd: string, args: unknown) => {
+      if (cmd === "workflow_codex_status") return Promise.resolve({
+        account: { status: signedIn ? "chatgpt" : "signedOut", email: null, planType: null },
+        version: "0.153.4", epoch: 1, loginInProgress: false, unresolvedAttempts: [],
+      });
+      if (cmd === "get_model_catalog") return Promise.resolve(catalog("codex", "cli", "0.153.4"));
+      return load(cmd, args);
+    });
+    const onSystemChange = vi.fn();
+    const user = userEvent.setup();
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}}
+      initialSection="providers" onSystemChange={onSystemChange} />);
+    await waitFor(() => expect(onSystemChange).toHaveBeenCalledTimes(1));
+    signedIn = true;
+    const connection = screen.getByRole("group", { name: "Workflow ChatGPT connection" });
+    await user.click(within(connection).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(onSystemChange).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Signed in")).toBeVisible();
+    expect(invoke.mock.calls.some(([cmd]) => cmd.startsWith("workbench_"))).toBe(false);
+  });
+
+  it("keeps Workspace lazy and preserves its connection panel across disclosure toggles", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} initialSection="providers" />);
+    await screen.findByRole("heading", { name: "Providers" });
+    expect(invoke).not.toHaveBeenCalledWith("workbench_codex_connect");
+    expect(screen.getByLabelText("Local Server URL")).toBeVisible();
+    expect(screen.getByLabelText("Local API Key")).toBeVisible();
+    expect(screen.getByLabelText("Local Model")).toBeVisible();
+
+    await user.click(screen.getByText("Workspace ChatGPT"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("workbench_codex_connect"));
+    await user.click(screen.getByText("Workspace ChatGPT"));
+    await user.click(screen.getByText("Workspace ChatGPT"));
+    expect(invoke.mock.calls.filter(([command]) => command === "workbench_codex_connect")).toHaveLength(1);
+    expect(invoke).not.toHaveBeenCalledWith("save_settings", expect.anything());
+  });
+
+  it("opens the Workspace sign-in disclosure from an existing Workspace shortcut", async () => {
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} initialSection="workspace" />);
+    expect(await screen.findByRole("heading", { name: "Providers" })).toBeVisible();
+    await waitFor(() => expect(document.getElementById("workspace-provider")).toHaveAttribute("open"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("workbench_codex_connect"));
+    expect(screen.getByRole("button", { name: "Providers" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("preserves pending edits while moving between providers and workflow defaults", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
+    await user.selectOptions(await screen.findByLabelText("Preferred Provider"), "codex");
+    await user.click(screen.getByRole("button", { name: "Providers" }));
+    await user.type(screen.getByLabelText("Local API Key"), "test-token");
+    await user.click(screen.getByRole("button", { name: "Review & workflows" }));
+    expect(screen.getByLabelText("Preferred Provider")).toHaveValue("codex");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
+      settings: { ...makeSettings(), preferred_provider: "codex", local_api_key: "test-token" },
+    }));
   });
 
   it("saves a dedicated Merge provider default", async () => {
@@ -168,13 +279,13 @@ describe("SettingsPage", () => {
     }));
   });
 
-  it("keeps API credentials on their own page with explicit connection modes", async () => {
+  it("groups provider credentials, access modes, and local endpoints together", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "API Keys" }));
-    expect(screen.getByRole("heading", { name: "API Keys" })).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "Providers" }));
+    expect(screen.getByRole("heading", { name: "Providers" })).toBeVisible();
     expect(screen.getByLabelText("Claude API Key")).toBeVisible();
     expect(screen.getByLabelText("OpenAI API Key")).toBeVisible();
     expect(screen.getByLabelText("Gemini API Key")).toBeVisible();
@@ -189,32 +300,32 @@ describe("SettingsPage", () => {
     expect(screen.getByText(/Enter an Anthropic API key/)).toBeVisible();
   });
 
-  it("locks Antigravity to API mode with the subscription option disabled", async () => {
+  it("presents Google as Gemini with API-only access", async () => {
     const user = userEvent.setup();
     // The fixture's legacy "subscription" value must render as API.
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "API Keys" }));
-    const modes = screen.getByRole("radiogroup", { name: "Antigravity connection mode" });
+    await user.click(await screen.findByRole("button", { name: "Providers" }));
+    const modes = screen.getByRole("radiogroup", { name: "Gemini connection mode" });
     const subscription = modes.querySelector<HTMLInputElement>('input[value="subscription"]');
     const api = modes.querySelector<HTMLInputElement>('input[value="api"]');
     expect(subscription).toBeDisabled();
     expect(subscription).not.toBeChecked();
     expect(api).toBeChecked();
     expect(
-      screen.getByText(/Google's Antigravity terms do not permit third-party software/),
+      screen.getByText(/Gemini connects through the Google API/),
     ).toBeVisible();
   });
 
-  it("moves execution controls to Workflow", async () => {
+  it("keeps execution controls alongside model defaults", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await screen.findByText("Preferred Provider");
-    expect(screen.queryByLabelText("Maximum Concurrent Agents")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Workflow" }));
+    expect(screen.getByLabelText("Maximum Concurrent Agents")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Review & workflows" }));
 
     const maxConcurrentAgents = screen.getByLabelText("Maximum Concurrent Agents");
     expect(maxConcurrentAgents).toHaveValue("16");
@@ -295,6 +406,7 @@ describe("SettingsPage", () => {
 
   it("lists discovered models without stable role options", async () => {
     invoke.mockImplementation((cmd: string, args?: { provider?: string }) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
@@ -338,6 +450,7 @@ describe("SettingsPage", () => {
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Providers" }));
     await user.click(await screen.findByRole("button", {
       name: "More information about Local server",
     }));
@@ -456,6 +569,8 @@ describe("SettingsPage", () => {
     mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await userEvent.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+    expect(await screen.findByText("Full parser structure")).not.toBeVisible();
+    await userEvent.click(await screen.findByText("Advanced parser settings"));
 
     const engineHeading = screen.getByRole("heading", { name: "Local Engines" });
     const recognitionSettings = await screen.findByText("PaddleOCR-VL recognition server");
@@ -494,6 +609,7 @@ describe("SettingsPage", () => {
     mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+    await userEvent.click(await screen.findByText("Advanced parser settings"));
     await user.click(
       screen.getByRole("radio", {
         name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
@@ -541,6 +657,7 @@ describe("SettingsPage", () => {
     mockLoad(makeSettings(), [], [paddleEngine({ installed: true })]);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "PDF Extraction" }));
+    await userEvent.click(await screen.findByText("Advanced parser settings"));
     await user.click(
       screen.getByRole("radio", {
         name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
@@ -604,6 +721,7 @@ describe("SettingsPage", () => {
     let saveAttempts = 0;
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     invoke.mockImplementation((cmd: string, args?: { provider?: string }) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
@@ -642,6 +760,7 @@ describe("SettingsPage", () => {
     });
     let saveCalls = 0;
     invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
@@ -649,7 +768,6 @@ describe("SettingsPage", () => {
         saveCalls += 1;
         return saveCalls === 1 ? firstSave : Promise.resolve();
       }
-      if (cmd === "list_engines") return Promise.resolve([]);
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     const onDirtyChange = vi.fn();
@@ -662,7 +780,7 @@ describe("SettingsPage", () => {
       />,
     );
 
-    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
     const reconciliation = screen.getByRole("switch", {
       name: /automatic revision reconciliation/i,
     });
@@ -684,6 +802,7 @@ describe("SettingsPage", () => {
   it("does not discover a partial credential before debounced autosave", async () => {
     let claudeRequests = 0;
     invoke.mockImplementation((cmd: string, args?: { provider?: string }) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
@@ -702,7 +821,7 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(claudeRequests).toBe(1));
     invoke.mockClear();
 
-    await user.click(screen.getByRole("button", { name: "API Keys" }));
+    await user.click(screen.getByRole("button", { name: "Providers" }));
     await user.type(screen.getByLabelText("Claude API Key"), "s");
     expect(invoke.mock.calls.some(([command]) => command === "save_settings")).toBe(false);
     expect(
@@ -721,6 +840,7 @@ describe("SettingsPage", () => {
       refresh?: boolean;
       settings?: Settings;
     }) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
@@ -744,7 +864,7 @@ describe("SettingsPage", () => {
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
     await waitFor(() => expect(claudeRequests).toBe(1));
-    await user.click(screen.getByRole("button", { name: "API Keys" }));
+    await user.click(screen.getByRole("button", { name: "Providers" }));
     const claudeModes = screen.getByRole("radiogroup", { name: "Claude connection mode" });
     await user.click(claudeModes.querySelector<HTMLInputElement>('input[value="api"]')!);
     await user.type(screen.getByLabelText("Claude API Key"), "sk-complete-key");
@@ -766,7 +886,7 @@ describe("SettingsPage", () => {
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
     const reconciliation = screen.getByRole("switch", {
       name: /automatic revision reconciliation/i,
     });
@@ -789,10 +909,10 @@ describe("SettingsPage", () => {
     const user = userEvent.setup();
     let usageCalls = 0;
     invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
-      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "runs_disk_usage") {
         usageCalls += 1;
         return Promise.resolve(
@@ -816,7 +936,7 @@ describe("SettingsPage", () => {
     confirmDialog.mockResolvedValueOnce(true);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
     await screen.findByText("8 reports · 7.0 GB");
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
@@ -842,10 +962,10 @@ describe("SettingsPage", () => {
   it("does not ask for destructive confirmation when the preview is empty", async () => {
     const user = userEvent.setup();
     invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
-      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "runs_disk_usage") {
         return Promise.resolve({ count: 5, bytes: 4_500_000_000 });
       }
@@ -862,7 +982,7 @@ describe("SettingsPage", () => {
     });
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
@@ -875,10 +995,10 @@ describe("SettingsPage", () => {
   it("does not purge when the exact preview is not confirmed", async () => {
     const user = userEvent.setup();
     invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
-      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "runs_disk_usage") {
         return Promise.resolve({ count: 8, bytes: 7_000_000_000 });
       }
@@ -896,7 +1016,7 @@ describe("SettingsPage", () => {
     confirmDialog.mockResolvedValueOnce(false);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
@@ -905,10 +1025,10 @@ describe("SettingsPage", () => {
   it("stops safely and shows an error when purge preview fails", async () => {
     const user = userEvent.setup();
     invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
         return Promise.resolve({ settings: makeSettings(), warnings: [] });
       }
-      if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "runs_disk_usage") {
         return Promise.resolve({ count: 8, bytes: 7_000_000_000 });
       }
@@ -919,7 +1039,7 @@ describe("SettingsPage", () => {
     });
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "General" }));
+    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(

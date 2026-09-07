@@ -476,6 +476,36 @@ fn windows_pathext_defaults_match_create_process_conventions() {
 
 #[test]
 #[cfg(unix)]
+fn codex_login_is_only_probed_for_explicit_legacy_subscription() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let executable = temp.path().join("codex");
+    let marker = temp.path().join("login-probed");
+    write_fixture(
+        &executable,
+        &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+    );
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let command = super::ResolvedCommand::direct(executable);
+    let mut settings = crate::settings::Settings::default();
+    assert_eq!(super::checks::check_codex_auth(&command, &settings), None);
+    assert!(!marker.exists());
+
+    settings.codex_backend = "legacy_cli".into();
+    settings.codex_access_mode = "api".into();
+    assert_eq!(super::checks::check_codex_auth(&command, &settings), None);
+    assert!(!marker.exists());
+
+    settings.codex_access_mode = "subscription".into();
+    assert_eq!(
+        super::checks::check_codex_auth(&command, &settings),
+        Some(true)
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn version_and_auth_probes_fail_closed() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -516,6 +546,23 @@ fn claude_auth_uses_json_state_even_when_signed_out_exits_nonzero() {
     );
     std::fs::set_permissions(&signed_out, std::fs::Permissions::from_mode(0o755)).unwrap();
     let command = resolve_command_in("signed-out", &[bin], false, None).unwrap();
+    assert_eq!(check_claude_auth(&command), Some(false));
+}
+
+#[test]
+#[cfg(unix)]
+fn claude_auth_requires_success_status_for_signed_in_payload() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let bin = temp.path().join("bin");
+    let contradictory = bin.join("contradictory-auth");
+    write_fixture(
+        &contradictory,
+        "#!/bin/sh\nprintf '{\"loggedIn\":true}\\n'\nexit 1\n",
+    );
+    std::fs::set_permissions(&contradictory, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let command = resolve_command_in("contradictory-auth", &[bin], false, None).unwrap();
     assert_eq!(check_claude_auth(&command), Some(false));
 }
 

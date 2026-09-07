@@ -306,6 +306,14 @@ pub struct Settings {
 
     #[serde(default)]
     pub codex_access_mode: String,
+    /// Native Workflow backend. App Server is the standard subscription path;
+    /// the legacy CLI remains an explicit advanced compatibility option.
+    #[serde(default = "default_codex_backend")]
+    pub codex_backend: String,
+    /// Version 1 retires the former implicit legacy-CLI default once, while
+    /// preserving an advanced backend choice made after that migration.
+    #[serde(default)]
+    pub codex_backend_preference_version: u32,
 
     /// Google is API-only: Google's Antigravity terms do not permit
     /// third-party software to use an Antigravity sign-in, so subscription
@@ -534,6 +542,8 @@ impl Default for Settings {
             max_saved_run_bytes: default_max_saved_run_bytes(),
             claude_access_mode: "subscription".to_string(),
             codex_access_mode: "subscription".to_string(),
+            codex_backend: default_codex_backend(),
+            codex_backend_preference_version: 1,
             antigravity_access_mode: "api".to_string(),
             anthropic_api_key: String::new(),
             openai_api_key: String::new(),
@@ -545,8 +555,15 @@ impl Default for Settings {
     }
 }
 
+fn default_codex_backend() -> String {
+    "app_server".into()
+}
+
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.codex_backend.as_str(), "legacy_cli" | "app_server") {
+            return Err("Unsupported Workflow Codex backend".into());
+        }
         if !matches!(
             self.preferred_provider.as_str(),
             "claude" | "codex" | "antigravity" | "local"
@@ -980,7 +997,14 @@ impl Settings {
     /// is never changed merely because a credential is entered or cleared.
     /// Antigravity is the exception: subscription mode is disabled, so any
     /// stored value is coerced to "api" and older settings files keep loading.
+    /// Codex's native backend migrates independently of subscription/API mode.
     fn normalize_access_modes(&mut self) {
+        if self.codex_backend_preference_version == 0 {
+            if self.codex_backend == "legacy_cli" {
+                self.codex_backend = default_codex_backend();
+            }
+            self.codex_backend_preference_version = 1;
+        }
         if self.claude_access_mode.trim().is_empty() {
             self.claude_access_mode = if self.anthropic_api_key.trim().is_empty() {
                 "subscription"

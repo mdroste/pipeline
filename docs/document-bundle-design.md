@@ -159,9 +159,9 @@ run's allowed roots and return provider-native multimodal image blocks:
 - OpenAI: `image_url` data URL in a user content part after the tool result;
 - Google: `inlineData` after the function response.
 
-Claude Code maps the capability to its native multimodal `Read` tool. Codex
-and Antigravity CLI receive the same selected roots through their native workspace
-controls. Prompts tell CLI agents to group independent bounded reads and image
+Claude Code maps the capability to its native multimodal `Read` tool. Codex CLI
+receives the same selected roots through its native workspace controls. Prompts
+tell CLI agents to group independent bounded reads and image
 inspections into one tool turn when supported. All transports must fall back
 to sequential reads for missing, truncated, or failed items; batching never
 relaxes an evidence requirement. Text, image, PDF, call-count, and cumulative

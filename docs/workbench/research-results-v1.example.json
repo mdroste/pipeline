@@ -1,0 +1,20 @@
+{
+  "schema": "research-results-v1",
+  "results": [
+    {
+      "resultId": "result-main-ate",
+      "estimand": "Average treatment effect",
+      "specificationId": "spec-main",
+      "sampleId": "sample-analysis",
+      "estimate": 0.018,
+      "standardError": 0.006,
+      "confidenceInterval": [0.006, 0.03],
+      "n": 12480,
+      "units": "log points",
+      "transformation": "log outcome",
+      "uncertaintyMethod": "heteroskedasticity-robust",
+      "sourceExecutionId": "execution-example",
+      "artifactLocator": "results/main.json#results/0"
+    }
+  ]
+}

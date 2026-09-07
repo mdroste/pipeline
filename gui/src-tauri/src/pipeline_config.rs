@@ -182,6 +182,9 @@ pub struct StepConfig {
     pub id: String,
     pub label: String,
     pub prompt: String,
+    /// Trusted, literal reviewer instructions. Codex App Server uses developerInstructions.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub system_prompt: String,
     pub enabled: bool,
     pub phase: Phase,
     #[serde(default = "default_tools")]
@@ -296,6 +299,7 @@ impl Default for StepConfig {
             id: String::new(),
             label: String::new(),
             prompt: String::new(),
+            system_prompt: String::new(),
             enabled: true,
             phase: Phase::Parallel,
             tools: Vec::new(),

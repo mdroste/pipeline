@@ -40,11 +40,26 @@ describe("NavRail", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "System ready" })).toBeVisible();
 
+    await user.click(screen.getByRole("button", { name: "Workspace" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("workspace");
+
     await user.click(screen.getByRole("button", { name: "History" }));
     expect(props.onNavigate).toHaveBeenCalledWith("history");
     await user.click(screen.getByRole("button", { name: "Projects" }));
     expect(props.onNavigate).toHaveBeenCalledWith("projects");
     expect(screen.queryByRole("button", { name: "Gallery" })).not.toBeInTheDocument();
+  });
+
+  it("shows Workspace activity and attention without changing Review navigation", () => {
+    renderRail({ activePage: "workspace", workspaceActive: true });
+    expect(screen.getByRole("button", { name: /Workspace/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByLabelText("running")).toBeVisible();
+
+    renderRail({ workspaceAttention: true });
+    expect(screen.getByLabelText("needs attention")).toBeVisible();
   });
 
   it("keeps Workflows active while its gallery is open", () => {

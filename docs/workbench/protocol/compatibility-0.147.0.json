@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "cli_version": "0.147.0",
+  "version_requirement": "=0.147.0",
+  "qualification_state": "in_progress",
+  "generated_at": "2026-09-06",
+  "documentation_url": "https://learn.chatgpt.com/docs/app-server",
+  "schema_bundles": [
+    {
+      "mode": "stable",
+      "path": "0.147.0/stable.schemas.json",
+      "sha256": "f72b2caa3cbfa4298de9e85c62dda6dfbaf2266ffeb916fed30615ca69ff8c74"
+    },
+    {
+      "mode": "experimental",
+      "path": "0.147.0/experimental.schemas.json",
+      "sha256": "babfd5c98cd978dd858b4762cdfbc9fba941e1a0e4053de0050e4082ae1f075a"
+    }
+  ],
+  "observations": [
+    {
+      "date": "2026-09-06",
+      "platform": "macos-arm64",
+      "probe": "no_login_handshake",
+      "result": "passed",
+      "isolated_codex_home_verified": true,
+      "ambient_account_absent": true,
+      "model_catalog_items": 5,
+      "thread_start_read_resume_verified": true,
+      "dynamic_tool_declaration_accepted": true,
+      "permission_profile": "pipeline-workbench-inspect",
+      "permission_profile_listed_and_activated": true,
+      "read_only_sandbox_returned": true,
+      "runtime_workspace_roots_returned": true,
+      "instruction_sources_empty": true,
+      "allowed_fixture_read_verified": true,
+      "workbench_state_read_denied": true,
+      "sibling_project_read_denied": true,
+      "workspace_write_denied": true,
+      "command_exec_stdin_verified": true,
+      "command_exec_resize_verified": true,
+      "command_exec_terminate_verified": true,
+      "graceful_stdio_shutdown_verified": true,
+      "active_command_connection_cleanup_verified": true,
+      "model_turn_started": false
+    },
+    {
+      "date": "2026-09-06",
+      "platform": "macos-arm64",
+      "probe": "persistent_supervisor_no_login",
+      "result": "passed",
+      "isolated_codex_home_verified": true,
+      "production_transport_handshake_verified": true,
+      "graceful_stdio_shutdown_verified": true,
+      "forced_process_tree_cleanup_verified": true,
+      "pipeline_cancellation_isolation_verified": true,
+      "scripted_reconnect_epoch_verified": true,
+      "durable_event_projection_verified": true,
+      "model_turn_started": false
+    }
+  ],
+  "remaining_gates": [
+    "isolated_chatgpt_login_and_logout",
+    "authenticated_dynamic_tool_call",
+    "approval_question_and_interrupt",
+    "authenticated_native_tool_scope_denial",
+    "windows_qualification",
+    "linux_qualification"
+  ]
+}

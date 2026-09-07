@@ -20,6 +20,43 @@ function dep(overrides: Partial<DepStatus>): DepStatus {
 }
 
 describe("DepsCheck", () => {
+  it("shows the managed Workflow sign-in as ready without CLI authentication", () => {
+    render(<DepsCheck report={{ ready: true, deps: [dep({
+      name: "Workflow ChatGPT", authenticated: true, cli_auth_status: undefined,
+    })] }} onDismiss={() => {}} />);
+    const models = screen.getByRole("region", { name: "Model access" });
+    expect(within(models).getByText("Workflow ChatGPT")).toBeVisible();
+    expect(within(models).getByText("signed in")).toBeVisible();
+    expect(within(models).getByText("Ready")).toBeVisible();
+  });
+
+  it("highlights a required connection failure even when another provider is ready", () => {
+    const hint = "Workflow ChatGPT connection is in use by another Pipeline process";
+    render(<DepsCheck report={{ ready: false, deps: [
+      dep({ authenticated: true, required: false }),
+      dep({ name: "Workflow ChatGPT", authenticated: false, hint }),
+      dep({ name: "Antigravity CLI", found: false, required: false }),
+    ] }} onDismiss={() => {}} />);
+    const models = screen.getByRole("region", { name: "Model access" });
+    expect(within(models).getByText("Needs attention")).toBeVisible();
+    expect(within(models).getByText("set up")).toHaveClass("text-red-700");
+    expect(within(models).getByText("alternative")).toHaveClass("text-gray-600");
+    expect(within(models).getByText(hint)).toBeVisible();
+  });
+
+  it("includes hidden required blockers in their section and shows their remedy", () => {
+    render(<DepsCheck report={{ ready: false, deps: [
+      dep({ name: "Local LLM server", found: false, hint: "Start the local server." }),
+      dep({ name: "PDF extractor configuration", found: false, hint: "Choose a supported extractor." }),
+    ] }} onDismiss={() => {}} />);
+    const models = screen.getByRole("region", { name: "Model access" });
+    const pdf = screen.getByRole("region", { name: "PDF parsing" });
+    expect(within(models).getByText("Needs attention")).toBeVisible();
+    expect(within(models).getByText("Start the local server.")).toBeVisible();
+    expect(within(pdf).getByText("Needs attention")).toBeVisible();
+    expect(within(pdf).getByText("Choose a supported extractor.")).toBeVisible();
+  });
+
   it("opens an official platform installation guide in the system browser", async () => {
     openUrl.mockResolvedValueOnce(undefined);
     const report: DepsReport = {
@@ -48,7 +85,7 @@ describe("DepsCheck", () => {
     expect(screen.getByRole("region", { name: "Model access" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "PDF parsing" })).toBeInTheDocument();
     expect(
-      screen.getByText(/Use at least one: the Claude or Codex CLI with a signed-in subscription/),
+      screen.getByText(/Each provider selected by this workflow must be ready/),
     ).toBeInTheDocument();
     expect(screen.getByText("signed in")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
@@ -61,16 +98,16 @@ describe("DepsCheck", () => {
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     expect(screen.getByText("set up")).toBeInTheDocument();
-    expect(screen.getByText(/Set up at least one model provider/)).toBeInTheDocument();
+    expect(screen.getByText(/Check the required model connections/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
   });
 
-  it("accepts any usable model provider without failing the dependency check", () => {
+  it("keeps unused model providers optional when the required provider is ready", () => {
     const report: DepsReport = {
       ready: true,
       deps: [
-        dep({ name: "Claude CLI", found: false, required: true, version: "", path: "" }),
-        dep({ name: "Codex CLI", authenticated: true, required: false }),
+        dep({ name: "Claude CLI", found: false, required: false, version: "", path: "" }),
+        dep({ name: "Codex CLI", authenticated: true, required: true }),
         dep({ name: "Antigravity CLI", found: false, required: false, version: "", path: "" }),
       ],
     };
@@ -78,7 +115,7 @@ describe("DepsCheck", () => {
     const models = screen.getByRole("region", { name: "Model access" });
     expect(within(models).getByText("Ready")).toBeInTheDocument();
     expect(within(models).getAllByText("alternative")).toHaveLength(2);
-    expect(screen.queryByText(/Set up at least one model provider/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Check the required model connections/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
@@ -92,7 +129,7 @@ describe("DepsCheck", () => {
         required: true,
         version: "",
         path: "",
-        hint: "Recommended for PDFs: Install from Settings → PDF Extraction.",
+        hint: "Recommended for PDFs: Install from Settings → Review & workflows → PDF Extraction.",
       })],
     };
     render(
@@ -107,7 +144,7 @@ describe("DepsCheck", () => {
     expect(screen.queryByText("required")).not.toBeInTheDocument();
     expect(screen.getByText(/Required PDF parsing tools are missing\./)).toBeInTheDocument();
     const settingsLink = screen.getByRole("link", {
-      name: "Settings → PDF Extraction",
+      name: "Settings → Review & workflows → PDF Extraction",
     });
     expect(settingsLink).toHaveAttribute("href", "#paddleocr-local-engine");
     await userEvent.setup().click(settingsLink);
@@ -122,10 +159,10 @@ describe("DepsCheck", () => {
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     expect(screen.getByText("not signed in")).toBeInTheDocument();
-    expect(screen.getByText(/Set up at least one model provider/)).toBeInTheDocument();
+    expect(screen.getByText(/Check the required model connections/)).toBeInTheDocument();
   });
 
-  it("uses the same signed-out label when Antigravity sign-in cannot be verified", () => {
+  it("distinguishes an unverified sign-in from a signed-out account", () => {
     const hint =
       "Antigravity CLI is installed, but sign-in could not be verified. Run `agy` in a terminal to sign in, then refresh this check.";
     const report: DepsReport = {
@@ -138,10 +175,10 @@ describe("DepsCheck", () => {
       })],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
-    expect(screen.getByText("not signed in")).toBeInTheDocument();
-    expect(screen.queryByText("sign-in not verified")).not.toBeInTheDocument();
+    expect(screen.getByText("sign-in not verified")).toBeInTheDocument();
+    expect(screen.queryByText("not signed in")).not.toBeInTheDocument();
     expect(screen.getByText(hint)).toBeInTheDocument();
-    expect(screen.getByText(/Set up at least one model provider/)).toBeInTheDocument();
+    expect(screen.getByText(/Check the required model connections/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
   });
 
@@ -163,7 +200,7 @@ describe("DepsCheck", () => {
     expect(screen.getByText("not signed in")).toBeInTheDocument();
     expect(screen.getByText("1.1.12")).toBeInTheDocument();
     expect(screen.getByText(hint)).toBeInTheDocument();
-    expect(screen.getByText(/Set up at least one model provider/)).toBeInTheDocument();
+    expect(screen.getByText(/Check the required model connections/)).toBeInTheDocument();
   });
 
   it("hides internal and bundled dependency cards", () => {

@@ -32,6 +32,32 @@ impl ResolvedCommand {
         &self.discovered_path
     }
 
+    /// Resolve the native program before launching long-lived managed runtimes.
+    ///
+    /// Codex may re-exec its current binary as a sandbox helper. On macOS, a
+    /// PATH entry is commonly a symlink into Codex's managed package directory;
+    /// retaining that symlink as argv[0] can leave the helper outside the
+    /// sandbox's executable allowlist even when the target itself is trusted.
+    pub(crate) fn canonical_program(&self) -> Result<PathBuf, String> {
+        std::fs::canonicalize(&self.program).map_err(|error| {
+            format!(
+                "Failed to resolve executable {}: {error}",
+                self.program.display()
+            )
+        })
+    }
+
+    pub(crate) fn canonical_command<I, S>(&self, args: I) -> Result<Command, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(self.canonical_program()?);
+        command.args(&self.prefix_args);
+        command.args(args);
+        Ok(command)
+    }
+
     /// Construct a command without losing argument boundaries. Callers still
     /// apply their own cwd, stdio, PATH, and process-group configuration.
     pub(crate) fn command<I, S>(&self, args: I) -> Command

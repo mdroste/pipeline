@@ -22,6 +22,16 @@ from typing import Any
 SCHEMA_VERSION = 2
 MAX_RAW_BLOCK_CHARS = 200_000
 SUSPECT_BASELINE_MIN_CHARS = 200
+FIGURE_RELATED_BLOCK_LABELS = {
+    "chart",
+    "image",
+    "figure",
+    "figure_title",
+    "chart_body",
+    "image_body",
+    "picture",
+}
+TABLE_BLOCK_LABELS = {"table", "table_title"}
 
 
 def _bool(value: str) -> bool:
@@ -180,6 +190,46 @@ def _result_text_chars(result: Any) -> int:
     )
 
 
+def _result_is_figure_related(result: Any) -> bool:
+    raw = _result_json(result)
+    collections: list[Any] = [raw.get("parsing_res_list", [])]
+    layout = raw.get("layout_det_res", {})
+    if isinstance(layout, dict):
+        collections.append(layout.get("boxes", []))
+    has_figure_region = False
+    for collection in collections:
+        if not isinstance(collection, list):
+            continue
+        for block in collection:
+            if not isinstance(block, dict):
+                continue
+            label = str(
+                block.get("block_label", block.get("label", ""))
+            ).lower()
+            if label in TABLE_BLOCK_LABELS:
+                return False
+            if label in FIGURE_RELATED_BLOCK_LABELS:
+                has_figure_region = True
+    return has_figure_region
+
+
+def _effective_baseline(
+    baseline_chars: int | None,
+    prose_chars: int | None,
+    is_figure_related: bool,
+) -> tuple[int | None, bool]:
+    fragmented_visual_page = (
+        baseline_chars is not None
+        and baseline_chars >= SUSPECT_BASELINE_MIN_CHARS
+        and prose_chars is not None
+        and prose_chars < baseline_chars // 2
+        and is_figure_related
+    )
+    if fragmented_visual_page:
+        return prose_chars, True
+    return baseline_chars, False
+
+
 def _is_suspicious(char_count: int, baseline_chars: int | None) -> bool:
     return (
         baseline_chars is not None
@@ -256,6 +306,7 @@ def _recover_suspicious_pages(
     pipeline: Any,
     pages: list[Any],
     baselines: list[int],
+    prose_baselines: list[int],
     args: argparse.Namespace,
     quality_notes: list[str],
 ) -> tuple[list[Any], list[int]]:
@@ -264,9 +315,17 @@ def _recover_suspicious_pages(
     for index, original in enumerate(pages):
         page_number = index + 1
         baseline = baselines[index] if index < len(baselines) else None
+        prose_baseline = (
+            prose_baselines[index] if index < len(prose_baselines) else None
+        )
         best = original
         best_chars = _result_text_chars(best)
-        if _is_suspicious(best_chars, baseline):
+        effective_baseline, used_fragmented_visual_baseline = _effective_baseline(
+            baseline,
+            prose_baseline,
+            _result_is_figure_related(original),
+        )
+        if _is_suspicious(best_chars, effective_baseline):
             image = _page_image(original)
             if image is None:
                 quality_notes.append(
@@ -303,13 +362,16 @@ def _recover_suspicious_pages(
                         if candidate_chars > best_chars:
                             best = candidate
                             best_chars = candidate_chars
-                    if not _is_suspicious(best_chars, baseline):
+                    if not _is_suspicious(best_chars, effective_baseline):
                         quality_notes.append(
                             f"Page {page_number}: recovered incomplete recognition with a {retry_mode} retry."
                         )
                         break
 
-                if _is_suspicious(best_chars, baseline) and args.layout_detection:
+                if (
+                    _is_suspicious(best_chars, effective_baseline)
+                    and args.layout_detection
+                ):
                     print(
                         f"Page {page_number}: layout retries remained incomplete; "
                         "recovering the page with PaddleOCR-VL whole-page recognition.",
@@ -334,12 +396,25 @@ def _recover_suspicious_pages(
                         if candidate_chars > best_chars:
                             best = candidate
                             best_chars = candidate_chars
-                    if not _is_suspicious(best_chars, baseline):
+                    if not _is_suspicious(best_chars, effective_baseline):
                         quality_notes.append(
                             f"Page {page_number}: recovered incomplete layout recognition with "
                             "PaddleOCR-VL whole-page recognition; consult the rendered page when "
                             "block-level layout matters."
                         )
+
+        if (
+            used_fragmented_visual_baseline
+            and _is_suspicious(best_chars, baseline)
+            and not _is_suspicious(best_chars, effective_baseline)
+        ):
+            note = (
+                f"Page {page_number}: the PDF text layer is dominated by isolated "
+                f"figure labels; completeness was checked against {prose_baseline} "
+                f"prose-like characters rather than {baseline} total characters."
+            )
+            if note not in quality_notes:
+                quality_notes.append(note)
 
         recovered_pages[index] = best
         source_text_chars.append(best_chars)
@@ -594,6 +669,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--page-retries", type=int, default=1)
     parser.add_argument("--baseline-chars", default="[]")
+    parser.add_argument("--baseline-prose-chars", default="[]")
     parser.add_argument("--layout-detection", type=_bool, default=True)
     parser.add_argument("--layout-threshold", type=float, default=0.5)
     parser.add_argument("--layout-nms", type=_bool, default=True)
@@ -679,11 +755,21 @@ def main() -> int:
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         baselines = []
+    try:
+        parsed_prose_baselines = json.loads(args.baseline_prose_chars)
+        prose_baselines = (
+            [int(value) for value in parsed_prose_baselines]
+            if isinstance(parsed_prose_baselines, list)
+            else []
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        prose_baselines = []
     quality_notes: list[str] = []
     pages, source_text_chars = _recover_suspicious_pages(
         pipeline,
         pages,
         baselines,
+        prose_baselines,
         args,
         quality_notes,
     )

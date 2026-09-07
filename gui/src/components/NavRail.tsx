@@ -3,6 +3,7 @@ import ResizeHandle from "./ResizeHandle";
 
 export type AppPage =
   | "main"
+  | "workspace"
   | "pipeline"
   | "settings"
   | "help"
@@ -13,6 +14,7 @@ export type AppPage =
 
 type IconName =
   | "new"
+  | "workspace"
   | "current"
   | "batch"
   | "runs"
@@ -26,6 +28,8 @@ interface Props {
   hasCurrentRun: boolean;
   hasActiveBatch: boolean;
   runInProgress: boolean;
+  workspaceActive?: boolean;
+  workspaceAttention?: boolean;
   isMac: boolean;
   dependenciesReady: boolean | null;
   dependenciesLoading: boolean;
@@ -47,6 +51,13 @@ function Icon({ name }: { name: IconName }) {
   };
 
   switch (name) {
+    case "workspace":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 18.5 3.5 21V5A2 2 0 0 1 5.5 3h13a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7l-2 1.5Z" />
+          <path strokeLinecap="round" d="M7.5 8h9M7.5 12h6" />
+        </svg>
+      );
     case "new":
       return (
         <svg {...common}>
@@ -155,6 +166,8 @@ export default function NavRail({
   hasCurrentRun,
   hasActiveBatch,
   runInProgress,
+  workspaceActive = false,
+  workspaceAttention = false,
   isMac,
   dependenciesReady,
   dependenciesLoading,
@@ -185,6 +198,16 @@ export default function NavRail({
       </div>
 
       <nav aria-label="Primary" className="space-y-1">
+        <RailButton
+          active={activePage === "workspace"}
+          icon="workspace"
+          label="Workspace"
+          onClick={() => onNavigate("workspace")}
+          suffix={(workspaceActive || workspaceAttention) ? (
+            <span aria-label={workspaceAttention ? "needs attention" : "running"} className={`h-1.5 w-1.5 rounded-full ${workspaceAttention ? "bg-amber-500" : "bg-blue-500"}`} />
+          ) : undefined}
+        />
+        <div className="my-2 border-t border-gray-200/80 dark:border-neutral-800" />
         <RailButton
           active={activePage === "main" && !hasCurrentRun}
           disabled={runInProgress}

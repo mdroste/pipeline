@@ -123,13 +123,13 @@ Transport per path:
 
 | Path | How the PDF reaches the model |
 |---|---|
-| Claude CLI / Antigravity CLI | Unchanged — prompt references the path, the CLI's Read tool is multimodal. |
+| Claude CLI | Unchanged — the prompt references the path and Claude's Read tool is multimodal. |
 | Codex CLI | Prompt references the path and the CLI reads it from the granted source directory. |
 | Anthropic direct API | Attach as a base64 document block up front (the plumbing exists in `api_anthropic.rs` for the Read tool; attaching in the first request skips the tool round-trip). ~100-page / 32 MB request limit. |
 | OpenAI direct API | Attach as a file input (base64 `input_file` content part). ~100-page / 32 MB limit. |
 | Google direct API | Attach as `inline_data` (application/pdf), or the File API for large documents (up to ~1000 pages). |
 
-This **removes the `pdf_read_supported` limitation** — all five paths can
+This **removes the `pdf_read_supported` limitation** — all five active paths can
 extract PDFs, and the OpenAI/Google forced-fallback notice goes away.
 
 Verification (the actual fix for silent truncation/summarization):

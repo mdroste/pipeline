@@ -1,0 +1,117 @@
+{
+  "recordedOn": "2026-09-07 America/Los_Angeles",
+  "scope": "PI-04 through PI-12 (authoring half) Research Studio and project exchange local qualification",
+  "platform": "macOS arm64",
+  "build": "Tauri development / Rust debug with Vite",
+  "modelCalls": 0,
+  "observed": {
+    "rust": {
+      "allTargets": "passed: 765 tests, 0 failures, 7 ignored",
+      "workbenchSubset": "passed: 86 tests, 0 failures, 6 ignored",
+      "cargoFmt": "passed",
+      "cargoClippyWarningsDenied": "passed"
+    },
+    "frontend": {
+      "build": "passed",
+      "tests": "passed: 458 tests in 56 files",
+      "releaseChecks": "passed: 58 tests"
+    },
+    "realLocalTools": [
+      "multi-file LaTeX build with latexmk, retained PDF/log/SyncTeX and declared input artifacts",
+      "SyncTeX source-to-page mapping with structured candidate output",
+      "Python research-results-v2 exporter syntax and bounded result import fixture",
+      "oldstata cooperative cancellation fixture (qualified earlier through the required wrapper)"
+    ],
+    "nativeGui": [
+      "created a disposable Workspace and registered a folder",
+      "retained an unsaved manuscript draft across Research Studio tabs",
+      "saved a manuscript through the recoverable change path",
+      "configured and completed a detached multi-file build",
+      "displayed an exact retained PDF and warning diagnostic",
+      "mapped source coordinates with SyncTeX and recorded page inspection",
+      "imported duplicate BibTeX keys as distinct source records"
+    ],
+    "pi10": {
+      "recordedOn": "2026-09-07 America/Los_Angeles",
+      "rust": {
+        "allTargets": "passed: 770 tests, 0 failures, 7 ignored",
+        "workbenchSubset": "passed: 91 tests, 0 failures, 7 ignored",
+        "cargoFmt": "passed",
+        "cargoClippyWarningsDenied": "passed"
+      },
+      "frontend": {
+        "build": "passed",
+        "tests": "passed: 462 tests in 57 files",
+        "theoryPanelTests": "passed: 4 tests"
+      },
+      "deterministic": [
+        "migration 8 keeps the project_records history trigger and rejects unknown record kinds",
+        "proof sketch with unresolved steps cannot be recorded as supported; a proposed note stays open",
+        "rejected approach requires status abandoned and a reason; abandoned approaches with assumptions and reason enter the bounded project context while derivation prose does not",
+        "client-supplied promotion links are replaced by the stored list",
+        "numerical checks require a tested domain, reject non-finite tolerance, reject unknown executions and cannot claim generality; heuristics and model assessments cannot establish a statement; scope labels distinguish general, instances_only and refuting_instance",
+        "promotion into a task copy inserts derivation prose with an assumptions header after a chosen line or at the end, refuses non-manuscript files, out-of-range lines and rejected approaches, leaves the working file untouched and records the promotion on the note",
+        "research directions reject score fields, require a reason when dropped, require a task when converted, and convert into an ordinary task only after a discriminating test is stated",
+        "Theory panel disables the generality claim for numerical methods, requires an abandonment reason, opens proposition and proof selections side by side and converts directions with the record revision"
+      ]
+    },
+    "pi11_pi12": {
+      "recordedOn": "2026-09-07 America/Los_Angeles",
+      "rust": {
+        "allTargets": "passed: 776 tests, 0 failures, 7 ignored",
+        "cargoFmt": "passed",
+        "cargoClippyWarningsDenied": "passed"
+      },
+      "frontend": {
+        "build": "passed",
+        "tests": "passed: 503 tests in 61 files (one earlier run under concurrent Rust load showed 3 timing failures; two clean reruns followed)",
+        "exchangePanelTests": "passed: 5 tests"
+      },
+      "deterministic": [
+        "migration 9 applies with exchange import/conflict and storage trash journals",
+        "export closes task -> anchor -> paper revision and note dependencies, writes README.md and objects/<kind>/<id>.json, packages paper text as a hashed blob, excludes sessions/Codex state, and refuses destinations inside private storage",
+        "tampered blob hashes and foreign files are rejected at inspection; missing target workspaces are rejected at preview",
+        "import into a nonempty store creates a separate workspace, remaps every colliding ID deterministically, resolves remapped references, copies text, imports no conversations, and leaves the origin workspace untouched",
+        "reimport is idempotent (all identical, no writes); a diverged note becomes one open conflict with the local body kept; resolving either way is recorded and cannot be repeated; imported blobs are retained-blob references",
+        "prune refuses referenced categories, previews without moving, journals moves into trash, restores, and empties only on explicit request while referenced evidence remains",
+        "workflow draft validates through parse_workflow_document_strict, adds a synthesis step, skips incomplete tasks, and lists execution/build steps as unsupported prerequisites",
+        "exchange panel sends the selection without conversation fields, defaults imports to a new workspace, resolves conflicts through the client, previews prunes before apply, and saves drafts through the studio export command"
+      ]
+    }
+  },
+  "pending": [
+    "rerun Stata results exporter through oldstata after the host usage-limit gate permits it",
+    "authenticated model dynamic-tool turns",
+    "live Zotero collection preview/import",
+    "custom build-script qualification",
+    "packaged abrupt-process-death and forced-Stata-cleanup runs",
+    "Windows and Linux qualification",
+    "scanned/large PDF and accessibility matrix",
+    "researcher-scored comparative evaluation",
+    "cold/warm UI paint, idle CPU and memory measurements",
+    "native GUI walk-through of the Theory panel (notes, checks, promotion, directions)",
+    "authenticated model read of theory/check/direction records through tool catalog version 4",
+    "researcher-scored usefulness of the five theory-check recipes",
+    "two-machine .pwex round trip and large-package performance",
+    "native GUI walk-through of the exchange, retention, and draft panels",
+    "import of a saved Workflow draft through the Workflows page and a fixture run reproducing a selected supported process",
+    "concurrent Workspace turns (PI-12) remain unimplemented and require their own design and qualification"
+  ],
+  "limitations": [
+    "Research execution is explicitly authorized host execution, not a conversation sandbox.",
+    "Declared input capture is bounded and does not claim transitive dependency completeness or snapshot consistency.",
+    "Numeric binding coverage begins with selected headline links; unlinked claims remain unknown.",
+    "Zotero is read-only metadata import with no credentials, attachment fetch or write-back.",
+    "Theory records are working notes with researcher-owned status; check receipts label evidence scope and never verify mathematics. Numerical checks cover tested instances only.",
+    "Exchange packages carry evidence copies, not reproducibility: declared inputs, execution profiles, and machine settings are excluded and listed; imported executions never run.",
+    "Conflict resolution replaces only project records and notes; immutable papers, executions, sources, and ledger entries keep the local version."
+  ],
+  "sources": [
+    "docs/workbench/research-studio.md",
+    "docs/workbench/release-qualification.md",
+    "https://www.zotero.org/support/dev/web_api/v3/local_api",
+    "https://www.zotero.org/support/dev/web_api/v3/basics",
+    "docs/workbench/research-studio.md#theory-notes-checks-and-research-directions",
+    "docs/workbench/project-exchange.md"
+  ]
+}

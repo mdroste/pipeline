@@ -21,6 +21,7 @@ pub fn is_usage_limit_error(error: &str) -> bool {
         "reached your limit",
         "usage limit reached",
         "usage limit exceeded",
+        "usagelimitexceeded",
         "session limit reached",
         "subscription limit",
         "plan limit",
@@ -39,6 +40,17 @@ pub fn is_usage_limit_error(error: &str) -> bool {
     ]
     .iter()
     .any(|pattern| lower.contains(pattern))
+}
+
+/// Runtime uncertainty and rejected capabilities must never enter a model retry loop.
+pub fn is_non_retryable_error(error: &str) -> bool {
+    [
+        "[codex-outcome-unknown]",
+        "[codex-capability]",
+        "[codex-auth]",
+    ]
+    .iter()
+    .any(|marker| error.contains(marker))
 }
 
 #[cfg(test)]

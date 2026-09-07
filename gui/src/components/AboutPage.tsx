@@ -12,7 +12,7 @@ interface Props {
   showBack?: boolean;
   /** Lets Help sections jump to the page they describe; links are hidden without it. */
   onNavigate?: (page: AppPage) => void;
-  /** Jumps to the PaddleOCR-VL install card in Settings → PDF Extraction. */
+  /** Jumps to the PaddleOCR-VL install card in Settings → Review & workflows → PDF Extraction. */
   onOpenPdfSettings?: () => void;
   /** Opens and scrolls to a section on arrival (used by the run-setup privacy link). */
   initialSection?: "privacy";
@@ -132,8 +132,9 @@ function HelpContent({
     <div className="space-y-8">
       {/* Overview */}
       <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-        Pipeline runs a workflow of AI review steps over a paper, grant
-        proposal, or folder of files and combines the findings into one report.
+        Pipeline orchestrates AI agents for doing and reviewing academic research.
+        Workspace supports persistent research conversations; Workflows run
+        repeatable, structured tasks over papers, proposals, and other research material.
       </p>
 
       {/* Setup */}
@@ -144,9 +145,9 @@ function HelpContent({
             badgeColor="text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/30"
             title="An AI provider"
           >
-            Sign in with the Claude Code or Codex CLI; add an
+            Sign in to ChatGPT in Settings → Providers or through Claude Code; add an
             Anthropic, OpenAI, or Google API key in Settings; or connect a
-            local OpenAI-compatible server. A Claude or ChatGPT CLI
+            local OpenAI-compatible server. A Claude or ChatGPT
             subscription works without an API key; Google always uses a
             Gemini API key. The status button in the lower-left corner shows
             what Pipeline found.
@@ -170,7 +171,7 @@ function HelpContent({
           >
             A local PDF parser that recovers reading order, headings,
             formulas, and tables, with no extra model calls. Install it once
-            under Settings → PDF Extraction.
+            under Settings → Review & workflows → PDF Extraction.
             <NavLink onClick={onOpenPdfSettings} label="Install in Settings" />
           </BadgeRow>
         </div>
@@ -195,6 +196,28 @@ function HelpContent({
             description="Pipeline extracts the text, builds a short survey of the material so each step knows where things are, runs the steps, and opens the finished report."
           />
         </div>
+      </Section>
+
+      <Section title="Workspace for research conversations">
+        <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">
+          Workspace is Pipeline&apos;s interactive orchestration mode: persistent ChatGPT
+          conversations with optional academic-research harness modules. It does not require
+          a Workflow run, saved configuration, project, or paper. Research recipes add editable
+          instructions, required-input checks, and completion records without scheduling a
+          Workflow or constraining ordinary conversation.
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
+          Workspace research archives contain a consistent database snapshot, immutable blobs,
+          and readable transcripts. They exclude credentials and private runtime state. Native
+          Codex threads may not resume on another machine or account; restored conversations can
+          start a new native session from reviewed notes and selected evidence.
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
+          The optional “Review this revision” action stages only the selected immutable artifact
+          and metadata, then opens the ordinary Workflow launch preview. Workflows keep their
+          own providers, authentication, permissions, scheduling, and cancellation.
+        </p>
+        <NavLink onClick={onNavigate && (() => onNavigate("workspace"))} label="Open Workspace" />
       </Section>
 
       {/* Reference sections, collapsed by default */}
@@ -286,7 +309,7 @@ function HelpContent({
             Pipeline prepares a text version of each document before the
             workflow begins. LaTeX and Word files are read directly. For PDFs,
             pick a method in the workflow or inherit the choice from
-            Settings → PDF Extraction.
+            Settings → Review & workflows → PDF Extraction.
           </p>
           <div className="space-y-2">
             <BadgeRow
@@ -313,7 +336,7 @@ function HelpContent({
               title="PaddleOCR-VL Full Parser"
             >
               A local engine that recovers reading order, headings, formulas,
-              and tables. Install it under Settings → PDF Extraction.
+              and tables. Install it under Settings → Review & workflows → PDF Extraction.
             </BadgeRow>
             <BadgeRow
               badge="Included"
@@ -349,10 +372,24 @@ function HelpContent({
               until you delete them or set a retention limit in Settings.
             </li>
             <li>
+              Workspace conversations, research records, immutable attachments, and isolated
+              Codex state are stored under{" "}
+              <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">
+                ~/.pipeline/workbench/
+              </code>
+              . Workspace archives exclude Codex credentials, but the exported archive or
+              transcript is a sensitive ordinary file wherever you save it.
+            </li>
+            <li>
               Each step reads only the material its workflow allows. When a
               step runs on a cloud provider, that material is sent through the
               provider's CLI or API and is subject to your provider account's
               plan and data-use terms.
+            </li>
+            <li>
+              Workspace sends conversation content and selected research context or tool
+              results through its managed ChatGPT account. Imported material stays local until
+              selected as context or returned by an enabled tool.
             </li>
             <li>
               If a workflow enables web search and the provider supports it,

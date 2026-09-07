@@ -1,0 +1,18 @@
+{
+  "ambient_account_absent": true,
+  "architecture": "aarch64",
+  "authenticated_model_turn": false,
+  "browser_login": false,
+  "dynamic_tools_accepted": true,
+  "isolated_home": true,
+  "model_reported": "gpt-6-astra",
+  "native_writes_denied": true,
+  "permission_profile": "pipeline-workflow-host-tools",
+  "platform": "macos",
+  "private_reads_denied": true,
+  "runtime_version": "0.153.4",
+  "sandbox_command_baseline": true,
+  "schema_version": 1,
+  "thread_contract": true,
+  "thread_read": true
+}

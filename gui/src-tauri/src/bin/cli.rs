@@ -278,7 +278,12 @@ fn main() {
             std::process::exit(1);
         }
     };
-    std::process::exit(rt.block_on(dispatch(command)));
+    let code = rt.block_on(async {
+        let code = dispatch(command).await;
+        pipeline_gui_lib::pipeline::codex_server::shutdown().await;
+        code
+    });
+    std::process::exit(code);
 }
 
 fn parse_cli(args: &[String]) -> Result<ParseAction, String> {

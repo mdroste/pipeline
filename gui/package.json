@@ -2,7 +2,7 @@
   "name": "pipeline-gui",
   "private": true,
   "version": "0.9.5",
-  "description": "Native desktop app for multi-pass, LLM-assisted document review",
+  "description": "Desktop agent orchestration suite for academic research and review",
   "homepage": "https://github.com/mdroste/pipeline",
   "repository": {
     "type": "git",

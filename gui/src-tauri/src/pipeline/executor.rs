@@ -1722,6 +1722,7 @@ struct StepCallRequest<'a> {
     pass_key: &'a str,
     log_label: &'a str,
     prompt: &'a str,
+    system_prompt: Option<&'a str>,
     tools: &'a [String],
     agent: Option<&'a str>,
     cwd: Option<&'a str>,
@@ -2091,6 +2092,7 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
             pass_key: request.pass_key,
             log_label: request.log_label,
             prompt,
+            system_prompt: request.system_prompt,
             tools: request.tools,
             output_schema: Some(terminal_schema),
             timeout_secs: timeout,
@@ -2274,7 +2276,9 @@ async fn execute_step_call(request: StepCallRequest<'_>) -> Result<StepCallResul
                         }
                     }
                 } else {
-                    if super::provider_error::is_usage_limit_error(&error) {
+                    if super::provider_error::is_usage_limit_error(&error)
+                        || super::provider_error::is_non_retryable_error(&error)
+                    {
                         return Err(error);
                     }
                     last_error = error;
@@ -3402,6 +3406,7 @@ async fn run_parallel_wave(
             // Keep the staged artifact view alive until the provider call and
             // all retries have completed.
             let context_view = resolved._view;
+            let system_prompt = step.system_prompt.clone();
 
             tasks.spawn(async move {
                 let _context_view = context_view;
@@ -3469,6 +3474,7 @@ async fn run_parallel_wave(
                     pass_key: &step_key_emit,
                     log_label: &log_label,
                     prompt: &prompt,
+                    system_prompt: (!system_prompt.is_empty()).then_some(system_prompt.as_str()),
                     tools: &tools,
                     agent: Some(&agent_name),
                     cwd: task_cwd.as_deref(),
@@ -3999,6 +4005,7 @@ async fn run_sequential_step(
         pass_key: &step.id,
         log_label: &log_label,
         prompt: &prompt,
+        system_prompt: (!step.system_prompt.is_empty()).then_some(step.system_prompt.as_str()),
         tools: &tools,
         agent,
         cwd: source_dir.as_deref(),

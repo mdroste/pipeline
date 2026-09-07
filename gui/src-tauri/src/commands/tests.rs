@@ -1,5 +1,62 @@
 use super::*;
 
+#[test]
+fn workflow_dependency_uses_live_connection_instead_of_cli_probe() {
+    use crate::agent_runtime::codex::{AccountState, AccountStatus};
+    use crate::deps::{dependency_ready, CliAuthStatus, DepStatus};
+    use crate::pipeline::codex_server::connection::ConnectionStatus;
+
+    let mut dep = DepStatus {
+        name: "Codex CLI".into(),
+        found: false,
+        version: String::new(),
+        path: "/test/codex".into(),
+        required: true,
+        hint: "Run codex login".into(),
+        help_url: None,
+        authenticated: None,
+        cli_auth_status: Some(CliAuthStatus::Unknown),
+    };
+    let status = |account_status, login_in_progress| ConnectionStatus {
+        account: AccountState {
+            status: account_status,
+            email: None,
+            plan_type: None,
+            unsupported_account_type: None,
+            requires_openai_auth: true,
+        },
+        version: "0.153.4".into(),
+        epoch: 1,
+        home: "/test/workflows/codex".into(),
+        login_in_progress,
+        unresolved_attempts: Vec::new(),
+    };
+    run_context::apply_workflow_codex_status(&mut dep, Ok(status(AccountStatus::Chatgpt, false)));
+    assert!(dependency_ready(&dep));
+    assert_eq!(dep.name, "Workflow ChatGPT");
+    assert_eq!(dep.cli_auth_status, None);
+    assert!(dep.hint.is_empty());
+
+    for account in [AccountStatus::SignedOut, AccountStatus::Unsupported] {
+        // A previously signed-in CLI must not mask the managed account state.
+        dep.cli_auth_status = Some(CliAuthStatus::SignedIn);
+        run_context::apply_workflow_codex_status(&mut dep, Ok(status(account, false)));
+        assert!(!dependency_ready(&dep));
+        assert_eq!(dep.cli_auth_status, None);
+        assert!(dep.hint.contains("Settings → Providers → ChatGPT"));
+    }
+    run_context::apply_workflow_codex_status(&mut dep, Ok(status(AccountStatus::Chatgpt, true)));
+    assert!(!dependency_ready(&dep));
+    assert!(dep.hint.contains("Complete Workflow ChatGPT sign-in"));
+
+    let error = "Workflow ChatGPT connection is in use by another Pipeline process";
+    run_context::apply_workflow_codex_status(&mut dep, Err(error.into()));
+    assert!(!dependency_ready(&dep));
+    assert_eq!(dep.hint, error);
+    dep.required = false;
+    assert!(dependency_ready(&dep));
+}
+
 fn empty_test_config() -> PipelineConfig {
     PipelineConfig {
         steps: Vec::new(),

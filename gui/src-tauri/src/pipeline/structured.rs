@@ -370,11 +370,14 @@ pub fn strip_optional_nulls(schema: &serde_json::Value, value: &mut serde_json::
 /// A private strict-dialect schema file for the Codex CLI, or None when the
 /// portable schema cannot be expressed strictly and the call should proceed
 /// without a native constraint.
+pub fn codex_schema(schema: &serde_json::Value) -> Result<Option<serde_json::Value>, String> {
+    Ok(strictify(&provider_schema(schema)?))
+}
+
 pub fn prepare_codex_schema_file(
     schema: &serde_json::Value,
 ) -> Result<Option<PreparedSchemaFile>, String> {
-    let projected = provider_schema(schema)?;
-    let Some(strict) = strictify(&projected) else {
+    let Some(strict) = codex_schema(schema)? else {
         return Ok(None);
     };
     let temp_dir = tempfile::Builder::new()

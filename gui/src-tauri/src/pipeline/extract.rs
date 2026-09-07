@@ -33,6 +33,7 @@ pub(crate) use core::{find_main_tex, ScopedSourceContext};
 pub use dispatch::extract;
 pub use folder::{effective_input_mode, ingest_folder, ingest_folder_async, ingest_none};
 pub(crate) use latex::stage_selected_source;
+pub(crate) use pdf::extract_pdftotext;
 pub use rendering::{
     render_pdf_page_preview, render_pdf_pages, RenderedPdfPagePreview, RenderedPdfPages,
 };

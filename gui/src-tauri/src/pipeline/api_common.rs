@@ -1810,7 +1810,7 @@ pub async fn google_tool_loop(
 // ── Shared helpers ─────────────────────────────────────────────────
 
 #[derive(Default)]
-struct ToolBudget {
+pub(crate) struct ToolBudget {
     read_calls: usize,
     read_bytes: usize,
     tool_calls: usize,
@@ -2585,6 +2585,91 @@ fn format_api_error(provider: &str, status: u16, body: &str) -> String {
         529 | 503 => format!("{provider}: Service overloaded. Try again in a few minutes."),
         _ => format!("{provider} API error (HTTP {status}): {detail}"),
     }
+}
+
+/// Bounded host tool execution used by native provider bridges. Authority is
+/// supplied by the host invocation, never by model-provided identifiers.
+pub(crate) async fn execute_native_tool(
+    app: &crate::emit::EventBus,
+    name: &str,
+    input: &serde_json::Value,
+    budget: &mut ToolBudget,
+    access: &ToolAccess,
+) -> ToolResult {
+    let bytes = match serde_json::to_vec(input) {
+        Ok(bytes) => bytes.len(),
+        Err(error) => return ToolResult::Error(error.to_string()),
+    };
+    if let Err(error) = budget.reserve_tool_call(bytes) {
+        return ToolResult::Error(error);
+    }
+    // Writes are bounded and atomic. Complete them in this poll so dropping
+    // the invocation cannot leave a detached mutation racing artifact ingest.
+    if name == "Write" {
+        let path = input
+            .get("file_path")
+            .or_else(|| input.get("path"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let Some(content) = input.get("content").and_then(serde_json::Value::as_str) else {
+            return ToolResult::Error("Write requires string content".into());
+        };
+        return match write_file_for_tool(access, path, content) {
+            Ok(message) => ToolResult::Text(message),
+            Err(error) => ToolResult::Error(error),
+        };
+    }
+    let path = input
+        .get("file_path")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    if name == "ReadPdfPage" || (name == "Read" && path.to_ascii_lowercase().ends_with(".pdf")) {
+        let page = input
+            .get("page")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(1);
+        if page == 0 || page > crate::pipeline::extract::MAX_RENDERED_PDF_PAGES as u64 {
+            return ToolResult::Error("PDF page is outside the supported range".into());
+        }
+        let remaining = match budget.reserve_read() {
+            Ok(n) => n,
+            Err(e) => return ToolResult::Error(e),
+        };
+        let access = access.clone();
+        let path = path.to_string();
+        let result = run_blocking_tool(move || {
+            let canonical = validate_tool_path(&access, &path, MAX_TOOL_PDF_SIZE.min(remaining))?;
+            let pdf = read_bytes_limited(&canonical, MAX_TOOL_PDF_SIZE.min(remaining))?;
+            let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+            let staged = temp.path().join("input.pdf");
+            std::fs::write(&staged, &pdf).map_err(|e| e.to_string())?;
+            let output = temp.path().join("pages");
+            let preview = crate::pipeline::extract::render_pdf_page_preview(&staged, &output, page as u32)?;
+            let bytes = read_bytes_limited(&output.join(&preview.name), 4 * 1024 * 1024)?;
+            Ok((pdf.len(), ToolResult::ImageBatch {
+                metadata: serde_json::json!({"page":page,"has_next":preview.has_next,"next_page":preview.has_next.then_some(page+1),"instruction":"Call ReadPdfPage with file_path and page to inspect another page."}).to_string(),
+                images: vec![ToolImage { data: STANDARD.encode(bytes), media_type: "image/jpeg".into() }],
+            }))
+        }).await;
+        return match result {
+            Ok((bytes, result)) => {
+                budget.record_read_bytes(bytes);
+                enforce_media_budget(result, budget, &OPENAI_MEDIA_POLICY)
+            }
+            Err(error) => ToolResult::Error(error),
+        };
+    }
+    execute_tool(
+        app,
+        name,
+        input,
+        "App Server",
+        budget.tool_calls,
+        budget,
+        access,
+        &OPENAI_MEDIA_POLICY,
+    )
+    .await
 }
 
 #[cfg(test)]

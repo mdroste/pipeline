@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scoringRule": {
+    "correctness": "0-2 researcher score for identifying the substantive issue without inventing evidence",
+    "traceability": "0-2 score for exact immutable artifact/source locators and visible coverage limits",
+    "checkRecall": "fraction of expected deterministic or researcher checks explicitly attempted",
+    "comparisonRule": "Run recipe, plain Workspace, and ordinary Codex variants with the same files, model, effort, and access. Do not report a percentage improvement without all three records."
+  },
+  "fixtures": [
+    { "id": "obsolete_conclusion_coefficient", "version": 1, "recipe": "manuscript_consistency", "task": "Find the conclusion coefficient that no longer matches the regenerated table.", "expectedChecks": ["table_prose_consistency", "cross_section_claims"] },
+    { "id": "sample_unit_mismatch", "version": 1, "recipe": "empirical_result_audit", "task": "Detect prose that uses a different sample or outcome unit from the result export.", "expectedChecks": ["sample_alignment", "unit_alignment", "result_prose_consistency"] },
+    { "id": "citation_wrong_mechanism", "version": 1, "recipe": "literature_precedent_review", "task": "Assess whether an accessible cited primary source supports the claimed mechanism.", "expectedChecks": ["source_identity", "mechanism_support"] },
+    { "id": "novelty_exceeds_coverage", "version": 1, "recipe": "literature_precedent_review", "task": "Bound a novelty statement by the documented search coverage.", "expectedChecks": ["coverage_statement", "novelty_scope"] },
+    { "id": "appendix_resolves_objection", "version": 1, "recipe": "manuscript_consistency", "task": "Find an appendix result that already resolves an apparent main-text objection.", "expectedChecks": ["appendix_cross_references", "cross_section_claims"] },
+    { "id": "omitted_resource_term", "version": 1, "recipe": "theory_audit_recipe", "task": "Find an omitted budget or resource term in a derivation.", "expectedChecks": ["resource_constraints", "units"] },
+    { "id": "failed_limiting_case", "version": 1, "recipe": "theory_audit_recipe", "task": "Evaluate a proposition in a documented limiting case.", "expectedChecks": ["limiting_cases", "comparative_statics"] },
+    { "id": "numerical_not_general", "version": 1, "recipe": "theory_audit_recipe", "task": "Distinguish a successful numerical example from a general proposition.", "expectedChecks": ["primitives_and_timing", "comparative_statics"] },
+    { "id": "stata_log_failure", "version": 1, "recipe": "empirical_result_audit", "task": "Detect a Stata log failure despite a superficially successful process outcome.", "expectedChecks": ["result_prose_consistency", "inference_method"] },
+    { "id": "missing_expected_output", "version": 1, "recipe": "empirical_result_audit", "task": "Report a missing declared output after a computation.", "expectedChecks": ["result_prose_consistency"] },
+    { "id": "latex_unresolved_reference", "version": 1, "recipe": "manuscript_consistency", "task": "Detect unresolved references after a compiling LaTeX edit.", "expectedChecks": ["appendix_cross_references", "notation_consistency"] },
+    { "id": "latex_missing_figure", "version": 1, "recipe": "manuscript_consistency", "task": "Detect a missing figure after a superficially successful compile.", "expectedChecks": ["cross_section_claims"] },
+    { "id": "fresh_session_memory", "version": 1, "recipe": "manuscript_consistency", "task": "Recover accepted decisions in a fresh session while excluding rejected suggestions.", "expectedChecks": ["cross_section_claims"] },
+    { "id": "estimand_population_drift", "version": 1, "recipe": "empirical_result_audit", "task": "Detect that the prose estimand targets a different population from the specification.", "expectedChecks": ["estimand_definition", "sample_alignment"] },
+    { "id": "cluster_level_mismatch", "version": 1, "recipe": "empirical_result_audit", "task": "Compare assignment and inference levels and flag an unsupported standard-error description.", "expectedChecks": ["inference_method"] },
+    { "id": "transformation_mismatch", "version": 1, "recipe": "empirical_result_audit", "task": "Detect level-versus-log interpretation drift between result and prose.", "expectedChecks": ["unit_alignment", "result_prose_consistency"] },
+    { "id": "equilibrium_condition_missing", "version": 1, "recipe": "theory_audit_recipe", "task": "Find an omitted market-clearing or equilibrium condition.", "expectedChecks": ["resource_constraints", "primitives_and_timing"] },
+    { "id": "comparative_static_sign", "version": 1, "recipe": "theory_audit_recipe", "task": "Verify a comparative-static sign and state the assumptions that determine it.", "expectedChecks": ["comparative_statics", "limiting_cases"] },
+    { "id": "secondary_source_only", "version": 1, "recipe": "literature_precedent_review", "task": "Make visible that a claim rests only on an abstract or secondary source.", "expectedChecks": ["source_identity", "claim_support"] },
+    { "id": "external_source_unavailable", "version": 1, "recipe": "literature_precedent_review", "task": "Preserve an external reference that became unavailable without silently recreating it.", "expectedChecks": ["source_identity", "coverage_statement"] }
+  ]
+}

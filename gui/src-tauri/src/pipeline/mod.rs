@@ -7,6 +7,7 @@ pub(crate) mod call;
 pub mod claude;
 mod cli_process;
 pub mod codex;
+pub mod codex_server;
 pub mod conditions;
 pub mod context_cache;
 pub mod executor;

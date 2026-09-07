@@ -51,9 +51,17 @@ needs internet access during installation so the bootstrapper can download it.
    npm run build
    cd src-tauri
    cargo test --locked --all-targets
-   cargo fmt --check
+   cargo fmt --all -- --check
    cargo clippy --locked --all-targets --all-features -- -D warnings
    ```
+
+   For a release that includes Workspace, also complete every applicable live
+   gate in
+   [docs/workbench/release-qualification.md](docs/workbench/release-qualification.md):
+   authenticated login/conversation/dynamic-tool behavior, configured LaTeX and
+   `oldstata` fixtures, the three-variant research evaluation, performance
+   measurements, packaged crash recovery, and platform permission/process
+   checks. The no-model probe, simulator, and unit suite do not replace them.
 
 6. Review `cargo audit` and the full `npm audit`, including build dependencies.
    Release CI also scans every platform build-input SBOM with pinned Grype
@@ -129,6 +137,10 @@ Before publishing the draft, a reviewer should independently:
 - verify GitHub attestations;
 - install on representative clean machines, complete a synthetic end-to-end
   run, render math, and export a report;
+- use an opt-in test account to complete a packaged Workspace conversation and
+  approval/tool cycle; verify isolated sign-in/logout, Stop, restart
+  reconciliation, `.pwrx` export/inspection/restore, explicit root detachment or
+  remapping, and that no Workflow state or credentials cross the handoff;
 - on a clean, currently serviced Windows 11 x86-64 VM with no Evergreen
   WebView2 runtime and a working network connection, verify that installation
   provisions WebView2 and that Pipeline launches afterward;

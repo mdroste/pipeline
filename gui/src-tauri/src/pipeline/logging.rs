@@ -288,6 +288,7 @@ pub fn classify_tool_name(name: &str) -> crate::models::ToolCallKind {
         || normalized.contains("vision")
         || normalized.contains("document_asset")
         || compact.contains("documentasset")
+        || compact == "readpdfpage"
     {
         ToolCallKind::Image
     } else if normalized.contains("web_search")

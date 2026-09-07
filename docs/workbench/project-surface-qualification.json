@@ -1,0 +1,182 @@
+{
+  "recordedOn": "2026-09-06 America/Los_Angeles",
+  "platform": "macOS arm64",
+  "build": "Tauri development / Rust debug",
+  "fixtures": {
+    "latex": {
+      "outcome": "completed",
+      "exitStatus": 0,
+      "snapshotConsistency": "uncertain",
+      "validation": {
+        "adapter": {
+          "checks": [
+            {
+              "path": "main.pdf",
+              "present": true
+            },
+            {
+              "path": "main.log",
+              "present": true
+            },
+            {
+              "check": "compiledPdf",
+              "passed": true
+            }
+          ],
+          "passed": true
+        },
+        "dependencyCoverage": "declared_only",
+        "executionBoundary": "explicitly_authorized_host",
+        "inputsChanged": false,
+        "stataCleanupRequired": false,
+        "stataWrapperReturnedAfterStop": false,
+        "stderrTruncated": false,
+        "stdoutTruncated": false,
+        "unchangedPreexistingOutputs": []
+      }
+    },
+    "theory": {
+      "outcome": "completed",
+      "exitStatus": 0,
+      "snapshotConsistency": "uncertain",
+      "validation": {
+        "adapter": {
+          "checks": [
+            {
+              "path": "theory-result.json",
+              "present": true
+            }
+          ],
+          "passed": true
+        },
+        "dependencyCoverage": "declared_only",
+        "executionBoundary": "explicitly_authorized_host",
+        "inputsChanged": false,
+        "stataCleanupRequired": false,
+        "stataWrapperReturnedAfterStop": false,
+        "stderrTruncated": false,
+        "stdoutTruncated": false,
+        "unchangedPreexistingOutputs": []
+      }
+    },
+    "stata": {
+      "outcome": "completed",
+      "exitStatus": 0,
+      "snapshotConsistency": "uncertain",
+      "validation": {
+        "adapter": {
+          "checks": [
+            {
+              "path": "empirical.log",
+              "present": true
+            },
+            {
+              "path": "estimate.txt",
+              "present": true
+            },
+            {
+              "check": "stataLogHasNoErrorCode",
+              "passed": true
+            }
+          ],
+          "passed": true
+        },
+        "dependencyCoverage": "declared_only",
+        "executionBoundary": "explicitly_authorized_host",
+        "inputsChanged": false,
+        "stataCleanupRequired": false,
+        "stataWrapperReturnedAfterStop": false,
+        "stderrTruncated": false,
+        "stdoutTruncated": false,
+        "unchangedPreexistingOutputs": []
+      }
+    },
+    "stata-cancellation": {
+      "outcome": "timed_out",
+      "exitStatus": 0,
+      "snapshotConsistency": "uncertain",
+      "validation": {
+        "adapter": {
+          "checks": [
+            {
+              "path": "cancellation.log",
+              "present": true
+            },
+            {
+              "check": "stataLogHasNoErrorCode",
+              "passed": true
+            }
+          ],
+          "passed": false
+        },
+        "dependencyCoverage": "declared_only",
+        "executionBoundary": "explicitly_authorized_host",
+        "inputsChanged": false,
+        "stataCleanupRequired": false,
+        "stataWrapperReturnedAfterStop": true,
+        "stderrTruncated": false,
+        "stdoutTruncated": false,
+        "unchangedPreexistingOutputs": []
+      }
+    },
+    "git": {
+      "outcome": "completed",
+      "verified": [
+        "source index byte preservation",
+        "source HEAD preservation",
+        "staged/unstaged/untracked content preservation",
+        "source git status preservation",
+        "rejection retains original files"
+      ]
+    }
+  },
+  "performance": {
+    "build": "Rust debug; local warm filesystem; no model",
+    "homeMs": 36.018667,
+    "inventoryFiles": 1000,
+    "inventoryMs": [
+      101.054875,
+      99.282542,
+      183.239917
+    ],
+    "platform": "macos",
+    "readerMs": 3.47525,
+    "readerReturnedBytes": 131072,
+    "readerTotalBytes": 1600000,
+    "scope": "Backend service measurements; excludes IPC, webview, first paint, and provider latency."
+  },
+  "nativeGui": {
+    "modelCalls": 0,
+    "observed": [
+      "Workspace creation with an inline form",
+      "Registered root and storage-overlap rejection",
+      "Selected-file task copy",
+      "Source diff, accept and undo",
+      "Immutable TeX text selection",
+      "Persisted annotation and exact-hash mapping",
+      "Mathematical rendering"
+    ],
+    "runtime": "Locally built Tauri debug binary with Vite at localhost:1420; temporary app wrapper for accessibility; disposable Workspace store. Not a packaged release test."
+  },
+  "remainingGates": [
+    "Authenticated model turns and dynamic-tool invocation",
+    "Forced Stata termination / manual cleanup qualification",
+    "Packaged builds and abrupt process-death testing",
+    "Windows and Linux platform qualification",
+    "Scanned/large PDF webview and accessibility matrix",
+    "Researcher-scored comparative evaluation",
+    "End-to-end cold/warm paint, idle CPU and memory measurements"
+  ],
+  "deterministicChecks": {
+    "rustLibraryPassed": 750,
+    "rustCliPassed": 14,
+    "rustIgnored": 5,
+    "frontendPassed": 434,
+    "frontendFiles": 51,
+    "releaseChecksPassed": 58,
+    "cargoFmt": "passed",
+    "cargoClippyAllTargetsWarningsDenied": "passed",
+    "frontendBuild": "passed",
+    "note": "Whole working-tree checks; pre-existing/concurrent repository changes were preserved. Ignored local project fixtures were run explicitly; authenticated/platform gates remain separate."
+  }
+}

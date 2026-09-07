@@ -389,7 +389,9 @@ pub async fn build_orientation_map(
                 {
                     return Err(error);
                 }
-                if super::provider_error::is_usage_limit_error(&error) {
+                if super::provider_error::is_usage_limit_error(&error)
+                    || super::provider_error::is_non_retryable_error(&error)
+                {
                     return Err(format!("Orientation map stopped: {error}"));
                 }
                 last_error = format!("provider call failed: {error}");

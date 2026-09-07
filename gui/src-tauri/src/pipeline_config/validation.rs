@@ -82,7 +82,9 @@ pub(super) fn validate_profile_steps(steps: &[StepConfig]) -> Result<(), String>
                 step.id
             ));
         }
-        if step.prompt.len() > MAX_STEP_PROMPT_BYTES {
+        if step.prompt.len() > MAX_STEP_PROMPT_BYTES
+            || step.system_prompt.len() > MAX_STEP_PROMPT_BYTES
+        {
             return Err(format!(
                 "Step '{}' prompt exceeds the {} MB safety limit",
                 step.id,

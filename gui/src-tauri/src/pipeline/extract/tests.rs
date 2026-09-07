@@ -354,6 +354,10 @@ fn paddle_server_credentials_are_high_entropy_hex() {
 
 #[test]
 fn full_parser_structure_drives_compatibility_text_and_page_verification() {
+    let baseline = |total_chars, prose_chars| PdfPageTextBaseline {
+        total_chars,
+        prose_chars,
+    };
     let structure = PaddleStructure {
         schema_version: PADDLE_STRUCTURE_SCHEMA,
         parser: "paddleocr-vl-full".to_string(),
@@ -380,9 +384,13 @@ fn full_parser_structure_drives_compatibility_text_and_page_verification() {
         ],
     };
     let path = Path::new("/tmp/paper.pdf");
-    let extraction =
-        full_parser_extraction_from_structure(&structure, path, "0123456789abcdef", Some(&[0, 0]))
-            .unwrap();
+    let extraction = full_parser_extraction_from_structure(
+        &structure,
+        path,
+        "0123456789abcdef",
+        Some(&[baseline(0, 0), baseline(0, 0)]),
+    )
+    .unwrap();
     assert_eq!(extraction.method, "paddleocr-vl-full");
     assert!(extraction.text.contains("<!-- PAGE 2 -->"));
     assert!(extraction
@@ -399,7 +407,7 @@ fn full_parser_structure_drives_compatibility_text_and_page_verification() {
         &moved_page,
         path,
         "0123456789abcdef",
-        Some(&[1_000, 0]),
+        Some(&[baseline(1_000, 1_000), baseline(0, 0)]),
     )
     .unwrap();
     assert!(moved_extraction
@@ -413,7 +421,7 @@ fn full_parser_structure_drives_compatibility_text_and_page_verification() {
         &incomplete_page,
         path,
         "0123456789abcdef",
-        Some(&[1_000, 0]),
+        Some(&[baseline(1_000, 1_000), baseline(0, 0)]),
     )
     .unwrap_err();
     assert!(incomplete_error.contains("recognized 10 substantive characters"));
@@ -424,10 +432,89 @@ fn full_parser_structure_drives_compatibility_text_and_page_verification() {
         &missing_page,
         path,
         "0123456789abcdef",
-        Some(&[0, 0]),
+        Some(&[baseline(0, 0), baseline(0, 0)]),
     )
     .unwrap_err()
     .contains("page 3 where page 2 was expected"));
+}
+
+#[test]
+fn full_parser_uses_prose_baseline_only_for_fragmented_visual_pages() {
+    let visual_block = PaddleStructuredBlock {
+        block_id: "page-0104-figure-title".to_string(),
+        role: "figure_title".to_string(),
+        block_label: "figure_title".to_string(),
+        markdown: "Figure E5: Conditional correlation".to_string(),
+        text: String::new(),
+        boundary: None,
+        note_marker: None,
+        order: Some(1),
+        bbox: vec![0.0, 0.0, 1200.0, 1600.0],
+        polygon: Vec::new(),
+        confidence: Some(0.95),
+        asset_files: Vec::new(),
+        raw: serde_json::Value::Null,
+    };
+    let page = PaddleStructuredPage {
+        number: 1,
+        markdown: "Figure E5: Conditional correlation\n\nThe caption and note were recognized."
+            .to_string(),
+        source_text_chars: Some(1_007),
+        width: Some(1200),
+        height: Some(1600),
+        blocks: vec![visual_block],
+    };
+    let structure = PaddleStructure {
+        schema_version: PADDLE_STRUCTURE_SCHEMA,
+        parser: "paddleocr-vl-full".to_string(),
+        parser_version: "3.7.0".to_string(),
+        settings: serde_json::Value::Null,
+        quality_notes: Vec::new(),
+        pages: vec![page],
+    };
+    let baseline = [PdfPageTextBaseline {
+        total_chars: 12_530,
+        prose_chars: 3_166,
+    }];
+    let extraction = full_parser_extraction_from_structure(
+        &structure,
+        Path::new("/tmp/figure-paper.pdf"),
+        "0123456789abcdef",
+        Some(&baseline),
+    )
+    .unwrap();
+    assert!(extraction.quality_notes.iter().any(|note| {
+        note.contains("isolated figure labels")
+            && note.contains("3166 prose-like characters")
+            && note.contains("12530 total characters")
+    }));
+
+    let mut mixed_table_and_figure = structure.clone();
+    let mut table_block = mixed_table_and_figure.pages[0].blocks[0].clone();
+    table_block.block_id = "page-0104-table".to_string();
+    table_block.role = "table".to_string();
+    table_block.block_label = "table".to_string();
+    mixed_table_and_figure.pages[0].blocks.push(table_block);
+    let error = full_parser_extraction_from_structure(
+        &mixed_table_and_figure,
+        Path::new("/tmp/mixed-table-figure-paper.pdf"),
+        "0123456789abcdef",
+        Some(&baseline),
+    )
+    .unwrap_err();
+    assert!(error.contains("text layer has 12530"));
+
+    let mut non_visual = structure;
+    non_visual.pages[0].blocks[0].role = "table".to_string();
+    non_visual.pages[0].blocks[0].block_label = "table".to_string();
+    let error = full_parser_extraction_from_structure(
+        &non_visual,
+        Path::new("/tmp/table-paper.pdf"),
+        "0123456789abcdef",
+        Some(&baseline),
+    )
+    .unwrap_err();
+    assert!(error.contains("text layer has 12530"));
 }
 
 #[test]
@@ -737,6 +824,33 @@ fn baseline_splits_on_form_feeds_and_drops_trailing_empty() {
     let text = "page   one text\u{0C}page two\u{0C}";
     let pages = baseline_page_lengths(text);
     assert_eq!(pages, vec!["pageonetext".len(), "pagetwo".len()]);
+}
+
+#[test]
+fn baseline_separates_dense_isolated_plot_labels_from_prose() {
+    let labels = (1..=40)
+        .map(|month| format!("2019m{month}"))
+        .collect::<Vec<_>>();
+    let labels = labels
+        .chunks(4)
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let caption = concat!(
+        "Figure E5: Conditional correlation of the policy shock and Treasury holdings\n",
+        "Note: Every dot represents one month and the red line is the fitted line.\n",
+    );
+    let page = format!("{labels}\n{caption}\u{0C}");
+    let metrics = baseline_page_metrics(&page);
+    assert_eq!(metrics.len(), 1);
+    assert!(metrics[0].total_chars > metrics[0].prose_chars * 2);
+    assert_eq!(
+        metrics[0].prose_chars,
+        caption
+            .chars()
+            .filter(|value| !value.is_whitespace())
+            .count()
+    );
 }
 
 #[test]

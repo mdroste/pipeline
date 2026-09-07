@@ -930,7 +930,9 @@ async fn call_claude_inner(
         Err(error) if error.starts_with("provider error: ") => {
             emit_stderr_tail(app, &stderr_tail);
             let detail = error.trim_start_matches("provider error: ");
-            let msg = format!("Claude call failed: {detail}");
+            let hint =
+                claude_failure_hint(detail, &stderr_tail).unwrap_or_else(|| detail.to_string());
+            let msg = format!("Claude call failed: {hint}");
             log(app, format!("ERROR: {msg}"));
             return Err(msg);
         }
@@ -969,7 +971,7 @@ async fn call_claude_inner(
             return Err(terminated);
         }
         emit_stderr_tail(app, &stderr_tail);
-        let hint = extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
+        let hint = claude_failure_hint(&text, &stderr_tail);
         let msg = if let Some(hint) = hint {
             format!("Claude call failed (exit {exit_code}): {hint}")
         } else {
@@ -1104,8 +1106,6 @@ fn claude_result_error_detail(value: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Extract a user-facing error hint from CLI output.
-/// Looks for common auth/config error patterns in stdout/stderr.
 /// Classify an unsuccessful CLI exit. Returns the cancellation error when
 /// Pipeline itself stopped the call (global cancel or this call's pass), and
 /// a retryable signal-death error when the child was killed by something
@@ -1131,16 +1131,41 @@ pub fn classify_terminated_exit(
     None
 }
 
+const CLAUDE_LOGIN_HINT: &str =
+    "Claude Code could not authenticate. Run `claude auth login` in Terminal, then try again.";
+
+fn is_claude_auth_error(output: &str) -> bool {
+    let lower = output.to_lowercase();
+    [
+        "not logged in",
+        "not signed in",
+        "not authenticated",
+        "authentication required",
+        "authentication failed",
+        "please sign in",
+        "please log in",
+        "run /login",
+        "401 unauthorized",
+        "http 401",
+        "status code 401",
+    ]
+    .iter()
+    .any(|pattern| lower.contains(pattern))
+}
+
+/// Prefer one actionable authentication instruction over the CLI's raw
+/// stdout/stderr diagnostics. Other failures retain the shared concise hint.
+fn claude_failure_hint(output: &str, stderr_tail: &[String]) -> Option<String> {
+    if is_claude_auth_error(output) || stderr_tail.iter().any(|line| is_claude_auth_error(line)) {
+        return Some(CLAUDE_LOGIN_HINT.to_string());
+    }
+    extract_error_hint(output).or_else(|| last_stderr_hint(stderr_tail))
+}
+
+/// Extract a provider-neutral user-facing error hint from CLI output.
 pub fn extract_error_hint(output: &str) -> Option<String> {
     let lower = output.to_lowercase();
-    if lower.contains("not logged in")
-        || lower.contains("not authenticated")
-        || lower.contains("sign in")
-        || lower.contains("log in")
-        || lower.contains("auth")
-    {
-        Some("Not signed in. Run `claude auth login` to authenticate.".into())
-    } else if lower.contains("api key") {
+    if lower.contains("api key") {
         Some("API key not configured. Check your API key settings.".into())
     } else if lower.contains("rate limit") || lower.contains("too many requests") {
         Some("Rate limited. Wait a moment and try again.".into())
@@ -1449,6 +1474,19 @@ pub async fn call_llm(
         let cli_call: BoxedProviderFuture<'_> = Box::pin(async {
             match provider {
                 "codex" => {
+                    if settings.codex_backend == "app_server" {
+                        return super::codex_server::call_codex(
+                            app,
+                            prompt,
+                            allowed_tools,
+                            system_prompt,
+                            timeout_secs,
+                            label,
+                            extra_read_dirs,
+                            overrides,
+                        )
+                        .await;
+                    }
                     let codex_cwd = cwd.or_else(|| {
                         extra_read_dirs
                             .iter()
@@ -1883,6 +1921,30 @@ mod tests {
         assert!(
             parse_claude_result(r#"{"type":"result","is_error":true,"result":"partial"}"#).is_err()
         );
+    }
+
+    #[test]
+    fn claude_auth_failures_get_one_actionable_console_hint() {
+        for error in [
+            "Authentication required",
+            "Not logged in. Please run /login.",
+            "HTTP 401 Unauthorized",
+        ] {
+            assert_eq!(
+                claude_failure_hint(error, &[]).as_deref(),
+                Some(CLAUDE_LOGIN_HINT)
+            );
+        }
+        assert_eq!(
+            claude_failure_hint("", &["authentication failed".to_string()]).as_deref(),
+            Some(CLAUDE_LOGIN_HINT)
+        );
+    }
+
+    #[test]
+    fn ordinary_auth_substrings_do_not_trigger_the_login_hint() {
+        let hint = claude_failure_hint("The authoring tool rejected the file", &[]).unwrap();
+        assert_eq!(hint, "The authoring tool rejected the file");
     }
 
     #[test]

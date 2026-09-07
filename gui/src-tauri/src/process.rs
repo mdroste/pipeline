@@ -16,7 +16,7 @@ pub struct BoundedOutput {
     pub stderr_truncated: bool,
 }
 
-fn configure_isolation(command: &mut Command) {
+pub(crate) fn configure_isolation(command: &mut Command) {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;

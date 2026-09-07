@@ -6,20 +6,43 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue)](https://github.com/mdroste/pipeline/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 
-Pipeline is a desktop app for structured LLM reviews of academic papers and
-other research documents. A workflow specifies the questions to ask, which
-parts of the source each step may read, which providers to use, and which
-outputs feed later steps. Pipeline handles extraction, scheduling, validation,
-and storage; the models handle the review itself.
+Pipeline is a desktop agent orchestration suite for doing and reviewing
+academic research. It combines a persistent ChatGPT Workspace for interactive
+research with deterministic Workflows for repeatable research and review tasks.
+The host application owns context, permissions, scheduling, validation,
+provenance, and storage; models supply judgment within those boundaries.
 
-Pipeline runs on macOS, Windows, and Linux. It can use the Claude Code or
-Codex CLI with an existing subscription; the Anthropic, OpenAI, or Google
-API; or a local OpenAI-compatible server such as Ollama. Pipeline does not run
-a hosted service.
+Pipeline runs on macOS, Windows, and Linux. Workflows can use Claude Code
+or Codex App Server with an existing subscription; the Anthropic, OpenAI, or Google
+API; or a local OpenAI-compatible server such as Ollama. Workspace currently
+uses the Codex CLI/App Server with managed ChatGPT authentication. Pipeline
+does not run a hosted service.
 
 [Privacy and data flow](PRIVACY.md) · [Security policy](SECURITY.md) ·
 [Supported platforms](SUPPORT.md) · [Contributing](CONTRIBUTING.md) ·
 [Changelog](CHANGELOG.md) · [Release process](RELEASING.md)
+
+## Orchestration modes
+
+**Workspace** supports persistent ChatGPT conversations with optional modular
+research instructions, paper and source access, configured local computation,
+research memory, claims and evidence, recipes, and portable archives. It uses
+an isolated Codex App Server runtime and does not require a Workflow project,
+run, or paper. Its first-release implementation is present but authenticated,
+real-tool, packaged-app, and cross-platform qualification is still in progress.
+
+**Workflows** are deterministic dependency graphs. A workflow specifies the
+questions or tasks, the material each step may read, the providers to use, and
+the outputs that feed later steps. Pipeline handles extraction, scheduling,
+validation, and durable artifacts. Paper Review is the principal built-in use
+case, while the engine and portable workflow format also support broader
+research tasks.
+
+Workspace recipes configure an interactive conversation; they are not
+Workflows and do not invoke the Workflow scheduler. The two modes keep their
+runtime, credentials, storage, and cancellation state separate. Their only
+implemented bridge is an explicit immutable paper handoff into the ordinary
+Workflow launch preview.
 
 ## Install
 
@@ -30,23 +53,30 @@ pip, or another language runtime.
 
 ### Model providers
 
-For Claude and OpenAI, the default provider path uses a signed-in
-command-line client. This lets a Pipeline run use a supported subscription
-without a separate API key.
+These choices apply to Workflows. Workspace currently uses its own isolated
+Codex App Server and managed ChatGPT sign-in from Workspace settings; it does
+not inherit Workflow provider configuration.
+
+Claude uses its signed-in command-line client; ChatGPT uses Pipeline's managed
+Codex App Server connection. Both support subscriptions without a separate
+API key.
 
 - **Claude:** Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
   with `npm install -g @anthropic-ai/claude-code`, then sign in.
 - **OpenAI:** Install the [Codex CLI](https://github.com/openai/codex) with
-  `npm install -g @openai/codex`, then sign in.
+  `npm install -g @openai/codex`, then use **Sign in to ChatGPT** under
+  **Settings → Providers → OpenAI → Review & workflows**. The executable
+  supplies App Server; a terminal login is not required. Legacy CLI access is
+  available under **Advanced connection settings** for compatibility.
 - **Google:** Enter a [Gemini API key](https://aistudio.google.com/apikey)
-  under Settings → API Keys. There is no subscription path for Google:
+  under Settings → Providers. There is no subscription path for Google:
   Google's [Antigravity terms](https://antigravity.google/terms) do not permit
   third-party software to use an Antigravity sign-in, and Google recommends an
   API key for third-party tools, so Pipeline always calls the Gemini API
   directly.
 
 For Claude and OpenAI you can instead enter Anthropic or OpenAI API keys under
-Settings → API Keys and explicitly select API mode for that provider. A stored
+Settings → Providers and explicitly select API mode for that provider. A stored
 key is ignored while Subscription mode is selected. API keys are encrypted
 before they are written to disk. Settings also accepts a
 local OpenAI-compatible endpoint; Ollama is the default, and LM Studio,
@@ -270,3 +300,13 @@ restricted material.
 
 Pipeline is released under the MIT License. Bundled Poppler components retain
 their GPL license; see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+
+### Codex App Server for Reviews and Workflows
+
+**Codex App Server** is the default ChatGPT subscription connection, with
+managed sign-in under Settings → Providers. It shares protocol and
+account infrastructure with Workspace while keeping credentials, conversations,
+and cancellation separate. Workflow execution options also expose **Reviewer
+instructions**. Old legacy defaults migrate to App Server; the CLI remains an
+explicit advanced compatibility option. API mode is preserved. See
+[setup, implementation details, and qualification limits](docs/workflow-codex.md).

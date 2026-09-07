@@ -98,7 +98,7 @@ function ExtractionEditor({
         <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
           The chosen PDF method is authoritative: incomplete or failed extraction stops before
           orientation instead of silently switching engines. Parser-specific speed, memory, OCR,
-          and image settings are configured once in Settings → PDF Extraction. LaTeX inputs bypass
+          and image settings are configured once in Settings → Review & workflows → PDF Extraction. LaTeX inputs bypass
           PDF extraction.
         </div>
       </div>

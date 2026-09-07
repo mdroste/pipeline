@@ -267,6 +267,30 @@ describe("App run options", () => {
     });
   });
 
+  it("rechecks dependencies when reopening a stale setup warning", async () => {
+    const defaultInvoke = invoke.getMockImplementation()!;
+    let ready = false;
+    let checks = 0;
+    invoke.mockImplementation(async (command: string, args: unknown) => {
+      const result = await defaultInvoke(command, args);
+      if (command !== "get_execution_plan") return result;
+      checks += 1;
+      return { ...result, readiness: { ready, deps: [{
+        name: "Workflow ChatGPT", found: true, required: true, version: "0.153.4",
+        path: "", hint: ready ? "" : "Sign in to the Workflow connection.", authenticated: ready,
+      }] } };
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+    ready = true;
+    await user.click(screen.getByRole("button", { name: "Setup needed" }));
+    expect(await screen.findByRole("button", { name: "Close" })).toBeVisible();
+    expect(screen.getByText("signed in")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Setup needed" })).not.toBeInTheDocument();
+    expect(checks).toBe(2);
+  });
+
   it("supports light, dark, and live system appearance preferences", async () => {
     systemIsDark = true;
     const user = userEvent.setup();
@@ -621,7 +645,7 @@ describe("App run options", () => {
               version: "",
               path: "",
               required: true,
-              hint: "Recommended for PDFs: Install from Settings → PDF Extraction.",
+              hint: "Recommended for PDFs: Install from Settings → Review & workflows → PDF Extraction.",
             }],
           },
           stages: [],
@@ -633,7 +657,7 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("link", {
-      name: "Settings → PDF Extraction",
+      name: "Settings → Review & workflows → PDF Extraction",
     }));
 
     expect(screen.queryByRole("dialog", { name: "Dependencies" })).not.toBeInTheDocument();
@@ -685,7 +709,7 @@ describe("App run options", () => {
     await user.click(screen.getByRole("button", { name: "Review report" }));
 
     expect(await screen.findByRole("dialog", { name: "Dependencies" })).toBeVisible();
-    expect(screen.getByText(/Set up at least one model provider/)).toBeVisible();
+    expect(screen.getByText(/Check the required model connections/)).toBeVisible();
     expect(startPipeline).not.toHaveBeenCalled();
     expect(checks).toBe(2);
   });

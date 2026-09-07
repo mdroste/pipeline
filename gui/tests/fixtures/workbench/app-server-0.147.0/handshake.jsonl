@@ -1,0 +1,4 @@
+{"id":1,"result":{"userAgent":"codex_cli_rs/0.147.0","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/pipeline-workbench-probe/codex"}}
+{"method":"account/updated","params":{"account":null}}
+{"id":"account-read","result":{"account":null,"requiresOpenaiAuth":true}}
+{"id":3,"result":{"data":[],"nextCursor":null}}

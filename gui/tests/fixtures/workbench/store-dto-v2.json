@@ -1,0 +1,30 @@
+{
+  "workspace": {
+    "id": "workspace_fixture",
+    "name": "Macro paper",
+    "root": "/tmp/research-project",
+    "rootIdentity": "unix:1:2",
+    "settingsRevision": 0,
+    "revision": 3,
+    "archivedAt": null,
+    "missingRootAt": null,
+    "createdAt": "2026-09-06T00:00:00Z",
+    "updatedAt": "2026-09-06T00:02:00Z"
+  },
+  "session": {
+    "id": "session_fixture",
+    "workspaceId": "workspace_fixture",
+    "paperId": null,
+    "title": "Identification notes",
+    "presetId": null,
+    "overrides": {
+      "reasoningEffort": "high"
+    },
+    "draft": "Check the normalization.",
+    "revision": 2,
+    "archivedAt": null,
+    "createdAt": "2026-09-06T00:01:00Z",
+    "updatedAt": "2026-09-06T00:02:00Z"
+  },
+  "sequence": 12
+}
