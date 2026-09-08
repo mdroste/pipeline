@@ -25,7 +25,7 @@ describe("DepsCheck", () => {
       name: "Workflow ChatGPT", authenticated: true, cli_auth_status: undefined,
     })] }} onDismiss={() => {}} />);
     const models = screen.getByRole("region", { name: "Model access" });
-    expect(within(models).getByText("Workflow ChatGPT")).toBeVisible();
+    expect(within(models).getByText("Reviews ChatGPT")).toBeVisible();
     expect(within(models).getByText("signed in")).toBeVisible();
     expect(within(models).getByText("Ready")).toBeVisible();
   });
@@ -41,7 +41,7 @@ describe("DepsCheck", () => {
     expect(within(models).getByText("Needs attention")).toBeVisible();
     expect(within(models).getByText("set up")).toHaveClass("text-red-700");
     expect(within(models).getByText("alternative")).toHaveClass("text-gray-600");
-    expect(within(models).getByText(hint)).toBeVisible();
+    expect(within(models).getByText("Reviews ChatGPT connection is in use by another Pipeline process")).toBeVisible();
   });
 
   it("includes hidden required blockers in their section and shows their remedy", () => {
@@ -129,7 +129,7 @@ describe("DepsCheck", () => {
         required: true,
         version: "",
         path: "",
-        hint: "Recommended for PDFs: Install from Settings → Review & workflows → PDF Extraction.",
+        hint: "Recommended for PDFs: Install from Settings → PDF Extraction.",
       })],
     };
     render(
@@ -144,7 +144,7 @@ describe("DepsCheck", () => {
     expect(screen.queryByText("required")).not.toBeInTheDocument();
     expect(screen.getByText(/Required PDF parsing tools are missing\./)).toBeInTheDocument();
     const settingsLink = screen.getByRole("link", {
-      name: "Settings → Review & workflows → PDF Extraction",
+      name: "Settings → Reviews → PDF Extraction",
     });
     expect(settingsLink).toHaveAttribute("href", "#paddleocr-local-engine");
     await userEvent.setup().click(settingsLink);

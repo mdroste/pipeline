@@ -52,6 +52,7 @@ pub(super) fn create_run_workspace(
         .set_pending_meta(pending_meta)
         .map_err(|error| format!("Could not initialize the durable run manifest: {error}"))?;
 
+    super::orchestration::mark_run(writer.dir())?;
     {
         let logs_dir = writer.dir().join("logs");
         let log_path = logs_dir.join("run.log");
@@ -90,10 +91,10 @@ pub(super) fn create_run_workspace(
 
 /// Begin mirroring logs before extraction has produced a paper hash/run
 /// directory. Failed extractions retain this transcript under
-/// ~/.pipeline/logs/preprocessing; successful runs adopt it as run.log.
+/// the active data folder's logs/preprocessing; successful runs adopt it as run.log.
 pub(super) fn start_preprocessing_log() -> Option<std::path::PathBuf> {
-    let root = dirs::home_dir()?
-        .join(".pipeline")
+    let root = crate::storage::data_root()
+        .ok()?
         .join("logs")
         .join("preprocessing");
     std::fs::create_dir_all(&root).ok()?;

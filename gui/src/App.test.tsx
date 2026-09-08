@@ -1,8 +1,10 @@
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 
+const saveCollection = vi.hoisted(() => vi.fn());
 const invoke = vi.hoisted(() => vi.fn());
 const startPipeline = vi.hoisted(() => vi.fn());
 const onCloseRequested = vi.hoisted(() => vi.fn());
@@ -126,6 +128,18 @@ vi.mock("./components/RunParallelAgents", () => ({
     </button>
   ),
 }));
+vi.mock("./components/ProjectsPage", () => ({
+  default: ({ onSaveHandlerChange, onDirtyChange }: {
+    onSaveHandlerChange: (save: (() => Promise<boolean>) | null) => void;
+    onDirtyChange: (dirty: boolean) => void;
+  }) => {
+    useEffect(() => {
+      onSaveHandlerChange(saveCollection);
+      return () => { onSaveHandlerChange(null); onDirtyChange(false); };
+    }, [onSaveHandlerChange, onDirtyChange]);
+    return <button onClick={() => onDirtyChange(true)}>Edit collection</button>;
+  },
+}));
 vi.mock("./components/HistoryPage", () => ({
   default: () => <div>History workspace</div>,
 }));
@@ -214,6 +228,7 @@ vi.mock("./components/UpdateBanner", () => ({ default: () => null }));
 
 describe("App run options", () => {
   beforeEach(() => {
+    saveCollection.mockReset().mockResolvedValue(true);
     invoke.mockReset();
     listen.mockReset();
     confirmDialog.mockReset();
@@ -361,18 +376,18 @@ describe("App run options", () => {
     expect(screen.queryByRole("button", { name: "Batch" })).not.toBeInTheDocument();
   });
 
-  it("opens Gallery from Workflows instead of the primary navigation", async () => {
+  it("opens Gallery from Designer instead of the primary navigation", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     await screen.findByRole("button", { name: "Review report" });
     expect(screen.queryByRole("button", { name: "Gallery" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Workflows" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(await screen.findByRole("button", { name: "Gallery" }));
 
     expect(await screen.findByText("Gallery workspace")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Workflows" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Designer" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -415,7 +430,7 @@ describe("App run options", () => {
     }));
     expect(await screen.findByText("Batch workspace · no setup")).toBeVisible();
     expect(screen.getByRole("button", { name: /Current batch/ })).toBeVisible();
-    expect(screen.getByRole("button", { name: "New report" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
@@ -495,7 +510,7 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Choose DOCX" }));
-    await user.click(screen.getByRole("button", { name: "Workflows" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(await screen.findByRole("button", {
       name: "Save document workflow",
     }));
@@ -516,7 +531,7 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
-    await user.click(screen.getByRole("button", { name: "Workflows" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(await screen.findByRole("button", {
       name: "Switch to folder workflow",
     }));
@@ -645,7 +660,7 @@ describe("App run options", () => {
               version: "",
               path: "",
               required: true,
-              hint: "Recommended for PDFs: Install from Settings → Review & workflows → PDF Extraction.",
+              hint: "Recommended for PDFs: Install from Settings → Reviews → PDF Extraction.",
             }],
           },
           stages: [],
@@ -657,7 +672,7 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("link", {
-      name: "Settings → Review & workflows → PDF Extraction",
+      name: "Settings → Reviews → PDF Extraction",
     }));
 
     expect(screen.queryByRole("dialog", { name: "Dependencies" })).not.toBeInTheDocument();
@@ -754,7 +769,7 @@ describe("App run options", () => {
     render(<App />);
 
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
-    expect(screen.getByRole("button", { name: "New report" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "New run" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -767,7 +782,7 @@ describe("App run options", () => {
       "page",
     );
 
-    await user.click(screen.getByRole("button", { name: "New report" }));
+    await user.click(screen.getByRole("button", { name: "New run" }));
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
   });
 
@@ -832,7 +847,7 @@ describe("App run options", () => {
     render(<App />);
 
     await waitFor(() => expect(onCloseRequested).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("button", { name: "Workflows" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(await screen.findByRole("button", { name: "Make workflow dirty" }));
 
     const event = { preventDefault: vi.fn() };
@@ -857,4 +872,35 @@ describe("App run options", () => {
     );
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeVisible();
   });
+  it("keeps collection edits on the page when a save fails, then allows a successful retry", async () => {
+    const user = userEvent.setup();
+    render(<App/>);
+    await user.click(screen.getByRole("button", { name: "Run collections" }));
+    await user.click(await screen.findByRole("button", { name: "Edit collection" }));
+    saveCollection.mockResolvedValue(false);
+    await user.click(screen.getByRole("button", { name: "History" }));
+    expect(screen.getByRole("button", { name: "Edit collection" })).toBeInTheDocument();
+    expect(screen.queryByText("History workspace")).not.toBeInTheDocument();
+    const event = { preventDefault: vi.fn() };
+    await act(async () => onCloseRequested.mock.calls[0][0](event));
+    expect(event.preventDefault).toHaveBeenCalled();
+    saveCollection.mockResolvedValue(true);
+    await user.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText("History workspace")).toBeInTheDocument();
+  });
+
+  it("honors returning to the collection while navigation is waiting for its save", async () => {
+    const user = userEvent.setup();
+    render(<App/>);
+    await user.click(screen.getByRole("button", { name: "Run collections" }));
+    await screen.findByRole("button", { name: "Edit collection" });
+    let resolve!: (saved: boolean) => void;
+    saveCollection.mockImplementation(() => new Promise<boolean>(done => { resolve = done; }));
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Run collections" }));
+    await act(async () => resolve(true));
+    expect(screen.getByRole("button", { name: "Edit collection" })).toBeInTheDocument();
+    expect(screen.queryByText("History workspace")).not.toBeInTheDocument();
+  });
+
 });

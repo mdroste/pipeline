@@ -1,8 +1,7 @@
 use super::*;
 
 pub(super) fn profiles_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let dir = home.join(".pipeline").join("profiles");
+    let dir = crate::storage::data_root()?.join("profiles");
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create profiles dir: {e}"))?;
     #[cfg(unix)]
     {

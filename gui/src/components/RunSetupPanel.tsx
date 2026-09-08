@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PaperSelector from "./PaperSelector";
-import ResizeHandle from "./ResizeHandle";
+import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkflowPanel from "./WorkflowPanel";
 import RunParallelAgents from "./RunParallelAgents";
 import type { PipelineConfig, PrimaryInputSelection, RunParallelOverrides } from "../lib/types";
@@ -71,19 +71,17 @@ export default function RunSetupPanel({
     !preparingRun;
 
   return (
-    <aside
+    <SidebarPanel
       data-testid="run-setup-panel"
-      style={{ width }}
-      className="relative flex shrink-0 flex-col border-r border-gray-200/80 bg-white
-                 dark:border-gray-800 dark:bg-gray-900"
+      width={width}
+      defaultWidth={288}
+      min={240}
+      max={440}
+      onResize={onResize}
+      resizeLabel="Resize report setup"
     >
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-6">
-        <header className="mb-6">
-          <h1 className="text-xl font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-50">
-            New report
-          </h1>
-        </header>
-
+      <SidebarHeader title="New run" heading="h1" />
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-6 pt-1">
         <div className="space-y-5">
           {inputMode === "none" ? (
             <p className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs leading-5 text-gray-600 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300">
@@ -198,14 +196,6 @@ export default function RunSetupPanel({
           </button>
         </div>
       </div>
-      <ResizeHandle
-        currentWidth={width}
-        defaultWidth={288}
-        label="Resize report setup"
-        min={240}
-        max={440}
-        onResize={onResize}
-      />
-    </aside>
+    </SidebarPanel>
   );
 }

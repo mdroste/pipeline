@@ -184,7 +184,7 @@ export const workbenchClient = {
   listExecutionProfiles(workspaceId: string) {
     return invoke<ExecutionProfile[]>("workbench_list_execution_profiles", { workspaceId });
   },
-  runExecution(request: { profileId: string; sessionId: string | null; testOnly: boolean; operationId: string }) {
+  runExecution(request: { planId?: string; profileId: string; sessionId: string | null; testOnly: boolean; operationId: string }) {
     return invoke<ResearchExecution>("workbench_run_execution", { request });
   },
   listExecutions(workspaceId: string) {
@@ -277,8 +277,8 @@ export const workbenchClient = {
   storageReport() {
     return invoke<StorageReport>("workbench_storage_report");
   },
-  pruneStorage(categories: string[], apply: boolean) {
-    return invoke<PrunePlan>("workbench_prune_storage", { request: { categories, apply } });
+  pruneStorage(categories: string[], apply: boolean, expectedPreviewToken: string | null = null) {
+    return invoke<PrunePlan>("workbench_prune_storage", { request: { categories, apply, expectedPreviewToken } });
   },
   restoreTrash(trashId: string) {
     return invoke<TrashEntry>("workbench_restore_trash", { trashId });

@@ -1,3 +1,8 @@
+import SourceEditor, { type SourceEditorHandle } from "../file-workspace/SourceEditor";
+import SourceDiff from "../file-workspace/SourceDiff";
+import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
+const PdfComparison = lazy(() => import("../file-workspace/PdfComparison"));
+const PdfReader = lazy(() => import("../file-workspace/PdfReader"));
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   studioClient,
@@ -25,7 +30,6 @@ import {
   type StudioProps,
 } from "./shared";
 import { JobLauncher } from "./Jobs";
-const Reader = lazy(() => import("../WorkspaceDocumentReader"));
 const initialBuild: BuildConfig = {
   name: "Manuscript build",
   checkpointId: null,
@@ -74,7 +78,10 @@ export default function Manuscript({
       : "",
   );
   const [diffMode, setDiffMode] = useState("source");
-  const editor = useRef<HTMLTextAreaElement>(null);
+  const editor = useRef<SourceEditorHandle>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
+  const [beside, setBeside] = useState(false);
+  const [completionTexts, setCompletionTexts] = useState<string[]>([]);
   const [builds, setBuilds] = useState<
     ProjectRecord<BuildRecord | BuildReceipt>[]
   >([]);
@@ -147,9 +154,11 @@ export default function Manuscript({
   const persistDraft = () => {
     const current = draftState.current;
     try {
-      if (current.file && current.draft !== current.file.content)
-        localStorage.setItem(draftKey, JSON.stringify(current));
-      else if (current.file) localStorage.removeItem(draftKey);
+      if (current.file) {
+        const key = `${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`;
+        if (current.draft !== current.file.content) { localStorage.setItem(draftKey, JSON.stringify(current)); localStorage.setItem(key, JSON.stringify(current)); }
+        else { localStorage.removeItem(draftKey); localStorage.removeItem(key); }
+      }
     } catch {
       setNotice(
         "Draft storage is full. Keep this editor open until the file is saved.",
@@ -164,9 +173,13 @@ export default function Manuscript({
     () => () => {
       const current = draftState.current;
       try {
-        if (current.file && current.draft !== current.file.content)
+        if (current.file && current.draft !== current.file.content) {
           localStorage.setItem(draftKey, JSON.stringify(current));
-        else if (current.file) localStorage.removeItem(draftKey);
+          localStorage.setItem(`${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`, JSON.stringify(current));
+        } else if (current.file) {
+          localStorage.removeItem(draftKey);
+          localStorage.removeItem(`${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`);
+        }
       } catch {
         /* Current save state already discloses draft-storage failure. */
       }
@@ -194,7 +207,7 @@ export default function Manuscript({
         path,
         checkpoint || null,
       );
-      const retained = cached.current;
+      const retained = readDraft(`${draftKey}.${checkpoint || "working"}.${path}`) ?? cached.current;
       if (
         retained?.file.path === next.path &&
         retained.file.checkpointId === next.checkpointId
@@ -212,17 +225,22 @@ export default function Manuscript({
         setNotice("Loaded current file bytes");
       }
     });
-  const jumpLine = (line: number) => {
-    const el = editor.current;
-    if (!el) return;
-    const offset = draft
-      .split("\n")
-      .slice(0, line - 1)
-      .reduce((n, s) => n + s.length + 1, 0);
-    el.focus();
-    el.setSelectionRange(offset, offset);
-    el.scrollTop = Math.max(0, (line - 4) * 22);
+  const jumpLine = (line: number) => editor.current?.goToLine(line);
+  const navigateSource = async (target: string, line: number) => {
+    if (file?.path === target) { setSourceLine(line); jumpLine(line); return; }
+    if (dirty && file) localStorage.setItem(`${draftKey}.${file.checkpointId ?? "working"}.${file.path}`, JSON.stringify({file,draft}));
+    const next = await studioClient.editor(workspaceId, target, checkpoint || null);
+    const retained = readDraft(`${draftKey}.${checkpoint || "working"}.${target}`);
+    setPath(target); setFile(retained?.file ?? next); setDraft(retained?.draft ?? next.content); setSourceLine(line);
+    setNotice("Opened source at the build location. The working source may have changed since this build; previous unsaved drafts remain retained by file.");
   };
+  useEffect(() => {
+    let live = true;
+    const candidates = (data.inventory?.body.files ?? []).filter(f=>/\.(bib|tex)$/i.test(f.path)).slice(0, 40);
+    void Promise.all(candidates.map(f=>studioClient.editor(workspaceId,f.path,checkpoint||null).then(v=>v.content).catch(()=>""))).then(texts=>{if(live)setCompletionTexts(texts);});
+    return()=>{live=false;};
+  },[workspaceId,checkpoint,data.inventory]);
+
   return (
     <div className="space-y-5">
       <ErrorNotice error={error} />
@@ -260,6 +278,7 @@ export default function Manuscript({
             </button>
             <button
               className={button}
+              ref={saveButton}
               disabled={!file || !dirty || busy}
               onClick={() =>
                 void run(async () => {
@@ -278,6 +297,7 @@ export default function Manuscript({
                   cached.current = null;
                   try {
                     localStorage.removeItem(draftKey);
+                    if(file)localStorage.removeItem(`${draftKey}.${file.checkpointId ?? "working"}.${file.path}`);
                   } catch {
                     /* Saving still succeeded. */
                   }
@@ -297,6 +317,7 @@ export default function Manuscript({
                 cached.current = null;
                 try {
                   localStorage.removeItem(draftKey);
+                  if(file)localStorage.removeItem(`${draftKey}.${file.checkpointId ?? "working"}.${file.path}`);
                 } catch {
                   /* Current draft is still discarded. */
                 }
@@ -329,14 +350,11 @@ export default function Manuscript({
           </p>
           {file && (
             <>
-              <textarea
-                aria-label="Manuscript source editor"
-                ref={editor}
-                spellCheck={false}
-                className={`${input} h-96 whitespace-pre font-mono text-xs leading-[22px]`}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-              />
+              <div className={beside ? "grid h-[38rem] grid-cols-2 gap-3" : "h-96"}>
+                <SourceEditor ref={editor} label="Manuscript source editor" readOnly={busy} path={`${workspaceId}/${checkpoint || "working"}/${file.path}`} value={draft} onChange={setDraft} line={sourceLine} onSave={()=>saveButton.current?.click()} completionTexts={completionTexts}/>
+                {beside && receipt?.pdf?.revision && <Suspense fallback={<p>Loading build PDF…</p>}><PdfReader documentKey={`${workspaceId}:${receipt.pdf.revision.id}`} title="Exact build PDF" initialPage={pdfPage} load={async()=>{const preview=await workspaceFileAdapter({workspaceId,revisionId:receipt.pdf!.revision!.id}).read("");if(!preview.base64)throw new Error("Build PDF unavailable");return preview.base64;}} onSource={point=>void run(async()=>{const mapped=await studioClient.sync(workspaceId,receipt.executionId,point);setSyncCandidates(mapped.candidates);const first=mapped.candidates.find(c=>c.sourcePath&&c.line);if(first)await navigateSource(first.sourcePath!,first.line!);})}/></Suspense>}
+              </div>
+              {receipt?.pdf?.revision && <button className={button} onClick={()=>setBeside(!beside)}>{beside ? "Close PDF beside source" : "Show build PDF beside source"}</button>}
               <details>
                 <summary className="cursor-pointer text-sm">
                   Review unsaved changes
@@ -359,23 +377,7 @@ export default function Manuscript({
                     labels and citations.
                   </p>
                 )}
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">
-                  {diff.map((l, i) => (
-                    <div
-                      key={i}
-                      className={
-                        l.type === "add"
-                          ? "bg-green-50 text-green-900"
-                          : l.type === "del"
-                            ? "bg-red-50 text-red-900"
-                            : ""
-                      }
-                    >
-                      {l.type === "add" ? "+ " : l.type === "del" ? "− " : "  "}
-                      {l.text}
-                    </div>
-                  ))}
-                </pre>
+                {diffMode === "source" ? <SourceDiff before={file.content} after={draft} path={file.path}/> : <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{diff.map((line,i)=><div key={i}>{line.type === "add" ? "+ " : line.type === "del" ? "− " : "  "}{line.text}</div>)}</pre>}
               </details>
             </>
           )}
@@ -530,7 +532,7 @@ export default function Manuscript({
         </section>
       </div>
       <section className={panel}>
-        <h2 className="font-semibold">Build receipts and PDF comparison</h2>
+        <h2 className="font-semibold">Build history and PDF comparison</h2>
         <div className="flex flex-wrap gap-2">
           {data.executions
             .filter(
@@ -562,7 +564,7 @@ export default function Manuscript({
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <Select
-            label="Build receipt"
+            label="Build"
             value={selectedBuild}
             onChange={setSelectedBuild}
             options={receipts.map((r) => ({
@@ -592,11 +594,7 @@ export default function Manuscript({
                   <button
                     className="text-blue-600 underline"
                     onClick={() => {
-                      setPath(d.path!);
-                      setSourceLine(d.line!);
-                      if (file?.path === d.path) jumpLine(d.line!);
-                      else
-                        setNotice(`Load ${d.path}, then go to line ${d.line}.`);
+                      void run(()=>navigateSource(d.path!,d.line!));
                     }}
                   >
                     {d.path}:{d.line}
@@ -724,7 +722,7 @@ export default function Manuscript({
                 </button>
                 {receipt.inspectedPages?.length ? (
                   <p className="text-xs">
-                    Pages explicitly marked inspected:{" "}
+                    Pages marked as inspected:{" "}
                     {receipt.inspectedPages.join(", ")}
                   </p>
                 ) : null}
@@ -733,39 +731,11 @@ export default function Manuscript({
                     {sync}
                   </pre>
                 )}
-                <div
-                  className={`grid h-[40rem] gap-3 ${comparison?.pdf?.revision ? "grid-cols-2" : "grid-cols-1"}`}
-                >
-                  <Suspense fallback={<p>Loading PDF…</p>}>
-                    {[receipt.pdf.revision, comparison?.pdf?.revision]
-                      .filter((r) => !!r)
-                      .map((r) => (
-                        <Reader
-                          key={`${r!.id}:${pdfPage}`}
-                          workspaceId={workspaceId}
-                          revisionId={r!.id}
-                          annotations={[]}
-                          onSelection={() => {}}
-                          onError={setError}
-                          readonly
-                          initialSelection={{
-                            revisionId: r!.id,
-                            revisionHash: r!.contentHash,
-                            start: null,
-                            end: null,
-                            page: pdfPage,
-                            region: null,
-                            quote: "",
-                          }}
-                        />
-                      ))}
-                  </Suspense>
-                </div>
+                <div className="h-[42rem]"><Suspense fallback={<p>Loading PDF comparison…</p>}><PdfComparison workspaceId={workspaceId} primary={{id:receipt.pdf.revision.id,title:"Selected build"}} secondary={comparison?.pdf?.revision?{id:comparison.pdf.revision.id,title:"Comparison build"}:undefined} page={pdfPage} onSource={point=>void run(async()=>{const mapped=await studioClient.sync(workspaceId,receipt.executionId,point);setSyncCandidates(mapped.candidates);const first=mapped.candidates.find(c=>c.sourcePath&&c.line);if(first)await navigateSource(first.sourcePath!,first.line!);})}/></Suspense></div>
               </>
             ) : (
               <p className="text-sm">
-                This receipt has no successful PDF output. Earlier PDFs are
-                available only through their own receipts.
+                This build did not produce a PDF. Select an earlier successful build to view its PDF.
               </p>
             )}
             <Inspect

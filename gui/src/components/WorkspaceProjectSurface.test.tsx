@@ -14,8 +14,16 @@ beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); mocks.home.mockReso
 afterEach(cleanup);
 const mount = async (conversation = vi.fn()) => { render(<WorkspaceProjectSurface workspaceId="workspace" onConversation={conversation} onWorkspaceChanged={vi.fn()}/>); await screen.findByRole("heading", { name: "Local research" }); };
 
+it("preserves legacy desk preferences without making the project content own assistant sizing", async () => {
+  localStorage.setItem("pipeline.desk.workspace", JSON.stringify({ assistantWidth: 55 }));
+  await mount();
+  expect(screen.queryByLabelText("Assistant pane width")).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("pipeline.desk.workspace")!).assistantWidth).toBe(55);
+});
+
 it("opens signed-out project state without a model call or choosing reference results", async () => {
   const conversation = vi.fn(); await mount(conversation);
+  fireEvent.click(screen.getByText("Project setup", { selector: "summary" }));
   expect(screen.getByLabelText("Reference results run")).toHaveValue("");
   expect(screen.getByLabelText("Current version of the paper")).toHaveValue("");
   expect(screen.getByText("research")).toBeInTheDocument();
@@ -23,24 +31,26 @@ it("opens signed-out project state without a model call or choosing reference re
 });
 it("uses plain-language section names instead of provenance vocabulary", async () => {
   await mount();
-  for (const label of ["Overview", "Documents", "Edits", "Research tools"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+  for (const label of ["Overview", "Library", "Analyses", "Writing", "Action items"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
   expect(screen.queryByText(/accepted research state/i)).toBeNull();
   expect(screen.queryByText(/computational baseline/i)).toBeNull();
   expect(screen.queryByText(/isolated task copy/i)).toBeNull();
 });
 it("records the task and user-specified outputs and checks", async () => {
   await mount();
-  fireEvent.change(screen.getByLabelText("New task"), { target: { value: "Check the envelope condition" } });
+  fireEvent.click(screen.getByRole("button", { name: "Action items" }));
+  fireEvent.change(screen.getByLabelText("New action item"), { target: { value: "Check the envelope condition" } });
   fireEvent.change(screen.getByLabelText("Intended outputs"), { target: { value: "model.tex\nproof.md" } });
   fireEvent.change(screen.getByLabelText("Checks to run"), { target: { value: "Finite difference\nCompile manuscript" } });
-  fireEvent.click(screen.getByRole("button", { name: "Add task" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add action item" }));
   await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("workspace", { action: "createTask", objective: "Check the envelope condition", anchorId: null, expectedOutputs: ["model.tex", "proof.md"], expectedChecks: ["Finite difference", "Compile manuscript"] }));
 });
 it("starts an edit from a task and copies only the explicitly selected files", async () => {
   const data = home(); data.tasks = [openTask]; mocks.home.mockResolvedValue(data);
   await mount();
+  fireEvent.click(screen.getByRole("button", { name: "Action items" }));
   fireEvent.click(screen.getByRole("button", { name: "Start an edit" }));
-  expect(screen.getByLabelText("Task for this edit")).toHaveValue("task");
+  expect(screen.getByLabelText("Action item for this edit")).toHaveValue("task");
   expect(screen.getByRole("button", { name: "Copy 0 files and start" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Select shown files" }));
   fireEvent.click(screen.getByRole("button", { name: "Copy 1 file and start" }));
@@ -50,12 +60,33 @@ it("explains that a folder is needed before an edit can start", async () => {
   mocks.getWorkspace.mockResolvedValue({ id: "workspace", name: "Local research", root: null, revision: 1 });
   await mount();
   expect(screen.getByText("No folder attached")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Edits" }));
+  fireEvent.click(screen.getByRole("button", { name: "Writing" }));
+  fireEvent.change(screen.getByLabelText("Project tool"), { target: { value: "edits" } });
   expect(screen.getByText(/Attach a folder on the Overview tab first/)).toBeInTheDocument();
-  expect(screen.queryByLabelText("Task for this edit")).toBeNull();
+  expect(screen.queryByLabelText("Action item for this edit")).toBeNull();
 });
 it("opens a research conversation only when explicitly requested", async () => {
   const conversation = vi.fn().mockResolvedValue(undefined); await mount(conversation);
   fireEvent.click(screen.getByRole("button", { name: "Continue in a conversation" }));
-  await waitFor(() => expect(conversation).toHaveBeenCalledWith("Continue from the project summary and open tasks."));
+  await waitFor(() => expect(conversation).toHaveBeenCalledWith("Continue from the project summary and open action items."));
+});
+
+
+it("keeps an unsaved project note when changing project destinations", async () => {
+  await mount();
+  expect(screen.getByLabelText("New note")).not.toBeVisible();
+  expect(screen.getByLabelText("Current version of the paper")).not.toBeVisible();
+  fireEvent.click(screen.getByText("Project notes", { selector: "summary", exact: false }));
+  const draft = screen.getByLabelText("New note");
+  fireEvent.change(draft, { target: { value: "Retain the aggregation assumptions" } });
+  fireEvent.click(screen.getByText("Project notes", { selector: "summary", exact: false }));
+  expect(draft).not.toBeVisible();
+  fireEvent.click(screen.getByText("Project notes", { selector: "summary", exact: false }));
+  expect(draft).toHaveValue("Retain the aggregation assumptions");
+  fireEvent.click(screen.getByRole("button", { name: "Action items" }));
+  expect(draft).not.toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+  expect(draft).toBeVisible();
+  expect(draft).toHaveValue("Retain the aggregation assumptions");
+  expect(mocks.mutate).not.toHaveBeenCalled();
 });

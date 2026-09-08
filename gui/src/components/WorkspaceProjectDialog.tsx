@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
+import useModalDialog from "../hooks/useModalDialog";
 import { open } from "@tauri-apps/plugin-dialog";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
@@ -22,12 +23,9 @@ export default function WorkspaceProjectDialog({ onClose, onCreated }: { onClose
   const [error, setError] = useState<string | null>(null);
   const created = useRef<Workspace | null>(null);
   const paperImported = useRef(false);
-  const titleId = "workspace-project-dialog-title";
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useModalDialog<HTMLDivElement>(() => { if (!busy) onClose(); }, true, true);
 
   const chooseFolder = async () => {
     const selected = await open({ directory: true, multiple: false });
@@ -61,10 +59,10 @@ export default function WorkspaceProjectDialog({ onClose, onCreated }: { onClose
     } finally { setBusy(false); }
   };
 
-  return <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onPointerDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+  return <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} aria-busy={busy} className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onPointerDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
     <form className="w-full max-w-md space-y-4 rounded-2xl border border-gray-200 bg-white p-6 shadow-xl dark:border-neutral-700 dark:bg-neutral-900" onSubmit={event => { event.preventDefault(); void create(); }}>
-      <div><h2 id={titleId} className="text-base font-semibold">New project</h2><p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">A project keeps a paper, its folder, your notes, and the conversations about it together.</p></div>
-      <label className="block text-xs">Name<input autoFocus aria-label="Project name" className={`${field} mt-1`} value={name} onChange={event => setName(event.target.value)} placeholder="e.g. Monetary policy and inequality" disabled={busy || Boolean(created.current)}/></label>
+      <div><h2 id={titleId} className="text-base font-semibold">New project</h2><p id={descriptionId} className="mt-1 text-xs text-gray-500 dark:text-neutral-400">A project keeps a paper, its folder, your notes, and the conversations about it together.</p></div>
+      <label className="block text-xs">Name<input data-autofocus aria-label="Project name" className={`${field} mt-1`} value={name} onChange={event => setName(event.target.value)} placeholder="e.g. Monetary policy and inequality" disabled={busy || Boolean(created.current)}/></label>
       <div className="text-xs">
         <span className="block">Folder <span className="text-gray-500">(optional)</span></span>
         <div className="mt-1 flex items-center gap-2">

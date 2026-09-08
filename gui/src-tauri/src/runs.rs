@@ -461,8 +461,7 @@ pub struct PdfArtifactPage {
 }
 
 pub fn runs_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let dir = home.join(".pipeline").join("runs");
+    let dir = crate::storage::data_root()?.join("runs");
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create runs dir: {e}"))?;
     Ok(dir)
 }
@@ -491,13 +490,14 @@ pub fn detect_kind(rel_path: &str, head: &[u8]) -> &'static str {
         .map(|e| e.to_ascii_lowercase())
         .unwrap_or_default();
     match ext.as_str() {
-        "md" | "markdown" => "markdown",
+        "md" | "markdown" | "rmd" | "qmd" => "markdown",
         "json" => "json",
         "csv" | "tsv" => "csv",
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "image",
-        "rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "r" | "do" | "jl" | "c" | "cc" | "cpp"
-        | "h" | "hpp" | "java" | "go" | "rb" | "sh" | "sql" | "tex" | "bib" | "toml" | "yaml"
-        | "yml" | "html" | "css" | "m" | "f90" | "sas" | "stan" => "code",
+        "ado" | "mata" | "sty" | "cls" | "pyi" | "mjs" | "cjs" | "zsh" | "bash" | "ini" | "cfg"
+        | "xml" | "jsonl" | "rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "r" | "do" | "jl" | "c"
+        | "cc" | "cpp" | "h" | "hpp" | "java" | "go" | "rb" | "sh" | "sql" | "tex" | "bib"
+        | "toml" | "yaml" | "yml" | "html" | "css" | "m" | "f90" | "sas" | "stan" => "code",
         "txt" | "log" => "text",
         "pdf" => "pdf",
         "zip" | "gz" | "xlsx" | "docx" | "pptx" | "dta" | "rds" | "parquet" => "binary",
@@ -1169,7 +1169,9 @@ mod history;
 mod persistence;
 mod retention;
 
-pub use artifacts::{read_artifact, read_page_artifact, read_pdf_artifact_page};
+pub use artifacts::{
+    read_artifact, read_page_artifact, read_pdf_artifact_bytes, read_pdf_artifact_page,
+};
 pub(crate) use history::captured_document_rel_path;
 pub use history::{
     delete_run, list_runs, list_trashed_runs, load_latest_report_for_input,

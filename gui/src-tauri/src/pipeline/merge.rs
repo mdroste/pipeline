@@ -1,3 +1,4 @@
+use super::provenance::{call_record, call_records_for_output, fallback_record};
 use crate::models::{StepCallRecord, StepOutput};
 use crate::output::{
     capitalize, normalize_math_delimiters, structured_output_format, text_artifact_output_format,
@@ -28,32 +29,6 @@ fn group_outputs(outputs: Vec<StepOutput>) -> Vec<(String, Vec<StepOutput>)> {
         }
     }
     groups
-}
-
-fn call_records_for_output(output: &StepOutput) -> Vec<StepCallRecord> {
-    if !output.calls.is_empty() {
-        return output.calls.clone();
-    }
-
-    vec![StepCallRecord {
-        role: output.phase.clone(),
-        provider: output.provider.clone(),
-        agent: output.agent.clone(),
-        model: output.model.clone(),
-        model_transport: output.model_transport.clone(),
-        model_policy: output.model_policy.clone(),
-        model_source: output.model_source.clone(),
-        model_catalog_updated_at: output.model_catalog_updated_at.clone(),
-        effort: String::new(),
-        duration_secs: output.duration_secs,
-        input_tokens: output.input_tokens,
-        output_tokens: output.output_tokens,
-        cached_input_tokens: output.cached_input_tokens,
-        cache_write_input_tokens: output.cache_write_input_tokens,
-        model_round_trips: output.model_round_trips,
-        tool_calls: output.tool_calls,
-        attempt_count: output.attempt_count,
-    }]
 }
 
 /// Merge multi-agent step outputs into single per-step outputs.
@@ -339,57 +314,11 @@ pub async fn merge_step_outputs(
                 },
                 Err(_) => None,
             };
-            let merge_call = StepCallRecord {
-                role: if fallback.is_some() {
-                    "usage_limit_primary_merge".to_string()
-                } else {
-                    "merge".to_string()
-                },
-                provider: provider.clone(),
-                agent: provider.clone(),
-                model: resolution.resolved_model.clone(),
-                model_transport: resolution.transport.clone(),
-                model_policy: resolution.selection.label(),
-                model_source: resolution.source.clone(),
-                model_catalog_updated_at: resolution.catalog_updated_at.clone(),
-                effort: if effort.trim().is_empty() {
-                    "default".to_string()
-                } else {
-                    effort.clone()
-                },
-                duration_secs: primary_duration,
-                input_tokens: primary_usage.input_tokens,
-                output_tokens: primary_usage.output_tokens,
-                cached_input_tokens: primary_usage.cached_input_tokens,
-                cache_write_input_tokens: primary_usage.cache_write_input_tokens,
-                model_round_trips: primary_usage.model_round_trips,
-                tool_calls: primary_usage.tool_calls,
-                attempt_count: u32::try_from(primary_usage.provider_attempts).unwrap_or(u32::MAX),
-            };
-            let fallback_merge_call = fallback.map(|fallback| StepCallRecord {
-                role: "usage_limit_fallback_merge".to_string(),
-                provider: fallback.provider.clone(),
-                agent: fallback.provider.clone(),
-                model: fallback.resolution.resolved_model.clone(),
-                model_transport: fallback.resolution.transport.clone(),
-                model_policy: fallback.resolution.selection.label(),
-                model_source: fallback.resolution.source.clone(),
-                model_catalog_updated_at: fallback.resolution.catalog_updated_at.clone(),
-                effort: if fallback.effort.trim().is_empty() {
-                    "default".to_string()
-                } else {
-                    fallback.effort.clone()
-                },
-                duration_secs: fallback.fallback_duration_secs,
-                input_tokens: fallback.fallback_usage.input_tokens,
-                output_tokens: fallback.fallback_usage.output_tokens,
-                cached_input_tokens: fallback.fallback_usage.cached_input_tokens,
-                cache_write_input_tokens: fallback.fallback_usage.cache_write_input_tokens,
-                model_round_trips: fallback.fallback_usage.model_round_trips,
-                tool_calls: fallback.fallback_usage.tool_calls,
-                attempt_count: u32::try_from(fallback.fallback_usage.provider_attempts)
-                    .unwrap_or(u32::MAX),
-            });
+            let merge_call = call_record(
+                if fallback.is_some() { "usage_limit_primary_merge" } else { "merge" },
+                &provider, &provider, &resolution, &effort, primary_duration, primary_usage,
+            );
+            let fallback_merge_call = fallback.map(|fallback| fallback_record("usage_limit_fallback_merge", fallback));
             if let Some(error) = cancellation_error() {
                 if let Some(capture) = response_capture.take() {
                     if let Err(journal_error) = capture

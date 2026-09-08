@@ -180,7 +180,7 @@ function RequestDetails({
               <span className="text-gray-500 dark:text-gray-400">
                 System, shared context, and task prompt are shown separately in dispatch order.
                 {hasTruncatedPreview &&
-                  " Long fields show bounded previews; Copy prompt copies only the visible preview."}
+                  " Long fields are shortened; Copy prompt copies only the visible text."}
               </span>
               <button
                 onClick={() => void copyText(requestText(request))}

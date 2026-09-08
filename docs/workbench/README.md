@@ -2,8 +2,9 @@
 
 Pipeline is an agent orchestration suite for doing and reviewing academic
 research. Workspace is its persistent, interactive orchestration mode;
-`workbench` is Workspace's compatibility implementation namespace. Workflows
-are the suite's deterministic orchestration mode.
+`workbench` is Workspace's compatibility implementation namespace. Reviews
+(formerly Workflows) is the suite's deterministic orchestration mode. A workflow
+remains a saved dependency graph; code and storage names are unchanged.
 
 | Term | Meaning |
 |---|---|
@@ -20,6 +21,11 @@ short implementation map.
 
 ## Product boundary
 
+The research directory defaults to `~/.pipeline/workbench/` and follows
+Settings → General → Research data folder after restart. Native credentials and
+session files stay in local `~/.pipeline/workbench/codex/`. See
+[storage selection](../storage.md) for scope and transfer limitations.
+
 Workspace works without a Pipeline project, Workflow run, profile, provider
 selection, or paper. It owns its SQLite store, blobs, Codex home, native
 process tree, cancellation, conversations, and research records under
@@ -33,13 +39,67 @@ finding bridge previews selected canonical findings and retains Workspace
 decisions separately from the Workflow issue ledger; neither side imports the
 other's mutable runtime state.
 
+## Workspace layout
+
+Workspace opens with a project working area and companion chat below one
+compact bar. The project-name button opens navigation as a bounded drawer;
+Keep navigation open pins it when space permits. Navigation is closed by
+default. The current-tool button opens a searchable picker, also available
+with Command/Ctrl K. It exposes every named tool, with the project's ordered
+pins first. Navigation groups tools into Overview, Library, Analyses, Writing,
+Notes & evidence, and Action items; Customize supports up to four shortcuts.
+The Chat toggle hides/reopens chat, and the layout menu provides focus and
+reset controls. Reset layout and shortcuts also restores pins and sidebar width.
+
+Model, Thinking and the Assistant settings gear are below the message.
+Settings opens preset, access, instructions, modules and recipes inside the
+assistant pane. The conversation menu opens Outline, Context and Activity &
+follow-ups in the same slot. Selected sources appear as a collapsed disclosure;
+an empty source list occupies no space. Project setup and project notes also
+start collapsed; Overview shows a brief and up to three open action items.
+The full assistant editor
+uses the project area and adapts to a single section picker at narrow widths.
+Whole-store backups, retention and diagnostics are under Settings → General →
+Research data; selective exchange and Send for review remain project tools.
+
+Pinned navigation collapses when the remaining working area cannot fit both
+panes. Below 848 pixels of working space, Project and Chat switch views while
+retaining mounted drafts. Widening restores a preferred split. View, assistant
+width, navigation pinning, project destination, last conversation and pins are local preferences;
+they do not change project permissions. Research tools mount on first visit
+and retain unsaved edits when switching destinations; polling stops for hidden
+job, grid, check and execution views. These drafts remain scoped to the current
+project/conversation and do not substitute for saving before leaving it.
+
+See [the redesign plan and qualification record](workspace-ui-plan.md).
+
+## Research desk
+
+[NF-07–NF-14 implementation and usage](research-programs.md) covers specification grids, publication assets, theory checks, revision campaigns, explicit follow-ups, coauthor/replication materials, starter kits and app-open checks. It states the native branching/concurrency and persistent-service qualification boundaries.
+
+[NF-01–NF-06 implementation and usage](research-desk.md) covers the persistent
+object/assistant desk, exact-reference search and collections, decisions and
+impact, literature acquisition, dataset/sample catalog, and captured execution.
+The guide records service limits, sharing policy, archive recovery and observed
+qualification. Migration 11 adds these records without replacing existing
+research services or Workflow ownership.
+
 ## Implementation map
+
+[File workspace](../file-workspace.md) covers the shared source editor, Markdown
+links and previews, PDF navigation, source/PDF comparisons, scope boundaries,
+and verification status.
 
 ### Frontend
 
-- `gui/src/components/WorkspacePage.tsx` owns the normal-chat route,
-  workspace/session navigation, bounded transcript window, streaming, pending
-  App Server requests, and draft composer.
+- `gui/src/components/WorkspacePage.tsx` owns project/session navigation,
+  the companion assistant, bounded transcript window, streaming, pending
+  App Server requests and serialized composer saves. `WorkspaceDesk.tsx`
+  owns the actual project/chat sizing; `WorkspaceProjectNavigation.tsx` and
+  `lib/workspaceNavigation.ts` own named destinations and local pins.
+  `WorkspaceToolPicker.tsx` provides searchable keyboard navigation and
+  `WorkspaceMenu.tsx` provides viewport-bounded action popovers.
+  `WorkspaceComposerControls.tsx` renders catalog-backed model/effort choices.
 - `WorkspaceComposerMenu.tsx` exposes project navigation, dictation guidance,
   and the lazy `WorkspaceAttachmentsPanel.tsx` document importer/selector.
   `WorkspaceMessageActions.tsx` handles Markdown copy; the paged
@@ -47,8 +107,10 @@ other's mutable runtime state.
   page to mount and focus the target transcript window.
 - `WorkspaceConnectionSettings.tsx` owns isolated ChatGPT authentication,
   visible models/reasoning effort, and quota display.
-- `WorkspaceResearchPanel.tsx` owns the lazy, tab-scoped research inspector;
-  its Setup tab is a read-only harness summary that opens the editor.
+- `WorkspaceResearchPanel.tsx` supplies the embedded assistant settings and
+  the project tools for sources, notes, evidence, results, execution, review
+  and exchange. `WorkspaceAssistantPresetForm.tsx` saves quick instruction and
+  module edits as an explicit new preset copy for the current conversation.
   `WorkspaceRecipesPanel.tsx` and `WorkspaceReleasePanel.tsx` isolate recipe and
   release/archive concerns.
 - `WorkspaceHarnessEditor.tsx` is the lazy two-pane harness editor (preset
@@ -59,8 +121,9 @@ other's mutable runtime state.
 - `WorkspaceResearchStudio.tsx` lazy-loads project Manuscript, Responses,
   Experiments, Result links, Literature and Theory panels, with a shared
   local-job drawer. See [research-studio.md](research-studio.md) and `studioClient.ts`.
-- `WorkspaceExchangePanel.tsx` (inside the Release tab) owns selective `.pwex`
-  project exchange, import conflicts, storage retention, and Workflow drafts.
+- `WorkspaceExchangePanel.tsx` owns selective `.pwex` project exchange,
+  import conflicts and Workflow drafts. `WorkspaceResearchDataSettings.tsx`
+  and `WorkspaceStorageRetention.tsx` expose whole-store operations in Settings.
   See [project-exchange.md](project-exchange.md).
 - `gui/src/lib/workbenchClient.ts`, `workbenchTypes.ts`, and
   `workbenchError.ts` are the typed Tauri boundary. Raw Codex protocol payloads
@@ -71,7 +134,7 @@ other's mutable runtime state.
 - `gui/src-tauri/src/workbench/commands.rs` is the Tauri facade and owns bounded
   blocking database workers, the shared archive database gate, global turn
   serialization, active-turn identity, and the epoch-scoped event bridge.
-- `store.rs` owns the schema-10 SQLite store, migrations, optimistic revisions,
+- `store.rs` owns the versioned SQLite store, migrations, optimistic revisions,
   operation IDs, conversations, native bindings, turns/items, and root
   reconciliation. `store/tests.rs` contains persistence and migration tests.
 - `codex/` owns Workspace configuration, App Server supervision, native thread
@@ -90,7 +153,9 @@ other's mutable runtime state.
   editor/build, response, experiment/binding and literature services.
 - `release.rs` owns recipes, evaluation/performance records, and Review
   handoffs. `release/archive.rs` owns bounded `.pwrx` inspection, export, and
-  whole-store restore.
+  whole-store restore. Older supported archive databases are validated and migrated
+  using the store migration runner on an isolated extracted copy before restore;
+  archive migration failure leaves the destination unchanged.
 - `migrations/` is append-only. Never edit an applied migration; add the next
   numbered migration and preserve backup, transaction, integrity, and
   newer-schema rejection behavior.
@@ -135,6 +200,14 @@ and method so a stale connection cannot authorize a new one.
   `oldstata` wrapper; direct Stata binaries are rejected.
 
 ## Performance and UI rules
+
+Use `SidebarPanel` and `SidebarHeader` for Workspace sidebars, matching the
+New Report surface and the workflow editor's shared panel shell. Keep title
+spacing, neutral surfaces, and scroll regions consistent; scroll content inside
+the shell so its divider remains reachable. Persist each panel's width with
+`usePersistentPanelWidth`. Right-side inspectors put `ResizeHandle` on their
+left edge; drag and arrow keys move that edge in the expected direction,
+Shift uses a larger step, Home/End reach the bounds, and double-click resets.
 
 Normal conversation must not initialize document, evidence, computation, or
 Workflow services. `WorkspacePage` and its research inspector are separate lazy

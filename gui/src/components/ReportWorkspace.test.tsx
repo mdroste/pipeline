@@ -73,7 +73,7 @@ describe("ReportWorkspace", () => {
     );
     expect(screen.getByRole("tab", { name: "Report" })).toHaveAttribute(
       "aria-controls",
-      "report-workspace-panel-report",
+      expect.stringMatching(/-panel-report$/),
     );
     expect(screen.getByRole("tab", { name: "Report" })).toHaveAttribute(
       "tabindex",
@@ -85,7 +85,7 @@ describe("ReportWorkspace", () => {
     );
     expect(await screen.findByRole("tabpanel", { name: "Report" }, lazyPanelWait)).toHaveAttribute(
       "aria-labelledby",
-      "report-workspace-tab-report",
+      expect.stringMatching(/-tab-report$/),
     );
     expect(screen.getByText("Monetary Policy and Networks")).toBeVisible();
     expect(screen.getByRole("tab", { name: "Provenance" })).toHaveAttribute(
@@ -215,7 +215,7 @@ describe("ReportWorkspace", () => {
     render(<ReportWorkspace markdown={"  \n\t"} report={makeReport()} />);
 
     expect(await screen.findByText("No final report was produced.")).toBeVisible();
-    expect(screen.getByText(/canonical report artifact is empty/i)).toBeVisible();
+    expect(screen.getByText(/report is empty/i)).toBeVisible();
   });
 
   it("keeps technical material behind the Sources tab", async () => {
@@ -262,7 +262,7 @@ describe("ReportWorkspace", () => {
     expect(reportTab).toHaveAttribute("tabindex", "-1");
     expect(await screen.findByRole("tabpanel", { name: "Sources" }, lazyPanelWait)).toHaveAttribute(
       "id",
-      "report-workspace-panel-sources",
+      expect.stringMatching(/-panel-sources$/),
     );
 
     await user.keyboard("{ArrowLeft}");
@@ -295,10 +295,10 @@ describe("ReportWorkspace", () => {
     const provenanceTab = screen.getByRole("tab", { name: "Provenance" });
     const issuesTab = screen.getByRole("tab", { name: /Issues/ });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
-    expect(issuesTab).toHaveAttribute("id", "report-workspace-tab-issues");
+    expect(issuesTab).toHaveAttribute("id", expect.stringMatching(/-tab-issues$/));
     expect(issuesTab).toHaveAttribute(
       "aria-controls",
-      "report-workspace-panel-issues",
+      expect.stringMatching(/-panel-issues$/),
     );
 
     reportTab.focus();
@@ -311,7 +311,7 @@ describe("ReportWorkspace", () => {
     expect(issuesTab).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("tabpanel", { name: /Issues/ }, lazyPanelWait)).toHaveAttribute(
       "aria-labelledby",
-      "report-workspace-tab-issues",
+      expect.stringMatching(/-tab-issues$/),
     );
 
     await user.keyboard("{ArrowRight}");

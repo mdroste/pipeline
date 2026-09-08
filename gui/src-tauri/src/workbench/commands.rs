@@ -135,19 +135,19 @@ impl From<super::codex::RequestError> for RuntimeCommandError {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendTurnRequest {
-    session_id: String,
-    text: String,
-    client_submission_id: String,
-    model: Option<String>,
-    effort: Option<String>,
+    pub(crate) session_id: String,
+    pub(crate) text: String,
+    pub(crate) client_submission_id: String,
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendTurnResult {
-    thread_id: String,
-    turn_id: String,
-    draft_cleared: bool,
+    pub(crate) thread_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) draft_cleared: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -206,6 +206,33 @@ where
 {
     let _gate = DATABASE_GATE.write().await;
     run_store_ungated(operation).await
+}
+
+fn storage_turn_permit(queue: Arc<Semaphore>) -> WorkbenchResult<OwnedSemaphorePermit> {
+    queue.try_acquire_owned().map_err(|_| {
+        WorkbenchError::conflict(
+            "Stop or finish the Workspace turn before changing private storage",
+        )
+    })
+}
+
+async fn run_storage_maintenance<T, F>(operation: F) -> WorkbenchResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
+{
+    // The native permit also covers setup before a turn has a persisted identity.
+    // The exclusive database gate prevents local jobs/captures starting mid-move.
+    let _turn = storage_turn_permit(turn_queue().clone())?;
+    run_store_exclusive(move |store| {
+        if super::research::jobs::has_active() {
+            return Err(WorkbenchError::conflict(
+                "Stop or finish local jobs before changing private storage",
+            ));
+        }
+        operation(store)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -446,8 +473,16 @@ fn spawn_title_generation(
     app: tauri::AppHandle,
     supervisor: Arc<super::codex::AppServerSupervisor>,
     thread_id: String,
+    turn_id: String,
 ) {
     tokio::spawn(async move {
+        let task_thread = thread_id.clone();
+        if run_store(move |s| super::tasks::is_task_turn(&s, &task_thread, &turn_id))
+            .await
+            .unwrap_or(true)
+        {
+            return;
+        }
         let namespace = supervisor.runtime_namespace();
         let lookup_thread = thread_id.clone();
         let session = run_store(move |store| store.session_for_thread(&namespace, &lookup_thread))
@@ -872,23 +907,27 @@ pub async fn workbench_resolve_exchange_conflict(
 }
 #[tauri::command]
 pub async fn workbench_storage_report() -> WorkbenchResult<super::release::StorageReport> {
-    run_store(move |store| super::release::storage_report(&store)).await
+    run_store_exclusive(move |store| super::release::storage_report(&store)).await
 }
 #[tauri::command]
 pub async fn workbench_prune_storage(
     request: super::release::PruneRequest,
 ) -> WorkbenchResult<super::release::PrunePlan> {
-    run_store(move |store| super::release::prune_storage(&store, request)).await
+    if request.apply {
+        run_storage_maintenance(move |store| super::release::prune_storage(&store, request)).await
+    } else {
+        run_store(move |store| super::release::prune_storage(&store, request)).await
+    }
 }
 #[tauri::command]
 pub async fn workbench_restore_trash(
     trash_id: String,
 ) -> WorkbenchResult<super::release::TrashEntry> {
-    run_store(move |store| super::release::restore_trash(&store, &trash_id)).await
+    run_storage_maintenance(move |store| super::release::restore_trash(&store, &trash_id)).await
 }
 #[tauri::command]
 pub async fn workbench_empty_trash() -> WorkbenchResult<usize> {
-    run_store(move |store| super::release::empty_trash(&store)).await
+    run_storage_maintenance(move |store| super::release::empty_trash(&store)).await
 }
 #[tauri::command]
 pub async fn workbench_draft_workflow(
@@ -1075,16 +1114,44 @@ pub async fn workbench_codex_send_turn(
     app: tauri::AppHandle,
     request: SendTurnRequest,
 ) -> Result<SendTurnResult, RuntimeCommandError> {
-    let permit = turn_queue()
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| RuntimeCommandError {
-            code: "turn_queue_closed".to_string(),
-            message: "The Workspace turn queue is unavailable".to_string(),
-            retryable: true,
-            recovery: None,
-        })?;
+    submit_turn(app, request, None).await
+}
+
+pub(crate) fn task_turn_available() -> bool {
+    turn_queue().available_permits() > 0
+}
+
+pub(crate) async fn submit_turn(
+    app: tauri::AppHandle,
+    request: SendTurnRequest,
+    task_binding: Option<super::tasks::TaskBinding>,
+) -> Result<SendTurnResult, RuntimeCommandError> {
+    let automated = task_binding.is_some();
+    let permit = if automated {
+        turn_queue()
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| RuntimeCommandError {
+                code: "task_busy".into(),
+                message: "task_busy: Workspace is running another turn".into(),
+                retryable: true,
+                recovery: None,
+            })?
+    } else {
+        turn_queue()
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| RuntimeCommandError {
+                code: "turn_queue_closed".into(),
+                message: "The Workspace turn queue is unavailable".into(),
+                retryable: true,
+                recovery: None,
+            })?
+    };
+    if let Some(binding) = task_binding {
+        run_store(move |store| super::tasks::validate_binding(&store, &binding)).await?;
+    }
     {
         let mut state = active_turn_state()
             .lock()
@@ -1099,6 +1166,7 @@ pub async fn workbench_codex_send_turn(
     }
 
     let result: Result<SendTurnResult, RuntimeCommandError> = async {
+        if !automated {
         let draft_operation = format!("send-draft-{}", request.client_submission_id);
         let session_id = request.session_id.clone();
         let text = request.text.clone();
@@ -1131,6 +1199,8 @@ pub async fn workbench_codex_send_turn(
             ))
         })
         .await?;
+
+        }
 
         let session_id = request.session_id.clone();
         let (binding, runtime_root, prepared) = run_store(move |store| {
@@ -1226,9 +1296,10 @@ pub async fn workbench_codex_send_turn(
         })
         .await?;
 
+        let draft_cleared = if automated { false } else {
         let clear_operation = format!("send-ack-{}", request.client_submission_id);
         let session_id = request.session_id;
-        let draft_cleared = run_store(move |store| {
+        run_store(move |store| {
             let snapshot = store.session_snapshot(&session_id)?;
             store.update_session(UpdateSessionRequest {
                 session_id,
@@ -1245,7 +1316,8 @@ pub async fn workbench_codex_send_turn(
             Ok::<_, WorkbenchError>(())
         })
         .await
-        .is_ok();
+        .is_ok()
+        };
         Ok(SendTurnResult {
             thread_id: connection.thread_id,
             turn_id,
@@ -1529,6 +1601,7 @@ fn ensure_event_bridge(app: tauri::AppHandle, supervisor: Arc<super::codex::AppS
                                     app.clone(),
                                     supervisor.clone(),
                                     thread_id.clone(),
+                                    turn_id.clone(),
                                 );
                             }
                         }
@@ -1649,72 +1722,7 @@ fn open_auth_url(app: &tauri::AppHandle, url: &str) -> Result<(), tauri_plugin_s
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn database_worker_pool_is_deliberately_bounded() {
-        assert_eq!(DATABASE_WORKER_LIMIT, 4);
-        assert_eq!(DATABASE_WORKERS.available_permits(), 4);
-    }
-
-    #[test]
-    fn authentication_urls_must_be_bounded_https_urls() {
-        assert!(is_safe_auth_url("https://auth.openai.com/authorize?x=1"));
-        assert!(!is_safe_auth_url("http://auth.openai.com/authorize"));
-        assert!(!is_safe_auth_url("file:///tmp/credential"));
-        assert!(!is_safe_auth_url("https://"));
-        assert!(!is_safe_auth_url("https://user@auth.openai.com/login"));
-        assert!(!is_safe_auth_url("https://auth.openai.com/\nheader"));
-    }
-
-    #[test]
-    fn interactive_server_responses_are_method_scoped() {
-        assert!(validate_server_response(
-            "item/commandExecution/requestApproval",
-            &json!({"decision":"accept"}),
-        )
-        .is_ok());
-        assert!(validate_server_response(
-            "item/tool/requestUserInput",
-            &json!({"answers":{"choice":{"answers":["A"]}}}),
-        )
-        .is_ok());
-        assert!(validate_server_response(
-            "item/fileChange/requestApproval",
-            &json!({"answers":{}}),
-        )
-        .is_err());
-        assert!(validate_server_response("future/request", &json!({})).is_err());
-
-        let pending = super::super::codex::NormalizedEvent::ServerRequest {
-            epoch: 7,
-            request_id: json!("approval-1"),
-            method: "item/fileChange/requestApproval".to_string(),
-            params: json!({"threadId":"thread-1","turnId":"turn-1"}),
-        };
-        assert!(validate_pending_request(&pending, 7, "item/fileChange/requestApproval").is_ok());
-        assert!(
-            validate_pending_request(&pending, 7, "item/commandExecution/requestApproval").is_err()
-        );
-        assert!(validate_pending_request(&pending, 8, "item/fileChange/requestApproval").is_err());
-    }
-
-    #[test]
-    fn transcript_export_text_accepts_string_and_content_parts() {
-        assert_eq!(
-            transcript_text(&json!({"text":"hello"})).as_deref(),
-            Some("hello")
-        );
-        assert_eq!(
-            transcript_text(
-                &json!({"content":[{"type":"text","text":"one"},{"type":"text","text":"two"}]})
-            )
-            .as_deref(),
-            Some("one\ntwo")
-        );
-    }
-}
+mod tests;
 
 #[tauri::command]
 pub async fn workbench_project_home(
@@ -1765,6 +1773,12 @@ pub async fn workbench_anchor_mapping(
         super::project::map_anchor(&store, &workspace_id, &anchor_id, &revision_id)
     })
     .await
+}
+#[tauri::command]
+pub async fn workbench_file_read(
+    request: super::project::FileReadRequest,
+) -> WorkbenchResult<super::project::FilePreview> {
+    run_store(move |store| super::project::read_workspace_file(&store, request)).await
 }
 #[tauri::command]
 pub async fn workbench_snapshot_preview(
@@ -2051,6 +2065,331 @@ pub async fn workbench_studio_export_file(path: String, content: String) -> Work
         std::fs::File::open(path)
             .and_then(|f| f.sync_all())
             .map_err(|e| WorkbenchError::storage("Failed to sync research export", e))
+    })
+    .await
+}
+
+// Research desk commands keep all app-owned storage work on the bounded gate.
+#[tauri::command]
+pub async fn workbench_desk_records(
+    workspace_id: String,
+    kind: String,
+) -> WorkbenchResult<Vec<super::desk::DeskRecord>> {
+    run_store(move |s| super::desk::records(&s, &workspace_id, &kind)).await
+}
+#[tauri::command]
+pub async fn workbench_research_object(
+    workspace_id: String,
+    object: super::desk::ResearchObjectRef,
+) -> WorkbenchResult<super::search::ResearchObject> {
+    run_store(move |s| super::search::read_object(&s, &workspace_id, &object, 64 * 1024)).await
+}
+#[tauri::command]
+pub async fn workbench_context_selection(
+    session_id: String,
+) -> WorkbenchResult<super::desk::ContextSelection> {
+    run_store(move |s| super::desk::context(&s, &session_id)).await
+}
+#[tauri::command]
+pub async fn workbench_save_context_selection(
+    session_id: String,
+    expected_revision: i64,
+    items: Vec<super::desk::ContextItem>,
+) -> WorkbenchResult<super::desk::ContextSelection> {
+    ensure_session_idle(session_id.clone()).await?;
+    run_store(move |s| super::desk::save_context(&s, &session_id, expected_revision, items)).await
+}
+#[tauri::command]
+pub async fn workbench_reading_collection(
+    request: super::desk::SaveCollection,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| super::desk::save_collection(&s, request)).await
+}
+#[tauri::command]
+pub async fn workbench_research_search(
+    request: super::search::SearchRequest,
+) -> WorkbenchResult<super::search::SearchPage> {
+    run_store(move |s| super::search::search(&s, request)).await
+}
+#[tauri::command]
+pub async fn workbench_research_index(
+    workspace_id: String,
+    rebuild: bool,
+) -> WorkbenchResult<super::search::IndexStatus> {
+    run_store(move |s| {
+        if rebuild {
+            super::search::rebuild(&s, &workspace_id)?;
+        }
+        super::search::advance(&s, &workspace_id)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_save_relation(
+    workspace_id: String,
+    relation: super::project::relations::Relation,
+    operation_id: String,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| {
+        super::project::relations::save_relation(&s, &workspace_id, relation, &operation_id)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_save_decision(
+    workspace_id: String,
+    title: String,
+    decision: super::project::relations::Decision,
+    supersedes: Option<String>,
+    operation_id: String,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| {
+        super::project::relations::save_decision(
+            &s,
+            &workspace_id,
+            &title,
+            decision,
+            supersedes.as_deref(),
+            &operation_id,
+        )
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_change_impact(
+    workspace_id: String,
+) -> WorkbenchResult<super::project::relations::ImpactReport> {
+    run_store(move |s| super::project::relations::impact(&s, &workspace_id)).await
+}
+#[tauri::command]
+pub async fn workbench_session_handoff(
+    session_id: String,
+    operation_id: String,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| super::project::relations::handoff(&s, &session_id, &operation_id)).await
+}
+#[tauri::command]
+pub async fn workbench_data_policy(
+    workspace_id: String,
+    policy: Option<super::data::DataPolicy>,
+) -> WorkbenchResult<super::data::DataPolicy> {
+    run_store(move |s| match policy {
+        Some(p) => super::data::save_policy(&s, &workspace_id, p),
+        None => super::data::policy(&s, &workspace_id),
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_import_dataset(
+    request: super::data::ImportDataset,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| super::data::import(&s, request)).await
+}
+#[tauri::command]
+pub async fn workbench_save_sample(
+    workspace_id: String,
+    title: String,
+    sample: super::data::SampleDefinition,
+    supersedes: Option<String>,
+    operation_id: String,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| {
+        super::data::save_sample(
+            &s,
+            &workspace_id,
+            &title,
+            sample,
+            supersedes.as_deref(),
+            &operation_id,
+        )
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_acquisition_network(
+    workspace_id: String,
+    enabled: Option<bool>,
+) -> WorkbenchResult<bool> {
+    run_store(move |s| match enabled {
+        Some(e) => super::acquisition::set_network(&s, &workspace_id, e),
+        None => super::acquisition::network_enabled(&s, &workspace_id),
+    })
+    .await
+}
+async fn acquisition_allowed(ws: String) -> WorkbenchResult<()> {
+    if !run_store(move |s| super::acquisition::network_enabled(&s, &ws)).await? {
+        return Err(WorkbenchError::invalid(
+            "Enable literature and data acquisition for this Workspace first",
+        ));
+    }
+    Ok(())
+}
+#[tauri::command]
+pub async fn workbench_crossref_lookup(
+    workspace_id: String,
+    query: String,
+    operation_id: String,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    acquisition_allowed(workspace_id.clone()).await?;
+    let result = super::acquisition::crossref(&query).await;
+    run_store(move |s| {
+        super::acquisition::record_lookup(&s, &workspace_id, &query, result, &operation_id)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_acquire_candidate(
+    workspace_id: String,
+    receipt_id: String,
+    index: usize,
+    citation_key: Option<String>,
+    operation_id: String,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| {
+        super::acquisition::import_candidate(
+            &s,
+            &workspace_id,
+            &receipt_id,
+            index,
+            citation_key,
+            &operation_id,
+        )
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_acquire_pdf(
+    workspace_id: String,
+    title: String,
+    url: String,
+    operation_id: String,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    acquisition_allowed(workspace_id.clone()).await?;
+    let result = super::acquisition::download_pdf(&url).await;
+    run_store(move |s| {
+        super::acquisition::record_pdf(&s, &workspace_id, &title, &url, result, &operation_id)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_acquire_fred(
+    request: super::acquisition::FredRequest,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    acquisition_allowed(request.workspace_id.clone()).await?;
+    let result = super::acquisition::fred(&request).await;
+    let ws = request.workspace_id;
+    let series = request.series_id;
+    let vintage = request.vintage;
+    let operation = request.operation_id;
+    run_store(move|s|match result{Ok((bytes,provenance))=>super::data::import_bytes(&s,&ws,&format!("{series} · {vintage}"),&bytes,"csv",provenance,None,&operation),Err(e)=>super::desk::insert(&s,&ws,"acquisition",&series,json!({"provider":"FRED/ALFRED","seriesId":series,"requestedVintage":vintage,"retrievedAt":super::desk::now(),"state":"failed","error":e.message}),None,&operation)}).await
+}
+
+pub(crate) fn task_pending_request(thread: &str, turn: &str) -> Option<String> {
+    pending_server_requests()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .find_map(|event| {
+            if let super::codex::NormalizedEvent::ServerRequest { method, params, .. } = event {
+                if params.get("threadId").and_then(Value::as_str) == Some(thread)
+                    && params.get("turnId").and_then(Value::as_str) == Some(turn)
+                    && method != "item/tool/call"
+                {
+                    return Some(
+                        params
+                            .get("reason")
+                            .or_else(|| params.get("questions"))
+                            .map(Value::to_string)
+                            .unwrap_or_else(|| method.clone()),
+                    );
+                }
+            }
+            None
+        })
+}
+#[tauri::command]
+pub async fn workbench_capture_execution_plan(
+    request: super::research::execution_plan::CapturePlanRequest,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| super::research::execution_plan::capture(&s, request)).await
+}
+#[tauri::command]
+pub async fn workbench_execution_plan_status(
+    workspace_id: String,
+    plan_id: String,
+) -> WorkbenchResult<super::research::execution_plan::PlanStatus> {
+    run_store(move |s| super::research::execution_plan::status(&s, &workspace_id, &plan_id)).await
+}
+#[tauri::command]
+pub async fn workbench_authorize_execution_plan(
+    workspace_id: String,
+    plan_id: String,
+    fingerprint: String,
+) -> WorkbenchResult<super::research::execution_plan::PlanStatus> {
+    run_store(move |s| {
+        super::research::execution_plan::authorize(&s, &workspace_id, &plan_id, &fingerprint)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_import_dataset_metadata(
+    request: super::data::MetadataDataset,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| super::data::import_metadata(&s, request)).await
+}
+#[tauri::command]
+pub async fn workbench_dataset_rows(
+    workspace_id: String,
+    dataset_id: String,
+    start: usize,
+) -> WorkbenchResult<super::data::RowPreview> {
+    run_store(move |s| super::data::preview_rows(&s, &workspace_id, &dataset_id, start, false))
+        .await
+}
+#[tauri::command]
+pub async fn workbench_reading_inbox_state(
+    workspace_id: String,
+    receipt_id: String,
+    state: String,
+    operation_id: String,
+) -> WorkbenchResult<super::desk::DeskRecord> {
+    run_store(move |s| {
+        super::acquisition::inbox_state(&s, &workspace_id, &receipt_id, &state, &operation_id)
+    })
+    .await
+}
+
+pub(crate) async fn deliver_task(
+    binding: super::tasks::TaskBinding,
+    operation: String,
+    value: Value,
+) -> Result<Value, String> {
+    let _permit = turn_queue()
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "task_busy: Workspace is running another turn".to_string())?;
+    run_store(move |store| {
+        super::tasks::validate_binding(&store, &binding)?;
+        let mut result = super::tasks::deliver(&store, &binding.session_id, &operation, value)?;
+        let next = super::tasks::binding(&store, &binding.session_id)?;
+        result["harnessFingerprint"] = serde_json::json!(next.harness_fingerprint);
+        result["cursor"] = serde_json::json!(next.cursor);
+        Ok(result)
+    })
+    .await
+    .map_err(|e| e.message)
+}
+
+#[tauri::command]
+pub async fn workbench_file_reveal(
+    request: super::project::FileReadRequest,
+) -> WorkbenchResult<()> {
+    run_store(move |store| {
+        let file = super::project::read_workspace_file(&store, request)?;
+        let path = file.external_path.ok_or_else(|| {
+            WorkbenchError::invalid("Captured documents have no writable external file")
+        })?;
+        crate::file_viewer::reveal(std::path::Path::new(&path)).map_err(WorkbenchError::invalid)
     })
     .await
 }

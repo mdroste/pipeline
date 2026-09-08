@@ -573,13 +573,13 @@ export interface ExchangeImportReport {
   conflicts: number; blobs: number; limitations: string[];
 }
 export interface ExchangeConflict {
-  id: string; importId: string; objectKind: string; objectId: string; local: unknown; imported: unknown;
+  id: string; importId: string; objectKind: string; objectId: string; local: unknown; base?: unknown; imported: unknown;
   state: string; recordedAt: string;
 }
 export interface StorageCategory { key: string; label: string; bytes: number; entries: number; disposable: boolean; note: string }
 export interface TrashEntry { id: string; category: string; originalPath: string; sizeBytes: number; reason: string; movedAt: string; state: string }
 export interface StorageReport { root: string; categories: StorageCategory[]; trash: TrashEntry[]; activeJobs: number; note: string }
-export interface PrunePlan { entries: Array<{ category: string; path: string; bytes: number }>; bytes: number; applied: boolean; trashIds: string[] }
+export interface PrunePlan { entries: Array<{ category: string; path: string; bytes: number }>; bytes: number; applied: boolean; trashIds: string[]; previewToken: string }
 export interface DraftWorkflow {
   name: string; canonicalJson: string; fingerprint: string;
   steps: Array<{ id: string; label: string; source: string }>; unsupported: string[]; notes: string[];

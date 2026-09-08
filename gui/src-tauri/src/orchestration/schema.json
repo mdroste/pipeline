@@ -1,0 +1,722 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "maxActions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "deadlineHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8760
+        },
+        "actionTimeoutSecs": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 28800
+        }
+      },
+      "required": [
+        "maxActions",
+        "deadlineHours",
+        "actionTimeoutSecs"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "name",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "binding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "literal"
+            },
+            "value": {}
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "output"
+            },
+            "step": {
+              "type": "string"
+            },
+            "pointer": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "step"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "input"
+            },
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "firstAvailable"
+            },
+            "values": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/binding"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "values"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "condition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "equals"
+            },
+            "left": {
+              "$ref": "#/$defs/binding"
+            },
+            "right": {}
+          },
+          "required": [
+            "op",
+            "left",
+            "right"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "lessThan"
+            },
+            "left": {
+              "$ref": "#/$defs/binding"
+            },
+            "right": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "op",
+            "left",
+            "right"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "exists"
+            },
+            "value": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "all"
+            },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            }
+          },
+          "required": [
+            "op",
+            "conditions"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "any"
+            },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            }
+          },
+          "required": [
+            "op",
+            "conditions"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "const": "not"
+            },
+            "condition": {
+              "$ref": "#/$defs/condition"
+            }
+          },
+          "required": [
+            "op",
+            "condition"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "workspace"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "effort": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "prompt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "snapshot"
+            },
+            "input": {
+              "$ref": "#/$defs/binding"
+            },
+            "filename": {
+              "type": "string"
+            },
+            "requireChange": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "input"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "review"
+            },
+            "profileId": {
+              "type": "string"
+            },
+            "input": {
+              "$ref": "#/$defs/binding"
+            },
+            "interpretation": {
+              "enum": [
+                "document",
+                "latex_project",
+                "source_tree",
+                "none"
+              ]
+            },
+            "variables": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "profileId",
+            "input"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "check"
+            },
+            "profileId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "profileId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "capturedCheck"
+            },
+            "planId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "planId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "deliver"
+            },
+            "input": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "input"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "delay"
+            },
+            "seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 31536000
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "seconds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "until"
+            },
+            "at": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "input"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "prompt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "if"
+            },
+            "condition": {
+              "$ref": "#/$defs/condition"
+            },
+            "thenSteps": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/step"
+              }
+            },
+            "elseSteps": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/step"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "condition",
+            "thenSteps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "repeat"
+            },
+            "maxIterations": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "until": {
+              "$ref": "#/$defs/condition"
+            },
+            "steps": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/step"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "maxIterations",
+            "until",
+            "steps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "parallel"
+            },
+            "branches": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "array",
+                "maxItems": 128,
+                "items": {
+                  "$ref": "#/$defs/step"
+                }
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "branches"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "forEach"
+            },
+            "input": {
+              "$ref": "#/$defs/binding"
+            },
+            "maxItems": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
+            "steps": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/step"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "input",
+            "maxItems",
+            "steps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "chain"
+            },
+            "chain": {
+              "$ref": "#"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "chain"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "label": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "while"
+            },
+            "maxIterations": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "steps": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/step"
+              }
+            },
+            "condition": {
+              "$ref": "#/$defs/condition"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind",
+            "maxIterations",
+            "condition",
+            "steps"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

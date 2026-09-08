@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { Annotation, HomeSettings, ProjectAction, ProjectHome, ProjectRecord } from "../../lib/projectClient";
 import type { PaperWithRevision, ResearchExecution, ResearchNote, Workspace } from "../../lib/workbenchTypes";
 
-export type ProjectTab = "overview" | "documents" | "edits" | "research";
+export type ProjectTab = import("../../lib/workspaceNavigation").WorkspaceDestination;
 
 export const button = "rounded-md border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
 export const primaryButton = "rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300";

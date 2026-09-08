@@ -5,7 +5,7 @@ import ComparePage from "./ComparePage";
 import ErrorBoundary from "./ErrorBoundary";
 import ReportWorkspace from "./ReportWorkspace";
 import type { Project, ProjectsResponse, RunSummary, RunsDiskUsage, TrashedRun } from "../lib/types";
-import type { ArtifactSelectionTarget } from "./ArtifactExplorer";
+import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
 
 interface Props {
   onClose: () => void;
@@ -395,8 +395,8 @@ export default function HistoryPage({
           <option value="all">All workflows</option>
           {profiles.map((profile) => <option key={profile} value={profile}>{profile}</option>)}
         </select>
-        <select aria-label="Filter by project" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="max-w-56 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900">
-          <option value="all">All projects</option>
+        <select aria-label="Filter by run collection" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="max-w-56 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900">
+          <option value="all">All run collections</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>
         <select aria-label="Filter by date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900">

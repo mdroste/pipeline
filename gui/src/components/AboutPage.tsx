@@ -12,7 +12,7 @@ interface Props {
   showBack?: boolean;
   /** Lets Help sections jump to the page they describe; links are hidden without it. */
   onNavigate?: (page: AppPage) => void;
-  /** Jumps to the PaddleOCR-VL install card in Settings → Review & workflows → PDF Extraction. */
+  /** Jumps to the PaddleOCR-VL install card in Settings → Reviews → PDF Extraction. */
   onOpenPdfSettings?: () => void;
   /** Opens and scrolls to a section on arrival (used by the run-setup privacy link). */
   initialSection?: "privacy";
@@ -133,7 +133,7 @@ function HelpContent({
       {/* Overview */}
       <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
         Pipeline orchestrates AI agents for doing and reviewing academic research.
-        Workspace supports persistent research conversations; Workflows run
+        Use Workspace for persistent research conversations and Reviews for
         repeatable, structured tasks over papers, proposals, and other research material.
       </p>
 
@@ -171,7 +171,7 @@ function HelpContent({
           >
             A local PDF parser that recovers reading order, headings,
             formulas, and tables, with no extra model calls. Install it once
-            under Settings → Review & workflows → PDF Extraction.
+            under Settings → Reviews → PDF Extraction.
             <NavLink onClick={onOpenPdfSettings} label="Install in Settings" />
           </BadgeRow>
         </div>
@@ -183,7 +183,7 @@ function HelpContent({
           <StageCard
             number="1"
             title="Choose a workflow and input"
-            description="On New report, pick a workflow, then select files or a folder and say how Pipeline should treat the selection — one document, a LaTeX project, a browsable folder, or a batch."
+            description="On New run, pick a workflow, then select files or a folder and say how Pipeline should treat the selection — one document, a LaTeX project, a browsable folder, or a batch."
           />
           <StageCard
             number="2"
@@ -200,32 +200,29 @@ function HelpContent({
 
       <Section title="Workspace for research conversations">
         <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Workspace is Pipeline&apos;s interactive orchestration mode: persistent ChatGPT
-          conversations with optional academic-research harness modules. It does not require
-          a Workflow run, saved configuration, project, or paper. Research recipes add editable
-          instructions, required-input checks, and completion records without scheduling a
-          Workflow or constraining ordinary conversation.
+          Use Workspace to chat with ChatGPT. Start a conversation, or create a project
+          to keep papers, files, notes, and related conversations together. Add research
+          tools and saved instructions when you need them.
         </p>
         <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Workspace research archives contain a consistent database snapshot, immutable blobs,
-          and readable transcripts. They exclude credentials and private runtime state. Native
-          Codex threads may not resume on another machine or account; restored conversations can
-          start a new native session from reviewed notes and selected evidence.
+          Backups include your projects, research files, and conversation transcripts.
+          After restoring, sign in to ChatGPT to continue from your reviewed notes
+          and selected evidence.
         </p>
         <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          The optional “Review this revision” action stages only the selected immutable artifact
-          and metadata, then opens the ordinary Workflow launch preview. Workflows keep their
-          own providers, authentication, permissions, scheduling, and cancellation.
+          Choose “Review this revision” to review a saved copy of the paper.
+          The preview lets you choose the workflow and models before starting.
+          Each run uses the settings and provider sign-in configured for Reviews.
         </p>
         <NavLink onClick={onNavigate && (() => onNavigate("workspace"))} label="Open Workspace" />
       </Section>
 
       {/* Reference sections, collapsed by default */}
       <div className="border-t border-gray-200 dark:border-gray-800">
-        <Collapsible title="Workflows">
+        <Collapsible title="Reviews">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
             A workflow is a saved recipe: its steps, prompts, and settings.
-            Pick one on New report; edit the active one on the Workflows page.
+            Pick one on New run; edit the active one in Reviews → Designer.
             Steps run as soon as their prerequisites finish, and independent
             steps run at the same time.
           </p>
@@ -238,13 +235,13 @@ function HelpContent({
               <BuiltinRow
                 key={profile.id}
                 name={profile.name}
-                description={`${profile.step_count} configured review step${profile.step_count === 1 ? "" : "s"}. Open Workflows for the current prompts, providers, inputs, and outputs.`}
+                description={`${profile.step_count} configured review step${profile.step_count === 1 ? "" : "s"}. Open Reviews → Designer for the current prompts, providers, inputs, and outputs.`}
               />
             ))}
           </div>
           <div>
             <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-2">
-              On the Workflows page you can:
+              In Reviews → Designer you can:
             </p>
             <ul className="space-y-1.5">
               <CheckItem text="Add, remove, reorder, or rewrite steps, and choose what each step may read" />
@@ -259,7 +256,7 @@ function HelpContent({
           <div className="flex gap-4">
             <NavLink
               onClick={onNavigate && (() => onNavigate("pipeline"))}
-              label="Open Workflows"
+              label="Open Designer"
             />
             <NavLink
               onClick={onNavigate && (() => onNavigate("gallery"))}
@@ -280,7 +277,7 @@ function HelpContent({
           </p>
         </Collapsible>
 
-        <Collapsible title="History & Projects">
+        <Collapsible title="History & run collections">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
             History lists every saved report. Rename, tag, or delete reports;
             resume an interrupted one; rerun one from scratch; or compare two
@@ -289,7 +286,7 @@ function HelpContent({
             document.
           </p>
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Projects group related reports and revisions and keep a running
+            Run collections group related reports and revisions and keep a running
             ledger of issues across them, without moving or deleting anything.
           </p>
           <div className="flex gap-4">
@@ -299,7 +296,7 @@ function HelpContent({
             />
             <NavLink
               onClick={onNavigate && (() => onNavigate("projects"))}
-              label="Open Projects"
+              label="Open run collections"
             />
           </div>
         </Collapsible>
@@ -309,7 +306,7 @@ function HelpContent({
             Pipeline prepares a text version of each document before the
             workflow begins. LaTeX and Word files are read directly. For PDFs,
             pick a method in the workflow or inherit the choice from
-            Settings → Review & workflows → PDF Extraction.
+            Settings → Reviews → PDF Extraction.
           </p>
           <div className="space-y-2">
             <BadgeRow
@@ -336,7 +333,7 @@ function HelpContent({
               title="PaddleOCR-VL Full Parser"
             >
               A local engine that recovers reading order, headings, formulas,
-              and tables. Install it under Settings → Review & workflows → PDF Extraction.
+              and tables. Install it under Settings → Reviews → PDF Extraction.
             </BadgeRow>
             <BadgeRow
               badge="Included"
@@ -352,7 +349,7 @@ function HelpContent({
         <Collapsible title="Batch reports">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
             To review several documents with the same workflow, select
-            multiple files on New report, or choose a folder and set its
+            multiple files on New run, or choose a folder and set its
             meaning to Batch of documents. Each document becomes an
             independent report and the queue appears under Current batch.
           </p>
@@ -372,7 +369,7 @@ function HelpContent({
               until you delete them or set a retention limit in Settings.
             </li>
             <li>
-              Workspace conversations, research records, immutable attachments, and isolated
+              Workspace conversations, research records, saved attachments, and separate
               Codex state are stored under{" "}
               <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">
                 ~/.pipeline/workbench/

@@ -4,7 +4,7 @@ import WorkspaceResearchPanel from "./WorkspaceResearchPanel";
 import type { ConversationSnapshot } from "../lib/workbenchTypes";
 import { CATALOG } from "./harness-editor/harnessHelpers.test";
 
-const mocks = vi.hoisted(() => ({ harnessCatalog: vi.fn(), effectiveHarness: vi.fn(), listRecipes: vi.fn(), listRecipeRuns: vi.fn() }));
+const mocks = vi.hoisted(() => ({ listPapers: vi.fn(), prepareReviewHandoff: vi.fn(), harnessCatalog: vi.fn(), effectiveHarness: vi.fn(), listRecipes: vi.fn(), listRecipeRuns: vi.fn() }));
 vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
 vi.mock("../lib/projectClient", () => ({ projectClient: {} }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
@@ -35,9 +35,30 @@ it("shows a read-only harness summary and hands editing to the harness editor", 
   expect(await screen.findByTestId("harness-summary")).toHaveTextContent("Adds 1 instruction pack, paper context, and paper tools.");
   expect(screen.getByText("Inspect · no command network · 64 KiB · 1 of 3 modules active · workbench-inspect")).toBeInTheDocument();
   expect(screen.getByText("Put this conversation in a Workspace to read papers.")).toBeInTheDocument();
-  expect(screen.getByLabelText("Access mode")).toHaveValue("inspect");
+  expect(screen.getByLabelText("Access mode")).toHaveValue("");
   expect(screen.queryByText("Clone as editable preset")).not.toBeInTheDocument();
   expect(screen.queryByText("Workspace defaults")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Edit harness…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Customize assistant…" }));
   expect(onEditHarness).toHaveBeenCalledTimes(1);
+});
+
+
+it("requires an explicit paper choice for a project review without a conversation", async () => {
+  mocks.listPapers.mockResolvedValue([
+    { paper: { id: "paper-1", title: "First paper" }, revision: { id: "revision-1", contentHash: "abc123" } },
+    { paper: { id: "paper-2", title: "Chosen paper" }, revision: { id: "revision-2", contentHash: "def456" } },
+  ]);
+  const handoff = { id: "handoff" };
+  mocks.prepareReviewHandoff.mockResolvedValue(handoff);
+  const review = vi.fn();
+  render(<WorkspaceResearchPanel embedded workspace={{ id: "project", name: "Project" } as ConversationSnapshot["workspace"]}
+    snapshot={null} initialTab="release" allowedTabs={["release"]} releaseView="review" onReviewHandoff={review}
+    onSnapshot={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+  await screen.findByRole("option", { name: "Chosen paper" });
+  expect(screen.getByRole("button", { name: "Review this revision…" })).toBeDisabled();
+  expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Paper to review"), { target: { value: "paper-2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Review this revision…" }));
+  await vi.waitFor(() => expect(review).toHaveBeenCalledWith(handoff));
+  expect(mocks.prepareReviewHandoff).toHaveBeenCalledWith(expect.objectContaining({ paperId: "paper-2", sessionId: null, workspaceId: "project" }));
 });

@@ -24,7 +24,7 @@ Pipeline is an agent orchestration suite for doing and reviewing academic resear
 Workspace and Workflows are peer orchestration modes in one desktop shell:
 
 - **Workspace** owns interactive ChatGPT conversations and the customizable research harness described here.
-- **Workflows** own deterministic, repeatable dependency graphs for research and review tasks. Paper Review is the principal built-in use case. **Review** remains a possible label for that use case, not an authorized code or storage rename.
+- **Reviews** is the current product label for deterministic workflows (formerly **Workflows**). Paper Review is the principal built-in use case. Workflow code, commands, and storage names remain unchanged; see the current navigation map in `CLAUDE.md`.
 - Neither mode replaces the other. Workspace must not alter Workflow providers, authentication, projects, runs, or defaults.
 - The optional WB-10 bridge explicitly sends one immutable document revision into the ordinary Workflow launch preview. It is not a first-release dependency and does not merge the two modes.
 
@@ -159,7 +159,7 @@ The separate sign-in is intentional and should be explained once in Settings. Do
 
 ### 4.3 Storage
 
-Use bundled SQLite through a Rust dependency compatible with the repository's toolchain. Run blocking database work on a bounded worker, never on the UI or protocol reader. Use foreign keys, transactions, an application schema version, and migration backups. Keep the database on local application storage rather than in a research folder or network drive.
+Use bundled SQLite through a Rust dependency compatible with the repository's toolchain. Run blocking database work on a bounded worker, never on the UI or protocol reader. Use foreign keys, transactions, an application schema version, and migration backups. The research data directory is now configurable under Settings → General; see [docs/storage.md](docs/storage.md). Its default is local application storage, and folder selection does not implement safe live cloud synchronization. Native credentials and session files remain in the device-local Codex home.
 
 ```text
 ~/.pipeline/

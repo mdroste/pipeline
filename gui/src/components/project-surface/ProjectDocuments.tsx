@@ -1,3 +1,5 @@
+import { addContextObject } from "../WorkspaceContextTray";
+import ResearchReaderBoundary from "../ResearchReaderBoundary";
 import { lazy, Suspense, useState } from "react";
 import { projectClient, type Annotation, type DocumentSelection, type ProjectRecord } from "../../lib/projectClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
@@ -24,8 +26,8 @@ interface Props extends SurfaceApi {
   onAddVersion: () => void;
 }
 
-const ACTION_TITLES: Record<SelectionActionKind, string> = { ask: "Question about this passage", note: "Note about this passage", task: "Task for this passage", revision: "How should this passage change?" };
-const ACTION_BUTTONS: Record<SelectionActionKind, string> = { ask: "Open conversation", note: "Save note", task: "Add task", revision: "Add task" };
+const ACTION_TITLES: Record<SelectionActionKind, string> = { ask: "Question about this passage", note: "Note about this passage", task: "Action item for this passage", revision: "How should this passage change?" };
+const ACTION_BUTTONS: Record<SelectionActionKind, string> = { ask: "Open conversation", note: "Save note", task: "Add action item", revision: "Add action item" };
 
 export default function ProjectDocuments(props: Props) {
   const { data, workspaceId, saveSettings, reportError, revisionId, setRevisionId, pinnedRevision, setPinnedRevision, initialSelection, setInitialSelection, pinnedSelection, selectionAction, selectionBody, setSelectionBody, onSelection, onSubmitSelection, onCancelSelection, onImport, onAddVersion, openAnnotation } = props;
@@ -46,17 +48,18 @@ export default function ProjectDocuments(props: Props) {
         {earlier.map(id => <option key={id} value={id}>{earlierVersionLabel(id)}</option>)}
       </select>
       <button className={button} onClick={onImport}>Import</button>
+      <button className={button} disabled={!revisionId} onClick={()=>{if(revisionId)void projectClient.read(workspaceId,revisionId).then(view=>addContextObject(workspaceId,{kind:"paper",id:view.revision.id,revision:view.revision.contentHash})).catch(e=>reportError(workbenchErrorMessage(e)));}}>Add document to conversation</button>
       <button className={button} disabled={!revisionId} onClick={onAddVersion}>Add new version</button>
       <button className={button} disabled={!revisionId && !pinnedRevision} onClick={() => setPinnedRevision(pinnedRevision ? null : revisionId)}>{pinnedRevision ? "Close comparison" : "Compare with another"}</button>
       <button className={button} onClick={() => void saveSettings({ layout: layout === "reading" ? "revision" : "reading" })}>{layout === "reading" ? "Stack when comparing" : "Side by side when comparing"}</button>
     </div>
     {pinnedRevision && <p className={`mb-2 ${muted}`}>The pinned document stays open while you choose another one above.</p>}
-    <div className={`flex min-h-0 flex-1 gap-3 ${layout === "revision" ? "flex-col xl:flex-row" : "flex-row"}`}>
+    <div className={`flex min-h-0 flex-1 gap-3 ${layout === "revision" ? "flex-col xl:flex-row" : "flex-col 2xl:flex-row"}`}>
       <Suspense fallback={<p className="p-6 text-sm">Loading reader…</p>}>
         {revisionId
-          ? <DocumentReader key={`${revisionId}:${initialSelection?.start ?? ""}:${initialSelection?.page ?? ""}`} workspaceId={workspaceId} revisionId={revisionId} initialSelection={initialSelection} annotations={annotations} onSelection={onSelection} onError={reportError}/>
-          : <p className={`p-8 text-sm ${muted}`}>{versions.length ? "Choose a document above." : "Import a paper to read it here. Select any passage to ask about it, note it, or turn it into a task."}</p>}
-        {pinnedRevision && <DocumentReader key={`pinned-${pinnedRevision}:${pinnedSelection?.start ?? ""}:${pinnedSelection?.page ?? ""}`} workspaceId={workspaceId} revisionId={pinnedRevision} initialSelection={pinnedSelection} annotations={[]} onSelection={onSelection} onError={reportError} readonly/>}
+          ? <ResearchReaderBoundary key={revisionId}><DocumentReader key={`${revisionId}:${initialSelection?.start ?? ""}:${initialSelection?.page ?? ""}`} workspaceId={workspaceId} revisionId={revisionId} initialSelection={initialSelection} annotations={annotations} onSelection={onSelection} onError={reportError}/></ResearchReaderBoundary>
+          : <p className={`p-8 text-sm ${muted}`}>{versions.length ? "Choose a document above." : "Import a paper to read it here. Select any passage to ask about it, note it, or turn it into an action item."}</p>}
+        {pinnedRevision && <ResearchReaderBoundary key={pinnedRevision}><DocumentReader key={`pinned-${pinnedRevision}:${pinnedSelection?.start ?? ""}:${pinnedSelection?.page ?? ""}`} workspaceId={workspaceId} revisionId={pinnedRevision} initialSelection={pinnedSelection} annotations={[]} onSelection={onSelection} onError={reportError} readonly/></ResearchReaderBoundary>}
       </Suspense>
     </div>
     {selectionAction && <form className="mt-3 rounded-lg border border-gray-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950" onSubmit={e => { e.preventDefault(); onSubmitSelection(); }}>

@@ -16,6 +16,18 @@ second project nor imports the paper twice. Overview, Documents, and Edits
 work without ChatGPT sign-in. A project without a folder keeps its saved
 research. An ordinary unfiled conversation does not load these modules.
 
+The desk offers **Project**, **Assistant**, and **Show both** when both panes
+fit. At narrow widths, one pane fills the available height; hidden panes retain
+their local drafts and scroll state. **Show navigation** reopens a collapsed
+project/conversation list. A narrow inspector temporarily fills the work area
+and its Close action returns to the desk. Pending-request counts and a running
+response's Stop action remain available from the project view. Creating a
+conversation from a research selection opens the assistant pane.
+
+New project contains keyboard focus, makes background controls inert, and
+returns focus to its opener on dismissal. Escape/backdrop dismissal is disabled
+while creation is pending, retaining the existing partial-failure retry behavior.
+
 The project view uses plain-language labels for the underlying records. The
 table below maps them to the persisted concepts; storage, commands, and
 record names are unchanged.
@@ -28,6 +40,7 @@ record names are unchanged.
 | Hide from the assistant | context exclusion (`excludedNoteIds`) |
 | What the assistant is told | assembled project context preview |
 | Task status Open / In progress / Later / Done / Dropped | `open` / `investigating` / `deferred` / `completed` / `rejected` |
+| Action items, New action item | local research task records (`ResearchTask`); distinct from durable Tasks chains |
 | Edit, working copy, Start an edit | isolated task checkpoint (plain copy or Git worktree) |
 | Check for changes / Accept files / Discard this edit | capture, apply, reject |
 | Restore original files / Undo | recovery and undo of an application |
@@ -36,7 +49,7 @@ record names are unchanged.
 **Overview** holds the paper card (current version and reference results),
 the folder card (attach or change the folder, refresh the file list, optional
 30-second polling, paths to leave out, and the folder-versus-paper status
-line), the project summary with its context preview, notes, and tasks.
+line), the project summary with its context preview, notes, and action items.
 A newer import or execution does not replace the chosen version or reference
 run. Rejected and suggested notes remain inspectable but are not accepted
 memory. Note edits preserve the preceding wording; the overview shows the
@@ -56,7 +69,7 @@ CSV/TSV, or an explicit LaTeX folder. Documents use immutable versions. Read
 source text, render Markdown/math, search an exact version, or inspect a PDF
 page. Source spans use UTF-8 byte offsets, a content hash, and surrounding
 text; PDF regions use an exact version/page and normalized rectangle.
-Selections support Ask, Add note, Add task, and Propose revision. These save
+Selections support Ask, Add note, Create action item, and Propose revision. These save
 the anchor first. A question opens a draft conversation, and a task remains
 separate from chat.
 

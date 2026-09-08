@@ -110,6 +110,7 @@ fn exported_result(
     let e = research::run_execution(
         &f.store,
         research::RunExecutionRequest {
+            plan_id: None,
             profile_id: p.id,
             session_id: None,
             test_only: true,
@@ -504,6 +505,7 @@ async fn durable_job_does_not_hold_database_workers_and_cancels_descendants() {
         vec![],
     );
     let request = research::RunExecutionRequest {
+        plan_id: None,
         profile_id: p.id,
         session_id: None,
         test_only: true,
@@ -591,6 +593,7 @@ fn failed_build_cannot_adopt_an_older_pdf_as_success() {
     let e = research::run_execution(
         &f.store,
         research::RunExecutionRequest {
+            plan_id: None,
             profile_id: p.id,
             session_id: None,
             test_only: true,
@@ -621,6 +624,7 @@ async fn changed_queued_inputs_do_not_launch_and_conflicting_jobs_are_rejected()
     let q = research::jobs::queue(
         &f.store,
         research::RunExecutionRequest {
+            plan_id: None,
             profile_id: p.id.clone(),
             session_id: None,
             test_only: true,
@@ -633,6 +637,7 @@ async fn changed_queued_inputs_do_not_launch_and_conflicting_jobs_are_rejected()
     assert!(research::jobs::queue(
         &f.store,
         research::RunExecutionRequest {
+            plan_id: None,
             profile_id: p.id,
             session_id: None,
             test_only: true,
@@ -701,6 +706,7 @@ fn live_studio_build_and_synctex() {
     let e = research::run_execution(
         &f.store,
         research::RunExecutionRequest {
+            plan_id: None,
             profile_id: profile.id,
             session_id: None,
             test_only: true,
@@ -796,6 +802,7 @@ fn live_studio_result_exporters() {
         let e = research::run_execution(
             &f.store,
             research::RunExecutionRequest {
+                plan_id: None,
                 profile_id: p.id,
                 session_id: None,
                 test_only: true,

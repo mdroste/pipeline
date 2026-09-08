@@ -367,7 +367,7 @@ describe("Console", () => {
     expect(screen.getByText("Shared context (72,000 characters)")).toBeVisible();
     expect(screen.getByText("Task prompt (48,000 characters)")).toBeVisible();
     expect(
-      screen.getByText(/Copy prompt copies only the visible preview/),
+      screen.getByText(/Copy prompt copies only the visible text/),
     ).toBeVisible();
   });
 });

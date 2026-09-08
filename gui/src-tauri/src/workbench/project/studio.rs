@@ -424,3 +424,76 @@ fn exact_text(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<String
     }
     Ok(text)
 }
+
+pub fn stage_publication(
+    store: &Store,
+    ws: &str,
+    checkpoint: &str,
+    path: &str,
+    expected: Option<&str>,
+    bytes: &[u8],
+) -> WorkbenchResult<Value> {
+    stage_publication_files(
+        store,
+        ws,
+        checkpoint,
+        vec![(path.into(), expected.map(str::to_owned), bytes.to_vec())],
+    )
+}
+pub fn stage_publication_files(
+    store: &Store,
+    ws: &str,
+    checkpoint: &str,
+    files_to_write: Vec<(String, Option<String>, Vec<u8>)>,
+) -> WorkbenchResult<Value> {
+    scope(store, ws)?;
+    let _guard = lock(store, ws)?;
+    if files_to_write.len() > 100
+        || files_to_write.iter().map(|f| f.2.len()).sum::<usize>() > 64 * 1024 * 1024
+    {
+        return Err(WorkbenchError::invalid(
+            "Staged publication exceeds its file or byte limit",
+        ));
+    }
+    let root = files::SafeRoot::open(&session_task_root(store, ws, checkpoint)?)?;
+    for (path, expected, bytes) in &files_to_write {
+        files::relative(path)?;
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err(WorkbenchError::invalid(
+                "Publication artifact exceeds 8 MiB",
+            ));
+        }
+        let current = root.optional_read(path)?;
+        if current.as_deref() != Some(bytes.as_slice()) && current.as_deref().map(hash) != *expected
+        {
+            return Err(WorkbenchError::conflict(format!(
+                "Destination {path} changed; refresh the task copy before staging"
+            )));
+        }
+        if root.executable(path)? {
+            return Err(WorkbenchError::invalid(
+                "Publication files cannot overwrite an executable file",
+            ));
+        }
+    }
+    let mut staged = Vec::new();
+    for (path, expected, bytes) in files_to_write {
+        if root.optional_read(&path)?.as_deref() != Some(bytes.as_slice()) {
+            let claim = id("publication")?;
+            root.replace(
+                &path,
+                expected.as_deref(),
+                false,
+                Some(&bytes),
+                false,
+                &claim,
+            )?;
+            root.clear_claim(&path, &claim)?;
+        }
+        staged.push(json!({"path":path,"hash":hash(&bytes)}));
+    }
+    let checkpoint = tasks::capture_changes(store, ws, checkpoint)?;
+    Ok(
+        json!({"checkpointId":checkpoint.id,"checkpointRevision":checkpoint.revision,"files":staged,"accepted":false,"checksValid":false}),
+    )
+}

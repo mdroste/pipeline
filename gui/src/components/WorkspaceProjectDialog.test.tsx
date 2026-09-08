@@ -1,3 +1,5 @@
+import { useState } from "react";
+import userEvent from "@testing-library/user-event";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectDialog from "./WorkspaceProjectDialog";
@@ -46,4 +48,46 @@ it("requires a name and closes on Escape", () => {
   fireEvent.keyDown(document, { key: "Escape" });
   expect(onClose).toHaveBeenCalled();
   expect(mocks.createWorkspace).not.toHaveBeenCalled();
+});
+
+
+it("contains keyboard focus, inerts background content and restores the opener", async () => {
+  const user = userEvent.setup();
+  function Example() {
+    const [open, setOpen] = useState(false);
+    return <><button onClick={() => setOpen(true)}>New project opener</button><button>Background action</button>{open && <WorkspaceProjectDialog onClose={() => setOpen(false)} onCreated={vi.fn()}/>}</>;
+  }
+  render(<Example/>);
+  const opener = screen.getByRole("button", { name: "New project opener" });
+  await user.click(opener);
+  const name = screen.getByLabelText("Project name");
+  await waitFor(() => expect(name).toHaveFocus());
+  expect(opener).toHaveAttribute("inert");
+  await user.tab({ shift: true });
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  await user.tab();
+  expect(name).toHaveFocus();
+  await user.type(name, "Trade");
+  await user.tab({ shift: true });
+  expect(screen.getByRole("button", { name: "Create project" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(opener).toHaveFocus();
+  expect(opener).not.toHaveAttribute("inert");
+});
+
+it("keeps the busy dialog open and focusable when all controls are disabled", async () => {
+  let finish!: (value: unknown) => void;
+  mocks.createWorkspace.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const onClose = vi.fn();
+  render(<WorkspaceProjectDialog onClose={onClose} onCreated={vi.fn()}/>);
+  fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "Trade" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+  fireEvent.keyDown(document, { key: "Tab" });
+  expect(screen.getByRole("dialog")).toHaveFocus();
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.pointerDown(screen.getByRole("dialog"));
+  expect(onClose).not.toHaveBeenCalled();
+  finish({ record });
+  await waitFor(() => expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false"));
 });

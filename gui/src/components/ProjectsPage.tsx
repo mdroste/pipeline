@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Project, ProjectsResponse, RunSummary, TrashedProject } from "../lib/types";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
 import { confirmDialog, notify } from "./DialogService";
-import type { ArtifactSelectionTarget } from "./ArtifactExplorer";
+import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
 
 interface Props {
+  onDirtyChange?: (dirty: boolean) => void;
+  onSaveHandlerChange?: (save: (() => Promise<boolean>) | null) => void;
   onOpenRun: (runId: string, source?: ArtifactSelectionTarget) => void;
 }
 
@@ -29,7 +31,7 @@ function sameInputLineage(left: RunSummary, right: RunSummary): boolean {
   return Boolean(left.input_path && left.input_path === right.input_path);
 }
 
-export default function ProjectsPage({ onOpenRun }: Props) {
+export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerChange }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -42,8 +44,13 @@ export default function ProjectsPage({ onOpenRun }: Props) {
   const [createDescription, setCreateDescription] = useState("");
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const draftProjectId = useRef<string | null>(null);
+  const saveInFlight = useRef<Promise<boolean> | null>(null);
+  const selectionSequence = useRef(0);
+  const detailsTimer = useRef<number | null>(null);
+  const [savingDetails, setSavingDetails] = useState(false);
   const [addRunId, setAddRunId] = useState("");
-  const [detailsStatus, setDetailsStatus] = useState<"saved" | "saving" | "unsaved">("saved");
+  const [detailsStatus, setDetailsStatus] = useState<"saved" | "saving" | "unsaved" | "failed">("saved");
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashedProjects, setTrashedProjects] = useState<TrashedProject[]>([]);
   const [trashLoading, setTrashLoading] = useState(false);
@@ -91,43 +98,90 @@ export default function ProjectsPage({ onOpenRun }: Props) {
   }, [trashOpen]);
 
   const selected = projects.find((project) => project.id === selectedId) ?? null;
-  const detailsDirty = Boolean(selected)
+  const detailsDirty = Boolean(selected) && draftProjectId.current === selected?.id
     && (editName !== selected?.name || editDescription !== selected?.description);
+  const detailsRef = useRef({ selected, editName, editDescription });
+  detailsRef.current = { selected, editName, editDescription };
   useEffect(() => {
+    draftProjectId.current = selected?.id ?? null;
     setEditName(selected?.name ?? "");
     setEditDescription(selected?.description ?? "");
     setAddRunId("");
     setDetailsStatus("saved");
   }, [selected?.id]);
 
-  useEffect(() => {
-    if (!selected || !detailsDirty || !editName.trim() || pending) return undefined;
-    setDetailsStatus("unsaved");
-    const timer = window.setTimeout(() => {
-      setDetailsStatus("saving");
-      void invoke<Project>("update_project", {
-        id: selected.id,
-        name: editName,
-        description: editDescription,
-      }).then((updated) => {
-        replaceProject(updated);
-        setDetailsStatus("saved");
-      }).catch((caught) => {
-        setDetailsStatus("unsaved");
-        setError(caught instanceof Error ? caught.message : String(caught));
-      });
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [detailsDirty, editDescription, editName, pending, selected?.id]);
+  // Autosave, explicit Save, collection switching, and route leaving share one
+  // write. Edits made during a write are drained in order before leaving.
+  const saveProject = useCallback((): Promise<boolean> => {
+    if (detailsTimer.current !== null) window.clearTimeout(detailsTimer.current);
+    detailsTimer.current = null;
+    if (saveInFlight.current) return saveInFlight.current;
+    const save = async () => {
+      setSavingDetails(true);
+      try {
+        for (;;) {
+          const draft = detailsRef.current;
+          const record = draft.selected;
+          if (!record || draftProjectId.current !== record.id) return true;
+          if (draft.editName === record.name && draft.editDescription === record.description) return true;
+          if (!draft.editName.trim()) {
+            setDetailsStatus("failed");
+            setError("Enter a project name before leaving. Your changes have been kept.");
+            return false;
+          }
+          setDetailsStatus("saving");
+          setError(null);
+          const updated = await invoke<Project>("update_project", {
+            id: record.id, name: draft.editName, description: draft.editDescription,
+          });
+          setProjects(current => current.map(project => project.id === updated.id ? updated : project));
+          const latest = detailsRef.current;
+          if (latest.selected?.id !== record.id) return false;
+          // Accept normalization only if the user has not edited that field
+          // since this write began. Never replace a newer draft with a response.
+          const name = latest.editName === draft.editName ? updated.name : latest.editName;
+          const description = latest.editDescription === draft.editDescription ? updated.description : latest.editDescription;
+          detailsRef.current = { selected: updated, editName: name, editDescription: description };
+          setEditName(name);
+          setEditDescription(description);
+          setDetailsStatus(name === updated.name && description === updated.description ? "saved" : "unsaved");
+        }
+      } catch (caught) {
+        setDetailsStatus("failed");
+        setError(`${caught instanceof Error ? caught.message : String(caught)}. Your changes have been kept. Retry Save details to continue.`);
+        return false;
+      } finally {
+        setSavingDetails(false);
+      }
+    };
+    const operation = save();
+    saveInFlight.current = operation;
+    void operation.finally(() => { if (saveInFlight.current === operation) saveInFlight.current = null; });
+    return operation;
+  }, []);
 
   useEffect(() => {
+    if (draftProjectId.current !== selected?.id || !detailsDirty) return;
+    setDetailsStatus("unsaved");
+    detailsTimer.current = window.setTimeout(() => { void saveProject(); }, 700);
+    return () => { if (detailsTimer.current !== null) window.clearTimeout(detailsTimer.current); };
+    // A failed save waits for an edit or explicit retry, not an automatic loop.
+  }, [editName, editDescription, selected?.id, saveProject]);
+
+  useEffect(() => { onDirtyChange?.(detailsDirty || savingDetails); }, [detailsDirty, savingDetails, onDirtyChange]);
+  useEffect(() => {
+    onSaveHandlerChange?.(saveProject);
+    return () => { onSaveHandlerChange?.(null); onDirtyChange?.(false); };
+  }, [onSaveHandlerChange, onDirtyChange, saveProject]);
+  useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
-      if (!detailsDirty) return;
+      if (!detailsDirty && !savingDetails) return;
       event.preventDefault();
+      event.returnValue = "";
     };
     window.addEventListener("beforeunload", guard);
     return () => window.removeEventListener("beforeunload", guard);
-  }, [detailsDirty]);
+  }, [detailsDirty, savingDetails]);
 
   const runsById = useMemo(
     () => new Map(runs.map((run) => [run.run_id, run])),
@@ -148,6 +202,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
 
   const createProject = async () => {
     if (!createName.trim() || pending) return;
+    if (!(await saveProject())) return;
     setPending(true);
     setError(null);
     try {
@@ -167,38 +222,23 @@ export default function ProjectsPage({ onOpenRun }: Props) {
     }
   };
 
-  const saveProject = async () => {
-    if (!selected || !editName.trim() || pending) return;
-    setPending(true);
-    setError(null);
-    try {
-      const updated = await invoke<Project>("update_project", {
-        id: selected.id,
-        name: editName,
-        description: editDescription,
-      });
-      replaceProject(updated);
-      setEditName(updated.name);
-      setEditDescription(updated.description);
-      setDetailsStatus("saved");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setPending(false);
-    }
+  const selectProject = async (id: string) => {
+    const sequence = ++selectionSequence.current;
+    if (id === selectedId || pending) return;
+    if (!(await saveProject())) return;
+    if (sequence === selectionSequence.current) setSelectedId(id);
   };
 
-  const selectProject = async (id: string) => {
-    if (id === selectedId) return;
-    if (detailsDirty) {
-      await saveProject();
-      if (!editName.trim()) return;
+  const openRun = async (id: string, source?: ArtifactSelectionTarget) => {
+    if (await saveProject()) {
+      if (source) onOpenRun(id, source);
+      else onOpenRun(id);
     }
-    setSelectedId(id);
   };
 
   const setRunMembership = async (runId: string, included: boolean) => {
     if (!selected || pending) return;
+    if (!(await saveProject())) return;
     setPending(true);
     setError(null);
     try {
@@ -220,6 +260,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
     const members = projectRuns.flatMap(({ run }) => run ? [run] : []);
     const related = availableRuns.filter((run) => members.some((member) => sameInputLineage(member, run)));
     if (related.length === 0) return;
+    if (!(await saveProject())) return;
     setPending(true);
     setError(null);
     try {
@@ -242,9 +283,10 @@ export default function ProjectsPage({ onOpenRun }: Props) {
   const deleteSelected = async () => {
     if (!selected || pending) return;
     if (!(await confirmDialog(
-      `Move the project “${selected.name}” to Trash? Its reports will be kept, and the project can be restored.`,
-      { title: "Move project to Trash", confirmLabel: "Move to Trash", destructive: true },
+      `Move the run collection “${selected.name}” to Trash? Its reports will be kept, and the collection can be restored.`,
+      { title: "Move collection to Trash", confirmLabel: "Move to Trash", destructive: true },
     ))) return;
+    if (!(await saveProject())) return;
     setPending(true);
     setError(null);
     try {
@@ -252,7 +294,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
       const remaining = projects.filter((project) => project.id !== selected.id);
       setProjects(remaining);
       setSelectedId(remaining[0]?.id ?? null);
-      notify("Project moved to Trash.", "success");
+      notify("Run collection moved to Trash.", "success");
       if (trashOpen) void refreshTrash();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -262,11 +304,12 @@ export default function ProjectsPage({ onOpenRun }: Props) {
   };
 
   const restoreProject = async (entry: TrashedProject) => {
+    if (!(await saveProject())) return;
     setPending(true);
     setError(null);
     try {
       await invoke("restore_trashed_project", { id: entry.project.id });
-      notify("Project restored.", "success");
+      notify("Run collection restored.", "success");
       await Promise.all([refresh(), refreshTrash()]);
       setSelectedId(entry.project.id);
     } catch (caught) {
@@ -278,14 +321,15 @@ export default function ProjectsPage({ onOpenRun }: Props) {
 
   const permanentlyDeleteProject = async (entry: TrashedProject) => {
     if (!(await confirmDialog(
-      `Permanently delete the project “${entry.project.name}” and its issue history? Reports will remain. This cannot be undone.`,
-      { title: "Delete project forever", confirmLabel: "Delete forever", destructive: true },
+      `Permanently delete the run collection “${entry.project.name}” and its issue history? Reports will remain. This cannot be undone.`,
+      { title: "Delete collection forever", confirmLabel: "Delete forever", destructive: true },
     ))) return;
+    if (!(await saveProject())) return;
     setPending(true);
     setError(null);
     try {
       await invoke("permanently_delete_trashed_project", { id: entry.project.id });
-      notify("Project permanently deleted.", "success");
+      notify("Run collection permanently deleted.", "success");
       await refreshTrash();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -299,7 +343,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
       <aside className="flex w-72 shrink-0 flex-col border-r border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-950">
         <div className="flex items-center gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-semibold text-gray-950 dark:text-gray-50">Projects</h1>
+            <h1 className="text-base font-semibold text-gray-950 dark:text-gray-50">Run collections</h1>
             <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Track reports and findings over time.</p>
           </div>
           <button
@@ -314,14 +358,14 @@ export default function ProjectsPage({ onOpenRun }: Props) {
           <div className="space-y-2 border-b border-gray-200 p-4 dark:border-gray-800">
             <input
               autoFocus
-              aria-label="New project name"
+              aria-label="New collection name"
               value={createName}
               onChange={(event) => setCreateName(event.target.value)}
-              placeholder="Project name"
+              placeholder="Collection name"
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
             <textarea
-              aria-label="New project description"
+              aria-label="New collection description"
               value={createDescription}
               onChange={(event) => setCreateDescription(event.target.value)}
               placeholder="Optional note"
@@ -346,6 +390,8 @@ export default function ProjectsPage({ onOpenRun }: Props) {
             <button
               type="button"
               key={project.id}
+              disabled={pending}
+              aria-current={project.id === selectedId ? "page" : undefined}
               onClick={() => void selectProject(project.id)}
               className={`mb-1 w-full rounded-lg px-3 py-2.5 text-left ${
                 project.id === selectedId
@@ -361,7 +407,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
           ))}
           {!loading && projects.length === 0 && (
             <p className="px-3 py-8 text-center text-xs leading-5 text-gray-500 dark:text-gray-400">
-              Create a project, then add reports from your saved history.
+              Create a run collection, then add reports from your saved history.
             </p>
           )}
         </div>
@@ -376,7 +422,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
             Trash{trashedProjects.length ? ` (${trashedProjects.length})` : ""}
           </button>
           {trashOpen && (
-            <div id="project-trash" className="mt-1 space-y-1" aria-label="Project Trash">
+            <div id="project-trash" className="mt-1 space-y-1" aria-label="Run collection Trash">
               {trashLoading ? (
                 <p className="px-3 py-2 text-xs text-gray-500">Loading Trash…</p>
               ) : trashedProjects.length === 0 ? (
@@ -404,24 +450,26 @@ export default function ProjectsPage({ onOpenRun }: Props) {
         )}
         {warnings.length > 0 && (
           <div role="status" className="mx-6 mt-6 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
-            {warnings.length} project file{warnings.length === 1 ? " was" : "s were"} skipped because it could not be read.
+            {warnings.length} collection file{warnings.length === 1 ? " was" : "s were"} skipped because it could not be read.
           </div>
         )}
         {loading ? (
-          <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading projects…</div>
+          <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading run collections…</div>
         ) : selected ? (
           <div className="mx-auto max-w-5xl p-8">
             <div className="flex items-start gap-4">
               <div className="min-w-0 flex-1">
-                <label className="text-xs font-medium text-gray-500 dark:text-gray-400" htmlFor="project-name">Project name</label>
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400" htmlFor="project-name">Collection name</label>
                 <input
                   id="project-name"
+                  disabled={pending}
                   value={editName}
                   onChange={(event) => setEditName(event.target.value)}
                   className="mt-1 w-full border-0 border-b border-transparent bg-transparent px-0 py-1 text-2xl font-semibold text-gray-950 outline-none focus:border-gray-300 dark:text-gray-50 dark:focus:border-gray-700"
                 />
                 <textarea
-                  aria-label="Project description"
+                  aria-label="Collection description"
+                  disabled={pending}
                   value={editDescription}
                   onChange={(event) => setEditDescription(event.target.value)}
                   placeholder="Add a note about the work, source set, or review goal…"
@@ -429,33 +477,33 @@ export default function ProjectsPage({ onOpenRun }: Props) {
                   className="mt-3 w-full resize-y rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300"
                 />
                 <p role="status" aria-live="polite" className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  {detailsStatus === "saving" ? "Saving…" : detailsStatus === "unsaved" ? "Unsaved changes" : "Saved"}
+                  {detailsStatus === "saving" ? "Saving…" : detailsStatus === "failed" ? "Save failed · changes kept" : detailsDirty ? "Unsaved changes" : "Saved"}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">
                 <button
                   type="button"
-                  disabled={pending || !editName.trim() || (editName === selected.name && editDescription === selected.description)}
+                  disabled={pending || savingDetails || !editName.trim() || (editName === selected.name && editDescription === selected.description)}
                   onClick={() => void saveProject()}
                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300"
                 >
                   Save details
                 </button>
                 <button type="button" disabled={pending} onClick={() => void deleteSelected()} className="rounded-lg px-3 py-1.5 text-xs text-red-600 disabled:opacity-40 dark:text-red-400">
-                  Delete project
+                  Delete collection
                 </button>
               </div>
             </div>
 
             <div className="mt-10 border-t border-gray-200 pt-8 dark:border-gray-800">
-              <ProjectIssueLedgerPanel project={selected} runs={runs} onOpenRun={onOpenRun} />
+              <ProjectIssueLedgerPanel project={selected} runs={runs} onOpenRun={(id, source) => { void openRun(id, source); }} />
             </div>
 
             <section className="mt-10 border-t border-gray-200 pt-8 dark:border-gray-800">
               <div className="flex items-center gap-3">
                 <div>
                   <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Reports</h2>
-                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Reports remain immutable and may belong to more than one project.</p>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Adding a report keeps the saved version. A report can belong to several collections.</p>
                 </div>
                 <div className="ml-auto flex items-center gap-2">
                   {projectRuns.some(({ run }) => run) && (
@@ -500,7 +548,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
                       </p>
                     </div>
                     {run && (
-                      <button type="button" onClick={() => onOpenRun(run.run_id)} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs dark:border-gray-700">Open</button>
+                      <button type="button" onClick={() => void openRun(run.run_id)} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs dark:border-gray-700">Open</button>
                     )}
                     <button type="button" disabled={pending} onClick={() => void setRunMembership(runId, false)} className="px-2 py-1 text-xs text-gray-500 disabled:opacity-40">Remove</button>
                   </div>
@@ -512,7 +560,7 @@ export default function ProjectsPage({ onOpenRun }: Props) {
             </section>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">Create a project to begin.</div>
+          <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">Create a run collection to begin.</div>
         )}
       </main>
     </div>

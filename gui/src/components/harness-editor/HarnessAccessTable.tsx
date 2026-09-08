@@ -116,7 +116,7 @@ function HarnessAccessTable({ effective, globalBody, workspaceBody, workspaceNam
   return (
     <div className="space-y-3">
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Each value comes from the rightmost scope that sets it. Global applies to every conversation, Workspace to conversations filed in {workspaceName ? <strong>{workspaceName}</strong> : "a workspace"}, and This conversation only here. Inherit removes an override instead of copying today's parent value.
+        Settings on the right override those on the left. Global applies to all conversations; Workspace applies to {workspaceName ? <strong>{workspaceName}</strong> : "this project"}. Choose Inherit to follow the setting to the left, including future changes.
       </p>
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <table className="w-full min-w-[40rem] text-left text-xs">
@@ -145,7 +145,7 @@ function HarnessAccessTable({ effective, globalBody, workspaceBody, workspaceNam
                       value={scopeValue(row.key, scope.id, bodies)}
                       winning={winner === scope.id}
                       editable={!row.locked && scope.id !== "builtIn"}
-                      unavailable={scope.id === "workspace" && workspaceBody === null ? "Workspace defaults apply only to conversations filed in a project. This conversation is unfiled; use Move to project… in the conversation list to file it." : null}
+                      unavailable={scope.id === "workspace" && workspaceBody === null ? "Choose Move to project… in the conversation list to use project defaults." : null}
                       busy={busy}
                       effectiveValue={effectiveValue}
                       onSet={onSet}
@@ -158,8 +158,8 @@ function HarnessAccessTable({ effective, globalBody, workspaceBody, workspaceNam
         </table>
       </div>
       <p className="text-[11px] text-gray-500 dark:text-gray-400">
-        Access changes apply to your next message. Native permission profile in effect: <span className="font-mono">{effective.permissionProfile}</span>.
-        {successor && " Because this setup differs from the active native thread, the next message starts a successor thread with a deterministic handoff from accepted Workspace records."}
+        Access changes apply to your next message. Current permissions: <span className="font-mono">{effective.permissionProfile}</span>.
+        {successor && " The assistant will start fresh with the new settings and saved project context. Earlier messages remain in the transcript."}
       </p>
     </div>
   );

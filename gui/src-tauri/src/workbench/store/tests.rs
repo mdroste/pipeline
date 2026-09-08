@@ -53,6 +53,29 @@ fn creates_private_versioned_layout() {
 }
 
 #[test]
+fn custom_research_storage_keeps_native_credentials_in_the_local_home() {
+    let temporary = tempfile::tempdir().unwrap();
+    let research = temporary.path().join("Research/workbench");
+    let local_codex = temporary.path().join("Local/workbench/codex");
+    let store = Store::open_with_codex_home(&research, &local_codex).unwrap();
+    assert_eq!(store.database_path(), research.join("research.sqlite3"));
+    assert_eq!(store.codex_home_path(), local_codex);
+    assert!(local_codex.is_dir());
+    assert!(!research.join("codex").exists());
+    std::fs::write(local_codex.join("auth-fixture.json"), "local-only").unwrap();
+    drop(store);
+    let reopened = Store::open_with_codex_home(&research, &local_codex).unwrap();
+    assert_eq!(
+        schema_version(&reopened.connection().unwrap()).unwrap(),
+        CURRENT_SCHEMA_VERSION
+    );
+    assert_eq!(
+        std::fs::read_to_string(local_codex.join("auth-fixture.json")).unwrap(),
+        "local-only"
+    );
+}
+
+#[test]
 fn concurrent_first_open_serializes_schema_initialization() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("concurrent-store");
@@ -226,6 +249,7 @@ fn failed_migration_rolls_back_and_preserves_a_usable_backup() {
         root: root.clone(),
         database: database.clone(),
         backups: root.join("backups"),
+        codex_home: root.join("codex"),
     };
     let error = store
         .initialize_with(|connection, _version| {

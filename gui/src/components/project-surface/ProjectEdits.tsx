@@ -1,3 +1,7 @@
+import SourceDiff from "../file-workspace/SourceDiff";
+import HighlightedCode from "../file-workspace/HighlightedCode";
+import { fileLanguage } from "../../lib/fileLanguages";
+import { studioClient } from "../../lib/studioClient";
 import ResearchTablePreview from "../ResearchTablePreview";
 import { useEffect, useMemo, useState } from "react";
 import { changedPaths, projectClient, type Application, type Checkpoint, type ProjectRecord, type SnapshotPreview } from "../../lib/projectClient";
@@ -12,7 +16,7 @@ interface Props extends SurfaceApi {
 const EDIT_STATES: Record<string, string> = { isolated: "In progress", review: "Ready to review", applied: "Accepted", rejected: "Discarded" };
 const editState = (state: string) => EDIT_STATES[state] ?? state.replaceAll("_", " ");
 
-function ChangePreview({ workspaceId, checkpoint, path, onError }: { workspaceId: string; checkpoint: Checkpoint; path: string; onError: (message: string) => void }) {
+function ChangePreview({ workspaceId, checkpoint, path, onError, onAccepted }: { workspaceId: string; checkpoint: Checkpoint; path: string; onError: (message: string) => void; onAccepted:()=>Promise<void> }) {
   const [sides, setSides] = useState<[SnapshotPreview | null, SnapshotPreview | null] | null>(null);
   useEffect(() => {
     let disposed = false; setSides(null);
@@ -26,7 +30,7 @@ function ChangePreview({ workspaceId, checkpoint, path, onError }: { workspaceId
   return <div className="max-h-[32rem] overflow-auto rounded-md border border-gray-200 p-3 dark:border-neutral-800">
     <h4 className="mb-3 font-mono text-xs">{path}</h4>
     {diff
-      ? <pre className="whitespace-pre-wrap break-words text-xs leading-6">{diff.map((line, i) => <div key={i} className={line.type === "add" ? "bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" : line.type === "del" ? "bg-red-50 text-red-900 dark:bg-red-950/40 dark:text-red-200" : ""}>{line.type === "add" ? "+ " : line.type === "del" ? "− " : "  "}{line.text}</div>)}</pre>
+      ? <SourceDiff before={sides[0]?.text ?? ""} after={sides[1]?.text ?? ""} path={path} onAccept={sides[0]?.text != null && sides[1]?.text != null ? async content=>{await studioClient.mutate(workspaceId,{action:"saveText",checkpointId:null,path,expectedHash:sides[0]!.hash,content});await onAccepted();} : undefined}/>
       : <div className="grid grid-cols-2 gap-3">{sides.map((side, i) => <div key={i}><h5 className="mb-2 text-xs">{i ? "Proposed" : "Before"}</h5>{side?.imageUrl ? <img src={side.imageUrl} alt={i ? "Proposed file" : "Original file"}/> : <p className={muted}>{side ? `Binary or large file · ${side.size} bytes · ${side.hash.slice(0, 12)}` : "File absent"}</p>}</div>)}</div>}
   </div>;
 }
@@ -60,9 +64,9 @@ function StartEdit({ api }: { api: SurfaceApi }) {
     {!workspace?.root && <p className={notice}>Attach a folder on the Overview tab first. <button className={linkButton} onClick={() => setTab("overview")}>Go to Overview</button></p>}
     {workspace?.root && !data.fileAcceptance && <p className={notice}>On this platform edits can be made in a working copy but cannot be copied back into your folder.</p>}
     {workspace?.root && <>
-      <label className="block text-xs">Task this edit is for
-        <select aria-label="Task for this edit" className={`${input} mt-1`} value={taskId} onChange={e => setTaskId(e.target.value)}>
-          <option value="">{openTasks.length ? "Choose a task" : "No open tasks; add one on the Overview tab"}</option>
+      <label className="block text-xs">Action item this edit is for
+        <select aria-label="Action item for this edit" className={`${input} mt-1`} value={taskId} onChange={e => setTaskId(e.target.value)}>
+          <option value="">{openTasks.length ? "Choose an action item" : "No open action items; add one on the Action items tab"}</option>
           {openTasks.map(t => <option key={t.id} value={t.id}>{t.body.objective}</option>)}
         </select>
       </label>
@@ -83,7 +87,7 @@ function StartEdit({ api }: { api: SurfaceApi }) {
       </div>
       {filePreview && <div className="max-h-96 space-y-3 overflow-auto rounded-md border border-gray-200 p-4 dark:border-neutral-800">
         <div className="flex justify-between gap-3 text-xs"><p className="font-mono">{filePreview.path}</p><button className={linkButton} onClick={() => setFilePreview(null)}>Close</button></div>
-        {filePreview.value.imageUrl ? <img alt={filePreview.path} src={filePreview.value.imageUrl} className="max-h-80"/> : filePreview.value.text !== null ? /\.(csv|tsv)$/i.test(filePreview.path) ? <ResearchTablePreview text={filePreview.value.text} path={filePreview.path}/> : <pre className="whitespace-pre-wrap break-words text-xs">{filePreview.value.text}</pre> : <p className="text-xs">Binary or large file · {filePreview.value.size} bytes. Import PDFs as papers to read them page by page.</p>}
+        {filePreview.value.imageUrl ? <img alt={filePreview.path} src={filePreview.value.imageUrl} className="max-h-80"/> : filePreview.value.text !== null ? /\.(csv|tsv)$/i.test(filePreview.path) ? <ResearchTablePreview text={filePreview.value.text} path={filePreview.path}/> : <HighlightedCode text={filePreview.value.text} language={fileLanguage(filePreview.path)}/> : <p className="text-xs">Binary or large file · {filePreview.value.size} bytes. Import PDFs as papers to read them page by page.</p>}
       </div>}
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-xs">Working copy
@@ -137,7 +141,7 @@ export default function ProjectEdits(props: Props) {
               </div>)}
               {!paths.length && <p className={muted}>No files changed.</p>}
             </div>
-            {preview ? <ChangePreview workspaceId={workspaceId} checkpoint={selected.body} path={preview} onError={reportError}/> : <p className={`rounded-md border border-gray-200 p-5 dark:border-neutral-800 ${muted}`}>Select a file to see what changed.</p>}
+            {preview ? <ChangePreview workspaceId={workspaceId} checkpoint={selected.body} path={preview} onError={reportError} onAccepted={()=>props.act({action:"refresh"})}/> : <p className={`rounded-md border border-gray-200 p-5 dark:border-neutral-800 ${muted}`}>Select a file to see what changed.</p>}
           </div>
           <div className="rounded-lg border border-gray-200 p-4 dark:border-neutral-800">
             <button className={primaryButton} disabled={!data.fileAcceptance || selected.body.state !== "review" || !accepted.length} onClick={() => void act({ action: "apply", checkpointId: selected.id, paths: accepted, expectedRevision: selected.revision })}>Accept {accepted.length} file{accepted.length === 1 ? "" : "s"}</button>

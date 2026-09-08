@@ -48,8 +48,7 @@ pub struct TrashedProject {
 }
 
 fn projects_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let dir = home.join(".pipeline").join("projects");
+    let dir = crate::storage::data_root()?.join("projects");
     ensure_projects_dir(&dir)?;
     Ok(dir)
 }

@@ -2,7 +2,7 @@
 // summary, ownership badges, use/clone/restore/save actions, and Instructions
 // and Modules tabs. Built-ins render read-only; clones own their copy.
 
-import { memo, useEffect, useState, type KeyboardEvent } from "react";
+import { memo, useState, type KeyboardEvent } from "react";
 import type { EffectiveHarness, HarnessCatalog, HarnessPreset } from "../../lib/workbenchTypes";
 import HarnessInstructionsEditor from "./HarnessInstructionsEditor";
 import HarnessModulesEditor from "./HarnessModulesEditor";
@@ -45,7 +45,6 @@ function HarnessPresetPanel({
   onDraft, onUse, onClone, onRestore, onSave, onDiscard, onSwitchToEdit,
 }: Props) {
   const [tab, setTab] = useState<TabId>("instructions");
-  useEffect(() => setTab("instructions"), [preset.id]);
   const readOnly = preset.builtIn;
   const summary = describeModules(draft.modules, catalog.modules, draft.instructions);
 

@@ -29,7 +29,9 @@ function parseRootMappings(value: string): Record<string, string | null> {
 }
 
 interface WorkspaceReleasePanelProps {
-  snapshot: ConversationSnapshot;
+  snapshot?: ConversationSnapshot | null;
+  workspaceId?: string | null;
+  view?: "all" | "share" | "review" | "backup" | "diagnostics";
   selectedPaper: PaperWithRevision | null;
   busy: boolean;
   onAction: (action: () => Promise<void>) => void;
@@ -39,20 +41,23 @@ interface WorkspaceReleasePanelProps {
 
 export default function WorkspaceReleasePanel({
   snapshot,
+  workspaceId: projectId,
+  view = "all",
   selectedPaper,
   busy,
   onAction,
   onError,
   onReviewHandoff,
 }: WorkspaceReleasePanelProps) {
-  const workspaceId = snapshot.session.workspaceId;
+  const workspaceId = projectId ?? snapshot?.session.workspaceId ?? null;
   const [budgets, setBudgets] = useState<PerformanceBudget[]>([]);
 
   useEffect(() => {
+    if (view !== "all" && view !== "diagnostics") return;
     void workbenchClient.performanceBudgets()
       .then(setBudgets)
       .catch((cause) => onError(workbenchErrorMessage(cause)));
-  }, [onError]);
+  }, [onError, view]);
 
   const exportArchive = async () => {
     const path = await save({
@@ -62,7 +67,7 @@ export default function WorkspaceReleasePanel({
     if (!path) return;
     const report = await workbenchClient.exportResearchArchive(path);
     window.alert(
-      `Exported ${report.workspaceCount} workspace(s), ${report.sessionCount} conversation(s), and ${report.blobCount} immutable blob(s).\n\n${report.portabilityNote}`,
+      `Exported ${report.workspaceCount} workspace(s), ${report.sessionCount} conversation(s), and ${report.blobCount} file(s).\n\n${report.portabilityNote}`,
     );
   };
 
@@ -77,7 +82,7 @@ export default function WorkspaceReleasePanel({
       ? inspection.workspaceRoots.map((root) => `• ${root}`).join("\n")
       : "• No registered Workspace roots";
     if (!window.confirm(
-      `Restore is allowed only into an empty Workspace research store. Imported tools will not run, native thread bindings will be retired, and execution profiles must be retested.\n\nArchived roots:\n${roots}\n\n${inspection.portabilityNote}\n\nContinue?`,
+      `You can restore only when Workspace has no saved research data. Restoring does not run any tools. Conversations restart from saved context, and command profiles must be tested again.\n\nProject folders in this backup:\n${roots}\n\n${inspection.portabilityNote}\n\nContinue?`,
     )) return;
     const defaultMappings = Object.fromEntries(
       inspection.workspaceRoots.map((root) => [root, null]),
@@ -101,7 +106,7 @@ export default function WorkspaceReleasePanel({
     if (!workspaceId || !selectedPaper?.revision || !onReviewHandoff) return;
     const handoff = await workbenchClient.prepareReviewHandoff({
       workspaceId,
-      sessionId: snapshot.session.id,
+      sessionId: snapshot?.session.id ?? null,
       paperId: selectedPaper.paper.id,
       metadata: { paperTitle: selectedPaper.paper.title },
       operationId: operation("review-handoff"),
@@ -110,25 +115,25 @@ export default function WorkspaceReleasePanel({
   };
 
   return <div className="space-y-4">
-    <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Portable research archive</h3>
+    {(view === "all" || view === "backup") && <section>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Research backup</h3>
       <p className="mt-1 text-xs text-gray-500">
-        Exports use a consistent SQLite snapshot, immutable blobs, and readable Markdown plus structured JSON transcripts. Credentials and private runtime state are excluded.
+        Back up projects, research files, and conversations, including transcripts in Markdown and JSON. Sign-in details are excluded.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <button type="button" disabled={busy} onClick={() => onAction(exportArchive)} className="rounded border px-3 py-2 text-xs">Export all research data</button>
         <button type="button" disabled={busy} onClick={() => onAction(restoreArchive)} className="rounded border px-3 py-2 text-xs">Restore archive</button>
       </div>
-    </section>
+    </section>}
 
-    {workspaceId && <Suspense fallback={<p className="text-xs text-gray-500">Loading project exchange…</p>}>
-      <ExchangePanel workspaceId={workspaceId} sessionId={snapshot.session.id} busy={busy} onAction={onAction} onError={onError}/>
+    {(view === "all" || view === "share") && workspaceId && <Suspense fallback={<p className="text-xs text-gray-500">Loading project exchange…</p>}>
+      <ExchangePanel showStorage={view === "all"} workspaceId={workspaceId} sessionId={snapshot?.session.id ?? null} busy={busy} onAction={onAction} onError={onError}/>
     </Suspense>}
 
-    <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Review bridge</h3>
+    {(view === "all" || view === "review") && <section>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Paper review</h3>
       <p className="mt-1 text-xs text-gray-500">
-        Optional and explicit. Workspace stages the selected immutable revision; Review keeps its current workflow, models, providers, authentication, scheduling, and cancellation.
+        Review a saved copy of this paper. Choose the workflow and models in the preview before starting.
       </p>
       <button
         type="button"
@@ -139,22 +144,22 @@ export default function WorkspaceReleasePanel({
         Review this revision…
       </button>
       <p className="mt-2 text-[10px] text-gray-500">
-        Only a staged artifact and selected metadata cross the boundary. Workspace credentials, model choice, tool catalog, permissions, and notes do not.
+        The review receives the paper and its selected metadata. It uses your Reviews settings and sign-in, and does not include project notes.
       </p>
-    </section>
+    </section>}
 
-    <details>
-      <summary className="cursor-pointer text-xs font-semibold">Recorded performance budgets</summary>
+    {(view === "all" || view === "diagnostics") && <details>
+      <summary className="cursor-pointer text-xs font-semibold">Performance targets</summary>
       <div className="mt-2 space-y-2">
         {budgets.map((budget) => <div key={budget.metric} className="rounded border bg-white p-2 text-[11px] dark:bg-neutral-950">
           <span className="font-medium">{budget.metric.replaceAll("_", " ")}: {budget.budgetValue} {budget.unit}</span>
           <span className="block text-gray-500">{budget.rationale}</span>
         </div>)}
       </div>
-    </details>
+    </details>}
 
-    <p className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-      Portable records do not guarantee resumable native Codex threads on another machine or account. Restored bindings start a new native session from reviewed Workspace context.
-    </p>
+    {(view === "all" || view === "backup") && <p className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+      After restoring, sign in to ChatGPT to continue. New replies use your reviewed notes and selected evidence; earlier messages remain in the saved transcript.
+    </p>}
   </div>;
 }

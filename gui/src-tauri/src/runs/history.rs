@@ -618,6 +618,7 @@ fn trash_runs_dir() -> Result<PathBuf, String> {
 /// Trash lives beside the run store on the same filesystem.
 pub fn delete_run(run_id: &str) -> Result<(), String> {
     validate_run_id(run_id)?;
+    if runs_dir()?.join(run_id).join(".task-pin").exists() { return Err("This run is retained by a task that has not yet adopted its result".into()); }
     let manifest = load_manifest(run_id)?;
     if manifest.status == "running" {
         return Err("A running job cannot be deleted".to_string());

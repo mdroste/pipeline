@@ -123,6 +123,41 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
     }
 }
 
+/// Full PDF bytes, checked against the retained artifact identity.
+pub fn read_pdf_artifact_bytes(run_id: &str, rel_path: &str) -> Result<String, String> {
+    let manifest = load_manifest(run_id)?;
+    let entry = manifest
+        .artifacts
+        .iter()
+        .find(|entry| entry.rel_path == rel_path)
+        .ok_or("PDF is not in this run's artifact manifest")?;
+    if detect_kind(rel_path, &[]) != "pdf" {
+        return Err("This artifact is not a PDF".into());
+    }
+    let (bytes, truncated) =
+        read_at_most(&resolve_artifact_path(run_id, rel_path)?, 32 * 1024 * 1024)?;
+    if truncated {
+        return Err("PDF exceeds the 32 MiB interactive viewer limit; use page previews".into());
+    }
+    verify_pdf_identity(&bytes, &entry.sha256)?;
+    use base64::Engine as _;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+fn verify_pdf_identity(bytes: &[u8], identity: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let digest = format!("{:x}", Sha256::digest(bytes));
+    let expected = match identity.len() {
+        16 => &digest[..16],
+        64 => &digest,
+        _ => "",
+    };
+    if expected.is_empty() || expected != identity {
+        return Err("PDF bytes no longer match the retained artifact".into());
+    }
+    Ok(())
+}
+
 /// Render one page of a PDF artifact through the same bundled Poppler path
 /// used for document-page previews. The source path remains run-scoped and
 /// only the bounded JPEG result crosses the IPC boundary.
@@ -188,4 +223,22 @@ pub fn read_page_artifact(run_id: &str, page: u32) -> Result<ArtifactContent, St
         .ok_or_else(|| "This run does not have a compact page index".to_string())?;
     let rel_path = index.rel_path(page)?;
     read_artifact(run_id, &rel_path)
+}
+
+#[cfg(test)]
+mod viewer_tests {
+    use super::*;
+    #[test]
+    fn pdf_viewer_accepts_the_manifest_digest_and_rejects_changed_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut run = RunWriter::create_in(root.path(), "pdf-viewer-test").unwrap();
+        let bytes = b"%PDF-1.4 test fixture";
+        run.add_bytes("artifacts/paper.pdf", "Paper", "product", bytes)
+            .unwrap();
+        let identity = &run.current_manifest().artifacts[0].sha256;
+        assert_eq!(identity.len(), 16);
+        assert!(verify_pdf_identity(bytes, identity).is_ok());
+        assert!(verify_pdf_identity(b"changed", identity).is_err());
+        assert!(verify_pdf_identity(bytes, "").is_err());
+    }
 }

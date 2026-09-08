@@ -847,8 +847,8 @@ pub(super) fn archive_retired_profile(profiles: &Path, id: &str) -> Result<(), S
 /// Migrate from old single-file formats to profiles directory. Idempotent.
 pub(super) fn ensure_migrated() -> Result<(), String> {
     let _lock = lock_profile_mutations()?;
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let old_path = home.join(".pipeline").join("pipeline.json");
+    let root = crate::storage::data_root()?;
+    let old_path = root.join("pipeline.json");
     let profiles = profiles_dir()?;
     // Every installation initialized under the profiles-directory scheme
     // created deep-review.json unconditionally; the v15 retirement archives
@@ -878,7 +878,7 @@ pub(super) fn ensure_migrated() -> Result<(), String> {
         }
 
         // Migrate from old referees.json
-        let old_referees = home.join(".pipeline").join("referees.json");
+        let old_referees = root.join("referees.json");
         if old_referees.exists() {
             if let Ok(content) = read_profile_file(&old_referees) {
                 if let Ok(referees) = serde_json::from_str::<Vec<LegacyRefereeConfig>>(&content) {

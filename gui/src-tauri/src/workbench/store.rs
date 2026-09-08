@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 10;
+pub const CURRENT_SCHEMA_VERSION: u32 = 13;
 const MAX_WORKSPACE_NAME_BYTES: usize = 300;
 const MAX_SESSION_TITLE_BYTES: usize = 300;
 const MAX_DRAFT_BYTES: usize = 1_000_000;
@@ -87,6 +87,7 @@ pub struct Store {
     root: PathBuf,
     database: PathBuf,
     backups: PathBuf,
+    codex_home: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -409,22 +410,29 @@ fn default_root() -> WorkbenchResult<PathBuf> {
         }
         return Ok(path);
     }
-    let home = dirs::home_dir().ok_or_else(|| {
-        WorkbenchError::storage(
-            "Cannot determine home directory",
-            "home directory unavailable",
-        )
-    })?;
-    Ok(home.join(".pipeline").join("workbench"))
+    crate::storage::data_root()
+        .map(|root| root.join("workbench"))
+        .map_err(|error| WorkbenchError::storage("Cannot locate Workspace data", error))
 }
 
 impl Store {
     pub fn open_default() -> WorkbenchResult<Self> {
         let root = default_root()?;
-        Self::open_at(&root)
+        #[cfg(debug_assertions)]
+        if std::env::var_os("PIPELINE_WORKBENCH_DEV_ROOT").is_some() {
+            return Self::open_at(&root);
+        }
+        let codex_home = crate::storage::local_root()
+            .map_err(|error| WorkbenchError::storage("Cannot locate Workspace sign-in", error))?
+            .join("workbench/codex");
+        Self::open_with_codex_home(&root, &codex_home)
     }
 
     pub fn open_at(root: &Path) -> WorkbenchResult<Self> {
+        Self::open_with_codex_home(root, &root.join("codex"))
+    }
+
+    fn open_with_codex_home(root: &Path, codex_home: &Path) -> WorkbenchResult<Self> {
         secure_directory(root)?;
         let initialization_lock_path = root.join(".initialize.lock");
         let initialization_lock = OpenOptions::new()
@@ -440,13 +448,15 @@ impl Store {
         initialization_lock.lock_exclusive().map_err(|error| {
             WorkbenchError::storage("Failed to acquire Workbench initialization lock", error)
         })?;
-        for child in ["blobs", "jobs", "context", "codex", "backups"] {
+        for child in ["blobs", "jobs", "context", "backups"] {
             secure_directory(&root.join(child))?;
         }
+        secure_directory(codex_home)?;
         let store = Self {
             root: root.to_path_buf(),
             database: root.join("research.sqlite3"),
             backups: root.join("backups"),
+            codex_home: codex_home.to_path_buf(),
         };
         store.initialize()?;
         Ok(store)
@@ -457,7 +467,7 @@ impl Store {
     }
 
     pub(crate) fn codex_home_path(&self) -> PathBuf {
-        self.root.join("codex")
+        self.codex_home.clone()
     }
 
     pub(crate) fn connection(&self) -> WorkbenchResult<Connection> {
@@ -1673,7 +1683,7 @@ fn database_has_objects(connection: &Connection) -> WorkbenchResult<bool> {
         .map_err(|error| WorkbenchError::storage("Failed to inspect Workbench database", error))
 }
 
-fn migrate(connection: &mut Connection, from: u32) -> WorkbenchResult<()> {
+pub(super) fn migrate(connection: &mut Connection, from: u32) -> WorkbenchResult<()> {
     connection
         .pragma_update(None, "foreign_keys", false)
         .map_err(|error| {
@@ -1757,6 +1767,12 @@ fn migrate(connection: &mut Connection, from: u32) -> WorkbenchResult<()> {
                     WorkbenchError::storage("Failed to apply Workbench migration 10", error)
                 })?;
         }
+        if from < 11 {
+            transaction.execute_batch(include_str!("migrations/011_research_desk.sql"))
+                .map_err(|error| WorkbenchError::storage("Failed to apply Workbench migration 11", error))?;
+        }
+        if from < 12 { transaction.execute_batch(include_str!("migrations/012_task_exchanges.sql")).map_err(|e| WorkbenchError::storage("Failed to migrate task exchanges", e))?; }
+        if from < 13 { transaction.execute_batch(include_str!("migrations/013_research_programs.sql")).map_err(|e| WorkbenchError::storage("Failed to migrate research programs", e))?; }
         transaction
             .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)
             .map_err(|error| {
@@ -1834,6 +1850,17 @@ pub(crate) fn canonical_workspace_root(root: &Path, store_root: &Path) -> Workbe
         return Err(WorkbenchError::invalid(
             "Workspace root cannot overlap Workbench-owned storage",
         ));
+    }
+    // A custom research directory no longer encloses the local credential
+    // store. Keep that store protected when registering project folders.
+    if let Ok(local) =
+        crate::storage::local_root().and_then(|p| p.canonicalize().map_err(|e| e.to_string()))
+    {
+        if canonical.starts_with(&local) || local.starts_with(&canonical) {
+            return Err(WorkbenchError::invalid(
+                "Workspace root cannot overlap Pipeline's local settings and credentials",
+            ));
+        }
     }
     if let Some(home) = dirs::home_dir().and_then(|path| path.canonicalize().ok()) {
         if canonical == home || home.starts_with(&canonical) {

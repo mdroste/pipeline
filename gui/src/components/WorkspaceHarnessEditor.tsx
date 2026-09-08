@@ -1,10 +1,11 @@
+import useContainerWidth from "../hooks/useContainerWidth";
 // Lazy two-pane harness editor for one Workspace conversation. The left
 // navigator lists presets and the conversation-level Access and Preview
 // entries; the right panel edits the selection. The page owns all remote
 // state and the single preset draft, mirroring PipelinePage.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import ResizeHandle from "./ResizeHandle";
+import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import PromptDialog from "./pipeline-editor/PromptDialog";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import { confirmDialog } from "./DialogService";
@@ -31,11 +32,16 @@ function sameDraft(a: PresetDraft, b: PresetDraft) {
 
 const sectionHeader = "sticky top-0 z-[1] bg-gray-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400";
 
-export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }: {
+export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, disabled = false, onBusy, beforeChange }: {
   snapshot: ConversationSnapshot;
   onSnapshot: (snapshot: ConversationSnapshot) => void;
   onClose: () => void;
+  disabled?: boolean;
+  onBusy?: (busy: boolean) => void;
+  beforeChange?: () => Promise<void>;
 }) {
+  const [root, width] = useContainerWidth<HTMLDivElement>();
+  const compact = width !== null && width < 760;
   const sessionId = snapshot.session.id;
   const workspaceId = snapshot.session.workspaceId;
   const [panelWidth, setPanelWidth] = usePersistentPanelWidth("workspace.ui.harnessPanelWidth", 300, 220, 480);
@@ -87,8 +93,9 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }
   };
 
   const act = async (fn: () => Promise<void>) => {
-    setBusy(true); setError(null);
-    try { await fn(); await load(); } catch (cause) { setError(workbenchErrorMessage(cause)); } finally { setBusy(false); }
+    if (busy || disabled) return;
+    setBusy(true); onBusy?.(true); setError(null);
+    try { await beforeChange?.(); await fn(); await load(); } catch (cause) { setError(workbenchErrorMessage(cause)); } finally { setBusy(false); onBusy?.(false); }
   };
 
   const patchSession = async (values: { presetId?: string; overrides?: Record<string, unknown> }) => {
@@ -112,7 +119,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }
       return;
     }
     const config = scope === "global" ? globalConfig : workspaceConfig;
-    if (!config) throw new Error(scope === "workspace" ? "Workspace defaults are unavailable because this conversation is unfiled." : "Global defaults are still loading.");
+    if (!config) throw new Error(scope === "workspace" ? "Move this conversation to a project to use project defaults." : "Global defaults are still loading.");
     const body = { ...config.body };
     if (value === undefined) delete body[key]; else body[key] = value;
     await workbenchClient.saveWorkspaceConfig({
@@ -165,7 +172,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }
     setSelection({ kind: "preset", id: created.id });
   });
 
-  const requestClose = () => { void guardDirty().then((ok) => { if (ok) onClose(); }); };
+  const requestClose = () => { if (!busy) void guardDirty().then((ok) => { if (ok) onClose(); }); };
 
   const successor = Boolean(snapshot.activeBinding?.harnessFingerprint && effective && snapshot.activeBinding.harnessFingerprint !== effective.fingerprint);
   const builtIns = catalog?.presets.filter((preset) => preset.builtIn) ?? [];
@@ -209,16 +216,24 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }
   };
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-1" data-testid="workspace-harness-editor">
-      <div style={{ width: panelWidth }} className="relative flex shrink-0 flex-col border-r border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
-        <div className="border-b border-gray-200 px-4 py-3 dark:border-gray-800">
-          <button type="button" onClick={requestClose} className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">← Conversation</button>
-          <h2 className="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">Harness</h2>
-          <p className="truncate text-xs text-gray-500 dark:text-gray-400">{snapshot.session.title}</p>
-        </div>
+    <div ref={root} className={`relative flex h-full min-h-0 min-w-0 flex-1 ${compact ? "flex-col" : ""}`} data-testid="workspace-harness-editor">
+      {compact && <div className="workspace-project-tool-bar">
+        <button type="button" onClick={requestClose}>Close editor</button>
+        <select aria-label="Assistant editor section" value={selection?.kind === "preset" ? selection.id : selection?.kind ?? ""}
+          onChange={event => void navigate(event.target.value === "access" || event.target.value === "preview" ? { kind: event.target.value } : { kind: "preset", id: event.target.value })}>
+          {!selection && <option value="">Loading…</option>}
+          {catalog?.presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+          <option value="access">Access & inheritance</option><option value="preview">Effective preview</option>
+        </select>
+      </div>}
+      {!compact && <SidebarPanel aria-label="Harness navigation" width={panelWidth} defaultWidth={300} min={220} max={480} onResize={setPanelWidth} resizeLabel="Resize harness panel">
+        <SidebarHeader title="Assistant editor">
+          <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400">{snapshot.session.title}</p>
+          <button type="button" onClick={requestClose} className="mt-3 rounded text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">Close editor</button>
+        </SidebarHeader>
         {successor && (
           <p className="m-2 rounded border border-blue-200 bg-blue-50 p-2 text-[11px] text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-            This setup differs from the active native thread. The next message starts a successor thread with a deterministic handoff.
+            The assistant will start fresh with the new settings and saved project context. Earlier messages remain in the transcript.
           </p>
         )}
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -234,8 +249,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }
           {entryRow("access", "Access & inheritance", effective ? compactAccessSummary(effective) : "Loading…")}
           {entryRow("preview", "Effective preview", effective ? compactModuleSummary(effective) : "Loading…")}
         </div>
-        <ResizeHandle currentWidth={panelWidth} defaultWidth={300} label="Resize harness panel" min={220} max={480} onResize={setPanelWidth} />
-      </div>
+      </SidebarPanel>}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white dark:bg-gray-900">
         {error && <div role="alert" className="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{error}</div>}
@@ -243,6 +257,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }
           <p className="p-6 text-sm text-gray-500">Loading harness…</p>
         ) : selection?.kind === "preset" && selectedPreset && draft ? (
           <HarnessPresetPanel
+            key={selectedPreset.id}
             preset={selectedPreset}
             sourcePreset={catalog.presets.find((preset) => preset.id === selectedPreset.sourcePresetId) ?? null}
             catalog={catalog}
@@ -250,7 +265,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }
             inUse={effective.preset.id === selectedPreset.id}
             draft={draft}
             dirty={dirty}
-            busy={busy}
+            busy={busy || disabled}
             onDraft={(patch) => setDraft({ ...draft, ...patch })}
             onUse={() => void act(() => patchSession({ presetId: selectedPreset.id }))}
             onClone={() => setNaming({ sourceId: selectedPreset.id, defaultName: `${selectedPreset.name} copy` })}
@@ -269,7 +284,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose }
                 workspaceBody={workspaceId ? workspaceConfig?.body ?? {} : null}
                 workspaceName={snapshot.workspace?.name ?? null}
                 conversationOverrides={snapshot.session.overrides}
-                busy={busy}
+                busy={busy || disabled}
                 successor={successor}
                 onSet={setAccess}
               />

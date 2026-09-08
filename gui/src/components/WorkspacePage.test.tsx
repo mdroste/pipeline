@@ -4,7 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import WorkspacePage from "./WorkspacePage";
 import type { ConversationSnapshot, WorkbenchSession, Workspace } from "../lib/workbenchTypes";
 
-const mocks = vi.hoisted(() => ({ listWorkspaces: vi.fn(), pendingRequests: vi.fn(), connectCodex: vi.fn(), accountState: vi.fn(), listSessions: vi.fn(), conversationSnapshot: vi.fn(), reconcileSession: vi.fn(), updateSession: vi.fn(), moveSession: vi.fn(), deleteSession: vi.fn(), generateSessionTitle: vi.fn(), sendTurn: vi.fn(), listPapers: vi.fn(), effectiveHarness: vi.fn(), importPaper: vi.fn(), open: vi.fn() }));
+const mocks = vi.hoisted(() => ({ modelCatalog: vi.fn(), harnessCatalog: vi.fn(), listWorkspaces: vi.fn(), pendingRequests: vi.fn(), connectCodex: vi.fn(), accountState: vi.fn(), listSessions: vi.fn(), conversationSnapshot: vi.fn(), reconcileSession: vi.fn(), updateSession: vi.fn(), moveSession: vi.fn(), deleteSession: vi.fn(), generateSessionTitle: vi.fn(), sendTurn: vi.fn(), listPapers: vi.fn(), effectiveHarness: vi.fn(), importPaper: vi.fn(), open: vi.fn() }));
+vi.mock("./WorkspaceProjectSurface", () => ({ default: () => <section aria-label="Project working area">Project content</section> }));
+vi.mock("../lib/programClient", () => ({ programClient: { queue: vi.fn().mockResolvedValue([]) } }));
 vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open, save: vi.fn() }));
@@ -16,6 +18,7 @@ beforeEach(() => {
   const session: WorkbenchSession = { id: "conversation", title: "Policy discussion", workspaceId: null, paperId: null, presetId: null, overrides: {}, draft: "", revision: 1, archivedAt: null, createdAt: "now", updatedAt: "now" };
   snapshot = { workspace: null, session, sequence: 1, activeBinding: null, turns: [], items: [] };
   mocks.listWorkspaces.mockResolvedValue({ workspaces: [workspace] }); mocks.pendingRequests.mockResolvedValue([]);
+  mocks.modelCatalog.mockResolvedValue({ models: [{ id: "test-model", model: "test-model", displayName: "Test model", supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High" }] }] });
   mocks.connectCodex.mockResolvedValue({}); mocks.accountState.mockResolvedValue({ status: "signedOut" });
   mocks.listSessions.mockImplementation(async () => ({ sessions: [snapshot.session] }));
   mocks.conversationSnapshot.mockImplementation(async () => snapshot);
@@ -24,6 +27,63 @@ beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
 });
 const mount = async () => { render(<WorkspacePage onOpenSettings={vi.fn()} />); await screen.findByRole("heading", { name: "Policy discussion" }); };
+
+it("starts with navigation closed and preserves the draft while opening, pinning and closing it", async () => {
+  await mount();
+  const draft = screen.getByLabelText("Message");
+  fireEvent.change(draft, { target: { value: "Keep my working question" } });
+  expect(screen.queryByRole("complementary", { name: "Workspace navigation" })).not.toBeInTheDocument();
+  const browse = screen.getByRole("button", { name: "Browse projects" });
+  browse.focus(); fireEvent.click(browse);
+  expect(screen.getByRole("dialog", { name: "Browse Workspace" })).toBeInTheDocument();
+  expect(draft.closest("[inert]")).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Keep navigation open" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("complementary", { name: "Workspace navigation" })).toBeInTheDocument();
+  expect(localStorage.getItem("pipeline.workspace.navigationPinned")).toBe("true");
+  expect(draft.closest("[inert]")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close navigation" }));
+  expect(localStorage.getItem("pipeline.workspace.navigationPinned")).toBe("false");
+  expect(browse).toHaveFocus();
+  expect(draft).toHaveValue("Keep my working question");
+  expect(mocks.sendTurn).not.toHaveBeenCalled();
+});
+
+it("opens project tools with the keyboard while leaving a message draft untouched", async () => {
+  localStorage.setItem("pipeline.workspace.workspaceId", workspace.id);
+  localStorage.setItem("pipeline.workspace.sessionId", "conversation");
+  localStorage.setItem(`pipeline.workspace.view.${workspace.id}`, "assistant");
+  snapshot = { ...snapshot, workspace, session: { ...snapshot.session, workspaceId: workspace.id } };
+  await mount();
+  const draft = screen.getByLabelText("Message");
+  fireEvent.change(draft, { target: { value: "Keep my assumptions" } });
+  draft.focus();
+  fireEvent.keyDown(draft, { key: "k", metaKey: true });
+  const search = await screen.findByRole("combobox", { name: "Find a project tool" });
+  fireEvent.change(search, { target: { value: "execution settings" } });
+  fireEvent.keyDown(search, { key: "Enter" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Find a project tool" })).toHaveTextContent("Execution settings");
+  expect(draft).toHaveValue("Keep my assumptions");
+  expect(mocks.sendTurn).not.toHaveBeenCalled();
+});
+
+it("restores the sidebar width, persists resizing, and resets without loading research tools", async () => {
+  localStorage.setItem("pipeline.workspace.navigationPinned", "true");
+  localStorage.setItem("pipeline.workspace.sidebarWidth", "336");
+  await mount();
+  const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+  const divider = within(sidebar).getByRole("separator", { name: "Resize Workspace sidebar" });
+  expect(sidebar).toHaveStyle({ width: "336px" });
+  fireEvent.keyDown(divider, { key: "ArrowRight" });
+  expect(sidebar).toHaveStyle({ width: "344px" });
+  expect(localStorage.getItem("pipeline.workspace.sidebarWidth")).toBe("344");
+  fireEvent.doubleClick(divider);
+  expect(sidebar).toHaveStyle({ width: "224px" });
+  expect(localStorage.getItem("pipeline.workspace.sidebarWidth")).toBe("224");
+  expect(mocks.listPapers).not.toHaveBeenCalled();
+  expect(mocks.effectiveHarness).not.toHaveBeenCalled();
+});
 
 it("opens composer tools lazily and explains voice availability", async () => {
   await mount();
@@ -53,6 +113,7 @@ it("jumps to an older response through search while keeping at most 200 transcri
   await mount();
   expect(screen.getAllByRole("article")).toHaveLength(200);
   expect(document.getElementById("workspace-message-message-1")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Conversation menu" }));
   fireEvent.click(screen.getByRole("button", { name: "Outline" }));
   fireEvent.change(screen.getByLabelText("Search prompts and responses"), { target: { value: "identification" } });
   const outline = within(screen.getByRole("complementary", { name: "Conversation outline" }));
@@ -106,7 +167,10 @@ it("blocks sending while files are being imported", async () => {
   expect(screen.getByRole("button", { name: "Send ↑" })).toBeEnabled();
 });
 
-const openMenu = () => fireEvent.click(screen.getByRole("button", { name: "Conversation actions for Policy discussion" }));
+const openMenu = () => {
+  if (!screen.queryByRole("complementary", { name: "Workspace navigation" })) fireEvent.click(screen.getByRole("button", { name: "Browse projects" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversation actions for Policy discussion" }));
+};
 
 it("renames a conversation from its row menu", async () => {
   await mount();
@@ -156,7 +220,7 @@ it("keeps a move dialog open with the error when the store refuses", async () =>
   openMenu();
   fireEvent.click(screen.getByRole("menuitem", { name: "Move to project…" }));
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Move" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("cannot be moved");
+  await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent("cannot be moved"));
   expect(screen.getByRole("dialog")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -175,4 +239,76 @@ it("regenerates a title on request and refreshes it from a background title even
   await act(async () => { handler!({ payload: { kind: "sessionTitleUpdated", epoch: 1, sessionId: "conversation", title: "Automatic title" } }); });
   await screen.findByRole("heading", { name: "Automatic title" });
   expect(mocks.sendTurn).not.toHaveBeenCalled();
+});
+
+it("recovers an immediate mode-exit draft even if its database save fails", async () => {
+  const view = render(<WorkspacePage onOpenSettings={vi.fn()} />);
+  await screen.findByRole("heading", { name: "Policy discussion" });
+  mocks.updateSession.mockRejectedValue({ message: "Temporary store failure" });
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Exact unsent question αβ" } });
+  view.unmount();
+  await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledWith(expect.objectContaining({ draft: "Exact unsent question αβ" })));
+  expect(localStorage.getItem("pipeline.pendingDraft.conversation")).toBe("Exact unsent question αβ");
+  render(<WorkspacePage onOpenSettings={vi.fn()} />);
+  await screen.findByRole("heading", { name: "Policy discussion" });
+  expect(screen.getByLabelText("Message")).toHaveValue("Exact unsent question αβ");
+  expect(mocks.sendTurn).not.toHaveBeenCalled();
+});
+
+
+it("preserves the draft and blocks Send if the bottom model selector fails to save", async () => {
+  mocks.accountState.mockResolvedValue({ status: "chatgpt" });
+  await mount();
+  await screen.findByRole("option", { name: "Test model" });
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Keep this question" } });
+  mocks.updateSession.mockRejectedValue(new Error("Store unavailable"));
+  fireEvent.change(screen.getByLabelText("Model"), { target: { value: "test-model" } });
+  await screen.findByText(/Model selection could not be saved/);
+  fireEvent.click(screen.getByRole("button", { name: "Send ↑" }));
+  await act(async () => {});
+  await screen.findByText(/Message not sent because its settings or draft could not be saved/);
+  expect(screen.getByLabelText("Message")).toHaveValue("Keep this question");
+  expect(localStorage.getItem("pipeline.pendingDraft.conversation")).toBe("Keep this question");
+  expect(mocks.sendTurn).not.toHaveBeenCalled();
+});
+
+it("waits for model selection to save before sending with the selected model", async () => {
+  mocks.accountState.mockResolvedValue({ status: "chatgpt" });
+  let release!: () => void;
+  const saved = new Promise<void>(resolve => { release = resolve; });
+  const update = mocks.updateSession.getMockImplementation()!;
+  mocks.updateSession.mockImplementation(async request => {
+    if (request.overrides) await saved;
+    return update(request);
+  });
+  mocks.sendTurn.mockResolvedValue({ threadId: "thread", turnId: "turn" });
+  await mount();
+  await screen.findByRole("option", { name: "Test model" });
+  fireEvent.change(screen.getByLabelText("Model"), { target: { value: "test-model" } });
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Use the selected model" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send ↑" }));
+  expect(mocks.sendTurn).not.toHaveBeenCalled();
+  await act(async () => release());
+  await waitFor(() => expect(mocks.sendTurn).toHaveBeenCalledWith(expect.objectContaining({ model: "test-model", effort: null, text: "Use the selected model" })));
+});
+
+
+it("retains unsaved assistant instructions and the message across inspector switches", async () => {
+  const preset = { id: "research_assistant", name: "Research assistant", instructions: "Be precise.", modules: [], revision: 1, builtIn: true };
+  mocks.harnessCatalog.mockResolvedValue({ presets: [preset], modules: [] });
+  mocks.effectiveHarness.mockResolvedValue({ preset, mode: "inspect", contextBudgetBytes: 65536, enabledModules: [], unavailableModules: [], diagnostics: [], fingerprint: "test", valueSources: {} });
+  await mount();
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Draft message" } });
+  fireEvent.click(within(screen.getByLabelText("Message").closest(".workspace-composer")!).getByRole("button", { name: "Assistant settings" }));
+  const instructions = await screen.findByLabelText("Assistant instructions");
+  fireEvent.click(screen.getByText("Instructions and tools", { selector: "summary" }));
+  fireEvent.change(instructions, { target: { value: "Keep these exact assumptions" } });
+  fireEvent.click(screen.getByRole("button", { name: "Conversation menu" }));
+  fireEvent.click(screen.getByRole("button", { name: "Outline" }));
+  expect(instructions).not.toBeVisible();
+  fireEvent.click(within(screen.getByLabelText("Message").closest(".workspace-composer")!).getByRole("button", { name: "Assistant settings" }));
+  expect(instructions).toBeVisible();
+  expect(instructions).toHaveValue("Keep these exact assumptions");
+  expect(screen.getByLabelText("Message")).toHaveValue("Draft message");
+  expect(screen.queryByRole("separator", { name: "Resize research workspace" })).not.toBeInTheDocument();
 });

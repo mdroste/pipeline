@@ -92,64 +92,47 @@ html.theme-transitioning *::after {
 
 .toc-nav {
   width: 15rem;
+  overflow-x: hidden;
   border-right: 1px solid theme("colors.gray.200");
   padding: 1.5rem 1rem 1.5rem 1.25rem;
   overflow-y: auto;
   flex-shrink: 0;
-  display: none;
+  display: block;
 }
+.toc-nav.toc-compact { max-height: 40%; border-right: 0; border-bottom: 1px solid theme("colors.gray.200"); padding: 0.75rem 1rem; }
+.reader-contents-toggle { display:flex; justify-content:space-between; flex-shrink:0; padding:8px 14px; border-bottom:1px solid theme("colors.gray.200"); font-size:12px; }
+.dark .toc-nav.toc-compact, .dark .reader-contents-toggle { border-bottom-color:theme("colors.gray.800"); }
 
-@media (min-width: 1024px) {
-  .toc-nav {
-    display: block;
-  }
+/* Semantic navigation colors: normal text remains readable in both themes. */
+.toc-nav {
+  --toc-text: theme("colors.gray.700");
+  --toc-secondary: theme("colors.gray.600");
+  --toc-strong: theme("colors.gray.950");
+  --toc-active-surface: theme("colors.gray.100");
+  --toc-focus: theme("colors.gray.600");
 }
-
 .dark .toc-nav {
   border-right-color: theme("colors.gray.800");
+  --toc-text: theme("colors.gray.300");
+  --toc-secondary: theme("colors.gray.400");
+  --toc-strong: theme("colors.gray.100");
+  --toc-active-surface: theme("colors.gray.800");
+  --toc-focus: theme("colors.gray.300");
 }
-
 .toc-link {
   display: block;
   font-size: 0.8125rem;
   padding: 0.25rem 0.5rem;
   border-radius: 0.25rem;
-  color: theme("colors.gray.500");
+  color: var(--toc-text);
   hyphens: auto;
   text-align: left;
   text-decoration: none;
   transition: color 0.15s, background-color 0.15s;
   line-height: 1.4;
 }
-
-.toc-link:hover {
-  color: theme("colors.gray.900");
-  background-color: theme("colors.gray.100");
-}
-
-.dark .toc-link:hover {
-  color: theme("colors.gray.100");
-  background-color: theme("colors.gray.800");
-}
-
-.toc-h1 {
-  font-weight: 600;
-  color: theme("colors.gray.700");
-}
-
-.dark .toc-h1 {
-  color: theme("colors.gray.300");
-}
-
-.toc-h2 {
-  padding-left: 1.25rem;
-  color: theme("colors.gray.400");
-}
-
-.dark .toc-h2 {
-  color: theme("colors.gray.500");
-}
-
+.toc-h1 { font-weight: 600; }
+.toc-h2 { padding-left: 1.25rem; color: var(--toc-secondary); }
 .toc-issue {
   display: grid;
   grid-template-columns: 2rem minmax(0, 1fr);
@@ -157,23 +140,21 @@ html.theme-transitioning *::after {
   align-items: start;
   margin-left: 0.75rem;
   padding: 0.4rem 0.5rem;
-  color: theme("colors.gray.600");
 }
-
 .toc-issue-number {
-  color: theme("colors.gray.400");
+  color: var(--toc-secondary);
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.025em;
   line-height: 1.65;
 }
-
-.dark .toc-issue {
-  color: theme("colors.gray.300");
+.toc-link:is(:hover, :focus-visible, [aria-current="location"]) {
+  color: var(--toc-strong);
+  background-color: var(--toc-active-surface);
 }
-
-.dark .toc-issue-number {
-  color: theme("colors.gray.500");
+.toc-link:focus-visible {
+  outline: 2px solid var(--toc-focus);
+  outline-offset: 2px;
 }
 
 /* ── Report content typography ──────────────────────────────────── */
@@ -556,3 +537,5 @@ mark.search-hit.current {
     margin: 1rem 0;
   }
 }
+
+.report-reader.reader-compact .report-content { padding-left: 1.5rem; padding-right: 1.5rem; }

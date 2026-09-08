@@ -368,7 +368,7 @@ export default function Experiments({
         </section>
       </div>
       <section className={panel}>
-        <h2 className="font-semibold">Immutable result registry</h2>
+        <h2 className="font-semibold">Saved results</h2>
         <div className="grid gap-3 md:grid-cols-2">
           <Select
             label="Completed execution"

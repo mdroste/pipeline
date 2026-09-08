@@ -157,8 +157,12 @@ function DependencyRow({
         : group === "models"
           ? "set up"
           : missingDependencyLabel(dep);
-  const pdfSettingsLabel = "Settings → Review & workflows → PDF Extraction";
-  const pdfSettingsIndex = dep.hint.indexOf(pdfSettingsLabel);
+  const pdfSettingsLabel = "Settings → Reviews → PDF Extraction";
+  // Older dependency reports use the previous Settings navigation labels.
+  const hint = dep.hint
+    .replace(/Settings → (?:Workflows → )?PDF Extraction/g, pdfSettingsLabel)
+    .replaceAll("Workflow ChatGPT", "Reviews ChatGPT");
+  const pdfSettingsIndex = hint.indexOf(pdfSettingsLabel);
   const linksToPdfSettings =
     !available &&
     /paddleocr-vl/i.test(dep.name) &&
@@ -170,7 +174,7 @@ function DependencyRow({
       <StatusIcon tone={tone} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="font-medium text-gray-900 dark:text-gray-100">{dep.name}</span>
+          <span className="font-medium text-gray-900 dark:text-gray-100">{dep.name === "Workflow ChatGPT" ? "Reviews ChatGPT" : dep.name}</span>
           {dep.found && dep.version && dep.version !== "direct API" && (
             <span className="max-w-40 truncate text-xs text-gray-500 dark:text-gray-400">
               {dep.version}
@@ -186,7 +190,7 @@ function DependencyRow({
           <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-300">
             {linksToPdfSettings ? (
               <>
-                {dep.hint.slice(0, pdfSettingsIndex)}
+                {hint.slice(0, pdfSettingsIndex)}
                 <a
                   href="#paddleocr-local-engine"
                   onClick={(event) => {
@@ -197,9 +201,9 @@ function DependencyRow({
                 >
                   {pdfSettingsLabel}
                 </a>
-                {dep.hint.slice(pdfSettingsIndex + pdfSettingsLabel.length)}
+                {hint.slice(pdfSettingsIndex + pdfSettingsLabel.length)}
               </>
-            ) : dep.hint}
+            ) : hint}
             {dep.help_url && (
               <>
                 {" "}
@@ -296,7 +300,7 @@ export default function DepsCheck({
                   Model access
                 </h3>
                 <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Each provider selected by this workflow must be ready. ChatGPT uses the Workflow connection selected in Settings → Providers; Workspace has its own sign-in.
+                  Each provider selected by this workflow must be ready. ChatGPT uses the Reviews connection selected in Settings → Providers; Workspace has its own sign-in.
                 </p>
               </div>
               <SectionStatus ready={modelAccessReady} />

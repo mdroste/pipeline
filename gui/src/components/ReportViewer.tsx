@@ -1,6 +1,9 @@
-import React, { memo, useMemo, useRef, useState } from "react";
+import useContainerWidth from "../hooks/useContainerWidth";
+import React, { memo, useId, useMemo, useRef, useState } from "react";
+import { reportAnchorPlugin } from "../lib/reportAnchors";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { fileMarkdownComponents } from "./file-workspace/markdownComponents";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import remarkParse from "remark-parse";
@@ -22,6 +25,7 @@ import SafeMarkdownLink from "./SafeMarkdownLink";
 
 interface Props {
   markdown: string;
+  initialContentsOpen?: boolean;
 }
 
 interface MarkdownAstNode {
@@ -359,6 +363,7 @@ export function stripInternalReportMarkers(markdown: string): string {
 
 /** Hoisted so the memoized markdown subtree receives a stable reference. */
 const MARKDOWN_COMPONENTS: Components = {
+  ...fileMarkdownComponents,
   a: SafeMarkdownLink,
   table: ({ node: _node, ...props }) => (
     <div className="max-w-full overflow-x-auto">
@@ -396,9 +401,11 @@ const MARKDOWN_COMPONENTS: Components = {
 const ReportMarkdown = memo(function ReportMarkdown({
   markdown,
   remarkNavigationIds,
+  rehypeAnchors,
 }: {
   markdown: string;
   remarkNavigationIds: ReturnType<typeof navigationIdPlugin>;
+  rehypeAnchors: ReturnType<typeof reportAnchorPlugin>;
 }) {
   return (
     <MathErrorBoundary resetKey={markdown}>
@@ -423,10 +430,11 @@ const ReportMarkdown = memo(function ReportMarkdown({
             }
             rehypePlugins={
               fallback
-                ? []
+                ? [rehypeAnchors]
                 : [
                     rehypeValidateMath,
                     [rehypeKatex, REPORT_KATEX_OPTIONS],
+                    rehypeAnchors,
                   ]
             }
             components={MARKDOWN_COMPONENTS}
@@ -439,9 +447,23 @@ const ReportMarkdown = memo(function ReportMarkdown({
   );
 });
 
-function ReportViewerContent({ markdown }: Props) {
+function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
-  const [contentsOpen, setContentsOpen] = useState(true);
+  const instanceId = useId();
+  const anchorPrefix = `report-${instanceId.replace(/[^a-zA-Z0-9_-]/g, "")}-`;
+  const rehypeAnchors = useMemo(() => reportAnchorPlugin(anchorPrefix), [anchorPrefix]);
+  const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
+  const [contentsOpen, setContentsOpen] = useState(initialContentsOpen);
+  const [readerRef, readerWidth] = useContainerWidth<HTMLDivElement>();
+  const compact = readerWidth !== null && readerWidth < 760;
+  const [compactContentsOpen, setCompactContentsOpen] = useState(false);
+  const outlineVisible = compact ? compactContentsOpen : contentsOpen;
+  const contentsToggle = useRef<HTMLButtonElement>(null);
+  const hideContents = () => {
+    if (compact) setCompactContentsOpen(false); else setContentsOpen(false);
+    requestAnimationFrame(() => contentsToggle.current?.focus());
+  };
+  const outlineId = `${instanceId}-contents`;
   const [fontScale, setFontScale] = useState(100);
   const [wideReading, setWideReading] = useState(false);
   const [relaxedLeading, setRelaxedLeading] = useState(true);
@@ -490,7 +512,23 @@ function ReportViewerContent({ markdown }: Props) {
   }, [navigationIndex.headings, navigationIndex.issues]);
 
   return (
-    <div className="flex h-full relative">
+    <div ref={readerRef} className={`report-reader flex h-full min-h-0 min-w-0 relative ${compact ? "reader-compact flex-col" : ""}`} onClickCapture={event => {
+      const link = event.target instanceof Element ? event.target.closest("a[href^='#']") : null;
+      const href = link?.getAttribute("href");
+      if (!href) return;
+      // Never let a missing fragment navigate another reader or the app shell.
+      event.preventDefault();
+      let id: string;
+      try { id = decodeURIComponent(href.slice(1)); } catch { return; }
+      const target = Array.from(contentRef.current?.querySelectorAll<HTMLElement>("[id]") ?? [])
+        .find(node => node.id === id);
+      if (!target) return;
+      setActiveAnchor(id);
+      if (compact) setCompactContentsOpen(false);
+      target.scrollIntoView({ block: "start" });
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }}>
       {find.open && (
         <div className="absolute top-2 right-3 z-20 flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg px-2 py-1">
           <input
@@ -516,15 +554,16 @@ function ReportViewerContent({ markdown }: Props) {
         </div>
       )}
       {/* Table of contents */}
-      {contents.length > 0 && contentsOpen && (
-        <nav className="toc-nav relative" style={{ width: contentsWidth }}>
+      {compact && contents.length > 0 && <button ref={contentsToggle} type="button" aria-expanded={outlineVisible} aria-controls={outlineId} onClick={() => setCompactContentsOpen(value => !value)} className="reader-contents-toggle">Contents <span aria-hidden="true">{outlineVisible ? "−" : "+"}</span></button>}
+      {contents.length > 0 && outlineVisible && (
+        <nav id={outlineId} aria-label="Table of contents" className={`toc-nav relative ${compact ? "toc-compact" : ""}`} style={{ width: compact ? "100%" : contentsWidth }}>
           <div className="mb-4 flex items-center justify-between gap-2">
             <h4 className="text-[11px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
               Contents
             </h4>
             <button
               type="button"
-              onClick={() => setContentsOpen(false)}
+              onClick={hideContents}
               aria-label="Hide table of contents"
               className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
@@ -539,7 +578,8 @@ function ReportViewerContent({ markdown }: Props) {
             {contents.map((entry) => (
                 <li key={entry.id}>
                   <a
-                    href={`#${entry.id}`}
+                    href={`#${anchorPrefix}${entry.id}`}
+                    aria-current={activeAnchor === anchorPrefix + entry.id ? "location" : undefined}
                     className={`toc-link ${
                       entry.kind === "issue"
                         ? "toc-issue"
@@ -554,25 +594,30 @@ function ReportViewerContent({ markdown }: Props) {
                 </li>
               ))}
           </ul>
-          <ResizeHandle
+          {!compact && <ResizeHandle
+            minRemaining={420}
             currentWidth={contentsWidth}
             defaultWidth={240}
             label="Resize table of contents"
             min={184}
             max={360}
             onResize={setContentsWidth}
-          />
+          />}
         </nav>
       )}
-      {contents.length > 0 && !contentsOpen && (
+      {contents.length > 0 && !outlineVisible && <nav id={outlineId} aria-label="Table of contents" hidden />}
+      {contents.length > 0 && !compact && !contentsOpen && (
         <button
           type="button"
           onClick={() => setContentsOpen(true)}
+          ref={contentsToggle}
           aria-label="Show table of contents"
-          className="hidden w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-5 text-gray-500
+          aria-expanded={false}
+          aria-controls={outlineId}
+          className="flex w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-5 text-gray-500
                      hover:bg-gray-50 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2
                      focus-visible:ring-inset focus-visible:ring-gray-400 dark:border-gray-800 dark:hover:bg-gray-900
-                     dark:text-gray-400 dark:hover:text-gray-100 lg:flex"
+                     dark:text-gray-400 dark:hover:text-gray-100"
         >
           <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h11M8 12h11M8 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
@@ -581,8 +626,8 @@ function ReportViewerContent({ markdown }: Props) {
       )}
 
       {/* Report content */}
-      <div className="relative flex-1 overflow-y-auto">
-        <div className="sticky right-3 top-2 z-10 ml-auto mr-3 flex w-fit items-center gap-1 rounded-lg border border-gray-200 bg-white/95 p-1 text-xs shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <div className="sticky right-3 top-2 z-10 ml-auto mr-3 flex max-w-full flex-wrap w-fit items-center gap-1 rounded-lg border border-gray-200 bg-white/95 p-1 text-xs shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
           <button aria-label="Decrease report text size" onClick={() => setFontScale((value) => Math.max(85, value - 5))} className="rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">A−</button>
           <button aria-label="Reset report text size" onClick={() => setFontScale(100)} className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">{fontScale}%</button>
           <button aria-label="Increase report text size" onClick={() => setFontScale((value) => Math.min(130, value + 5))} className="rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">A+</button>
@@ -611,6 +656,7 @@ function ReportViewerContent({ markdown }: Props) {
           <ReportMarkdown
             markdown={normalizedMarkdown}
             remarkNavigationIds={remarkNavigationIds}
+            rehypeAnchors={rehypeAnchors}
           />
         </div>
       </div>

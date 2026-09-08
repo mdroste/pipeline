@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "artifactId": null,
+  "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "externalReference": "REPLACE_WITH_AN_IMMUTABLE_DATA_VERSION_REFERENCE",
+  "rows": 100,
+  "columns": [
+    {"name": "output", "inferredType": "numeric", "missing": 3, "units": "millions of 2017 dollars", "description": "Declared output variable", "origin": "exporter"}
+  ],
+  "acquisition": {
+    "provider": "researcher exporter",
+    "source": "REPLACE_WITH_SOURCE",
+    "retrievedAt": "2026-09-07T00:00:00Z",
+    "requestedVintage": null,
+    "returnedVintage": null,
+    "seriesIds": [],
+    "units": null,
+    "frequency": null,
+    "transformation": null
+  },
+  "diagnosticsCoverage": "exporter_declared",
+  "delimiter": "external",
+  "limitations": ["Example only: replace the hash, version reference, dimensions and declarations before importing. Pipeline does not verify external rows."]
+}

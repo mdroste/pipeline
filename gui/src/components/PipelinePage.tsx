@@ -1,27 +1,7 @@
-import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type {
-  Phase,
-  PipelineConfig,
-  StepConfig,
-  MergeConfig,
-  ExtractionConfig,
-  ProfileSummary,
-  ExportEnvelope,
-  Settings,
-  ModelCatalog,
-  ArtifactSelector,
-} from "../lib/types";
-import { PROVIDERS } from "../lib/providers";
-import { lintCrossStepReferences } from "../lib/pipelineHelpers";
-import WaveDiagram, { type WaveSelection } from "./WaveDiagram";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
-import ResizeHandle from "./ResizeHandle";
-import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
-import { confirmDialog, notify } from "./DialogService";
+
 import PromptDialog from "./pipeline-editor/PromptDialog";
-import AddStepDialog, { type AddStepDraft } from "./pipeline-editor/AddStepDialog";
+import AddStepDialog from "./pipeline-editor/AddStepDialog";
 import {
   MergeEditorPanel,
   PipelineSettingsEditorPanel,
@@ -31,10 +11,9 @@ import {
   MemoizedExtractionEditor as ExtractionEditor,
   MemoizedOrientationEditor as OrientationEditor,
 } from "./pipeline-editor/PreprocessingEditors";
-import { MemoizedStepRow as StepRow } from "./pipeline-editor/StepListItems";
+
 import {
   AdaptiveAgentsEditorPanel,
-  AdaptiveAgentsRow,
   type AdaptiveSlotKind,
 } from "./pipeline-editor/AdaptiveReviewEditors";
 import {
@@ -43,14 +22,7 @@ import {
   isAutoReview,
   withAdaptiveAgentCount,
 } from "../lib/autoReview";
-import {
-  conditionUpstreamIds,
-  defaultStepContext,
-  normalizeConfig,
-  primaryPartsForMode,
-} from "./pipeline-editor/utils";
-import { describeStep } from "./pipeline-editor/stepSummary";
-import { ISSUES_SCHEMA } from "./pipeline-editor/stepTemplates";
+
 import SchemaEditorPanel from "./pipeline-editor/SchemaEditorPanel";
 
 interface Props {
@@ -61,12 +33,14 @@ interface Props {
   showBack?: boolean;
 }
 
-const DEFAULT_EXTRACTION: ExtractionConfig = {
-  method: "",
-};
-
-type EditingMode = WaveSelection | null;
-
+import { DEFAULT_EXTRACTION } from "./pipeline-editor/editorState";
+import { useWorkflowEditor } from "./pipeline-editor/useWorkflowEditor";
+import { useProfileOperations } from "./pipeline-editor/useProfileOperations";
+import { useStepActions } from "./pipeline-editor/useStepActions";
+import { useWorkflowCatalogs } from "./pipeline-editor/useWorkflowCatalogs";
+import { useWorkflowShortcuts } from "./pipeline-editor/useWorkflowShortcuts";
+import { useWorkflowView } from "./pipeline-editor/useWorkflowView";
+import { WorkflowNavigator } from "./pipeline-editor/WorkflowNavigator";
 export default function PipelinePage({
   onClose,
   onDirtyChange,
@@ -74,269 +48,47 @@ export default function PipelinePage({
   onProfileChange,
   showBack = true,
 }: Props) {
-  // Editor state is profile-scoped; switching profiles replaces the active draft.
-  const [config, setConfig] = useState<PipelineConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [loadAttempt, setLoadAttempt] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [schemaDraftValid, setSchemaDraftValid] = useState(true);
-  const [schemaEditorEpoch, setSchemaEditorEpoch] = useState(0);
-  const [editing, setEditing] = useState<EditingMode>(null);
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
-
-  // Profile state
-  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
-  const [activeProfile, setActiveProfile] = useState<string>("auto-review");
-  const [profileMutationPending, setProfileMutationPending] = useState(false);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [navigatorView, setNavigatorView] = useState<"steps" | "overview" | "schemas">("steps");
-  const [editorMode, setEditorMode] = useState<"basic" | "advanced">("basic");
-  const [, setHistoryVersion] = useState(0);
-  const [catalogTab, setCatalogTab] = useState<"subjects" | "methods" | null>(null);
-  const configRef = useRef<PipelineConfig | null>(config);
-  const activeProfileRef = useRef(activeProfile);
-  const profileMutationRequestRef = useRef(0);
-  const profileMutationActiveRef = useRef(false);
-  const promptResetRequestRef = useRef(0);
-  const undoHistoryRef = useRef<PipelineConfig[]>([]);
-  const redoHistoryRef = useRef<PipelineConfig[]>([]);
-  const lastConfigRef = useRef<PipelineConfig | null>(null);
-  const savedConfigRef = useRef<PipelineConfig | null>(null);
-  const applyingHistoryRef = useRef(false);
-  const saveShortcutRef = useRef<() => void>(() => {});
-  const undoShortcutRef = useRef<() => void>(() => {});
-  const redoShortcutRef = useRef<() => void>(() => {});
-  configRef.current = config;
-  activeProfileRef.current = activeProfile;
-
-  // Prompt dialog state
-  const [promptDialog, setPromptDialog] = useState<{
-    title: string;
-    defaultValue: string;
-    onSubmit: (value: string) => void;
-  } | null>(null);
-  const [addStepOpen, setAddStepOpen] = useState(false);
-  const [panelWidth, setPanelWidth] = usePersistentPanelWidth(
-    "pipeline.ui.workflowPanelWidth",
-    420,
-    280,
-    640,
-  );
-
-  useEffect(() => {
-    onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
-
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
-
-  useEffect(
-    () => () => {
-      profileMutationRequestRef.current += 1;
-      profileMutationActiveRef.current = false;
-    },
-    [],
-  );
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setLoadError(null);
-    Promise.all([
-      invoke<PipelineConfig>("get_pipeline_config"),
-      invoke<ProfileSummary[]>("list_profiles"),
-      invoke<string>("get_active_profile"),
-    ])
-      .then(async ([c, p, a]) => {
-        if (!live) return;
-        const normalized = normalizeConfig(c);
-        const draftKey = `pipeline.workflowDraft.${a}`;
-        let restored = normalized;
-        const savedDraft = window.localStorage.getItem(draftKey);
-        if (savedDraft) {
-          try {
-            const candidate = normalizeConfig(JSON.parse(savedDraft) as PipelineConfig);
-            if (JSON.stringify(candidate) !== JSON.stringify(normalized)
-              && await confirmDialog(
-                "Pipeline found an unsaved draft for this workflow. Restore it?",
-                { title: "Recover workflow draft", confirmLabel: "Restore draft" },
-              )) {
-              restored = candidate;
-              setDirty(true);
-            }
-          } catch {
-            window.localStorage.removeItem(draftKey);
-          }
-        }
-        applyingHistoryRef.current = true;
-        undoHistoryRef.current = [];
-        redoHistoryRef.current = [];
-        setHistoryVersion((version) => version + 1);
-        lastConfigRef.current = restored;
-        savedConfigRef.current = normalized;
-        setConfig(restored);
-        setProfiles(p);
-        setActiveProfile(a);
-        setLoading(false);
-      })
-      .catch((e) => {
-        console.error(e);
-        if (live) {
-          setConfig(null);
-          setLoadError(e instanceof Error ? e.message : String(e));
-          setLoading(false);
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [loadAttempt]);
-
-  useEffect(() => {
-    if (!config) return;
-    if (applyingHistoryRef.current) {
-      applyingHistoryRef.current = false;
-      lastConfigRef.current = config;
-      return;
-    }
-    const previous = lastConfigRef.current;
-    if (previous && JSON.stringify(previous) !== JSON.stringify(config)) {
-      undoHistoryRef.current = [...undoHistoryRef.current.slice(-99), previous];
-      redoHistoryRef.current = [];
-      setHistoryVersion((version) => version + 1);
-    }
-    lastConfigRef.current = config;
-  }, [config]);
-
-  useEffect(() => {
-    const key = `pipeline.workflowDraft.${activeProfile}`;
-    if (dirty && config) {
-      window.localStorage.setItem(key, JSON.stringify(config));
-    } else {
-      window.localStorage.removeItem(key);
-    }
-  }, [activeProfile, config, dirty]);
-
-  useEffect(() => {
-    let live = true;
-    invoke<{ settings: Settings; warnings: string[] }>("get_settings")
-      .then((response) => {
-        if (!live) return;
-        setSettings(response.settings);
-        for (const provider of PROVIDERS) {
-          invoke<ModelCatalog>("get_model_catalog", {
-            provider,
-            settings: response.settings,
-            refresh: false,
-          }).then((catalog) => {
-            if (live) setCatalogs((old) => ({ ...old, [provider]: catalog }));
-          }).catch(() => {});
-        }
-      })
-      .catch(() => {
-        // Model overrides remain usable with legacy fields against an older
-        // backend; catalog loading is an enhancement, not an editor blocker.
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  const profileMutationIsCurrent = (request: number) =>
-    request === profileMutationRequestRef.current;
-
-  const beginProfileMutation = (): number | null => {
-    if (profileMutationActiveRef.current) return null;
-    profileMutationActiveRef.current = true;
-    const request = ++profileMutationRequestRef.current;
-    setProfileMutationPending(true);
-    return request;
-  };
-
-  const finishProfileMutation = (request: number) => {
-    if (!profileMutationIsCurrent(request)) return;
-    profileMutationActiveRef.current = false;
-    setProfileMutationPending(false);
-  };
-
-  const refreshProfiles = async (request?: number) => {
-    try {
-      const p = await invoke<ProfileSummary[]>("list_profiles");
-      if (request !== undefined && !profileMutationIsCurrent(request)) return;
-      setProfiles(p);
-    } catch (e) {
-      if (request === undefined || profileMutationIsCurrent(request)) {
-        console.error(e);
-      }
-    }
-  };
-
-  const switchProfileForMutation = async (id: string, request: number) => {
-    const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
-    if (!profileMutationIsCurrent(request)) return false;
-    const normalized = normalizeConfig(newConfig);
-    applyingHistoryRef.current = true;
-    undoHistoryRef.current = [];
-    redoHistoryRef.current = [];
-    setHistoryVersion((version) => version + 1);
-    lastConfigRef.current = normalized;
-    savedConfigRef.current = normalized;
-    setConfig(normalized);
-    setActiveProfile(id);
-    setEditing(null);
-    setSchemaDraftValid(true);
-    setSchemaEditorEpoch((current) => current + 1);
-    setDirty(false);
-    onProfileChange?.();
-    return true;
-  };
-
-  // IDs that aren't tied to a specific step's prompt; everything else is treated
-  // as a step ID and looked up in config.steps.
-  const NON_STEP_EDITORS = new Set([
-    "merge",
-    "pipeline_settings",
-    "extraction",
-    "orientation",
-    "auto_adaptive_agents",
-  ]);
-  const isStepEditing = !!editing && !NON_STEP_EDITORS.has(editing);
-
-  const editingStep = (config && isStepEditing)
-    ? config.steps.find((s) => s.id === editing) ?? null
-    : null;
-  const conditionStepIds = config && editingStep
-    ? conditionUpstreamIds(config.steps, editingStep.id)
-    : [];
-
-  useEffect(() => {
-    if (isStepEditing && !editingStep) {
-      setEditing(null);
-    }
-  }, [isStepEditing, editingStep]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      const key = event.key.toLowerCase();
-      if (key === "s") {
-        event.preventDefault();
-        saveShortcutRef.current();
-      } else if (key === "z" && event.shiftKey) {
-        event.preventDefault();
-        redoShortcutRef.current();
-      } else if (key === "z") {
-        event.preventDefault();
-        undoShortcutRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
+  const editor = useWorkflowEditor(onDirtyChange);
+  const { settings, catalogs } = useWorkflowCatalogs();
+  const operations = useProfileOperations(editor, settings, onProfileChange);
+  const view = useWorkflowView();
+  const {
+    addStepOpen,
+    setAddStepOpen,
+    navigatorView,
+    setNavigatorView,
+    editorMode,
+    catalogTab,
+    setCatalogTab,
+  } = view;
+  const actions = useStepActions(editor, () => {
+    setAddStepOpen(false);
+    setNavigatorView("steps");
+  });
+  useWorkflowShortcuts(editor, operations);
+  const {
+    config,
+    activeProfile,
+    schemaEditorEpoch,
+    editing,
+    editingStep,
+    conditionStepIds,
+    setConfig,
+    setDirty,
+    setSchemaDraftValid,
+  } = editor;
+  const { promptResetRequestRef } = editor.identity;
+  const { loading, loadError, retryLoad, promptDialog, setPromptDialog } =
+    operations;
+  const {
+    updateStep,
+    updateStepPhase,
+    updateOutputRole,
+    updateMerge,
+    updateExtraction,
+    resetParallelTemplate,
+    addStep,
+  } = actions;
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400">
@@ -357,7 +109,7 @@ export default function PipelinePage({
           <div className="flex justify-center gap-2">
             <button
               type="button"
-              onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+              onClick={retryLoad}
               className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700"
             >
               Retry
@@ -375,743 +127,11 @@ export default function PipelinePage({
     );
   }
 
-  // --- Profile management ---
-
-  const handleSwitchProfile = async (id: string) => {
-    if (id === activeProfileRef.current) return;
-    if (dirty && !(await confirmDialog("You have unsaved changes. Switch workflow and discard them?", { destructive: true }))) return;
-    const request = beginProfileMutation();
-    if (request === null) return;
-    try {
-      await switchProfileForMutation(id, request);
-    } catch (e) {
-      if (profileMutationIsCurrent(request)) {
-        notify(`Failed to switch workflow: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    } finally {
-      finishProfileMutation(request);
-    }
-  };
-
-  const handleNewProfile = () => {
-    setPromptDialog({
-      title: "New profile name",
-      defaultValue: "",
-      onSubmit: async (name) => {
-        if (dirty && !(await confirmDialog("Create this workflow and discard the current unsaved changes?", { destructive: true }))) {
-          return;
-        }
-        const request = beginProfileMutation();
-        if (request === null) return;
-        try {
-          const summary = await invoke<ProfileSummary>("create_profile", { name });
-          if (!profileMutationIsCurrent(request)) return;
-          await refreshProfiles(request);
-          await switchProfileForMutation(summary.id, request);
-        } catch (e) {
-          if (profileMutationIsCurrent(request)) {
-            notify(`Failed to create workflow: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        } finally {
-          finishProfileMutation(request);
-        }
-      },
-    });
-  };
-
-  const handleDuplicateProfile = () => {
-    setPromptDialog({
-      title: "Name for the duplicate",
-      defaultValue: "",
-      onSubmit: async (name) => {
-        if (dirty && !(await confirmDialog("Duplicate this workflow and discard the current unsaved changes?", { destructive: true }))) {
-          return;
-        }
-        const request = beginProfileMutation();
-        if (request === null) return;
-        const sourceId = activeProfileRef.current;
-        try {
-          const summary = await invoke<ProfileSummary>("duplicate_profile", {
-            sourceId,
-            newName: name,
-          });
-          if (!profileMutationIsCurrent(request)) return;
-          await refreshProfiles(request);
-          await switchProfileForMutation(summary.id, request);
-        } catch (e) {
-          if (profileMutationIsCurrent(request)) {
-            notify(`Failed to duplicate workflow: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        } finally {
-          finishProfileMutation(request);
-        }
-      },
-    });
-  };
-
-  const handleRenameProfile = () => {
-    const current = profiles.find((p) => p.id === activeProfile);
-    const profile = activeProfile;
-    setPromptDialog({
-      title: "Rename profile",
-      defaultValue: current?.name ?? "",
-      onSubmit: async (name) => {
-        const request = beginProfileMutation();
-        if (request === null) return;
-        try {
-          await invoke<ProfileSummary>("rename_profile", { id: profile, newName: name });
-          if (
-            !profileMutationIsCurrent(request) ||
-            activeProfileRef.current !== profile
-          ) return;
-          await refreshProfiles(request);
-        } catch (e) {
-          if (profileMutationIsCurrent(request)) {
-            notify(`Failed to rename workflow: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        } finally {
-          finishProfileMutation(request);
-        }
-      },
-    });
-  };
-
-  const handleDeleteProfile = async () => {
-    const profile = activeProfileRef.current;
-    if (profiles.find((candidate) => candidate.id === profile)?.builtin) {
-      notify("Built-in workflows cannot be deleted.", "info");
-      return;
-    }
-    const current = profiles.find((candidate) => candidate.id === profile);
-    if (!(await confirmDialog(
-      `Delete workflow “${current?.name ?? profile}”? This cannot be undone.`,
-      { title: "Delete workflow", confirmLabel: "Delete", destructive: true },
-    ))) return;
-    const request = beginProfileMutation();
-    if (request === null) return;
-    try {
-      await invoke("delete_profile", { id: profile });
-      if (!profileMutationIsCurrent(request)) return;
-      await refreshProfiles(request);
-      await switchProfileForMutation("auto-review", request);
-    } catch (e) {
-      if (profileMutationIsCurrent(request)) {
-        notify(`Failed to delete workflow: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    } finally {
-      finishProfileMutation(request);
-    }
-  };
-
-  // --- Config editing ---
-
-  const updateStep = (id: string, patch: Partial<StepConfig>) => {
-    setConfig((current) => {
-      if (!current) return current;
-      const outputs = { ...(current.outputs ?? {}) };
-      if (patch.output_schema === null && outputs.findings_step === id) {
-        outputs.findings_step = "";
-      }
-      return {
-        ...current,
-        outputs,
-        steps: current.steps.map((step) => step.id === id ? { ...step, ...patch } : step),
-      };
-    });
-    setDirty(true);
-  };
-
-  const updateStepPhase = (id: string, phase: Phase) => {
-    setConfig((current) => {
-      if (!current) return current;
-      const outputs = { ...(current.outputs ?? {}) };
-      if (phase !== "sequential") {
-        if (outputs.primary_step === id) outputs.primary_step = "";
-        if (outputs.findings_step === id) outputs.findings_step = "";
-      }
-      return {
-        ...current,
-        outputs,
-        steps: current.steps.map((step) => step.id === id ? { ...step, phase } : step),
-      };
-    });
-    setDirty(true);
-  };
-
-  const updateOutputRole = (
-    id: string,
-    role: "primary_step" | "findings_step",
-    enabled: boolean,
-  ) => {
-    setConfig((current) => {
-      if (!current) return current;
-      const outputs = { ...(current.outputs ?? {}) };
-      outputs[role] = enabled ? id : outputs[role] === id ? "" : outputs[role];
-      return {
-        ...current,
-        outputs,
-        steps: role === "findings_step" && enabled
-          ? current.steps.map((step) => step.id === id && !step.output_schema
-            ? { ...step, output_schema: ISSUES_SCHEMA }
-            : step)
-          : current.steps,
-      };
-    });
-    setDirty(true);
-  };
-
-  const updateMerge = (patch: Partial<MergeConfig>) => {
-    setConfig((current) => current ? {
-      ...current,
-      merge: { ...current.merge, ...patch },
-    } : current);
-    setDirty(true);
-  };
-
-  const updateExtraction = async (patch: Partial<ExtractionConfig>) => {
-    const previous = config.extraction ?? DEFAULT_EXTRACTION;
-    const extraction = { ...previous, ...patch };
-    const previousInputs = previous.extra_inputs ?? [];
-    const nextInputs = extraction.extra_inputs ?? [];
-    const renamedInputs = new Map<string, string>();
-    if (previousInputs.length === nextInputs.length) {
-      previousInputs.forEach((slot, index) => {
-        const nextKey = nextInputs[index]?.key;
-        if (nextKey !== undefined && slot.key !== nextKey) {
-          renamedInputs.set(slot.key, nextKey);
-        }
-      });
-    }
-    const namedKeys = new Set((extraction.extra_inputs ?? []).map((slot) => slot.key));
-    let removedSelectors = 0;
-    const steps = config.steps.map((step) => {
-      const include = step.context.include
-        .map((selector): ArtifactSelector => {
-          if (selector.kind === "named_input" && renamedInputs.has(selector.key)) {
-            return { ...selector, key: renamedInputs.get(selector.key)! };
-          }
-          return selector;
-        })
-        .filter((selector) => {
-          const remove =
-            (selector.kind === "primary" && extraction.input_mode === "none") ||
-            (selector.kind === "named_input" && !namedKeys.has(selector.key));
-          if (remove) removedSelectors += 1;
-          return !remove;
-        });
-      return { ...step, context: { include } };
-    });
-    if (
-      removedSelectors > 0 &&
-      !(await confirmDialog(
-        `This change removes ${removedSelectors} artifact access rule${removedSelectors === 1 ? "" : "s"} from workflow steps. Continue?`,
-        { destructive: true },
-      ))
-    ) {
-      return;
-    }
-    const nextConfig = { ...config, extraction, steps };
-    setConfig(nextConfig);
-    setDirty(true);
-  };
-
-  const updateStepEnabled = async (id: string, enabled: boolean) => {
-    const affected = enabled
-      ? []
-      : config.steps.filter((step) =>
-          (step.after ?? []).includes(id) ||
-          step.context.include.some(
-            (selector) => selector.kind === "step" && selector.step === id,
-          ) ||
-          (step.run_if?.kind === "output_matches" && step.run_if.step === id),
-        );
-    if (
-      affected.length > 0 &&
-      !(await confirmDialog(
-        `Disabling this step removes dependencies or artifact access from ${affected.length} downstream step${affected.length === 1 ? "" : "s"}. Continue?`,
-        { destructive: true },
-      ))
-    ) {
-      return;
-    }
-    const nextConfig = {
-      ...config,
-      outputs: enabled
-        ? config.outputs
-        : {
-            ...(config.outputs ?? {}),
-            primary_step: config.outputs?.primary_step === id ? "" : config.outputs?.primary_step,
-            findings_step: config.outputs?.findings_step === id ? "" : config.outputs?.findings_step,
-          },
-      steps: config.steps.map((step) => {
-        if (step.id === id) return { ...step, enabled };
-        if (enabled) return step;
-        return {
-          ...step,
-          after: (step.after ?? []).filter((dependency) => dependency !== id),
-          context: {
-            include: step.context.include.filter(
-              (selector) => selector.kind !== "step" || selector.step !== id,
-            ),
-          },
-          run_if: step.run_if?.kind === "output_matches" && step.run_if.step === id
-            ? null
-            : step.run_if,
-        };
-      }),
-    };
-    setConfig(nextConfig);
-    setDirty(true);
-  };
-
-  const persistCurrentConfig = async (): Promise<boolean> => {
-    const configToSave = config;
-    const profileToSave = activeProfile;
-    const savedSnapshot = JSON.stringify(configToSave);
-    setSaving(true); setSaved(false);
-    try {
-      await invoke("save_pipeline_config", {
-        config: configToSave,
-        profileId: profileToSave,
-      });
-      const isCurrentVersion =
-        activeProfileRef.current === profileToSave &&
-        JSON.stringify(configRef.current) === savedSnapshot;
-      setSaved(isCurrentVersion);
-      if (isCurrentVersion) {
-        savedConfigRef.current = configToSave;
-        setDirty(false);
-      }
-      await refreshProfiles();
-      onProfileChange?.();
-      if (isCurrentVersion) setTimeout(() => setSaved(false), 2000);
-      return isCurrentVersion;
-    } catch (e) {
-      notify(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);
-      return false;
-    }
-    finally { setSaving(false); }
-  };
-
-  const handleSave = async () => {
-    await persistCurrentConfig();
-  };
-
-  const undo = () => {
-    const previous = undoHistoryRef.current.pop();
-    if (!previous || !configRef.current) return;
-    redoHistoryRef.current.push(configRef.current);
-    setHistoryVersion((version) => version + 1);
-    applyingHistoryRef.current = true;
-    setConfig(previous);
-    setDirty(JSON.stringify(previous) !== JSON.stringify(savedConfigRef.current));
-  };
-
-  const redo = () => {
-    const next = redoHistoryRef.current.pop();
-    if (!next || !configRef.current) return;
-    undoHistoryRef.current.push(configRef.current);
-    setHistoryVersion((version) => version + 1);
-    applyingHistoryRef.current = true;
-    setConfig(next);
-    setDirty(JSON.stringify(next) !== JSON.stringify(savedConfigRef.current));
-  };
-  saveShortcutRef.current = () => {
-    if (dirty && schemaDraftValid && !saving) void handleSave();
-  };
-  undoShortcutRef.current = undo;
-  redoShortcutRef.current = redo;
-
-  const saveBeforeExport = async (what: string): Promise<boolean> => {
-    if (!dirty) return true;
-    if (!(await confirmDialog(
-      `Exporting ${what} requires saving this profile's unsaved edits first. Save and continue?`,
-    ))) {
-      return false;
-    }
-    const currentSaved = await persistCurrentConfig();
-    if (!currentSaved) {
-      notify("Export cancelled because the workflow changed while it was being saved.", "info");
-    }
-    return currentSaved;
-  };
-
-  const resetParallelTemplate = async (
-    source: "generic" | "paper",
-  ) => {
-    const request = ++promptResetRequestRef.current;
-    const profile = activeProfileRef.current;
-    try {
-      const template = source === "generic"
-        ? await invoke<string>("get_default_prompt", { name: "parallel_context_generic" })
-        : await invoke<string>("get_default_parallel_template");
-      if (
-        request !== promptResetRequestRef.current ||
-        activeProfileRef.current !== profile
-      ) return;
-      setConfig((current) =>
-        current ? { ...current, parallel_context_template: template } : current,
-      );
-      setDirty(true);
-    } catch (error) {
-      if (
-        request === promptResetRequestRef.current &&
-        activeProfileRef.current === profile
-      ) {
-        notify(
-          `Failed to reset the parallel context template: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-  };
-
-  const handleReset = async () => {
-    if (!(await confirmDialog(
-      "Reset this workflow to defaults? All customizations will be lost.",
-      { title: "Reset workflow", confirmLabel: "Reset", destructive: true },
-    ))) return;
-    const request = beginProfileMutation();
-    if (request === null) return;
-    const profile = activeProfileRef.current;
-    try {
-      const d = await invoke<PipelineConfig>("reset_pipeline_config");
-      if (
-        !profileMutationIsCurrent(request) ||
-        activeProfileRef.current !== profile
-      ) return;
-      setConfig(normalizeConfig(d)); setEditing(null); setDirty(false);
-      savedConfigRef.current = normalizeConfig(d);
-      setSchemaDraftValid(true);
-      setSchemaEditorEpoch((current) => current + 1);
-      await refreshProfiles(request);
-      if (
-        !profileMutationIsCurrent(request) ||
-        activeProfileRef.current !== profile
-      ) return;
-      onProfileChange?.();
-    } catch (e) {
-      if (profileMutationIsCurrent(request)) {
-        notify(`Failed to reset: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    } finally {
-      finishProfileMutation(request);
-    }
-  };
-
-  // --- Export/Import ---
-
-  // The backend opens the native save dialog and writes only to the chosen
-  // path; the webview passes a suggested name but never a filesystem path.
-  const handleExportItem = async () => {
-    if (!editingStep) return;
-    const envelope: ExportEnvelope = { type: "step", data: editingStep };
-    const suggestedName = `pipeline-step-${editingStep.id}.json`;
-    try {
-      await invoke("export_item", { json: JSON.stringify(envelope, null, 2), suggestedName });
-    } catch (e) {
-      notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
-  const handleExportProfile = async () => {
-    const suggestedName = `pipeline-profile-${activeProfile}.json`;
-    try {
-      if (!(await saveBeforeExport("the profile"))) return;
-      await invoke("export_profile", { id: activeProfile, suggestedName });
-    } catch (e) {
-      notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
-  const handleExportBundle = async () => {
-    try {
-      if (!(await saveBeforeExport("the settings bundle"))) return;
-      await invoke("export_bundle", { suggestedName: "pipeline-settings-backup.json" });
-    } catch (e) {
-      notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
-  const handleImport = async () => {
-    try {
-      const path = await openDialog({
-        multiple: false,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!path) return;
-      const envelope = await invoke<ExportEnvelope>("import_item", { path });
-      switch (envelope.type) {
-        case "step": {
-          const imported = envelope.data as StepConfig;
-          const step: StepConfig = {
-            ...imported,
-            after: imported.after ?? [],
-            context: imported.context ?? { include: [] },
-          };
-          const agents = step.agents?.length || 1;
-          const fanOut = step.for_each ? `; fan-out up to ${step.for_each.max} items` : "";
-          const logicalCalls = (step.for_each?.max ?? 1) * agents;
-          const attempts = logicalCalls * ((settings?.max_retries ?? 0) + 1);
-          if (!(await confirmDialog(
-            `Import step “${step.label}”?\n\n` +
-            `Tools: ${step.tools?.join(", ") || "none"}\n` +
-            `Agents: ${step.agents?.join(", ") || "profile default"}${fanOut}\n` +
-            `Maximum provider attempts from this step: ${attempts}`,
-          ))) return;
-          const id = config.steps.some((s) => s.id === step.id)
-            ? `${step.id}_${Date.now()}`
-            : step.id;
-          setConfig({
-            ...config,
-            steps: [...config.steps, { ...step, id }],
-          });
-          setEditing(id);
-          setDirty(true);
-          break;
-        }
-        case "profile": {
-          const enabled = envelope.steps.filter((step) => step.enabled);
-          const tools = [...new Set(enabled.flatMap((step) => step.tools ?? []))];
-          const agents = [...new Set(enabled.flatMap((step) => step.agents ?? []))];
-          const logicalCalls = enabled.reduce((total, step) => {
-            const agentCount = Math.max(1, step.agents?.length ?? 0);
-            return total + agentCount * (step.for_each?.max ?? 1);
-          }, 0);
-          const mergeCalls = envelope.merge?.enabled
-            ? enabled.reduce((total, step) => {
-                const agentCount = Math.max(1, step.agents?.length ?? 0);
-                return total + (agentCount > 1 ? (step.for_each?.max ?? 1) : 0);
-              }, 0)
-            : 0;
-          const maxAttempts = logicalCalls * ((settings?.max_retries ?? 0) + 1) + mergeCalls;
-          if (!(await confirmDialog(
-            `Import and activate profile “${envelope.name}”?\n\n` +
-            `${enabled.length} enabled steps; up to ${maxAttempts} provider attempts per report (including retries and merges).\n` +
-            `Tools: ${tools.join(", ") || "none"}\n` +
-            `Agents: ${agents.join(", ") || "profile default"}\n\n` +
-            "Review the imported prompts in the editor before generating a report.",
-          ))) return;
-          const summary = await invoke<ProfileSummary>("import_profile", { path });
-          await refreshProfiles();
-          await handleSwitchProfile(summary.id);
-          break;
-        }
-        case "bundle": {
-          if (!(await confirmDialog(
-            `Import ${envelope.profiles.length} profiles plus provider/settings configuration?\n\n` +
-            "Existing profiles with the same ID will be overwritten. API-key fields and the active profile may change. Review the active profile before running it.",
-          ))) return;
-          await invoke("import_bundle", { path });
-          const [c, p, a] = await Promise.all([
-            invoke<PipelineConfig>("get_pipeline_config"),
-            invoke<ProfileSummary[]>("list_profiles"),
-            invoke<string>("get_active_profile"),
-          ]);
-          setConfig(normalizeConfig(c));
-          setProfiles(p);
-          setActiveProfile(a);
-          setEditing(null);
-          setDirty(false);
-          setSchemaDraftValid(true);
-          setSchemaEditorEpoch((current) => current + 1);
-          break;
-        }
-      }
-    } catch (e) {
-      notify(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
-  // --- Step CRUD ---
-
-  const addStep = async (draft: AddStepDraft) => {
-    const inputMode = config.extraction?.input_mode || "document";
-    let template: StepConfig | null = null;
-    if (draft.mode === "adaptive") {
-      if (!draft.templateId) throw new Error("Select an adaptive agent to copy.");
-      template = await invoke<StepConfig>("get_auto_review_specialist_step", {
-        id: draft.templateId,
-      });
-    }
-
-    const baseId = template
-      ? `manual_${template.id}`
-      : draft.label
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "") || "custom_step";
-    let id = baseId;
-    let suffix = 2;
-    while (config.steps.some((step) => step.id === id)) {
-      id = `${baseId}_${suffix++}`;
-    }
-
-    const priorReports: ArtifactSelector[] = config.steps
-      .filter((step) => step.enabled)
-      .map((step) => ({ kind: "step", step: step.id, parts: ["report"] }));
-    const primaryParts = primaryPartsForMode(inputMode);
-    const context = (() => {
-      if (draft.mode === "adaptive" || draft.mode === "blank" || draft.contextPreset === "standard") {
-        return defaultStepContext(
-          draft.phase,
-          inputMode,
-          true,
-          config.steps,
-        );
-      }
-      if (draft.contextPreset === "input") {
-        return {
-          include: primaryParts.length
-            ? [{ kind: "primary" as const, parts: primaryParts }]
-            : [],
-        };
-      }
-      if (draft.contextPreset === "prior_reports") {
-        return { include: priorReports };
-      }
-      return { include: [] };
-    })();
-
-    const prompt = (() => {
-      if (template) return template.prompt;
-      if (draft.mode === "blank") {
-        return draft.phase === "parallel"
-          ? `# ${draft.label}\n\nDescribe what this step should evaluate.\n\n## Method\n\n...\n\n## Output structure\n\n...`
-          : `You are performing a custom analysis step.\n\nORIENTATION MAP:\n{orientation}\n\nPRIOR OUTPUTS:\n{prior_outputs}\n\nLAST OUTPUT:\n{last_output}\n\n[Your instructions here]`;
-      }
-      const contextBlocks: string[] = [];
-      if (context.include.some((selector) => selector.kind === "survey")) {
-        contextBlocks.push("ORIENTATION MAP:\n{orientation}");
-      }
-      if (context.include.some(
-        (selector) => selector.kind === "step" && selector.parts.includes("report"),
-      )) {
-        contextBlocks.push("PRIOR OUTPUTS:\n{prior_outputs}");
-      }
-      const outputInstruction = draft.output === "issues"
-        ? "Populate the configured issues schema with the completed findings."
-        : "Return a clear, self-contained markdown report.";
-      return [
-        `# ${draft.label}`,
-        ...contextBlocks,
-        `## Task\n\n${draft.instructions}`,
-        `## Output\n\n${outputInstruction}`,
-      ].join("\n\n");
-    })();
-
-    const step: StepConfig = template
-      ? {
-          ...template,
-          id,
-          enabled: true,
-          after: [...(template.after ?? [])],
-          context,
-        }
-      : {
-          id,
-          label: draft.label,
-          enabled: true,
-          phase: draft.phase,
-          tools: [],
-          agents: [],
-          prompt,
-          after: [],
-          context,
-          output_schema: draft.mode === "guided" && draft.output === "issues"
-            ? ISSUES_SCHEMA
-            : null,
-        };
-    const insertionIndex = step.phase === "parallel"
-      ? config.steps.findIndex((candidate) => candidate.phase === "sequential")
-      : -1;
-    const steps = config.steps.slice();
-    steps.splice(insertionIndex < 0 ? steps.length : insertionIndex, 0, step);
-    const publishesFindings = draft.mode === "guided"
-      && draft.output === "issues"
-      && step.phase === "sequential";
-    setConfig({
-      ...config,
-      steps,
-      outputs: publishesFindings
-        ? { ...(config.outputs ?? {}), primary_step: id, findings_step: id }
-        : config.outputs,
-    });
-    setAddStepOpen(false);
-    setNavigatorView("steps");
-    setEditing(id);
-    setDirty(true);
-  };
-
-  const removeStep = async (id: string) => {
-    const step = config.steps.find((candidate) => candidate.id === id);
-    const affected = config.steps.filter((candidate) =>
-      (candidate.after ?? []).includes(id) ||
-      candidate.context.include.some(
-        (selector) => selector.kind === "step" && selector.step === id,
-      ) ||
-      (candidate.run_if?.kind === "output_matches" && candidate.run_if.step === id),
-    );
-    const consequence = affected.length > 0
-      ? ` It will also remove references from ${affected.length} downstream step${affected.length === 1 ? "" : "s"}.`
-      : "";
-    if (!(await confirmDialog(
-      `Remove “${step?.label ?? id}”?${consequence}`,
-      { title: "Remove step", confirmLabel: "Remove", destructive: true },
-    ))) return;
-    const nextConfig = {
-      ...config,
-      outputs: {
-        ...(config.outputs ?? {}),
-        primary_step: config.outputs?.primary_step === id ? "" : config.outputs?.primary_step,
-        findings_step: config.outputs?.findings_step === id ? "" : config.outputs?.findings_step,
-      },
-      steps: config.steps
-        .filter((step) => step.id !== id)
-        .map((step) => ({
-          ...step,
-          after: (step.after ?? []).filter((dependency) => dependency !== id),
-          context: {
-            include: step.context.include.filter(
-              (selector) => selector.kind !== "step" || selector.step !== id,
-            ),
-          },
-          run_if: step.run_if?.kind === "output_matches" && step.run_if.step === id
-            ? null
-            : step.run_if,
-        })),
-    };
-    setConfig(nextConfig);
-    if (editing === id) setEditing(null);
-    setDirty(true);
-  };
-
-  const moveSequentialStep = (id: string, direction: -1 | 1) => {
-    const step = config.steps.find((candidate) => candidate.id === id);
-    if (!step || step.phase !== "sequential") return;
-    const peers = config.steps.filter((candidate) => candidate.phase === "sequential");
-    const position = peers.findIndex((candidate) => candidate.id === id);
-    const target = peers[position + direction];
-    if (!target) return;
-    const fromIndex = config.steps.findIndex((candidate) => candidate.id === id);
-    const toIndex = config.steps.findIndex((candidate) => candidate.id === target.id);
-    const steps = config.steps.slice();
-    [steps[fromIndex], steps[toIndex]] = [steps[toIndex], steps[fromIndex]];
-    setConfig({ ...config, steps });
-    setDirty(true);
-  };
-
-  const activeProfileName = profiles.find((p) => p.id === activeProfile)?.name ?? activeProfile;
-
   // Group steps for display: find boundaries between parallel and sequential
   const parallelSteps = config.steps.filter((s) => s.phase === "parallel");
-  const sequentialSteps = config.steps.filter((s) => s.phase === "sequential");
-  const hasMultiAgent = parallelSteps.some((s) => s.agents?.length > 1);
   const autoReview = isAutoReview(config);
   const adaptiveAgentCount = getAdaptiveAgentCount(config);
   const adaptiveAgentRange = getAdaptiveAgentRange(config);
-  const crossStepWarnings = lintCrossStepReferences(config);
   const browseSpecialists = (kind: AdaptiveSlotKind) => {
     setCatalogTab(kind === "subject" ? "subjects" : "methods");
   };
@@ -1123,7 +143,10 @@ export default function PipelinePage({
         <PromptDialog
           title={promptDialog.title}
           defaultValue={promptDialog.defaultValue}
-          onSubmit={(value) => { promptDialog.onSubmit(value); setPromptDialog(null); }}
+          onSubmit={(value) => {
+            promptDialog.onSubmit(value);
+            setPromptDialog(null);
+          }}
           onCancel={() => setPromptDialog(null)}
         />
       )}
@@ -1141,497 +164,43 @@ export default function PipelinePage({
       )}
 
       {/* Left panel — list */}
-      <div
-        className="border-r border-gray-200 dark:border-gray-700 flex flex-col bg-white dark:bg-gray-900 relative shrink-0"
-        style={{ width: panelWidth }}
-      >
-        {/* Header */}
-        <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Workflow Editor</h2>
-            <div className="mt-2 inline-flex rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800" aria-label="Editor detail level">
-              {(["basic", "advanced"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-pressed={editorMode === mode}
-                  onClick={() => {
-                    setEditorMode(mode);
-                    if (mode === "basic" && navigatorView === "schemas") setNavigatorView("steps");
-                  }}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${editorMode === mode ? "bg-white shadow-sm dark:bg-gray-700" : "text-gray-500 dark:text-gray-400"}`}
-                >
-                  {mode === "basic" ? "Basic" : "Advanced"}
-                </button>
-              ))}
-            </div>
-          </div>
-          {showBack && (
-            <button onClick={() => void (async () => {
-              if (dirty && !(await confirmDialog("You have unsaved changes. Leave and discard them?", { destructive: true }))) return;
-              onClose();
-            })()} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">Back</button>
-          )}
-        </div>
-
-        {/* Profile selector */}
-        <div className="px-4 pb-3 space-y-2">
-          <div className="flex items-center gap-2">
-            <select
-              aria-label="Active workflow profile"
-              aria-busy={profileMutationPending}
-              value={activeProfile}
-              onChange={(e) => handleSwitchProfile(e.target.value)}
-              disabled={profileMutationPending}
-              className="flex-1 py-1.5 px-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
-                         focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors
-                         disabled:cursor-wait disabled:opacity-60"
-            >
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            <button
-              onClick={handleNewProfile}
-              aria-label="New profile"
-              disabled={profileMutationPending}
-              className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-40"
-              title="New profile"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
-              </svg>
-            </button>
-          </div>
-          <div className="flex gap-1">
-            <button onClick={handleDuplicateProfile}
-              disabled={profileMutationPending}
-              className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors disabled:opacity-40">
-              Duplicate
-            </button>
-            <button onClick={handleRenameProfile}
-              disabled={profileMutationPending}
-              className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors disabled:opacity-40">
-              Rename
-            </button>
-            <button onClick={handleDeleteProfile}
-              disabled={
-                profileMutationPending ||
-                profiles.find((profile) => profile.id === activeProfile)?.builtin
-              }
-              className="flex-1 py-1 text-[11px] text-gray-500 hover:text-red-600 hover:bg-red-50
-                         rounded transition-colors disabled:opacity-30 disabled:hover:text-gray-500
-                         disabled:hover:bg-transparent">
-              Delete
-            </button>
-          </div>
-        </div>
-
-        {crossStepWarnings.length > 0 && (
-          <div className="mx-4 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
-              Cross-step references
-            </p>
-            <ul className="mt-1 space-y-0.5">
-              {crossStepWarnings.slice(0, 6).map((warning, index) => (
-                <li key={`${warning.stepId}-${index}`} className="text-[11px] leading-snug text-amber-800 dark:text-amber-200">
-                  <button
-                    type="button"
-                    className="font-medium underline underline-offset-2"
-                    onClick={() => setEditing(warning.stepId)}
-                  >
-                    {warning.stepId}
-                  </button>
-                  : {warning.message}
-                </li>
-              ))}
-              {crossStepWarnings.length > 6 && (
-                <li className="text-[11px] text-amber-700 dark:text-amber-300">
-                  +{crossStepWarnings.length - 6} more
-                </li>
-              )}
-            </ul>
-          </div>
-        )}
-        <div className="px-4 pb-2">
-          <div
-            role="tablist"
-            aria-label="Workflow navigator view"
-            className="grid grid-cols-3 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800"
-          >
-            {(editorMode === "advanced" ? ["steps", "overview", "schemas"] as const : ["steps", "overview"] as const).map((view) => (
-              <button
-                key={view}
-                type="button"
-                role="tab"
-                aria-selected={navigatorView === view}
-                onClick={() => {
-                  setNavigatorView(view);
-                  if (view === "schemas" && editing !== "orientation" && !editingStep) {
-                    setEditing("orientation");
-                  }
-                }}
-                className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                  navigatorView === view
-                    ? "bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100"
-                    : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
-                }`}
-              >
-                {view === "steps" ? "Steps" : view === "overview" ? "Overview" : "Schemas"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Primary workflow navigator. The overview replaces rather than duplicates the list. */}
-        <div className="flex-1 overflow-y-auto">
-          {navigatorView === "overview" ? (
-            <WaveDiagram
-              steps={config.steps}
-              merge={config.merge}
-              adaptiveReview={autoReview}
-              adaptiveAgentCount={adaptiveAgentCount}
-              adaptiveAgentRange={adaptiveAgentRange}
-              selectedId={editing}
-              onSelect={(id) => setEditing(editing === id ? null : id)}
-            />
-          ) : navigatorView === "schemas" ? (
-            <div>
-              <div className="sticky top-0 z-[1] border-b border-gray-100 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-900">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
-                    Artifact contracts
-                  </span>
-                  <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
-                    {config.steps.filter((step) => !!step.output_schema).length + (config.orientation_schema ? 1 : 0)} configured
-                  </span>
-                </div>
-                <p className="mt-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
-                  Select a stage to inspect its effective provider schema.
-                </p>
-              </div>
-              <button
-                type="button"
-                aria-label="Orientation schema"
-                onClick={() => setEditing("orientation")}
-                className={`w-full border-b border-gray-100 px-4 py-3 text-left transition-colors dark:border-gray-800 ${
-                  !editingStep
-                    ? "bg-violet-50/70 dark:bg-violet-950/25"
-                    : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                }`}
-              >
-                <span className="flex items-center justify-between gap-3">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
-                      Orientation map
-                    </span>
-                    <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-                      Preprocessing JSON survey
-                    </span>
-                  </span>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                    config.orientation_schema
-                      ? "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"
-                      : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                  }`}>
-                    {config.orientation_schema
-                      ? autoReview ? "Catalog-backed" : "Workflow contract"
-                      : "Object only"}
-                  </span>
-                </span>
-              </button>
-              <div className="bg-gray-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
-                Step outputs
-              </div>
-              {config.steps.map((step) => (
-                <button
-                  key={step.id}
-                  type="button"
-                  aria-label={`${step.label} output schema`}
-                  onClick={() => setEditing(step.id)}
-                  className={`w-full border-b border-gray-100 px-4 py-3 text-left transition-colors dark:border-gray-800 ${
-                    editingStep?.id === step.id
-                      ? "bg-violet-50/70 dark:bg-violet-950/25"
-                      : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
-                  }`}
-                >
-                  <span className="flex items-center justify-between gap-3">
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
-                        {step.label}
-                      </span>
-                      <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-                        {step.phase === "parallel" ? "Parallel" : "Sequential"}
-                        {!step.enabled ? " · Disabled" : ""}
-                      </span>
-                    </span>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                      step.output_schema
-                        ? "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"
-                        : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                    }`}>
-                      {step.output_schema ? "Custom JSON" : "Markdown"}
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <>
-          <div className="px-4 py-1.5 bg-gray-50 dark:bg-gray-800/50 sticky top-0 z-[1]">
-            <span className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium">
-              Workflow setup
-            </span>
-          </div>
-          <button
-            type="button"
-            aria-label="Input & extraction"
-            onClick={() => setEditing(editing === "extraction" ? null : "extraction")}
-            className={`w-full border-b border-gray-100 px-4 py-2.5 text-left dark:border-gray-800 ${
-              editing === "extraction"
-                ? "bg-gray-100 dark:bg-gray-800"
-                : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
-            }`}
-          >
-            <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">Input &amp; extraction</span>
-            <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-              Choose the input type and PDF extraction method
-            </span>
-          </button>
-          <button
-            type="button"
-            aria-label={autoReview ? "Orientation & classification" : "Orientation map"}
-            onClick={() => setEditing(editing === "orientation" ? null : "orientation")}
-            className={`w-full border-b border-gray-100 px-4 py-2.5 text-left dark:border-gray-800 ${
-              editing === "orientation"
-                ? "bg-gray-100 dark:bg-gray-800"
-                : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
-            }`}
-          >
-            <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
-              {autoReview ? "Orientation & classification" : "Orientation map"}
-            </span>
-            <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-              {autoReview
-                ? "Build the paper map and select its review plan in one LLM call"
-                : "Survey the input before review steps run"}
-            </span>
-          </button>
-
-          {/* Parallel section */}
-          <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-950/30 sticky top-0 z-[1]">
-            <span className="text-[10px] uppercase tracking-wider text-blue-700 dark:text-blue-300 font-medium">
-              Parallel
-            </span>
-          </div>
-
-          {parallelSteps.map((step) => (
-            <div key={step.id}>
-              <StepRow
-                step={step}
-                summary={describeStep(step, config).compact}
-                selected={editing === step.id}
-                onToggle={() => updateStepEnabled(step.id, !step.enabled)}
-                onSelect={() => setEditing(editing === step.id ? null : step.id)}
-                onDelete={() => removeStep(step.id)}
-              />
-            </div>
-          ))}
-          {autoReview && (
-            <div className="border-t border-blue-100 dark:border-blue-950/60">
-              <div className="bg-blue-50/60 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:bg-blue-950/25 dark:text-blue-300">
-                Auto-filled from orientation
-              </div>
-              <AdaptiveAgentsRow
-                count={adaptiveAgentCount}
-                range={adaptiveAgentRange}
-                selected={editing === "auto_adaptive_agents"}
-                onSelect={() => setEditing(editing === "auto_adaptive_agents" ? null : "auto_adaptive_agents")}
-              />
-            </div>
-          )}
-
-          {/* Merge indicator */}
-          {hasMultiAgent && config.merge?.enabled && (
-            <button
-              onClick={() => setEditing("merge")}
-              className={`w-full px-4 py-1.5 text-left ${
-                editing === "merge"
-                  ? "bg-amber-50 dark:bg-amber-950/30"
-                  : "bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800"
-              }`}
-            >
-              <span className="text-[10px] uppercase tracking-wider text-amber-700 dark:text-amber-300 font-medium">
-                Merge (auto)
-              </span>
-            </button>
-          )}
-
-          {/* Sequential section */}
-          <div className="px-4 py-1.5 bg-orange-50 dark:bg-orange-950/30 sticky top-0 z-[1]">
-            <span className="text-[10px] uppercase tracking-wider text-orange-700 dark:text-orange-300 font-medium">
-              Sequential
-            </span>
-          </div>
-
-          {sequentialSteps.map((step, posInSection) => (
-            <div key={step.id}>
-              <StepRow
-                step={step}
-                summary={describeStep(step, config).compact}
-                selected={editing === step.id}
-                onToggle={() => updateStepEnabled(step.id, !step.enabled)}
-                onSelect={() => setEditing(editing === step.id ? null : step.id)}
-                onDelete={() => removeStep(step.id)}
-                canMoveUp={posInSection > 0}
-                canMoveDown={posInSection < sequentialSteps.length - 1}
-                onMoveUp={() => moveSequentialStep(step.id, -1)}
-                onMoveDown={() => moveSequentialStep(step.id, 1)}
-              />
-            </div>
-          ))}
-
-          {/* Pipeline settings */}
-          <button
-            onClick={() => setEditing(editing === "pipeline_settings" ? null : "pipeline_settings")}
-            className={`w-full px-4 py-2 text-left border-t border-gray-200 dark:border-gray-700 ${
-              editing === "pipeline_settings"
-                ? "bg-gray-100 dark:bg-gray-800"
-                : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
-              </svg>
-              <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Pipeline Settings</span>
-            </div>
-          </button>
-            </>
-          )}
-        </div>
-
-        {/* Bottom actions */}
-        <div className="p-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
-          <button
-            type="button"
-            onClick={() => setAddStepOpen(true)}
-            className="w-full rounded-lg border border-dashed border-gray-400 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:border-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-gray-400 dark:hover:bg-gray-800"
-          >
-            + Add step
-          </button>
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving || profileMutationPending || !dirty || !schemaDraftValid}
-              className="flex-1 py-2 px-3 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg text-sm font-medium
-                         hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-300 dark:disabled:bg-gray-700 transition-colors"
-            >
-              {saving ? "Saving..." : "Save"}
-            </button>
-            <button
-              onClick={handleReset}
-              disabled={profileMutationPending}
-              className="py-2 px-3 border border-gray-300 rounded-lg text-sm text-gray-600
-                         hover:bg-gray-50 transition-colors disabled:cursor-wait disabled:opacity-50"
-            >
-              Reset
-            </button>
-          </div>
-          <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
-            <span>{!schemaDraftValid ? "Cannot save: fix the invalid schema draft." : dirty ? "Unsaved draft is recoverable." : "All changes saved."}</span>
-            <span className="flex gap-2">
-              <button type="button" onClick={undo} disabled={undoHistoryRef.current.length === 0} className="underline disabled:opacity-30">Undo</button>
-              <button type="button" onClick={redo} disabled={redoHistoryRef.current.length === 0} className="underline disabled:opacity-30">Redo</button>
-            </span>
-          </div>
-          {/* Export/Import */}
-          <div className="flex gap-2 relative">
-            <div className="flex-1 relative">
-              <button
-                onClick={() => setExportMenuOpen(!exportMenuOpen)}
-                className="w-full py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
-                           hover:bg-gray-50 transition-colors"
-              >
-                Export {exportMenuOpen ? "\u25B2" : "\u25BC"}
-              </button>
-              {exportMenuOpen && (
-                <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200
-                                rounded-lg shadow-lg overflow-hidden z-10">
-                  <button
-                    onClick={() => { handleExportItem(); setExportMenuOpen(false); }}
-                    disabled={!editingStep}
-                    className="w-full py-2 px-3 text-xs text-left text-gray-700 hover:bg-gray-50
-                               disabled:text-gray-300 disabled:hover:bg-white transition-colors"
-                  >
-                    Export selected step
-                  </button>
-                  <button
-                    onClick={() => { handleExportProfile(); setExportMenuOpen(false); }}
-                    className="w-full py-2 px-3 text-xs text-left text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    Export profile &ldquo;{activeProfileName}&rdquo;
-                  </button>
-                  <button
-                    onClick={() => { handleExportBundle(); setExportMenuOpen(false); }}
-                    className="w-full py-2 px-3 text-xs text-left text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    Export all (profiles + settings)
-                  </button>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={handleImport}
-              className="flex-1 py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
-                         hover:bg-gray-50 transition-colors"
-            >
-              Import
-            </button>
-            {onOpenGallery && (
-              <button
-                onClick={onOpenGallery}
-                title="Browse curated workflow templates"
-                className="flex-1 py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
-                           hover:bg-gray-50 transition-colors"
-              >
-                Gallery
-              </button>
-            )}
-          </div>
-          {saved && <p className="text-xs text-green-700 dark:text-green-400 text-center">Saved.</p>}
-        </div>
-        <ResizeHandle
-          currentWidth={panelWidth}
-          defaultWidth={420}
-          label="Resize workflow panel"
-          min={280}
-          max={640}
-          onResize={setPanelWidth}
-        />
-      </div>
-
+      <WorkflowNavigator
+        editor={editor}
+        operations={operations}
+        actions={actions}
+        view={view}
+        onClose={onClose}
+        onOpenGallery={onOpenGallery}
+        showBack={showBack}
+      />
       {/* Right panel — independently memoizable editors */}
       <div className="flex-1 flex flex-col min-h-0">
         {navigatorView === "schemas" ? (
           <SchemaEditorPanel
             scopeKey={`${activeProfile}:${schemaEditorEpoch}`}
-            target={editingStep
-              ? {
-                  kind: "step",
-                  step: editingStep,
-                  publishesFindings: config.outputs?.findings_step === editingStep.id,
-                }
-              : {
-                  kind: "orientation",
-                  schema: config.orientation_schema,
-                  autoReview,
-                }}
+            target={
+              editingStep
+                ? {
+                    kind: "step",
+                    step: editingStep,
+                    publishesFindings:
+                      config.outputs?.findings_step === editingStep.id,
+                  }
+                : {
+                    kind: "orientation",
+                    schema: config.orientation_schema,
+                    autoReview,
+                  }
+            }
             onOrientationSchemaChange={(orientation_schema) => {
-              setConfig((current) => current ? { ...current, orientation_schema } : current);
+              setConfig((current) =>
+                current ? { ...current, orientation_schema } : current,
+              );
               setDirty(true);
             }}
-            onStepSchemaChange={(id, output_schema) => updateStep(id, { output_schema })}
+            onStepSchemaChange={(id, output_schema) =>
+              updateStep(id, { output_schema })
+            }
             onDraftValidityChange={setSchemaDraftValid}
             onBrowseCatalog={setCatalogTab}
           />
@@ -1649,11 +218,15 @@ export default function PipelinePage({
             inputMode={config.extraction?.input_mode ?? "document"}
             autoReview={autoReview}
             onPromptChange={(orientation_prompt) => {
-              setConfig((current) => current ? { ...current, orientation_prompt } : current);
+              setConfig((current) =>
+                current ? { ...current, orientation_prompt } : current,
+              );
               setDirty(true);
             }}
             onSchemaChange={(orientation_schema) => {
-              setConfig((current) => current ? { ...current, orientation_schema } : current);
+              setConfig((current) =>
+                current ? { ...current, orientation_schema } : current,
+              );
               setDirty(true);
             }}
           />
@@ -1661,7 +234,9 @@ export default function PipelinePage({
           <AdaptiveAgentsEditorPanel
             count={adaptiveAgentCount}
             range={adaptiveAgentRange}
-            coreStepLabels={parallelSteps.filter((step) => step.enabled).map((step) => step.label)}
+            coreStepLabels={parallelSteps
+              .filter((step) => step.enabled)
+              .map((step) => step.label)}
             onCountChange={(count) => {
               setConfig(withAdaptiveAgentCount(config, count));
               setDirty(true);
@@ -1691,7 +266,9 @@ export default function PipelinePage({
               });
               setDirty(true);
             }}
-            onResetParallelTemplate={(source) => void resetParallelTemplate(source)}
+            onResetParallelTemplate={(source) =>
+              void resetParallelTemplate(source)
+            }
             onParallelTemplateChange={(parallel_context_template) => {
               promptResetRequestRef.current += 1;
               setConfig({ ...config, parallel_context_template });

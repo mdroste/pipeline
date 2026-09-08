@@ -226,7 +226,7 @@ export default function RunPreview({
               : "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/25"
           }`}>
             <h2 className={`text-sm font-semibold ${remoteIsPossible ? "text-amber-900 dark:text-amber-200" : "text-emerald-900 dark:text-emerald-200"}`}>
-              {remoteIsPossible ? "Selected artifacts may leave this computer" : "Explicit providers are local-only"}
+              {remoteIsPossible ? "Selected artifacts may leave this computer" : "Selected providers run locally"}
             </h2>
             <p className={`mt-1 text-xs leading-5 ${remoteIsPossible ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"}`}>
               Each step receives only the artifacts listed below. Provider retries and schema-repair attempts are not included in the work-unit estimate.

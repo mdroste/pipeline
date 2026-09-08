@@ -1,0 +1,71 @@
+.pdf-reader {
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+  height: 100%;
+  min-width: 0;
+}
+.pdf-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.pdf-positioner {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 300px;
+}
+.pdf-scroll-container {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: #d4d4d4;
+}
+.pdf-sidebar {
+  width: 155px;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 4px;
+  background: #f3f4f6;
+  font-size: 12px;
+}
+.pdf-sidebar > button {
+  display: block;
+  text-align: left;
+  width: 100%;
+  padding: 6px;
+}
+.pdf-thumbnail {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.pdf-thumbnail canvas {
+  background: white;
+  box-shadow: 0 1px 3px #0003;
+}
+.pdf-research-selection {
+  position: absolute;
+  z-index: 6;
+  border: 2px solid #2563eb;
+  background: #3b82f622;
+  pointer-events: none;
+}
+.pdf-region-mode .page {
+  cursor: crosshair;
+  touch-action: none;
+}
+.pdf-region-mode .textLayer {
+  pointer-events: none;
+}
+.dark .pdf-sidebar {
+  background: #262626;
+}
+.dark .pdf-scroll-container {
+  background: #1a1a1a;
+}
+.pdf-reader .pdfViewer {
+  --viewer-container-height: 100%;
+}

@@ -19,6 +19,7 @@ const FOCUSABLE = [
 export default function useModalDialog<T extends HTMLElement>(
   onClose: () => void,
   active = true,
+  inertBackground = false,
 ): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
   const closeRef = useRef(onClose);
@@ -29,12 +30,32 @@ export default function useModalDialog<T extends HTMLElement>(
     const previousFocus = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
+    const inertSiblings: Array<{ element: HTMLElement; wasInert: boolean }> = [];
+    if (inertBackground) {
+      // Inert siblings along the whole ancestor path, never the dialog itself.
+      // Remember existing values so closing the modal does not enable content
+      // that was already disabled by its owner.
+      let branch: HTMLElement | null = dialogRef.current;
+      while (branch?.parentElement) {
+        for (const sibling of branch.parentElement.children) {
+          if (sibling === branch || !(sibling instanceof HTMLElement)) continue;
+          inertSiblings.push({ element: sibling, wasInert: sibling.hasAttribute("inert") });
+          sibling.setAttribute("inert", "");
+        }
+        branch = branch.parentElement;
+        if (branch === document.body) break;
+      }
+    }
+    const focusable = (dialog: HTMLElement) => Array.from(
+      dialog.querySelectorAll<HTMLElement>(FOCUSABLE),
+    ).filter(control => !control.matches(":disabled") && !control.closest('[hidden], [inert], [aria-hidden="true"]')
+      && getComputedStyle(control).display !== "none" && getComputedStyle(control).visibility !== "hidden");
     const focusInitial = window.setTimeout(() => {
       const dialog = dialogRef.current;
       if (!dialog) return;
       const target =
-        dialog.querySelector<HTMLElement>("[data-autofocus]") ??
-        dialog.querySelector<HTMLElement>(FOCUSABLE) ??
+        focusable(dialog).find(control => control.hasAttribute("data-autofocus")) ??
+        focusable(dialog)[0] ??
         dialog;
       target.focus();
     }, 0);
@@ -48,9 +69,7 @@ export default function useModalDialog<T extends HTMLElement>(
         return;
       }
       if (event.key !== "Tab") return;
-      const controls = Array.from(
-        dialog.querySelectorAll<HTMLElement>(FOCUSABLE),
-      ).filter((control) => control.getAttribute("aria-hidden") !== "true");
+      const controls = focusable(dialog);
       if (controls.length === 0) {
         event.preventDefault();
         dialog.focus();
@@ -72,9 +91,12 @@ export default function useModalDialog<T extends HTMLElement>(
     return () => {
       window.clearTimeout(focusInitial);
       document.removeEventListener("keydown", onKeyDown);
-      previousFocus?.focus();
+      for (const { element, wasInert } of inertSiblings) {
+        if (!wasInert) element.removeAttribute("inert");
+      }
+      if (previousFocus?.isConnected) previousFocus.focus();
     };
-  }, [active]);
+  }, [active, inertBackground]);
 
   return dialogRef;
 }

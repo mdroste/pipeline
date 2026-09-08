@@ -89,10 +89,15 @@ The storage report separates immutable evidence blobs that any artifact, paper
 or source text, evidence, exchange import, or context snapshot references from
 unreferenced blobs, execution scratch, unreferenced turn-context files, and
 pre-migration backups. Only the latter categories are disposable, and
-execution scratch is unavailable while a job is queued or running. Pruning is
-previewed first; applying it moves each item into `trash/<id>/` with a
-`storage_trash` journal row and re-checks references before any move. Trash
-entries can be restored until trash is explicitly emptied. The database,
+conversation working files are retained. Execution scratch is unavailable while
+a local job or Workspace turn is active. Storage mutations hold the native turn
+permit and exclusive store gate so turn setup, new jobs and captures cannot race
+a move. Pruning requires a current preview token covering selected categories,
+candidate paths and file identities, including nested files. Category changes
+invalidate the displayed preview. Applying it commits each `storage_trash`
+recovery record before moving the item into `trash/<id>/`; reference checks still
+precede every batch. Listing trash reconciles interrupted moves and restores.
+Trash entries can be restored until trash is explicitly emptied. The database,
 credentials, and Workflow runs are never touched.
 
 ## Workflow drafts (PI-12 authoring half)

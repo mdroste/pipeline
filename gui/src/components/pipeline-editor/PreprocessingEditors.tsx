@@ -9,7 +9,7 @@ import { MemoizedExtraInputsEditor as ExtraInputsEditor } from "./ProfileSetting
 const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   { value: "", label: "Inherit from global Settings", hint: "Use whatever PDF extractor is configured globally." },
   { value: "auto", label: "Auto", hint: "Try the global setting; same as inherit." },
-  { value: "llm", label: "LLM", hint: "Bounded, page-verified transcription through the active provider. Slower, but preserves equations and original typos." },
+  { value: "llm", label: "LLM", hint: "Your selected model transcribes the PDF a few pages at a time, with checks for missing text. Slower, but retains equations and original typos." },
   { value: "paddleocr-vl-full", label: "Local engine: PaddleOCR-VL 1.6 Full Parser", hint: "Official layout-aware client with structured regions, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses Pipeline's managed llama.cpp server." },
   { value: "pdftotext", label: "pdftotext (basic)", hint: "Fast, but equations are lost. Uses bundled poppler." },
 ];
@@ -98,7 +98,7 @@ function ExtractionEditor({
         <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
           The chosen PDF method is authoritative: incomplete or failed extraction stops before
           orientation instead of silently switching engines. Parser-specific speed, memory, OCR,
-          and image settings are configured once in Settings → Review & workflows → PDF Extraction. LaTeX inputs bypass
+          and image settings are configured once in Settings → Reviews → PDF Extraction. LaTeX inputs bypass
           PDF extraction.
         </div>
       </div>

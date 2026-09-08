@@ -69,11 +69,11 @@ export default function WorkflowCodexConnection({ onAccountChange, onStatusChang
   }
   const button = "rounded border px-3 py-1 text-xs disabled:opacity-50";
   return (
-    <div role="group" aria-label="Workflow ChatGPT connection" className="space-y-2 rounded border border-gray-200 dark:border-neutral-700 p-3">
+    <div role="group" aria-label="Reviews ChatGPT connection" className="space-y-2 rounded border border-gray-200 dark:border-neutral-700 p-3">
       <p className="text-xs">{status?.account.status === "chatgpt"
         ? `Signed in${status.account.email ? ` as ${status.account.email}` : ""}${status.account.planType ? ` (${status.account.planType})` : ""}`
-        : status ? "Workflow ChatGPT is not signed in." : "Checking Workflow connection…"}</p>
-      <p className="text-xs text-gray-500 dark:text-neutral-400">This connection belongs to Reviews and Workflows. Workspace keeps its own sign-in. Codex {status?.version ?? "App Server"}.</p>
+        : status ? "Reviews ChatGPT is not signed in." : "Checking Reviews connection…"}</p>
+      <p className="text-xs text-gray-500 dark:text-neutral-400">This connection belongs to Reviews. Workspace keeps its own sign-in. Codex {status?.version ?? "App Server"}.</p>
       {status?.loginInProgress && <p className="text-xs">Complete ChatGPT sign-in in your browser. Workflow calls wait until sign-in finishes.</p>}
       <div className="flex gap-2">
         <button type="button" className={button} disabled={busy || !status || status.loginInProgress}

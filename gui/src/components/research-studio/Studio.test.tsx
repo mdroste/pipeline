@@ -29,6 +29,8 @@ vi.mock("../../lib/projectClient", () => ({ projectClient: mocks }));
 vi.mock("../../lib/workbenchClient", () => ({ workbenchClient: mocks }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
+// The save/conflict integration is independent of the editor's DOM implementation.
+vi.mock("../file-workspace/SourceEditor",()=>({default:({value,onChange,label}:{value:string;onChange:(s:string)=>void;label:string})=><textarea aria-label={label} value={value} onChange={e=>onChange(e.target.value)}/>}));
 const data = {
   settings: { body: { manuscriptRevisionId: null } },
   papers: [],
@@ -166,7 +168,7 @@ it("reads no Workflow state until the bridge and run selection are requested", a
   await waitFor(() => expect(mocks.records).toHaveBeenCalled());
   expect(mocks.invoke).not.toHaveBeenCalled();
   fireEvent.click(
-    screen.getByLabelText("Enable explicit Workflow findings bridge"),
+    screen.getByLabelText("Enable importing Workflow findings"),
   );
   expect(mocks.invoke).not.toHaveBeenCalled();
   mocks.invoke.mockResolvedValue([]);

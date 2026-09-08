@@ -36,6 +36,13 @@ pub async fn read_page_artifact(
     crate::runs::read_page_artifact(&run_id, page)
 }
 
+#[tauri::command]
+pub async fn read_pdf_artifact_bytes(run_id: String, rel_path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || crate::runs::read_pdf_artifact_bytes(&run_id, &rel_path))
+        .await
+        .map_err(|e| format!("PDF read failed: {e}"))?
+}
+
 /// The structured report for a past run (for run-vs-run comparison).
 #[tauri::command]
 pub async fn get_run_report(run_id: String) -> Result<PipelineReport, String> {
@@ -319,4 +326,18 @@ pub async fn cancel_pipeline() -> Result<(), String> {
     signal_cancellation();
     kill_all_children();
     Ok(())
+}
+
+#[tauri::command]
+pub async fn reveal_run_artifact(run_id: String, rel_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let manifest = crate::runs::load_manifest(&run_id)?;
+        if !manifest.artifacts.iter().any(|a| a.rel_path == rel_path) {
+            return Err("File is not in the retained artifact manifest".into());
+        }
+        let file = crate::runs::read_artifact(&run_id, &rel_path)?;
+        crate::file_viewer::reveal(std::path::Path::new(&file.abs_path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

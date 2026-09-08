@@ -179,7 +179,8 @@ fn retention_plan_from_sized_runs(
                     || summary.resumable
                     || project_runs.contains(&summary.run_id)
                     || annotated
-                    || explicitly_kept,
+                    || explicitly_kept
+                    || runs_dir().map(|d| d.join(&summary.run_id).join(".task-pin").exists()).unwrap_or(true),
                 *bytes,
             )
         })

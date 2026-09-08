@@ -1,3 +1,5 @@
+import { pendingRequestIds } from "./lib/workspaceAttention";
+import { loadDeskLayout,saveDeskLayout } from "./lib/deskLayout";
 import {
   lazy,
   Suspense,
@@ -16,7 +18,7 @@ import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
 import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
-import NavRail, { type AppPage } from "./components/NavRail";
+import NavRail, { NAV_RAIL_WIDTH, type AppPage } from "./components/NavRail";
 import RunSetupPanel from "./components/RunSetupPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { usePipeline, type ProviderLimitNotice } from "./hooks/usePipeline";
@@ -38,7 +40,7 @@ import type {
   BatchJob,
 } from "./lib/types";
 import type { ExecutionPlanStage } from "./lib/pipelineHelpers";
-import type { ArtifactSelectionTarget } from "./components/ArtifactExplorer";
+import type { ArtifactSelectionTarget } from "./lib/artifactTypes";
 import { confirmDialog, notify } from "./components/DialogService";
 import type { SettingsSection } from "./components/SettingsPage";
 import type { ReviewHandoff, WorkbenchEvent } from "./lib/workbenchTypes";
@@ -106,8 +108,10 @@ function configForRunPreview(
 }
 
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
+const TasksPage = lazy(() => import("./components/TasksPage"));
 const WorkspacePage = lazy(() => import("./components/WorkspacePage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
+const ResearchActivity = lazy(() => import("./components/ResearchActivity"));
 const AboutPage = lazy(() => import("./components/AboutPage"));
 const HistoryPage = lazy(() => import("./components/HistoryPage"));
 const ProjectsPage = lazy(() => import("./components/ProjectsPage"));
@@ -207,20 +211,48 @@ function App() {
   const [depsReport, setDepsReport] = useState<DepsReport | null>(null);
   const [depsLoading, setDepsLoading] = useState(true);
   const [depsError, setDepsError] = useState<string | null>(null);
-  const [page, setPage] = useState<AppPage>(() =>
+  const [taskSessionId, setTaskSessionId] = useState<string | null>(null);
+  const [tasksAttention, setTasksAttention] = useState(false);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [page, setPageState] = useState<AppPage>(() =>
     localStorage.getItem("pipeline.ui.page") === "workspace" ? "workspace" : "main",
   );
+  const projectSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const navigationSequence = useRef(0);
+  const registerProjectSave = useCallback((save: (() => Promise<boolean>) | null) => {
+    projectSaveRef.current = save;
+  }, []);
+  // All entry points, including activity/attention links, protect collection
+  // drafts. Only the latest navigation request may apply after a pending save.
+  const setPage = useCallback((next: AppPage) => {
+    const sequence = ++navigationSequence.current;
+    if (pageRef.current === "projects" && next !== "projects" && projectSaveRef.current) {
+      void projectSaveRef.current().then(saved => {
+        if (saved && sequence === navigationSequence.current) setPageState(next);
+      });
+    } else setPageState(next);
+  }, []);
+  useEffect(() => { const changed = () => { if (page !== "tasks") setTasksAttention(true); }; const pending = [listen("tasks:notice", changed), listen("missions:notice", changed)]; return () => { for (const off of pending) void off.then(f => f()).catch(() => undefined); }; }, [page]);
   const [workspaceActive, setWorkspaceActive] = useState(false);
   const [workspaceAttention, setWorkspaceAttention] = useState(false);
+  const [showActivity,setShowActivity]=useState(false);
+  const [researchNotice,setResearchNotice]=useState<{workspaceId:string;checkId:string}|null>(null);
+  useEffect(()=>{const off=listen<{workspaceId:string;checkId:string}>("workbench-research-attention",({payload})=>setResearchNotice(payload));return()=>{void off.then(f=>f());};},[]);
 
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    let unresolved=new Set<string>();
+    let bootstrapping=true;const observed:WorkbenchEvent[]=[];
+    void import("./lib/workbenchClient").then(({workbenchClient})=>workbenchClient.pendingRequests()).then(requests=>{if(!disposed){let ids=new Set<string>();for(const r of [...requests,...observed])ids=pendingRequestIds(ids,r);unresolved=ids;bootstrapping=false;setWorkspaceAttention(ids.size>0);}}).catch(()=>{bootstrapping=false;});
     void listen<WorkbenchEvent>("workbench:event", ({ payload }) => {
+      if(bootstrapping&&["serverRequest","serverRequestResolved","connectionClosed"].includes(payload.kind))observed.push(payload);
       if (payload.kind === "turnStarted") setWorkspaceActive(true);
       if (payload.kind === "turnCompleted" || payload.kind === "connectionClosed") setWorkspaceActive(false);
-      if (payload.kind === "serverRequest") setWorkspaceAttention(true);
-      if (payload.kind === "serverRequestResolved" || payload.kind === "connectionClosed") setWorkspaceAttention(false);
+      unresolved=pendingRequestIds(unresolved,payload);
+      setWorkspaceAttention(unresolved.size>0);
     }).then((dispose) => {
       if (disposed) dispose();
       else unlisten = dispose;
@@ -240,15 +272,16 @@ function App() {
   const [selectionKey, setSelectionKey] = useState(0);
   const [workflowDirty, setWorkflowDirty] = useState(false);
   const [settingsDirty, setSettingsDirty] = useState(false);
+  const [projectsDirty, setProjectsDirty] = useState(false);
   const [closeProtectionUnavailable, setCloseProtectionUnavailable] = useState(false);
-  const unsavedRef = useRef({ workflowDirty, settingsDirty });
+  const unsavedRef = useRef({ workflowDirty, settingsDirty, projectsDirty });
   const allowCloseRef = useRef(false);
-  unsavedRef.current = { workflowDirty, settingsDirty };
+  unsavedRef.current = { workflowDirty, settingsDirty, projectsDirty };
   const [navRailWidth, setNavRailWidth] = usePersistentPanelWidth(
     "pipeline.ui.navRailWidth",
-    176,
-    152,
-    320,
+    NAV_RAIL_WIDTH.default,
+    NAV_RAIL_WIDTH.min,
+    NAV_RAIL_WIDTH.max,
   );
   const [runSetupWidth, setRunSetupWidth] = usePersistentPanelWidth(
     "pipeline.ui.runSetupWidth",
@@ -346,7 +379,7 @@ function App() {
       .onCloseRequested(async (event) => {
         if (allowCloseRef.current) return;
         const unsaved = unsavedRef.current;
-        if (!unsaved.workflowDirty && !unsaved.settingsDirty) return;
+        if (!unsaved.workflowDirty && !unsaved.settingsDirty && !unsaved.projectsDirty) return;
         event.preventDefault();
         if (await confirmDialog("You have unsaved changes. Quit and discard them?", {
           title: "Quit Pipeline?",
@@ -726,7 +759,12 @@ function App() {
   };
 
   const confirmLeaveCurrentPage = async (nextPage: AppPage) => {
+    const sequence = ++navigationSequence.current;
     if (nextPage === page) return true;
+    if (page === "projects" && projectSaveRef.current) {
+      const saved = await projectSaveRef.current();
+      return saved && sequence === navigationSequence.current;
+    }
     if (page === "pipeline" && workflowDirty) {
       return confirmDialog("You have unsaved workflow changes. Leave and discard them?", {
         confirmLabel: "Discard and leave",
@@ -762,6 +800,7 @@ function App() {
   };
 
   const handleNavigate = async (nextPage: AppPage) => {
+    if (nextPage === "tasks") setTasksAttention(false);
     if (!(await confirmLeaveCurrentPage(nextPage))) return;
     if (page === "settings") void checkDependencies();
     if (nextPage === "settings" && page !== "settings") {
@@ -863,8 +902,12 @@ function App() {
         </div>
       )}
 
+      {researchNotice&&<div role="status" className="absolute bottom-5 right-5 z-50 max-w-sm space-y-2 rounded-lg border border-amber-300 bg-white p-4 shadow-lg dark:bg-neutral-950"><p className="text-sm">A tracked research state changed.</p><button className="rounded border px-3 py-1 text-xs" onClick={()=>{const id=researchNotice.workspaceId;saveDeskLayout(id,{...loadDeskLayout(id),tab:"checks"});localStorage.setItem("pipeline.workspace.workspaceId",id);localStorage.setItem("pipeline.workspace.surface","project");setPage("workspace");setResearchNotice(null);window.dispatchEvent(new CustomEvent("pipeline:open-project",{detail:id}));window.dispatchEvent(new CustomEvent("pipeline:research-destination",{detail:{workspaceId:id,tab:"checks"}}));}}>Inspect research attention</button><button className="px-3 py-1 text-xs" onClick={()=>setResearchNotice(null)}>Dismiss notification</button></div>}
+      {showActivity&&<Suspense fallback={null}><ResearchActivity onClose={()=>setShowActivity(false)} onSession={id=>{void import("./lib/workbenchClient").then(({workbenchClient})=>workbenchClient.sessionSnapshot(id)).then(snapshot=>{localStorage.setItem("pipeline.workspace.sessionId",id);if(snapshot.session.workspaceId)localStorage.setItem("pipeline.workspace.workspaceId",snapshot.session.workspaceId);else localStorage.removeItem("pipeline.workspace.workspaceId");localStorage.setItem("pipeline.workspace.surface","chat");setPage("workspace");setShowActivity(false);window.dispatchEvent(new CustomEvent("pipeline:open-session",{detail:id}));});}} onProject={id=>{saveDeskLayout(id,{...loadDeskLayout(id),tab:"plans"});localStorage.setItem("pipeline.workspace.workspaceId",id);localStorage.setItem("pipeline.workspace.surface","project");setPage("workspace");setShowActivity(false);window.dispatchEvent(new CustomEvent("pipeline:open-project",{detail:id}));window.dispatchEvent(new CustomEvent("pipeline:research-destination",{detail:{workspaceId:id,tab:"plans"}}));}} onTasks={id=>{setTaskId(id);setPage("tasks");setShowActivity(false);}} onReview={id=>{if("runId" in state&&state.runId===id){setPage("main");}else{setHistoryRunId(id);setHistorySourceSelection(null);setPage("history");}setShowActivity(false);}}/></Suspense>}
       <div className="flex min-h-0 flex-1">
         <NavRail
+          onActivity={()=>setShowActivity(true)}
+          tasksAttention={tasksAttention}
           activePage={page}
           hasCurrentRun={hasCurrentRun}
           hasActiveBatch={batchActive}
@@ -948,12 +991,14 @@ function App() {
               )}
             >
             {page === "workspace" ? (
-              <WorkspacePage onOpenSettings={() => {
+              <WorkspacePage onTasks={(session, id) => { setTaskSessionId(session); setTaskId(id ?? null); setPage("tasks"); }} onOpenSettings={() => {
                 setSettingsInitialSection("workspace");
                 setSettingsTargetId(undefined);
                 setSettingsNavigationKey((key) => key + 1);
                 setPage("settings");
               }} onReviewHandoff={(handoff) => void handleWorkspaceReviewHandoff(handoff)} />
+            ) : page === "tasks" ? (
+              <TasksPage initialSessionId={taskSessionId} initialTaskId={taskId} onConversation={id => { return import("./lib/workbenchClient").then(({ workbenchClient }) => workbenchClient.sessionSnapshot(id)).then(snapshot => { localStorage.setItem("pipeline.workspace.sessionId", id); if (snapshot.session.workspaceId) localStorage.setItem("pipeline.workspace.workspaceId", snapshot.session.workspaceId); else localStorage.removeItem("pipeline.workspace.workspaceId"); localStorage.setItem("pipeline.workspace.surface", "chat"); setPage("workspace"); }); }} />
             ) : page === "pipeline" ? (
               <PipelinePage
                 onClose={() => {
@@ -1014,6 +1059,8 @@ function App() {
               />
             ) : page === "projects" ? (
               <ProjectsPage
+                onDirtyChange={setProjectsDirty}
+                onSaveHandlerChange={registerProjectSave}
                 onOpenRun={(runId, source) => {
                   setHistoryRunId(runId);
                   setHistorySourceSelection(source ?? null);

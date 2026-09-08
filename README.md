@@ -8,11 +8,11 @@
 
 Pipeline is a desktop agent orchestration suite for doing and reviewing
 academic research. It combines a persistent ChatGPT Workspace for interactive
-research with deterministic Workflows for repeatable research and review tasks.
+research with Reviews for repeatable, structured research and review tasks.
 The host application owns context, permissions, scheduling, validation,
 provenance, and storage; models supply judgment within those boundaries.
 
-Pipeline runs on macOS, Windows, and Linux. Workflows can use Claude Code
+Pipeline runs on macOS, Windows, and Linux. Reviews can use Claude Code
 or Codex App Server with an existing subscription; the Anthropic, OpenAI, or Google
 API; or a local OpenAI-compatible server such as Ollama. Workspace currently
 uses the Codex CLI/App Server with managed ChatGPT authentication. Pipeline
@@ -31,12 +31,13 @@ an isolated Codex App Server runtime and does not require a Workflow project,
 run, or paper. Its first-release implementation is present but authenticated,
 real-tool, packaged-app, and cross-platform qualification is still in progress.
 
-**Workflows** are deterministic dependency graphs. A workflow specifies the
+**Reviews** runs deterministic workflows. A workflow specifies the
 questions or tasks, the material each step may read, the providers to use, and
 the outputs that feed later steps. Pipeline handles extraction, scheduling,
 validation, and durable artifacts. Paper Review is the principal built-in use
 case, while the engine and portable workflow format also support broader
-research tasks.
+research tasks. In the sidebar, Reviews groups **New run**, **History**,
+**Run collections**, and **Designer**. Designer includes the workflow Gallery.
 
 Workspace recipes configure an interactive conversation; they are not
 Workflows and do not invoke the Workflow scheduler. The two modes keep their
@@ -53,7 +54,7 @@ pip, or another language runtime.
 
 ### Model providers
 
-These choices apply to Workflows. Workspace currently uses its own isolated
+These choices apply to Reviews. Workspace currently uses its own isolated
 Codex App Server and managed ChatGPT sign-in from Workspace settings; it does
 not inherit Workflow provider configuration.
 
@@ -65,7 +66,7 @@ API key.
   with `npm install -g @anthropic-ai/claude-code`, then sign in.
 - **OpenAI:** Install the [Codex CLI](https://github.com/openai/codex) with
   `npm install -g @openai/codex`, then use **Sign in to ChatGPT** under
-  **Settings → Providers → OpenAI → Review & workflows**. The executable
+  **Settings → Providers → OpenAI → Reviews**. The executable
   supplies App Server; a terminal login is not required. Legacy CLI access is
   available under **Advanced connection settings** for compatibility.
 - **Google:** Enter a [Gemini API key](https://aistudio.google.com/apikey)
@@ -173,7 +174,7 @@ consolidation, validation) remain shipped defaults available from the workflow
 editor. An existing installation keeps any customized copy under
 `~/.pipeline/profiles/.retired-builtins/`.
 
-The Workflow Gallery contains four additional starting points: Revision
+The Gallery under Reviews → Designer contains four additional starting points: Revision
 Response Check, Literature Positioning Scan, Thesis Chapter Review, and
 Rubric-Based Review. Installing one creates a normal local workflow that can
 be edited, exported, or deleted.
@@ -301,7 +302,7 @@ restricted material.
 Pipeline is released under the MIT License. Bundled Poppler components retain
 their GPL license; see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
-### Codex App Server for Reviews and Workflows
+### Codex App Server for Reviews
 
 **Codex App Server** is the default ChatGPT subscription connection, with
 managed sign-in under Settings → Providers. It shares protocol and

@@ -161,7 +161,7 @@ export default function Bindings({
             New binding
           </button>
           <Select
-            label="Immutable result"
+            label="Saved result"
             value={
               binding.result.executionId
                 ? `${binding.result.executionId}/${binding.result.resultId}`
@@ -276,7 +276,7 @@ export default function Bindings({
           {current ? (
             <>
               <p className="text-sm">
-                {current.state} · deterministic numeric check:{" "}
+                {current.state} · numeric check:{" "}
                 {current.numericPassed === null
                   ? "unavailable"
                   : current.numericPassed
@@ -285,11 +285,11 @@ export default function Bindings({
               </p>
               <p className="text-xs">{current.reasons.join("; ")}</p>
               <Inspect
-                label="Exact result, specification IDs and artifact locator"
+                label="Result and source details"
                 value={current.result}
               />
               <Inspect
-                label="Execution receipt and captured dependencies"
+                label="Run details and inputs"
                 value={data.executions.find(
                   (e) => e.id === current.record.body.result.executionId,
                 )}

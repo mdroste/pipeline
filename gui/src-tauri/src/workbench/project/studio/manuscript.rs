@@ -28,12 +28,9 @@ fn editor_root(store: &Store, ws: &str, checkpoint: Option<&str>) -> WorkbenchRe
 }
 fn editable(path: &str) -> WorkbenchResult<()> {
     files::relative(path)?;
-    if !matches!(
-        Path::new(path).extension().and_then(|s| s.to_str()),
-        Some("tex" | "md" | "bib" | "txt")
-    ) {
+    if !super::super::file_workspace::editable_source(path) {
         return Err(WorkbenchError::invalid(
-            "The manuscript editor supports TeX, Markdown, BibTeX and text",
+            "Choose a supported UTF-8 source or text file",
         ));
     }
     Ok(())

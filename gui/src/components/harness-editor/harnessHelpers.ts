@@ -29,11 +29,11 @@ export const MODULE_KIND_LABELS: Record<ModuleKind, string> = {
 };
 
 export const MODULE_KIND_HINTS: Record<ModuleKind, string> = {
-  instruction_pack: "Text added to the developer instructions on every turn.",
-  context_provider: "Material assembled into the bounded context packet.",
-  tool: "Dynamic tools the model may call; each records a receipt.",
-  inspector: "Panels shown in the Research inspector; no model effect.",
-  recipe: "Optional versioned instruction modules.",
+  instruction_pack: "Instructions sent with each message.",
+  context_provider: "Source material included with each message.",
+  tool: "Tools the assistant can use. Each use is recorded.",
+  inspector: "Research panels for you to view; these do not change the assistant’s instructions.",
+  recipe: "Saved instructions for specific research tasks.",
 };
 
 export function groupModules(modules: HarnessModule[]): Array<{ kind: ModuleKind; label: string; hint: string; modules: HarnessModule[] }> {
@@ -57,9 +57,9 @@ export interface ModuleBundle {
 
 const BUNDLE_DEFINITIONS: Array<Omit<ModuleBundle, "modules"> & { modules: string[] }> = [
   { id: "minimal", label: "Instructions only", description: "No context, tools, or inspectors.", modules: [] },
-  { id: "read", label: "Read the paper", description: "Paper context plus bounded read and search tools.", modules: ["paper_context", "paper_tools"] },
-  { id: "ledger", label: "Paper + ledger", description: "Adds proposed notes, claims, and evidence with the Evidence inspector.", modules: ["paper_context", "paper_tools", "research_ledger", "evidence_inspector"] },
-  { id: "execution", label: "Paper + ledger + execution", description: "Adds tested local execution profiles and the Results inspector.", modules: ["paper_context", "paper_tools", "research_ledger", "evidence_inspector", "research_execution", "results_inspector"] },
+  { id: "read", label: "Read the paper", description: "Lets the assistant read and search the paper.", modules: ["paper_context", "paper_tools"] },
+  { id: "ledger", label: "Paper + ledger", description: "Lets the assistant suggest notes, claims, and evidence for review.", modules: ["paper_context", "paper_tools", "research_ledger", "evidence_inspector"] },
+  { id: "execution", label: "Paper + ledger + execution", description: "Adds tested local commands and a panel to view results.", modules: ["paper_context", "paper_tools", "research_ledger", "evidence_inspector", "research_execution", "results_inspector"] },
 ];
 
 export function moduleBundles(catalog: HarnessModule[]): ModuleBundle[] {
@@ -183,7 +183,7 @@ export const ACCESS_ROWS: AccessRow[] = [
   {
     key: "contextBudgetBytes",
     label: "Context budget",
-    description: "Upper bound on the assembled paper and note context sent each turn.",
+    description: "Maximum amount of paper text and notes included with each message.",
     builtIn: 65536,
     kind: "select",
     options: [
@@ -199,7 +199,7 @@ export const ACCESS_ROWS: AccessRow[] = [
     description: "Provider-side search inside the conversation.",
     builtIn: false,
     kind: "boolean",
-    locked: "Unavailable in the pinned App Server protocol; no scope can enable it.",
+    locked: "Web search is not available in Workspace yet.",
   },
 ];
 

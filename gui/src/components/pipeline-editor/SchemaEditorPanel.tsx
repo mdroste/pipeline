@@ -369,7 +369,7 @@ export default function SchemaEditorPanel({
               </h3>
               <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
                 {isManagedText
-                  ? "Switching to a custom schema makes the durable step result JSON. Supporting files remain separate artifacts."
+                  ? "A custom schema saves the step’s result as JSON. Supporting files are saved separately."
                   : "A custom schema can require the exact fields that downstream conditions and prompts rely on."}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">

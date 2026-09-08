@@ -9,7 +9,7 @@ import type {
   ProjectIssueStatus,
   RunSummary,
 } from "../lib/types";
-import type { ArtifactSelectionTarget } from "./ArtifactExplorer";
+import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
 
 interface Props {
   project: Project;
@@ -116,9 +116,9 @@ function exportLedger(project: Project, issues: ProjectIssue[]): string {
       const section = occurrence.section ? ` · ${occurrence.section}` : "";
       return `- ${formatDate(occurrence.observed_at)} · ${occurrence.input_name} · ${occurrence.profile_name}${section}\n  - ${occurrence.body.replaceAll("\n", " ")}${evidence}`;
     }).join("\n");
-    return `## ${issueIndex + 1}. ${issue.title}\n\n- Status: ${issue.status}\n- Severity: ${issue.severity || "unspecified"}\n- First observed: ${formatDate(issueFirstObserved(issue))}\n- Last observed: ${formatDate(issueLastObserved(issue))}\n- Occurrences: ${issue.occurrences.length}${issue.section ? `\n- Current section/location: ${issue.section}` : ""}${issue.note ? `\n\n**Project note:** ${issue.note}` : ""}\n\n### Observations\n\n${occurrences}`;
+    return `## ${issueIndex + 1}. ${issue.title}\n\n- Status: ${issue.status}\n- Severity: ${issue.severity || "unspecified"}\n- First observed: ${formatDate(issueFirstObserved(issue))}\n- Last observed: ${formatDate(issueLastObserved(issue))}\n- Occurrences: ${issue.occurrences.length}${issue.section ? `\n- Current section/location: ${issue.section}` : ""}${issue.note ? `\n\n**Collection note:** ${issue.note}` : ""}\n\n### Observations\n\n${occurrences}`;
   }).join("\n\n");
-  return `# ${project.name} — Issue ledger\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are project-level; observations retain their original report provenance.\n\n${body || "No issues match the current filters."}\n`;
+  return `# ${project.name} — Issue ledger\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are collection-level; observations retain their original report provenance.\n\n${body || "No issues match the current filters."}\n`;
 }
 
 export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Props) {
@@ -281,7 +281,7 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Issue ledger</h2>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Findings are matched conservatively across structured reports. Project decisions persist; a missing finding is never treated as addressed automatically. The ledger works the same way for documents, source trees, and input-free reports.
+            Findings are matched conservatively across structured reports. Collection decisions persist; a missing finding is never treated as addressed automatically. The ledger works the same way for documents, source trees, and input-free reports.
           </p>
         </div>
         <div className="flex gap-2">
@@ -312,7 +312,7 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
       </div>
 
       <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(12rem,1fr)_auto_auto_auto_auto]">
-        <input aria-label="Search project issues" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search titles, locations, notes, or report text…" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs dark:border-gray-700 dark:bg-gray-900" />
+        <input aria-label="Search collection issues" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search titles, locations, notes, or report text…" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs dark:border-gray-700 dark:bg-gray-900" />
         <select aria-label="Issue status filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900">
           <option value="all">All statuses</option>
           <option value="open">Open</option><option value="regressed">Regressed</option><option value="addressed">Addressed</option><option value="dismissed">Dismissed</option>
@@ -364,7 +364,7 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
                 <div className="border-t border-gray-200 bg-gray-50/60 px-4 py-4 dark:border-gray-800 dark:bg-gray-900/30">
                   <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_15rem]">
                     <div>
-                      <label htmlFor={`project-issue-note-${issue.id}`} className="text-[11px] font-medium text-gray-700 dark:text-gray-300">Project note or decision rationale</label>
+                      <label htmlFor={`project-issue-note-${issue.id}`} className="text-[11px] font-medium text-gray-700 dark:text-gray-300">Collection note or decision rationale</label>
                       <textarea id={`project-issue-note-${issue.id}`} value={noteDrafts[issue.id] ?? issue.note} onChange={(event) => setNoteDrafts((current) => ({ ...current, [issue.id]: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs dark:border-gray-700 dark:bg-gray-950" placeholder="This note persists across future reports." />
                       <button type="button" disabled={pendingIssueId !== null || (noteDrafts[issue.id] ?? issue.note) === issue.note} onClick={() => void updateIssue(issue, decisionValue, noteDrafts[issue.id] ?? issue.note)} className="mt-2 rounded-lg border border-gray-300 px-3 py-1.5 text-xs disabled:opacity-40 dark:border-gray-700">Save note</button>
                     </div>
@@ -376,7 +376,7 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
                           <option value="open">Open</option><option value="addressed">Addressed</option><option value="dismissed">Dismissed</option><option value="regressed">Regressed</option>
                         </select>
                       </label>
-                      <p className="text-[10px] leading-4 text-gray-500 dark:text-gray-400">{issue.decision_updated ? `Project decision updated ${formatDate(issue.decision_updated, true)}.` : "Derived from accept/reject/done annotations on its report occurrences."}</p>
+                      <p className="text-[10px] leading-4 text-gray-500 dark:text-gray-400">{issue.decision_updated ? `Collection decision updated ${formatDate(issue.decision_updated, true)}.` : "Based on your accept, reject, and done choices in the reports."}</p>
                       {ledger && ledger.issues.length > 1 && (
                         <div>
                           <label className="text-[11px] font-medium text-gray-700 dark:text-gray-300" htmlFor={`merge-${issue.id}`}>Combine duplicate into</label>
@@ -429,8 +429,8 @@ export default function ProjectIssueLedgerPanel({ project, runs, onOpenRun }: Pr
         })}
         {!loading && visibleIssues.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-300 px-5 py-10 text-center dark:border-gray-700">
-            <p className="text-sm text-gray-600 dark:text-gray-300">{ledger?.issues.length ? "No issues match these filters." : "No structured issues were found in this project's reports."}</p>
-            <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">Any workflow can contribute by publishing structured findings. Existing issue-shaped JSON reports and older Automatic Paper Review reports remain compatible; ordinary narrative reports are not reinterpreted as findings.</p>
+            <p className="text-sm text-gray-600 dark:text-gray-300">{ledger?.issues.length ? "No issues match these filters." : "No structured issues were found in this collection’s reports."}</p>
+            <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">Issues appear here when a workflow saves structured findings, including older Paper Review reports. Reports saved only as prose do not populate this list.</p>
           </div>
         )}
       </div>

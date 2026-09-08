@@ -357,6 +357,7 @@ fn execution_profiles_require_oldstata_and_tests_before_runs() {
     assert!(run_execution(
         &fixture.store,
         RunExecutionRequest {
+            plan_id: None,
             profile_id: profile.id.clone(),
             session_id: Some(fixture.session_id.clone()),
             test_only: false,
@@ -369,6 +370,7 @@ fn execution_profiles_require_oldstata_and_tests_before_runs() {
     let tested = run_execution(
         &fixture.store,
         RunExecutionRequest {
+            plan_id: None,
             profile_id: profile.id.clone(),
             session_id: Some(fixture.session_id.clone()),
             test_only: true,
@@ -380,6 +382,7 @@ fn execution_profiles_require_oldstata_and_tests_before_runs() {
     let run = run_execution(
         &fixture.store,
         RunExecutionRequest {
+            plan_id: None,
             profile_id: profile.id,
             session_id: Some(fixture.session_id.clone()),
             test_only: false,

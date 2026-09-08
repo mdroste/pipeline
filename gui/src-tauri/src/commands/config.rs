@@ -1,12 +1,10 @@
 use super::*;
 
-/// Open ~/.pipeline/ in the OS file manager. The path is resolved server-side
+/// Open the active research data folder. The path is resolved server-side
 /// (never passed from the frontend) so there is nothing to sanitize.
 #[tauri::command]
 pub async fn open_pipeline_dir() -> Result<(), String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let dir = home.join(".pipeline");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create .pipeline dir: {e}"))?;
+    let dir = crate::storage::data_root()?;
     let path_str = dir.to_string_lossy().to_string();
 
     #[cfg(target_os = "macos")]
@@ -35,6 +33,22 @@ pub async fn open_pipeline_dir() -> Result<(), String> {
 }
 
 // --- Settings ---
+
+#[tauri::command]
+pub async fn get_storage_settings() -> Result<crate::storage::StorageSettings, String> {
+    tokio::task::spawn_blocking(crate::storage::settings)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_storage_directory(
+    directory: String,
+) -> Result<crate::storage::StorageSettings, String> {
+    tokio::task::spawn_blocking(move || crate::storage::set_directory(&directory))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
 #[derive(serde::Serialize)]
 pub struct SettingsResponse {

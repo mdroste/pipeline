@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ReportViewer, {
@@ -24,7 +24,7 @@ describe("ReportViewer", () => {
     expect(screen.getByText("Contents")).toBeInTheDocument();
     // TOC links target slugified heading ids.
     const link = screen.getByRole("link", { name: "Four" });
-    expect(link).toHaveAttribute("href", "#four");
+    expect(link).toHaveAttribute("href", expect.stringMatching(/-four$/));
   });
 
   it("derives the table of contents from Markdown headings, not fenced code", () => {
@@ -51,7 +51,7 @@ describe("ReportViewer", () => {
 
     expect(tocQueries.getByRole("link", { name: "Real one" })).toHaveAttribute(
       "href",
-      "#real-one",
+      expect.stringMatching(/-real-one$/),
     );
     expect(
       tocQueries.queryByRole("link", { name: "Not a heading" }),
@@ -93,7 +93,7 @@ describe("ReportViewer", () => {
     expect(toc).not.toHaveTextContent(/beta|u'|continuation value\}\$/);
     expect(links[2]).toHaveAttribute(
       "href",
-      "#issue-1-euler-equation-omits-the-continuation-value",
+      expect.stringMatching(/-issue-1-euler-equation-omits-the-continuation-value$/),
     );
     expect(document.querySelector(links[2].getAttribute("href")!)).not.toBeNull();
   });
@@ -120,16 +120,43 @@ describe("ReportViewer", () => {
     ];
 
     expect(links.map((link) => link.getAttribute("href"))).toEqual(
-      expectedIds.map((id) => `#${id}`),
+      expectedIds.map((id) => expect.stringContaining(`-${id}`)),
     );
     expect(
       screen
         .getAllByRole("heading")
         .filter((heading) => heading.tagName !== "H4")
-        .map((heading) => heading.id),
+        .map((heading) => heading.dataset.sourceAnchor),
     ).toEqual(expectedIds);
     for (const link of links) {
       expect(document.querySelector(link.getAttribute("href")!)).not.toBeNull();
+    }
+  });
+
+  it("keeps contents, body fragments and footnotes inside their owning reader", async () => {
+    const user = userEvent.setup();
+    const markdown = "# One\n\n## Two\n\n## Three\n\n## Four\n\n[Jump](#four) and a note[^a].\n\n[^a]: Evidence.";
+    const { container } = render(<><ReportViewer markdown={markdown}/><ReportViewer markdown={markdown}/></>);
+    const ids = Array.from(container.querySelectorAll("[id]"), node => node.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const readers = container.querySelectorAll<HTMLElement>(".report-content");
+    const leftTarget = within(readers[0]).getByRole("heading", { name: "Four" });
+    const rightTarget = within(readers[1]).getByRole("heading", { name: "Four" });
+    const leftScroll = vi.fn(); const rightScroll = vi.fn();
+    leftTarget.scrollIntoView = leftScroll; rightTarget.scrollIntoView = rightScroll;
+    await user.click(screen.getAllByRole("link", { name: "Four" })[1]);
+    expect(rightScroll).toHaveBeenCalledOnce();
+    expect(leftScroll).not.toHaveBeenCalled();
+    expect(rightTarget).toHaveFocus();
+    await user.click(within(readers[1]).getByRole("link", { name: "Jump" }));
+    expect(rightScroll).toHaveBeenCalledTimes(2);
+    for (const reader of readers) {
+      for (const link of reader.querySelectorAll<HTMLAnchorElement>("a[href^='#']")) {
+        expect(Array.from(reader.querySelectorAll("[id]")).some(node => node.id === decodeURIComponent(link.hash.slice(1)))).toBe(true);
+      }
+      for (const reference of reader.querySelectorAll("[aria-describedby]")) {
+        expect(reader.querySelector(`[id="${reference.getAttribute("aria-describedby")}"]`)).not.toBeNull();
+      }
     }
   });
 
@@ -148,17 +175,17 @@ describe("ReportViewer", () => {
 
     expect(tocQueries.getByRole("link", { name: "Overview" })).toHaveAttribute(
       "href",
-      "#overview",
+      expect.stringMatching(/-overview$/),
     );
     expect(
       tocQueries.getByRole("link", { name: "Primary finding" }),
-    ).toHaveAttribute("href", "#primary-finding");
+    ).toHaveAttribute("href", expect.stringMatching(/-primary-finding$/));
     expect(
       tocQueries.getByRole("link", { name: "Robustness checks" }),
-    ).toHaveAttribute("href", "#robustness-checks");
+    ).toHaveAttribute("href", expect.stringMatching(/-robustness-checks$/));
     expect(
       tocQueries.getByRole("link", { name: "Appendix evidence" }),
-    ).toHaveAttribute("href", "#appendix-evidence");
+    ).toHaveAttribute("href", expect.stringMatching(/-appendix-evidence$/));
     expect(toc).not.toHaveTextContent(/<span|\*\*|_/);
   });
 
@@ -190,7 +217,7 @@ describe("ReportViewer", () => {
       within(toc!).getByRole("link", {
         name: "Strategic Complementarities in Posted Wages",
       }),
-    ).toHaveAttribute("href", "#strategic-complementarities-in-posted-wages");
+    ).toHaveAttribute("href", expect.stringMatching(/-strategic-complementarities-in-posted-wages$/));
     expect(toc).not.toHaveTextContent(/\^\{|\$\s*\^/);
   });
 
@@ -414,4 +441,20 @@ describe("ReportViewer", () => {
     expect(screen.getByText("Model:")).toBeVisible();
     expect(screen.getByText("gpt-5.6-sol")).toBeVisible();
   });
+});
+
+it("collapses contents by the reader's own width and keeps a local outline available", async () => {
+  const user = userEvent.setup();
+  const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({width: 450, height: 600} as DOMRect);
+  try {
+    render(<ReportViewer markdown={"# First\n\n## Second\n\n## Third\n\n## Fourth\n\nReading text."}/>);
+    const toggle = screen.getByRole("button", {name:"Contents"});
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    await user.click(toggle);
+    expect(screen.getByRole("navigation", {name:"Table of contents"}).id).toBe(toggle.getAttribute("aria-controls"));
+    expect(screen.getByRole("link", {name:"Fourth"})).toBeVisible();
+    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+    expect(screen.getByText("Reading text.")).toBeVisible();
+  } finally { geometry.mockRestore(); }
 });

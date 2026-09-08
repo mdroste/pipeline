@@ -29,9 +29,9 @@ const DEFAULT_ORIENTATION_GENERIC: &str = include_str!("../../../prompts/orienta
 const DEFAULT_ORIENTATION_GRANT: &str = include_str!("../../../prompts/orientation_grant.md");
 const DEFAULT_ORIENTATION_FOLDER: &str = include_str!("../../../prompts/orientation_folder.md");
 
-/// Get the user prompts directory (~/.pipeline/prompts/).
-fn user_prompts_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".pipeline").join("prompts"))
+/// Get user prompt overrides in the active research data directory.
+fn user_prompts_dir() -> Result<PathBuf, String> {
+    Ok(crate::storage::data_root()?.join("prompts"))
 }
 
 /// Get the default content for a named prompt.
@@ -79,7 +79,8 @@ pub fn load_prompt(filename: &str) -> Result<String, String> {
     }
 
     // Check user override
-    if let Some(dir) = user_prompts_dir() {
+    {
+        let dir = user_prompts_dir()?;
         let user_path = dir.join(format!("{base}.md"));
         if user_path.is_file() {
             // Verify resolved path stays within the prompts directory

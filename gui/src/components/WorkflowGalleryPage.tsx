@@ -102,7 +102,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
         )}
         {installed && (
           <div role="status" className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
-            Installed and activated. Open Workflows to review or customize it.
+            Installed and activated. Open Reviews → Designer to review or customize it.
           </div>
         )}
 

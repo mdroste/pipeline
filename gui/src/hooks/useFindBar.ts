@@ -147,7 +147,9 @@ export function useFindBar(containerRef: RefObject<HTMLElement | null>, resetKey
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-        if (!containerRef.current) return;
+        if (e.defaultPrevented || !containerRef.current || containerRef.current.closest(".hidden, [hidden]")) return;
+        const pane = e.target instanceof Element ? e.target.closest(".file-pane, .pdf-reader") : null;
+        if (pane && !pane.contains(containerRef.current)) return;
         e.preventDefault();
         setOpen(true);
       }

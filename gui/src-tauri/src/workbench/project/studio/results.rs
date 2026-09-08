@@ -472,7 +472,8 @@ fn result_freshness(
 ) -> WorkbenchResult<Value> {
     let e = execution(store, ws, &r.execution_id)?;
     let registered = root(store, ws)?;
-    let cwd = Path::new(&e.cwd);
+    let original_cwd=e.input_manifest["planId"].as_str().and_then(|id|crate::workbench::desk::record(store,ws,id).ok()).and_then(|p|p.body["profile"]["cwd"].as_str().map(str::to_string));
+    let cwd = Path::new(original_cwd.as_deref().unwrap_or(&e.cwd));
     if !cwd.starts_with(&registered) || !cwd.is_dir() {
         return Ok(json!({"state":"unknown","reason":"Execution root is no longer available"}));
     }
@@ -481,6 +482,7 @@ fn result_freshness(
     let mut unknown = Vec::new();
     for f in e.input_manifest["files"].as_array().into_iter().flatten() {
         let path = f["path"].as_str().unwrap_or("");
+        if original_cwd.is_some() && path=="pipeline-parameters.json" {continue;}
         if started.elapsed() > Duration::from_secs(2) || *read > 32 * 1024 * 1024 {
             unknown.push(path.to_string());
             continue;

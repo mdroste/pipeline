@@ -224,7 +224,7 @@ export default function Responses({
                 }
               }}
             />
-            Enable explicit Workflow findings bridge
+            Enable importing Workflow findings
           </label>
           {bridge && (
             <>
@@ -257,7 +257,7 @@ export default function Responses({
                   )
                 }
               >
-                Preview canonical findings
+                Preview findings
               </button>
               <Field label="Or import a findings exchange JSON file">
                 <input
@@ -343,8 +343,8 @@ export default function Responses({
             </>
           )}
           <p className="text-xs text-gray-500">
-            The Workflow issue ledger remains separate. Imports retain source
-            occurrences and existing Workspace decisions.
+            Imported findings link to the original reports. Your existing decisions
+            are preserved; edits here do not change the Workflow reports.
           </p>
         </section>
       </div>
@@ -573,7 +573,7 @@ export default function Responses({
               />
               <Inspect
                 value={current.body.source}
-                label="Immutable imported source"
+                label="Imported source"
               />
               <button
                 className={button}

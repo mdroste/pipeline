@@ -1,3 +1,6 @@
+import useTabList from "../hooks/useTabList";
+import { artifactClient } from "../lib/artifactClient";
+import RunMarkdown from "./file-workspace/RunMarkdown";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ExportControls from "./ExportControls";
@@ -27,7 +30,7 @@ import type {
   ArtifactSelectionRequest,
   ArtifactSelectionTarget,
   RunManifest,
-} from "./ArtifactExplorer";
+} from "../lib/artifactTypes";
 
 const loadArtifactExplorer = () => import("./ArtifactExplorer");
 const ArtifactExplorer = lazy(loadArtifactExplorer);
@@ -59,20 +62,6 @@ type CanonicalReportProblem =
   | "apparent-refusal";
 
 const APPARENT_REFUSAL_RE = /\bi(?:\s+(?:cannot|can't|am\s+unable\s+to|must\s+refuse\s+to|will\s+not|won't)|'m\s+unable\s+to)\s+(?:comply(?:\s+with\s+(?:this|the)\s+request)?|(?:provide|produce|write|generate|complete)\s+(?:(?:this|the|a)\s+)?(?:requested\s+)?(?:report|review|task|request)|(?:help|assist)\s+with\s+(?:this|that|the\s+request)|follow\s+(?:these|the)\s+instructions)\b/i;
-
-const TAB_IDS: Record<WorkspaceTab, string> = {
-  report: "report-workspace-tab-report",
-  provenance: "report-workspace-tab-provenance",
-  issues: "report-workspace-tab-issues",
-  sources: "report-workspace-tab-sources",
-};
-
-const TAB_PANEL_IDS: Record<WorkspaceTab, string> = {
-  report: "report-workspace-panel-report",
-  provenance: "report-workspace-panel-provenance",
-  issues: "report-workspace-panel-issues",
-  sources: "report-workspace-panel-sources",
-};
 
 const TAB_LABELS = Object.fromEntries(
   REPORT_WORKSPACE_TABS.map((tab) => [tab.id, tab.label]),
@@ -218,37 +207,16 @@ function canonicalProblemMessage(problem: CanonicalReportProblem): string {
     case "no-step-output":
       return "No completed step returned usable report content. Any captured attempts remain available for inspection.";
     case "missing-content":
-      return "The canonical report artifact is empty or unavailable. Other run artifacts may still contain useful diagnostic material.";
+      return "The report is empty or unavailable. Check the saved outputs for details.";
   }
 }
 
-function TabButton({
-  active,
-  count,
-  id,
-  label,
-  onClick,
-  onKeyDown,
-  panelId,
-}: {
-  active: boolean;
-  count?: number;
-  id: string;
-  label: string;
-  onClick: () => void;
-  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
-  panelId: string;
+function TabButton({ active, count, label, tabProps }: {
+  active: boolean; count?: number; label: string;
+  tabProps: React.ComponentPropsWithRef<"button">;
 }) {
   return (
-    <button
-      id={id}
-      type="button"
-      role="tab"
-      aria-controls={panelId}
-      aria-selected={active}
-      tabIndex={active ? 0 : -1}
-      onClick={onClick}
-      onKeyDown={onKeyDown}
+    <button {...tabProps}
       className={`relative h-11 px-1 text-sm font-medium transition-colors focus-visible:outline-none
                   focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-400 ${
                     active
@@ -357,7 +325,7 @@ function ProvenancePanel({
                 </ul>
               </div>
             ) : (
-              <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">No deterministic limitations were recorded.</p>
+              <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">No limitations were reported by the automatic checks.</p>
             )}
             <p className="mt-3 break-all font-mono text-[11px] text-gray-500 dark:text-gray-400">
               Reproducibility hash: {quality.reproducibility_hash || "Unavailable"}
@@ -531,7 +499,7 @@ export default function ReportWorkspace({
 
     // The compact manifest supports provenance and evidence links. The source
     // tree component and artifact bytes remain truly lazy until Sources opens.
-    void invoke<RunManifest>("get_run_manifest", { runId })
+    void artifactClient.manifest(runId)
       .then((loaded) => {
         if (live) setRunManifest(loaded);
       })
@@ -561,7 +529,7 @@ export default function ReportWorkspace({
         : invoke<PipelineReport>("get_run_report", { runId }),
       initialMarkdown
         ? Promise.resolve({ text: initialMarkdown } as ArtifactContent)
-        : invoke<ArtifactContent>("read_artifact", { runId, relPath: "report.md" }),
+        : artifactClient.read(runId, "report.md"),
     ])
       .then(([loadedReport, artifact]) => {
         if (!live) return;
@@ -664,27 +632,7 @@ export default function ReportWorkspace({
     }
     setTab("sources");
   };
-  const handleTabKeyDown = (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    currentTab: WorkspaceTab,
-  ) => {
-    const currentIndex = availableTabs.indexOf(currentTab);
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") {
-      nextIndex = (currentIndex + 1) % availableTabs.length;
-    } else if (event.key === "ArrowLeft") {
-      nextIndex = (currentIndex - 1 + availableTabs.length) % availableTabs.length;
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = availableTabs.length - 1;
-    }
-    if (nextIndex === null) return;
-    event.preventDefault();
-    const nextTab = availableTabs[nextIndex];
-    setTab(nextTab);
-    document.getElementById(TAB_IDS[nextTab])?.focus();
-  };
+  const tabList = useTabList(availableTabs, tab, setTab);
 
   if (loading) {
     return (
@@ -757,7 +705,7 @@ export default function ReportWorkspace({
                   {formatRunDuration(provenance.duration_secs)}
                 </>
               ) : (
-                "Canonical report metadata unavailable · preserved artifacts remain accessible"
+                "Report details unavailable · saved outputs are still accessible"
               )}
             </p>
           </div>
@@ -829,44 +777,33 @@ export default function ReportWorkspace({
       >
         <TabButton
           active={tab === "report"}
-          id={TAB_IDS.report}
+          tabProps={tabList.tabProps("report")}
           label={TAB_LABELS.report}
-          panelId={TAB_PANEL_IDS.report}
-          onClick={() => setTab("report")}
-          onKeyDown={(event) => handleTabKeyDown(event, "report")}
         />
         {provenance && (
           <TabButton
             active={tab === "provenance"}
-            id={TAB_IDS.provenance}
+          tabProps={tabList.tabProps("provenance")}
             label={TAB_LABELS.provenance}
-            panelId={TAB_PANEL_IDS.provenance}
-            onClick={() => setTab("provenance")}
-            onKeyDown={(event) => handleTabKeyDown(event, "provenance")}
           />
         )}
         {issues && issues.length > 0 && (
           <TabButton
             active={tab === "issues"}
             count={issues.length}
-            id={TAB_IDS.issues}
+          tabProps={tabList.tabProps("issues")}
             label={TAB_LABELS.issues}
-            panelId={TAB_PANEL_IDS.issues}
-            onClick={() => setTab("issues")}
-            onKeyDown={(event) => handleTabKeyDown(event, "issues")}
           />
         )}
         <TabButton
           active={tab === "sources"}
-          id={TAB_IDS.sources}
+          tabProps={tabList.tabProps("sources")}
           label={TAB_LABELS.sources}
-          panelId={TAB_PANEL_IDS.sources}
-          onClick={() => setTab("sources")}
-          onKeyDown={(event) => handleTabKeyDown(event, "sources")}
         />
       </div>
 
-      <div className="min-h-0 flex-1">
+      {availableTabs.filter(id => id !== tab).map(id => <div key={id} {...tabList.panelProps(id)} hidden />)}
+      <div {...tabList.panelProps(tab)} className="min-h-0 flex-1">
         <Suspense
           fallback={(
             <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
@@ -876,9 +813,6 @@ export default function ReportWorkspace({
         >
           {tab === "issues" && issues ? (
             <div
-              id={TAB_PANEL_IDS.issues}
-              role="tabpanel"
-              aria-labelledby={TAB_IDS.issues}
               className="h-full overflow-auto"
             >
               <IssuesTable
@@ -889,18 +823,12 @@ export default function ReportWorkspace({
             </div>
           ) : tab === "provenance" && provenance ? (
             <div
-              id={TAB_PANEL_IDS.provenance}
-              role="tabpanel"
-              aria-labelledby={TAB_IDS.provenance}
               className="h-full"
             >
               <ProvenancePanel provenance={provenance} quality={report?.quality} />
             </div>
           ) : tab === "sources" ? (
             <div
-              id={TAB_PANEL_IDS.sources}
-              role="tabpanel"
-              aria-labelledby={TAB_IDS.sources}
               className="h-full"
             >
               {runId ? (
@@ -920,9 +848,6 @@ export default function ReportWorkspace({
             </div>
           ) : (
             <div
-              id={TAB_PANEL_IDS.report}
-              role="tabpanel"
-              aria-labelledby={TAB_IDS.report}
               className="h-full overflow-hidden"
             >
               <div className="flex h-full min-h-0 flex-col">
@@ -979,7 +904,7 @@ export default function ReportWorkspace({
                       </div>
                     </div>
                   ) : markdown.trim() ? (
-                    <ReportViewer markdown={visibleMarkdown} />
+                    runId ? <RunMarkdown runId={runId} onOpen={location=>{setSourceRequest({key:Date.now(),relPath:location.path,...location});setTab("sources");}}><ReportViewer markdown={visibleMarkdown}/></RunMarkdown> : <ReportViewer markdown={visibleMarkdown}/>
                   ) : (
                     <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
                       <div>

@@ -27,5 +27,5 @@ export function parseResearchTable(text: string, delimiter: string, limit = 200)
 }
 export default function ResearchTablePreview({ text, path }: { text: string; path: string }) {
   const table = useMemo(() => parseResearchTable(text, path.toLowerCase().endsWith(".tsv") ? "\t" : ","), [text, path]);
-  return <div className="overflow-auto">{table.error ? <p className="text-xs text-amber-700">{table.error}</p> : <table aria-label="Research data preview" className="border-collapse text-xs"><tbody>{table.rows.map((row, i) => <tr key={i}>{row.map((value, j) => <td key={j} className="whitespace-pre-wrap border px-3 py-2">{value}</td>)}</tr>)}</tbody></table>}{table.truncated && <p className="mt-2 text-xs text-gray-500">Preview is bounded to 200 rows.</p>}</div>;
+  return <div className="overflow-auto">{table.error ? <p className="text-xs text-amber-700">{table.error}</p> : <table aria-label="Research data preview" className="border-collapse text-xs"><tbody>{table.rows.map((row, i) => <tr key={i}>{row.map((value, j) => <td key={j} className="whitespace-pre-wrap border px-3 py-2">{value}</td>)}</tr>)}</tbody></table>}{table.truncated && <p className="mt-2 text-xs text-gray-500">Showing up to 200 rows.</p>}</div>;
 }

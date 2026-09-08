@@ -1,0 +1,31 @@
+{
+  "maxLines": 1200,
+  "maxBytes": 50000,
+  "longLineCharacters": 200,
+  "generated": [
+    {
+      "path": "gui/package-lock.json",
+      "owner": "dependency maintenance",
+      "reason": "npm-generated dependency lockfile",
+      "reviewTrigger": "dependency updates"
+    },
+    {
+      "path": "gui/src-tauri/Cargo.lock",
+      "owner": "dependency maintenance",
+      "reason": "Cargo-generated dependency lockfile",
+      "reviewTrigger": "dependency updates"
+    },
+    {
+      "path": "docs/workbench/protocol/0.147.0/stable.schemas.json",
+      "owner": "Codex protocol compatibility",
+      "reason": "Checksum-pinned vendor reference; retain exact bytes",
+      "reviewTrigger": "protocol reference generation changes"
+    },
+    {
+      "path": "docs/workbench/protocol/0.147.0/experimental.schemas.json",
+      "owner": "Codex protocol compatibility",
+      "reason": "Checksum-pinned vendor reference; retain exact bytes",
+      "reviewTrigger": "protocol reference generation changes"
+    }
+  ]
+}

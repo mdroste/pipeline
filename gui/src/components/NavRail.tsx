@@ -1,9 +1,12 @@
 import type { ReactNode } from "react";
 import ResizeHandle from "./ResizeHandle";
 
+export const NAV_RAIL_WIDTH = { default: 216, min: 208, max: 320 };
+
 export type AppPage =
   | "main"
   | "workspace"
+  | "tasks"
   | "pipeline"
   | "settings"
   | "help"
@@ -15,11 +18,14 @@ export type AppPage =
 type IconName =
   | "new"
   | "workspace"
+  | "reviews"
+  | "tasks"
+  | "activity"
   | "current"
   | "batch"
   | "runs"
   | "projects"
-  | "workflows"
+  | "designer"
   | "help"
   | "settings";
 
@@ -30,6 +36,7 @@ interface Props {
   runInProgress: boolean;
   workspaceActive?: boolean;
   workspaceAttention?: boolean;
+  tasksAttention?: boolean;
   isMac: boolean;
   dependenciesReady: boolean | null;
   dependenciesLoading: boolean;
@@ -39,6 +46,7 @@ interface Props {
   onNewRun: () => void;
   onNavigate: (page: AppPage) => void;
   onDependencies: () => void;
+  onActivity?: () => void;
 }
 
 function Icon({ name }: { name: IconName }) {
@@ -48,9 +56,29 @@ function Icon({ name }: { name: IconName }) {
     viewBox: "0 0 24 24",
     stroke: "currentColor",
     strokeWidth: 1.65,
+    "aria-hidden": true as const,
   };
 
   switch (name) {
+    case "reviews":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M14 3.5H6A1.5 1.5 0 0 0 4.5 5v14A1.5 1.5 0 0 0 6 20.5h12a1.5 1.5 0 0 0 1.5-1.5V9L14 3.5ZM14 3.5V9h5.5M8 14l2.5 2.5L16 11" />
+        </svg>
+      );
+    case "tasks":
+      return (
+        <svg {...common}>
+          <rect x="4" y="4" width="16" height="16" rx="3" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="m8 12 2.5 2.5L16 9" />
+        </svg>
+      );
+    case "activity":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 12h4l3-7 4 14 3-7h4" />
+        </svg>
+      );
     case "workspace":
       return (
         <svg {...common}>
@@ -83,8 +111,7 @@ function Icon({ name }: { name: IconName }) {
     case "runs":
       return (
         <svg {...common}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 4.75h9M7.5 9.5h9M7.5 14.25h5.5" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5 3.25h14a1.5 1.5 0 0 1 1.5 1.5v14.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V4.75A1.5 1.5 0 0 1 5 3.25Z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3.5 4.5v5h5M3.8 9a8.25 8.25 0 1 1 .3 6M12 7.5V12l3 2" />
         </svg>
       );
     case "projects":
@@ -94,7 +121,7 @@ function Icon({ name }: { name: IconName }) {
           <path strokeLinecap="round" strokeLinejoin="round" d="M5.75 7.25V5.5a1.5 1.5 0 0 1 1.5-1.5h4.25l1.5 2h4.75a1.5 1.5 0 0 1 1.5 1.5v1.75" />
         </svg>
       );
-    case "workflows":
+    case "designer":
       return (
         <svg {...common}>
           <circle cx="6" cy="6" r="2.25" />
@@ -128,6 +155,8 @@ function RailButton({
   onClick,
   suffix,
   title,
+  nested = false,
+  action = false,
 }: {
   active: boolean;
   disabled?: boolean;
@@ -136,6 +165,8 @@ function RailButton({
   onClick: () => void;
   suffix?: ReactNode;
   title?: string;
+  nested?: boolean;
+  action?: boolean;
 }) {
   return (
     <button
@@ -143,16 +174,18 @@ function RailButton({
       aria-current={active ? "page" : undefined}
       disabled={disabled}
       onClick={onClick}
-      title={title}
-      className={`group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium
+      title={title ?? label}
+      className={`group flex w-full items-center gap-2 rounded-lg py-2 text-left text-[13px] font-medium
                   transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
-                  disabled:cursor-not-allowed disabled:opacity-40 ${
-                    active
+                  disabled:cursor-not-allowed disabled:opacity-40 ${nested ? "px-2" : "px-3"} ${
+                    action
+                      ? "bg-gray-900 text-white shadow-sm hover:bg-gray-800 dark:bg-neutral-200 dark:text-neutral-950 dark:hover:bg-neutral-100"
+                      : active
                       ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200/80 dark:bg-neutral-800 dark:text-neutral-50 dark:ring-neutral-700"
                       : "text-gray-600 hover:bg-white/70 hover:text-gray-950 dark:text-neutral-400 dark:hover:bg-neutral-800/70 dark:hover:text-neutral-100"
                   }`}
     >
-      <span className={active ? "text-gray-900 dark:text-neutral-100" : "text-gray-500 group-hover:text-gray-700 dark:text-neutral-400 dark:group-hover:text-neutral-200"}>
+      <span className={`shrink-0 ${action ? "text-current" : active ? "text-gray-900 dark:text-neutral-100" : "text-gray-500 group-hover:text-gray-700 dark:text-neutral-400 dark:group-hover:text-neutral-200"}`}>
         <Icon name={icon} />
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -168,6 +201,7 @@ export default function NavRail({
   runInProgress,
   workspaceActive = false,
   workspaceAttention = false,
+  tasksAttention = false,
   isMac,
   dependenciesReady,
   dependenciesLoading,
@@ -177,12 +211,13 @@ export default function NavRail({
   onNewRun,
   onNavigate,
   onDependencies,
+  onActivity,
 }: Props) {
   return (
     <aside
       style={{ width }}
-      className={`relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-3 pb-3
-                  dark:border-neutral-800 dark:bg-[#101010] ${isMac ? "pt-12" : "pt-4"}`}
+      className={`relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-3 pb-3 [color-scheme:light]
+                  dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark] ${isMac ? "pt-12" : "pt-4"}`}
     >
       {isMac && (
         <div
@@ -197,7 +232,7 @@ export default function NavRail({
         </span>
       </div>
 
-      <nav aria-label="Primary" className="space-y-1">
+      <nav aria-label="Primary" className="min-h-0 overflow-y-auto pb-4 space-y-1 [scrollbar-width:thin]">
         <RailButton
           active={activePage === "workspace"}
           icon="workspace"
@@ -207,64 +242,83 @@ export default function NavRail({
             <span aria-label={workspaceAttention ? "needs attention" : "running"} className={`h-1.5 w-1.5 rounded-full ${workspaceAttention ? "bg-amber-500" : "bg-blue-500"}`} />
           ) : undefined}
         />
-        <div className="my-2 border-t border-gray-200/80 dark:border-neutral-800" />
-        <RailButton
-          active={activePage === "main" && !hasCurrentRun}
-          disabled={runInProgress}
-          icon="new"
-          label="New report"
-          onClick={onNewRun}
-          title={runInProgress ? "A report is already being generated" : undefined}
-        />
-        {hasCurrentRun && (
-          <RailButton
-            active={activePage === "main"}
-            icon="current"
-            label="Current report"
-            onClick={() => onNavigate("main")}
-            suffix={runInProgress ? (
-              <span
-                aria-label="running"
-                className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_0_3px_rgba(59,130,246,0.12)]"
-              />
-            ) : undefined}
-          />
-        )}
-        {hasActiveBatch && (
-          <RailButton
-            active={activePage === "batch"}
-            icon="batch"
-            label="Current batch"
-            onClick={() => onNavigate("batch")}
-            suffix={(
-              <span
-                aria-label="running"
-                className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_0_3px_rgba(59,130,246,0.12)]"
+        <RailButton active={activePage === "tasks"} icon="tasks" label="Tasks" onClick={() => onNavigate("tasks")} suffix={tasksAttention ? <span aria-label="Task update" className="h-1.5 w-1.5 rounded-full bg-amber-500" /> : undefined} />
+        <div role="group" aria-label="Reviews" className="!mt-5 border-t border-gray-200/80 pt-4 dark:border-neutral-800">
+          <h2 className="flex items-center gap-2 px-3 pb-3 text-[13px] font-semibold text-gray-900 dark:text-neutral-100">
+            <Icon name="reviews" />
+            Reviews
+          </h2>
+          <div className="ml-[21px] space-y-1 border-l border-gray-300/70 pl-2 dark:border-neutral-700">
+            <RailButton
+              nested
+              action
+              active={activePage === "main" && !hasCurrentRun}
+              disabled={runInProgress}
+              icon="new"
+              label="New run"
+              onClick={onNewRun}
+              title={runInProgress ? "A review is already running" : "Start a new review run"}
+            />
+            {hasCurrentRun && (
+              <RailButton
+                nested
+                active={activePage === "main"}
+                icon="current"
+                label="Current run"
+                onClick={() => onNavigate("main")}
+                suffix={runInProgress ? (
+                  <span
+                    aria-label="running"
+                    className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_0_3px_rgba(59,130,246,0.12)]"
+                  />
+                ) : undefined}
               />
             )}
-          />
-        )}
-        <RailButton
-          active={activePage === "history"}
-          icon="runs"
-          label="History"
-          onClick={() => onNavigate("history")}
-        />
-        <RailButton
-          active={activePage === "projects"}
-          icon="projects"
-          label="Projects"
-          onClick={() => onNavigate("projects")}
-        />
-        <RailButton
-          active={activePage === "pipeline" || activePage === "gallery"}
-          icon="workflows"
-          label="Workflows"
-          onClick={() => onNavigate("pipeline")}
-        />
+            {hasActiveBatch && (
+              <RailButton
+                nested
+                active={activePage === "batch"}
+                icon="batch"
+                label="Current batch"
+                onClick={() => onNavigate("batch")}
+                suffix={(
+                  <span
+                    aria-label="running"
+                    className="h-1.5 w-1.5 rounded-full bg-blue-500 shadow-[0_0_0_3px_rgba(59,130,246,0.12)]"
+                  />
+                )}
+              />
+            )}
+            <RailButton
+              nested
+              active={activePage === "history"}
+              icon="runs"
+              label="History"
+              onClick={() => onNavigate("history")}
+            />
+            <RailButton
+              nested
+              active={activePage === "projects"}
+              icon="projects"
+              label="Run collections"
+              onClick={() => onNavigate("projects")}
+            />
+            <div className="!mt-2 border-t border-gray-200/80 pt-2 dark:border-neutral-800">
+              <RailButton
+                nested
+                active={activePage === "pipeline" || activePage === "gallery"}
+                icon="designer"
+                label="Designer"
+                onClick={() => onNavigate("pipeline")}
+                title="Design review steps, prompts, and templates"
+              />
+            </div>
+          </div>
+        </div>
       </nav>
 
-      <div className="mt-auto space-y-1 border-t border-gray-200/80 pt-3 dark:border-neutral-800">
+      <div className="mt-auto shrink-0 space-y-1 border-t border-gray-200/80 pt-3 dark:border-neutral-800">
+        {onActivity && <RailButton active={false} icon="activity" label="Activity" onClick={onActivity} />}
         <RailButton
           active={activePage === "help"}
           icon="help"
@@ -310,10 +364,10 @@ export default function NavRail({
       </div>
       <ResizeHandle
         currentWidth={width}
-        defaultWidth={176}
+        defaultWidth={NAV_RAIL_WIDTH.default}
         label="Resize primary navigation"
-        min={152}
-        max={320}
+        min={NAV_RAIL_WIDTH.min}
+        max={NAV_RAIL_WIDTH.max}
         onResize={onResize}
       />
     </aside>

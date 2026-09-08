@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import NavRail from "./NavRail";
+import NavRail, { NAV_RAIL_WIDTH } from "./NavRail";
 
 function renderRail(
   overrides: Partial<ComponentProps<typeof NavRail>> = {},
@@ -15,7 +15,7 @@ function renderRail(
     isMac: false,
     dependenciesReady: true,
     dependenciesLoading: false,
-    width: 176,
+    width: NAV_RAIL_WIDTH.default,
     onResize: vi.fn(),
     onNewRun: vi.fn(),
     onNavigate: vi.fn(),
@@ -30,8 +30,9 @@ describe("NavRail", () => {
   it("exposes labeled primary navigation and its active destination", async () => {
     const user = userEvent.setup();
     const props = renderRail();
+    const reviews = within(screen.getByRole("group", { name: "Reviews" }));
 
-    expect(screen.getByRole("button", { name: "New report" })).toHaveAttribute(
+    expect(reviews.getByRole("button", { name: "New run" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -43,10 +44,17 @@ describe("NavRail", () => {
     await user.click(screen.getByRole("button", { name: "Workspace" }));
     expect(props.onNavigate).toHaveBeenCalledWith("workspace");
 
-    await user.click(screen.getByRole("button", { name: "History" }));
+    expect(reviews.queryByRole("button", { name: "Workspace" })).not.toBeInTheDocument();
+    expect(reviews.queryByRole("button", { name: "Tasks" })).not.toBeInTheDocument();
+
+    await user.click(reviews.getByRole("button", { name: "History" }));
     expect(props.onNavigate).toHaveBeenCalledWith("history");
-    await user.click(screen.getByRole("button", { name: "Projects" }));
+    await user.click(reviews.getByRole("button", { name: "Run collections" }));
     expect(props.onNavigate).toHaveBeenCalledWith("projects");
+    await user.click(reviews.getByRole("button", { name: "Designer" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("pipeline");
+    await user.click(reviews.getByRole("button", { name: "New run" }));
+    expect(props.onNewRun).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: "Gallery" })).not.toBeInTheDocument();
   });
 
@@ -62,10 +70,10 @@ describe("NavRail", () => {
     expect(screen.getByLabelText("needs attention")).toBeVisible();
   });
 
-  it("keeps Workflows active while its gallery is open", () => {
+  it("keeps Designer active while its gallery is open", () => {
     renderRail({ activePage: "gallery" });
 
-    expect(screen.getByRole("button", { name: "Workflows" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Designer" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -77,9 +85,9 @@ describe("NavRail", () => {
       runInProgress: true,
     });
 
-    expect(screen.getByRole("button", { name: "New report" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: /Current report/ }),
+      screen.getByRole("button", { name: /Current run/ }),
     ).toHaveAttribute("aria-current", "page");
   });
 
@@ -91,7 +99,7 @@ describe("NavRail", () => {
       runInProgress: true,
     });
 
-    expect(screen.getByRole("button", { name: "New report" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: /Current batch/ }));
     expect(props.onNavigate).toHaveBeenCalledWith("batch");
   });
@@ -113,9 +121,9 @@ describe("NavRail", () => {
       name: "Resize primary navigation",
     });
 
-    expect(divider).toHaveAttribute("aria-valuenow", "176");
+    expect(divider).toHaveAttribute("aria-valuenow", "216");
     await user.click(divider);
     await user.keyboard("{ArrowRight}");
-    expect(props.onResize).toHaveBeenCalledWith(184);
+    expect(props.onResize).toHaveBeenCalledWith(224);
   });
 });

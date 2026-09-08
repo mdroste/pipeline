@@ -85,6 +85,10 @@ function mockLoad(
 ) {
   invoke.mockImplementation((cmd: string) => {
     if (cmd === "get_settings") return Promise.resolve({ settings, warnings });
+    if (cmd === "get_storage_settings") return Promise.resolve({
+      activeDirectory: "/home/researcher/.pipeline", configuredDirectory: "/home/researcher/.pipeline",
+      defaultDirectory: "/home/researcher/.pipeline", restartRequired: false, error: null,
+    });
     if (cmd === "save_settings") return Promise.resolve();
     if (cmd === "list_engines") return Promise.resolve(engines);
     if (cmd === "workflow_codex_status") return Promise.resolve({
@@ -125,7 +129,7 @@ describe("SettingsPage", () => {
     const user = userEvent.setup();
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} initialSection="providers" />);
     expect(await screen.findByRole("button", { name: "Sign in to ChatGPT" })).toBeVisible();
-    const selector = screen.getByLabelText("Workflow Codex backend");
+    const selector = screen.getByLabelText("Reviews Codex backend");
     expect(selector).toHaveValue("app_server");
     expect(selector).not.toBeVisible();
     expect(selector.closest("details")).not.toHaveAttribute("open");
@@ -134,14 +138,14 @@ describe("SettingsPage", () => {
     await user.click(screen.getByText("Advanced connection settings"));
     expect(selector).toBeVisible();
     await user.selectOptions(selector, "legacy_cli");
-    expect(screen.queryByRole("group", { name: "Workflow ChatGPT connection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Reviews ChatGPT connection" })).not.toBeInTheDocument();
     expect(screen.getByText("codex login")).toBeVisible();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
       settings: expect.objectContaining({ codex_backend: "legacy_cli", codex_backend_preference_version: 1 }),
     }));
 
     await user.selectOptions(selector, "app_server");
-    expect(await screen.findByRole("group", { name: "Workflow ChatGPT connection" })).toBeVisible();
+    expect(await screen.findByRole("group", { name: "Reviews ChatGPT connection" })).toBeVisible();
     expect(screen.queryByText("codex login")).not.toBeInTheDocument();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
       settings: expect.objectContaining({ codex_backend: "app_server", codex_backend_preference_version: 1 }),
@@ -152,7 +156,7 @@ describe("SettingsPage", () => {
     mockLoad({ ...makeSettings(), codex_backend: "legacy_cli", codex_backend_preference_version: 1 });
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} initialSection="providers" />);
     expect(await screen.findByText(/The legacy Codex CLI connection is enabled/)).toBeVisible();
-    expect(screen.getByLabelText("Workflow Codex backend")).toHaveValue("legacy_cli");
+    expect(screen.getByLabelText("Reviews Codex backend")).toHaveValue("legacy_cli");
     expect(invoke).not.toHaveBeenCalledWith("workflow_codex_status");
   });
 
@@ -187,7 +191,7 @@ describe("SettingsPage", () => {
     const navigation = screen.getByRole("navigation", { name: "Settings categories" });
     expect(within(navigation).getAllByRole("button")).toHaveLength(3);
     expect(within(navigation).getByRole("button", { name: "Providers" })).toBeVisible();
-    expect(within(navigation).getByRole("button", { name: "Review & workflows" })).toHaveAttribute("aria-current", "page");
+    expect(within(navigation).getByRole("button", { name: "Reviews" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByLabelText("Maximum saved reports")).toBeVisible();
     expect(screen.getByRole("radio", { name: /^LLM/ })).toBeVisible();
     expect(invoke).toHaveBeenCalledWith("get_settings");
@@ -212,7 +216,7 @@ describe("SettingsPage", () => {
       initialSection="providers" onSystemChange={onSystemChange} />);
     await waitFor(() => expect(onSystemChange).toHaveBeenCalledTimes(1));
     signedIn = true;
-    const connection = screen.getByRole("group", { name: "Workflow ChatGPT connection" });
+    const connection = screen.getByRole("group", { name: "Reviews ChatGPT connection" });
     await user.click(within(connection).getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(onSystemChange).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Signed in")).toBeVisible();
@@ -253,7 +257,7 @@ describe("SettingsPage", () => {
     await user.selectOptions(await screen.findByLabelText("Preferred Provider"), "codex");
     await user.click(screen.getByRole("button", { name: "Providers" }));
     await user.type(screen.getByLabelText("Local API Key"), "test-token");
-    await user.click(screen.getByRole("button", { name: "Review & workflows" }));
+    await user.click(screen.getByRole("button", { name: "Reviews" }));
     expect(screen.getByLabelText("Preferred Provider")).toHaveValue("codex");
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_settings", {
       settings: { ...makeSettings(), preferred_provider: "codex", local_api_key: "test-token" },
@@ -325,7 +329,7 @@ describe("SettingsPage", () => {
 
     await screen.findByText("Preferred Provider");
     expect(screen.getByLabelText("Maximum Concurrent Agents")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Review & workflows" }));
+    await user.click(screen.getByRole("button", { name: "Reviews" }));
 
     const maxConcurrentAgents = screen.getByLabelText("Maximum Concurrent Agents");
     expect(maxConcurrentAgents).toHaveValue("16");
@@ -468,7 +472,7 @@ describe("SettingsPage", () => {
 
     await screen.findByText("Preferred Provider");
     expect(
-      screen.queryByText("Provider used when workflow does not specify explicit agent(s)."),
+      screen.queryByText("Used when a workflow has no assigned provider,"),
     ).not.toBeInTheDocument();
 
     const info = screen.getByRole("button", {
@@ -477,7 +481,7 @@ describe("SettingsPage", () => {
     await user.click(info);
 
     expect(screen.getByRole("dialog", { name: "Preferred Provider help" })).toHaveTextContent(
-      "Provider used when workflow does not specify explicit agent(s).",
+      "Used when a workflow has no assigned provider,",
     );
     expect(info).toHaveAttribute("aria-expanded", "true");
 
@@ -556,7 +560,7 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Best quality")).toBeVisible();
     expect(screen.getByText("High quality")).toBeVisible();
     expect(screen.getByText("Basic quality")).toBeVisible();
-    expect(screen.getByText(/Slightly less faithful than PaddleOCR-VL/)).toBeVisible();
+    expect(screen.getByText(/This may lose more detail than PaddleOCR-VL/)).toBeVisible();
     expect(
       paddle.compareDocumentPosition(llm) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
@@ -780,7 +784,7 @@ describe("SettingsPage", () => {
       />,
     );
 
-    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
+    await user.click(await screen.findByRole("button", { name: "Reviews" }));
     const reconciliation = screen.getByRole("switch", {
       name: /automatic revision reconciliation/i,
     });
@@ -886,7 +890,7 @@ describe("SettingsPage", () => {
     mockLoad(makeSettings());
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
+    await user.click(await screen.findByRole("button", { name: "Reviews" }));
     const reconciliation = screen.getByRole("switch", {
       name: /automatic revision reconciliation/i,
     });
@@ -936,7 +940,7 @@ describe("SettingsPage", () => {
     confirmDialog.mockResolvedValueOnce(true);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
+    await user.click(await screen.findByRole("button", { name: "Reviews" }));
     await screen.findByText("8 reports · 7.0 GB");
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
@@ -982,7 +986,7 @@ describe("SettingsPage", () => {
     });
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
+    await user.click(await screen.findByRole("button", { name: "Reviews" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
@@ -1016,7 +1020,7 @@ describe("SettingsPage", () => {
     confirmDialog.mockResolvedValueOnce(false);
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
+    await user.click(await screen.findByRole("button", { name: "Reviews" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(invoke.mock.calls.some(([command]) => command === "purge_runs")).toBe(false);
@@ -1039,7 +1043,7 @@ describe("SettingsPage", () => {
     });
     render(<SettingsPage onClose={() => {}} theme="light" onThemeChange={() => {}} />);
 
-    await user.click(await screen.findByRole("button", { name: "Review & workflows" }));
+    await user.click(await screen.findByRole("button", { name: "Reviews" }));
     await user.click(screen.getByRole("button", { name: "Purge now" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(

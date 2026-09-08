@@ -1,0 +1,29 @@
+{
+  "description": "Generated R0 source/test size debt; values are [physical lines, UTF-8 bytes]. Do not refresh merely to hide growth.",
+  "files": {
+    "gui/src-tauri/src/auto_review.rs": [2292, 90046],
+    "gui/src-tauri/src/bin/cli.rs": [1778, 63811],
+    "gui/src-tauri/src/commands/export.rs": [1379, 57021],
+    "gui/src-tauri/src/commands/tests.rs": [1239, 44815],
+    "gui/src-tauri/src/pipeline_config/tests.rs": [1392, 46580],
+    "gui/src-tauri/src/pipeline/api_common.rs": [3306, 124404],
+    "gui/src-tauri/src/pipeline/claude.rs": [2068, 78988],
+    "gui/src-tauri/src/pipeline/executor.rs": [5569, 217987],
+    "gui/src-tauri/src/pipeline/extract/pdf.rs": [1512, 57855],
+    "gui/src-tauri/src/pipeline/structured.rs": [1274, 50391],
+    "gui/src-tauri/src/projects/ledger.rs": [1377, 49500],
+    "gui/src-tauri/src/runs.rs": [1204, 46417],
+    "gui/src-tauri/src/settings.rs": [1542, 59946],
+    "gui/src-tauri/src/workbench/codex/probe.rs": [1404, 50562],
+    "gui/src-tauri/src/workbench/codex/supervisor.rs": [1609, 64739],
+    "gui/src-tauri/src/workbench/commands.rs": [2172, 85287],
+    "gui/src-tauri/src/workbench/release.rs": [1124, 52095],
+    "gui/src-tauri/src/workbench/release/exchange.rs": [2316, 98654],
+    "gui/src-tauri/src/workbench/research.rs": [2827, 132585],
+    "gui/src-tauri/src/workbench/research/execution.rs": [1505, 66839],
+    "gui/src-tauri/src/workbench/store.rs": [2184, 86702],
+    "gui/src/components/ArtifactExplorer.tsx": [1596, 58795],
+    "gui/src/components/PipelinePage.tsx": [1723, 68525],
+    "gui/src/components/SettingsPage.tsx": [1923, 78173]
+  }
+}

@@ -1,0 +1,212 @@
+.file-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  color: inherit;
+}
+.file-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid #d1d5db;
+  font-size: 12px;
+}
+.file-toolbar button,
+.file-toolbar select,
+.file-toolbar input:not([type="checkbox"]) {
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: transparent;
+}
+.file-toolbar button:disabled {
+  opacity: 0.45;
+}
+.file-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.file-line-input {
+  width: 65px;
+}
+.file-source-editor {
+  min-height: 300px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.file-editor-host {
+  flex: 1;
+  min-height: 0;
+}
+.file-code-block {
+  position: relative;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+.file-code-block pre {
+  margin: 0 !important;
+  padding: 12px !important;
+  overflow: auto;
+  font:
+    12px/1.65 ui-monospace,
+    monospace;
+  white-space: pre;
+  background: #f8fafc !important;
+  color: #1f2937;
+}
+.file-code-toolbar {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: #f1f5f9;
+  font-size: 11px;
+}
+.file-code-block .hljs-keyword,
+.file-code-block .hljs-selector-tag {
+  color: #a626a4;
+}
+.file-code-block .hljs-string,
+.file-code-block .hljs-regexp {
+  color: #256c39;
+}
+.file-code-block .hljs-number,
+.file-code-block .hljs-literal {
+  color: #986801;
+}
+.file-code-block .hljs-title,
+.file-code-block .hljs-built_in {
+  color: #075fa9;
+}
+.file-code-block .hljs-comment {
+  color: #64748b;
+  font-style: italic;
+}
+.file-code-block .hljs-variable,
+.file-code-block .hljs-attr {
+  color: #b94b16;
+}
+.file-panes {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+.file-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.file-tabs {
+  display: flex;
+  gap: 2px;
+  overflow: auto;
+  padding: 4px;
+  border-bottom: 1px solid #d1d5db;
+}
+.file-tab {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+.file-tab[data-active="true"] {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.file-tab button {
+  padding: 2px;
+  min-width: 24px;
+  min-height: 24px;
+}
+.file-error {
+  padding: 10px;
+  font-size: 12px;
+  color: #b91c1c;
+}
+.file-status {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #64748b;
+}
+.file-missing-image {
+  display: inline-block;
+  border: 1px dashed #94a3b8;
+  padding: 10px;
+  font-size: 12px;
+}
+.dark .file-toolbar,
+.dark .file-toolbar button,
+.dark .file-toolbar input,
+.dark .file-toolbar select,
+.dark .file-source-editor,
+.dark .file-code-block,
+.dark .file-tabs {
+  border-color: #404040;
+}
+.dark .file-code-block pre {
+  background: #171717 !important;
+  color: #e5e5e5;
+}
+.dark .file-code-toolbar {
+  background: #262626;
+}
+.dark .file-code-block .hljs-keyword {
+  color: #d8a0df;
+}
+.dark .file-code-block .hljs-string {
+  color: #9ed79d;
+}
+.dark .file-code-block .hljs-number {
+  color: #e4c27b;
+}
+.dark .file-code-block .hljs-title,
+.dark .file-code-block .hljs-built_in {
+  color: #8ac5ff;
+}
+.dark .file-source-editor .cm-editor {
+  background: #171717;
+  color: #e5e5e5;
+}
+.dark .file-source-editor .cm-gutters {
+  background: #202020;
+  color: #a3a3a3;
+  border-color: #404040;
+}
+.dark .file-source-editor .cm-activeLine,
+.dark .file-source-editor .cm-activeLineGutter {
+  background: #ffffff0a;
+}
+.dark .file-source-editor .cm-cursor {
+  border-left-color: white;
+}
+.dark .file-source-editor .cm-selectionBackground {
+  background: #26466b !important;
+}
+.dark .file-source-editor .cm-panels,
+.dark .file-source-editor .cm-tooltip {
+  background: #262626;
+  color: #e5e5e5;
+}
+.dark .file-tab[data-active="true"] {
+  background: #1e3a5f;
+  color: #bfdbfe;
+}
+
+.file-tab-panel { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; overflow:hidden; }
+.file-tab-panel[hidden] { display:none; }
+.file-tab-panel > .file-pane, .split-view-content > .file-pane { flex:1; }

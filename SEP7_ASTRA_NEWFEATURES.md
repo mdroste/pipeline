@@ -1,7 +1,9 @@
 # Pipeline: new features for an academic research workspace
 
+Implementation note, September 7, 2026: the NF-01–NF-14 bounded first slices are implemented. NF-07–NF-14 usage, implementation and qualification boundaries are in [research-programs.md](docs/workbench/research-programs.md). NF-11 retains one native turn and uses a labeled context-branch fallback; NF-14 provides app-open checks, with native concurrency and a persistent service left to their separately qualified stages. See [research-desk.md](docs/workbench/research-desk.md) for usage, contracts, validation and remaining qualification; the recommendations below remain the original plan.
+
 **Prepared:** September 7, 2026.  
-**Status:** recommendations and implementation plan; no application changes are made by this document.  
+**Status:** original recommendations, with NF-01–NF-14 first-slice implementation status and qualification links above.
 **Baseline:** the working tree inspected on September 7, including the uncommitted Workspace, Research Studio, project exchange, and Workflow App Server work.  
 **Audience:** product decisions first, followed by implementation in this repository.
 

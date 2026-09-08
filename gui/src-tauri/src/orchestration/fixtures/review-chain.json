@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "name": "Review and revise",
+  "description": "Stop when a complete review has no high-priority or unclassified findings, or the review limit is reached. The final paper is always the reviewed revision.",
+  "limits": {
+    "maxActions": 64,
+    "deadlineHours": 168,
+    "actionTimeoutSecs": 7200
+  },
+  "steps": [
+    {
+      "id": "draft",
+      "label": "Draft the paper",
+      "kind": "workspace",
+      "prompt": "A macroeconomic idea\n\nReturn the complete paper as Markdown, with no enclosing code fence. This text will be saved as paper.md and reviewed. Keep uncertain claims explicit."
+    },
+    {
+      "id": "initialPaper",
+      "label": "Save the paper",
+      "kind": "snapshot",
+      "input": {
+        "kind": "output",
+        "step": "draft",
+        "pointer": "/text"
+      },
+      "filename": "paper.md"
+    },
+    {
+      "id": "reviewCycle",
+      "label": "Review and revise",
+      "kind": "repeat",
+      "maxIterations": 3,
+      "until": {
+        "op": "all",
+        "conditions": [
+          {
+            "op": "equals",
+            "left": {
+              "kind": "output",
+              "step": "review",
+              "pointer": "/complete"
+            },
+            "right": true
+          },
+          {
+            "op": "lessThan",
+            "left": {
+              "kind": "output",
+              "step": "review",
+              "pointer": "/highPriorityCount"
+            },
+            "right": 1
+          },
+          {
+            "op": "lessThan",
+            "left": {
+              "kind": "output",
+              "step": "review",
+              "pointer": "/unknownPriorityCount"
+            },
+            "right": 1
+          }
+        ]
+      },
+      "steps": [
+        {
+          "id": "needsRevision",
+          "label": "Revise after an unsuccessful review",
+          "kind": "if",
+          "condition": {
+            "op": "exists",
+            "value": {
+              "kind": "output",
+              "step": "review",
+              "pointer": ""
+            }
+          },
+          "thenSteps": [
+            {
+              "id": "revise",
+              "label": "Address the review",
+              "kind": "workspace",
+              "prompt": "Revise the paper below to address the review. Preserve the argument and flag claims you cannot verify. Return the complete revised paper as Markdown, without a surrounding code fence.\n\nPaper:\n{{output:review#/paperText}}\n\nReview:\n{{output:review#/report}}\n\nReview quality and limitations:\n{{output:review#/quality}}"
+            },
+            {
+              "id": "revisedPaper",
+              "label": "Capture the revised paper",
+              "kind": "snapshot",
+              "input": {
+                "kind": "output",
+                "step": "revise",
+                "pointer": "/text"
+              },
+              "filename": "paper.md",
+              "requireChange": true
+            }
+          ]
+        },
+        {
+          "id": "review",
+          "label": "Run the Review profile",
+          "kind": "review",
+          "profileId": "auto-review",
+          "interpretation": "document",
+          "input": {
+            "kind": "firstAvailable",
+            "values": [
+              {
+                "kind": "output",
+                "step": "revisedPaper",
+                "pointer": ""
+              },
+              {
+                "kind": "output",
+                "step": "initialPaper",
+                "pointer": ""
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "result",
+      "label": "Return the reviewed paper and findings",
+      "kind": "deliver",
+      "input": {
+        "kind": "output",
+        "step": "review",
+        "pointer": ""
+      }
+    }
+  ]
+}

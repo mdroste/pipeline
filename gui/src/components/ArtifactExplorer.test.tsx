@@ -1,3 +1,5 @@
+// Keep the retained Poppler fallback exercised; PDF.js has separate viewer coverage.
+vi.mock("./file-workspace/PdfReader",()=>({default:({fallback}:{fallback:import("react").ReactNode})=><>{fallback}</>}));
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

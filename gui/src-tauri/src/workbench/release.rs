@@ -97,7 +97,7 @@ fn builtin_recipes() -> Vec<ResearchRecipe> {
         recipe(
             "manuscript_consistency",
             "Manuscript consistency",
-            "Trace claims, tables, appendices, notation, and conclusions against one immutable revision.",
+            "Check consistency between the paper’s text, tables, appendices, and notation.",
             "Build a consistency ledger before proposing edits. Check each reported quantitative claim against the selected revision and attached results. Record exact locators and leave unsupported statements unresolved.",
             &["paper_revision"],
             &["paper_tools", "research_ledger"],
@@ -106,7 +106,7 @@ fn builtin_recipes() -> Vec<ResearchRecipe> {
         ),
         recipe(
             "empirical_result_audit",
-            "Empirical-result audit",
+            "Empirical results audit",
             "Audit estimands, samples, units, specifications, inference, and reported results.",
             "Identify the estimand and variation first. Match every audited statement to a structured result or immutable output. Report incompatible samples, units, transformations, or inference rather than coercing a comparison.",
             &["paper_revision", "tested_execution_profile"],
@@ -177,7 +177,7 @@ fn builtin_recipes() -> Vec<ResearchRecipe> {
         recipe(
             "literature_precedent_review",
             "Literature and precedent review",
-            "Assess support and novelty against accessible primary sources with explicit coverage limits.",
+            "Check claims and originality against the primary sources you can access.",
             "Prefer primary sources. Record source access state and search coverage. Separate evidence for a mechanism from a merely related citation, and label novelty claims unresolved when coverage is incomplete.",
             &["paper_revision", "primary_source"],
             &["paper_tools", "research_ledger"],

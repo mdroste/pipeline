@@ -44,7 +44,7 @@ function effective(presetId = "empirical_audit"): EffectiveHarness {
     moduleAvailability: CATALOG.map((module) => module.id === "research_execution"
       ? { id: module.id, available: false, reasons: ["Needs Edit access mode.", "Needs an execution profile that has passed its test."] }
       : { id: module.id, available: true, reasons: [] }),
-    instructionSections: [{ id: "preamble", label: "Workspace preamble (host-owned)", text: "preamble" }, { id: "preset", label: "Preset instructions: Empirical audit", text: "preset" }],
+    instructionSections: [{ id: "preamble", label: "Pipeline instructions", text: "preamble" }, { id: "preset", label: "Preset instructions: Empirical audit", text: "preset" }],
   };
 }
 
@@ -88,7 +88,7 @@ it("lists presets, opens the preset in use as read-only, and flags the successor
   expect(screen.queryByRole("button", { name: "Use in this conversation" })).not.toBeInTheDocument();
   expect(screen.getByTestId("preset-summary")).toHaveTextContent("Adds 2 instruction packs, paper context, 3 tools, and 2 inspectors.");
   expect(screen.getAllByText("In use")).toHaveLength(1);
-  expect(screen.getByText(/differs from the active native thread/)).toBeInTheDocument();
+  expect(screen.getByText(/assistant will start fresh/)).toBeInTheDocument();
   expect(screen.getByText("Custom")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /My audit/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Modules" }));
@@ -174,7 +174,7 @@ it("shows the inheritance table with the winning scope and writes to global, wor
   await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledWith(expect.objectContaining({ overrides: {} })));
 
   expect(within(table).queryByLabelText("Native web search (Global)")).not.toBeInTheDocument();
-  expect(screen.getByText(/no scope can enable it/)).toBeInTheDocument();
+  expect(screen.getByText(/Web search is not available in Workspace yet/)).toBeInTheDocument();
 });
 
 it("offers to switch an inspect conversation to Edit beside an execution module", async () => {
@@ -191,7 +191,7 @@ it("renders the effective preview as labelled bands", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Effective preview/ }));
   // The Instructions tab also previews these bands, so wait for the panel itself first.
   await screen.findByRole("heading", { name: "Effective preview", level: 2 });
-  expect(screen.getByText("Workspace preamble (host-owned)")).toBeInTheDocument();
+  expect(screen.getByText("Pipeline instructions")).toBeInTheDocument();
   expect(screen.getByText("Preset instructions: Empirical audit")).toBeInTheDocument();
   expect(screen.getByText("Research execution · unavailable")).toBeInTheDocument();
   expect(screen.getByText("AGENTS.md")).toBeInTheDocument();

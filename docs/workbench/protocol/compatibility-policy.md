@@ -59,3 +59,16 @@ still returns its terminal receipt, but its process wait now runs outside the
 database worker/gate. Turn-owned jobs stop with their turn; explicitly detached
 UI jobs use the separate local-job Stop control. Authenticated use remains a
 release qualification gate.
+
+
+## Task chain catalog 6
+
+The optional `task_tools` module adds `workbench_task_catalog` and
+`workbench_task_propose`. They read the portable chain schema/profile identities
+and save a bounded, conversation-scoped proposal. Neither starts a task, changes
+native permission modes, nor authorizes host execution. Task preparation and
+Start remain native desktop commands. The changed catalog fingerprint follows
+the existing successor-binding policy; no provider wire DTO or method changed.
+Workspace store migration 12 adds immutable `task_exchanges`; execution state
+remains in the independent coordinator database. See [Tasks](../../tasks.md).
+Authenticated task-driven native turns remain a release qualification gate.

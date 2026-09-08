@@ -241,7 +241,7 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
               navLabel="Method families"
               selectedGroup={selectedFamily}
               onSelectGroup={setSelectedFamily}
-              hint="Within a family, a specific role is preferred; the broad fallback covers unlisted or spanning approaches."
+              hint="The review uses a specialist when one fits. A general reviewer covers other methods or work that spans several approaches."
             />
           )}
           {catalog && tab === "methods" && normalizedQuery && (
@@ -250,7 +250,7 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
         </div>
 
         <footer className="flex items-center justify-between border-t border-gray-200 bg-white px-5 py-3 dark:border-gray-800 dark:bg-gray-900 sm:px-6">
-          <p className="text-[10px] text-gray-500 dark:text-gray-400">Subject expertise and method scrutiny are complementary.</p>
+          <p className="text-[10px] text-gray-500 dark:text-gray-400">Reviewers check both the subject matter and the methods.</p>
           <button type="button" onClick={onClose} className="rounded-lg bg-gray-900 px-4 py-2 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900">
             Done
           </button>

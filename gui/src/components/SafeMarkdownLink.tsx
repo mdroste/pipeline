@@ -4,6 +4,8 @@ import type {
 } from "react";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { notify } from "./DialogService";
+import { useFileNavigation } from "./file-workspace/FileNavigation";
+import { resolveFileLink } from "../lib/fileLinks";
 
 type SafeMarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   node?: unknown;
@@ -64,6 +66,7 @@ export default function SafeMarkdownLink({
   title,
   ...props
 }: SafeMarkdownLinkProps) {
+  const navigation = useFileNavigation();
   if (href?.startsWith("#")) {
     return (
       <a
@@ -81,8 +84,13 @@ export default function SafeMarkdownLink({
 
   const externalHref = safeExternalHref(href);
   if (!externalHref) {
+    const location = href && navigation ? resolveFileLink(navigation.path, href) : null;
+    if (location && navigation) return <a {...props} className={className} title={title ?? `Open ${location.path} in Pipeline`} href={href} onClick={event => {
+      event.preventDefault();
+      void Promise.resolve(navigation.open(location)).catch(error => notify(`Could not open this file: ${String(error)}`));
+    }}>{children}</a>;
     return (
-      <span className={className} title={title}>
+      <span className={className} title={title ?? "This link is unavailable in the document’s files."}>
         {children}
       </span>
     );

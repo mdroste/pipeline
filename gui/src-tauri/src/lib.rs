@@ -8,9 +8,11 @@ pub mod document_bundle;
 pub mod emit;
 pub mod engines;
 pub mod env;
+pub mod file_viewer;
 pub mod findings;
 pub mod model_catalog;
 pub mod models;
+pub mod orchestration;
 pub mod orientation_contract;
 pub mod output;
 pub mod pipeline;
@@ -21,6 +23,7 @@ pub mod prompts;
 pub mod runs;
 pub mod safety;
 pub mod settings;
+pub mod storage;
 pub mod updates;
 pub mod workbench;
 
@@ -74,13 +77,61 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            // Pin storage before any recovery or background work opens a store.
+            // Settings remains accessible if a configured drive is unavailable.
+            let _ = storage::data_root();
             env::set_bundled_poppler_dir(locate_bundled_poppler(app));
             commands::cleanup_stale_print_exports();
             engines::schedule_stale_managed_engine_cleanup();
             let _ = runs::recover_resumable_runs();
+            orchestration::start_if_present(app.handle().clone());
+            workbench::programs::commands::start(app.handle().clone());
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main"
+                    && orchestration::background_enabled()
+                    && window.hide().is_ok()
+                {
+                    api.prevent_close();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            workbench::programs::commands::workbench_program,
+            workbench::programs::commands::workbench_research_activity,
+            workbench::programs::commands::workbench_followups,
+            orchestration::commands::task_prepare,
+            orchestration::missions::commands::mission_prepare,
+            orchestration::missions::commands::mission_choices,
+            orchestration::missions::commands::mission_list,
+            orchestration::missions::commands::mission_get,
+            orchestration::missions::commands::mission_events,
+            orchestration::missions::commands::mission_methods,
+            orchestration::missions::commands::mission_control,
+            orchestration::missions::commands::mission_answer,
+            orchestration::missions::commands::mission_retain_method,
+            orchestration::missions::commands::mission_export,
+            orchestration::missions::commands::mission_evidence,
+            orchestration::commands::task_list,
+            orchestration::commands::task_get,
+            orchestration::commands::task_events,
+            orchestration::commands::task_control,
+            orchestration::commands::task_input,
+            orchestration::commands::task_schedules,
+            orchestration::commands::task_update_schedule,
+            orchestration::commands::task_preview_times,
+            orchestration::commands::task_saved_chains,
+            orchestration::commands::task_save_chain,
+            orchestration::commands::task_validate_chain,
+            orchestration::commands::task_background,
+            orchestration::commands::task_sessions,
+            orchestration::commands::task_proposals,
+            orchestration::commands::task_prepare_proposal,
+            orchestration::commands::task_export_artifact,
+            orchestration::commands::task_export_chain,
+            orchestration::commands::task_step_output,
             commands::run_entry::run_pipeline,
             commands::export::save_report_md,
             commands::export::save_all_artifacts,
@@ -93,6 +144,8 @@ pub fn run() {
             commands::artifacts::get_run_manifest,
             commands::artifacts::read_artifact,
             commands::artifacts::read_pdf_artifact_page,
+            commands::artifacts::read_pdf_artifact_bytes,
+            commands::artifacts::reveal_run_artifact,
             commands::artifacts::read_page_artifact,
             commands::artifacts::list_runs,
             commands::artifacts::get_run_report,
@@ -159,6 +212,31 @@ pub fn run() {
             workbench::commands::workbench_import_paper,
             workbench::commands::workbench_list_papers,
             workbench::commands::workbench_project_home,
+            workbench::commands::workbench_capture_execution_plan,
+            workbench::commands::workbench_execution_plan_status,
+            workbench::commands::workbench_authorize_execution_plan,
+            workbench::commands::workbench_import_dataset_metadata,
+            workbench::commands::workbench_dataset_rows,
+            workbench::commands::workbench_reading_inbox_state,
+            workbench::commands::workbench_desk_records,
+            workbench::commands::workbench_research_object,
+            workbench::commands::workbench_context_selection,
+            workbench::commands::workbench_save_context_selection,
+            workbench::commands::workbench_reading_collection,
+            workbench::commands::workbench_research_search,
+            workbench::commands::workbench_research_index,
+            workbench::commands::workbench_save_relation,
+            workbench::commands::workbench_save_decision,
+            workbench::commands::workbench_change_impact,
+            workbench::commands::workbench_session_handoff,
+            workbench::commands::workbench_data_policy,
+            workbench::commands::workbench_import_dataset,
+            workbench::commands::workbench_save_sample,
+            workbench::commands::workbench_acquisition_network,
+            workbench::commands::workbench_crossref_lookup,
+            workbench::commands::workbench_acquire_candidate,
+            workbench::commands::workbench_acquire_pdf,
+            workbench::commands::workbench_acquire_fred,
             workbench::commands::workbench_studio_mutate,
             workbench::commands::workbench_studio_export_file,
             workbench::commands::workbench_studio_records,
@@ -186,6 +264,8 @@ pub fn run() {
             workbench::commands::workbench_authorize_host_execution,
             workbench::commands::workbench_project_mutate,
             workbench::commands::workbench_document_read,
+            workbench::commands::workbench_file_read,
+            workbench::commands::workbench_file_reveal,
             workbench::commands::workbench_anchor_mapping,
             workbench::commands::workbench_snapshot_preview,
             workbench::commands::workbench_task_session,
@@ -290,6 +370,8 @@ pub fn run() {
             // Update check
             commands::config::check_for_update,
             commands::config::open_pipeline_dir,
+            commands::config::get_storage_settings,
+            commands::config::set_storage_directory,
             // Managed local engines
             commands::config::list_engines,
             commands::config::install_engine,
@@ -308,6 +390,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                tauri::async_runtime::block_on(orchestration::shutdown());
                 tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
                 tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
             }

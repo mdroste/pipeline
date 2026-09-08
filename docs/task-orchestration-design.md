@@ -1,9 +1,10 @@
 # Tasks, chains, and schedules
 
-Status: proposed design, September 7, 2026. No runtime changes are implemented
-by this document. The repository's current working tree, including the
-in-progress Workspace implementation, is the baseline. Implemented behavior
-remains documented in [CLAUDE.md](../CLAUDE.md).
+Status: design reference, September 7, 2026. The durable desktop coordinator,
+chain actions, schedules, waits, and task interface are implemented. See
+[tasks.md](tasks.md) for the exact shipped-code boundaries and qualification.
+This original proposal also discusses future deployment and authoring options;
+those sections are design intent rather than a release claim.
 
 The proposed feature gives Pipeline a durable task coordinator. A task can
 continue a Workspace conversation, run a saved Review profile, pass the result

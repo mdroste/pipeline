@@ -170,7 +170,7 @@ export default function WorkspaceConnectionSettings({ embedded = false }: { embe
 
       <section className="space-y-3 rounded-xl border p-5 text-sm">
         <h2 className="font-semibold">Conversation titles</h2>
-        <p className="text-gray-500 dark:text-neutral-400">After the first reply, Workspace asks for a short title in a separate tool-free call that never touches the conversation's own thread. It uses the cheapest available model unless you pick one. Any title can be renamed or regenerated from the conversation list.</p>
+        <p className="text-gray-500 dark:text-neutral-400">Generate a short title after the first reply. This uses an additional model call, with the cheapest available model by default. Rename or regenerate titles from the conversation list.</p>
         {titles ? <>
           <label className="flex items-center gap-2"><input type="checkbox" checked={titles.enabled} onChange={(event) => saveTitles({ ...titles, enabled: event.target.checked })} />Name new conversations automatically</label>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -196,7 +196,7 @@ export default function WorkspaceConnectionSettings({ embedded = false }: { embe
       <section className="space-y-3 rounded-xl border p-5 text-sm">
         <h2 className="font-semibold">Research capabilities</h2>
         <p className="text-gray-500">{capabilities?.qualification ?? "Project reading, notes and task history work without ChatGPT sign-in."}</p>
-        {capabilities && <><dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs"><dt>Platform</dt><dd>{capabilities.platform} · file acceptance {capabilities.fileAcceptance ? "available" : "unavailable: safe file replacement is not qualified"}</dd><dt>Git</dt><dd>{capabilities.git ?? "Missing. Install Git or use local file copies."}</dd><dt>LaTeX</dt><dd>{capabilities.latex ?? "Missing. Install a TeX distribution and configure an execution profile."}</dd><dt>PDF pages</dt><dd>{capabilities.pdfPages ?? "No system pdftoppm found. Packaged resources may still supply it; try a page render, or install Poppler."}</dd><dt>Stata</dt><dd>{capabilities.stataPolicy}</dd></dl><p className="text-xs text-gray-500">Tool discovery does not establish a successful execution. Test each authorized profile. Qualification record: {capabilities.record}</p></>}
+        {capabilities && <><dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs"><dt>Platform</dt><dd>{capabilities.platform} · file acceptance {capabilities.fileAcceptance ? "available" : "not yet supported on this platform"}</dd><dt>Git</dt><dd>{capabilities.git ?? "Missing. Install Git or use local file copies."}</dd><dt>LaTeX</dt><dd>{capabilities.latex ?? "Missing. Install a TeX distribution and configure an execution profile."}</dd><dt>PDF pages</dt><dd>{capabilities.pdfPages ?? "No system pdftoppm found. Packaged resources may still supply it; try a page render, or install Poppler."}</dd><dt>Stata</dt><dd>{capabilities.stataPolicy}</dd></dl><p className="text-xs text-gray-500">Test each command profile before using it. Platform test details: {capabilities.record}</p></>}
       </section>
 
       {account?.status === "chatgpt" && (

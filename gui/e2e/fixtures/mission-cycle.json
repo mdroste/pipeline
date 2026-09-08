@@ -1,0 +1,81 @@
+{
+  "plan": {
+    "summary": "Test the aggregation identity in the smallest heterogeneous example.",
+    "newGoals": [
+      {
+        "id": "g1",
+        "question": "Does E[x\u00b2] equal E[x]\u00b2 under heterogeneity?",
+        "rationale": "An omitted variance term would invalidate the general identity.",
+        "resolvingEvidence": "A checked analytical counterexample or a general derivation.",
+        "parentId": null,
+        "dependsOn": []
+      }
+    ],
+    "candidates": [
+      {
+        "id": "c1",
+        "goalId": "g1",
+        "question": "Evaluate two equally weighted types x=0 and x=2.",
+        "uncertainty": "Whether dispersion changes the identity.",
+        "rationale": "This small case distinguishes the two claims.",
+        "possibleOutcomes": [
+          "Equality survives the heterogeneous example.",
+          "The variance term produces a discrepancy."
+        ],
+        "expectedCost": "One short calculation.",
+        "instruction": "Compute both moments and explain the difference.",
+        "kind": "workspace",
+        "capabilityId": null
+      }
+    ],
+    "selectedId": "c1",
+    "selectionReason": "The smallest example can refute the universal statement.",
+    "questions": [],
+    "disposition": "investigate"
+  },
+  "investigate": {
+    "summary": "For x=0 and x=2 with equal weights, E[x\u00b2]=2 and E[x]\u00b2=1. The identity fails; the difference is Var(x)=1.",
+    "outcome": "Refuted by an analytical counterexample.",
+    "method": "Compute the moments directly and check the variance identity.",
+    "testedDomain": "Two equally weighted values 0 and 2.",
+    "limitations": [
+      "The example does not establish a replacement equilibrium result."
+    ],
+    "sources": [],
+    "files": []
+  },
+  "challenge": {
+    "summary": "Recomputing both moments confirms the discrepancy. Heterogeneity refutes the proposed identity.",
+    "outcome": "refuted",
+    "goalResolved": true,
+    "missionComplete": true,
+    "progressMade": true,
+    "testedDomain": "Two equally weighted types 0 and 2.",
+    "limitations": [
+      "This is an analytical counterexample, not a theorem about equilibrium."
+    ],
+    "unresolved": [],
+    "criteria": [
+      {
+        "criterion": 0,
+        "status": "met",
+        "explanation": "The retained memo supplies and checks the counterexample.",
+        "evidenceIds": [
+          "r1-memo"
+        ]
+      }
+    ],
+    "questions": [],
+    "methods": [
+      {
+        "name": "Smallest heterogeneous counterexample",
+        "whenToUse": "Testing whether a homogeneous identity is claimed to hold generally.",
+        "procedure": "Compare the required moment with the corresponding moment of the aggregate in a two-type case.",
+        "limitations": "A surviving example does not prove the general claim.",
+        "evidenceIds": [
+          "r1-memo"
+        ]
+      }
+    ]
+  }
+}

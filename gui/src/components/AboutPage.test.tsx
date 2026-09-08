@@ -94,12 +94,12 @@ describe("AboutPage", () => {
     render(<AboutPage onClose={() => undefined} />);
 
     expect(screen.getByText(/doing and reviewing academic research/i)).toBeInTheDocument();
-    expect(screen.getByText(/interactive orchestration mode/i)).toBeInTheDocument();
+    expect(screen.getByText(/Use Workspace to chat with ChatGPT/i)).toBeInTheDocument();
     expect(screen.getByText("~/.pipeline/workbench/")).toBeInTheDocument();
     expect(screen.getByText(/prerequisites finish/i)).toBeInTheDocument();
     expect(screen.getByText(/reads only the material its workflow allows/i)).toBeInTheDocument();
     expect(screen.getByText(/plan and data-use terms/i)).toBeInTheDocument();
-    expect(screen.getByText("Workflows")).toBeInTheDocument();
+    expect(screen.getByText("Reviews")).toBeInTheDocument();
     expect(screen.getByText("Automatic Paper Review (Full)")).toBeInTheDocument();
     expect(screen.getByText("Automatic Paper Review (Quick)")).toBeInTheDocument();
     expect(screen.getByText("Grant Proposal Review")).toBeInTheDocument();
@@ -118,12 +118,12 @@ describe("AboutPage", () => {
     const collapsed = screen.getByText("Data & privacy").closest("details");
     expect(collapsed).not.toBeNull();
     expect(collapsed).not.toHaveAttribute("open");
-    expect(screen.getByText("Workflows").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Reviews").closest("details")).not.toHaveAttribute("open");
     unmount();
 
     render(<AboutPage onClose={() => undefined} initialSection="privacy" />);
     expect(screen.getByText("Data & privacy").closest("details")).toHaveAttribute("open");
-    expect(screen.getByText("Workflows").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Reviews").closest("details")).not.toHaveAttribute("open");
   });
 
   it("navigates to the described page from section links", () => {
@@ -131,10 +131,10 @@ describe("AboutPage", () => {
     render(<AboutPage onClose={() => undefined} onNavigate={onNavigate} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open Workflows" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Designer" }));
     fireEvent.click(screen.getByRole("button", { name: "Open Gallery" }));
     fireEvent.click(screen.getByRole("button", { name: "Open History" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open Projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open run collections" }));
 
     expect(onNavigate.mock.calls.map((call) => call[0])).toEqual([
       "settings",
@@ -147,7 +147,7 @@ describe("AboutPage", () => {
 
   it("hides navigation links when no navigator is provided", () => {
     render(<AboutPage onClose={() => undefined} />);
-    expect(screen.queryByRole("button", { name: "Open Workflows" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Designer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Install in Settings" })).not.toBeInTheDocument();
   });

@@ -64,6 +64,8 @@ pub struct ResearchExecution {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunExecutionRequest {
+    #[serde(default)]
+    pub plan_id: Option<String>,
     pub profile_id: String,
     pub session_id: Option<String>,
     pub test_only: bool,
@@ -86,7 +88,7 @@ pub(crate) fn cancelled_executions() -> &'static Mutex<HashSet<String>> {
     CANCELLED_EXECUTIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-fn safe_relative_path(label: &str, value: &str) -> WorkbenchResult<()> {
+pub(super) fn safe_relative_path(label: &str, value: &str) -> WorkbenchResult<()> {
     let path = Path::new(value);
     if value.is_empty()
         || value.len() > 4_096
@@ -421,7 +423,7 @@ pub(crate) fn run_profile_process(
     if &launch != authorized_launch {
         return Err("The launch program changed after authorization".into());
     }
-    let program = launch["executable"]
+    let program = launch["invocationPath"]
         .as_str()
         .ok_or("Execution program was not resolved")?;
     let mut command = Command::new(program);
@@ -725,10 +727,10 @@ pub(crate) fn prepare_execution(
     tool_origin: Option<(&str, &str, &str)>,
 ) -> WorkbenchResult<PreparedOrExisting> {
     validate_id("execution profile id", &request.profile_id)?;
-    let profile = get_execution_profile(store, &request.profile_id)?;
+    let mut profile = get_execution_profile(store, &request.profile_id)?;
     let project_guard = super::super::project::execution_lock(store, &profile.workspace_id)?;
-    let authorization = preview_host_execution(store, &profile.id)?;
-    if !authorization.authorized {
+    let mut authorization = if request.plan_id.is_none() {Some(preview_host_execution(store, &profile.id)?)} else {None};
+    if authorization.as_ref().is_some_and(|a|!a.authorized) {
         return Err(WorkbenchError::invalid("Review and authorize this exact host command and its current inputs before testing or running it"));
     }
     if let Some(session_id) = &request.session_id {
@@ -742,7 +744,7 @@ pub(crate) fn prepare_execution(
             return Err(WorkbenchError::invalid("Workspace host profiles are unavailable in isolated task sessions; use the task sandbox"));
         }
     }
-    if !request.test_only && profile.test_status.as_deref() != Some("passed") {
+    if request.plan_id.is_none() && !request.test_only && profile.test_status.as_deref() != Some("passed") {
         return Err(WorkbenchError::invalid(
             "Run the profile test successfully before using it for research execution",
         ));
@@ -762,7 +764,6 @@ pub(crate) fn prepare_execution(
             ));
         }
     }
-    let (mut manifest, dependency_hash, consistency) = input_manifest(&profile)?;
     let previous_operation: Option<(String, String)> = open_connection(store)?.query_row("SELECT entity_id,details_json FROM change_log WHERE operation_id=?1 AND entity_type='research_execution'", [&request.operation_id], |r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|WorkbenchError::storage("Failed to inspect prior execution",e))?;
     if let Some((id, details)) = previous_operation {
         let details: Value = serde_json::from_str(&details)
@@ -777,6 +778,13 @@ pub(crate) fn prepare_execution(
             store, &id,
         )?)));
     }
+    let execution_id = new_id("execution")?;
+    let (mut manifest, dependency_hash, consistency) = if let Some(plan_id)=&request.plan_id {
+        let (captured,grant,manifest)=super::execution_plan::stage(store,&profile.workspace_id,plan_id,&execution_id,request.test_only)?;
+        if captured.id!=request.profile_id {return Err(WorkbenchError::invalid("Plan belongs to another profile"));}
+        profile=captured;authorization=Some(grant);let dependency=hash_bytes(&serde_json::to_vec(&manifest).map_err(|e|WorkbenchError::storage("Plan manifest",e))?);(manifest,dependency,"uncertain".to_string())
+    } else {input_manifest(&profile)?};
+    let authorization=authorization.ok_or_else(||WorkbenchError::invalid("Missing execution authorization"))?;
     // Existing outputs cannot count as newly produced artifacts. Record their
     // metadata before launch; unchanged outputs remain explicitly unverified.
     let before_outputs = profile
@@ -790,7 +798,6 @@ pub(crate) fn prepare_execution(
             )
         })
         .collect::<HashMap<_, _>>();
-    let execution_id = new_id("execution")?;
     let input_size = manifest["files"]
         .as_array()
         .into_iter()
@@ -931,11 +938,15 @@ pub(crate) fn finalize_execution(
     };
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    let validation = json!({"adapter":validation,"stdoutTruncated":output.stdout_truncated,"stderrTruncated":output.stderr_truncated,"executionBoundary":"explicitly_authorized_host","authorizationFingerprint":authorization.fingerprint,"authorizedLaunch":authorization.launch,"dependencyCoverage":"declared_only","inputsChanged":inputs_changed,"unchangedPreexistingOutputs":stale_outputs,"stataWrapperReturnedAfterStop":output.wrapper_completed_after_stop,"processStarted":output.process_started,"stataCleanupRequired":profile.adapter=="stata" && output.process_started && outcome!="completed" && !output.wrapper_completed_after_stop});
+    let observed = observed_dependencies(&profile);
+    let validation = json!({"observedDependencies":observed,"adapter":validation,"stdoutTruncated":output.stdout_truncated,"stderrTruncated":output.stderr_truncated,"executionBoundary":"explicitly_authorized_host","executionContainment":"host_access","capturedInputIdentity":manifest["snapshotConsistency"],"planId":request.plan_id,"authorizationFingerprint":authorization.fingerprint,"authorizedLaunch":authorization.launch,"dependencyCoverage":"declared_only","inputsChanged":inputs_changed,"unchangedPreexistingOutputs":stale_outputs,"stataWrapperReturnedAfterStop":output.wrapper_completed_after_stop,"processStarted":output.process_started,"stataCleanupRequired":profile.adapter=="stata" && output.process_started && outcome!="completed" && !output.wrapper_completed_after_stop});
     let ended = now();
     open_connection(store)?.execute("UPDATE execution_jobs SET finalization_json=?2 WHERE execution_id=?1", params![execution_id,json!({"outcome":outcome,"endedAt":ended,"exitStatus":output.status,"stdout":stdout,"stderr":stderr,"outputs":outputs,"validation":validation,"testOnly":request.test_only,"profileId":profile.id,"profileRevision":profile.revision}).to_string()]).map_err(|e|WorkbenchError::storage("Failed to journal adopted execution",e))?;
     open_connection(store)?.execute("UPDATE research_executions SET outcome=?2, ended_at=?3, exit_status=?4, stdout_text=?5, stderr_text=?6, output_manifest_json=?7, validation_json=?8 WHERE id=?1", params![execution_id, outcome, ended, output.status, stdout, stderr, serde_json::to_string(&outputs).unwrap_or_default(), serde_json::to_string(&validation).unwrap_or_default()]).map_err(|error| WorkbenchError::storage("Failed to complete research execution receipt", error))?;
-    if request.test_only {
+    if request.test_only && request.plan_id.is_some() {
+        super::execution_plan::record_test(store,request.plan_id.as_deref().unwrap(),&outcome)?;
+    }
+    if request.test_only && request.plan_id.is_none() {
         open_connection(store)?
             .execute(
                 "UPDATE execution_profiles SET tested_at=?2, test_status=?3 WHERE id=?1 AND revision=?4",
@@ -1349,7 +1360,7 @@ pub struct HostExecutionPreview {
     pub boundary: String,
 }
 
-fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Value> {
+pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Value> {
     let requested = Path::new(&profile.argv[0]);
     let executable = if requested.is_absolute() {
         requested.to_path_buf()
@@ -1372,8 +1383,15 @@ fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Value> {
                 )
             })?
     };
-    let executable = fs::canonicalize(executable)
+    // Preserve the invocation path: Python discovers a venv beside that path,
+    // and multicall binaries may also distinguish their aliases. Hash the target.
+    let invocation_path=if executable.is_absolute(){executable}else{Path::new(&profile.cwd).join(executable)};
+    let executable = fs::canonicalize(&invocation_path)
         .map_err(|e| WorkbenchError::storage("Failed to resolve execution program", e))?;
+    let python_environment=if requested.file_name().is_some_and(|s|s.to_string_lossy().starts_with("python")) {
+        let config=invocation_path.parent().and_then(Path::parent).map(|p|p.join("pyvenv.cfg"));
+        if let Some(config)=config.filter(|p|p.is_file()){let (hash,size)=hash_file(&config)?;json!({"configuration":config,"hash":hash,"size":size})}else{Value::Null}
+    }else{Value::Null};
     let (hash, size) = hash_file(&executable)?;
     let mut launch_files = Vec::new();
     for argument in profile.argv.iter().skip(1) {
@@ -1424,7 +1442,7 @@ fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Value> {
         }
     }
     Ok(
-        json!({"executable":executable,"hash":hash,"size":size,"shellStartupFiles":startup,"launchFiles":launch_files,"coverage":"executable, directly referenced launch scripts, known shell startup files and declared inputs; shell-string and transitive dependencies require explicit input declarations"}),
+        json!({"executable":executable,"invocationPath":invocation_path,"pythonEnvironment":python_environment,"hash":hash,"size":size,"shellStartupFiles":startup,"launchFiles":launch_files,"coverage":"executable, directly referenced launch scripts, known shell startup files and declared inputs; shell-string and transitive dependencies require explicit input declarations"}),
     )
 }
 
@@ -1472,4 +1490,16 @@ pub fn authorize_host_execution(
     }
     open_connection(store)?.execute("INSERT INTO execution_authorizations(profile_id,fingerprint,authorized_at) VALUES(?1,?2,?3) ON CONFLICT(profile_id) DO UPDATE SET fingerprint=excluded.fingerprint,authorized_at=excluded.authorized_at",params![profile_id,fingerprint,now()]).map_err(|e|WorkbenchError::storage("Failed to authorize host execution",e))?;
     preview_host_execution(store, profile_id)
+}
+
+/// TeX recorder observations are evidence of files opened on this run, not a closure.
+fn observed_dependencies(profile:&ExecutionProfile)->Value {
+    let mut paths=std::collections::BTreeSet::new();let mut truncated=false;
+    for name in profile.outputs.iter().filter(|s|s.ends_with(".fls")) {
+        let Ok(file)=fs::File::open(Path::new(&profile.cwd).join(name)) else {continue;};
+        let mut bytes=Vec::new();if file.take(512*1024+1).read_to_end(&mut bytes).is_err(){continue;}
+        truncated|=bytes.len()>512*1024;
+        for line in String::from_utf8_lossy(&bytes[..bytes.len().min(512*1024)]).lines(){if let Some(path)=line.strip_prefix("INPUT "){if paths.len()>=1024{truncated=true;break;}paths.insert(path.to_string());}}
+    }
+    json!({"method":"TeX recorder when declared as output","paths":paths,"truncated":truncated,"coverage":"observed on this run; not a complete dependency closure"})
 }

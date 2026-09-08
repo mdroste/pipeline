@@ -103,7 +103,7 @@ export default function WorkspaceRecipesPanel({
   const selected = recipes.find((recipe) => recipe.id === selectedId);
 
   if (!workspaceId) {
-    return <p className="text-xs text-amber-700">Move this conversation into a Workspace to use research recipes.</p>;
+    return <p className="text-xs text-amber-700">Move this conversation to a project to use research recipes.</p>;
   }
 
   return <div className="space-y-4">
@@ -162,7 +162,7 @@ export default function WorkspaceRecipesPanel({
         type="button"
         disabled={!selected || busy}
         onClick={() => void act(async () => {
-          const name = window.prompt("Name for editable recipe", `${selected!.name} copy`)?.trim();
+          const name = window.prompt("Name for recipe copy", `${selected!.name} copy`)?.trim();
           if (!name) return;
           const created = await workbenchClient.cloneRecipe({
             workspaceId,
@@ -173,7 +173,7 @@ export default function WorkspaceRecipesPanel({
         })}
         className="rounded border px-3 py-2 text-xs"
       >
-        Clone and edit
+        Copy and edit
       </button>
       <button
         type="button"
@@ -222,7 +222,7 @@ export default function WorkspaceRecipesPanel({
     </details>}
 
     <section>
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Completion cards</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Recipe progress</h3>
       <div className="mt-2 space-y-2">
         {runs.map((run) => <div key={run.id} className="rounded border bg-white p-3 dark:bg-neutral-950">
           <div className="flex items-center gap-2">

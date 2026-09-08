@@ -652,7 +652,7 @@ impl ProfileData {
         }
     }
 
-    fn from_config(name: impl Into<String>, config: &PipelineConfig) -> Self {
+    pub(crate) fn from_config(name: impl Into<String>, config: &PipelineConfig) -> Self {
         Self {
             name: name.into(),
             steps: config.steps.clone(),

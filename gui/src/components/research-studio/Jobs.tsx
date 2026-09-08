@@ -87,9 +87,11 @@ export function JobLauncher({
 export default function Jobs({
   workspaceId,
   onCompleted,
+  visible = true,
 }: {
   workspaceId: string;
   onCompleted: () => void;
+  visible?: boolean;
 }) {
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [selected, setSelected] = useState("");
@@ -101,6 +103,7 @@ export default function Jobs({
   const callback = useRef(onCompleted);
   callback.current = onCompleted;
   useEffect(() => {
+    if (!visible) return;
     completed.current = null;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -124,14 +127,14 @@ export default function Jobs({
       disposed = true;
       clearTimeout(timer);
     };
-  }, [workspaceId, setError]);
+  }, [visible, workspaceId, setError]);
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     let offset = 0;
     setLog("");
     setTruncated(false);
-    if (!selected) return;
+    if (!selected || !visible) return;
     const read = async () => {
       try {
         const page = await studioClient.log(
@@ -154,7 +157,7 @@ export default function Jobs({
       disposed = true;
       clearTimeout(timer);
     };
-  }, [workspaceId, selected, stream, setError]);
+  }, [visible, workspaceId, selected, stream, setError]);
   const active = jobs.filter((j) =>
     ["queued", "running", "cancelling"].includes(j.state),
   );
@@ -165,8 +168,8 @@ export default function Jobs({
       </summary>
       <ErrorNotice error={error} />
       <p className="text-xs text-gray-500">
-        Two local execution slots. Conflicting project writes are rejected. Logs
-        are bounded; no daemon or automatic restart.
+        Up to two jobs can run at once. Jobs that would write to the same project
+        cannot run together. Keep Pipeline open; interrupted jobs do not restart automatically.
       </p>
       <div className="max-h-64 space-y-2 overflow-auto">
         {jobs.map((j) => (
@@ -214,6 +217,12 @@ export default function Jobs({
                 Reconcile adopted outputs
               </button>
             )}
+            {j.execution.inputManifest.snapshotConsistency === "captured_inputs_verified" && (
+              <div className="w-full space-y-1 text-gray-600 dark:text-gray-400">
+                <p>Verified captured inputs · declared dependencies · host access</p>
+                <Inspect label="Run details and saved inputs" value={{ executionId: j.execution.id, planId: j.execution.inputManifest.planId, workingDirectory: j.execution.cwd, inputs: j.execution.inputManifest, outputs: j.execution.outputManifest, validation: j.execution.validation }} />
+              </div>
+            )}
             {j.execution.validation.stataCleanupRequired === true && (
               <p role="alert" className="w-full text-red-700">
                 Verify that Legacy Time Off has completed before continuing.
@@ -244,13 +253,12 @@ export default function Jobs({
           </pre>
           {truncated && (
             <p className="text-xs">
-              Display or capture limit reached. Retained receipt logs are
-              bounded to 4 MiB per stream.
+              Log limit reached. Up to 4 MiB is saved for each output stream.
             </p>
           )}
           <Inspect
             value={jobs.find((j) => j.execution.id === selected)}
-            label="Execution receipt"
+            label="Run details"
           />
         </>
       )}

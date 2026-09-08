@@ -62,10 +62,10 @@ export function MoveConversationDialog({ session, workspaces, busy, error, onMov
   return <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 p-4">
     <form role="dialog" aria-modal="true" aria-labelledby={titleId} onSubmit={(event) => { event.preventDefault(); if (targets.length) onMove(target || null); }} className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 text-sm shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
       <h2 id={titleId} className="text-sm font-semibold">Move “{session.title}”</h2>
-      <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-neutral-400">The conversation keeps its transcript and inherits the destination's harness defaults. A selected document is cleared, and the next message starts a new native thread with the usual handoff from accepted records.</p>
+      <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-neutral-400">The conversation will use the new project’s settings and saved context. Its transcript stays here. Select a document again after moving.</p>
       {targets.length
         ? <label className="mt-3 block text-xs font-medium">Destination<select aria-label="Destination project" value={target} onChange={(event) => setTarget(event.target.value)} disabled={busy} className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm font-normal dark:border-neutral-700 dark:bg-neutral-950">{targets.map((candidate) => <option key={candidate.id ?? ""} value={candidate.id ?? ""}>{candidate.name}</option>)}</select></label>
-        : <p className="mt-3 text-xs text-gray-500">Create a project first; there is nowhere else to file this conversation.</p>}
+        : <p className="mt-3 text-xs text-gray-500">Create a project before moving this conversation.</p>}
       {error && <p role="alert" className="mt-3 text-xs text-red-600 dark:text-red-400">{error}</p>}
       <div className="mt-4 flex justify-end gap-2">
         <button type="button" disabled={busy} onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs dark:border-neutral-700">Cancel</button>

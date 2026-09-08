@@ -12,6 +12,7 @@ pub(crate) mod batch;
 pub(crate) mod config;
 pub(crate) mod export;
 mod guard;
+pub(crate) mod orchestration;
 pub(crate) mod lifecycle;
 mod profile_import;
 pub(crate) mod rerun;
