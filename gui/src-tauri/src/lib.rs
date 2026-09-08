@@ -201,6 +201,7 @@ pub fn run() {
             workbench::commands::workbench_session_snapshot,
             workbench::commands::workbench_conversation_snapshot,
             workbench::commands::workbench_harness_catalog,
+            workbench::commands::workbench_native_prompt_catalog,
             workbench::commands::workbench_effective_harness,
             workbench::commands::workbench_get_workspace_config,
             workbench::commands::workbench_save_workspace_config,

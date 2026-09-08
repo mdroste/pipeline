@@ -95,8 +95,12 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
                 server_reader.read_line(&mut line).await.unwrap();
                 let request: Value = serde_json::from_str(&line).unwrap();
                 assert_eq!(request["method"], expected);
+                if expected == "thread/resume" {
+                    assert!(request["params"].get("baseInstructions").is_none(), "resume retains the persisted base prompt");
+                }
                 let result = match expected {
                     "thread/start" => {
+                        assert_eq!(request["params"]["baseInstructions"], "You are an economics research partner.");
                         assert_eq!(request["params"]["modelProvider"], "openai");
                         assert_eq!(request["params"]["allowProviderModelFallback"], false);
                         assert_eq!(request["params"]["approvalPolicy"], "untrusted");
@@ -143,6 +147,7 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
         let root = workspace.display().to_string();
         let thread = supervisor
             .start_thread(StartThreadRequest {
+                base_instructions: Some("You are an economics research partner.".into()),
                 workbench_session_id: "session-test".to_string(),
                 cwd: root.clone(),
                 runtime_workspace_roots: vec![root.clone()],
@@ -301,6 +306,7 @@ fn side_turns_run_ephemeral_tool_free_threads_and_return_the_final_message() {
         assert!(!supervisor.is_side_thread("thread-side"));
         let observed = server.await.unwrap();
         assert_eq!(observed[0]["params"]["ephemeral"], true);
+        assert!(observed[0]["params"]["baseInstructions"].is_null());
         assert_eq!(observed[0]["params"]["dynamicTools"], json!([]));
         assert_eq!(observed[0]["params"]["permissions"], "workbench-inspect");
         assert_eq!(observed[0]["params"]["allowProviderModelFallback"], false);

@@ -134,7 +134,7 @@ export function describeModules(selected: string[], catalog: HarnessModule[], in
 }
 
 export function describePreset(preset: HarnessPreset, catalog: HarnessModule[]): string {
-  return describeModules(preset.modules, catalog, preset.instructions);
+  return describeModules(preset.modules, catalog, preset.baseInstructions ?? preset.instructions);
 }
 
 export function availabilityFor(id: string, availability: ModuleAvailability[] | undefined): ModuleAvailability {

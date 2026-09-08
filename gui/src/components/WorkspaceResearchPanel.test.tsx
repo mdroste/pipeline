@@ -38,7 +38,7 @@ it("shows a read-only harness summary and hands editing to the harness editor", 
   expect(screen.getByLabelText("Access mode")).toHaveValue("");
   expect(screen.queryByText("Clone as editable preset")).not.toBeInTheDocument();
   expect(screen.queryByText("Workspace defaults")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Customize assistant…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Manage agent profiles…" }));
   expect(onEditHarness).toHaveBeenCalledTimes(1);
 });
 

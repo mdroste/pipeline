@@ -300,8 +300,8 @@ it("retains unsaved assistant instructions and the message across inspector swit
   await mount();
   fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Draft message" } });
   fireEvent.click(within(screen.getByLabelText("Message").closest(".workspace-composer")!).getByRole("button", { name: "Assistant settings" }));
-  const instructions = await screen.findByLabelText("Assistant instructions");
-  fireEvent.click(screen.getByText("Instructions and tools", { selector: "summary" }));
+  const instructions = await screen.findByLabelText("Supplemental instructions");
+  fireEvent.click(screen.getByText("Create a customized profile", { selector: "summary" }));
   fireEvent.change(instructions, { target: { value: "Keep these exact assumptions" } });
   fireEvent.click(screen.getByRole("button", { name: "Conversation menu" }));
   fireEvent.click(screen.getByRole("button", { name: "Outline" }));

@@ -1455,7 +1455,7 @@ export default function WorkspacePage({
                 onWorkspaceChanged={updateProjectWorkspace} onReviewHandoff={onReviewHandoff} />
             </Suspense>
           </div>}
-          {snapshot && harnessEditor && <Suspense fallback={<section className="workspace-panel-loading">Opening assistant editor…</section>}>
+          {snapshot && harnessEditor && <Suspense fallback={<section className="workspace-panel-loading">Opening agent profiles…</section>}>
             <WorkspaceHarnessEditor key={snapshot.session.id} snapshot={snapshot} onSnapshot={acceptSnapshot}
               beforeChange={saveCurrentDraft}
               disabled={Boolean(active) || submitting}

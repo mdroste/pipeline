@@ -28,6 +28,8 @@ import type {
   SendTurnResult,
   WorkbenchEvent,
   HarnessCatalog,
+  BasePromptUpdate,
+  NativePromptCatalog,
   EffectiveHarness,
   WorkspaceConfig,
   HarnessPreset,
@@ -130,10 +132,13 @@ export const workbenchClient = {
   saveWorkspaceConfig(request: { workspaceId: string | null; expectedRevision: number; body: Record<string, unknown>; operationId: string }) {
     return invoke<WorkspaceConfig>("workbench_save_workspace_config", { request });
   },
-  clonePreset(request: { workspaceId: string | null; sourcePresetId: string; name: string; operationId: string }) {
+  clonePreset(request: { workspaceId: string | null; sourceWorkspaceId?: string | null; sourcePresetId: string; name: string; operationId: string }) {
     return invoke<HarnessPreset>("workbench_clone_preset", { request });
   },
-  updatePreset(request: { presetId: string; expectedRevision: number; name: string; description: string; instructions: string; modules: string[]; operationId: string }) {
+  nativePromptCatalog() {
+    return invoke<NativePromptCatalog>("workbench_native_prompt_catalog");
+  },
+  updatePreset(request: { basePrompt?: BasePromptUpdate; presetId: string; expectedRevision: number; name: string; description: string; instructions: string; modules: string[]; operationId: string }) {
     return invoke<HarnessPreset>("workbench_update_preset", { request });
   },
   createNote(request: { workspaceId: string; paperId: string | null; kind: ResearchNote["kind"]; body: string; state?: ResearchNote["state"]; origin: string; pinned: boolean; operationId: string }) {

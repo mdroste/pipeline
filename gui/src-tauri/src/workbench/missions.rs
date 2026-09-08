@@ -107,6 +107,7 @@ pub fn roles(
         research::clone_preset(
             store,
             research::ClonePresetRequest {
+                source_workspace_id: None,
                 workspace_id: source.workspace_id.clone(),
                 source_preset_id: h.preset.id.clone(),
                 name: format!("Mission: {}", name.chars().take(100).collect::<String>()),
@@ -130,7 +131,7 @@ pub fn roles(
         if !modules.iter().any(|m| m == "paper_tools") {
             modules.push("paper_tools".into());
         }
-        research::update_preset(store,research::UpdatePresetRequest{preset_id:preset_id.clone(),expected_revision:preset.revision,
+        research::update_preset(store,research::UpdatePresetRequest{base_prompt:None,preset_id:preset_id.clone(),expected_revision:preset.revision,
             name:preset.name,description:"Mission research tools; host executions are admitted by the coordinator.".into(),
             instructions:format!("{}\n\nThis conversation belongs to a bounded research mission. Report evidence and limitations. Research conclusions and reusable methods remain model assessments. Do not expand the mission remit, authorize host commands, or accept edits. Host checks are dispatched by the coordinator.",h.preset.instructions),
             modules,operation_id:update_op})?;

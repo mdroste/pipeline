@@ -44,7 +44,7 @@ runtime never falls back to `codex exec` for Workspace.
 | Models | `model/list` with `cursor`, `limit`, and `includeHidden` | Stable schema; no-login response observed |
 | Thread lifecycle | `thread/start`, `thread/inject_items`, `thread/read`, `thread/resume` | Stable schema; persistent fixture history observed without a model turn |
 | Turn lifecycle | `turn/start`, `turn/interrupt`; terminal status from `turn/completed` | Stable schema; not yet observed |
-| Instructions | `thread/start.developerInstructions`; `baseInstructions` also exists but Workspace will not replace it | Stable schema |
+| Instructions | `thread/start.developerInstructions` for supplemental layers; `baseInstructions` for an explicit profile replacement (null inherits the default) | Stable schema |
 | Permission profiles | `permissionProfile/list`; `thread/start.permissions`, `thread/resume.permissions`, and `command/exec.permissionProfile` select a profile by ID | Experimental schema in this build; custom inspect profile listed, activated, and exercised on macOS |
 | Sandbox | A custom profile uses `filesystem` entries plus `workspace_roots`; permission profiles cannot be combined with legacy `sandbox`/`sandboxPolicy` fields | Generated schema and [official permissions documentation](https://learn.chatgpt.com/docs/permissions); read-only narrow-root command enforcement observed on macOS |
 | Approvals | `approvalPolicy` uses `untrusted`, `on-request`, `never`, or the granular object; server requests include command, file-change, and permission approval methods | Stable schema; interactions not yet observed |

@@ -10,7 +10,7 @@ remains a saved dependency graph; code and storage names are unchanged.
 |---|---|
 | Workflow | A deterministic dependency graph of isolated model calls for repeatable research or review tasks |
 | Workspace | Persistent ChatGPT conversations plus optional research capabilities |
-| Harness preset | Resolved instructions, context providers, tools, inspectors, and permissions for a Workspace turn |
+| Agent profile (harness preset internally) | Resolved instructions, context providers, tools, inspectors, and permissions for a Workspace turn |
 | Recipe | Optional versioned conversation instructions, input requirements, and completion checks; not a scheduler |
 | Review handoff | Explicit copy of one immutable Workspace paper revision into the normal Workflow launch preview |
 
@@ -72,6 +72,83 @@ job, grid, check and execution views. These drafts remain scoped to the current
 project/conversation and do not substitute for saving before leaving it.
 
 See [the redesign plan and qualification record](workspace-ui-plan.md).
+
+## Agent profiles
+
+Open **Assistant settings → Manage agent profiles** to create, find, duplicate,
+select, or edit an agent profile. **New profile** starts with an empty added prompt
+and no Workspace modules. The creation dialog offers this project or all
+Workspaces; duplication copies the saved prompt and capabilities independently.
+The System prompt tab edits the profile’s standing instructions. Tools & context
+controls the Workspace capability allowlist, with unavailable tools explained.
+Native command/file permissions remain under Access & inheritance for the
+conversation. Profile prompts do not grant permissions.
+
+Codex default, Writing, Code review, Economics research, and the existing research
+starters are read-only. Duplicate one to customize it. Editing a custom profile
+changes future turns for every conversation using it. Changes are saved with
+optimistic revisions; navigating away prompts before discarding a draft.
+
+The System prompt tab separates **Use Codex default** / **Replace base prompt**
+from **Supplemental instructions**. Writing, Code review, and Economics research
+start with domain-specific replacement base prompts; the older research starters
+continue to inherit Codex. Custom replacements are sent verbatim through stable
+`thread/start.baseInstructions`. Supplemental profile instructions, Pipeline's
+preamble, and recipe/context layers use `developerInstructions`. Native runtime
+instructions, tools, permission enforcement, and project instructions remain
+separate; a base override does not replace the entire assembled turn.
+
+**View Codex default prompt** reads model templates from local `models_cache.json`
+files. Pipeline's isolated runtime cache is offered first when available; the
+regular `~/.codex` cache is also available, explicitly marked as reference only.
+The viewer includes the source path, model, cache client version, fetch timestamp,
+installed CLI version, and additional cached instruction sections. Unknown cache
+formats, missing files, and version mismatches are visible. No cached text is
+silently installed as a prompt. A custom profile can explicitly copy the selected
+template into its replacement editor; template variables are not expanded and
+should be reviewed before saving. Cache contents are neither a live prompt readback
+nor proof of the exact default selected by the running server. Reading the viewer
+uses no model call and reads no session histories or credentials.
+
+On the inspected Codex 0.153.4 installation, the package contains compiled binaries;
+the model cache contains the plaintext templates. Parsing strings out of the binary
+would be brittle, so Pipeline uses the structured cache and reports when it is
+unavailable. The App Server contract is documented in the
+[official OpenAI documentation](https://learn.chatgpt.com/docs/app-server), and the
+[file-based base override](https://learn.chatgpt.com/docs/config-file/config-sample#instruction-overrides)
+is an alternative for standalone CLI configuration. Pipeline uses per-thread
+fields so profiles do not modify the global Codex installation.
+
+Schema 14 adds nullable `presets.base_instructions`: existing profiles inherit the
+native default. Legacy JSON snapshots omit this field, preserving their hashes;
+old update requests preserve a stored override. New requests use
+`basePrompt: { mode: "codexDefault" }` or `{ mode: "replace", text: "…" }`.
+Replacement text is bounded to 256 KiB and cannot be blank or contain NUL.
+Cloning, restoring from source, and full research archive round trips retain the
+base prompt. Selective project exchanges continue to exclude all harness presets.
+Changing a saved base prompt changes the harness fingerprint and starts a fresh
+native binding on the next turn; resuming an unchanged binding retains its native
+instructions. Renaming Plain conversation to Codex default preserves its existing
+binding fingerprint.
+
+### Agent profile verification
+
+Tests cover read-only built-ins, base replacement/reset and supplemental separation,
+legacy migration/update/snapshot compatibility, archive round trips, native request
+payloads, bounded modern/legacy cache parsing, cache provenance and error states.
+The browser fixture at `gui/e2e/agent-profiles.html` uses explicitly labeled sample
+metadata to check creation, prompt edits, saved tool choices, and compact/light/dark
+layouts without native or model calls. A no-model probe against installed Codex
+0.153.4 accepted `thread/start` with separate base and developer instructions.
+After `thread/inject_items` supplied one harmless user fixture, its native
+`session_meta.base_instructions.text` exactly matched the replacement and
+`thread/resume` succeeded. No model turn was started.
+
+All 655 frontend tests, 938 Rust tests (10 ignored), 58 release checks, the
+frontend build, and all-feature Clippy with warnings denied passed. The release
+checks passed with local server access for their temporary localhost fixtures. Whole-repository formatting
+checks still report pre-existing differences. These checks do not qualify
+authenticated model turns or packaged releases.
 
 ## Research desk
 

@@ -14,7 +14,7 @@ interface Props {
 function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
   const name = (id: string) => catalog.modules.find((module) => module.id === id)?.name ?? id;
   const facts: Array<[string, string]> = [
-    ["Preset", effective.preset.name],
+    ["Agent profile", effective.preset.name],
     ["Access", compactAccessSummary(effective)],
     ["Permission profile", effective.permissionProfile],
     ["Dynamic tools", String(effective.dynamicTools.length)],
@@ -24,7 +24,7 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Everything below is computed by Pipeline from the resolved settings and snapshotted immutably before each turn. Nothing here is editable; change the preset or access scopes instead.
+        Everything below is computed by Pipeline from the resolved settings and snapshotted immutably before each turn. Nothing here is editable; change the profile or access scopes instead.
       </p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-xl border border-gray-200 bg-white p-3 text-xs dark:border-gray-700 dark:bg-gray-900 sm:grid-cols-3">
         {facts.map(([label, value]) => (

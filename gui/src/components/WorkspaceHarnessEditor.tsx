@@ -6,7 +6,7 @@ import useContainerWidth from "../hooks/useContainerWidth";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
-import PromptDialog from "./pipeline-editor/PromptDialog";
+import AgentProfileDialog from "./harness-editor/AgentProfileDialog";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import { confirmDialog } from "./DialogService";
 import { workbenchClient } from "../lib/workbenchClient";
@@ -22,11 +22,11 @@ type Selection = { kind: "preset"; id: string } | { kind: "access" } | { kind: "
 function operation(prefix: string) { return `${prefix}-${crypto.randomUUID()}`; }
 
 function draftFrom(preset: HarnessPreset): PresetDraft {
-  return { name: preset.name, description: preset.description, instructions: preset.instructions, modules: [...preset.modules] };
+  return { name: preset.name, description: preset.description, instructions: preset.instructions, baseInstructions: preset.baseInstructions ?? null, modules: [...preset.modules] };
 }
 
 function sameDraft(a: PresetDraft, b: PresetDraft) {
-  return a.name === b.name && a.description === b.description && a.instructions === b.instructions
+  return a.name === b.name && a.description === b.description && a.instructions === b.instructions && a.baseInstructions === b.baseInstructions
     && a.modules.length === b.modules.length && a.modules.every((id, index) => id === b.modules[index]);
 }
 
@@ -54,7 +54,8 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
   // selection change reads fresh values on the very next render; no effect
   // can leave a stale draft on screen for one frame.
   const [draftState, setDraftState] = useState<{ key: string; draft: PresetDraft } | null>(null);
-  const [naming, setNaming] = useState<{ sourceId: string; defaultName: string } | null>(null);
+  const [naming, setNaming] = useState<{ sourceId: string; defaultName: string; fresh?: boolean } | null>(null);
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,10 +86,11 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
 
   const dirty = Boolean(selectedPreset && draft && !selectedPreset.builtIn && !sameDraft(draft, draftFrom(selectedPreset)));
 
-  const guardDirty = async () => !dirty || confirmDialog("Discard unsaved changes to this preset?", { title: "Unsaved changes", confirmLabel: "Discard", destructive: true });
+  const guardDirty = async () => !dirty || confirmDialog("Discard unsaved changes to this profile?", { title: "Unsaved changes", confirmLabel: "Discard", destructive: true });
 
   const navigate = async (next: Selection) => {
     if (!(await guardDirty())) return;
+    setDraftState(null);
     setSelection(next);
   };
 
@@ -138,6 +140,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
       name: draft.name.trim(),
       description: draft.description.trim(),
       instructions: draft.instructions,
+      basePrompt: draft.baseInstructions === null ? { mode: "codexDefault" } : { mode: "replace", text: draft.baseInstructions },
       modules: draft.modules,
       operationId: operation("edit-preset"),
     });
@@ -146,9 +149,9 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
   const restorePreset = () => void act(async () => {
     if (!selectedPreset || !catalog) return;
     const source = catalog.presets.find((preset) => preset.id === selectedPreset.sourcePresetId);
-    if (!source) throw new Error("The source preset is no longer available.");
+    if (!source) throw new Error("The source profile is no longer available.");
     const confirmed = await confirmDialog(
-      `Replace this preset's description, instructions, and modules with the current values of "${source.name}"? The name is kept and your edits are lost.`,
+      `Replace this profile's description, instructions, and modules with the current values of "${source.name}"? The name is kept and your edits are lost.`,
       { title: "Restore from source", confirmLabel: "Restore", destructive: true },
     );
     if (!confirmed) return;
@@ -158,25 +161,38 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
       name: selectedPreset.name,
       description: source.description,
       instructions: source.instructions,
+      basePrompt: source.baseInstructions == null ? { mode: "codexDefault" } : { mode: "replace", text: source.baseInstructions },
       modules: [...source.modules],
       operationId: operation("restore-preset"),
     });
   });
 
-  const clonePreset = (name: string) => void act(async () => {
+  const clonePreset = (name: string, targetWorkspaceId: string | null) => void act(async () => {
     if (!naming) return;
     const source = naming.sourceId;
+    const created = await workbenchClient.clonePreset({ workspaceId: targetWorkspaceId, sourceWorkspaceId: workspaceId, sourcePresetId: source, name, operationId: operation("clone-preset") });
+    // Keep the created profile discoverable even if switching the conversation fails.
     setNaming(null);
-    const created = await workbenchClient.clonePreset({ workspaceId, sourcePresetId: source, name, operationId: operation("clone-preset") });
-    await patchSession({ presetId: created.id });
+    setCatalog(old => old ? { ...old, presets: [...old.presets, created] } : old);
+    setQuery("");
+    setDraftState(null);
     setSelection({ kind: "preset", id: created.id });
+    await patchSession({ presetId: created.id });
   });
 
+  const requestNaming = async (next: NonNullable<typeof naming>) => {
+    if (busy || disabled || !(await guardDirty())) return;
+    setDraftState(null);
+    setError(null);
+    setNaming(next);
+  };
+  const newProfile = () => void requestNaming({ sourceId: "plain", defaultName: "New agent profile", fresh: true });
   const requestClose = () => { if (!busy) void guardDirty().then((ok) => { if (ok) onClose(); }); };
 
   const successor = Boolean(snapshot.activeBinding?.harnessFingerprint && effective && snapshot.activeBinding.harnessFingerprint !== effective.fingerprint);
-  const builtIns = catalog?.presets.filter((preset) => preset.builtIn) ?? [];
-  const customs = catalog?.presets.filter((preset) => !preset.builtIn) ?? [];
+  const filtered = catalog?.presets.filter((preset) => `${preset.name} ${preset.description}`.toLowerCase().includes(query.trim().toLowerCase())) ?? [];
+  const builtIns = filtered.filter((preset) => preset.builtIn);
+  const customs = filtered.filter((preset) => !preset.builtIn);
 
   const presetRow = (preset: HarnessPreset) => {
     const selected = selection?.kind === "preset" && selection.id === preset.id;
@@ -192,7 +208,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
         <span className="flex items-center justify-between gap-2">
           <span className="min-w-0">
             <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">{preset.name}</span>
-            <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">{catalog ? describePreset(preset, catalog.modules) : preset.description}</span>
+            <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">{preset.description || describePreset(preset, catalog?.modules ?? [])}</span>
           </span>
           {inUse && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">In use</span>}
         </span>
@@ -217,19 +233,22 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
 
   return (
     <div ref={root} className={`relative flex h-full min-h-0 min-w-0 flex-1 ${compact ? "flex-col" : ""}`} data-testid="workspace-harness-editor">
-      {compact && <div className="workspace-project-tool-bar">
-        <button type="button" onClick={requestClose}>Close editor</button>
-        <select aria-label="Assistant editor section" value={selection?.kind === "preset" ? selection.id : selection?.kind ?? ""}
+      {compact && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 p-2 text-xs text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+        <button type="button" onClick={requestClose} className="rounded border border-gray-300 px-2 py-1.5 dark:border-gray-600">Close editor</button>
+        <button type="button" disabled={busy || disabled || !catalog} onClick={newProfile} className="rounded border border-gray-300 px-2 py-1.5 disabled:opacity-50 dark:border-gray-600">New profile</button>
+        <select aria-label="Agent profile editor section" className="min-w-0 max-w-full flex-1 rounded border border-gray-300 bg-white p-1.5 dark:border-gray-600 dark:bg-gray-800" value={selection?.kind === "preset" ? selection.id : selection?.kind ?? ""}
           onChange={event => void navigate(event.target.value === "access" || event.target.value === "preview" ? { kind: event.target.value } : { kind: "preset", id: event.target.value })}>
           {!selection && <option value="">Loading…</option>}
           {catalog?.presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
           <option value="access">Access & inheritance</option><option value="preview">Effective preview</option>
         </select>
       </div>}
-      {!compact && <SidebarPanel aria-label="Harness navigation" width={panelWidth} defaultWidth={300} min={220} max={480} onResize={setPanelWidth} resizeLabel="Resize harness panel">
-        <SidebarHeader title="Assistant editor">
+      {!compact && <SidebarPanel aria-label="Agent profile navigation" width={panelWidth} defaultWidth={300} min={220} max={480} onResize={setPanelWidth} resizeLabel="Resize agent profile panel">
+        <SidebarHeader title="Agent profiles">
           <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400">{snapshot.session.title}</p>
           <button type="button" onClick={requestClose} className="mt-3 rounded text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">Close editor</button>
+          <button type="button" disabled={busy || disabled || !catalog} onClick={newProfile} className="mt-3 block w-full rounded-lg bg-gray-900 px-3 py-2 text-xs font-medium text-white disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900">New profile</button>
+          <input aria-label="Search agent profiles" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search profiles…" className="mt-3 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs dark:border-gray-600 dark:bg-gray-800" />
         </SidebarHeader>
         {successor && (
           <p className="m-2 rounded border border-blue-200 bg-blue-50 p-2 text-[11px] text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
@@ -237,14 +256,15 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
           </p>
         )}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className={sectionHeader}>Presets</div>
+          <div className={sectionHeader}>Profiles</div>
           <div className="px-4 pt-2 text-[10px] text-gray-400">Built-in</div>
           {builtIns.map(presetRow)}
-          {customs.length > 0 && <div className="px-4 pt-2 text-[10px] text-gray-400">Custom</div>}
+          {customs.length > 0 && <div className="px-4 pt-2 text-[10px] text-gray-400">Your profiles</div>}
           {customs.map(presetRow)}
-          {catalog && customs.length === 0 && (
-            <p className="px-4 py-2 text-[11px] text-gray-500 dark:text-gray-400">No custom presets yet. Open a built-in and choose Clone to edit.</p>
+          {catalog && !catalog.presets.some(preset => !preset.builtIn) && !query && (
+            <p className="px-4 py-2 text-[11px] text-gray-500 dark:text-gray-400">Create a profile or duplicate a built-in to get started.</p>
           )}
+          {query && filtered.length === 0 && <p className="px-4 py-3 text-xs text-gray-500">No profiles match your search.</p>}
           <div className={sectionHeader}>This conversation</div>
           {entryRow("access", "Access & inheritance", effective ? compactAccessSummary(effective) : "Loading…")}
           {entryRow("preview", "Effective preview", effective ? compactModuleSummary(effective) : "Loading…")}
@@ -254,7 +274,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white dark:bg-gray-900">
         {error && <div role="alert" className="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{error}</div>}
         {!catalog || !effective ? (
-          <p className="p-6 text-sm text-gray-500">Loading harness…</p>
+          <p className="p-6 text-sm text-gray-500">Loading agent profiles…</p>
         ) : selection?.kind === "preset" && selectedPreset && draft ? (
           <HarnessPresetPanel
             key={selectedPreset.id}
@@ -268,7 +288,7 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
             busy={busy || disabled}
             onDraft={(patch) => setDraft({ ...draft, ...patch })}
             onUse={() => void act(() => patchSession({ presetId: selectedPreset.id }))}
-            onClone={() => setNaming({ sourceId: selectedPreset.id, defaultName: `${selectedPreset.name} copy` })}
+            onClone={() => void requestNaming({ sourceId: selectedPreset.id, defaultName: `${selectedPreset.name} copy` })}
             onRestore={restorePreset}
             onSave={savePreset}
             onDiscard={() => setDraft(draftFrom(selectedPreset))}
@@ -296,14 +316,18 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
             <div className="mt-3"><HarnessPreviewPanel effective={effective} catalog={catalog} snapshot={snapshot} /></div>
           </div>
         ) : (
-          <p className="p-6 text-sm text-gray-500">Select a preset to edit.</p>
+          <p className="p-6 text-sm text-gray-500">Select an agent profile to edit.</p>
         )}
       </div>
 
       {naming && (
-        <PromptDialog
-          title="Name for the editable copy"
-          defaultValue={naming.defaultName}
+        <AgentProfileDialog
+          title={naming.fresh ? "Create agent profile" : "Duplicate agent profile"}
+          defaultName={naming.defaultName}
+          workspaceId={workspaceId}
+          workspaceName={snapshot.workspace?.name ?? "This project"}
+          busy={busy}
+          error={error}
           onSubmit={clonePreset}
           onCancel={() => setNaming(null)}
         />

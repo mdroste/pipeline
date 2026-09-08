@@ -45,7 +45,7 @@ function Switch({ checked, disabled, label, onToggle }: { checked: boolean; disa
         checked ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
       }`}
     >
-      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-3.5" : "translate-x-0.5"}`} />
+      <span className={`absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-3.5" : "translate-x-0.5"}`} />
     </button>
   );
 }
@@ -58,7 +58,7 @@ function HarnessModulesEditor({ catalog, selected, readOnly, availability, busy,
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        This is an exact allowlist. A module the preset does not list never runs; a listed module that this conversation cannot support is shown as unavailable and skipped without failing the turn.
+        Choose the Workspace tools and context this profile may use. Unselected Workspace tools are never offered. Selected tools that need a project, Edit access, or a tested execution profile stay unavailable until those requirements are met.
       </p>
 
       <div>

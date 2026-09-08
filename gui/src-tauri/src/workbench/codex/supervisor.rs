@@ -44,6 +44,8 @@ pub struct StartThreadRequest {
     pub runtime_workspace_roots: Vec<String>,
     pub permissions: String,
     pub developer_instructions: String,
+    #[serde(default)]
+    pub base_instructions: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
     #[serde(default)]
@@ -273,6 +275,7 @@ impl AppServerSupervisor {
                     "approvalsReviewer": "user",
                     "cwd": request.cwd,
                     "developerInstructions": request.developer_instructions,
+                    "baseInstructions": request.base_instructions,
                     "dynamicTools": request.dynamic_tools,
                     "ephemeral": ephemeral,
                     "model": request.model,
@@ -320,6 +323,7 @@ impl AppServerSupervisor {
             .start_thread_unbound(
                 StartThreadRequest {
                     workbench_session_id: "side-turn".to_string(),
+                    base_instructions: None,
                     cwd: request.cwd.clone(),
                     runtime_workspace_roots: vec![request.cwd],
                     permissions: request.permissions,
@@ -755,6 +759,11 @@ fn validate_thread_request(request: &StartThreadRequest) -> Result<(), RequestEr
         return Err(RequestError::invalid(
             "Developer instructions must contain 1 to 2 MiB",
         ));
+    }
+    if let Some(text) = &request.base_instructions {
+        if text.trim().is_empty() || text.len() > 256 * 1024 || text.contains('\0') {
+            return Err(RequestError::invalid("Replacement base prompt must contain 1 to 256 KiB and no NUL characters"));
+        }
     }
     validate_identifier("permissions profile", &request.permissions)?;
     let cwd = Path::new(&request.cwd);

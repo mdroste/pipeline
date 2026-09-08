@@ -334,7 +334,7 @@ export default function WorkspaceResearchPanel({
         {tab === "setup" && snapshot && effective && catalog && (
           <div className="space-y-4">
             <label className="block">
-              <span className="text-xs font-medium">Assistant preset · This conversation</span>
+              <span className="text-xs font-medium">Agent profile · This conversation</span>
               <select
                 value={snapshot.session.presetId ?? "plain"}
                 disabled={busy || settingsDisabled}
@@ -413,10 +413,10 @@ export default function WorkspaceResearchPanel({
                   onClick={onEditHarness}
                   className="rounded border px-3 py-2 text-xs font-medium"
                 >
-                  Customize assistant…
+                  Manage agent profiles…
                 </button>
                 <p className="mt-1 text-[11px] text-gray-500">
-                  Open advanced preset, access, and inheritance settings.
+                  Create profiles, view system prompts, and choose allowed tools.
                 </p>
               </div>
             )}

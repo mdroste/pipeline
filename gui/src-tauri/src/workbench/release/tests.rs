@@ -1,7 +1,7 @@
 //! Tests spanning release recipes, handoffs, evaluation, and portability.
 
 use super::*;
-use crate::workbench::research::ImportPaperRequest;
+use crate::workbench::research::{self, ImportPaperRequest};
 use crate::workbench::store::{
     CreateSessionRequest, CreateWorkspaceRequest, RegisterWorkspaceRootRequest,
     UpdateSessionRequest,
@@ -367,6 +367,10 @@ fn archive_round_trip_is_consistent_and_retires_native_bindings() {
         },
     )
     .unwrap();
+    let agent_profile = research::clone_preset(&source, research::ClonePresetRequest {
+        workspace_id: None, source_workspace_id: None, source_preset_id: "writing".into(),
+        name: "Portable writer".into(), operation_id: "portable-agent-profile".into(),
+    }).unwrap();
     let binding = source
         .bind_session(&session, "test-runtime", "thread-portable")
         .unwrap();
@@ -431,6 +435,8 @@ fn archive_round_trip_is_consistent_and_retires_native_bindings() {
     )
     .unwrap();
     assert_eq!(restored.workspace_count, 1);
+    let restored_profile = research::harness_catalog(&destination, None).unwrap().presets.into_iter().find(|profile| profile.id == agent_profile.id).unwrap();
+    assert_eq!(restored_profile, agent_profile);
     let restored_collection=crate::workbench::desk::record(&destination,&workspace,&collection.id).unwrap();
     assert_eq!(restored_collection.content_hash,collection.content_hash);
     let grants:i64=destination.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_plan_state",[],|r|r.get(0)).unwrap();

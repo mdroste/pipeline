@@ -6,12 +6,13 @@ import { memo, useState, type KeyboardEvent } from "react";
 import type { EffectiveHarness, HarnessCatalog, HarnessPreset } from "../../lib/workbenchTypes";
 import HarnessInstructionsEditor from "./HarnessInstructionsEditor";
 import HarnessModulesEditor from "./HarnessModulesEditor";
-import { describeModules, instructionBlocks } from "./harnessHelpers";
+import { byteLength, describeModules, instructionBlocks, lintHarnessInstructions } from "./harnessHelpers";
 
 export interface PresetDraft {
   name: string;
   description: string;
   instructions: string;
+  baseInstructions: string | null;
   modules: string[];
 }
 
@@ -34,7 +35,7 @@ interface Props {
 }
 
 type TabId = "instructions" | "modules";
-const TABS: Array<[TabId, string]> = [["instructions", "Instructions"], ["modules", "Modules"]];
+const TABS: Array<[TabId, string]> = [["instructions", "System prompt"], ["modules", "Tools & context"]];
 
 const primaryButton = "rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200";
 const secondaryButton = "rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800";
@@ -46,7 +47,10 @@ function HarnessPresetPanel({
 }: Props) {
   const [tab, setTab] = useState<TabId>("instructions");
   const readOnly = preset.builtIn;
-  const summary = describeModules(draft.modules, catalog.modules, draft.instructions);
+  const summary = describeModules(draft.modules, catalog.modules, draft.baseInstructions ?? draft.instructions);
+  const invalid = !draft.name.trim() || byteLength(draft.name.trim()) > 300 || byteLength(draft.description.trim()) > 2000
+    || lintHarnessInstructions(draft.instructions).some(hit => hit.level === "error")
+    || (draft.baseInstructions !== null && (!draft.baseInstructions.trim() || lintHarnessInstructions(draft.baseInstructions).some(hit => hit.level === "error")));
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: TabId) => {
     const index = TABS.findIndex(([id]) => id === current);
@@ -69,7 +73,7 @@ function HarnessPresetPanel({
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{preset.name}</h2>
           ) : (
             <input
-              aria-label="Preset name"
+              aria-label="Profile name"
               value={draft.name}
               disabled={busy}
               onChange={(event) => onDraft({ name: event.target.value })}
@@ -88,41 +92,42 @@ function HarnessPresetPanel({
           {dirty && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">Unsaved</span>}
         </div>
         <p data-testid="preset-summary" className="text-xs text-gray-600 dark:text-gray-300">{summary}</p>
+        {!readOnly && <p className="text-[11px] text-gray-500">{preset.workspaceId ? "Available in this project." : "Available in all Workspaces."} Saving changes affects future turns in every conversation using this profile. Duplicate it to customize only this conversation.</p>}
         {readOnly ? (
           <p className="text-xs text-gray-500 dark:text-gray-400">{preset.description}</p>
         ) : (
           <input
-            aria-label="Preset description"
+            aria-label="Profile description"
             value={draft.description}
             disabled={busy}
-            placeholder="One line shown in the preset list"
+            placeholder="One line shown in the profile list"
             onChange={(event) => onDraft({ description: event.target.value })}
             className={`${inputClass} text-xs`}
           />
         )}
         <div className="flex flex-wrap items-center gap-2">
           {!inUse && <button type="button" disabled={busy || dirty} title={dirty ? "Save or discard changes first" : undefined} onClick={onUse} className={primaryButton}>Use in this conversation</button>}
-          <button type="button" disabled={busy} onClick={onClone} className={secondaryButton}>Clone to edit</button>
+          <button type="button" disabled={busy || dirty} title={dirty ? "Save or discard changes first" : undefined} onClick={onClone} className={secondaryButton}>Duplicate profile</button>
           {!readOnly && sourcePreset && (
-            <button type="button" disabled={busy} onClick={onRestore} title={`Replace this preset's instructions and modules with ${sourcePreset.name}'s current values; the name is kept.`} className={secondaryButton}>
+            <button type="button" disabled={busy} onClick={onRestore} title={`Replace this profile's instructions and modules with ${sourcePreset.name}'s current values; the name is kept.`} className={secondaryButton}>
               Restore from {sourcePreset.name}
             </button>
           )}
           {dirty && (
             <>
-              <button type="button" disabled={busy} onClick={onSave} className={primaryButton}>Save preset</button>
+              <button type="button" disabled={busy || invalid} onClick={onSave} className={primaryButton}>Save profile</button>
               <button type="button" disabled={busy} onClick={onDiscard} className={secondaryButton}>Discard</button>
             </>
           )}
         </div>
         {readOnly && (
           <p className="text-[11px] text-gray-500 dark:text-gray-400">
-            Built-in presets are read-only. Clone to edit makes an independent copy that Pipeline updates never overwrite.
+            Built-in profiles are read-only. Duplicate a profile to make an independent copy that Pipeline updates never overwrite.
           </p>
         )}
       </header>
 
-      <div role="tablist" aria-label="Preset sections" className="flex gap-1 border-b border-gray-200 px-4 dark:border-gray-700">
+      <div role="tablist" aria-label="Profile sections" className="flex gap-1 border-b border-gray-200 px-4 dark:border-gray-700">
         {TABS.map(([id, label]) => (
           <button
             key={id}
@@ -148,14 +153,19 @@ function HarnessPresetPanel({
       <section id="harness-panel-instructions" role="tabpanel" aria-labelledby="harness-tab-instructions" hidden={tab !== "instructions"} className="min-h-0 flex-1 overflow-auto p-4">
         <HarnessInstructionsEditor
           value={draft.instructions}
+          baseInstructions={draft.baseInstructions}
+          onBaseChange={(baseInstructions) => onDraft({ baseInstructions })}
           onChange={(instructions) => onDraft({ instructions })}
           readOnly={readOnly}
+          busy={busy}
+          promptLayers={catalog.promptLayers}
           blocks={instructionBlocks(catalog.presets)}
           effective={effective}
           inUse={inUse}
         />
       </section>
       <section id="harness-panel-modules" role="tabpanel" aria-labelledby="harness-tab-modules" hidden={tab !== "modules"} className="min-h-0 flex-1 overflow-auto p-4">
+        <p className="mb-3 rounded border border-gray-200 p-3 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300">Codex’s native command and file tools follow this conversation’s access settings: {effective.mode === "inspect" ? "read only" : "edits allowed"}, command network {effective.commandNetwork ? "allowed" : "blocked"}. Use Access &amp; inheritance to change those permissions. The choices below control additional Workspace capabilities.</p>
         <HarnessModulesEditor
           catalog={catalog.modules}
           selected={draft.modules}

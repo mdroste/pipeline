@@ -285,12 +285,28 @@ export interface HarnessModule {
   capability: string;
 }
 
+export type BasePromptUpdate = { mode: "codexDefault" } | { mode: "replace"; text: string };
+
+export interface NativePromptCatalog {
+  installedVersion: string | null;
+  sources: Array<{
+    path: string;
+    origin: "pipeline" | "codex";
+    clientVersion: string | null;
+    fetchedAt: string | null;
+    models: Array<{ model: string; template: string; templateField: string; sections: InstructionSection[] }>;
+  }>;
+  diagnostics: string[];
+}
+
 export interface HarnessPreset {
   id: string;
   workspaceId: string | null;
   name: string;
   description: string;
   instructions: string;
+  /** Absent/null inherits the native default; a string replaces it. */
+  baseInstructions?: string | null;
   modules: string[];
   builtIn: boolean;
   sourcePresetId: string | null;
@@ -302,6 +318,8 @@ export interface HarnessCatalog {
   toolCatalogVersion: number;
   modules: HarnessModule[];
   presets: HarnessPreset[];
+  /** Pipeline-owned prompt layers; Codex base instructions are runtime-managed. */
+  promptLayers?: InstructionSection[];
 }
 
 export interface EffectiveHarness {

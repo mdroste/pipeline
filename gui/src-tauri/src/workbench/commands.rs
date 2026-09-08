@@ -536,6 +536,12 @@ pub async fn workbench_harness_catalog(
 }
 
 #[tauri::command]
+pub async fn workbench_native_prompt_catalog() -> WorkbenchResult<super::codex::native_prompts::NativePromptCatalog> {
+    let home = run_store(|store| Ok(store.codex_home_path())).await?;
+    super::codex::native_prompts::catalog(home).await.map_err(WorkbenchError::invalid)
+}
+
+#[tauri::command]
 pub async fn workbench_effective_harness(
     session_id: String,
 ) -> WorkbenchResult<super::research::EffectiveHarness> {
@@ -1234,6 +1240,7 @@ pub(crate) async fn submit_turn(
         } else {
             supervisor
                 .start_thread(super::codex::StartThreadRequest {
+                    base_instructions: prepared.effective.preset.base_instructions.clone(),
                     workbench_session_id: request.session_id.clone(),
                     cwd: root.clone(),
                     runtime_workspace_roots: vec![root],

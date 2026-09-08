@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 13;
+pub const CURRENT_SCHEMA_VERSION: u32 = 14;
 const MAX_WORKSPACE_NAME_BYTES: usize = 300;
 const MAX_SESSION_TITLE_BYTES: usize = 300;
 const MAX_DRAFT_BYTES: usize = 1_000_000;
@@ -1773,6 +1773,7 @@ pub(super) fn migrate(connection: &mut Connection, from: u32) -> WorkbenchResult
         }
         if from < 12 { transaction.execute_batch(include_str!("migrations/012_task_exchanges.sql")).map_err(|e| WorkbenchError::storage("Failed to migrate task exchanges", e))?; }
         if from < 13 { transaction.execute_batch(include_str!("migrations/013_research_programs.sql")).map_err(|e| WorkbenchError::storage("Failed to migrate research programs", e))?; }
+        if from < 14 { transaction.execute_batch(include_str!("migrations/014_agent_base_prompts.sql")).map_err(|e| WorkbenchError::storage("Failed to migrate agent base prompts", e))?; }
         transaction
             .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)
             .map_err(|error| {

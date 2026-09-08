@@ -5,6 +5,14 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
+- Workspace Agent profiles now provide searchable built-in and custom profiles,
+  blank creation and duplication for one project or all Workspaces, explicit
+  system-prompt and tool editing, and Writing, Code review, and Economics research
+  starters. Profiles can inherit Codex or replace its native base prompt, with
+  supplemental instructions kept separate. Codex default stays read-only, with
+  model templates and additional sections viewable from local runtime caches,
+  including source/version information and explicit cache limitations.
+
 - Pipeline now presents two complementary agent-orchestration modes for
   academic research. The new Workspace is a persistent ChatGPT client with
   independent workspaces and conversations, isolated managed ChatGPT sign-in,

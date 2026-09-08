@@ -1,6 +1,7 @@
 //! Qualified Codex App Server integration boundary.
 
 use crate::agent_runtime::codex::compatibility;
+pub mod native_prompts;
 mod probe;
 mod process;
 mod supervisor;

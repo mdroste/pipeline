@@ -5,7 +5,7 @@ import type { ConversationSnapshot, EffectiveHarness, HarnessCatalog, HarnessPre
 import { CATALOG } from "./harness-editor/harnessHelpers.test";
 
 const mocks = vi.hoisted(() => ({
-  harnessCatalog: vi.fn(), effectiveHarness: vi.fn(), getWorkspaceConfig: vi.fn(), saveWorkspaceConfig: vi.fn(),
+  nativePromptCatalog: vi.fn(), harnessCatalog: vi.fn(), effectiveHarness: vi.fn(), getWorkspaceConfig: vi.fn(), saveWorkspaceConfig: vi.fn(),
   clonePreset: vi.fn(), updatePreset: vi.fn(), conversationSnapshot: vi.fn(), updateSession: vi.fn(),
   confirmDialog: vi.fn(),
 }));
@@ -23,8 +23,9 @@ const custom: HarnessPreset = {
 function catalog(): HarnessCatalog {
   return {
     schemaVersion: 1, toolCatalogVersion: 4, modules: CATALOG,
+    promptLayers: [{ id: "preamble", label: "Pipeline Workspace instructions", text: "Always preserve the native base prompt." }],
     presets: [
-      builtIn("plain", "Plain conversation", "", []),
+      builtIn("plain", "Codex default", "", []),
       builtIn("research_assistant", "Research assistant", "State the question precisely.", ["research_structure", "paper_context", "paper_tools", "research_ledger", "evidence_inspector"]),
       builtIn("empirical_audit", "Empirical audit", "Identify the estimand.", ["research_structure", "empirical_audit", "paper_context", "paper_tools", "research_ledger", "research_execution", "results_inspector", "evidence_inspector"]),
       custom,
@@ -61,6 +62,7 @@ function snapshot(presetId = "empirical_audit"): ConversationSnapshot {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  mocks.nativePromptCatalog.mockResolvedValue({ installedVersion: "0.153.4", sources: [{ path: "/codex/models_cache.json", origin: "codex", clientVersion: "0.153.4", fetchedAt: "today", models: [{ model: "model-a", template: "Cached base template", templateField: "model_messages.instructions_template", sections: [] }] }], diagnostics: [] });
   mocks.harnessCatalog.mockResolvedValue(catalog());
   mocks.effectiveHarness.mockResolvedValue(effective());
   mocks.getWorkspaceConfig.mockImplementation(async (workspaceId: string | null) => workspaceId
@@ -84,14 +86,14 @@ it("lists presets, opens the preset in use as read-only, and flags the successor
   const heading = await screen.findByRole("heading", { name: "Empirical audit" });
   expect(heading).toBeInTheDocument();
   expect(screen.getByText("In use by this conversation")).toBeInTheDocument();
-  expect(screen.getByText(/Built-in presets are read-only/)).toBeInTheDocument();
+  expect(screen.getByText(/Built-in profiles are read-only/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Use in this conversation" })).not.toBeInTheDocument();
   expect(screen.getByTestId("preset-summary")).toHaveTextContent("Adds 2 instruction packs, paper context, 3 tools, and 2 inspectors.");
   expect(screen.getAllByText("In use")).toHaveLength(1);
   expect(screen.getByText(/assistant will start fresh/)).toBeInTheDocument();
-  expect(screen.getByText("Custom")).toBeInTheDocument();
+  expect(screen.getByText("Your profiles")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /My audit/ })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: "Modules" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Tools & context" }));
   expect(screen.getByRole("switch", { name: "Research execution" })).toBeDisabled();
   expect(screen.getByText(/Needs Edit access mode/)).toBeInTheDocument();
 });
@@ -100,11 +102,11 @@ it("clones a built-in through a named dialog and switches the conversation to th
   const onSnapshot = vi.fn();
   renderEditor({ onSnapshot });
   await screen.findByRole("heading", { name: "Empirical audit" });
-  fireEvent.click(screen.getByRole("button", { name: "Clone to edit" }));
-  const dialog = screen.getByRole("dialog");
+  fireEvent.click(screen.getByRole("button", { name: "Duplicate profile" }));
+  const dialog = await screen.findByRole("dialog");
   const input = within(dialog).getByRole("textbox");
   fireEvent.change(input, { target: { value: "Field audit" } });
-  fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create profile" }));
   await waitFor(() => expect(mocks.clonePreset).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "workspace", sourcePresetId: "empirical_audit", name: "Field audit" })));
   await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledWith(expect.objectContaining({ presetId: "preset-new", expectedRevision: 3 })));
   expect(onSnapshot).toHaveBeenCalled();
@@ -115,23 +117,23 @@ it("edits a custom preset as a draft, saves with the expected revision, and guar
   renderEditor();
   await screen.findByRole("heading", { name: "Empirical audit" });
   fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
-  const name = await screen.findByLabelText("Preset name");
+  const name = await screen.findByLabelText("Profile name");
   expect(name).toHaveValue("My audit");
   expect(screen.getByText("based on Empirical audit")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Preset instructions"), { target: { value: "Check the estimand. <workspace_context>" } });
+  fireEvent.change(screen.getByLabelText("Supplemental instructions"), { target: { value: "Check the estimand. <workspace_context>" } });
   expect(screen.getByText(/reserved for the host/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: "Modules" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Tools & context" }));
   fireEvent.click(screen.getByRole("switch", { name: "Evidence inspector" }));
   fireEvent.click(screen.getByRole("button", { name: "Paper + ledger" }));
   expect(screen.getByText("Unsaved")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Use in this conversation" })).toBeDisabled();
 
   mocks.confirmDialog.mockResolvedValueOnce(false);
-  fireEvent.click(screen.getByRole("button", { name: /Plain conversation/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Codex default/ }));
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
-  expect(screen.getByLabelText("Preset name")).toBeInTheDocument();
+  expect(screen.getByLabelText("Profile name")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Save preset" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
   await waitFor(() => expect(mocks.updatePreset).toHaveBeenCalledWith(expect.objectContaining({
     presetId: "preset-custom", expectedRevision: 2, name: "My audit", instructions: "Check the estimand. <workspace_context>",
     modules: ["research_structure", "empirical_audit", "paper_context", "paper_tools", "research_ledger", "evidence_inspector"],
@@ -180,7 +182,7 @@ it("shows the inheritance table with the winning scope and writes to global, wor
 it("offers to switch an inspect conversation to Edit beside an execution module", async () => {
   renderEditor();
   await screen.findByRole("heading", { name: "Empirical audit" });
-  fireEvent.click(screen.getByRole("tab", { name: "Modules" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Tools & context" }));
   fireEvent.click(screen.getByRole("button", { name: "Switch this conversation to Edit" }));
   await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledWith(expect.objectContaining({ overrides: { commandNetwork: false, mode: "edit" } })));
 });
@@ -207,4 +209,108 @@ it("disables workspace-scope cells for an unfiled conversation", async () => {
   const table = await screen.findByRole("table");
   expect(within(table).queryByRole("button", { name: "Override Access mode for Workspace" })).not.toBeInTheDocument();
   expect(within(table).getByRole("button", { name: "Override Access mode for Global" })).toBeInTheDocument();
+});
+
+it("shows the Codex default prompt layers honestly and keeps the built-in read-only", async () => {
+  mocks.effectiveHarness.mockResolvedValue(effective("plain"));
+  renderEditor({ snapshot: snapshot("plain") });
+  await screen.findByRole("heading", { name: "Codex default", level: 2 });
+  expect(screen.getByLabelText("Base prompt mode")).toBeDisabled();
+  expect(screen.getByLabelText("Base prompt mode")).toHaveValue("default");
+  expect(await screen.findByLabelText("Codex native base prompt")).toHaveTextContent("Cached base template");
+  expect(screen.queryByRole("textbox", { name: "Supplemental instructions" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save profile" })).not.toBeInTheDocument();
+});
+
+it("creates a blank profile for all Workspaces and selects it", async () => {
+  renderEditor();
+  await screen.findByRole("heading", { name: "Empirical audit" });
+  fireEvent.click(screen.getByRole("button", { name: "New profile" }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Profile name"), { target: { value: "General writer" } });
+  fireEvent.change(within(dialog).getByLabelText("Available in"), { target: { value: "global" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create profile" }));
+  await waitFor(() => expect(mocks.clonePreset).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: null, sourcePresetId: "plain", name: "General writer" })));
+  await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledWith(expect.objectContaining({ presetId: "preset-new" })));
+});
+
+it("searches profiles by name and description", async () => {
+  renderEditor();
+  await screen.findByRole("heading", { name: "Empirical audit" });
+  fireEvent.change(screen.getByLabelText("Search agent profiles"), { target: { value: "Mine" } });
+  expect(screen.getByRole("button", { name: /My audit/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Codex default/ })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Search agent profiles"), { target: { value: "No such profile" } });
+  expect(screen.getByText("No profiles match your search.")).toBeVisible();
+});
+
+it("discards a draft when navigating away and does not resurrect it on return", async () => {
+  renderEditor();
+  await screen.findByRole("heading", { name: "Empirical audit" });
+  fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
+  await screen.findByLabelText("Profile name");
+  fireEvent.change(await screen.findByLabelText("Supplemental instructions"), { target: { value: "Unsaved prompt" } });
+  fireEvent.click(screen.getByRole("button", { name: /Codex default/ }));
+  await screen.findByRole("heading", { name: "Codex default", level: 2 });
+  fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
+  await screen.findByLabelText("Profile name");
+  expect(screen.getByRole("textbox", { name: "Supplemental instructions" })).toHaveValue("Check the estimand.");
+});
+
+it("retains the creation dialog and name when saving fails", async () => {
+  mocks.clonePreset.mockRejectedValueOnce(new Error("Could not save profile"));
+  renderEditor();
+  await screen.findByRole("heading", { name: "Empirical audit" });
+  fireEvent.click(screen.getByRole("button", { name: "New profile" }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Profile name"), { target: { value: "Keep this name" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create profile" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Could not save profile");
+  expect(within(dialog).getByLabelText("Profile name")).toHaveValue("Keep this name");
+  expect(mocks.updateSession).not.toHaveBeenCalled();
+});
+
+it("saves a replacement separately from supplemental instructions and explicitly restores inheritance", async () => {
+  renderEditor();
+  await screen.findByRole("heading", { name: "Empirical audit" });
+  fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
+  await screen.findByLabelText("Profile name");
+  fireEvent.change(await screen.findByLabelText("Base prompt mode"), { target: { value: "replace" } });
+  expect(screen.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Replacement base prompt"), { target: { value: "You are a writing partner." } });
+  const saved = { ...custom, baseInstructions: "You are a writing partner.", revision: 3 };
+  mocks.harnessCatalog.mockResolvedValue({ ...catalog(), presets: [...catalog().presets.filter(p => p.id !== custom.id), saved] });
+  fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+  await waitFor(() => expect(mocks.updatePreset).toHaveBeenCalledWith(expect.objectContaining({ basePrompt: { mode: "replace", text: "You are a writing partner." }, instructions: custom.instructions })));
+  await waitFor(() => expect(screen.queryByText("Unsaved")).not.toBeInTheDocument());
+  fireEvent.change(screen.getByLabelText("Base prompt mode"), { target: { value: "default" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+  await waitFor(() => expect(mocks.updatePreset).toHaveBeenLastCalledWith(expect.objectContaining({ basePrompt: { mode: "codexDefault" }, expectedRevision: 3 })));
+});
+
+it("lets a custom profile start from a viewable native template with its provenance", async () => {
+  renderEditor();
+  await screen.findByRole("heading", { name: "Empirical audit" });
+  fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
+  await screen.findByLabelText("Profile name");
+  fireEvent.click(await screen.findByText("View Codex default prompt"));
+  expect(await screen.findByLabelText("Codex native base prompt")).toHaveTextContent("Cached base template");
+  expect(screen.getByText(/does not establish which default/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Use this template as replacement" }));
+  expect(screen.getByLabelText("Base prompt mode")).toHaveValue("replace");
+  expect(screen.getByLabelText("Replacement base prompt")).toHaveValue("Cached base template");
+  expect(screen.getByLabelText("Supplemental instructions")).toHaveValue(custom.instructions);
+});
+
+it("keeps replacement editing available when the cache cannot be read", async () => {
+  mocks.nativePromptCatalog.mockRejectedValue(new Error("Cache unavailable"));
+  renderEditor();
+  await screen.findByRole("heading", { name: "Empirical audit" });
+  fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
+  await screen.findByLabelText("Profile name");
+  fireEvent.click(await screen.findByText("View Codex default prompt"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Cache unavailable");
+  fireEvent.change(screen.getByLabelText("Base prompt mode"), { target: { value: "replace" } });
+  fireEvent.change(screen.getByLabelText("Replacement base prompt"), { target: { value: "My base prompt" } });
+  expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
 });
