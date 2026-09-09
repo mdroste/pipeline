@@ -202,10 +202,17 @@ pub struct HeadlessCheckReport {
 async fn prepare_headless_run(
     options: &HeadlessRunOptions,
 ) -> Result<(RunSnapshot, crate::deps::DepsReport), String> {
-    crate::safety::validate_runtime_context(&options.variables, "Run variables")?;
-    crate::safety::validate_runtime_context(&options.extra_inputs, "Named input paths")?;
     let snapshot =
         load_run_snapshot_for_workflow(options.profile_id.as_deref(), options.workflow.as_ref())?;
+    Box::pin(prepare_headless_snapshot(options, snapshot)).await
+}
+
+async fn prepare_headless_snapshot(
+    options: &HeadlessRunOptions,
+    snapshot: RunSnapshot,
+) -> Result<(RunSnapshot, crate::deps::DepsReport), String> {
+    crate::safety::validate_runtime_context(&options.variables, "Run variables")?;
+    crate::safety::validate_runtime_context(&options.extra_inputs, "Named input paths")?;
     validate_runtime_bindings(
         &snapshot.config,
         &options.variables,
@@ -305,9 +312,36 @@ pub async fn run_headless_with_options(
     bus: crate::emit::EventBus,
     options: HeadlessRunOptions,
 ) -> Result<serde_json::Value, String> {
+    Box::pin(run_headless_batch_item(bus, options, None)).await
+}
+
+/// Opaque immutable settings/workflow capture shared by every document in a batch.
+#[derive(Clone)]
+pub struct HeadlessBatchSnapshot(RunSnapshot);
+impl HeadlessBatchSnapshot {
+    pub fn capture(
+        profile: Option<&str>,
+        workflow: Option<&HeadlessWorkflow>,
+    ) -> Result<Self, String> {
+        let snapshot = load_run_snapshot_for_workflow(profile, workflow)?;
+        if snapshot.config.extraction.input_mode.trim() == "none" {
+            return Err("Batch processing requires a workflow that accepts input".into());
+        }
+        Ok(Self(snapshot))
+    }
+}
+
+pub async fn run_headless_batch_item(
+    bus: crate::emit::EventBus,
+    options: HeadlessRunOptions,
+    batch: Option<&HeadlessBatchSnapshot>,
+) -> Result<serde_json::Value, String> {
     let preflight_cancel_epoch = current_cancel_epoch();
     let _ = crate::runs::recover_resumable_runs();
-    let (snapshot, dependencies) = prepare_headless_run(&options).await?;
+    let (snapshot, dependencies) = match batch {
+        Some(batch) => prepare_headless_snapshot(&options, batch.0.clone()).await?,
+        None => prepare_headless_run(&options).await?,
+    };
     require_snapshot_dependencies(&dependencies)?;
     let guard = acquire_pipeline_guard()?;
     PipelineTask::spawn(

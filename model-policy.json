@@ -27,7 +27,6 @@
         { "id": "gpt-4o-mini", "input_price_per_million": 0.15, "output_price_per_million": 0.6 }
       ]
     },
-    "antigravity:cli": { "roles": {}, "models": [] },
     "antigravity:api": {
       "roles": { "quality": "gemini-3.1-pro-preview", "balanced": "gemini-3.6-flash", "fast": "gemini-3.5-flash-lite" },
       "models": [

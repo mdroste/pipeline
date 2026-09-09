@@ -11,28 +11,65 @@ import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import { confirmDialog } from "./DialogService";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type { ConversationSnapshot, EffectiveHarness, HarnessCatalog, HarnessPreset, WorkspaceConfig } from "../lib/workbenchTypes";
-import HarnessPresetPanel, { type PresetDraft } from "./harness-editor/HarnessPresetPanel";
+import type {
+  ConversationSnapshot,
+  EffectiveHarness,
+  HarnessCatalog,
+  HarnessPreset,
+  WorkspaceConfig,
+} from "../lib/workbenchTypes";
+import HarnessPresetPanel, {
+  type PresetDraft,
+} from "./harness-editor/HarnessPresetPanel";
 import HarnessAccessTable from "./harness-editor/HarnessAccessTable";
 import HarnessPreviewPanel from "./harness-editor/HarnessPreviewPanel";
-import { type AccessKey, type AccessScope, compactAccessSummary, compactModuleSummary, describePreset } from "./harness-editor/harnessHelpers";
+import {
+  type AccessKey,
+  type AccessScope,
+  compactAccessSummary,
+  compactModuleSummary,
+  describePreset,
+} from "./harness-editor/harnessHelpers";
 
-type Selection = { kind: "preset"; id: string } | { kind: "access" } | { kind: "preview" };
+type Selection =
+  { kind: "preset"; id: string } | { kind: "access" } | { kind: "preview" };
 
-function operation(prefix: string) { return `${prefix}-${crypto.randomUUID()}`; }
+function operation(prefix: string) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
 
 function draftFrom(preset: HarnessPreset): PresetDraft {
-  return { name: preset.name, description: preset.description, instructions: preset.instructions, baseInstructions: preset.baseInstructions ?? null, modules: [...preset.modules] };
+  return {
+    name: preset.name,
+    description: preset.description,
+    instructions: preset.instructions,
+    baseInstructions: preset.baseInstructions ?? null,
+    modules: [...preset.modules],
+  };
 }
 
 function sameDraft(a: PresetDraft, b: PresetDraft) {
-  return a.name === b.name && a.description === b.description && a.instructions === b.instructions && a.baseInstructions === b.baseInstructions
-    && a.modules.length === b.modules.length && a.modules.every((id, index) => id === b.modules[index]);
+  return (
+    a.name === b.name &&
+    a.description === b.description &&
+    a.instructions === b.instructions &&
+    a.baseInstructions === b.baseInstructions &&
+    a.modules.length === b.modules.length &&
+    a.modules.every((id, index) => id === b.modules[index])
+  );
 }
 
-const sectionHeader = "sticky top-0 z-[1] bg-gray-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400";
+const sectionHeader =
+  "sticky top-0 z-[1] bg-gray-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400";
 
-export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, disabled = false, onBusy, beforeChange }: {
+export default function WorkspaceHarnessEditor({
+  snapshot,
+  onSnapshot,
+  onClose,
+  disabled = false,
+  onBusy,
+  beforeChange,
+}: {
   snapshot: ConversationSnapshot;
   onSnapshot: (snapshot: ConversationSnapshot) => void;
   onClose: () => void;
@@ -44,49 +81,95 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
   const compact = width !== null && width < 760;
   const sessionId = snapshot.session.id;
   const workspaceId = snapshot.session.workspaceId;
-  const [panelWidth, setPanelWidth] = usePersistentPanelWidth("workspace.ui.harnessPanelWidth", 300, 220, 480);
+  const [panelWidth, setPanelWidth] = usePersistentPanelWidth(
+    "workspace.ui.harnessPanelWidth",
+    300,
+    220,
+    480,
+  );
   const [catalog, setCatalog] = useState<HarnessCatalog | null>(null);
   const [effective, setEffective] = useState<EffectiveHarness | null>(null);
-  const [globalConfig, setGlobalConfig] = useState<WorkspaceConfig | null>(null);
-  const [workspaceConfig, setWorkspaceConfig] = useState<WorkspaceConfig | null>(null);
+  const [globalConfig, setGlobalConfig] = useState<WorkspaceConfig | null>(
+    null,
+  );
+  const [workspaceConfig, setWorkspaceConfig] =
+    useState<WorkspaceConfig | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   // The draft is keyed by preset id + revision so a save, restore, or
   // selection change reads fresh values on the very next render; no effect
   // can leave a stale draft on screen for one frame.
-  const [draftState, setDraftState] = useState<{ key: string; draft: PresetDraft } | null>(null);
-  const [naming, setNaming] = useState<{ sourceId: string; defaultName: string; fresh?: boolean } | null>(null);
+  const [draftState, setDraftState] = useState<{
+    key: string;
+    draft: PresetDraft;
+  } | null>(null);
+  const [naming, setNaming] = useState<{
+    sourceId: string;
+    defaultName: string;
+    fresh?: boolean;
+  } | null>(null);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [nextCatalog, nextEffective, nextGlobal, nextWorkspace] = await Promise.all([
-      workbenchClient.harnessCatalog(workspaceId),
-      workbenchClient.effectiveHarness(sessionId),
-      workbenchClient.getWorkspaceConfig(null),
-      workspaceId ? workbenchClient.getWorkspaceConfig(workspaceId) : Promise.resolve(null),
-    ]);
-    setCatalog(nextCatalog); setEffective(nextEffective); setGlobalConfig(nextGlobal); setWorkspaceConfig(nextWorkspace);
+    const [nextCatalog, nextEffective, nextGlobal, nextWorkspace] =
+      await Promise.all([
+        workbenchClient.harnessCatalog(workspaceId),
+        workbenchClient.effectiveHarness(sessionId),
+        workbenchClient.getWorkspaceConfig(null),
+        workspaceId
+          ? workbenchClient.getWorkspaceConfig(workspaceId)
+          : Promise.resolve(null),
+      ]);
+    setCatalog(nextCatalog);
+    setEffective(nextEffective);
+    setGlobalConfig(nextGlobal);
+    setWorkspaceConfig(nextWorkspace);
   }, [sessionId, workspaceId]);
 
-  useEffect(() => { void load().catch((cause) => setError(workbenchErrorMessage(cause))); }, [load]);
+  useEffect(() => {
+    void load().catch((cause) => setError(workbenchErrorMessage(cause)));
+  }, [load]);
 
   useEffect(() => {
-    if (!selection && effective) setSelection({ kind: "preset", id: effective.preset.id });
+    if (!selection && effective)
+      setSelection({ kind: "preset", id: effective.preset.id });
   }, [effective, selection]);
 
   const selectedPreset = useMemo(
-    () => (selection?.kind === "preset" ? catalog?.presets.find((preset) => preset.id === selection.id) ?? null : null),
+    () =>
+      selection?.kind === "preset"
+        ? (catalog?.presets.find((preset) => preset.id === selection.id) ??
+          null)
+        : null,
     [catalog, selection],
   );
 
-  const draftKey = selectedPreset ? `${selectedPreset.id}:${selectedPreset.revision}` : "";
-  const draft = selectedPreset ? (draftState?.key === draftKey ? draftState.draft : draftFrom(selectedPreset)) : null;
-  const setDraft = (next: PresetDraft) => setDraftState({ key: draftKey, draft: next });
+  const draftKey = selectedPreset
+    ? `${selectedPreset.id}:${selectedPreset.revision}`
+    : "";
+  const draft = selectedPreset
+    ? draftState?.key === draftKey
+      ? draftState.draft
+      : draftFrom(selectedPreset)
+    : null;
+  const setDraft = (next: PresetDraft) =>
+    setDraftState({ key: draftKey, draft: next });
 
-  const dirty = Boolean(selectedPreset && draft && !selectedPreset.builtIn && !sameDraft(draft, draftFrom(selectedPreset)));
+  const dirty = Boolean(
+    selectedPreset &&
+    draft &&
+    !selectedPreset.builtIn &&
+    !sameDraft(draft, draftFrom(selectedPreset)),
+  );
 
-  const guardDirty = async () => !dirty || confirmDialog("Discard unsaved changes to this profile?", { title: "Unsaved changes", confirmLabel: "Discard", destructive: true });
+  const guardDirty = async () =>
+    !dirty ||
+    confirmDialog("Discard unsaved changes to this profile?", {
+      title: "Unsaved changes",
+      confirmLabel: "Discard",
+      destructive: true,
+    });
 
   const navigate = async (next: Selection) => {
     if (!(await guardDirty())) return;
@@ -96,11 +179,25 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
 
   const act = async (fn: () => Promise<void>) => {
     if (busy || disabled) return;
-    setBusy(true); onBusy?.(true); setError(null);
-    try { await beforeChange?.(); await fn(); await load(); } catch (cause) { setError(workbenchErrorMessage(cause)); } finally { setBusy(false); onBusy?.(false); }
+    setBusy(true);
+    onBusy?.(true);
+    setError(null);
+    try {
+      await beforeChange?.();
+      await fn();
+      await load();
+    } catch (cause) {
+      setError(workbenchErrorMessage(cause));
+    } finally {
+      setBusy(false);
+      onBusy?.(false);
+    }
   };
 
-  const patchSession = async (values: { presetId?: string; overrides?: Record<string, unknown> }) => {
+  const patchSession = async (values: {
+    presetId?: string;
+    overrides?: Record<string, unknown>;
+  }) => {
     const latest = await workbenchClient.conversationSnapshot(sessionId);
     const updated = await workbenchClient.updateSession({
       sessionId: latest.session.id,
@@ -109,76 +206,116 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
       presetId: values.presetId,
       overrides: values.overrides,
     });
-    onSnapshot({ ...latest, session: updated.record, sequence: updated.sequence });
+    onSnapshot({
+      ...latest,
+      session: updated.record,
+      sequence: updated.sequence,
+    });
   };
 
-  const setAccess = (scope: Exclude<AccessScope, "builtIn">, key: AccessKey, value: string | number | boolean | undefined) => void act(async () => {
-    if (scope === "conversation") {
-      const latest = await workbenchClient.conversationSnapshot(sessionId);
-      const overrides = { ...latest.session.overrides };
-      if (value === undefined) delete overrides[key]; else overrides[key] = value;
-      await patchSession({ overrides });
-      return;
-    }
-    const config = scope === "global" ? globalConfig : workspaceConfig;
-    if (!config) throw new Error(scope === "workspace" ? "Move this conversation to a project to use project defaults." : "Global defaults are still loading.");
-    const body = { ...config.body };
-    if (value === undefined) delete body[key]; else body[key] = value;
-    await workbenchClient.saveWorkspaceConfig({
-      workspaceId: scope === "global" ? null : workspaceId,
-      expectedRevision: config.revision,
-      body,
-      operationId: operation(`${scope}-defaults`),
+  const setAccess = (
+    scope: Exclude<AccessScope, "builtIn">,
+    key: AccessKey,
+    value: string | number | boolean | undefined,
+  ) =>
+    void act(async () => {
+      if (scope === "conversation") {
+        const latest = await workbenchClient.conversationSnapshot(sessionId);
+        const overrides = { ...latest.session.overrides };
+        if (value === undefined) delete overrides[key];
+        else overrides[key] = value;
+        await patchSession({ overrides });
+        return;
+      }
+      const config = scope === "global" ? globalConfig : workspaceConfig;
+      if (!config)
+        throw new Error(
+          scope === "workspace"
+            ? "Move this conversation to a project to use project defaults."
+            : "Global defaults are still loading.",
+        );
+      const body = { ...config.body };
+      if (value === undefined) delete body[key];
+      else body[key] = value;
+      await workbenchClient.saveWorkspaceConfig({
+        workspaceId: scope === "global" ? null : workspaceId,
+        expectedRevision: config.revision,
+        body,
+        operationId: operation(`${scope}-defaults`),
+      });
     });
-  });
 
-  const savePreset = () => void act(async () => {
-    if (!selectedPreset || !draft) return;
-    await workbenchClient.updatePreset({
-      presetId: selectedPreset.id,
-      expectedRevision: selectedPreset.revision,
-      name: draft.name.trim(),
-      description: draft.description.trim(),
-      instructions: draft.instructions,
-      basePrompt: draft.baseInstructions === null ? { mode: "codexDefault" } : { mode: "replace", text: draft.baseInstructions },
-      modules: draft.modules,
-      operationId: operation("edit-preset"),
+  const savePreset = () =>
+    void act(async () => {
+      if (!selectedPreset || !draft) return;
+      await workbenchClient.updatePreset({
+        presetId: selectedPreset.id,
+        expectedRevision: selectedPreset.revision,
+        name: draft.name.trim(),
+        description: draft.description.trim(),
+        instructions: draft.instructions,
+        basePrompt:
+          draft.baseInstructions === null
+            ? { mode: "codexDefault" }
+            : { mode: "replace", text: draft.baseInstructions },
+        modules: draft.modules,
+        operationId: operation("edit-preset"),
+      });
     });
-  });
 
-  const restorePreset = () => void act(async () => {
-    if (!selectedPreset || !catalog) return;
-    const source = catalog.presets.find((preset) => preset.id === selectedPreset.sourcePresetId);
-    if (!source) throw new Error("The source profile is no longer available.");
-    const confirmed = await confirmDialog(
-      `Replace this profile's description, instructions, and modules with the current values of "${source.name}"? The name is kept and your edits are lost.`,
-      { title: "Restore from source", confirmLabel: "Restore", destructive: true },
-    );
-    if (!confirmed) return;
-    await workbenchClient.updatePreset({
-      presetId: selectedPreset.id,
-      expectedRevision: selectedPreset.revision,
-      name: selectedPreset.name,
-      description: source.description,
-      instructions: source.instructions,
-      basePrompt: source.baseInstructions == null ? { mode: "codexDefault" } : { mode: "replace", text: source.baseInstructions },
-      modules: [...source.modules],
-      operationId: operation("restore-preset"),
+  const restorePreset = () =>
+    void act(async () => {
+      if (!selectedPreset || !catalog) return;
+      const source = catalog.presets.find(
+        (preset) => preset.id === selectedPreset.sourcePresetId,
+      );
+      if (!source)
+        throw new Error("The source profile is no longer available.");
+      const confirmed = await confirmDialog(
+        `Replace this profile's description, instructions, and modules with the current values of "${source.name}"? The name is kept and your edits are lost.`,
+        {
+          title: "Restore from source",
+          confirmLabel: "Restore",
+          destructive: true,
+        },
+      );
+      if (!confirmed) return;
+      await workbenchClient.updatePreset({
+        presetId: selectedPreset.id,
+        expectedRevision: selectedPreset.revision,
+        name: selectedPreset.name,
+        description: source.description,
+        instructions: source.instructions,
+        basePrompt:
+          source.baseInstructions == null
+            ? { mode: "codexDefault" }
+            : { mode: "replace", text: source.baseInstructions },
+        modules: [...source.modules],
+        operationId: operation("restore-preset"),
+      });
     });
-  });
 
-  const clonePreset = (name: string, targetWorkspaceId: string | null) => void act(async () => {
-    if (!naming) return;
-    const source = naming.sourceId;
-    const created = await workbenchClient.clonePreset({ workspaceId: targetWorkspaceId, sourceWorkspaceId: workspaceId, sourcePresetId: source, name, operationId: operation("clone-preset") });
-    // Keep the created profile discoverable even if switching the conversation fails.
-    setNaming(null);
-    setCatalog(old => old ? { ...old, presets: [...old.presets, created] } : old);
-    setQuery("");
-    setDraftState(null);
-    setSelection({ kind: "preset", id: created.id });
-    await patchSession({ presetId: created.id });
-  });
+  const clonePreset = (name: string, targetWorkspaceId: string | null) =>
+    void act(async () => {
+      if (!naming) return;
+      const source = naming.sourceId;
+      const created = await workbenchClient.clonePreset({
+        workspaceId: targetWorkspaceId,
+        sourceWorkspaceId: workspaceId,
+        sourcePresetId: source,
+        name,
+        operationId: operation("clone-preset"),
+      });
+      // Keep the created profile discoverable even if switching the conversation fails.
+      setNaming(null);
+      setCatalog((old) =>
+        old ? { ...old, presets: [...old.presets, created] } : old,
+      );
+      setQuery("");
+      setDraftState(null);
+      setSelection({ kind: "preset", id: created.id });
+      await patchSession({ presetId: created.id });
+    });
 
   const requestNaming = async (next: NonNullable<typeof naming>) => {
     if (busy || disabled || !(await guardDirty())) return;
@@ -186,11 +323,30 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
     setError(null);
     setNaming(next);
   };
-  const newProfile = () => void requestNaming({ sourceId: "plain", defaultName: "New agent profile", fresh: true });
-  const requestClose = () => { if (!busy) void guardDirty().then((ok) => { if (ok) onClose(); }); };
+  const newProfile = () =>
+    void requestNaming({
+      sourceId: "plain",
+      defaultName: "New agent profile",
+      fresh: true,
+    });
+  const requestClose = () => {
+    if (!busy)
+      void guardDirty().then((ok) => {
+        if (ok) onClose();
+      });
+  };
 
-  const successor = Boolean(snapshot.activeBinding?.harnessFingerprint && effective && snapshot.activeBinding.harnessFingerprint !== effective.fingerprint);
-  const filtered = catalog?.presets.filter((preset) => `${preset.name} ${preset.description}`.toLowerCase().includes(query.trim().toLowerCase())) ?? [];
+  const successor = Boolean(
+    snapshot.activeBinding?.harnessFingerprint &&
+    effective &&
+    snapshot.activeBinding.harnessFingerprint !== effective.fingerprint,
+  );
+  const filtered =
+    catalog?.presets.filter((preset) =>
+      `${preset.name} ${preset.description}`
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+    ) ?? [];
   const builtIns = filtered.filter((preset) => preset.builtIn);
   const customs = filtered.filter((preset) => !preset.builtIn);
 
@@ -207,16 +363,29 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
       >
         <span className="flex items-center justify-between gap-2">
           <span className="min-w-0">
-            <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">{preset.name}</span>
-            <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">{preset.description || describePreset(preset, catalog?.modules ?? [])}</span>
+            <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
+              {preset.name}
+            </span>
+            <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">
+              {preset.description ||
+                describePreset(preset, catalog?.modules ?? [])}
+            </span>
           </span>
-          {inUse && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">In use</span>}
+          {inUse && (
+            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+              In use
+            </span>
+          )}
         </span>
       </button>
     );
   };
 
-  const entryRow = (kind: "access" | "preview", label: string, detail: string) => {
+  const entryRow = (
+    kind: "access" | "preview",
+    label: string,
+    detail: string,
+  ) => {
     const selected = selection?.kind === kind;
     return (
       <button
@@ -225,61 +394,168 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
         onClick={() => void navigate({ kind })}
         className={`w-full border-b border-gray-100 px-4 py-2.5 text-left transition-colors dark:border-gray-800 ${selected ? "bg-white shadow-sm dark:bg-gray-800" : "hover:bg-gray-100/70 dark:hover:bg-gray-800/50"}`}
       >
-        <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">{label}</span>
-        <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">{detail}</span>
+        <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
+          {label}
+        </span>
+        <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">
+          {detail}
+        </span>
       </button>
     );
   };
 
   return (
-    <div ref={root} className={`relative flex h-full min-h-0 min-w-0 flex-1 ${compact ? "flex-col" : ""}`} data-testid="workspace-harness-editor">
-      {compact && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 p-2 text-xs text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
-        <button type="button" onClick={requestClose} className="rounded border border-gray-300 px-2 py-1.5 dark:border-gray-600">Close editor</button>
-        <button type="button" disabled={busy || disabled || !catalog} onClick={newProfile} className="rounded border border-gray-300 px-2 py-1.5 disabled:opacity-50 dark:border-gray-600">New profile</button>
-        <select aria-label="Agent profile editor section" className="min-w-0 max-w-full flex-1 rounded border border-gray-300 bg-white p-1.5 dark:border-gray-600 dark:bg-gray-800" value={selection?.kind === "preset" ? selection.id : selection?.kind ?? ""}
-          onChange={event => void navigate(event.target.value === "access" || event.target.value === "preview" ? { kind: event.target.value } : { kind: "preset", id: event.target.value })}>
-          {!selection && <option value="">Loading…</option>}
-          {catalog?.presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
-          <option value="access">Access & inheritance</option><option value="preview">Effective preview</option>
-        </select>
-      </div>}
-      {!compact && <SidebarPanel aria-label="Agent profile navigation" width={panelWidth} defaultWidth={300} min={220} max={480} onResize={setPanelWidth} resizeLabel="Resize agent profile panel">
-        <SidebarHeader title="Agent profiles">
-          <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400">{snapshot.session.title}</p>
-          <button type="button" onClick={requestClose} className="mt-3 rounded text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">Close editor</button>
-          <button type="button" disabled={busy || disabled || !catalog} onClick={newProfile} className="mt-3 block w-full rounded-lg bg-gray-900 px-3 py-2 text-xs font-medium text-white disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900">New profile</button>
-          <input aria-label="Search agent profiles" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search profiles…" className="mt-3 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs dark:border-gray-600 dark:bg-gray-800" />
-        </SidebarHeader>
-        {successor && (
-          <p className="m-2 rounded border border-blue-200 bg-blue-50 p-2 text-[11px] text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-            The assistant will start fresh with the new settings and saved project context. Earlier messages remain in the transcript.
-          </p>
-        )}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className={sectionHeader}>Profiles</div>
-          <div className="px-4 pt-2 text-[10px] text-gray-400">Built-in</div>
-          {builtIns.map(presetRow)}
-          {customs.length > 0 && <div className="px-4 pt-2 text-[10px] text-gray-400">Your profiles</div>}
-          {customs.map(presetRow)}
-          {catalog && !catalog.presets.some(preset => !preset.builtIn) && !query && (
-            <p className="px-4 py-2 text-[11px] text-gray-500 dark:text-gray-400">Create a profile or duplicate a built-in to get started.</p>
-          )}
-          {query && filtered.length === 0 && <p className="px-4 py-3 text-xs text-gray-500">No profiles match your search.</p>}
-          <div className={sectionHeader}>This conversation</div>
-          {entryRow("access", "Access & inheritance", effective ? compactAccessSummary(effective) : "Loading…")}
-          {entryRow("preview", "Effective preview", effective ? compactModuleSummary(effective) : "Loading…")}
+    <div
+      ref={root}
+      className={`relative flex h-full min-h-0 min-w-0 flex-1 ${compact ? "flex-col" : ""}`}
+      data-testid="workspace-harness-editor"
+    >
+      {compact && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 p-2 text-xs text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+          <button
+            type="button"
+            onClick={requestClose}
+            className="rounded border border-gray-300 px-2 py-1.5 dark:border-gray-600"
+          >
+            Close editor
+          </button>
+          <button
+            type="button"
+            disabled={busy || disabled || !catalog}
+            onClick={newProfile}
+            className="rounded border border-gray-300 px-2 py-1.5 disabled:opacity-50 dark:border-gray-600"
+          >
+            New profile
+          </button>
+          <select
+            aria-label="Agent profile editor section"
+            className="min-w-0 max-w-full flex-1 rounded border border-gray-300 bg-white p-1.5 dark:border-gray-600 dark:bg-gray-800"
+            value={
+              selection?.kind === "preset"
+                ? selection.id
+                : (selection?.kind ?? "")
+            }
+            onChange={(event) =>
+              void navigate(
+                event.target.value === "access" ||
+                  event.target.value === "preview"
+                  ? { kind: event.target.value }
+                  : { kind: "preset", id: event.target.value },
+              )
+            }
+          >
+            {!selection && <option value="">Loading…</option>}
+            {catalog?.presets.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.name}
+              </option>
+            ))}
+            <option value="access">Access & inheritance</option>
+            <option value="preview">Effective preview</option>
+          </select>
         </div>
-      </SidebarPanel>}
+      )}
+      {!compact && (
+        <SidebarPanel
+          aria-label="Agent profile navigation"
+          width={panelWidth}
+          defaultWidth={300}
+          min={220}
+          max={480}
+          onResize={setPanelWidth}
+          resizeLabel="Resize agent profile panel"
+        >
+          <SidebarHeader title="Agent profiles">
+            <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400">
+              {snapshot.session.title}
+            </p>
+            <button
+              type="button"
+              onClick={requestClose}
+              className="mt-3 rounded text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
+            >
+              Close editor
+            </button>
+            <button
+              type="button"
+              disabled={busy || disabled || !catalog}
+              onClick={newProfile}
+              className="mt-3 block w-full rounded-lg bg-gray-900 px-3 py-2 text-xs font-medium text-white disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900"
+            >
+              New profile
+            </button>
+            <input
+              aria-label="Search agent profiles"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search profiles…"
+              className="mt-3 w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs dark:border-gray-600 dark:bg-gray-800"
+            />
+          </SidebarHeader>
+          {successor && (
+            <p className="m-2 rounded border border-blue-200 bg-blue-50 p-2 text-[11px] text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+              The assistant will start fresh with the new settings and saved
+              project context. Earlier messages remain in the transcript.
+            </p>
+          )}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className={sectionHeader}>Profiles</div>
+            <div className="px-4 pt-2 text-[10px] text-gray-400">Built-in</div>
+            {builtIns.map(presetRow)}
+            {customs.length > 0 && (
+              <div className="px-4 pt-2 text-[10px] text-gray-400">
+                Your profiles
+              </div>
+            )}
+            {customs.map(presetRow)}
+            {catalog &&
+              !catalog.presets.some((preset) => !preset.builtIn) &&
+              !query && (
+                <p className="px-4 py-2 text-[11px] text-gray-500 dark:text-gray-400">
+                  Create a profile or duplicate a built-in to get started.
+                </p>
+              )}
+            {query && filtered.length === 0 && (
+              <p className="px-4 py-3 text-xs text-gray-500">
+                No profiles match your search.
+              </p>
+            )}
+            <div className={sectionHeader}>This conversation</div>
+            {entryRow(
+              "access",
+              "Access & inheritance",
+              effective ? compactAccessSummary(effective) : "Loading…",
+            )}
+            {entryRow(
+              "preview",
+              "Effective preview",
+              effective ? compactModuleSummary(effective) : "Loading…",
+            )}
+          </div>
+        </SidebarPanel>
+      )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white dark:bg-gray-900">
-        {error && <div role="alert" className="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{error}</div>}
+        {error && (
+          <div
+            role="alert"
+            className="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+          >
+            {error}
+          </div>
+        )}
         {!catalog || !effective ? (
           <p className="p-6 text-sm text-gray-500">Loading agent profiles…</p>
         ) : selection?.kind === "preset" && selectedPreset && draft ? (
           <HarnessPresetPanel
             key={selectedPreset.id}
             preset={selectedPreset}
-            sourcePreset={catalog.presets.find((preset) => preset.id === selectedPreset.sourcePresetId) ?? null}
+            sourcePreset={
+              catalog.presets.find(
+                (preset) => preset.id === selectedPreset.sourcePresetId,
+              ) ?? null
+            }
             catalog={catalog}
             effective={effective}
             inUse={effective.preset.id === selectedPreset.id}
@@ -287,8 +563,15 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
             dirty={dirty}
             busy={busy || disabled}
             onDraft={(patch) => setDraft({ ...draft, ...patch })}
-            onUse={() => void act(() => patchSession({ presetId: selectedPreset.id }))}
-            onClone={() => void requestNaming({ sourceId: selectedPreset.id, defaultName: `${selectedPreset.name} copy` })}
+            onUse={() =>
+              void act(() => patchSession({ presetId: selectedPreset.id }))
+            }
+            onClone={() =>
+              void requestNaming({
+                sourceId: selectedPreset.id,
+                defaultName: `${selectedPreset.name} copy`,
+              })
+            }
             onRestore={restorePreset}
             onSave={savePreset}
             onDiscard={() => setDraft(draftFrom(selectedPreset))}
@@ -296,12 +579,16 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
           />
         ) : selection?.kind === "access" ? (
           <div className="min-h-0 flex-1 overflow-auto p-4">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Access &amp; inheritance</h2>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              Access &amp; inheritance
+            </h2>
             <div className="mt-3">
               <HarnessAccessTable
                 effective={effective}
                 globalBody={globalConfig?.body ?? {}}
-                workspaceBody={workspaceId ? workspaceConfig?.body ?? {} : null}
+                workspaceBody={
+                  workspaceId ? (workspaceConfig?.body ?? {}) : null
+                }
                 workspaceName={snapshot.workspace?.name ?? null}
                 conversationOverrides={snapshot.session.overrides}
                 busy={busy || disabled}
@@ -312,17 +599,29 @@ export default function WorkspaceHarnessEditor({ snapshot, onSnapshot, onClose, 
           </div>
         ) : selection?.kind === "preview" ? (
           <div className="min-h-0 flex-1 overflow-auto p-4">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Effective preview</h2>
-            <div className="mt-3"><HarnessPreviewPanel effective={effective} catalog={catalog} snapshot={snapshot} /></div>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              Effective preview
+            </h2>
+            <div className="mt-3">
+              <HarnessPreviewPanel
+                effective={effective}
+                catalog={catalog}
+                snapshot={snapshot}
+              />
+            </div>
           </div>
         ) : (
-          <p className="p-6 text-sm text-gray-500">Select an agent profile to edit.</p>
+          <p className="p-6 text-sm text-gray-500">
+            Select an agent profile to edit.
+          </p>
         )}
       </div>
 
       {naming && (
         <AgentProfileDialog
-          title={naming.fresh ? "Create agent profile" : "Duplicate agent profile"}
+          title={
+            naming.fresh ? "Create agent profile" : "Duplicate agent profile"
+          }
           defaultName={naming.defaultName}
           workspaceId={workspaceId}
           workspaceName={snapshot.workspace?.name ?? "This project"}

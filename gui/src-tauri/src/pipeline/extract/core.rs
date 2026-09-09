@@ -383,6 +383,9 @@ pub(super) fn stage_pdf_input(source: &Path, root: &Path) -> Result<PathBuf, Str
 
 /// Find the main .tex file in a directory by looking for \documentclass.
 pub(crate) fn find_main_tex(dir: &Path) -> Option<PathBuf> {
+    if let Some(captured) = super::staged::main_file(dir) {
+        return captured;
+    }
     let tex_files: Vec<PathBuf> = fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())

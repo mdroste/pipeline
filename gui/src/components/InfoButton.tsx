@@ -47,8 +47,17 @@ export default function InfoButton({ label, children }: Props) {
         onClick={() => setOpen((value) => !value)}
         className="inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-500/40 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-200"
       >
-        <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
-          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-10.75a.75.75 0 00-1.5 0v.1a.75.75 0 001.5 0v-.1zm0 2.75a.75.75 0 00-1.5 0v3a.75.75 0 001.5 0v-3z" clipRule="evenodd" />
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          className="h-3.5 w-3.5"
+        >
+          <path
+            fillRule="evenodd"
+            d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-10.75a.75.75 0 00-1.5 0v.1a.75.75 0 001.5 0v-.1zm0 2.75a.75.75 0 00-1.5 0v3a.75.75 0 001.5 0v-3z"
+            clipRule="evenodd"
+          />
         </svg>
       </button>
       {open && (

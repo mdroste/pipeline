@@ -85,48 +85,44 @@ pub(super) async fn checkpoint_outputs(
     Ok(())
 }
 
-/// Remove checkpoint files at or above the given ordinal. Runs before a
-/// wave's final rewrite so its provisional completion-order checkpoints
-/// cannot linger next to the final ordering and double-load in recovery.
-/// Failure checkpoints (`failure_*.json`) have no numeric prefix and are
-/// never touched.
-pub(super) async fn remove_checkpoints_from(
+/// Publish a whole logical wave in one durable operation. Provisional unit
+/// files remain available if publication fails; recovery overlays only a
+/// successfully published wave. `steps` is a completion receipt, not inferred
+/// from the number of outputs (merges and fan-out change that number).
+pub(super) async fn checkpoint_wave(
     write_dir: Option<&str>,
     start: usize,
+    steps: Vec<String>,
+    outputs: &[StepOutput],
 ) -> Result<(), String> {
-    let Some(write_dir) = write_dir else {
+    let Some(root) = write_dir else {
         return Ok(());
     };
-    let directory = std::path::PathBuf::from(write_dir).join("checkpoints");
+    let directory = std::path::PathBuf::from(root).join("checkpoints");
+    let outputs = outputs.to_vec();
     tokio::task::spawn_blocking(move || {
-        let entries = match std::fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(format!("Failed to read checkpoint directory: {error}")),
-        };
-        for entry in entries {
-            let entry = entry.map_err(|error| format!("Failed to inspect checkpoint: {error}"))?;
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            let Some(ordinal) = name
-                .split('_')
-                .next()
-                .and_then(|prefix| prefix.parse::<usize>().ok())
-            else {
-                continue;
-            };
-            if ordinal >= start {
-                std::fs::remove_file(entry.path()).map_err(|error| {
-                    format!("Failed to replace provisional checkpoint: {error}")
-                })?;
-            }
-        }
+        use std::io::Write as _;
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        let destination = directory.join(format!(
+            "wave_{start:04}_{}.json",
+            step_slug(&steps.join("_"))
+        ));
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"checkpointVersion":1,"steps":steps,"outputs":outputs}),
+        )
+        .map_err(|e| e.to_string())?;
+        let mut temp = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
+        temp.write_all(&bytes).map_err(|e| e.to_string())?;
+        temp.as_file().sync_all().map_err(|e| e.to_string())?;
+        temp.persist(destination).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        std::fs::File::open(&directory)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
         Ok(())
     })
     .await
-    .map_err(|error| format!("Checkpoint cleanup task failed: {error}"))?
+    .map_err(|e| e.to_string())?
 }
 
 pub(super) async fn checkpoint_failure(

@@ -185,32 +185,45 @@ export default function PdfComparison({
           {progress}
         </p>
       )}
-      {secondary ? <SplitView storageKey={`pipeline.files.pdfSplit.${workspaceId}`} firstLabel={`Primary PDF: ${primary.title}`} secondLabel={`Second PDF: ${secondary.title}`}
-        first={<PdfReader
-          documentKey={`${workspaceId}:${primary.id}`}
-          title={primary.title}
-          initialPage={page}
-          load={() => loaders(primary.id)}
-          position={position}
-          onPosition={setPosition}
-          onSource={onSource}
-        />}
-        second={<PdfReader
-            documentKey={`${workspaceId}:${secondary.id}`}
-            title={secondary.title}
-            load={() => loaders(secondary.id)}
-            position={linked ? position : undefined}
-            onPosition={linked ? setPosition : undefined}
-          />}
-      /> : <div className="file-panes"><PdfReader
-          documentKey={`${workspaceId}:${primary.id}`}
-          title={primary.title}
-          initialPage={page}
-          load={() => loaders(primary.id)}
-          position={position}
-          onPosition={setPosition}
-          onSource={onSource}
-        /></div>}
+      {secondary ? (
+        <SplitView
+          storageKey={`pipeline.files.pdfSplit.${workspaceId}`}
+          firstLabel={`Primary PDF: ${primary.title}`}
+          secondLabel={`Second PDF: ${secondary.title}`}
+          first={
+            <PdfReader
+              documentKey={`${workspaceId}:${primary.id}`}
+              title={primary.title}
+              initialPage={page}
+              load={() => loaders(primary.id)}
+              position={position}
+              onPosition={setPosition}
+              onSource={onSource}
+            />
+          }
+          second={
+            <PdfReader
+              documentKey={`${workspaceId}:${secondary.id}`}
+              title={secondary.title}
+              load={() => loaders(secondary.id)}
+              position={linked ? position : undefined}
+              onPosition={linked ? setPosition : undefined}
+            />
+          }
+        />
+      ) : (
+        <div className="file-panes">
+          <PdfReader
+            documentKey={`${workspaceId}:${primary.id}`}
+            title={primary.title}
+            initialPage={page}
+            load={() => loaders(primary.id)}
+            position={position}
+            onPosition={setPosition}
+            onSource={onSource}
+          />
+        </div>
+      )}
     </div>
   );
 }

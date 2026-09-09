@@ -56,14 +56,17 @@ function jsonCandidates(text: string): unknown[] {
       parseAttempts >= MAX_PARSE_ATTEMPTS ||
       source.length > MAX_CANDIDATE_CHARS ||
       parsedChars + source.length > MAX_PARSE_CHARS
-    ) return;
+    )
+      return;
     parseAttempts += 1;
     parsedChars += source.length;
     const parsed = tryParse(source);
     if (parsed !== undefined) candidates.push(parsed);
   };
   add(trimmed);
-  for (const fence of trimmed.matchAll(/```(?:[a-zA-Z0-9_-]*)?\s*\n?([\s\S]*?)```/g)) {
+  for (const fence of trimmed.matchAll(
+    /```(?:[a-zA-Z0-9_-]*)?\s*\n?([\s\S]*?)```/g,
+  )) {
     add(fence[1].trim());
     if (candidates.length >= MAX_CANDIDATES) return candidates;
   }
@@ -158,10 +161,15 @@ export function extractJson(text: string): unknown | null {
 }
 
 function normalizeSeverity(value: unknown): string {
-  const severity = String(value ?? "").toLowerCase().trim();
+  const severity = String(value ?? "")
+    .toLowerCase()
+    .trim();
   if (["critical", "major", "severe", "high"].includes(severity)) return "high";
   if (["moderate", "medium", "warning"].includes(severity)) return "medium";
-  if (["minor", "low", "suggestion", "info", "informational"].includes(severity)) return "low";
+  if (
+    ["minor", "low", "suggestion", "info", "informational"].includes(severity)
+  )
+    return "low";
   return severity;
 }
 
@@ -173,12 +181,13 @@ function boundedString(value: unknown, max = 2_000): string | undefined {
 
 function safeRelativePath(value: string | undefined): string | undefined {
   if (
-    !value
-    || value.startsWith("/")
-    || value.includes("\\")
-    || value.includes(":")
-    || !value.split("/").every((part) => part && part !== "." && part !== "..")
-  ) return undefined;
+    !value ||
+    value.startsWith("/") ||
+    value.includes("\\") ||
+    value.includes(":") ||
+    !value.split("/").every((part) => part && part !== "." && part !== "..")
+  )
+    return undefined;
   return value;
 }
 
@@ -186,23 +195,31 @@ function parseEvidence(value: unknown): IssueEvidence[] {
   if (!Array.isArray(value)) return [];
   const evidence: IssueEvidence[] = [];
   for (const candidate of value.slice(0, 50)) {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+      continue;
     const object = candidate as Record<string, unknown>;
     const rawPage = Number(object.page);
-    const page = Number.isInteger(rawPage) && rawPage > 0 && rawPage <= 5_000
-      ? rawPage
-      : undefined;
-    const rawLineStart = Number(object.line_start ?? object.lineStart ?? object.line);
-    const lineStart = Number.isInteger(rawLineStart) && rawLineStart > 0 && rawLineStart <= 10_000_000
-      ? rawLineStart
-      : undefined;
+    const page =
+      Number.isInteger(rawPage) && rawPage > 0 && rawPage <= 5_000
+        ? rawPage
+        : undefined;
+    const rawLineStart = Number(
+      object.line_start ?? object.lineStart ?? object.line,
+    );
+    const lineStart =
+      Number.isInteger(rawLineStart) &&
+      rawLineStart > 0 &&
+      rawLineStart <= 10_000_000
+        ? rawLineStart
+        : undefined;
     const rawLineEnd = Number(object.line_end ?? object.lineEnd);
-    const lineEnd = Number.isInteger(rawLineEnd)
-      && rawLineEnd > 0
-      && rawLineEnd <= 10_000_000
-      && (!lineStart || rawLineEnd >= lineStart)
-      ? rawLineEnd
-      : undefined;
+    const lineEnd =
+      Number.isInteger(rawLineEnd) &&
+      rawLineEnd > 0 &&
+      rawLineEnd <= 10_000_000 &&
+      (!lineStart || rawLineEnd >= lineStart)
+        ? rawLineEnd
+        : undefined;
     const nodeId = boundedString(object.node_id ?? object.nodeId, 500);
     const assetId = boundedString(object.asset_id ?? object.assetId, 500);
     const rawArtifactPath = boundedString(
@@ -211,15 +228,44 @@ function parseEvidence(value: unknown): IssueEvidence[] {
     );
     const artifactPath = safeRelativePath(rawArtifactPath);
     const rawSourcePath = boundedString(
-      object.source_path ?? object.sourcePath ?? object.file_path ?? object.filePath ?? object.file,
+      object.source_path ??
+        object.sourcePath ??
+        object.file_path ??
+        object.filePath ??
+        object.file,
       1_000,
     );
     const sourcePath = safeRelativePath(rawSourcePath);
-    const sourceHash = boundedString(object.source_hash ?? object.sourceHash, 1_000);
+    const sourceHash = boundedString(
+      object.source_hash ?? object.sourceHash,
+      1_000,
+    );
     const description = boundedString(object.description ?? object.label);
     const quote = boundedString(object.quote);
-    if (page || lineStart || lineEnd || nodeId || assetId || artifactPath || sourcePath || sourceHash || description || quote) {
-      evidence.push({ page, lineStart, lineEnd, nodeId, assetId, artifactPath, sourcePath, sourceHash, description, quote });
+    if (
+      page ||
+      lineStart ||
+      lineEnd ||
+      nodeId ||
+      assetId ||
+      artifactPath ||
+      sourcePath ||
+      sourceHash ||
+      description ||
+      quote
+    ) {
+      evidence.push({
+        page,
+        lineStart,
+        lineEnd,
+        nodeId,
+        assetId,
+        artifactPath,
+        sourcePath,
+        sourceHash,
+        description,
+        quote,
+      });
     }
   }
   return evidence;
@@ -237,7 +283,8 @@ function parseIssueCandidate(json: unknown): Issue[] | null {
   } else {
     return null;
   }
-  if (!Array.isArray(arr) || arr.length === 0 || arr.length > MAX_ISSUES) return null;
+  if (!Array.isArray(arr) || arr.length === 0 || arr.length > MAX_ISSUES)
+    return null;
 
   const issues: Issue[] = [];
   const usedIds = new Set<string>();
@@ -321,9 +368,12 @@ function specialistCitation(value: unknown): string | null {
   if (sourcePath) {
     const start = Number(object.line_start);
     const end = Number(object.line_end);
-    const lines = Number.isInteger(start) && start > 0
-      ? Number.isInteger(end) && end > start ? `:${start}–${end}` : `:${start}`
-      : "";
+    const lines =
+      Number.isInteger(start) && start > 0
+        ? Number.isInteger(end) && end > start
+          ? `:${start}–${end}`
+          : `:${start}`
+        : "";
     parts.push(`${sourcePath}${lines}`);
   }
   const description = boundedString(object.description);
@@ -356,7 +406,8 @@ export function renderSpecialistMarkdown(text: string): string | null {
   const blocks: string[] = [];
   for (let index = 0; index < findings.length; index++) {
     const finding = findings[index];
-    if (!finding || typeof finding !== "object" || Array.isArray(finding)) return null;
+    if (!finding || typeof finding !== "object" || Array.isArray(finding))
+      return null;
     const object = finding as Record<string, unknown>;
     if (!("problem" in object) || !("what_would_help" in object)) return null;
     const field = (key: string) => boundedString(object[key], 50_000) ?? "";
@@ -371,7 +422,9 @@ export function renderSpecialistMarkdown(text: string): string | null {
       if (value) block += `- **${label}:** ${value}\n`;
     }
     const citations = Array.isArray(object.evidence)
-      ? object.evidence.map(specialistCitation).filter((entry): entry is string => !!entry)
+      ? object.evidence
+          .map(specialistCitation)
+          .filter((entry): entry is string => !!entry)
       : [];
     if (citations.length) block += `- **Location:** ${citations.join("; ")}\n`;
     blocks.push(block.trimEnd());
@@ -384,13 +437,17 @@ const MAX_TABLE_COLUMNS = 12;
 const MAX_CELL_CHARS = 300;
 
 function tableCell(value: unknown): string {
-  const text = value === undefined || value === null
-    ? ""
-    : typeof value === "string"
-      ? value
-      : JSON.stringify(value);
+  const text =
+    value === undefined || value === null
+      ? ""
+      : typeof value === "string"
+        ? value
+        : JSON.stringify(value);
   const flattened = text.replace(/\s+/g, " ").trim();
-  const bounded = flattened.length > MAX_CELL_CHARS ? `${flattened.slice(0, MAX_CELL_CHARS)}…` : flattened;
+  const bounded =
+    flattened.length > MAX_CELL_CHARS
+      ? `${flattened.slice(0, MAX_CELL_CHARS)}…`
+      : flattened;
   return bounded.replace(/\|/g, "\\|");
 }
 
@@ -399,22 +456,35 @@ function renderJsonValue(value: unknown, depth: number): string {
   if (Array.isArray(value)) {
     if (value.length === 0) return "_(empty)_";
     // Array of objects → table over the union of keys (bounded).
-    if (value.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry))) {
+    if (
+      value.every(
+        (entry) => entry && typeof entry === "object" && !Array.isArray(entry),
+      )
+    ) {
       const keys: string[] = [];
       for (const entry of value.slice(0, MAX_TABLE_ROWS)) {
         for (const key of Object.keys(entry as Record<string, unknown>)) {
-          if (!keys.includes(key) && keys.length < MAX_TABLE_COLUMNS) keys.push(key);
+          if (!keys.includes(key) && keys.length < MAX_TABLE_COLUMNS)
+            keys.push(key);
         }
       }
       const header = `| ${keys.join(" | ")} |\n| ${keys.map(() => "---").join(" | ")} |`;
-      const rows = value.slice(0, MAX_TABLE_ROWS).map((entry) =>
-        `| ${keys.map((key) => tableCell((entry as Record<string, unknown>)[key])).join(" | ")} |`);
-      const overflow = value.length > MAX_TABLE_ROWS
-        ? `\n\n_(${value.length - MAX_TABLE_ROWS} more rows in the raw artifact)_`
-        : "";
+      const rows = value
+        .slice(0, MAX_TABLE_ROWS)
+        .map(
+          (entry) =>
+            `| ${keys.map((key) => tableCell((entry as Record<string, unknown>)[key])).join(" | ")} |`,
+        );
+      const overflow =
+        value.length > MAX_TABLE_ROWS
+          ? `\n\n_(${value.length - MAX_TABLE_ROWS} more rows in the raw artifact)_`
+          : "";
       return `${header}\n${rows.join("\n")}${overflow}`;
     }
-    return value.slice(0, MAX_TABLE_ROWS).map((entry) => `- ${tableCell(entry)}`).join("\n");
+    return value
+      .slice(0, MAX_TABLE_ROWS)
+      .map((entry) => `- ${tableCell(entry)}`)
+      .join("\n");
   }
   if (value && typeof value === "object") {
     return Object.entries(value as Record<string, unknown>)

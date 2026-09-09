@@ -5,24 +5,62 @@ export interface FileLocation {
   fragment?: string;
 }
 
+/** Absolute native paths are opened only after the owning backend validates them. */
+export function absoluteLocalFilePath(href: string): string | null {
+  if (!href || /[\u0000-\u001f]/.test(href)) return null;
+  const [raw] = href.split("#", 1);
+  if (raw.includes("?")) return null;
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (decoded.startsWith("/") && !decoded.startsWith("//")) return decoded;
+    if (/^[a-z]:[\\/]/i.test(decoded)) return decoded;
+  } catch {
+    /* Malformed URL escapes are never passed to the native boundary. */
+  }
+  return null;
+}
+
+function absolutePathRelativeToRoot(
+  root: string | undefined,
+  target: string,
+): string | null {
+  if (!root) return null;
+
+  const windowsTarget = /^[a-z]:[\\/]/i.test(target);
+  const windowsRoot = /^[a-z]:[\\/]/i.test(root);
+  const posixTarget = target.startsWith("/") && !target.startsWith("//");
+  const posixRoot = root.startsWith("/") && !root.startsWith("//");
+  if (!(windowsTarget && windowsRoot) && !(posixTarget && posixRoot))
+    return null;
+
+  const normalize = (value: string) =>
+    (windowsTarget ? value.replaceAll("\\", "/") : value).replace(/\/$/, "");
+  const normalizedRoot = normalize(root);
+  const normalizedTarget = normalize(target);
+  const comparableRoot = windowsTarget
+    ? normalizedRoot.toLowerCase()
+    : normalizedRoot;
+  const comparableTarget = windowsTarget
+    ? normalizedTarget.toLowerCase()
+    : normalizedTarget;
+  if (!comparableTarget.startsWith(`${comparableRoot}/`)) return null;
+  return normalizedTarget.slice(normalizedRoot.length + 1);
+}
+
 /** Relative URLs resolve inside their owning project or immutable capture only. */
 export function resolveFileLink(
   base: string,
   href: string,
+  root?: string,
 ): FileLocation | null {
-  if (
-    !href ||
-    href.startsWith("#") ||
-    /^[a-z][\w+.-]*:/i.test(href) ||
-    /^[\/\\]/.test(href) ||
-    /[\u0000-\u001f\\]/.test(href)
-  )
+  if (!href || href.startsWith("#") || /[\u0000-\u001f]/.test(href))
     return null;
   const [raw, hash = ""] = href.split("#", 2);
   if (raw.includes("?")) return null;
   let relative: string, fragment: string;
   try {
-    relative = decodeURIComponent(raw);
+    const decoded = decodeURIComponent(raw);
+    relative = absolutePathRelativeToRoot(root, decoded) ?? decoded;
     fragment = decodeURIComponent(hash);
   } catch {
     return null;

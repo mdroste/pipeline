@@ -32,19 +32,23 @@ export const MODULE_KIND_HINTS: Record<ModuleKind, string> = {
   instruction_pack: "Instructions sent with each message.",
   context_provider: "Source material included with each message.",
   tool: "Tools the assistant can use. Each use is recorded.",
-  inspector: "Research panels for you to view; these do not change the assistant’s instructions.",
+  inspector:
+    "Research panels for you to view; these do not change the assistant’s instructions.",
   recipe: "Saved instructions for specific research tasks.",
 };
 
-export function groupModules(modules: HarnessModule[]): Array<{ kind: ModuleKind; label: string; hint: string; modules: HarnessModule[] }> {
-  return MODULE_KIND_ORDER
-    .map((kind) => ({
-      kind,
-      label: MODULE_KIND_LABELS[kind],
-      hint: MODULE_KIND_HINTS[kind],
-      modules: modules.filter((module) => module.kind === kind),
-    }))
-    .filter((group) => group.modules.length > 0);
+export function groupModules(modules: HarnessModule[]): Array<{
+  kind: ModuleKind;
+  label: string;
+  hint: string;
+  modules: HarnessModule[];
+}> {
+  return MODULE_KIND_ORDER.map((kind) => ({
+    kind,
+    label: MODULE_KIND_LABELS[kind],
+    hint: MODULE_KIND_HINTS[kind],
+    modules: modules.filter((module) => module.kind === kind),
+  })).filter((group) => group.modules.length > 0);
 }
 
 /** Capability bundles cover every module that is not an instruction pack. */
@@ -55,11 +59,46 @@ export interface ModuleBundle {
   modules: string[];
 }
 
-const BUNDLE_DEFINITIONS: Array<Omit<ModuleBundle, "modules"> & { modules: string[] }> = [
-  { id: "minimal", label: "Instructions only", description: "No context, tools, or inspectors.", modules: [] },
-  { id: "read", label: "Read the paper", description: "Lets the assistant read and search the paper.", modules: ["paper_context", "paper_tools"] },
-  { id: "ledger", label: "Paper + ledger", description: "Lets the assistant suggest notes, claims, and evidence for review.", modules: ["paper_context", "paper_tools", "research_ledger", "evidence_inspector"] },
-  { id: "execution", label: "Paper + ledger + execution", description: "Adds tested local commands and a panel to view results.", modules: ["paper_context", "paper_tools", "research_ledger", "evidence_inspector", "research_execution", "results_inspector"] },
+const BUNDLE_DEFINITIONS: Array<
+  Omit<ModuleBundle, "modules"> & { modules: string[] }
+> = [
+  {
+    id: "minimal",
+    label: "Instructions only",
+    description: "No context, tools, or inspectors.",
+    modules: [],
+  },
+  {
+    id: "read",
+    label: "Read the paper",
+    description: "Lets the assistant read and search the paper.",
+    modules: ["paper_context", "paper_tools"],
+  },
+  {
+    id: "ledger",
+    label: "Paper + ledger",
+    description:
+      "Lets the assistant suggest notes, claims, and evidence for review.",
+    modules: [
+      "paper_context",
+      "paper_tools",
+      "research_ledger",
+      "evidence_inspector",
+    ],
+  },
+  {
+    id: "execution",
+    label: "Paper + ledger + execution",
+    description: "Adds tested local commands and a panel to view results.",
+    modules: [
+      "paper_context",
+      "paper_tools",
+      "research_ledger",
+      "evidence_inspector",
+      "research_execution",
+      "results_inspector",
+    ],
+  },
 ];
 
 export function moduleBundles(catalog: HarnessModule[]): ModuleBundle[] {
@@ -71,33 +110,57 @@ export function moduleBundles(catalog: HarnessModule[]): ModuleBundle[] {
 }
 
 function isPack(id: string, catalog: HarnessModule[]) {
-  return catalog.find((module) => module.id === id)?.kind === "instruction_pack";
+  return (
+    catalog.find((module) => module.id === id)?.kind === "instruction_pack"
+  );
 }
 
 /** Return `selected` in catalog order. Unknown ids are dropped. */
-export function orderModules(selected: string[], catalog: HarnessModule[]): string[] {
+export function orderModules(
+  selected: string[],
+  catalog: HarnessModule[],
+): string[] {
   const wanted = new Set(selected);
-  return catalog.filter((module) => wanted.has(module.id)).map((module) => module.id);
+  return catalog
+    .filter((module) => wanted.has(module.id))
+    .map((module) => module.id);
 }
 
 /** Replace the non-pack modules with the bundle while keeping instruction packs. */
-export function applyBundle(selected: string[], bundle: ModuleBundle, catalog: HarnessModule[]): string[] {
+export function applyBundle(
+  selected: string[],
+  bundle: ModuleBundle,
+  catalog: HarnessModule[],
+): string[] {
   const packs = selected.filter((id) => isPack(id, catalog));
   return orderModules([...packs, ...bundle.modules], catalog);
 }
 
-export function activeBundle(selected: string[], bundles: ModuleBundle[], catalog: HarnessModule[]): string | null {
+export function activeBundle(
+  selected: string[],
+  bundles: ModuleBundle[],
+  catalog: HarnessModule[],
+): string | null {
   const capabilities = selected.filter((id) => !isPack(id, catalog)).sort();
   const match = bundles.find((bundle) => {
     const wanted = [...bundle.modules].sort();
-    return wanted.length === capabilities.length && wanted.every((id, index) => id === capabilities[index]);
+    return (
+      wanted.length === capabilities.length &&
+      wanted.every((id, index) => id === capabilities[index])
+    );
   });
   return match?.id ?? null;
 }
 
-export function toggleModule(selected: string[], id: string, catalog: HarnessModule[]): string[] {
+export function toggleModule(
+  selected: string[],
+  id: string,
+  catalog: HarnessModule[],
+): string[] {
   return orderModules(
-    selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id],
+    selected.includes(id)
+      ? selected.filter((item) => item !== id)
+      : [...selected, id],
     catalog,
   );
 }
@@ -113,38 +176,71 @@ function joinList(parts: string[]) {
 }
 
 /** One plain sentence describing what a module set does, in the style of the workflow editor's step summaries. */
-export function describeModules(selected: string[], catalog: HarnessModule[], instructions: string): string {
-  const modules = orderModules(selected, catalog).map((id) => catalog.find((module) => module.id === id)!);
+export function describeModules(
+  selected: string[],
+  catalog: HarnessModule[],
+  instructions: string,
+): string {
+  const modules = orderModules(selected, catalog).map((id) =>
+    catalog.find((module) => module.id === id)!,
+  );
   if (modules.length === 0) {
     return instructions.trim()
       ? "Preset instructions only; no automatic context, tools, or inspectors."
       : "No research instructions or automatic context; an ordinary conversation.";
   }
   const packs = modules.filter((module) => module.kind === "instruction_pack");
-  const context = modules.filter((module) => module.kind === "context_provider");
+  const context = modules.filter(
+    (module) => module.kind === "context_provider",
+  );
   const tools = modules.filter((module) => module.kind === "tool");
   const inspectors = modules.filter((module) => module.kind === "inspector");
   const parts: string[] = [];
   if (packs.length) parts.push(plural(packs.length, "instruction pack"));
-  if (context.length) parts.push(context.map((module) => module.name.toLowerCase()).join(" and "));
-  if (tools.length) parts.push(tools.length <= 2 ? tools.map((module) => module.name.toLowerCase()).join(" and ") : plural(tools.length, "tool"));
+  if (context.length)
+    parts.push(
+      context.map((module) => module.name.toLowerCase()).join(" and "),
+    );
+  if (tools.length)
+    parts.push(
+      tools.length <= 2
+        ? tools.map((module) => module.name.toLowerCase()).join(" and ")
+        : plural(tools.length, "tool"),
+    );
   if (inspectors.length) parts.push(plural(inspectors.length, "inspector"));
   const sentence = `Adds ${joinList(parts)}.`;
   return instructions.trim() ? sentence : `${sentence} No preset instructions.`;
 }
 
-export function describePreset(preset: HarnessPreset, catalog: HarnessModule[]): string {
-  return describeModules(preset.modules, catalog, preset.baseInstructions ?? preset.instructions);
+export function describePreset(
+  preset: HarnessPreset,
+  catalog: HarnessModule[],
+): string {
+  return describeModules(
+    preset.modules,
+    catalog,
+    preset.baseInstructions ?? preset.instructions,
+  );
 }
 
-export function availabilityFor(id: string, availability: ModuleAvailability[] | undefined): ModuleAvailability {
-  return availability?.find((item) => item.id === id) ?? { id, available: true, reasons: [] };
+export function availabilityFor(
+  id: string,
+  availability: ModuleAvailability[] | undefined,
+): ModuleAvailability {
+  return (
+    availability?.find((item) => item.id === id) ?? {
+      id,
+      available: true,
+      reasons: [],
+    }
+  );
 }
 
 // --- Access inheritance -----------------------------------------------------
 
 export type AccessScope = "builtIn" | "global" | "workspace" | "conversation";
-export type AccessKey = "mode" | "commandNetwork" | "contextBudgetBytes" | "webSearch";
+export type AccessKey =
+  "mode" | "commandNetwork" | "contextBudgetBytes" | "webSearch";
 
 export const ACCESS_SCOPES: Array<{ id: AccessScope; label: string }> = [
   { id: "builtIn", label: "Built-in" },
@@ -168,10 +264,14 @@ export const ACCESS_ROWS: AccessRow[] = [
   {
     key: "mode",
     label: "Access mode",
-    description: "Inspect lets commands read the registered folder. Edit also lets them write to it and enables execution modules.",
+    description:
+      "Inspect lets commands read the registered folder. Edit also lets them write to it and enables execution modules.",
     builtIn: "inspect",
     kind: "select",
-    options: [{ value: "inspect", label: "Inspect" }, { value: "edit", label: "Edit" }],
+    options: [
+      { value: "inspect", label: "Inspect" },
+      { value: "edit", label: "Edit" },
+    ],
   },
   {
     key: "commandNetwork",
@@ -183,7 +283,8 @@ export const ACCESS_ROWS: AccessRow[] = [
   {
     key: "contextBudgetBytes",
     label: "Context budget",
-    description: "Maximum amount of paper text and notes included with each message.",
+    description:
+      "Maximum amount of paper text and notes included with each message.",
     builtIn: 65536,
     kind: "select",
     options: [
@@ -213,25 +314,49 @@ export function formatAccessValue(row: AccessRow, value: unknown): string {
 export function scopeValue(
   key: AccessKey,
   scope: AccessScope,
-  bodies: { global: Record<string, unknown>; workspace: Record<string, unknown> | null; conversation: Record<string, unknown> },
+  bodies: {
+    global: Record<string, unknown>;
+    workspace: Record<string, unknown> | null;
+    conversation: Record<string, unknown>;
+  },
 ): unknown {
-  if (scope === "builtIn") return ACCESS_ROWS.find((row) => row.key === key)?.builtIn;
-  const body = scope === "global" ? bodies.global : scope === "workspace" ? bodies.workspace : bodies.conversation;
+  if (scope === "builtIn")
+    return ACCESS_ROWS.find((row) => row.key === key)?.builtIn;
+  const body =
+    scope === "global"
+      ? bodies.global
+      : scope === "workspace"
+        ? bodies.workspace
+        : bodies.conversation;
   const value = body?.[key];
   return value === null ? undefined : value;
 }
 
-export function winningScope(effective: EffectiveHarness, key: AccessKey): AccessScope {
+export function winningScope(
+  effective: EffectiveHarness,
+  key: AccessKey,
+): AccessScope {
   const source = effective.valueSources[key];
-  return source === "global" || source === "workspace" || source === "conversation" ? source : "builtIn";
+  return source === "global" ||
+    source === "workspace" ||
+    source === "conversation"
+    ? source
+    : "builtIn";
 }
 
-export function effectiveAccessValue(effective: EffectiveHarness, key: AccessKey): string | number | boolean {
+export function effectiveAccessValue(
+  effective: EffectiveHarness,
+  key: AccessKey,
+): string | number | boolean {
   switch (key) {
-    case "mode": return effective.mode;
-    case "commandNetwork": return effective.commandNetwork;
-    case "contextBudgetBytes": return effective.contextBudgetBytes;
-    case "webSearch": return effective.webSearch;
+    case "mode":
+      return effective.mode;
+    case "commandNetwork":
+      return effective.commandNetwork;
+    case "contextBudgetBytes":
+      return effective.contextBudgetBytes;
+    case "webSearch":
+      return effective.webSearch;
   }
 }
 
@@ -247,7 +372,12 @@ export function compactAccessSummary(effective: EffectiveHarness): string {
 export function compactModuleSummary(effective: EffectiveHarness): string {
   const total = effective.preset.modules.length;
   const active = effective.enabledModules.length;
-  const modules = total === 0 ? "no modules" : active === total ? plural(total, "module") + " active" : `${active} of ${total} modules active`;
+  const modules =
+    total === 0
+      ? "no modules"
+      : active === total
+        ? plural(total, "module") + " active"
+        : `${active} of ${total} modules active`;
   return `${modules} · ${effective.permissionProfile}`;
 }
 
@@ -269,29 +399,62 @@ export function lintHarnessInstructions(text: string): InstructionLint[] {
   const hits: InstructionLint[] = [];
   const bytes = byteLength(text);
   if (bytes > MAX_PRESET_INSTRUCTION_BYTES) {
-    hits.push({ level: "error", message: "Instructions exceed the 256 KiB limit and cannot be saved." });
+    hits.push({
+      level: "error",
+      message: "Instructions exceed the 256 KiB limit and cannot be saved.",
+    });
   } else if (bytes > LONG_INSTRUCTION_BYTES) {
-    hits.push({ level: "warning", message: `Long instructions (${Math.round(bytes / 1024)} KiB) are sent on every turn and reduce room for the paper.` });
+    hits.push({
+      level: "warning",
+      message: `Long instructions (${Math.round(bytes / 1024)} KiB) are sent on every turn and reduce room for the paper.`,
+    });
   }
   if (/<\/?workspace_context/i.test(text)) {
-    hits.push({ level: "warning", message: "<workspace_context> is reserved for the host; Pipeline wraps source material itself and escapes it." });
+    hits.push({
+      level: "warning",
+      message:
+        "<workspace_context> is reserved for the host; Pipeline wraps source material itself and escapes it.",
+    });
   }
-  if (/\{(?:step:|orientation\}|prior_outputs\}|last_output\}|input_path\}|var:|input:)/.test(text)) {
-    hits.push({ level: "warning", message: "Workflow placeholders such as {step:id} are not expanded in Workspace instructions; they reach the model verbatim." });
+  if (
+    /\{(?:step:|orientation\}|prior_outputs\}|last_output\}|input_path\}|var:|input:)/.test(
+      text,
+    )
+  ) {
+    hits.push({
+      level: "warning",
+      message:
+        "Workflow placeholders such as {step:id} are not expanded in Workspace instructions; they reach the model verbatim.",
+    });
   }
   return hits;
 }
 
-export function instructionSections(effective: EffectiveHarness): InstructionSection[] {
-  if (effective.instructionSections?.length) return effective.instructionSections;
-  return [{ id: "all", label: "Developer instructions", text: effective.developerInstructions }];
+export function instructionSections(
+  effective: EffectiveHarness,
+): InstructionSection[] {
+  if (effective.instructionSections?.length)
+    return effective.instructionSections;
+  return [
+    {
+      id: "all",
+      label: "Developer instructions",
+      text: effective.developerInstructions,
+    },
+  ];
 }
 
 /** Built-in preset instruction blocks offered as insertable starting points. */
-export function instructionBlocks(presets: HarnessPreset[]): Array<{ id: string; label: string; text: string }> {
+export function instructionBlocks(
+  presets: HarnessPreset[],
+): Array<{ id: string; label: string; text: string }> {
   return presets
     .filter((preset) => preset.builtIn && preset.instructions.trim())
-    .map((preset) => ({ id: preset.id, label: preset.name, text: preset.instructions.trim() }));
+    .map((preset) => ({
+      id: preset.id,
+      label: preset.name,
+      text: preset.instructions.trim(),
+    }));
 }
 
 export function compactHash(value?: string | null): string {

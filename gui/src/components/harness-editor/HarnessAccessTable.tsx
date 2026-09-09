@@ -25,12 +25,27 @@ interface Props {
   conversationOverrides: Record<string, unknown>;
   busy: boolean;
   successor: boolean;
-  onSet: (scope: Exclude<AccessScope, "builtIn">, key: AccessKey, value: string | number | boolean | undefined) => void;
+  onSet: (
+    scope: Exclude<AccessScope, "builtIn">,
+    key: AccessKey,
+    value: string | number | boolean | undefined,
+  ) => void;
 }
 
-const controlClass = "rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200";
+const controlClass =
+  "rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200";
 
-function Cell({ row, scope, value, winning, editable, unavailable, busy, effectiveValue, onSet }: {
+function Cell({
+  row,
+  scope,
+  value,
+  winning,
+  editable,
+  unavailable,
+  busy,
+  effectiveValue,
+  onSet,
+}: {
   row: AccessRow;
   scope: AccessScope;
   value: unknown;
@@ -43,9 +58,24 @@ function Cell({ row, scope, value, winning, editable, unavailable, busy, effecti
 }) {
   const scopeLabel = ACCESS_SCOPES.find((item) => item.id === scope)!.label;
   const body = (() => {
-    if (scope === "builtIn") return <span className="text-gray-600 dark:text-gray-300">{formatAccessValue(row, value)}</span>;
-    if (unavailable) return <span className="text-gray-400" title={unavailable}>—</span>;
-    if (!editable) return <span className="text-gray-400">{value === undefined ? "inherits" : formatAccessValue(row, value)}</span>;
+    if (scope === "builtIn")
+      return (
+        <span className="text-gray-600 dark:text-gray-300">
+          {formatAccessValue(row, value)}
+        </span>
+      );
+    if (unavailable)
+      return (
+        <span className="text-gray-400" title={unavailable}>
+          —
+        </span>
+      );
+    if (!editable)
+      return (
+        <span className="text-gray-400">
+          {value === undefined ? "inherits" : formatAccessValue(row, value)}
+        </span>
+      );
     if (value === undefined) {
       return (
         <button
@@ -59,31 +89,38 @@ function Cell({ row, scope, value, winning, editable, unavailable, busy, effecti
         </button>
       );
     }
-    const control = row.kind === "boolean" ? (
-      <label className="inline-flex items-center gap-1 text-xs">
-        <input
-          type="checkbox"
+    const control =
+      row.kind === "boolean" ? (
+        <label className="inline-flex items-center gap-1 text-xs">
+          <input
+            type="checkbox"
+            aria-label={`${row.label} (${scopeLabel})`}
+            checked={value === true}
+            disabled={busy}
+            onChange={(event) => onSet(scope, row.key, event.target.checked)}
+          />
+          {formatAccessValue(row, value)}
+        </label>
+      ) : (
+        <select
           aria-label={`${row.label} (${scopeLabel})`}
-          checked={value === true}
+          value={String(value)}
           disabled={busy}
-          onChange={(event) => onSet(scope, row.key, event.target.checked)}
-        />
-        {formatAccessValue(row, value)}
-      </label>
-    ) : (
-      <select
-        aria-label={`${row.label} (${scopeLabel})`}
-        value={String(value)}
-        disabled={busy}
-        onChange={(event) => {
-          const option = row.options?.find((candidate) => String(candidate.value) === event.target.value);
-          if (option) onSet(scope, row.key, option.value);
-        }}
-        className={controlClass}
-      >
-        {row.options?.map((option) => <option key={String(option.value)} value={String(option.value)}>{option.label}</option>)}
-      </select>
-    );
+          onChange={(event) => {
+            const option = row.options?.find(
+              (candidate) => String(candidate.value) === event.target.value,
+            );
+            if (option) onSet(scope, row.key, option.value);
+          }}
+          className={controlClass}
+        >
+          {row.options?.map((option) => (
+            <option key={String(option.value)} value={String(option.value)}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      );
     return (
       <span className="inline-flex items-center gap-1">
         {control}
@@ -105,37 +142,74 @@ function Cell({ row, scope, value, winning, editable, unavailable, busy, effecti
       data-winning={winning || undefined}
       className={`px-2 py-2 align-top ${winning ? "rounded bg-emerald-50 ring-1 ring-inset ring-emerald-300 dark:bg-emerald-950/30 dark:ring-emerald-700" : ""}`}
     >
-      {winning && <div className="mb-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">In effect</div>}
+      {winning && (
+        <div className="mb-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+          In effect
+        </div>
+      )}
       {body}
     </td>
   );
 }
 
-function HarnessAccessTable({ effective, globalBody, workspaceBody, workspaceName, conversationOverrides, busy, successor, onSet }: Props) {
-  const bodies = { global: globalBody, workspace: workspaceBody, conversation: conversationOverrides };
+function HarnessAccessTable({
+  effective,
+  globalBody,
+  workspaceBody,
+  workspaceName,
+  conversationOverrides,
+  busy,
+  successor,
+  onSet,
+}: Props) {
+  const bodies = {
+    global: globalBody,
+    workspace: workspaceBody,
+    conversation: conversationOverrides,
+  };
   return (
     <div className="space-y-3">
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Settings on the right override those on the left. Global applies to all conversations; Workspace applies to {workspaceName ? <strong>{workspaceName}</strong> : "this project"}. Choose Inherit to follow the setting to the left, including future changes.
+        Settings on the right override those on the left. Global applies to all
+        conversations; Workspace applies to{" "}
+        {workspaceName ? <strong>{workspaceName}</strong> : "this project"}.
+        Choose Inherit to follow the setting to the left, including future
+        changes.
       </p>
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <table className="w-full min-w-[40rem] text-left text-xs">
           <thead>
             <tr className="border-b border-gray-200 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-700 dark:text-gray-400">
-              <th scope="col" className="px-3 py-2">Setting</th>
-              {ACCESS_SCOPES.map((scope) => <th key={scope.id} scope="col" className="px-2 py-2">{scope.label}</th>)}
+              <th scope="col" className="px-3 py-2">
+                Setting
+              </th>
+              {ACCESS_SCOPES.map((scope) => (
+                <th key={scope.id} scope="col" className="px-2 py-2">
+                  {scope.label}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
             {ACCESS_ROWS.map((row) => {
-              const winner = row.locked ? "builtIn" : winningScope(effective, row.key);
+              const winner = row.locked
+                ? "builtIn"
+                : winningScope(effective, row.key);
               const effectiveValue = effectiveAccessValue(effective, row.key);
               return (
                 <tr key={row.key}>
                   <th scope="row" className="px-3 py-2 align-top font-normal">
-                    <div className="text-sm font-medium text-gray-800 dark:text-gray-200">{row.label}</div>
-                    <div className="text-[11px] text-gray-500 dark:text-gray-400">{row.description}</div>
-                    {row.locked && <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{row.locked}</div>}
+                    <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                      {row.label}
+                    </div>
+                    <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                      {row.description}
+                    </div>
+                    {row.locked && (
+                      <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                        {row.locked}
+                      </div>
+                    )}
                   </th>
                   {ACCESS_SCOPES.map((scope) => (
                     <Cell
@@ -145,7 +219,11 @@ function HarnessAccessTable({ effective, globalBody, workspaceBody, workspaceNam
                       value={scopeValue(row.key, scope.id, bodies)}
                       winning={winner === scope.id}
                       editable={!row.locked && scope.id !== "builtIn"}
-                      unavailable={scope.id === "workspace" && workspaceBody === null ? "Choose Move to project… in the conversation list to use project defaults." : null}
+                      unavailable={
+                        scope.id === "workspace" && workspaceBody === null
+                          ? "Choose Move to project… in the conversation list to use project defaults."
+                          : null
+                      }
                       busy={busy}
                       effectiveValue={effectiveValue}
                       onSet={onSet}
@@ -158,8 +236,10 @@ function HarnessAccessTable({ effective, globalBody, workspaceBody, workspaceNam
         </table>
       </div>
       <p className="text-[11px] text-gray-500 dark:text-gray-400">
-        Access changes apply to your next message. Current permissions: <span className="font-mono">{effective.permissionProfile}</span>.
-        {successor && " The assistant will start fresh with the new settings and saved project context. Earlier messages remain in the transcript."}
+        Access changes apply to your next message. Current permissions:{" "}
+        <span className="font-mono">{effective.permissionProfile}</span>.
+        {successor &&
+          " The assistant will start fresh with the new settings and saved project context. Earlier messages remain in the transcript."}
       </p>
     </div>
   );

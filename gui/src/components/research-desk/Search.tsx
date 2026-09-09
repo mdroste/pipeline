@@ -1,14 +1,238 @@
-import { useEffect, useState } from 'react';
-import { deskClient, type DeskRecord, type IndexStatus, type OpenResearchObject, type SearchPage } from '../../lib/deskClient';
-import { workbenchErrorMessage } from '../../lib/workbenchError';
-import { addContextObject } from '../WorkspaceContextTray';
-import { button, input, card, muted, type DeskProps } from './shared';
-export default function Search(props:DeskProps){
- const {workspaceId,onOpen,onError}=props;const [query,setQuery]=useState('');const [kind,setKind]=useState('');const [page,setPage]=useState<SearchPage|null>(null);const [index,setIndex]=useState<IndexStatus|null>(null);const [busy,setBusy]=useState(false);const [selected,setSelected]=useState<OpenResearchObject[]>([]);const [title,setTitle]=useState('');const [collections,setCollections]=useState<DeskRecord<{objects:OpenResearchObject[]}>[]>([]);const [rebuild,setRebuild]=useState(0);
- useEffect(()=>{let alive=true;let timer:ReturnType<typeof setTimeout>;const step=async()=>{try{const next=await deskClient.index(workspaceId);if(!alive)return;setIndex(next);timer=setTimeout(()=>void step(),next.complete?5000:100);}catch(e){if(alive)onError(workbenchErrorMessage(e));}};void step();void deskClient.records<{objects:OpenResearchObject[]}>(workspaceId,'collection').then(setCollections).catch(e=>onError(workbenchErrorMessage(e)));return()=>{alive=false;clearTimeout(timer);};},[workspaceId,onError,rebuild]);
- useEffect(()=>{if(index&&page&&index.generation!==page.index.generation)setPage(null);},[index,page]);
- const search=async(more=false)=>{setBusy(true);try{const next=await deskClient.search(workspaceId,query,kind||null,more?page?.nextCursor:null);setPage(old=>more&&old?{...next,hits:[...old.hits,...next.hits]}:next);}catch(e){onError(workbenchErrorMessage(e));}finally{setBusy(false);}};
- return <div className="space-y-5"><form className="flex flex-wrap gap-2" onSubmit={e=>{e.preventDefault();void search();}}><input aria-label="Search project" className={`${input} flex-1`} value={query} onChange={e=>setQuery(e.target.value)} placeholder="Decisions, equations, sources, messages, results…"/><select aria-label="Search object kind" className={button} value={kind} onChange={e=>setKind(e.target.value)}><option value="">All research</option>{['paper','source','note','record','message','execution','result','decision','dataset','sample'].map(k=><option key={k}>{k}</option>)}</select><button className={button} disabled={busy||!query.trim()}>Search</button></form><p role="status" className={muted}>{index?.complete?'Local index complete':'Building local index; results may be incomplete'} · lexical search · exact revisions <button className="ml-2 underline" onClick={()=>void deskClient.index(workspaceId,true).then(()=>{setPage(null);setRebuild(v=>v+1);}).catch(e=>onError(workbenchErrorMessage(e)))}>Rebuild index</button></p>
- {page?.hits.map((hit,i)=><article key={`${hit.object.id}:${hit.object.start}:${i}`} className={card}><div className="flex items-start gap-2"><input type="checkbox" aria-label={`Collect ${hit.title}`} checked={selected.some(s=>JSON.stringify(s)===JSON.stringify(hit.object))} onChange={e=>setSelected(old=>e.target.checked?[...old,hit.object]:old.filter(s=>JSON.stringify(s)!==JSON.stringify(hit.object)))}/><button className="text-left font-semibold underline" onClick={()=>onOpen(hit.object)}>{hit.title}</button></div><p className={muted}>{hit.object.kind} · {hit.provenance} · {hit.access} · {hit.completeness} · revision {hit.object.revision.slice(0,12)}</p><p className="whitespace-pre-wrap text-sm">{hit.text}</p><button className={button} onClick={()=>addContextObject(workspaceId,hit.object)}>Add exact excerpt to conversation</button></article>)}{page&&!page.hits.length&&<p className={muted}>No indexed matches. Try a shorter phrase or wait for indexing to finish.</p>}{page?.nextCursor&&<button className={button} disabled={busy} onClick={()=>void search(true)}>More results</button>}
- <section className={card}><h2 className="font-semibold">Reading collections</h2><form className="flex gap-2" onSubmit={e=>{e.preventDefault();void deskClient.collection(workspaceId,title,selected).then(()=>{setSelected([]);setTitle('');setRebuild(v=>v+1);}).catch(e=>onError(workbenchErrorMessage(e)));}}><input aria-label="Reading collection name" className={input} value={title} onChange={e=>setTitle(e.target.value)} placeholder="Chapter or literature review"/><button className={button} disabled={!title.trim()||!selected.length}>Save {selected.length} references</button></form>{collections.map(c=><details key={c.id}><summary>{c.title} · {c.body.objects.length} exact references</summary>{c.body.objects.map((o,i)=><button className="m-2 text-xs underline" key={i} onClick={()=>onOpen(o)}>{o.kind} · {o.id.slice(-8)} · {o.revision.slice(0,8)}</button>)}</details>)}</section></div>;
+import { useEffect, useState } from "react";
+import {
+  deskClient,
+  type DeskRecord,
+  type IndexStatus,
+  type OpenResearchObject,
+  type SearchPage,
+} from "../../lib/deskClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { addContextObject } from "../WorkspaceContextTray";
+import { button, input, card, muted, type DeskProps } from "./shared";
+export default function Search(props: DeskProps) {
+  const { workspaceId, onOpen, onError } = props;
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState("");
+  const [page, setPage] = useState<SearchPage | null>(null);
+  const [index, setIndex] = useState<IndexStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [selected, setSelected] = useState<OpenResearchObject[]>([]);
+  const [title, setTitle] = useState("");
+  const [collections, setCollections] = useState<
+    DeskRecord<{ objects: OpenResearchObject[] }>[]
+  >([]);
+  const [rebuild, setRebuild] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const step = async () => {
+      try {
+        const next = await deskClient.index(workspaceId);
+        if (!alive) return;
+        setIndex(next);
+        timer = setTimeout(() => void step(), next.complete ? 5000 : 100);
+      } catch (e) {
+        if (alive) onError(workbenchErrorMessage(e));
+      }
+    };
+    void step();
+    void deskClient
+      .records<{ objects: OpenResearchObject[] }>(workspaceId, "collection")
+      .then(setCollections)
+      .catch((e) => onError(workbenchErrorMessage(e)));
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [workspaceId, onError, rebuild]);
+  useEffect(() => {
+    if (index && page && index.generation !== page.index.generation)
+      setPage(null);
+  }, [index, page]);
+  const search = async (more = false) => {
+    setBusy(true);
+    try {
+      const next = await deskClient.search(
+        workspaceId,
+        query,
+        kind || null,
+        more ? page?.nextCursor : null,
+      );
+      setPage((old) =>
+        more && old ? { ...next, hits: [...old.hits, ...next.hits] } : next,
+      );
+    } catch (e) {
+      onError(workbenchErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-5">
+      <form
+        className="flex flex-wrap gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void search();
+        }}
+      >
+        <input
+          aria-label="Search project"
+          className={`${input} flex-1`}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Decisions, equations, sources, messages, results…"
+        />
+        <select
+          aria-label="Search object kind"
+          className={button}
+          value={kind}
+          onChange={(e) => setKind(e.target.value)}
+        >
+          <option value="">All research</option>
+          {[
+            "paper",
+            "source",
+            "note",
+            "record",
+            "message",
+            "execution",
+            "result",
+            "decision",
+            "dataset",
+            "sample",
+          ].map((k) => (
+            <option key={k}>{k}</option>
+          ))}
+        </select>
+        <button className={button} disabled={busy || !query.trim()}>
+          Search
+        </button>
+      </form>
+      <p role="status" className={muted}>
+        {index?.complete
+          ? "Local index complete"
+          : "Building local index; results may be incomplete"}{" "}
+        · lexical search · exact revisions{" "}
+        <button
+          className="ml-2 underline"
+          onClick={() =>
+            void deskClient
+              .index(workspaceId, true)
+              .then(() => {
+                setPage(null);
+                setRebuild((v) => v + 1);
+              })
+              .catch((e) => onError(workbenchErrorMessage(e)))
+          }
+        >
+          Rebuild index
+        </button>
+      </p>
+      {page?.hits.map((hit, i) => (
+        <article
+          key={`${hit.object.id}:${hit.object.start}:${i}`}
+          className={card}
+        >
+          <div className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              aria-label={`Collect ${hit.title}`}
+              checked={selected.some(
+                (s) => JSON.stringify(s) === JSON.stringify(hit.object),
+              )}
+              onChange={(e) =>
+                setSelected((old) =>
+                  e.target.checked
+                    ? [...old, hit.object]
+                    : old.filter(
+                        (s) => JSON.stringify(s) !== JSON.stringify(hit.object),
+                      ),
+                )
+              }
+            />
+            <button
+              className="text-left font-semibold underline"
+              onClick={() => onOpen(hit.object)}
+            >
+              {hit.title}
+            </button>
+          </div>
+          <p className={muted}>
+            {hit.object.kind} · {hit.provenance} · {hit.access} ·{" "}
+            {hit.completeness} · revision {hit.object.revision.slice(0, 12)}
+          </p>
+          <p className="whitespace-pre-wrap text-sm">{hit.text}</p>
+          <button
+            className={button}
+            onClick={() => addContextObject(workspaceId, hit.object)}
+          >
+            Add exact excerpt to conversation
+          </button>
+        </article>
+      ))}
+      {page && !page.hits.length && (
+        <p className={muted}>
+          No indexed matches. Try a shorter phrase or wait for indexing to
+          finish.
+        </p>
+      )}
+      {page?.nextCursor && (
+        <button
+          className={button}
+          disabled={busy}
+          onClick={() => void search(true)}
+        >
+          More results
+        </button>
+      )}
+      <section className={card}>
+        <h2 className="font-semibold">Reading collections</h2>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void deskClient
+              .collection(workspaceId, title, selected)
+              .then(() => {
+                setSelected([]);
+                setTitle("");
+                setRebuild((v) => v + 1);
+              })
+              .catch((e) => onError(workbenchErrorMessage(e)));
+          }}
+        >
+          <input
+            aria-label="Reading collection name"
+            className={input}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Chapter or literature review"
+          />
+          <button
+            className={button}
+            disabled={!title.trim() || !selected.length}
+          >
+            Save {selected.length} references
+          </button>
+        </form>
+        {collections.map((c) => (
+          <details key={c.id}>
+            <summary>
+              {c.title} · {c.body.objects.length} exact references
+            </summary>
+            {c.body.objects.map((o, i) => (
+              <button
+                className="m-2 text-xs underline"
+                key={i}
+                onClick={() => onOpen(o)}
+              >
+                {o.kind} · {o.id.slice(-8)} · {o.revision.slice(0, 8)}
+              </button>
+            ))}
+          </details>
+        ))}
+      </section>
+    </div>
+  );
 }

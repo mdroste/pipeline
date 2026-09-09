@@ -164,6 +164,15 @@ pub fn read_workspace_file(
         let external = base.join(&request.path).to_string_lossy().into_owned();
         (bytes, request.path, Some(external), false)
     };
+    Ok(preview_from_bytes(path, bytes, external_path, captured))
+}
+
+fn preview_from_bytes(
+    path: String,
+    bytes: Vec<u8>,
+    external_path: Option<String>,
+    captured: bool,
+) -> FilePreview {
     let ext = Path::new(&path)
         .extension()
         .and_then(|e| e.to_str())
@@ -199,7 +208,7 @@ pub fn read_workspace_file(
         }
         s
     });
-    Ok(FilePreview {
+    FilePreview {
         path,
         hash: hash(&bytes),
         bytes: bytes.len(),
@@ -209,5 +218,140 @@ pub fn read_workspace_file(
         editable,
         truncated,
         external_path,
-    })
+    }
+}
+
+fn conversation_relative_path(root: &Path, value: &str) -> WorkbenchResult<String> {
+    if value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
+        return Err(WorkbenchError::invalid("Invalid conversation file path"));
+    }
+    let canonical_root = root.canonicalize().map_err(err)?;
+    let supplied = Path::new(value);
+    let relative = if supplied.is_absolute() {
+        let name = supplied
+            .file_name()
+            .ok_or_else(|| WorkbenchError::invalid("Conversation link has no file name"))?;
+        let parent = supplied
+            .parent()
+            .ok_or_else(|| WorkbenchError::invalid("Conversation link has no parent folder"))?
+            .canonicalize()
+            .map_err(err)?;
+        parent
+            .strip_prefix(&canonical_root)
+            .map_err(|_| {
+                WorkbenchError::invalid(
+                    "Conversation links can open only files in this conversation's folder",
+                )
+            })?
+            .join(name)
+    } else {
+        supplied.to_path_buf()
+    };
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => {
+                parts.push(part.to_str().ok_or_else(|| {
+                    WorkbenchError::invalid("Conversation file path is not UTF-8")
+                })?)
+            }
+            _ => return Err(WorkbenchError::invalid("Invalid conversation file path")),
+        }
+    }
+    let relative = parts.join("/");
+    files::relative(&relative)?;
+    Ok(relative)
+}
+
+fn conversation_file_bytes(
+    store: &Store,
+    session_id: &str,
+    value: &str,
+) -> WorkbenchResult<(String, Vec<u8>)> {
+    let root = store.runtime_root(session_id)?;
+    let relative = conversation_relative_path(&root, value)?;
+    let bytes = files::SafeRoot::open(&root)?.read(&relative)?;
+    Ok((relative, bytes))
+}
+
+pub fn read_conversation_file(
+    store: &Store,
+    session_id: &str,
+    value: &str,
+) -> WorkbenchResult<FilePreview> {
+    let (path, bytes) = conversation_file_bytes(store, session_id, value)?;
+    Ok(preview_from_bytes(path, bytes, None, true))
+}
+
+/// Copy a validated conversation artifact into app-owned immutable storage for
+/// a native open. The shell receives this snapshot, never a pathname that the
+/// active model can replace after validation.
+pub fn snapshot_conversation_file(
+    store: &Store,
+    session_id: &str,
+    value: &str,
+) -> WorkbenchResult<PathBuf> {
+    let (path, bytes) = conversation_file_bytes(store, session_id, value)?;
+    let digest = hash(&bytes);
+    let suffix = Path::new(&path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| {
+            !extension.is_empty()
+                && extension.len() <= 16
+                && extension
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
+        .map(|extension| format!(".{extension}"))
+        .unwrap_or_default();
+    let directory = store.root_path().join("opened-conversation-files");
+    fs::create_dir_all(&directory).map_err(err)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).map_err(err)?;
+    }
+    let target = directory.join(format!("{digest}{suffix}"));
+    if target.exists() {
+        verify_conversation_snapshot(&target, &bytes)?;
+        return Ok(target);
+    }
+    let mut temporary = tempfile::NamedTempFile::new_in(&directory).map_err(err)?;
+    temporary.write_all(&bytes).map_err(err)?;
+    temporary.flush().map_err(err)?;
+    temporary.as_file().sync_all().map_err(err)?;
+    match temporary.persist_noclobber(&target) {
+        Ok(_) => {}
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(err(error.error)),
+    }
+    // Verify the final directory entry even when another writer won the
+    // no-clobber race. Never hand the shell a path based only on the bytes that
+    // were validated before publication.
+    verify_conversation_snapshot(&target, &bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o400)).map_err(err)?;
+        fs::File::open(&directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(err)?;
+    }
+    Ok(target)
+}
+
+fn verify_conversation_snapshot(target: &Path, expected: &[u8]) -> WorkbenchResult<()> {
+    let mut existing = crate::safety::open_regular_file(target).map_err(err)?;
+    let mut existing_bytes = Vec::new();
+    Read::by_ref(&mut existing)
+        .take(MAX_FILE + 1)
+        .read_to_end(&mut existing_bytes)
+        .map_err(err)?;
+    if existing_bytes != expected {
+        return Err(WorkbenchError::conflict(
+            "An opened conversation snapshot failed its integrity check",
+        ));
+    }
+    Ok(())
 }

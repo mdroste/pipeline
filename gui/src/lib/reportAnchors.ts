@@ -20,8 +20,13 @@ export function reportAnchorPlugin(prefix: string) {
         }
         for (const key of ["ariaDescribedBy", "ariaLabelledBy"]) {
           const value = props[key];
-          if (Array.isArray(value)) props[key] = value.map(id => prefix + String(id));
-          else if (typeof value === "string") props[key] = value.split(/\s+/).map(id => prefix + id).join(" ");
+          if (Array.isArray(value))
+            props[key] = value.map((id) => prefix + String(id));
+          else if (typeof value === "string")
+            props[key] = value
+              .split(/\s+/)
+              .map((id) => prefix + id)
+              .join(" ");
         }
       }
       node.children?.forEach(visit);

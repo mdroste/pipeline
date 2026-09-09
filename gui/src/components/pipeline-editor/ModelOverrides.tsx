@@ -18,12 +18,21 @@ function ModelOverrides({
   catalogs: Record<string, ModelCatalog>;
   onChange: (patch: Partial<StepConfig>) => void;
 }) {
-  const hasOverride = !!(step.model || step.effort || Object.keys(step.model_overrides ?? {}).length || Object.keys(step.effort_overrides ?? {}).length);
+  const hasOverride = !!(
+    step.model ||
+    step.effort ||
+    Object.keys(step.model_overrides ?? {}).length ||
+    Object.keys(step.effort_overrides ?? {}).length
+  );
   const [open, setOpen] = useState(hasOverride);
-  const providers = Array.from(new Set(
-    (step.agents?.length ? step.agents : [settings?.preferred_provider || "claude"])
-      .map((provider) => provider || "claude"),
-  ));
+  const providers = Array.from(
+    new Set(
+      (step.agents?.length
+        ? step.agents
+        : [settings?.preferred_provider || "claude"]
+      ).map((provider) => provider || "claude"),
+    ),
+  );
 
   const transportFor = (provider: string): "cli" | "api" =>
     settings ? providerTransport(settings, provider) : "api";
@@ -57,10 +66,13 @@ function ModelOverrides({
             {[
               step.model,
               step.effort,
-              ...Object.entries(step.model_overrides ?? {}).map(([key, selection]) =>
-                `${key}=${selection.mode === "automatic" ? "auto" : selection.mode === "role" ? selection.role : selection.model}`
+              ...Object.entries(step.model_overrides ?? {}).map(
+                ([key, selection]) =>
+                  `${key}=${selection.mode === "automatic" ? "auto" : selection.mode === "role" ? selection.role : selection.model}`,
               ),
-            ].filter(Boolean).join(" / ")}
+            ]
+              .filter(Boolean)
+              .join(" / ")}
           </span>
         )}
       </button>
@@ -74,19 +86,25 @@ function ModelOverrides({
             const key = `${provider}:${transportFor(provider)}`;
             const catalog = catalogs[provider];
             const selection = step.model_overrides?.[key];
-            const value = selection?.mode === "automatic"
-              ? "inherit"
-              : encodeModelSelection(selection);
-            const known = value === "inherit"
-              || catalog?.roles.some((role) => value === `role:${role.id}`)
-              || catalog?.models.some((model) => value === `pinned:${model.id}`);
+            const value =
+              selection?.mode === "automatic"
+                ? "inherit"
+                : encodeModelSelection(selection);
+            const known =
+              value === "inherit" ||
+              catalog?.roles.some((role) => value === `role:${role.id}`) ||
+              catalog?.models.some((model) => value === `pinned:${model.id}`);
             const efforts = effortOptions(
               catalog,
               selection,
-              provider === "claude" ? ["low", "medium", "high", "max"]
-                : provider === "codex" ? ["low", "medium", "high"]
-                  : provider === "antigravity" && transportFor(provider) === "cli"
-                    ? ["low", "medium", "high"] : [],
+              provider === "claude"
+                ? ["low", "medium", "high", "max"]
+                : provider === "codex"
+                  ? ["low", "medium", "high"]
+                  : provider === "antigravity" &&
+                      transportFor(provider) === "cli"
+                    ? ["low", "medium", "high"]
+                    : [],
             );
             return (
               <div key={key} className="space-y-1.5">
@@ -100,13 +118,33 @@ function ModelOverrides({
                   className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                 >
                   <option value="inherit">Provider default (automatic)</option>
-                  {!!catalog?.roles.length && <optgroup label="Stable roles">
-                    {catalog.roles.map((role) => <option key={role.id} value={`role:${role.id}`}>{role.label} — {role.model}</option>)}
-                  </optgroup>}
-                  {!!catalog?.models.length && <optgroup label="Pin exact model">
-                    {catalog.models.map((model) => <option key={model.id} value={`pinned:${model.id}`} disabled={model.deprecated}>{model.display_name || model.id}</option>)}
-                  </optgroup>}
-                  {!known && <option value={value}>Saved selection (not currently listed)</option>}
+                  {!!catalog?.roles.length && (
+                    <optgroup label="Stable roles">
+                      {catalog.roles.map((role) => (
+                        <option key={role.id} value={`role:${role.id}`}>
+                          {role.label} — {role.model}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {!!catalog?.models.length && (
+                    <optgroup label="Pin exact model">
+                      {catalog.models.map((model) => (
+                        <option
+                          key={model.id}
+                          value={`pinned:${model.id}`}
+                          disabled={model.deprecated}
+                        >
+                          {model.display_name || model.id}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {!known && (
+                    <option value={value}>
+                      Saved selection (not currently listed)
+                    </option>
+                  )}
                 </select>
                 {!!efforts.length && (
                   <select
@@ -116,7 +154,11 @@ function ModelOverrides({
                     className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                   >
                     <option value="">Provider default thinking</option>
-                    {efforts.map((effort) => <option key={effort} value={effort}>{effort.charAt(0).toUpperCase() + effort.slice(1)}</option>)}
+                    {efforts.map((effort) => (
+                      <option key={effort} value={effort}>
+                        {effort.charAt(0).toUpperCase() + effort.slice(1)}
+                      </option>
+                    ))}
                   </select>
                 )}
               </div>

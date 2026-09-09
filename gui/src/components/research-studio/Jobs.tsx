@@ -168,8 +168,9 @@ export default function Jobs({
       </summary>
       <ErrorNotice error={error} />
       <p className="text-xs text-gray-500">
-        Up to two jobs can run at once. Jobs that would write to the same project
-        cannot run together. Keep Pipeline open; interrupted jobs do not restart automatically.
+        Up to two jobs can run at once. Jobs that would write to the same
+        project cannot run together. Keep Pipeline open; interrupted jobs do not
+        restart automatically.
       </p>
       <div className="max-h-64 space-y-2 overflow-auto">
         {jobs.map((j) => (
@@ -217,10 +218,23 @@ export default function Jobs({
                 Reconcile adopted outputs
               </button>
             )}
-            {j.execution.inputManifest.snapshotConsistency === "captured_inputs_verified" && (
+            {j.execution.inputManifest.snapshotConsistency ===
+              "captured_inputs_verified" && (
               <div className="w-full space-y-1 text-gray-600 dark:text-gray-400">
-                <p>Verified captured inputs · declared dependencies · host access</p>
-                <Inspect label="Run details and saved inputs" value={{ executionId: j.execution.id, planId: j.execution.inputManifest.planId, workingDirectory: j.execution.cwd, inputs: j.execution.inputManifest, outputs: j.execution.outputManifest, validation: j.execution.validation }} />
+                <p>
+                  Verified captured inputs · declared dependencies · host access
+                </p>
+                <Inspect
+                  label="Run details and saved inputs"
+                  value={{
+                    executionId: j.execution.id,
+                    planId: j.execution.inputManifest.planId,
+                    workingDirectory: j.execution.cwd,
+                    inputs: j.execution.inputManifest,
+                    outputs: j.execution.outputManifest,
+                    validation: j.execution.validation,
+                  }}
+                />
               </div>
             )}
             {j.execution.validation.stataCleanupRequired === true && (

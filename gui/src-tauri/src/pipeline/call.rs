@@ -304,11 +304,10 @@ async fn execute_provider_once(
                 crate::commands::kill_pass_children(&request.pass_key);
                 // Keep polling briefly after termination so CLI providers can
                 // reap their child and drain/close reader tasks.
-                let _ = tokio::time::timeout(Duration::from_secs(5), call.as_mut()).await;
-                Err(format!(
-                    "{} timed out after {}s (including context preparation and fallbacks)",
-                    label, timeout_secs
-                ))
+                let cleanup = tokio::time::timeout(Duration::from_secs(5), call.as_mut())
+                    .await
+                    .ok();
+                timeout_outcome(request, provider, label, timeout_secs, cleanup)
             }
         }
     });
@@ -321,6 +320,33 @@ async fn execute_provider_once(
         output,
         usage,
         duration_secs: started.elapsed().as_secs(),
+    }
+}
+
+/// Transport identity, rather than provider error prose, determines whether a
+/// deadline may have interrupted an accepted native turn. Preserve late success.
+fn timeout_outcome(
+    request: &OwnedRequest,
+    provider: Option<&str>,
+    label: &str,
+    seconds: u64,
+    cleanup: Option<std::result::Result<String, String>>,
+) -> std::result::Result<String, String> {
+    if let Some(Ok(text)) = cleanup {
+        return Ok(text);
+    }
+    let provider = provider.unwrap_or(&request.settings.preferred_provider);
+    let native_submission = provider == "codex"
+        && request.settings.model_transport(provider) != "api"
+        && request.settings.codex_backend == "app_server";
+    if native_submission {
+        Err(format!("[codex-outcome-unknown] {label} exceeded its {seconds}s deadline; review the native attempt before retrying. {}", cleanup.and_then(|r| r.err()).unwrap_or_default()))
+    } else {
+        cleanup.unwrap_or_else(|| {
+            Err(format!(
+                "{label} timed out after {seconds}s (including context preparation and fallbacks)"
+            ))
+        })
     }
 }
 
@@ -565,6 +591,39 @@ mod tests {
             duration_secs: 0,
             usage_limit_fallback: None,
         }
+    }
+
+    #[test]
+    fn native_outer_deadline_preserves_success_and_blocks_uncertain_retry() {
+        let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
+        let mut request = OwnedRequest::new(&app, "timeout", "Timeout", "prompt", 1);
+        let settings = crate::settings::Settings {
+            codex_backend: "app_server".into(),
+            ..Default::default()
+        };
+        request.settings = Arc::new(settings);
+        let error = timeout_outcome(&request, Some("codex"), "test", 1, None).unwrap_err();
+        assert!(super::super::provider_error::is_non_retryable_error(&error));
+        let error = timeout_outcome(
+            &request,
+            Some("codex"),
+            "test",
+            1,
+            Some(Err("late timeout".into())),
+        )
+        .unwrap_err();
+        assert!(super::super::provider_error::is_non_retryable_error(&error));
+        assert_eq!(
+            timeout_outcome(
+                &request,
+                Some("codex"),
+                "test",
+                1,
+                Some(Ok("complete".into()))
+            )
+            .unwrap(),
+            "complete"
+        );
     }
 
     #[test]

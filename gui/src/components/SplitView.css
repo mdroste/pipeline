@@ -1,14 +1,77 @@
-.split-view { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; overflow:hidden; }
-.split-view-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:5px 8px; border-bottom:1px solid #d4d4d4; font-size:12px; flex-shrink:0; }
-.split-view-toolbar label { display:flex; align-items:center; gap:6px; }
-.split-view-toolbar button, .split-view-toolbar select { border:1px solid #d4d4d4; border-radius:5px; padding:4px 7px; background:transparent; }
-.split-view-toolbar button[aria-pressed="true"] { background:#e5e5e5; }
-.split-view-body { display:flex; flex:1; gap:12px; min-width:0; min-height:0; padding:0 4px; }
-.split-view-vertical { flex-direction:column; padding:4px 0; }
-.split-view-pane { position:relative; display:flex; min-width:0; min-height:0; }
-.split-view-pane[hidden] { display:none; }
-.split-view-second { flex:1; }
-.split-view-content { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; overflow:auto; }
-.split-view-pane .file-source-editor { min-height:0; flex:1; }
-.dark .split-view-toolbar, .dark .split-view-toolbar button, .dark .split-view-toolbar select { border-color:#404040; }
-.dark .split-view-toolbar button[aria-pressed="true"] { background:#262626; }
+.split-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.split-view-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #d4d4d4;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.split-view-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.split-view-toolbar button,
+.split-view-toolbar select {
+  border: 1px solid #d4d4d4;
+  border-radius: 5px;
+  padding: 4px 7px;
+  background: transparent;
+}
+.split-view-toolbar button[aria-pressed="true"] {
+  background: #e5e5e5;
+}
+.split-view-body {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 4px;
+}
+.split-view-vertical {
+  flex-direction: column;
+  padding: 4px 0;
+}
+.split-view-pane {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.split-view-pane[hidden] {
+  display: none;
+}
+.split-view-second {
+  flex: 1;
+}
+.split-view-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.split-view-pane .file-source-editor {
+  min-height: 0;
+  flex: 1;
+}
+.dark .split-view-toolbar,
+.dark .split-view-toolbar button,
+.dark .split-view-toolbar select {
+  border-color: #404040;
+}
+.dark .split-view-toolbar button[aria-pressed="true"] {
+  background: #262626;
+}

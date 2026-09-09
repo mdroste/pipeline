@@ -107,6 +107,27 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     };
     crate::pipeline::logging::emit(app, preprocessing_message);
 
+    let run_input_dir = tempfile::Builder::new()
+        .prefix("pipeline_run_inputs_")
+        .tempdir()
+        .map_err(|e| format!("Failed to create run input directory: {e}"))?;
+    let staged = extract::stage_selected_source(paper, input_mode, run_input_dir.path())?;
+    let scoped_source = super::reuse_artifacts::snapshot_source(&staged, run_input_dir.path())?;
+    let captured_path = scoped_source.source_path.as_deref().unwrap_or(paper);
+    let captured_path_text = captured_path.to_string_lossy();
+    let captured_visual_pdf = if captured_path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+    {
+        Some(captured_path.to_path_buf())
+    } else if let Some(companion) = crate::document_bundle::companion_pdf(paper_path) {
+        let destination = run_input_dir.path().join("visual-companion.pdf");
+        super::reuse_artifacts::copy_tree(&companion, &destination)?;
+        Some(destination)
+    } else {
+        None
+    };
+
     // Extract paper text
     app.emit_event(
         "pipeline:stage",
@@ -121,11 +142,11 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     .ok();
     let extract_start = std::time::Instant::now();
     let extraction_result = match input_mode {
-        "folder" => extract::ingest_folder_async(paper_path).await,
+        "folder" => extract::ingest_folder_async(&captured_path_text).await,
         "none" => Ok(extract::ingest_none()),
-        _ => extract::extract(app, paper_path, &config.extraction).await,
+        _ => extract::extract(app, &captured_path_text, &config.extraction).await,
     };
-    let extraction = match extraction_result {
+    let mut extraction = match extraction_result {
         Ok(value) => value,
         Err(error) => {
             crate::pipeline::logging::emit(
@@ -141,6 +162,8 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             return Err(error);
         }
     };
+    let captured_document_path = std::path::PathBuf::from(&extraction.source_path);
+    extraction.source_path = paper_path.to_string();
     let extract_secs = extract_start.elapsed().as_secs();
     crate::pipeline::logging::emit(
         app,
@@ -242,15 +265,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     // compiled companion PDF. The semantic LaTeX source remains primary, but
     // the page renders preserve the visual evidence needed to inspect figures,
     // tables, equation layout, and extraction quality.
-    let visual_pdf = if extraction
-        .source_path
-        .to_ascii_lowercase()
-        .ends_with(".pdf")
-    {
-        Some(std::path::PathBuf::from(&extraction.source_path))
-    } else {
-        crate::document_bundle::companion_pdf(&extraction.source_path)
-    };
+    let visual_pdf = captured_visual_pdf;
     if input_mode == "document" {
         if let (Some(pdf), Some(w)) = (visual_pdf, run_writer.as_mut()) {
             let out_dir = w.dir().join("artifacts").join("pages");
@@ -406,7 +421,11 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     // persisted after the orientation stage below.
     let mut document_bundle = None;
     if let Some(w) = run_writer.as_mut() {
-        match crate::document_bundle::build(&extraction, w.dir()) {
+        match super::reuse_artifacts::build_bundle(
+            &extraction,
+            Some(&captured_document_path),
+            w.dir(),
+        ) {
             Ok(build) => {
                 for (rel_path, label, group) in &build.added_artifacts {
                     if let Err(error) = w.register_existing(rel_path, label, group) {
@@ -433,29 +452,9 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
 
-    // Keep every model-readable transient for this run under one private
-    // directory. CLI providers can grant this root without exposing unrelated
-    // files in the process-wide temp directory.
-    let run_input_dir = tempfile::Builder::new()
-        .prefix("pipeline_run_inputs_")
-        .tempdir()
-        .map_err(|e| format!("Failed to create run input directory: {e}"))?;
-    let scoped_source =
-        match extract::stage_selected_source(paper, input_mode, run_input_dir.path()) {
-            Ok(context) => context,
-            Err(error) => {
-                app.emit_event(
-                    "pipeline:log",
-                    serde_json::json!({
-                        "line": format!(
-                            "WARNING: source context is unavailable to review steps: {error}"
-                        )
-                    }),
-                )
-                .ok();
-                extract::ScopedSourceContext::default()
-            }
-        };
+    if let Some(writer) = run_writer.as_mut() {
+        super::reuse_artifacts::retain_source(&scoped_source, writer)?;
+    }
     let scoped_source_path = scoped_source
         .source_path
         .as_deref()
@@ -656,6 +655,8 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     let mut persisted_inputs: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     let mut extra_tmps: Vec<tempfile::NamedTempFile> = Vec::new();
+    let mut runtime_extra_sources: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     let mut extra_sources: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for (input_index, slot) in config.extraction.extra_inputs.iter().enumerate() {
@@ -683,9 +684,28 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             .ok_or_else(|| "Durable run workspace disappeared before named inputs".to_string())?
             .record_extra_input_source(&slot.key, path)
             .map_err(|error| format!("Could not record named input '{}': {error}", slot.key))?;
+        let private = run_input_dir
+            .path()
+            .join("named")
+            .join(executor::step_slug(&slot.key));
+        let staged =
+            extract::stage_selected_source(std::path::Path::new(path), &slot.mode, &private)?;
+        let captured = super::reuse_artifacts::snapshot_source(&staged, &private)?;
+        let captured_path = captured
+            .source_path
+            .as_ref()
+            .ok_or("Named input has no captured source")?
+            .to_string_lossy()
+            .into_owned();
+        super::reuse_artifacts::retain_named_source(
+            &slot.key,
+            &captured,
+            run_writer.as_mut().ok_or("Missing durable run workspace")?,
+        )?;
+        runtime_extra_sources.insert(slot.key.clone(), captured_path.clone());
         let ex = match slot.mode.as_str() {
-            "folder" => extract::ingest_folder_async(path).await?,
-            _ => extract::extract(app, path, &config.extraction).await?,
+            "folder" => extract::ingest_folder_async(&captured_path).await?,
+            _ => extract::extract(app, &captured_path, &config.extraction).await?,
         };
         let rel_path = extra_input_artifact_path(input_index, &slot.key);
         let label = if slot.label.is_empty() {
@@ -732,7 +752,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         &survey_hint,
         &variables,
         &resolved_inputs,
-        &extra_sources,
+        &runtime_extra_sources,
         &std::collections::HashMap::new(), // no preloaded steps for a fresh run
         artifact_write_dir.as_deref(),
         &settings,

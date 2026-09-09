@@ -451,6 +451,9 @@ fn parser_sidecar_refresh_reuses_only_a_verified_pinned_runtime() {
     .unwrap();
 
     assert!(parser_runtime_reusable_for_sidecar_refresh(root.path()));
+    assert!(refresh_paddle_parser_sidecar_locked(root.path()).unwrap());
+    assert!(paddle_full_parser_paths_at(root.path()).is_some());
+    assert!(!refresh_paddle_parser_sidecar_locked(root.path()).unwrap());
     std::fs::write(version_root.join("packages.txt"), b"changed").unwrap();
     assert!(!parser_runtime_reusable_for_sidecar_refresh(root.path()));
 }
@@ -605,6 +608,12 @@ fn archive_paths_reject_traversal_and_absolute_paths() {
         Path::new("python/link"),
         Path::new("../../outside")
     ));
+}
+
+#[test]
+fn llama_archive_entry_limit_rejects_inode_exhaustion() {
+    assert!(ensure_llama_archive_entry_count(MAX_LLAMA_ARCHIVE_ENTRIES).is_ok());
+    assert!(ensure_llama_archive_entry_count(MAX_LLAMA_ARCHIVE_ENTRIES + 1).is_err());
 }
 
 #[test]

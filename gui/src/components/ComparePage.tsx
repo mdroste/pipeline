@@ -97,11 +97,17 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
     const seen = new Set<string>();
     for (const o of reportA?.step_outputs ?? []) {
       const k = baseId(o.step_id);
-      if (!seen.has(k)) { seen.add(k); keys.push(k); }
+      if (!seen.has(k)) {
+        seen.add(k);
+        keys.push(k);
+      }
     }
     for (const o of reportB?.step_outputs ?? []) {
       const k = baseId(o.step_id);
-      if (!seen.has(k)) { seen.add(k); keys.push(k); }
+      if (!seen.has(k)) {
+        seen.add(k);
+        keys.push(k);
+      }
     }
     return keys;
   }, [reportA, reportB]);
@@ -128,7 +134,10 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
       const newer = mapB.get(key);
       const label = newer?.step_label || older?.step_label || key;
       const lines = lineDiff(older?.raw_text ?? "", newer?.raw_text ?? "")
-        .map((operation) => `${operation.type === "add" ? "+" : operation.type === "del" ? "-" : " "} ${operation.text}`)
+        .map(
+          (operation) =>
+            `${operation.type === "add" ? "+" : operation.type === "del" ? "-" : " "} ${operation.text}`,
+        )
         .join("\n");
       return `## ${label}\n\n\`\`\`diff\n${lines}\n\`\`\``;
     });
@@ -140,7 +149,10 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
       ...blocks,
     ].join("\n\n");
     try {
-      await invoke("save_text_file", { content, suggestedName: `pipeline-diff-${runA.slice(0, 8)}-${runB.slice(0, 8)}.md` });
+      await invoke("save_text_file", {
+        content,
+        suggestedName: `pipeline-diff-${runA.slice(0, 8)}-${runB.slice(0, 8)}.md`,
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -169,10 +181,15 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-6 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
-        <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100">
+        <button
+          onClick={onBack}
+          className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
+        >
           ← Back
         </button>
-        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Compare reports</span>
+        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+          Compare reports
+        </span>
         <button
           onClick={() => void exportDiff()}
           disabled={loading}
@@ -197,30 +214,76 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
           </div>
         )}
         {loading ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">Loading both reports…</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
+            Loading both reports…
+          </p>
         ) : (
           <>
             <div className="grid gap-3 sm:grid-cols-2">
-              {([
-                ["Older report", runA, manifestA, "border-red-200 dark:border-red-900"],
-                ["Newer report", runB, manifestB, "border-green-200 dark:border-green-900"],
-              ] as const).map(([label, id, manifest, tone]) => (
-                <section key={id} className={`rounded-lg border bg-white p-3 dark:bg-gray-900 ${tone}`}>
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{label}</h3>
-                  <p className="mt-1 text-sm text-gray-800 dark:text-gray-200">{manifest?.title || manifest?.profile_name || "Untitled report"}</p>
-                  <p className="mt-1 break-all font-mono text-[11px] text-gray-500 dark:text-gray-400">{id}</p>
+              {(
+                [
+                  [
+                    "Older report",
+                    runA,
+                    manifestA,
+                    "border-red-200 dark:border-red-900",
+                  ],
+                  [
+                    "Newer report",
+                    runB,
+                    manifestB,
+                    "border-green-200 dark:border-green-900",
+                  ],
+                ] as const
+              ).map(([label, id, manifest, tone]) => (
+                <section
+                  key={id}
+                  className={`rounded-lg border bg-white p-3 dark:bg-gray-900 ${tone}`}
+                >
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    {label}
+                  </h3>
+                  <p className="mt-1 text-sm text-gray-800 dark:text-gray-200">
+                    {manifest?.title ||
+                      manifest?.profile_name ||
+                      "Untitled report"}
+                  </p>
+                  <p className="mt-1 break-all font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                    {id}
+                  </p>
                   <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                    <dt className="text-gray-500">Created</dt><dd>{manifest?.created ? new Date(manifest.created).toLocaleString() : "Unknown"}</dd>
-                    <dt className="text-gray-500">Provider</dt><dd>{manifest?.provider || "Unknown"}</dd>
-                    <dt className="text-gray-500">Workflow</dt><dd>{manifest?.profile_name || "Unknown"}</dd>
-                    <dt className="text-gray-500">Artifacts</dt><dd>{manifest?.artifacts.length ?? 0}</dd>
+                    <dt className="text-gray-500">Created</dt>
+                    <dd>
+                      {manifest?.created
+                        ? new Date(manifest.created).toLocaleString()
+                        : "Unknown"}
+                    </dd>
+                    <dt className="text-gray-500">Provider</dt>
+                    <dd>{manifest?.provider || "Unknown"}</dd>
+                    <dt className="text-gray-500">Workflow</dt>
+                    <dd>{manifest?.profile_name || "Unknown"}</dd>
+                    <dt className="text-gray-500">Artifacts</dt>
+                    <dd>{manifest?.artifacts.length ?? 0}</dd>
                   </dl>
                 </section>
               ))}
             </div>
             <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-300">
-              <span className="font-medium">Summary:</span> {comparisonSummary.changed} changed · {comparisonSummary.added} added · {comparisonSummary.removed} removed · {comparisonSummary.unchanged} unchanged.
-              <span className="ml-2 text-gray-500 dark:text-gray-400">Diffs show <span className="text-red-700 dark:text-red-400">− older</span> and <span className="text-green-700 dark:text-green-400">+ newer</span> lines. Reconciliation sends both reports and their disclosed provider-produced artifacts to the selected model for one additional call.</span>
+              <span className="font-medium">Summary:</span>{" "}
+              {comparisonSummary.changed} changed · {comparisonSummary.added}{" "}
+              added · {comparisonSummary.removed} removed ·{" "}
+              {comparisonSummary.unchanged} unchanged.
+              <span className="ml-2 text-gray-500 dark:text-gray-400">
+                Diffs show{" "}
+                <span className="text-red-700 dark:text-red-400">− older</span>{" "}
+                and{" "}
+                <span className="text-green-700 dark:text-green-400">
+                  + newer
+                </span>{" "}
+                lines. Reconciliation sends both reports and their disclosed
+                provider-produced artifacts to the selected model for one
+                additional call.
+              </span>
             </div>
 
             {reconcile && (
@@ -245,18 +308,35 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
               const changed = before !== after;
               const isOpen = expanded.has(k);
               return (
-                <div key={k} className="border border-gray-200 dark:border-gray-800 rounded-lg bg-white dark:bg-gray-900">
+                <div
+                  key={k}
+                  className="border border-gray-200 dark:border-gray-800 rounded-lg bg-white dark:bg-gray-900"
+                >
                   <button
                     onClick={() => toggle(k)}
                     className="w-full flex items-center gap-2 px-3 py-2 text-left"
                   >
-                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{label}</span>
-                    {!a && <span className="text-[10px] text-green-700 dark:text-green-400">only in newer</span>}
-                    {!b && <span className="text-[10px] text-red-700 dark:text-red-400">only in older</span>}
-                    <span className={`ml-auto text-xs ${changed ? "text-amber-700 dark:text-amber-300" : "text-gray-500 dark:text-gray-400"}`}>
+                    <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                      {label}
+                    </span>
+                    {!a && (
+                      <span className="text-[10px] text-green-700 dark:text-green-400">
+                        only in newer
+                      </span>
+                    )}
+                    {!b && (
+                      <span className="text-[10px] text-red-700 dark:text-red-400">
+                        only in older
+                      </span>
+                    )}
+                    <span
+                      className={`ml-auto text-xs ${changed ? "text-amber-700 dark:text-amber-300" : "text-gray-500 dark:text-gray-400"}`}
+                    >
                       {changed ? "changed" : "unchanged"}
                     </span>
-                    <span className="text-gray-500 dark:text-gray-400 text-xs">{isOpen ? "▾" : "▸"}</span>
+                    <span className="text-gray-500 dark:text-gray-400 text-xs">
+                      {isOpen ? "▾" : "▸"}
+                    </span>
                   </button>
                   {isOpen && (
                     <div className="px-3 pb-3 border-t border-gray-100 dark:border-gray-800 pt-2">

@@ -212,7 +212,11 @@ pub(super) fn import_report(
     }
     Ok(json!(result))
 }
-pub fn response_flags(store: &Store, ws: &str, d: &ResponseDecision) -> WorkbenchResult<Vec<String>> {
+pub fn response_flags(
+    store: &Store,
+    ws: &str,
+    d: &ResponseDecision,
+) -> WorkbenchResult<Vec<String>> {
     let mut flags = Vec::new();
     let analysis=d.reports_analysis_added||regex::Regex::new(r"(?i)\b(added|ran|reran|performed|conducted)\b.{0,70}\b(analysis|regression|experiment|robustness|simulation|estimation)\b").expect("response assertion").is_match(&d.draft);
     if analysis {

@@ -178,6 +178,7 @@ export interface SendTurnRequest {
 }
 
 export interface SendTurnResult {
+  epoch: number;
   threadId: string;
   turnId: string;
   draftCleared: boolean;
@@ -201,6 +202,7 @@ export interface WorkbenchEvent {
 }
 
 export interface ResolveServerRequest {
+  epoch: number;
   requestId: string | number;
   method: string;
   result?: Record<string, unknown> | null;
@@ -277,7 +279,8 @@ export interface TitlePreferences {
 
 export interface HarnessModule {
   id: string;
-  kind: "instruction_pack" | "context_provider" | "tool" | "inspector" | "recipe";
+  kind:
+    "instruction_pack" | "context_provider" | "tool" | "inspector" | "recipe";
   version: number;
   name: string;
   description: string;
@@ -285,7 +288,8 @@ export interface HarnessModule {
   capability: string;
 }
 
-export type BasePromptUpdate = { mode: "codexDefault" } | { mode: "replace"; text: string };
+export type BasePromptUpdate =
+  { mode: "codexDefault" } | { mode: "replace"; text: string };
 
 export interface NativePromptCatalog {
   installedVersion: string | null;
@@ -294,7 +298,12 @@ export interface NativePromptCatalog {
     origin: "pipeline" | "codex";
     clientVersion: string | null;
     fetchedAt: string | null;
-    models: Array<{ model: string; template: string; templateField: string; sections: InstructionSection[] }>;
+    models: Array<{
+      model: string;
+      template: string;
+      templateField: string;
+      sections: InstructionSection[];
+    }>;
   }>;
   diagnostics: string[];
 }
@@ -372,7 +381,13 @@ export interface ResearchNote {
   id: string;
   workspaceId: string;
   paperId: string | null;
-  kind: "question" | "assumption" | "decision" | "next_step" | "notation" | "handoff";
+  kind:
+    | "question"
+    | "assumption"
+    | "decision"
+    | "next_step"
+    | "notation"
+    | "handoff";
   body: string;
   state: "proposed" | "accepted" | "rejected" | "retired";
   origin: string;
@@ -406,9 +421,26 @@ export interface ResearchPaper {
   updatedAt: string;
 }
 
-export interface PaperWithRevision { paper: ResearchPaper; revision: PaperRevision | null; }
-export interface PaperReadResult { revisionId: string; contentHash: string; start: number; end: number; text: string; }
-export interface PaperSearchHit { revisionId: string; contentHash: string; start: number; end: number; line: number; page: number | null; excerpt: string; }
+export interface PaperWithRevision {
+  paper: ResearchPaper;
+  revision: PaperRevision | null;
+}
+export interface PaperReadResult {
+  revisionId: string;
+  contentHash: string;
+  start: number;
+  end: number;
+  text: string;
+}
+export interface PaperSearchHit {
+  revisionId: string;
+  contentHash: string;
+  start: number;
+  end: number;
+  line: number;
+  page: number | null;
+  excerpt: string;
+}
 
 export interface SourceRecord {
   id: string;
@@ -427,7 +459,10 @@ export interface SourceRecord {
   updatedAt: string;
 }
 
-export interface SourceImportResult { source: SourceRecord; duplicateCandidates: SourceRecord[]; }
+export interface SourceImportResult {
+  source: SourceRecord;
+  duplicateCandidates: SourceRecord[];
+}
 
 export interface ClaimRecord {
   id: string;
@@ -453,7 +488,12 @@ export interface EvidenceRecord {
   targetId: string;
   locator: Record<string, unknown> | null;
   relation: "supports" | "contradicts" | "qualifies";
-  assessment: "not_checked" | "model_assessed" | "human_confirmed" | "check_passed" | "check_failed";
+  assessment:
+    | "not_checked"
+    | "model_assessed"
+    | "human_confirmed"
+    | "check_passed"
+    | "check_failed";
   assessor: string;
   dependencyHash: string | null;
   freshness: "current" | "stale" | "unknown";
@@ -495,7 +535,14 @@ export interface ResearchExecution {
   cwd: string;
   inputManifest: Record<string, unknown>;
   dependencyHash: string;
-  outcome: "queued" | "running" | "completed" | "failed" | "interrupted" | "timed_out" | "outcome_unknown";
+  outcome:
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "interrupted"
+    | "timed_out"
+    | "outcome_unknown";
   startedAt: string | null;
   endedAt: string | null;
   exitStatus: number | null;
@@ -508,104 +555,264 @@ export interface ResearchExecution {
 }
 
 export interface ResearchResultV1 {
-  resultId: string; estimand: string; specificationId: string; sampleId: string; estimate: number;
-  standardError: number | null; confidenceInterval: [number, number] | null; n: number | null; units: string;
-  transformation: string | null; uncertaintyMethod: string | null; sourceExecutionId: string; artifactLocator: string;
+  resultId: string;
+  estimand: string;
+  specificationId: string;
+  sampleId: string;
+  estimate: number;
+  standardError: number | null;
+  confidenceInterval: [number, number] | null;
+  n: number | null;
+  units: string;
+  transformation: string | null;
+  uncertaintyMethod: string | null;
+  sourceExecutionId: string;
+  artifactLocator: string;
 }
 
 export interface ResultComparison {
-  comparable: boolean; passed: boolean; absoluteDifference: number | null; tolerance: number;
-  incompatibilities: string[]; limitations: string;
+  comparable: boolean;
+  passed: boolean;
+  absoluteDifference: number | null;
+  tolerance: number;
+  incompatibilities: string[];
+  limitations: string;
 }
 
 export interface VerificationRecord {
-  id: string; evidenceLinkId: string; method: string; checkerIdentity: string;
-  inputHashes: Record<string, unknown>; observedResult: Record<string, unknown>;
-  limitations: string; passed: boolean; createdAt: string;
+  id: string;
+  evidenceLinkId: string;
+  method: string;
+  checkerIdentity: string;
+  inputHashes: Record<string, unknown>;
+  observedResult: Record<string, unknown>;
+  limitations: string;
+  passed: boolean;
+  createdAt: string;
 }
 
 export interface ResearchRecipe {
-  id: string; workspaceId: string | null; sourceRecipeId: string | null; name: string;
-  description: string; instructions: string; requiredInputs: string[]; requiredTools: string[];
-  suggestedPermissionMode: "inspect" | "edit"; expectedChecks: string[]; version: number;
-  revision: number; builtIn: boolean;
+  id: string;
+  workspaceId: string | null;
+  sourceRecipeId: string | null;
+  name: string;
+  description: string;
+  instructions: string;
+  requiredInputs: string[];
+  requiredTools: string[];
+  suggestedPermissionMode: "inspect" | "edit";
+  expectedChecks: string[];
+  version: number;
+  revision: number;
+  builtIn: boolean;
 }
 
-export interface RecipeInputCheck { input: string; available: boolean; detail: string; }
+export interface RecipeInputCheck {
+  input: string;
+  available: boolean;
+  detail: string;
+}
 export interface RecipeRun {
-  id: string; workspaceId: string; sessionId: string; recipe: ResearchRecipe;
-  status: "active" | "completed" | "incomplete"; artifacts: Array<Record<string, unknown>>;
-  checks: Array<Record<string, unknown>>; unresolvedIssues: string[]; missingEvidence: string[];
-  startedAt: string; completedAt: string | null;
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  recipe: ResearchRecipe;
+  status: "active" | "completed" | "incomplete";
+  artifacts: Array<Record<string, unknown>>;
+  checks: Array<Record<string, unknown>>;
+  unresolvedIssues: string[];
+  missingEvidence: string[];
+  startedAt: string;
+  completedAt: string | null;
 }
 
-export interface PerformanceBudget { metric: string; unit: "ms" | "percent" | "mib"; budgetValue: number; rationale: string; }
+export interface PerformanceBudget {
+  metric: string;
+  unit: "ms" | "percent" | "mib";
+  budgetValue: number;
+  rationale: string;
+}
 export interface ResearchEvaluation {
-  id: string; fixtureId: string; fixtureVersion: number;
-  variant: "recipe" | "plain_workspace" | "ordinary_codex"; model: string | null;
-  settings: Record<string, unknown>; outcome: Record<string, unknown>; latencyMs: number | null;
-  inputTokens: number | null; outputTokens: number | null; createdAt: string;
+  id: string;
+  fixtureId: string;
+  fixtureVersion: number;
+  variant: "recipe" | "plain_workspace" | "ordinary_codex";
+  model: string | null;
+  settings: Record<string, unknown>;
+  outcome: Record<string, unknown>;
+  latencyMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  createdAt: string;
 }
 
 export interface ReviewHandoff {
-  version: number; id: string; workspaceId: string; sessionId: string | null; paperId: string;
-  revisionId: string; contentHash: string; mediaKind: string; stagedPath: string;
-  inputInterpretation: "document" | "source_tree"; metadata: Record<string, unknown>;
-  externalReference: string | null; createdAt: string; linkedAt: string | null;
+  version: number;
+  id: string;
+  workspaceId: string;
+  sessionId: string | null;
+  paperId: string;
+  revisionId: string;
+  contentHash: string;
+  mediaKind: string;
+  stagedPath: string;
+  inputInterpretation: "document" | "source_tree";
+  metadata: Record<string, unknown>;
+  externalReference: string | null;
+  createdAt: string;
+  linkedAt: string | null;
 }
 
 export interface ResearchArchiveReport {
-  path: string; workspaceCount: number; sessionCount: number; blobCount: number; bytes: number;
-  nativeBindingsRetired: number; portabilityNote: string;
+  path: string;
+  workspaceCount: number;
+  sessionCount: number;
+  blobCount: number;
+  bytes: number;
+  nativeBindingsRetired: number;
+  portabilityNote: string;
 }
 
 export interface ExchangeSelection {
-  includeNotes: boolean; recordKinds: string[]; paperIds: string[]; executionIds: string[];
-  includeSources: boolean; includeLedger: boolean; includeCompiledPdfs: boolean;
+  includeNotes: boolean;
+  recordKinds: string[];
+  paperIds: string[];
+  executionIds: string[];
+  includeSources: boolean;
+  includeLedger: boolean;
+  includeCompiledPdfs: boolean;
 }
-export interface ExchangeObjectEntry { kind: string; id: string; fingerprint: string; title: string }
-export interface ExchangeExternalReference { kind: string; id: string; reason: string }
+export interface ExchangeObjectEntry {
+  kind: string;
+  id: string;
+  fingerprint: string;
+  title: string;
+}
+export interface ExchangeExternalReference {
+  kind: string;
+  id: string;
+  reason: string;
+}
 export interface ExchangePreview {
-  objects: ExchangeObjectEntry[]; blobCount: number; blobBytes: number; exclusions: string[];
-  externalReferences: ExchangeExternalReference[]; limitations: string[];
+  objects: ExchangeObjectEntry[];
+  blobCount: number;
+  blobBytes: number;
+  exclusions: string[];
+  externalReferences: ExchangeExternalReference[];
+  limitations: string[];
 }
 export interface ExchangeReport {
-  path: string; bytes: number; packageHash: string; objectCount: number; blobCount: number;
-  exclusions: string[]; externalReferences: ExchangeExternalReference[]; limitations: string[];
+  path: string;
+  bytes: number;
+  packageHash: string;
+  objectCount: number;
+  blobCount: number;
+  exclusions: string[];
+  externalReferences: ExchangeExternalReference[];
+  limitations: string[];
 }
 export interface ExchangeInspection {
-  path: string; packageHash: string; workspaceName: string; sourceNamespace: string; createdAt: string;
-  workspaceRoot: string | null; counts: Record<string, number>; blobCount: number; blobBytes: number;
-  exclusions: string[]; externalReferences: number; limitations: string[]; ownExport: boolean;
+  path: string;
+  packageHash: string;
+  workspaceName: string;
+  sourceNamespace: string;
+  createdAt: string;
+  workspaceRoot: string | null;
+  counts: Record<string, number>;
+  blobCount: number;
+  blobBytes: number;
+  exclusions: string[];
+  externalReferences: number;
+  limitations: string[];
+  ownExport: boolean;
 }
 export type ExchangeTarget =
   | { kind: "newWorkspace"; name: string; root: string | null }
   | { kind: "existingWorkspace"; workspaceId: string };
-export interface ExchangeDecision { kind: string; id: string; outcome: string; newId: string | null; title: string }
+export interface ExchangeDecision {
+  kind: string;
+  id: string;
+  outcome: string;
+  newId: string | null;
+  title: string;
+}
 export interface ExchangeImportPreview {
-  targetWorkspaceId: string | null; new: number; identical: number; remapped: number;
-  conflicts: ExchangeDecision[]; decisions: ExchangeDecision[]; blobCount: number; limitations: string[];
+  targetWorkspaceId: string | null;
+  new: number;
+  identical: number;
+  remapped: number;
+  conflicts: ExchangeDecision[];
+  decisions: ExchangeDecision[];
+  blobCount: number;
+  limitations: string[];
 }
 export interface ExchangeImportReport {
-  importId: string; workspaceId: string; new: number; identical: number; remapped: number;
-  conflicts: number; blobs: number; limitations: string[];
+  importId: string;
+  workspaceId: string;
+  new: number;
+  identical: number;
+  remapped: number;
+  conflicts: number;
+  blobs: number;
+  limitations: string[];
 }
 export interface ExchangeConflict {
-  id: string; importId: string; objectKind: string; objectId: string; local: unknown; base?: unknown; imported: unknown;
-  state: string; recordedAt: string;
+  id: string;
+  importId: string;
+  objectKind: string;
+  objectId: string;
+  local: unknown;
+  base?: unknown;
+  imported: unknown;
+  state: string;
+  recordedAt: string;
 }
-export interface StorageCategory { key: string; label: string; bytes: number; entries: number; disposable: boolean; note: string }
-export interface TrashEntry { id: string; category: string; originalPath: string; sizeBytes: number; reason: string; movedAt: string; state: string }
-export interface StorageReport { root: string; categories: StorageCategory[]; trash: TrashEntry[]; activeJobs: number; note: string }
-export interface PrunePlan { entries: Array<{ category: string; path: string; bytes: number }>; bytes: number; applied: boolean; trashIds: string[]; previewToken: string }
+export interface StorageCategory {
+  key: string;
+  label: string;
+  bytes: number;
+  entries: number;
+  disposable: boolean;
+  note: string;
+}
+export interface TrashEntry {
+  id: string;
+  category: string;
+  originalPath: string;
+  sizeBytes: number;
+  reason: string;
+  movedAt: string;
+  state: string;
+}
+export interface StorageReport {
+  root: string;
+  categories: StorageCategory[];
+  trash: TrashEntry[];
+  activeJobs: number;
+  note: string;
+}
+export interface PrunePlan {
+  entries: Array<{ category: string; path: string; bytes: number }>;
+  bytes: number;
+  applied: boolean;
+  trashIds: string[];
+  previewToken: string;
+}
 export interface DraftWorkflow {
-  name: string; canonicalJson: string; fingerprint: string;
-  steps: Array<{ id: string; label: string; source: string }>; unsupported: string[]; notes: string[];
+  name: string;
+  canonicalJson: string;
+  fingerprint: string;
+  steps: Array<{ id: string; label: string; source: string }>;
+  unsupported: string[];
+  notes: string[];
 }
 
 export interface ResearchArchiveInspection {
-  path: string; formatVersion: number; storeSchemaVersion: number;
-  workspaceRoots: string[]; portabilityNote: string;
+  path: string;
+  formatVersion: number;
+  storeSchemaVersion: number;
+  workspaceRoots: string[];
+  portabilityNote: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -623,7 +830,8 @@ export function isSessionSnapshot(value: unknown): value is SessionSnapshot {
       typeof workspace.id === "string" &&
       typeof workspace.name === "string" &&
       (typeof workspace.root === "string" || workspace.root === null) &&
-      (typeof workspace.rootIdentity === "string" || workspace.rootIdentity === null) &&
+      (typeof workspace.rootIdentity === "string" ||
+        workspace.rootIdentity === null) &&
       typeof workspace.revision === "number");
   return (
     typeof value.sequence === "number" &&

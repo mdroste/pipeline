@@ -177,6 +177,9 @@ fn tex_graphic_names(source: &str) -> Vec<String> {
 }
 
 fn resolve_tex_graphic(root: &Path, raw: &str) -> Option<PathBuf> {
+    if let Some(captured) = crate::pipeline::extract::captured_reference(root, root, raw) {
+        return captured;
+    }
     let raw_path = Path::new(raw);
     if raw_path.is_absolute()
         || raw_path

@@ -729,8 +729,12 @@ pub(crate) fn prepare_execution(
     validate_id("execution profile id", &request.profile_id)?;
     let mut profile = get_execution_profile(store, &request.profile_id)?;
     let project_guard = super::super::project::execution_lock(store, &profile.workspace_id)?;
-    let mut authorization = if request.plan_id.is_none() {Some(preview_host_execution(store, &profile.id)?)} else {None};
-    if authorization.as_ref().is_some_and(|a|!a.authorized) {
+    let mut authorization = if request.plan_id.is_none() {
+        Some(preview_host_execution(store, &profile.id)?)
+    } else {
+        None
+    };
+    if authorization.as_ref().is_some_and(|a| !a.authorized) {
         return Err(WorkbenchError::invalid("Review and authorize this exact host command and its current inputs before testing or running it"));
     }
     if let Some(session_id) = &request.session_id {
@@ -744,7 +748,10 @@ pub(crate) fn prepare_execution(
             return Err(WorkbenchError::invalid("Workspace host profiles are unavailable in isolated task sessions; use the task sandbox"));
         }
     }
-    if request.plan_id.is_none() && !request.test_only && profile.test_status.as_deref() != Some("passed") {
+    if request.plan_id.is_none()
+        && !request.test_only
+        && profile.test_status.as_deref() != Some("passed")
+    {
         return Err(WorkbenchError::invalid(
             "Run the profile test successfully before using it for research execution",
         ));
@@ -779,12 +786,29 @@ pub(crate) fn prepare_execution(
         )?)));
     }
     let execution_id = new_id("execution")?;
-    let (mut manifest, dependency_hash, consistency) = if let Some(plan_id)=&request.plan_id {
-        let (captured,grant,manifest)=super::execution_plan::stage(store,&profile.workspace_id,plan_id,&execution_id,request.test_only)?;
-        if captured.id!=request.profile_id {return Err(WorkbenchError::invalid("Plan belongs to another profile"));}
-        profile=captured;authorization=Some(grant);let dependency=hash_bytes(&serde_json::to_vec(&manifest).map_err(|e|WorkbenchError::storage("Plan manifest",e))?);(manifest,dependency,"uncertain".to_string())
-    } else {input_manifest(&profile)?};
-    let authorization=authorization.ok_or_else(||WorkbenchError::invalid("Missing execution authorization"))?;
+    let (mut manifest, dependency_hash, consistency) = if let Some(plan_id) = &request.plan_id {
+        let (captured, grant, manifest) = super::execution_plan::stage(
+            store,
+            &profile.workspace_id,
+            plan_id,
+            &execution_id,
+            request.test_only,
+        )?;
+        if captured.id != request.profile_id {
+            return Err(WorkbenchError::invalid("Plan belongs to another profile"));
+        }
+        profile = captured;
+        authorization = Some(grant);
+        let dependency = hash_bytes(
+            &serde_json::to_vec(&manifest)
+                .map_err(|e| WorkbenchError::storage("Plan manifest", e))?,
+        );
+        (manifest, dependency, "uncertain".to_string())
+    } else {
+        input_manifest(&profile)?
+    };
+    let authorization =
+        authorization.ok_or_else(|| WorkbenchError::invalid("Missing execution authorization"))?;
     // Existing outputs cannot count as newly produced artifacts. Record their
     // metadata before launch; unchanged outputs remain explicitly unverified.
     let before_outputs = profile
@@ -944,7 +968,7 @@ pub(crate) fn finalize_execution(
     open_connection(store)?.execute("UPDATE execution_jobs SET finalization_json=?2 WHERE execution_id=?1", params![execution_id,json!({"outcome":outcome,"endedAt":ended,"exitStatus":output.status,"stdout":stdout,"stderr":stderr,"outputs":outputs,"validation":validation,"testOnly":request.test_only,"profileId":profile.id,"profileRevision":profile.revision}).to_string()]).map_err(|e|WorkbenchError::storage("Failed to journal adopted execution",e))?;
     open_connection(store)?.execute("UPDATE research_executions SET outcome=?2, ended_at=?3, exit_status=?4, stdout_text=?5, stderr_text=?6, output_manifest_json=?7, validation_json=?8 WHERE id=?1", params![execution_id, outcome, ended, output.status, stdout, stderr, serde_json::to_string(&outputs).unwrap_or_default(), serde_json::to_string(&validation).unwrap_or_default()]).map_err(|error| WorkbenchError::storage("Failed to complete research execution receipt", error))?;
     if request.test_only && request.plan_id.is_some() {
-        super::execution_plan::record_test(store,request.plan_id.as_deref().unwrap(),&outcome)?;
+        super::execution_plan::record_test(store, request.plan_id.as_deref().unwrap(), &outcome)?;
     }
     if request.test_only && request.plan_id.is_none() {
         open_connection(store)?
@@ -1385,13 +1409,30 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
     };
     // Preserve the invocation path: Python discovers a venv beside that path,
     // and multicall binaries may also distinguish their aliases. Hash the target.
-    let invocation_path=if executable.is_absolute(){executable}else{Path::new(&profile.cwd).join(executable)};
+    let invocation_path = if executable.is_absolute() {
+        executable
+    } else {
+        Path::new(&profile.cwd).join(executable)
+    };
     let executable = fs::canonicalize(&invocation_path)
         .map_err(|e| WorkbenchError::storage("Failed to resolve execution program", e))?;
-    let python_environment=if requested.file_name().is_some_and(|s|s.to_string_lossy().starts_with("python")) {
-        let config=invocation_path.parent().and_then(Path::parent).map(|p|p.join("pyvenv.cfg"));
-        if let Some(config)=config.filter(|p|p.is_file()){let (hash,size)=hash_file(&config)?;json!({"configuration":config,"hash":hash,"size":size})}else{Value::Null}
-    }else{Value::Null};
+    let python_environment = if requested
+        .file_name()
+        .is_some_and(|s| s.to_string_lossy().starts_with("python"))
+    {
+        let config = invocation_path
+            .parent()
+            .and_then(Path::parent)
+            .map(|p| p.join("pyvenv.cfg"));
+        if let Some(config) = config.filter(|p| p.is_file()) {
+            let (hash, size) = hash_file(&config)?;
+            json!({"configuration":config,"hash":hash,"size":size})
+        } else {
+            Value::Null
+        }
+    } else {
+        Value::Null
+    };
     let (hash, size) = hash_file(&executable)?;
     let mut launch_files = Vec::new();
     for argument in profile.argv.iter().skip(1) {
@@ -1493,13 +1534,27 @@ pub fn authorize_host_execution(
 }
 
 /// TeX recorder observations are evidence of files opened on this run, not a closure.
-fn observed_dependencies(profile:&ExecutionProfile)->Value {
-    let mut paths=std::collections::BTreeSet::new();let mut truncated=false;
-    for name in profile.outputs.iter().filter(|s|s.ends_with(".fls")) {
-        let Ok(file)=fs::File::open(Path::new(&profile.cwd).join(name)) else {continue;};
-        let mut bytes=Vec::new();if file.take(512*1024+1).read_to_end(&mut bytes).is_err(){continue;}
-        truncated|=bytes.len()>512*1024;
-        for line in String::from_utf8_lossy(&bytes[..bytes.len().min(512*1024)]).lines(){if let Some(path)=line.strip_prefix("INPUT "){if paths.len()>=1024{truncated=true;break;}paths.insert(path.to_string());}}
+fn observed_dependencies(profile: &ExecutionProfile) -> Value {
+    let mut paths = std::collections::BTreeSet::new();
+    let mut truncated = false;
+    for name in profile.outputs.iter().filter(|s| s.ends_with(".fls")) {
+        let Ok(file) = fs::File::open(Path::new(&profile.cwd).join(name)) else {
+            continue;
+        };
+        let mut bytes = Vec::new();
+        if file.take(512 * 1024 + 1).read_to_end(&mut bytes).is_err() {
+            continue;
+        }
+        truncated |= bytes.len() > 512 * 1024;
+        for line in String::from_utf8_lossy(&bytes[..bytes.len().min(512 * 1024)]).lines() {
+            if let Some(path) = line.strip_prefix("INPUT ") {
+                if paths.len() >= 1024 {
+                    truncated = true;
+                    break;
+                }
+                paths.insert(path.to_string());
+            }
+        }
     }
     json!({"method":"TeX recorder when declared as output","paths":paths,"truncated":truncated,"coverage":"observed on this run; not a complete dependency closure"})
 }

@@ -23,7 +23,7 @@ function emitLog(
     label?: string;
     level?: string;
     request?: Record<string, unknown>;
-  }
+  },
 ) {
   handlers["pipeline:log"]({ payload: { line, ...extra } });
 }
@@ -76,7 +76,10 @@ function emitRouting() {
       methodIds: ["formal_proofs"],
       methodLabels: ["Method — Formal Proofs"],
       specialistIds: ["subject_economics_macro", "formal_proofs"],
-      specialistLabels: ["Economics — Macroeconomics", "Method — Formal Proofs"],
+      specialistLabels: [
+        "Economics — Macroeconomics",
+        "Method — Formal Proofs",
+      ],
     },
   });
 }
@@ -98,7 +101,11 @@ describe("usePipeline log buffering", () => {
 
     act(() => {
       emitLog("line one");
-      emitLog("line two", { session: 3, label: "Orientation map", level: "info" });
+      emitLog("line two", {
+        session: 3,
+        label: "Orientation map",
+        level: "info",
+      });
     });
 
     // Buffered logs are flushed on a short interval rather than per event.
@@ -141,7 +148,9 @@ describe("usePipeline log buffering", () => {
     await waitFor(() => expect(result.current.logs).toHaveLength(8001));
     const logs = result.current.logs;
     expect(logs[0].line).toContain("earlier log lines dropped");
-    expect(logs.some((entry) => entry.session === 9 && entry.request)).toBe(true);
+    expect(logs.some((entry) => entry.session === 9 && entry.request)).toBe(
+      true,
+    );
     expect(logs[logs.length - 1].line).toBe("line 10000");
     unmount();
   });
@@ -249,13 +258,17 @@ describe("usePipeline log buffering", () => {
           : Promise.resolve(cleanups[index]);
       },
     );
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     const { result, unmount } = renderHook(() => usePipeline());
 
-    await waitFor(() => expect(result.current.state).toMatchObject({
-      kind: "error",
-      message: expect.stringContaining("event permission denied"),
-    }));
+    await waitFor(() =>
+      expect(result.current.state).toMatchObject({
+        kind: "error",
+        message: expect.stringContaining("event permission denied"),
+      }),
+    );
     expect(result.current.listenersReady).toBe(false);
     expect(cleanups[0]).toHaveBeenCalledTimes(1);
     expect(cleanups[2]).toHaveBeenCalledTimes(1);
@@ -280,7 +293,10 @@ describe("usePipeline log buffering", () => {
       methodIds: ["formal_proofs"],
       methodLabels: ["Method — Formal Proofs"],
       specialistIds: ["subject_economics_macro", "formal_proofs"],
-      specialistLabels: ["Economics — Macroeconomics", "Method — Formal Proofs"],
+      specialistLabels: [
+        "Economics — Macroeconomics",
+        "Method — Formal Proofs",
+      ],
     });
     unmount();
   });
@@ -303,7 +319,9 @@ describe("usePipeline log buffering", () => {
       });
     });
     expect(result.current.providerLimitNotices).toHaveLength(1);
-    expect(result.current.providerLimitNotices[0].status).toBe("fallback_starting");
+    expect(result.current.providerLimitNotices[0].status).toBe(
+      "fallback_starting",
+    );
 
     act(() => {
       handlers["pipeline:provider-limit"]({

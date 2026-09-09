@@ -695,7 +695,7 @@ pub fn import_archive(
     }
     validate_database(&imported)?;
     if schema < CURRENT_SCHEMA_VERSION {
-        // Upgrade only the isolated extracted copy, using the store's own migrations.
+        // Migrate only the extracted copy.
         crate::workbench::store::migrate(&mut imported, schema)?;
         validate_database(&imported)?;
     }
@@ -973,7 +973,7 @@ pub fn import_archive(
                 })?;
         }
     }
-    imported.execute_batch("DELETE FROM execution_plan_state; UPDATE experiment_runs SET state='attention',authorized_hash=NULL,reason='Restored material requires execution reconciliation and new authorization'; UPDATE scheduled_checks SET enabled=0; UPDATE research_followups SET state='attention' WHERE state IN ('queued','dispatching','running'); DELETE FROM research_fts; UPDATE research_index_state SET generation=generation+1,cursor='',byte_offset=0,complete=0;").map_err(|e|WorkbenchError::storage("Reset imported desk authority and projection",e))?;
+    imported.execute_batch("UPDATE discovery_roles SET enabled=0; DELETE FROM execution_plan_state; UPDATE experiment_runs SET state='attention',authorized_hash=NULL,reason='Restored material requires execution reconciliation and new authorization'; UPDATE scheduled_checks SET enabled=0; UPDATE research_followups SET state='attention' WHERE state IN ('queued','dispatching','running'); DELETE FROM research_fts; UPDATE research_index_state SET generation=generation+1,cursor='',byte_offset=0,complete=0;").map_err(|e|WorkbenchError::storage("Reset imported desk authority and projection",e))?;
     imported
         .execute("DELETE FROM execution_authorizations", [])
         .map_err(|error| {

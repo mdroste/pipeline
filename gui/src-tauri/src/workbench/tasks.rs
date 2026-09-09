@@ -17,10 +17,30 @@ pub struct TaskBinding {
 fn error(e: impl std::fmt::Display) -> WorkbenchError {
     WorkbenchError::storage("Task conversation", e)
 }
+fn canonical_state(state: &str) -> &str {
+    if state == "inProgress" {
+        "running"
+    } else {
+        state
+    }
+}
+fn compatible_cursor(expected: &str, actual: &str) -> bool {
+    if expected == actual {
+        return true;
+    }
+    match (expected.rsplit_once(':'), actual.rsplit_once(':')) {
+        (Some((e, es)), Some((a, as_))) if e == a => {
+            let es = canonical_state(es);
+            let as_ = canonical_state(as_);
+            es == as_ || (es == "running" && as_ == "completed")
+        }
+        _ => false,
+    }
+}
 pub fn cursor(store: &Store, session: &str) -> WorkbenchResult<String> {
     let value:Option<(String,String)>=store.connection()?.query_row("SELECT t.id,t.state FROM turns t JOIN session_bindings b ON b.id=t.binding_id WHERE b.session_id=?1 ORDER BY t.created_at DESC,t.id DESC LIMIT 1",[session],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(error)?;
     Ok(value
-        .map(|(id, state)| format!("{id}:{state}"))
+        .map(|(id, state)| format!("{id}:{}", canonical_state(&state)))
         .unwrap_or_default())
 }
 pub fn is_task_turn(store: &Store, thread: &str, turn: &str) -> WorkbenchResult<bool> {
@@ -48,12 +68,8 @@ pub fn binding(store: &Store, session: &str) -> WorkbenchResult<TaskBinding> {
 }
 pub fn validate_binding(store: &Store, expected: &TaskBinding) -> WorkbenchResult<()> {
     let actual = binding(store, &expected.session_id)?;
-    let same_finishing_turn = expected.cursor.ends_with(":running")
-        && actual.cursor.ends_with(":completed")
-        && expected.cursor.rsplit_once(':').map(|v| v.0)
-            == actual.cursor.rsplit_once(':').map(|v| v.0);
     if actual.root_identity != expected.root_identity
-        || (actual.cursor != expected.cursor && !same_finishing_turn)
+        || !compatible_cursor(&expected.cursor, &actual.cursor)
         || actual.workspace_id != expected.workspace_id
         || actual.runtime_root != expected.runtime_root
         || actual.harness_fingerprint != expected.harness_fingerprint
@@ -85,8 +101,9 @@ pub fn outcome(store: &Store, session: &str, operation: &str) -> WorkbenchResult
         .collect::<Result<Vec<_>, _>>()
         .map_err(error)?;
     let (text, final_text) = turn_text(items)?;
+    let state = canonical_state(&state);
     Ok(Some(
-        json!({"state":state,"threadId":thread,"turnId":turn,"text":text,"finalText":final_text,"cursor":format!("{id}:{state}")}),
+        json!({"state":state,"threadId":thread,"turnId":turn,"text":text,"finalText":final_text,"cursor":format!("{id}:{}", state)}),
     ))
 }
 fn turn_text(items: Vec<String>) -> WorkbenchResult<(String, Option<String>)> {
@@ -141,7 +158,7 @@ pub fn deliver(
 
 pub fn session_choices(store: &Store) -> WorkbenchResult<Vec<Value>> {
     let c = store.connection()?;
-    let mut q=c.prepare("SELECT s.id,s.title,w.name FROM sessions s LEFT JOIN workspaces w ON w.id=s.workspace_id WHERE s.archived_at IS NULL AND (w.id IS NULL OR w.archived_at IS NULL) ORDER BY s.updated_at DESC,s.id LIMIT 500").map_err(error)?;
+    let mut q=c.prepare("SELECT s.id,s.title,w.name FROM sessions s LEFT JOIN workspaces w ON w.id=s.workspace_id WHERE s.archived_at IS NULL AND s.id NOT IN (SELECT session_id FROM discovery_roles) AND (w.id IS NULL OR w.archived_at IS NULL) ORDER BY s.updated_at DESC,s.id LIMIT 500").map_err(error)?;
     let rows=q.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"workspaceName":r.get::<_,Option<String>>(2)?}))).map_err(error)?.collect::<Result<Vec<_>,_>>().map_err(error)?;
     Ok(rows)
 }
@@ -561,5 +578,18 @@ mod tests {
         .unwrap();
         std::fs::create_dir(&expected.runtime_root).unwrap();
         assert!(validate_binding(&s, &expected).is_err());
+    }
+}
+
+#[cfg(test)]
+mod state_compatibility_tests {
+    use super::*;
+    #[test]
+    fn native_running_state_preserves_task_cursor_identity() {
+        assert_eq!(canonical_state("inProgress"), "running");
+        assert!(compatible_cursor("turn:inProgress", "turn:completed"));
+        assert!(compatible_cursor("turn:running", "turn:inProgress"));
+        assert!(!compatible_cursor("turn:inProgress", "another:completed"));
+        assert!(!compatible_cursor("turn:completed", "turn:running"));
     }
 }

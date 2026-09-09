@@ -1,6 +1,6 @@
 # Research desk — NF-01 through NF-06
 
-Implemented September 7, 2026 against the current Workspace architecture. This is the implementation and usage guide for the bounded first slices in [SEP7_ASTRA_NEWFEATURES.md](../../SEP7_ASTRA_NEWFEATURES.md). It supplements [project-surface.md](project-surface.md), [research-studio.md](research-studio.md), and [release-qualification.md](release-qualification.md). It is not a packaged-release qualification record.
+Implemented September 7, 2026 against the current Workspace architecture. This is the implementation and usage guide for the bounded first slices in [SEP7_ASTRA_NEWFEATURES.md](../../notes/SEP7_ASTRA_NEWFEATURES.md). It supplements [project-surface.md](project-surface.md), [research-studio.md](research-studio.md), and [release-qualification.md](release-qualification.md). It is not a packaged-release qualification record.
 
 ## Find the features
 
@@ -10,12 +10,12 @@ Open a Workspace project, then **Open project**. The project stays beside its co
 |---|---|---|
 | NF-01 | Every desk destination | Persistent document/object pane, assistant, exact-source context tray, pinned comparison, remembered revision and layout |
 | NF-02 | Library → Search & collections | Local project search, kind filters, exact excerpts, pagination, saved reading collections, rebuild status |
-| NF-03 | Overview → Decisions & impact | Decisions with rationale/alternatives/supersession, explicit dependencies, explainable impact, session handoff draft |
+| NF-03 | Activity → Decisions & impact | Decisions with rationale/alternatives/supersession, explicit dependencies, explainable impact, session handoff draft |
 | NF-04 | Library → Acquisition inbox | Crossref DOI/bibliographic discovery, selected metadata/abstract import, explicit PDF acquisition, local PDF import, reading status |
-| NF-05 | Analyses → Data & samples | Captured CSV/TSV, dictionary and missingness, versioned samples, exporter metadata, per-project data access, FRED/ALFRED vintage capture |
-| NF-06 | Analyses → Captured execution | Capture configured inputs, inspect and authorize exact plan, test, replay in a fresh directory, retained execution receipts |
+| NF-05 | Analyze → Data & samples | Captured CSV/TSV, dictionary and missingness, versioned samples, exporter metadata, per-project data access, FRED/ALFRED vintage capture |
+| NF-06 | Analyze → Captured execution | Capture configured inputs, inspect and authorize exact plan, test, replay in a fresh directory, retained execution receipts |
 
-Analyses also contains existing Experiments, Result links and Theory. Writing contains Manuscript, Responses, and Edits & acceptance. Action items exposes existing research objectives and their intended outputs/checks. Literature notes retains the existing BibTeX, source assessments, and Zotero metadata adapter.
+Analyze also contains Experiments, Result links, and Theory. Write contains Manuscript, Responses, and Edits & acceptance. Automate exposes action items, recurring checks, and revision automations. Activity contains research notes, claims and evidence, and decisions. Literature notes retains the existing BibTeX, source assessments, and Zotero metadata adapter.
 
 Workspace and Workflows continue to own separate stores, credentials, process lifecycles, cancellation and writable runtime state. None of these features turns a Workspace recipe or captured execution plan into a Workflow. Existing immutable Review handoffs remain explicit.
 

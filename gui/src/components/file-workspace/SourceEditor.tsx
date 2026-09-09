@@ -1,3 +1,4 @@
+import { useAppPreferences } from "../../lib/appPreferences";
 import {
   forwardRef,
   useEffect,
@@ -97,7 +98,9 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
     const current = useRef(props);
     current.current = props;
     const [language, setLanguage] = useState(() => fileLanguage(path));
-    const [wrap, setWrap] = useState(false);
+    const { editorWrap, editorFontSize } = useAppPreferences();
+    const [wrapOverride, setWrap] = useState<boolean | null>(null);
+    const wrap = wrapOverride ?? editorWrap;
     const [languageError, setLanguageError] = useState("");
     const [configuration] = useState(() => ({
       language: new Compartment(),
@@ -106,6 +109,12 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
       completion: new Compartment(),
       lineSeparator: new Compartment(),
     }));
+    useEffect(() => {
+      host.current?.style.setProperty(
+        "--source-editor-font-size",
+        `${editorFontSize}px`,
+      );
+    }, [editorFontSize]);
     const goToLine = (n: number) => {
       const editor = view.current;
       if (!editor) return;
@@ -169,7 +178,10 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
               }
             }),
             EditorView.theme({
-              "&": { height: "100%", fontSize: "13px" },
+              "&": {
+                height: "100%",
+                fontSize: "var(--source-editor-font-size, 13px)",
+              },
               ".cm-scroller": {
                 overflow: "auto",
                 fontFamily: "ui-monospace, monospace",

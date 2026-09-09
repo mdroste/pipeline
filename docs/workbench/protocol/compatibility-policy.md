@@ -72,3 +72,13 @@ the existing successor-binding policy; no provider wire DTO or method changed.
 Workspace store migration 12 adds immutable `task_exchanges`; execution state
 remains in the independent coordinator database. See [Tasks](../../tasks.md).
 Authenticated task-driven native turns remain a release qualification gate.
+
+## App-owned approval identity
+
+Workspace approval responses require the connection `epoch` captured by the
+request card as well as its unchanged native request ID and method. Missing or
+stale epochs fail closed. The host claims a pending request before sending its
+response, so duplicate clicks and uncertain writes cannot replay an approval.
+`SendTurnResult` also includes its originating epoch; transient conversation
+state uses that identity when matching native terminal events. These are
+app-owned IPC fields, not changes to the pinned native protocol schemas.

@@ -27,10 +27,12 @@ export default function useModalDialog<T extends HTMLElement>(
 
   useEffect(() => {
     if (!active) return;
-    const previousFocus = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    const inertSiblings: Array<{ element: HTMLElement; wasInert: boolean }> = [];
+    const previousFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const inertSiblings: Array<{ element: HTMLElement; wasInert: boolean }> =
+      [];
     if (inertBackground) {
       // Inert siblings along the whole ancestor path, never the dialog itself.
       // Remember existing values so closing the modal does not enable content
@@ -39,22 +41,31 @@ export default function useModalDialog<T extends HTMLElement>(
       while (branch?.parentElement) {
         for (const sibling of branch.parentElement.children) {
           if (sibling === branch || !(sibling instanceof HTMLElement)) continue;
-          inertSiblings.push({ element: sibling, wasInert: sibling.hasAttribute("inert") });
+          inertSiblings.push({
+            element: sibling,
+            wasInert: sibling.hasAttribute("inert"),
+          });
           sibling.setAttribute("inert", "");
         }
         branch = branch.parentElement;
         if (branch === document.body) break;
       }
     }
-    const focusable = (dialog: HTMLElement) => Array.from(
-      dialog.querySelectorAll<HTMLElement>(FOCUSABLE),
-    ).filter(control => !control.matches(":disabled") && !control.closest('[hidden], [inert], [aria-hidden="true"]')
-      && getComputedStyle(control).display !== "none" && getComputedStyle(control).visibility !== "hidden");
+    const focusable = (dialog: HTMLElement) =>
+      Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (control) =>
+          !control.matches(":disabled") &&
+          !control.closest('[hidden], [inert], [aria-hidden="true"]') &&
+          getComputedStyle(control).display !== "none" &&
+          getComputedStyle(control).visibility !== "hidden",
+      );
     const focusInitial = window.setTimeout(() => {
       const dialog = dialogRef.current;
       if (!dialog) return;
       const target =
-        focusable(dialog).find(control => control.hasAttribute("data-autofocus")) ??
+        focusable(dialog).find((control) =>
+          control.hasAttribute("data-autofocus"),
+        ) ??
         focusable(dialog)[0] ??
         dialog;
       target.focus();
@@ -78,10 +89,16 @@ export default function useModalDialog<T extends HTMLElement>(
       const first = controls[0];
       const last = controls[controls.length - 1];
       const activeElement = document.activeElement;
-      if (event.shiftKey && (activeElement === first || !dialog.contains(activeElement))) {
+      if (
+        event.shiftKey &&
+        (activeElement === first || !dialog.contains(activeElement))
+      ) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && (activeElement === last || !dialog.contains(activeElement))) {
+      } else if (
+        !event.shiftKey &&
+        (activeElement === last || !dialog.contains(activeElement))
+      ) {
         event.preventDefault();
         first.focus();
       }

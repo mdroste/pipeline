@@ -38,8 +38,8 @@ export default class ErrorBoundary extends Component<Props, State> {
               {publicErrorMessage(this.state.error)}
             </p>
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
-              Try again to reset the interface. If the problem continues, restart
-              Pipeline and include the message above when reporting it.
+              Try again to reset the interface. If the problem continues,
+              restart Pipeline and include the message above when reporting it.
             </p>
             {showTechnicalDetails && this.state.error.stack && (
               <details className="mb-4 text-left">
@@ -52,7 +52,12 @@ export default class ErrorBoundary extends Component<Props, State> {
               </details>
             )}
             <button
-              onClick={() => this.setState((prev) => ({ error: null, resetKey: prev.resetKey + 1 }))}
+              onClick={() =>
+                this.setState((prev) => ({
+                  error: null,
+                  resetKey: prev.resetKey + 1,
+                }))
+              }
               className="px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors"
             >
               Try Again

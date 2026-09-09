@@ -13,7 +13,9 @@ function nonEmptyString(value: unknown): string | null {
  */
 export function workbenchErrorMessage(cause: unknown): string {
   if (cause instanceof Error) {
-    return nonEmptyString(cause.message) ?? "An unexpected Workspace error occurred.";
+    return (
+      nonEmptyString(cause.message) ?? "An unexpected project error occurred."
+    );
   }
 
   const direct = nonEmptyString(cause);
@@ -23,10 +25,11 @@ export function workbenchErrorMessage(cause: unknown): string {
     const structured = cause as StructuredWorkbenchError;
     const message = nonEmptyString(structured.message);
     const recovery = nonEmptyString(structured.recovery);
-    if (message && recovery && recovery !== message) return `${message} ${recovery}`;
+    if (message && recovery && recovery !== message)
+      return `${message} ${recovery}`;
     if (message) return message;
     if (recovery) return recovery;
   }
 
-  return "An unexpected Workspace error occurred.";
+  return "An unexpected project error occurred.";
 }

@@ -1,4 +1,9 @@
-import { destinationsInSection, isWorkspaceDestination, workspaceDestinations, workspaceSections } from "../lib/workspaceNavigation";
+import {
+  destinationsInSection,
+  isWorkspaceDestination,
+  workspaceDestinations,
+  workspaceSections,
+} from "../lib/workspaceNavigation";
 import RetainedWorkspaceView from "./RetainedWorkspaceView";
 import { loadDeskLayout, saveDeskLayout } from "../lib/deskLayout";
 import { type ContextItem, type OpenResearchObject } from "../lib/deskClient";
@@ -39,7 +44,11 @@ import {
   type ProjectRecord,
   type ResearchTask,
 } from "../lib/projectClient";
-import type { Workspace, ReviewHandoff, ConversationSnapshot } from "../lib/workbenchTypes";
+import type {
+  Workspace,
+  ReviewHandoff,
+  ConversationSnapshot,
+} from "../lib/workbenchTypes";
 import ProjectOverview from "./project-surface/ProjectOverview";
 import ProjectEdits from "./project-surface/ProjectEdits";
 import ProjectDocuments, {
@@ -103,8 +112,16 @@ export default function WorkspaceProjectSurface({
   const [data, setData] = useState<ProjectHome | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [layout] = useState(() => loadDeskLayout(workspaceId));
-  const [tab, setLocalTab] = useState<ProjectTab>(destination ?? layout.tab as ProjectTab);
-  const setTab = useCallback((next: ProjectTab) => { setLocalTab(next); onDestination?.(next); }, [onDestination]);
+  const [tab, setLocalTab] = useState<ProjectTab>(
+    destination ?? (layout.tab as ProjectTab),
+  );
+  const setTab = useCallback(
+    (next: ProjectTab) => {
+      setLocalTab(next);
+      onDestination?.(next);
+    },
+    [onDestination],
+  );
   const [object, setObject] = useState<OpenResearchObject | null>(
     layout.object,
   );
@@ -112,10 +129,7 @@ export default function WorkspaceProjectSurface({
     const open = (event: Event) => {
       const d = (event as CustomEvent<{ workspaceId: string; tab: string }>)
         .detail;
-      if (
-        d.workspaceId === workspaceId &&
-        isWorkspaceDestination(d.tab)
-      ) {
+      if (d.workspaceId === workspaceId && isWorkspaceDestination(d.tab)) {
         setObject(null);
         setTab(d.tab as ProjectTab);
       }
@@ -125,7 +139,10 @@ export default function WorkspaceProjectSurface({
       window.removeEventListener("pipeline:research-destination", open);
   }, [workspaceId]);
   useEffect(() => {
-    if (destination && destination !== tab) { setLocalTab(destination); setObject(null); }
+    if (destination && destination !== tab) {
+      setLocalTab(destination);
+      setObject(null);
+    }
   }, [destination]);
   const [fileLocation, setFileLocation] = useState<
     import("../lib/fileLinks").FileLocation | null
@@ -503,34 +520,78 @@ export default function WorkspaceProjectSurface({
       ref={deskRoot}
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-gray-50 dark:bg-neutral-900"
     >
-      {!navigationInSidebar && <><header className="flex flex-wrap items-center gap-4 border-b border-gray-200 bg-white px-6 py-4 dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-lg font-semibold">
-            {workspace?.name ?? "Project"}
-          </h1>
-          <p
-            className={`truncate ${muted}`}
-            title={workspace?.root ?? undefined}
-          >
-            {subtitle}
-          </p>
-        </div>
-        {!navigationInSidebar && <nav aria-label="Project sections" className="flex flex-wrap gap-2">
-          {workspaceSections.map(section => <button key={section.id} type="button" className={button}
-            aria-current={workspaceDestinations[tab].section === section.id ? "page" : undefined}
-            onClick={() => { setObject(null); setTab(section.destination); }}>{section.label}</button>)}
-        </nav>}
-      </header>
-      <div className="workspace-project-tool-bar">
-        <label>Tool
-          <select aria-label="Project tool" value={tab} onChange={event => { setObject(null); setTab(event.target.value as ProjectTab); }}>
-            {destinationsInSection(tab).map(id => <option key={id} value={id}>{workspaceDestinations[id].label}</option>)}
-          </select>
-        </label>
-        <span className="flex-1" />
-        <button type="button" className={button} onClick={() => { setObject(null); setTab("exchange"); }}>Share project</button>
-      </div>
-      </>}
+      {!navigationInSidebar && (
+        <>
+          <header className="flex flex-wrap items-center gap-4 border-b border-gray-200 bg-white px-6 py-4 dark:border-neutral-800 dark:bg-neutral-950">
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-lg font-semibold">
+                {workspace?.name ?? "Project"}
+              </h1>
+              <p
+                className={`truncate ${muted}`}
+                title={workspace?.root ?? undefined}
+              >
+                {subtitle}
+              </p>
+            </div>
+            {!navigationInSidebar && (
+              <nav
+                aria-label="Project sections"
+                className="flex flex-wrap gap-2"
+              >
+                {workspaceSections.map((section) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    className={button}
+                    aria-current={
+                      workspaceDestinations[tab].section === section.id
+                        ? "page"
+                        : undefined
+                    }
+                    onClick={() => {
+                      setObject(null);
+                      setTab(section.destination);
+                    }}
+                  >
+                    {section.label}
+                  </button>
+                ))}
+              </nav>
+            )}
+          </header>
+          <div className="workspace-project-tool-bar">
+            <label>
+              View
+              <select
+                aria-label="Project view"
+                value={tab}
+                onChange={(event) => {
+                  setObject(null);
+                  setTab(event.target.value as ProjectTab);
+                }}
+              >
+                {destinationsInSection(tab).map((id) => (
+                  <option key={id} value={id}>
+                    {workspaceDestinations[id].label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="flex-1" />
+            <button
+              type="button"
+              className={button}
+              onClick={() => {
+                setObject(null);
+                setTab("exchange");
+              }}
+            >
+              Share project
+            </button>
+          </div>
+        </>
+      )}
       {error && (
         <div
           role="alert"
@@ -563,51 +624,66 @@ export default function WorkspaceProjectSurface({
             )}
           </div>
         )}
-        {(["search", "acquisition", "data", "decisions", "plans"] as const).map(view => <RetainedWorkspaceView key={view} active={!object && tab === view}>
-            <div className="min-h-0 flex-1 overflow-auto p-5">
-              <Suspense fallback={<p>Loading research tools…</p>}>
-                {view === "search" && (
-                  <DeskSearch
-                    workspaceId={workspaceId}
-                    sessionId={sessionId}
-                    onOpen={openObject}
-                    onError={reportError}
-                  />
-                )}{" "}
-                {view === "acquisition" && (
-                  <DeskDiscovery
-                    workspaceId={workspaceId}
-                    onOpen={openObject}
-                    onError={reportError}
-                  />
-                )}{" "}
-                {view === "data" && (
-                  <DeskData
-                    workspaceId={workspaceId}
-                    onOpen={openObject}
-                    onError={reportError}
-                  />
-                )}{" "}
-                {view === "decisions" && (
-                  <DeskDecisions
-                    workspaceId={workspaceId}
-                    sessionId={sessionId}
-                    onOpen={openObject}
-                    onError={reportError}
-                    onRefresh={refresh}
-                  />
-                )}{" "}
-                {view === "plans" && (
-                  <DeskPlans
-                    workspaceId={workspaceId}
-                    onOpen={openObject}
-                    onError={reportError}
-                  />
-                )}
-              </Suspense>
-            </div>
-        </RetainedWorkspaceView>)}
-        {(["grids", "assets", "symbols", "campaigns", "delivery", "sharing", "checks"] as const).map(view => <RetainedWorkspaceView key={view} active={!object && tab === view}>
+        {(["search", "acquisition", "data", "decisions", "plans"] as const).map(
+          (view) => (
+            <RetainedWorkspaceView key={view} active={!object && tab === view}>
+              <div className="min-h-0 flex-1 overflow-auto p-5">
+                <Suspense fallback={<p>Loading research tools…</p>}>
+                  {view === "search" && (
+                    <DeskSearch
+                      workspaceId={workspaceId}
+                      sessionId={sessionId}
+                      onOpen={openObject}
+                      onError={reportError}
+                    />
+                  )}{" "}
+                  {view === "acquisition" && (
+                    <DeskDiscovery
+                      workspaceId={workspaceId}
+                      onOpen={openObject}
+                      onError={reportError}
+                    />
+                  )}{" "}
+                  {view === "data" && (
+                    <DeskData
+                      workspaceId={workspaceId}
+                      onOpen={openObject}
+                      onError={reportError}
+                    />
+                  )}{" "}
+                  {view === "decisions" && (
+                    <DeskDecisions
+                      workspaceId={workspaceId}
+                      sessionId={sessionId}
+                      onOpen={openObject}
+                      onError={reportError}
+                      onRefresh={refresh}
+                    />
+                  )}{" "}
+                  {view === "plans" && (
+                    <DeskPlans
+                      workspaceId={workspaceId}
+                      onOpen={openObject}
+                      onError={reportError}
+                    />
+                  )}
+                </Suspense>
+              </div>
+            </RetainedWorkspaceView>
+          ),
+        )}
+        {(
+          [
+            "grids",
+            "assets",
+            "symbols",
+            "campaigns",
+            "delivery",
+            "sharing",
+            "checks",
+          ] as const
+        ).map((view) => (
+          <RetainedWorkspaceView key={view} active={!object && tab === view}>
             <div className="min-h-0 flex-1 overflow-auto p-5">
               <Suspense fallback={<p>Loading research tools…</p>}>
                 {view === "grids" && (
@@ -671,26 +747,29 @@ export default function WorkspaceProjectSurface({
                 )}
               </Suspense>
             </div>
-        </RetainedWorkspaceView>)}
-        {(["overview", "tasks"] as const).map(view => <RetainedWorkspaceView key={view} active={!object && tab === view}>
-          <div className="min-h-0 flex-1 overflow-auto p-6">
-            <ProjectOverview
-              {...api}
-              tasksOnly={view === "tasks"}
-              watch={watch}
-              setWatch={setWatch}
-              onContinue={() =>
-                void run(() =>
-                  onConversation(
-                    "Continue from the project summary and open action items.",
-                  ),
-                )
-              }
-              onImportPaper={(folder) => void importPaper(folder)}
-              onAttachFolder={() => void attachFolder()}
-            />
-          </div>
-        </RetainedWorkspaceView>)}
+          </RetainedWorkspaceView>
+        ))}
+        {(["overview", "tasks"] as const).map((view) => (
+          <RetainedWorkspaceView key={view} active={!object && tab === view}>
+            <div className="min-h-0 flex-1 overflow-auto p-6">
+              <ProjectOverview
+                {...api}
+                tasksOnly={view === "tasks"}
+                watch={watch}
+                setWatch={setWatch}
+                onContinue={() =>
+                  void run(() =>
+                    onConversation(
+                      "Continue from the project summary and open action items.",
+                    ),
+                  )
+                }
+                onImportPaper={(folder) => void importPaper(folder)}
+                onAttachFolder={() => void attachFolder()}
+              />
+            </div>
+          </RetainedWorkspaceView>
+        ))}
         <RetainedWorkspaceView active={!object && tab === "files"}>
           <div className="min-h-0 flex-1 p-3">
             <Suspense fallback={<p>Loading files…</p>}>
@@ -737,40 +816,104 @@ export default function WorkspaceProjectSurface({
             <ProjectEdits {...api} onConversation={onConversation} />
           </div>
         </RetainedWorkspaceView>
-        {(["research", "writing", "literature", "responses", "bindings", "theory"] as const).map(view => <RetainedWorkspaceView key={view} active={!object && tab === view}>
-          <div className="min-h-0 flex-1 overflow-auto p-6">
-            <div className="mx-auto max-w-7xl">
-              <Suspense fallback={<p>Loading research tools…</p>}>
-                <ResearchStudio
-                  key={view}
-                  active={!object && tab === view}
-                  destination={view} tool={view === "writing" ? "manuscript" : view === "research" ? "experiments" : view}
-                  workspaceId={workspaceId}
-                  data={data}
-                  onRefresh={refresh}
-                  onDocument={(id) => {
-                    setRevisionId(id);
-                    setInitialSelection(undefined);
-                    setTab("documents");
-                  }}
-                  onAnchors={openAnchors}
-                  onReviewHandoff={onReviewHandoff}
-                />
-              </Suspense>
+        {(
+          [
+            "research",
+            "writing",
+            "literature",
+            "responses",
+            "bindings",
+            "theory",
+          ] as const
+        ).map((view) => (
+          <RetainedWorkspaceView key={view} active={!object && tab === view}>
+            <div className="min-h-0 flex-1 overflow-auto p-6">
+              <div className="mx-auto max-w-7xl">
+                <Suspense fallback={<p>Loading research tools…</p>}>
+                  <ResearchStudio
+                    key={view}
+                    active={!object && tab === view}
+                    destination={view}
+                    tool={
+                      view === "writing"
+                        ? "manuscript"
+                        : view === "research"
+                          ? "experiments"
+                          : view
+                    }
+                    workspaceId={workspaceId}
+                    data={data}
+                    onRefresh={refresh}
+                    onDocument={(id) => {
+                      setRevisionId(id);
+                      setInitialSelection(undefined);
+                      setTab("documents");
+                    }}
+                    onAnchors={openAnchors}
+                    onReviewHandoff={onReviewHandoff}
+                  />
+                </Suspense>
+              </div>
             </div>
-          </div>
-        </RetainedWorkspaceView>)}
-        {(["sources", "memory", "evidence", "results", "execution", "review", "exchange"] as const).map(view => <RetainedWorkspaceView key={view} active={!object && tab === view}>
-          <Suspense fallback={<section className="workspace-panel-loading">Opening {workspaceDestinations[view].label}…</section>}>
-            <ResearchPanel embedded active={!object && tab === view} title={workspaceDestinations[view].label} workspace={workspace}
-              snapshot={snapshot?.session.workspaceId === workspaceId ? snapshot : null}
-              onSnapshot={next => onSnapshot?.(next)} onError={reportError} onClose={() => setTab("overview")}
-              initialTab={view === "sources" ? "documents" : view === "execution" ? "results" : view === "review" || view === "exchange" ? "release" : view}
-              allowedTabs={[view === "sources" ? "documents" : view === "execution" ? "results" : view === "review" || view === "exchange" ? "release" : view]}
-              resultsView={view === "execution" ? "profiles" : "runs"}
-              releaseView={view === "exchange" ? "share" : "review"} onReviewHandoff={onReviewHandoff} />
-          </Suspense>
-        </RetainedWorkspaceView>)}
+          </RetainedWorkspaceView>
+        ))}
+        {(
+          [
+            "sources",
+            "memory",
+            "evidence",
+            "results",
+            "execution",
+            "review",
+            "exchange",
+          ] as const
+        ).map((view) => (
+          <RetainedWorkspaceView key={view} active={!object && tab === view}>
+            <Suspense
+              fallback={
+                <section className="workspace-panel-loading">
+                  Opening {workspaceDestinations[view].label}…
+                </section>
+              }
+            >
+              <ResearchPanel
+                embedded
+                active={!object && tab === view}
+                title={workspaceDestinations[view].label}
+                workspace={workspace}
+                snapshot={
+                  snapshot?.session.workspaceId === workspaceId
+                    ? snapshot
+                    : null
+                }
+                onSnapshot={(next) => onSnapshot?.(next)}
+                onError={reportError}
+                onClose={() => setTab("overview")}
+                initialTab={
+                  view === "sources"
+                    ? "documents"
+                    : view === "execution"
+                      ? "results"
+                      : view === "review" || view === "exchange"
+                        ? "release"
+                        : view
+                }
+                allowedTabs={[
+                  view === "sources"
+                    ? "documents"
+                    : view === "execution"
+                      ? "results"
+                      : view === "review" || view === "exchange"
+                        ? "release"
+                        : view,
+                ]}
+                resultsView={view === "execution" ? "profiles" : "runs"}
+                releaseView={view === "exchange" ? "share" : "review"}
+                onReviewHandoff={onReviewHandoff}
+              />
+            </Suspense>
+          </RetainedWorkspaceView>
+        ))}
       </fieldset>
       {busy && (
         <div

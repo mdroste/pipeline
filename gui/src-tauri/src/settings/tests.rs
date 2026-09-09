@@ -182,10 +182,15 @@ fn quarantine_moves_corrupt_file_aside() {
     let path = dir.path().join("settings.json");
     fs::write(&path, "{not json").unwrap();
 
-    let backup = quarantine_corrupt_file(&path).expect("quarantine should succeed");
+    let backup = quarantine_corrupt_file(&path, &fs::read_to_string(&path).unwrap())
+        .expect("quarantine should succeed");
 
     assert!(!path.exists());
-    assert_eq!(backup, dir.path().join("settings.json.corrupt"));
+    assert!(backup
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("settings.corrupt-"));
     assert_eq!(fs::read_to_string(&backup).unwrap(), "{not json");
 }
 
@@ -443,11 +448,17 @@ fn antigravity_is_api_only() {
     // A stored subscription choice from an older build still loads, is
     // dispatched over the API, and normalizes to an explicit "api".
     let legacy: Settings =
-        serde_json::from_str(r#"{"antigravity_access_mode":"subscription"}"#).unwrap();
+        serde_json::from_str(r#"{"antigravity_access_mode":"subscription","antigravity_cli_model_selection":{"mode":"pinned","model":"legacy-model"},"antigravity_effort":"high"}"#).unwrap();
     assert_eq!(legacy.model_transport("antigravity"), "api");
     assert!(legacy.validate().is_err());
     let normalized = legacy.normalized();
     assert_eq!(normalized.antigravity_access_mode, "api");
+    let roundtrip = serde_json::to_value(&normalized).unwrap();
+    assert_eq!(
+        roundtrip["antigravity_cli_model_selection"]["model"],
+        "legacy-model"
+    );
+    assert_eq!(roundtrip["antigravity_effort"], "high");
     assert!(normalized.validate().is_ok());
 }
 
@@ -655,4 +666,20 @@ fn old_codex_defaults_migrate_once_and_advanced_legacy_choice_survives_reload() 
             assert_eq!(reloaded.codex_access_mode, mode);
         }
     }
+}
+
+#[test]
+fn quarantine_never_overwrites_a_backup_or_a_concurrent_repair() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    fs::write(&path, "first corrupt").unwrap();
+    let first = quarantine_corrupt_file(&path, "first corrupt").unwrap();
+    fs::write(&path, "second corrupt").unwrap();
+    let second = quarantine_corrupt_file(&path, "second corrupt").unwrap();
+    assert_ne!(first, second);
+    assert_eq!(fs::read_to_string(first).unwrap(), "first corrupt");
+    assert_eq!(fs::read_to_string(second).unwrap(), "second corrupt");
+    fs::write(&path, "{}").unwrap();
+    assert!(quarantine_corrupt_file(&path, "second corrupt").is_none());
+    assert_eq!(fs::read_to_string(path).unwrap(), "{}");
 }

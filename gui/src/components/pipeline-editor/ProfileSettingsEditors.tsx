@@ -10,7 +10,11 @@ interface CalibrationDraft {
   rejected_count: number;
 }
 
-function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: string) => void }) {
+function CalibrateSection({
+  onAppend,
+}: {
+  onAppend: (stepId: string, text: string) => void;
+}) {
   const [draft, setDraft] = useState<CalibrationDraft | null>(null);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -37,10 +41,13 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
 
   return (
     <div>
-      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Calibrate from feedback</label>
+      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+        Calibrate from feedback
+      </label>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2 leading-relaxed">
-        Draft an instruction from the issues you've rejected (in the Issues view) so this profile stops
-        flagging them, and append it to the synthesis step.
+        Draft an instruction from the issues you've rejected (in the Issues
+        view) so this profile stops flagging them, and append it to the
+        synthesis step.
       </p>
       <button
         type="button"
@@ -50,7 +57,9 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
       >
         {loading ? "Drafting…" : "Draft from my rejected issues"}
       </button>
-      {error && <p className="text-xs text-red-600 dark:text-red-400 mt-1.5">{error}</p>}
+      {error && (
+        <p className="text-xs text-red-600 dark:text-red-400 mt-1.5">{error}</p>
+      )}
 
       {draft && (
         <div
@@ -72,12 +81,24 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
             tabIndex={-1}
             className="w-full max-w-lg rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl p-5"
           >
-            <h3 id={titleId} className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">Calibration draft</h3>
-            <p id={descriptionId} className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-              From {draft.rejected_count} rejected issue{draft.rejected_count === 1 ? "" : "s"}. Will be appended to
-              step <span className="font-medium">{draft.target_label}</span>. Edit before applying.
+            <h3
+              id={titleId}
+              className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1"
+            >
+              Calibration draft
+            </h3>
+            <p
+              id={descriptionId}
+              className="text-xs text-gray-500 dark:text-gray-400 mb-3"
+            >
+              From {draft.rejected_count} rejected issue
+              {draft.rejected_count === 1 ? "" : "s"}. Will be appended to step{" "}
+              <span className="font-medium">{draft.target_label}</span>. Edit
+              before applying.
             </p>
-            <label htmlFor={textareaId} className="sr-only">Calibration instruction</label>
+            <label htmlFor={textareaId} className="sr-only">
+              Calibration instruction
+            </label>
             <textarea
               id={textareaId}
               data-autofocus
@@ -96,14 +117,19 @@ function CalibrateSection({ onAppend }: { onAppend: (stepId: string, text: strin
               </button>
               <button
                 type="button"
-                onClick={() => { if (text.trim()) onAppend(draft.target_step_id, text.trim()); setDraft(null); }}
+                onClick={() => {
+                  if (text.trim()) onAppend(draft.target_step_id, text.trim());
+                  setDraft(null);
+                }}
                 disabled={!text.trim()}
                 className="px-4 py-2 text-sm rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40"
               >
                 Append &amp; keep
               </button>
             </div>
-            <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-2">Save the profile to persist the change.</p>
+            <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-2">
+              Save the profile to persist the change.
+            </p>
           </div>
         </div>
       )}
@@ -128,7 +154,15 @@ function ExtraInputsEditor({
     onChange(slots.map((s, j) => (j === i ? { ...s, ...patch } : s)));
   const remove = (i: number) => onChange(slots.filter((_, j) => j !== i));
   const add = () =>
-    onChange([...slots, { key: `input${slots.length + 1}`, label: "", mode: "document", required: false }]);
+    onChange([
+      ...slots,
+      {
+        key: `input${slots.length + 1}`,
+        label: "",
+        mode: "document",
+        required: false,
+      },
+    ]);
 
   const inputClass =
     "py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400";
@@ -139,18 +173,23 @@ function ExtraInputsEditor({
         Extra inputs
       </label>
       <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
-        Additional files/folders the Generate report action asks for. A step can select the extracted text,
-        original source, or both; selected text is available as{" "}
-        <code className="font-mono">{"{input:key}"}</code>. Useful for a response letter, rubric,
-        or prior report alongside the main input.
+        Additional files/folders the Generate report action asks for. A step can
+        select the extracted text, original source, or both; selected text is
+        available as <code className="font-mono">{"{input:key}"}</code>. Useful
+        for a response letter, rubric, or prior report alongside the main input.
       </p>
       <div className="space-y-2">
         {slots.map((s, i) => (
-          <div key={i} className="flex flex-wrap items-center gap-1.5 p-2 border border-gray-200 dark:border-gray-700 rounded">
+          <div
+            key={i}
+            className="flex flex-wrap items-center gap-1.5 p-2 border border-gray-200 dark:border-gray-700 rounded"
+          >
             <input
               aria-label={`Extra input ${i + 1} key`}
               value={s.key}
-              onChange={(e) => update(i, { key: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
+              onChange={(e) =>
+                update(i, { key: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })
+              }
               placeholder="key"
               className={`${inputClass} w-24 font-mono`}
             />
@@ -182,9 +221,16 @@ function ExtraInputsEditor({
             <input
               aria-label={`Allowed extensions for ${s.label || s.key || i + 1}`}
               value={(s.extensions ?? []).join(", ")}
-              onChange={(e) => update(i, {
-                extensions: e.target.value.split(",").map((value) => value.trim().toLowerCase().replace(/^\./, "")).filter(Boolean),
-              })}
+              onChange={(e) =>
+                update(i, {
+                  extensions: e.target.value
+                    .split(",")
+                    .map((value) =>
+                      value.trim().toLowerCase().replace(/^\./, ""),
+                    )
+                    .filter(Boolean),
+                })
+              }
               placeholder="extensions: pdf, docx"
               className={`${inputClass} min-w-[10rem] flex-1`}
             />
@@ -193,14 +239,20 @@ function ExtraInputsEditor({
               min={0}
               aria-label={`Maximum bytes for ${s.label || s.key || i + 1}`}
               value={s.max_bytes || ""}
-              onChange={(e) => update(i, { max_bytes: Number(e.target.value) || 0 })}
+              onChange={(e) =>
+                update(i, { max_bytes: Number(e.target.value) || 0 })
+              }
               placeholder="max bytes"
               className={`${inputClass} w-28`}
             />
             <select
               aria-label={`Sensitivity for ${s.label || s.key || i + 1}`}
               value={s.sensitivity ?? ""}
-              onChange={(e) => update(i, { sensitivity: e.target.value as InputSlot["sensitivity"] })}
+              onChange={(e) =>
+                update(i, {
+                  sensitivity: e.target.value as InputSlot["sensitivity"],
+                })
+              }
               className={inputClass}
             >
               <option value="">internal</option>
@@ -246,25 +298,40 @@ function VariablesEditor({
     onChange(variables.map((v, j) => (j === i ? { ...v, ...patch } : v)));
   const remove = (i: number) => onChange(variables.filter((_, j) => j !== i));
   const add = () =>
-    onChange([...variables, { key: `var${variables.length + 1}`, label: "", kind: "text", default: "" }]);
+    onChange([
+      ...variables,
+      {
+        key: `var${variables.length + 1}`,
+        label: "",
+        kind: "text",
+        default: "",
+      },
+    ]);
 
   const inputClass =
     "py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400";
 
   return (
     <div>
-      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Variables</label>
+      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+        Variables
+      </label>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
         Values the Generate report action asks for, substituted into prompts as{" "}
         <code className="font-mono">{"{var:key}"}</code>.
       </p>
       <div className="space-y-2">
         {variables.map((v, i) => (
-          <div key={i} className="flex flex-wrap items-center gap-1.5 p-2 border border-gray-200 dark:border-gray-700 rounded">
+          <div
+            key={i}
+            className="flex flex-wrap items-center gap-1.5 p-2 border border-gray-200 dark:border-gray-700 rounded"
+          >
             <input
               aria-label={`Variable ${i + 1} key`}
               value={v.key}
-              onChange={(e) => update(i, { key: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
+              onChange={(e) =>
+                update(i, { key: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })
+              }
               placeholder="key"
               className={`${inputClass} w-24 font-mono`}
             />
@@ -321,7 +388,14 @@ function VariablesEditor({
               <input
                 aria-label={`Variable ${v.label || v.key || i + 1} choices`}
                 value={(v.choices ?? []).join(", ")}
-                onChange={(e) => update(i, { choices: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+                onChange={(e) =>
+                  update(i, {
+                    choices: e.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  })
+                }
                 placeholder="choices, comma-separated"
                 className={`${inputClass} w-full`}
               />
@@ -332,7 +406,17 @@ function VariablesEditor({
                 min={0}
                 aria-label={`Minimum length for ${v.label || v.key || i + 1}`}
                 value={v.validation?.min_length ?? ""}
-                onChange={(e) => update(i, { validation: { ...v.validation, min_length: e.target.value === "" ? undefined : Number(e.target.value) } })}
+                onChange={(e) =>
+                  update(i, {
+                    validation: {
+                      ...v.validation,
+                      min_length:
+                        e.target.value === ""
+                          ? undefined
+                          : Number(e.target.value),
+                    },
+                  })
+                }
                 placeholder="min length"
                 className={inputClass}
               />
@@ -341,14 +425,28 @@ function VariablesEditor({
                 min={0}
                 aria-label={`Maximum length for ${v.label || v.key || i + 1}`}
                 value={v.validation?.max_length ?? ""}
-                onChange={(e) => update(i, { validation: { ...v.validation, max_length: e.target.value === "" ? undefined : Number(e.target.value) } })}
+                onChange={(e) =>
+                  update(i, {
+                    validation: {
+                      ...v.validation,
+                      max_length:
+                        e.target.value === ""
+                          ? undefined
+                          : Number(e.target.value),
+                    },
+                  })
+                }
                 placeholder="max length"
                 className={inputClass}
               />
               <input
                 aria-label={`Validation pattern for ${v.label || v.key || i + 1}`}
                 value={v.validation?.pattern ?? ""}
-                onChange={(e) => update(i, { validation: { ...v.validation, pattern: e.target.value } })}
+                onChange={(e) =>
+                  update(i, {
+                    validation: { ...v.validation, pattern: e.target.value },
+                  })
+                }
                 placeholder="optional regular expression"
                 className={`${inputClass} font-mono`}
               />

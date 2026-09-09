@@ -3,6 +3,7 @@ pub(crate) mod adapters;
 pub(crate) mod background;
 pub mod commands;
 pub mod definition;
+pub mod discovery;
 pub mod missions;
 pub mod state;
 pub(crate) mod store;
@@ -160,6 +161,7 @@ impl Coordinator {
     async fn tick(self: &Arc<Self>) -> Result<()> {
         let _gate = self.gate.lock().await;
         missions::tick(self).await?;
+        discovery::tick(self).await?;
         self.db(|s| s.fire_schedules(now())).await?;
         let ids = self.db(|s| s.ready_ids(now())).await?;
         for id in ids {
@@ -439,7 +441,8 @@ impl Coordinator {
         let (stored, mission_owned) = self
             .db(move |s| {
                 s.save(&mut copy, &stored_kind, &detail)?;
-                let owned = missions::storage::wake_owner(&s, &copy.id)?;
+                let owned = missions::storage::wake_owner(&s, &copy.id)?
+                    || discovery::storage::wake_owner(&s, &copy.id)?;
                 Ok((copy, owned))
             })
             .await?;
@@ -455,16 +458,8 @@ impl Coordinator {
                     "tasks:notice",
                     json!({"id":run.id,"name":run.name,"state":run.state,"reason":run.reason}),
                 );
-                if self.background.load(Ordering::Acquire) {
-                    use tauri::Manager;
-                    if let Some(window) = app.get_webview_window("main") {
-                        if window.is_visible().is_ok_and(|v| !v) {
-                            let _ = window.request_user_attention(Some(
-                                tauri::UserAttentionType::Informational,
-                            ));
-                        }
-                    }
-                }
+                // The shell applies notification preferences to this notice,
+                // including when the main window is hidden in background mode.
             }
         }
         Ok(())

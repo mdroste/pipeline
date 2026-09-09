@@ -1,9 +1,12 @@
 import { useState } from "react";
 
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import type { ModelCatalog, Settings } from "../../lib/types";
+import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
 
 import InfoButton from "../InfoButton";
+import CredentialField from "./CredentialField";
+import ConnectionStatus from "./ConnectionStatus";
+import { ReviewSaveFeedback } from "./SaveState";
 
 import WorkflowCodexConnection from "../WorkflowCodexConnection";
 import WorkspaceConnectionSettings from "../WorkspaceConnectionSettings";
@@ -96,22 +99,12 @@ export function LocalProviderSection({
           spellCheck={false}
         />
       </Field>
-      <Field
-        label="API Key"
-        help="Optional bearer token for this endpoint. Stored encrypted."
-      >
-        <input
-          aria-label="Local API Key"
-          type="password"
-          value={settings.local_api_key}
-          onChange={(e) =>
-            setSettings({ ...settings, local_api_key: e.target.value })
-          }
-          placeholder="Usually empty for local servers"
-          className={`${inputClass} font-mono`}
-          autoComplete="off"
-        />
-      </Field>
+      <CredentialField
+        label="Local API Key"
+        value={settings.local_api_key}
+        optional
+        onSave={(value) => setSettings({ ...settings, local_api_key: value })}
+      />
       <Field label="Model">
         <select
           aria-label="Local Model"
@@ -219,214 +212,185 @@ export function ProvidersSection({
   setSettings,
   onCodexAccountChange,
   onCodexStatusChange,
+  catalogs,
+  catalogLoading,
+  catalogBlocked,
+  loadCatalog,
+  dependencies,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
   onCodexAccountChange: () => void;
   onCodexStatusChange?: () => void;
+  catalogs: Record<string, ModelCatalog>;
+  catalogLoading: Record<string, boolean>;
+  catalogBlocked: Record<string, boolean>;
+  loadCatalog: (
+    provider: string,
+    settings: Settings,
+    refresh?: boolean,
+  ) => Promise<void>;
+  dependencies?: DepsReport | null;
 }) {
-  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const check = (provider: string) => (
+    <ConnectionStatus
+      provider={provider}
+      settings={settings}
+      catalog={catalogs[provider]}
+      loading={catalogLoading[provider]}
+      blocked={catalogBlocked[provider]}
+      onCheck={() => loadCatalog(provider, settings, true)}
+      dependencies={dependencies}
+    />
+  );
   return (
     <>
-      <div className="space-y-5">
-        <SettingsCard id="anthropic-provider">
-          <ProviderHeader
-            name="Anthropic"
-            description="Claude through a subscription or the Anthropic API."
-            badge="Reviews"
+      <SettingsCard id="anthropic-provider">
+        <ProviderHeader
+          name="Anthropic"
+          description="Claude through a subscription or the Anthropic API."
+          badge="Reviews"
+        />
+        {check("claude")}
+        <AccessModeSelector
+          provider="Claude"
+          value={settings.claude_access_mode}
+          onChange={(mode) =>
+            setSettings({ ...settings, claude_access_mode: mode })
+          }
+        />
+        {settings.claude_access_mode === "api" ? (
+          <CredentialField
+            label="Claude API Key"
+            value={settings.anthropic_api_key}
+            onSave={(value) =>
+              setSettings({ ...settings, anthropic_api_key: value })
+            }
           />
-          <div className="space-y-4">
-            <AccessModeSelector
-              provider="Claude"
-              value={settings.claude_access_mode}
-              onChange={(mode) =>
-                setSettings({ ...settings, claude_access_mode: mode })
-              }
-            />
-            <Field
-              label={
-                settings.claude_access_mode === "api"
-                  ? "API Key"
-                  : "API Key · inactive in subscription mode"
-              }
-              help="Stored encrypted and used only when Claude is in API mode."
-            >
-              <input
-                aria-label="Claude API Key"
-                type="password"
-                value={settings.anthropic_api_key}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    anthropic_api_key: e.target.value,
-                  })
-                }
-                placeholder="sk-ant-…"
-                className={`${inputClass} font-mono`}
-                autoComplete="off"
-              />
-            </Field>
-            {settings.claude_access_mode === "api" &&
-              !settings.anthropic_api_key.trim() && (
-                <p className="text-xs text-amber-700 dark:text-amber-300">
-                  Enter an Anthropic API key before running Claude in API mode.
-                </p>
+        ) : (
+          <p className="settings-row-description mt-3">
+            Uses the account signed in through Claude.{" "}
+            {settings.anthropic_api_key
+              ? "A saved API key is inactive in subscription mode."
+              : ""}
+          </p>
+        )}
+        <ReviewSaveFeedback />
+      </SettingsCard>
+      <SettingsCard id="openai-provider">
+        <ProviderHeader
+          name="OpenAI"
+          description="Separate connections for conversations and structured reviews."
+          badge="Conversations · Reviews"
+        />
+        <section
+          id="workspace-provider"
+          tabIndex={-1}
+          className="settings-anchor settings-provider-scope"
+        >
+          <h3>Conversations</h3>
+          <WorkspaceConnectionSettings embedded connectionOnly />
+        </section>
+        <section className="settings-provider-scope">
+          <h3>Reviews</h3>
+          <AccessModeSelector
+            provider="ChatGPT"
+            value={settings.codex_access_mode}
+            onChange={(mode) =>
+              setSettings({ ...settings, codex_access_mode: mode })
+            }
+          />
+          {settings.codex_access_mode !== "api" ? (
+            <>
+              {settings.codex_backend === "legacy_cli" ? (
+                check("codex")
+              ) : (
+                <WorkflowCodexConnection
+                  onAccountChange={onCodexAccountChange}
+                  onStatusChange={onCodexStatusChange}
+                />
               )}
-          </div>
-        </SettingsCard>
-
-        <SettingsCard id="openai-provider">
-          <ProviderHeader
-            name="OpenAI"
-            description="ChatGPT subscriptions and OpenAI API access."
-            badge="Workspace · Reviews"
-          />
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium">Reviews</h3>
-            <AccessModeSelector
-              provider="ChatGPT"
-              value={settings.codex_access_mode}
-              onChange={(mode) =>
-                setSettings({ ...settings, codex_access_mode: mode })
-              }
-            />
-            {settings.codex_access_mode !== "api" && (
-              <>
-                {settings.codex_backend === "legacy_cli" ? (
-                  <p className="text-xs text-gray-600 dark:text-neutral-400">
-                    The legacy Codex CLI connection is enabled. Manage it in
-                    Advanced connection settings.
-                  </p>
-                ) : (
-                  <WorkflowCodexConnection
-                    onAccountChange={onCodexAccountChange}
-                    onStatusChange={onCodexStatusChange}
-                  />
-                )}
-                <details className="settings-disclosure">
-                  <summary>
-                    Advanced connection settings <span>Compatibility</span>
-                  </summary>
-                  <div className="space-y-3 pt-4">
-                    <Field
-                      label="Reviews connection"
-                      help="Use the legacy CLI only for compatibility troubleshooting. Pipeline never switches to it automatically."
+              <details className="settings-disclosure mt-4">
+                <summary>
+                  Advanced connection settings <span>Compatibility</span>
+                </summary>
+                <div className="pt-4">
+                  <Field
+                    label="Reviews connection"
+                    help="Use the legacy CLI only for compatibility troubleshooting. Pipeline never switches to it automatically."
+                  >
+                    <select
+                      aria-label="Reviews Codex backend"
+                      className={selectClass}
+                      value={settings.codex_backend ?? "app_server"}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          codex_backend: e.target.value as
+                            "legacy_cli" | "app_server",
+                          codex_backend_preference_version: 1,
+                        })
+                      }
                     >
-                      <select
-                        aria-label="Reviews Codex backend"
-                        className={inputClass}
-                        value={settings.codex_backend ?? "app_server"}
-                        onChange={(e) =>
-                          setSettings({
-                            ...settings,
-                            codex_backend: e.target.value as
-                              "legacy_cli" | "app_server",
-                            codex_backend_preference_version: 1,
-                          })
-                        }
-                      >
-                        <option value="app_server">
-                          Codex App Server (recommended)
-                        </option>
-                        <option value="legacy_cli">Legacy Codex CLI</option>
-                      </select>
-                    </Field>
-                    {settings.codex_backend === "legacy_cli" && (
-                      <p className="text-xs text-gray-600 dark:text-neutral-400">
-                        This uses your terminal's Codex account. Run{" "}
-                        <code>codex login</code> in a terminal to sign in. App
-                        Server keeps its own sign-in and can be restored above.
-                      </p>
-                    )}
-                  </div>
-                </details>
-              </>
-            )}
-            <Field
-              label={
-                settings.codex_access_mode === "api"
-                  ? "API Key"
-                  : "API Key · inactive in subscription mode"
-              }
-              help="Stored encrypted and used only when ChatGPT is in API mode."
-            >
-              <input
-                aria-label="OpenAI API Key"
-                type="password"
-                value={settings.openai_api_key}
-                onChange={(e) =>
-                  setSettings({ ...settings, openai_api_key: e.target.value })
-                }
-                placeholder="sk-…"
-                className={`${inputClass} font-mono`}
-                autoComplete="off"
-              />
-            </Field>
-            {settings.codex_access_mode === "api" &&
-              !settings.openai_api_key.trim() && (
-                <p className="text-xs text-amber-700 dark:text-amber-300">
-                  Enter an OpenAI API key before running ChatGPT in API mode.
+                      <option value="app_server">
+                        Codex App Server (recommended)
+                      </option>
+                      <option value="legacy_cli">Legacy Codex CLI</option>
+                    </select>
+                  </Field>
+                  {settings.codex_backend === "legacy_cli" && (
+                    <p className="settings-row-description mt-3">
+                      This uses your terminal’s account. Run{" "}
+                      <code>codex login</code> in a terminal to sign in.
+                    </p>
+                  )}
+                </div>
+              </details>
+              {settings.openai_api_key && (
+                <p className="settings-row-description mt-3">
+                  A saved API key is inactive in subscription mode.
                 </p>
               )}
-          </div>
-          <details
-            id="workspace-provider"
-            tabIndex={-1}
-            className="settings-disclosure settings-anchor mt-5"
-            onToggle={(event) => {
-              if (event.currentTarget.open) setWorkspaceLoaded(true);
-            }}
-          >
-            <summary>
-              Workspace ChatGPT <span>Separate sign-in, models & usage</span>
-            </summary>
-            {workspaceLoaded && (
-              <div className="pt-5">
-                <WorkspaceConnectionSettings embedded />
-              </div>
-            )}
-          </details>
-        </SettingsCard>
-
-        <SettingsCard id="google-provider">
-          <ProviderHeader
-            name="Google"
-            description="Gemini models through the Google API."
-            badge="Reviews"
-          />
-          <div className="space-y-4">
-            <AccessModeSelector
-              provider="Gemini"
-              value={settings.antigravity_access_mode}
-              onChange={(mode) =>
-                setSettings({ ...settings, antigravity_access_mode: mode })
-              }
-              subscriptionDisabledNote="Gemini connects through the Google API. A Google API key is required; subscription sign-in is unavailable."
-            />
-            <Field
-              label="Gemini API Key"
-              help="Stored encrypted. Required for Gemini API calls."
-            >
-              <input
-                aria-label="Gemini API Key"
-                type="password"
-                value={settings.google_api_key}
-                onChange={(e) =>
-                  setSettings({ ...settings, google_api_key: e.target.value })
+            </>
+          ) : (
+            <>
+              {check("codex")}
+              <CredentialField
+                label="OpenAI API Key"
+                value={settings.openai_api_key}
+                onSave={(value) =>
+                  setSettings({ ...settings, openai_api_key: value })
                 }
-                placeholder="AI..."
-                className={`${inputClass} font-mono`}
-                autoComplete="off"
               />
-            </Field>
-            {!settings.google_api_key.trim() && (
-              <p className="text-xs text-amber-700 dark:text-amber-300">
-                Enter a Google AI API key before running Gemini.
-              </p>
-            )}
-          </div>
-        </SettingsCard>
-      </div>
+            </>
+          )}
+          <ReviewSaveFeedback />
+        </section>
+      </SettingsCard>
+      <SettingsCard id="google-provider">
+        <ProviderHeader
+          name="Google"
+          description="Gemini models through the Google API."
+          badge="Reviews"
+        />
+        {check("antigravity")}
+        <AccessModeSelector
+          provider="Gemini"
+          value={settings.antigravity_access_mode}
+          onChange={(mode) =>
+            setSettings({ ...settings, antigravity_access_mode: mode })
+          }
+          subscriptionDisabledNote="Gemini connects through the Google API. A Google API key is required; subscription sign-in is unavailable."
+        />
+        <CredentialField
+          label="Gemini API Key"
+          value={settings.google_api_key}
+          onSave={(value) =>
+            setSettings({ ...settings, google_api_key: value })
+          }
+        />
+        <ReviewSaveFeedback />
+      </SettingsCard>
     </>
   );
 }

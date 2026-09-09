@@ -5,7 +5,7 @@ import type {
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { notify } from "./DialogService";
 import { useFileNavigation } from "./file-workspace/FileNavigation";
-import { resolveFileLink } from "../lib/fileLinks";
+import { absoluteLocalFilePath, resolveFileLink } from "../lib/fileLinks";
 
 type SafeMarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   node?: unknown;
@@ -84,13 +84,51 @@ export default function SafeMarkdownLink({
 
   const externalHref = safeExternalHref(href);
   if (!externalHref) {
-    const location = href && navigation ? resolveFileLink(navigation.path, href) : null;
-    if (location && navigation) return <a {...props} className={className} title={title ?? `Open ${location.path} in Pipeline`} href={href} onClick={event => {
-      event.preventDefault();
-      void Promise.resolve(navigation.open(location)).catch(error => notify(`Could not open this file: ${String(error)}`));
-    }}>{children}</a>;
+    const location =
+      href && navigation
+        ? resolveFileLink(navigation.path, href, navigation.root)
+        : null;
+    if (location && navigation)
+      return (
+        <a
+          {...props}
+          className={className}
+          title={title ?? `Open ${location.path} in Pipeline`}
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            void Promise.resolve(navigation.open(location)).catch((error) =>
+              notify(`Could not open this file: ${String(error)}`),
+            );
+          }}
+        >
+          {children}
+        </a>
+      );
+    const absolutePath = href ? absoluteLocalFilePath(href) : null;
+    const openAbsolute = navigation?.openAbsolute;
+    if (absolutePath && openAbsolute)
+      return (
+        <a
+          {...props}
+          className={className}
+          title={title ?? "Open this conversation file"}
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            void Promise.resolve(openAbsolute(absolutePath)).catch((error) =>
+              notify(`Could not open this file: ${String(error)}`),
+            );
+          }}
+        >
+          {children}
+        </a>
+      );
     return (
-      <span className={className} title={title ?? "This link is unavailable in the document’s files."}>
+      <span
+        className={className}
+        title={title ?? "This link is unavailable in the document’s files."}
+      >
         {children}
       </span>
     );

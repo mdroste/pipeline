@@ -27,8 +27,10 @@ describe("AboutPage", () => {
     const context = {
       arc: vi.fn(),
       beginPath: vi.fn(),
+      bezierCurveTo: vi.fn(),
       clearRect: vi.fn(),
       closePath: vi.fn(),
+      createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
       ellipse: vi.fn(),
       fill: vi.fn(),
       fillRect: vi.fn(),
@@ -39,6 +41,8 @@ describe("AboutPage", () => {
       restore: vi.fn(),
       rotate: vi.fn(),
       save: vi.fn(),
+      scale: vi.fn(),
+      setTransform: vi.fn(),
       stroke: vi.fn(),
       strokeRect: vi.fn(),
       translate: vi.fn(),
@@ -49,11 +53,21 @@ describe("AboutPage", () => {
     render(<AboutPage onClose={() => undefined} />);
 
     const keys = [
-      "ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft",
-      "ArrowRight", "ArrowLeft", "ArrowRight", "B", "A",
+      "ArrowUp",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+      "ArrowLeft",
+      "ArrowRight",
+      "B",
+      "A",
     ];
     keys.forEach((key) => fireEvent.keyDown(document, { key }));
-    expect(screen.queryByRole("dialog", { name: "Flappy Pipeline" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Flappy Pipeline" }),
+    ).not.toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Enter" });
     const dialog = screen.getByRole("dialog", { name: "Flappy Pipeline" });
@@ -65,21 +79,37 @@ describe("AboutPage", () => {
     expect(dario).toBeInTheDocument();
     expect(screen.queryByText("Dario Amodei")).not.toBeInTheDocument();
     expect(screen.queryByText("Sam Altman")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Start flight" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/Flappy Pipeline game board/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Start flight" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Flappy Pipeline game board/),
+    ).not.toBeInTheDocument();
 
     await userEvent.setup().click(sam);
-    expect(screen.getByLabelText(/Flappy Pipeline game board.*Ready to play/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Flappy Pipeline game board.*Ready to play/i),
+    ).toBeInTheDocument();
     expect(screen.getByText("SAM")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start flight" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Start flight" }),
+    ).toBeInTheDocument();
 
-    await userEvent.setup().click(screen.getByRole("button", { name: "Change character" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Choose DARIO" })).toHaveFocus());
-
-    await userEvent.setup().click(
-      screen.getByRole("button", { name: "Close Flappy Pipeline" }),
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Change character" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Choose DARIO" }),
+      ).toHaveFocus(),
     );
-    expect(screen.queryByRole("dialog", { name: "Flappy Pipeline" })).not.toBeInTheDocument();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Close Flappy Pipeline" }));
+    expect(
+      screen.queryByRole("dialog", { name: "Flappy Pipeline" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the larger high score in local storage", () => {
@@ -93,18 +123,30 @@ describe("AboutPage", () => {
   it("explains both orchestration modes, scoped access, and provider data sharing", () => {
     render(<AboutPage onClose={() => undefined} />);
 
-    expect(screen.getByText(/doing and reviewing academic research/i)).toBeInTheDocument();
-    expect(screen.getByText(/Use Workspace to chat with ChatGPT/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/doing and reviewing academic research/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Chat with the assistant in an unfiled conversation/i),
+    ).toBeInTheDocument();
     expect(screen.getByText("~/.pipeline/workbench/")).toBeInTheDocument();
     expect(screen.getByText(/prerequisites finish/i)).toBeInTheDocument();
-    expect(screen.getByText(/reads only the material its workflow allows/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/reads only the material its workflow allows/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/plan and data-use terms/i)).toBeInTheDocument();
     expect(screen.getByText("Reviews")).toBeInTheDocument();
-    expect(screen.getByText("Automatic Paper Review (Full)")).toBeInTheDocument();
-    expect(screen.getByText("Automatic Paper Review (Quick)")).toBeInTheDocument();
+    expect(
+      screen.getByText("Automatic Paper Review (Full)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Automatic Paper Review (Quick)"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Grant Proposal Review")).toBeInTheDocument();
     expect(screen.queryByText("Codebase Review")).not.toBeInTheDocument();
-    expect(screen.queryByText("Replication Package Audit")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Replication Package Audit"),
+    ).not.toBeInTheDocument();
     // Once in setup (highly recommended) and once under PDF & document handling.
     expect(screen.getAllByText("PaddleOCR-VL Full Parser")).toHaveLength(2);
     expect(screen.getByText("Highly recommended")).toBeInTheDocument();
@@ -118,12 +160,18 @@ describe("AboutPage", () => {
     const collapsed = screen.getByText("Data & privacy").closest("details");
     expect(collapsed).not.toBeNull();
     expect(collapsed).not.toHaveAttribute("open");
-    expect(screen.getByText("Reviews").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Reviews").closest("details")).not.toHaveAttribute(
+      "open",
+    );
     unmount();
 
     render(<AboutPage onClose={() => undefined} initialSection="privacy" />);
-    expect(screen.getByText("Data & privacy").closest("details")).toHaveAttribute("open");
-    expect(screen.getByText("Reviews").closest("details")).not.toHaveAttribute("open");
+    expect(
+      screen.getByText("Data & privacy").closest("details"),
+    ).toHaveAttribute("open");
+    expect(screen.getByText("Reviews").closest("details")).not.toHaveAttribute(
+      "open",
+    );
   });
 
   it("navigates to the described page from section links", () => {
@@ -134,7 +182,9 @@ describe("AboutPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open Designer" }));
     fireEvent.click(screen.getByRole("button", { name: "Open Gallery" }));
     fireEvent.click(screen.getByRole("button", { name: "Open History" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open run collections" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open review collections" }),
+    );
 
     expect(onNavigate.mock.calls.map((call) => call[0])).toEqual([
       "settings",
@@ -147,16 +197,29 @@ describe("AboutPage", () => {
 
   it("hides navigation links when no navigator is provided", () => {
     render(<AboutPage onClose={() => undefined} />);
-    expect(screen.queryByRole("button", { name: "Open Designer" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open Settings" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Install in Settings" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open Designer" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open Settings" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Install in Settings" }),
+    ).not.toBeInTheDocument();
   });
 
   it("links the recommended parser to the Settings install card", () => {
     const onOpenPdfSettings = vi.fn();
-    render(<AboutPage onClose={() => undefined} onOpenPdfSettings={onOpenPdfSettings} />);
+    render(
+      <AboutPage
+        onClose={() => undefined}
+        onOpenPdfSettings={onOpenPdfSettings}
+      />,
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "Install in Settings" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Install in Settings" }),
+    );
     expect(onOpenPdfSettings).toHaveBeenCalledTimes(1);
   });
 
@@ -164,7 +227,9 @@ describe("AboutPage", () => {
     openUrl.mockRejectedValueOnce(new Error("no browser is configured"));
     render(<AboutPage onClose={() => undefined} initialSection="privacy" />);
 
-    await userEvent.setup().click(screen.getByRole("link", { name: "Full privacy details" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("link", { name: "Full privacy details" }));
 
     expect(openUrl).toHaveBeenCalledWith(
       "https://github.com/mdroste/pipeline/blob/main/PRIVACY.md",

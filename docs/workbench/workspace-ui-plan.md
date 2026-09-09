@@ -1,14 +1,15 @@
 # Workspace interface modernization
 
-Status: implemented in the working tree on September 8, 2026. Frontend tests,
-production build and browser geometry checks pass. Native Tauri and packaged
-qualification remain pending; see the implementation record below.
+Status: implemented in the working tree on September 8, 2026, with the
+product-vocabulary and six-area navigation consolidation on September 9, 2026.
+Frontend tests, production build and browser geometry checks pass. Native Tauri
+and packaged qualification remain pending; see the implementation record below.
 
 The following design records the approved direction and the original findings.
 
 The accompanying interactive conversation sketch uses sample project content
 and illustrative model/effort choices. It demonstrates the arrangement,
-destination switching, inspector placement, pins, and composer location; it
+destination switching, inspector placement, and composer location; it
 does not connect to Pipeline or qualify native pixel geometry. Static DOM and
 interaction checks passed for those switches, draft retention, settings, reset,
 and inert Send. Browser preview was blocked by the browser's local-file URL
@@ -32,8 +33,9 @@ The first release of this redesign should address three concrete outcomes:
    adjacent to the message they govern.
 
 This is a presentation and navigation change over existing services. Preserve
-the Workspace/Workflow runtime boundary and the distinctions among presets,
-recipes, project action items, and durable task chains.
+the Workspace/Review/automation runtime boundaries. Recipes, workflows, task
+chains, harnesses, and missions remain implementation or advanced-editor terms,
+not peer product objects.
 
 ## Findings before implementation
 
@@ -105,25 +107,24 @@ Expose six project destinations:
 
 | Destination | Contents |
 | --- | --- |
-| Overview | Current paper, project brief, recent work, decisions and next action items |
+| Overview | Current paper, project brief, setup, and next action items |
 | Library | Documents, files, sources, search and collections, acquisition, literature notes |
-| Analyses | Results, experiments, data and samples, execution plans, specification grids, theory and assumptions |
-| Writing | Manuscript, responses, edits, tables and figures, revision campaigns, deliverables |
-| Notes & evidence | Saved project notes, claims, linked evidence, and confirmation state |
-| Action items | Project action items and checks; explicit links to owning task-chain and mission views |
+| Analyze | Results, experiments, data and samples, execution plans, specification grids, theory and assumptions |
+| Write | Manuscript, responses, edits, tables and figures, review, sharing, and deliverables |
+| Automate | Project action items, recurring checks, and revision automations |
+| Activity | Saved notes, decisions, claims, linked evidence, and change impact |
 
 Each destination uses one local navigation level with direct tool selection.
-For example, Analyses → Results opens results immediately; the user need not
+For example, Analyze → Results opens results immediately; the user need not
 select “Experiments & theory” and then another nested tab. Use compact vertical
 tool navigation or an accessible local chooser where a horizontal row will not
 fit. Avoid adding another global “Research” destination over these destinations.
 
-Allow up to four pinned shortcuts in Workspace navigation, initially Files,
-Manuscript, and Results. Provide a visible Customize action with pin/unpin and
-Move up/Move down controls; drag reorder can be an additional convenience.
-Pins are shortcuts to canonical destinations, not duplicate editors or data.
-Store them per project on this device. Hiding or pinning a tool changes only
-navigation; enabling assistant access is a separate setting.
+Keep only the six areas in persistent project navigation. The current-view
+button and Command/Ctrl K open the searchable list of specialized views. This
+keeps every existing destination reachable without turning all of them into
+peer navigation entries. Selecting a view changes presentation only; enabling
+assistant access remains a separate setting.
 
 Overview should emphasize continuing real work: the current paper or selected
 file, recent edits/results, and a short action list. Empty projects offer Add
@@ -214,11 +215,12 @@ not authorize broader access or bypass host-execution tests and grants.
 | Setup / Edit harness | Composer setup chip → Assistant settings; full editor in working area |
 | Documents | Library; attach/use exact revisions from the composer or context tray |
 | Recipes | Assistant settings → Conversation recipes, with a composer shortcut while a recipe is active |
-| Memory | Notes & evidence → Notes; selected/pinned notes also visible in Context |
-| Evidence | Notes & evidence → Claims and evidence |
-| Results / execution profiles | Analyses → Results / Execution settings; full-width editing |
-| Paper review handoff | Writing or manuscript action → Send for review, using existing preview |
-| Selective project exchange / coauthor materials | Project menu → Share project; Writing can link to the same destination |
+| Memory | Activity → Research notes; selected notes also visible in Context |
+| Evidence | Activity → Claims and evidence |
+| Decisions | Activity → Decisions & impact |
+| Results / execution profiles | Analyze → Results / Execution settings; full-width editing |
+| Paper review handoff | Write or manuscript action → Send for review, using existing preview |
+| Selective project exchange / coauthor materials | Project menu → Share project; Write can link to the same destination |
 | Whole-store backup / restore / retention | App Settings → Research data, labelled with their actual scope |
 | Performance and qualification information | Advanced diagnostics |
 
@@ -267,8 +269,8 @@ are requested preferences; viewport clamping never overwrites them.
 | 1. Repair geometry | Reproduce Research/Outline composition; give pane sizing an explicit stable container/budget; unify loading geometry and focused mode | Panel and close/divider controls stay in bounds through opening, resizing, and restoring saved widths |
 | 2. Move turn controls | Extract a composer-controls component; relocate Model/Thinking; compact the assistant header | Same selection/persistence/Send behavior, visible controls at narrow widths, usable menus |
 | 3. Establish project-first shell | One project navigation, stable assistant slot, unified layout state, last-project/destination restoration | Project opens directly; pane switching retains edits, chat draft, and activity |
-| 4. Redistribute Research | Direct tool destinations, Notes & evidence, assistant settings, scoped sharing/backup routes, old-route redirects | Every existing Research action remains reachable; common work takes at most two navigation actions |
-| 5. Personalization and polish | Pins, visible Customize/Reset, keyboard interactions, consistent spacing and empty states | Preferences survive reload; hiding UI never changes assistant access; native geometry and focus checks pass |
+| 4. Redistribute Research | Searchable project views, Activity records, assistant settings, scoped sharing/backup routes, old-route redirects | Every existing Research action remains reachable; common work takes at most two navigation actions |
+| 5. Consolidate and polish | Six stable areas, searchable specialized views, keyboard interactions, consistent spacing and empty states | Preferences survive reload; hiding UI never changes assistant access; native geometry and focus checks pass |
 
 Ship slices 1 and 2 independently of the larger navigation migration. Do not
 delay the display repair until every tool has moved.
@@ -280,10 +282,11 @@ Primary implementation owners: `WorkspacePage.tsx`, `WorkspaceDesk.tsx`,
 components, and `deskLayout.ts`. Shared sizing changes belong in
 `SidebarPanel.tsx` / `ResizeHandle.tsx` with cross-surface regression coverage.
 
-Use a typed destination registry to map navigation, pin choices, and legacy
+Use a typed destination registry to map navigation, the searchable view list, and legacy
 destinations to existing lazy surfaces. Keep layout preferences separate from
 research records and permission configuration. Version optional layout state;
-validate saved destinations, discard obsolete pins, and fall back gracefully.
+validate saved destinations and fall back gracefully. Legacy pin preferences may
+continue to influence picker ordering, but are no longer a visible navigation model.
 Preserve pending drafts and exact source identities when moving views. Mount
 only surfaces the user has opened and fetch data for the active destination;
 retaining an opened editor must not initialize every research module at launch.
@@ -333,7 +336,7 @@ qualification; report those checks separately under the existing release policy.
 ## Implementation record — September 8, 2026
 
 All five frontend slices above are implemented. The project-first shell has
-six sections, named local tools and up to four ordered per-project pins.
+six stable areas and a searchable list of specialized project views.
 Project/Chat/Project + chat and the assistant's pixel width persist per project;
 old desk routes are validated through the shared typed destination registry.
 The default navigator is 224 px and assistant is 380 px. The working area needs
@@ -398,9 +401,9 @@ workspace bar and controls that open when needed:
 - Navigation starts closed. The project-name button opens a bounded drawer;
   Keep navigation open saves an optional pinned layout when both panes fit.
   Closing pinned navigation restores the full working area.
-- The current-tool button and Command/Ctrl K open a searchable tool picker.
-  All destinations are reachable directly; ordered project pins appear first.
-  Arrow keys select results, Enter opens a tool and Escape returns focus.
+- The current-view button and Command/Ctrl K open a searchable project-view picker.
+  All destinations remain reachable without persistent shortcut clutter.
+  Arrow keys select results, Enter opens a view and Escape returns focus.
 - The Chat toggle hides or restores the companion pane. Focus and reset
   options live in its layout menu. Redundant project headers and Tool/Share
   rows are omitted in the integrated Workspace surface.

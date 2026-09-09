@@ -49,7 +49,9 @@ describe("EnginesPanel", () => {
   it("lists engines with an Install button and size estimate", async () => {
     invoke.mockResolvedValue([engine()]);
     render(<EnginesPanel />);
-    expect(await screen.findByText("PaddleOCR-VL 1.6 Full Parser")).toBeInTheDocument();
+    expect(
+      await screen.findByText("PaddleOCR-VL 1.6 Full Parser"),
+    ).toBeInTheDocument();
     expect(screen.getByText("not installed")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Install \(~2\.9 GB\)/ }),
@@ -78,7 +80,9 @@ describe("EnginesPanel", () => {
     render(<EnginesPanel />);
     expect(await screen.findByText("installed v3.7.0")).toBeInTheDocument();
     expect(screen.getByText(/Disk usage: 3\.8 GB/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Uninstall" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Uninstall" }),
+    ).toBeInTheDocument();
   });
 
   it("surfaces an engine-list failure and retries it", async () => {
@@ -100,9 +104,13 @@ describe("EnginesPanel", () => {
     );
     await user.click(screen.getByRole("button", { name: "Retry status" }));
 
-    expect(await screen.findByText("PaddleOCR-VL 1.6 Full Parser")).toBeVisible();
+    expect(
+      await screen.findByText("PaddleOCR-VL 1.6 Full Parser"),
+    ).toBeVisible();
     await waitFor(() =>
-      expect(screen.queryByText(/engine catalog unavailable/)).not.toBeInTheDocument(),
+      expect(
+        screen.queryByText(/engine catalog unavailable/),
+      ).not.toBeInTheDocument(),
     );
   });
 
@@ -118,9 +126,11 @@ describe("EnginesPanel", () => {
     render(<EnginesPanel />);
 
     await screen.findByText("PaddleOCR-VL 1.6 Full Parser");
-    await user.click(screen.getByRole("button", {
-      name: "More information about Local Engines",
-    }));
+    await user.click(
+      screen.getByRole("button", {
+        name: "More information about Local Engines",
+      }),
+    );
     await user.click(screen.getByRole("button", { name: "~/.pipeline/" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -149,13 +159,19 @@ describe("EnginesPanel", () => {
     // While installing: phase chips update from events, log lines stream.
     act(() => {
       handlers.get("engines:phase")!({
-        payload: { engine: "paddleocr-vl-parser", phase: "models", status: "running" },
+        payload: {
+          engine: "paddleocr-vl-parser",
+          phase: "models",
+          status: "running",
+        },
       });
       handlers.get("engines:log")!({
         payload: { line: "Downloading model weights..." },
       });
     });
-    expect(await screen.findByText("Downloading model weights...")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Downloading model weights..."),
+    ).toBeInTheDocument();
     expect(screen.getByText("Models")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
 
@@ -207,7 +223,9 @@ describe("EnginesPanel", () => {
       "Installation continues in the background if you leave Settings.",
     );
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
-    expect(invoke.mock.calls.filter(([command]) => command === "install_engine")).toHaveLength(1);
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "install_engine"),
+    ).toHaveLength(1);
   });
 
   it("cancel button invokes cancel_engine_install", async () => {
@@ -306,9 +324,13 @@ describe("EnginesPanel", () => {
     });
     render(<EnginesPanel />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("event permission denied");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "event permission denied",
+    );
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: /Install/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Retry connection" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Retry connection" }),
+    ).toBeEnabled();
   });
 });

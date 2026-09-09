@@ -96,7 +96,8 @@ function usageIdentity(
   return {
     provider: displayProvider(provider),
     model: call?.model?.trim() || step.model?.trim() || "Automatic",
-    transport: call?.model_transport?.trim() || step.model_transport?.trim() || "",
+    transport:
+      call?.model_transport?.trim() || step.model_transport?.trim() || "",
     effort: call?.effort?.trim() || "",
   };
 }
@@ -135,16 +136,19 @@ export function aggregateProviderModelUsage(
         groups.set(key, group);
       }
       addUsage(group, call ?? step);
-      if (identity.transport) group.transportSet.add(identity.transport.toUpperCase());
+      if (identity.transport)
+        group.transportSet.add(identity.transport.toUpperCase());
       if (identity.effort) group.effortSet.add(identity.effort);
     }
   }
 
-  return Array.from(groups.values()).map(({ transportSet, effortSet, ...group }) => ({
-    ...group,
-    transports: Array.from(transportSet),
-    efforts: Array.from(effortSet),
-  }));
+  return Array.from(groups.values()).map(
+    ({ transportSet, effortSet, ...group }) => ({
+      ...group,
+      transports: Array.from(transportSet),
+      efforts: Array.from(effortSet),
+    }),
+  );
 }
 
 /**
@@ -153,7 +157,9 @@ export function aggregateProviderModelUsage(
  * latter remains useful for compact summaries, while this preserves the step
  * boundary needed by the provenance table.
  */
-export function aggregateStepModelUsage(report: PipelineReport): StepModelUsage[] {
+export function aggregateStepModelUsage(
+  report: PipelineReport,
+): StepModelUsage[] {
   const groups = new Map<
     string,
     StepModelUsage & { transportSet: Set<string>; effortSet: Set<string> }
@@ -186,16 +192,19 @@ export function aggregateStepModelUsage(report: PipelineReport): StepModelUsage[
         groups.set(key, group);
       }
       addUsage(group, call ?? step);
-      if (identity.transport) group.transportSet.add(identity.transport.toUpperCase());
+      if (identity.transport)
+        group.transportSet.add(identity.transport.toUpperCase());
       if (identity.effort) group.effortSet.add(identity.effort);
     }
   }
 
-  return Array.from(groups.values()).map(({ transportSet, effortSet, ...group }) => ({
-    ...group,
-    transports: Array.from(transportSet),
-    efforts: Array.from(effortSet),
-  }));
+  return Array.from(groups.values()).map(
+    ({ transportSet, effortSet, ...group }) => ({
+      ...group,
+      transports: Array.from(transportSet),
+      efforts: Array.from(effortSet),
+    }),
+  );
 }
 
 function totalsForRows(rows: ProviderModelUsage[]): UsageTotals {
@@ -251,14 +260,18 @@ export function buildRunProvenance({
   runId?: string | null;
   durationSecs?: number | null;
 }): RunProvenance {
-  const paper = isPaperOrientation(report.orientation) ? report.orientation : null;
+  const paper = isPaperOrientation(report.orientation)
+    ? report.orientation
+    : null;
   const usage = aggregateProviderModelUsage(report);
   const stepUsage = aggregateStepModelUsage(report);
   const attributedTotals = totalsForRows(usage);
   const totals = authoritativeTotals(summary, manifest) ?? attributedTotals;
   const fallbackProvider = summary?.provider || manifest?.provider || "Default";
   const providers = unique(
-    usage.length ? usage.map((row) => row.provider) : [displayProvider(fallbackProvider)],
+    usage.length
+      ? usage.map((row) => row.provider)
+      : [displayProvider(fallbackProvider)],
   );
   const models = unique(usage.map((row) => row.model));
   const resolvedDuration =
@@ -284,12 +297,16 @@ export function buildRunProvenance({
       summary?.profile_id ||
       manifest?.profile_id ||
       "Current workflow",
-    completed: summary?.created || manifest?.created || report.report_date || "",
+    completed:
+      summary?.created || manifest?.created || report.report_date || "",
     duration_secs:
-      resolvedDuration && Number.isFinite(resolvedDuration) && resolvedDuration > 0
+      resolvedDuration &&
+      Number.isFinite(resolvedDuration) &&
+      resolvedDuration > 0
         ? resolvedDuration
         : null,
-    run_id: runId || summary?.run_id || manifest?.run_id || report.paper_hash || "",
+    run_id:
+      runId || summary?.run_id || manifest?.run_id || report.paper_hash || "",
     status:
       summary?.status ||
       manifest?.status ||
@@ -337,7 +354,9 @@ function escapeMarkdown(value: string): string {
 }
 
 function modelUsageLabel(row: ProviderModelUsage): string {
-  const transport = row.transports.length ? ` (${row.transports.join(" + ")})` : "";
+  const transport = row.transports.length
+    ? ` (${row.transports.join(" + ")})`
+    : "";
   const effort = row.efforts.length ? row.efforts.join(" + ") : "not recorded";
   return `${row.provider}${transport} / ${row.model} / effort ${effort}`;
 }
@@ -349,7 +368,9 @@ function tokenSummary(provenance: RunProvenance): string {
     `${formatTokens(provenance.totals.cached_input_tokens)} cached`,
   ];
   if (provenance.totals.cache_write_input_tokens > 0) {
-    parts.push(`${formatTokens(provenance.totals.cache_write_input_tokens)} cache write`);
+    parts.push(
+      `${formatTokens(provenance.totals.cache_write_input_tokens)} cache write`,
+    );
   }
   return parts.join(" · ");
 }

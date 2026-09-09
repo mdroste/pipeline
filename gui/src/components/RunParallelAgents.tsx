@@ -33,7 +33,9 @@ export default function RunParallelAgents({
   onChange,
 }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [workflowMerge, setWorkflowMerge] = useState<PipelineConfig["merge"] | null>(null);
+  const [workflowMerge, setWorkflowMerge] = useState<
+    PipelineConfig["merge"] | null
+  >(null);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
   const [open, setOpen] = useState(false);
 
@@ -61,8 +63,9 @@ export default function RunParallelAgents({
   const providers = useMemo<Provider[]>(() => {
     if (!settings) return ["claude", "codex", "antigravity"];
     return PROVIDERS.filter(
-      (provider) => provider !== "local"
-        || (localLlmActive && Boolean(settings.local_model.trim())),
+      (provider) =>
+        provider !== "local" ||
+        (localLlmActive && Boolean(settings.local_model.trim())),
     ) as Provider[];
   }, [localLlmActive, settings]);
 
@@ -94,12 +97,10 @@ export default function RunParallelAgents({
 
   const inheritedAgents = defaultParallelAgents(settings);
   const agents = value?.agents ?? inheritedAgents;
-  const modelOverrides = value?.model_overrides
-    ?? settings.default_parallel_model_overrides
-    ?? {};
-  const effortOverrides = value?.effort_overrides
-    ?? settings.default_parallel_effort_overrides
-    ?? {};
+  const modelOverrides =
+    value?.model_overrides ?? settings.default_parallel_model_overrides ?? {};
+  const effortOverrides =
+    value?.effort_overrides ?? settings.default_parallel_effort_overrides ?? {};
   const workflowMergeAgent = workflowMerge?.agents?.[0];
   const inheritedMergeAgent = workflowMergeAgent || defaultMergeAgent(settings);
   const mergeAgent = value?.merge_agent || inheritedMergeAgent;
@@ -110,10 +111,10 @@ export default function RunParallelAgents({
     ? {}
     : defaultMergeEffortOverrides(settings);
   const mergeModelOverrides = value?.merge_agent
-    ? value.merge_model_overrides ?? {}
+    ? (value.merge_model_overrides ?? {})
     : inheritedMergeModelOverrides;
   const mergeEffortOverrides = value?.merge_agent
-    ? value.merge_effort_overrides ?? {}
+    ? (value.merge_effort_overrides ?? {})
     : inheritedMergeEffortOverrides;
   const multipleAgents = agents.length > 1;
   const mergeEnabled = workflowMerge?.enabled ?? true;
@@ -127,9 +128,13 @@ export default function RunParallelAgents({
     <section className="rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2.5 dark:border-gray-800 dark:bg-gray-800/25">
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Parallel agents</p>
+          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
+            Parallel agents
+          </p>
           <p className="mt-0.5 truncate text-[11px] text-gray-500 dark:text-gray-500">
-            {agents.map((agent) => PROVIDER_LABELS[agent as Provider]).join(" + ")}
+            {agents
+              .map((agent) => PROVIDER_LABELS[agent as Provider])
+              .join(" + ")}
             {!value && " · Settings default"}
           </p>
           {multipleAgents && (
@@ -173,12 +178,14 @@ export default function RunParallelAgents({
             label="Agents for this report"
             help="Each selected provider independently runs every Parallel step in this report."
             disabled={disabled}
-            onChange={(next) => onChange({
-              ...(value ?? {}),
-              agents: next.agents,
-              model_overrides: next.modelOverrides,
-              effort_overrides: next.effortOverrides,
-            })}
+            onChange={(next) =>
+              onChange({
+                ...(value ?? {}),
+                agents: next.agents,
+                model_overrides: next.modelOverrides,
+                effort_overrides: next.effortOverrides,
+              })
+            }
           />
           {multipleAgents && mergeEnabled && (
             <div className="mt-4 border-t border-gray-200 pt-4 dark:border-gray-800">
@@ -192,14 +199,16 @@ export default function RunParallelAgents({
                 label="Merge for this report"
                 help="One provider combines the independent Parallel outputs before downstream steps run."
                 disabled={disabled}
-                onChange={(next) => onChange({
-                  agents,
-                  model_overrides: modelOverrides,
-                  effort_overrides: effortOverrides,
-                  merge_agent: next.agents[0],
-                  merge_model_overrides: next.modelOverrides,
-                  merge_effort_overrides: next.effortOverrides,
-                })}
+                onChange={(next) =>
+                  onChange({
+                    agents,
+                    model_overrides: modelOverrides,
+                    effort_overrides: effortOverrides,
+                    merge_agent: next.agents[0],
+                    merge_model_overrides: next.modelOverrides,
+                    merge_effort_overrides: next.effortOverrides,
+                  })
+                }
               />
             </div>
           )}

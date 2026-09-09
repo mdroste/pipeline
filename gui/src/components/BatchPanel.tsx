@@ -49,7 +49,9 @@ function statusColor(status: string): string {
 }
 
 function representativeBatchPath(paths: string[]): string | null {
-  return paths.find((path) => !/\.(?:tex|docx)$/i.test(path)) ?? paths[0] ?? null;
+  return (
+    paths.find((path) => !/\.(?:tex|docx)$/i.test(path)) ?? paths[0] ?? null
+  );
 }
 
 /** Run one profile over many inputs, one at a time. Each input becomes a normal
@@ -66,17 +68,23 @@ export default function BatchPanel({
   // Live job list from the backend once a batch is running.
   const [jobs, setJobs] = useState<BatchJob[]>([]);
   const [inputMode, setInputMode] = useState(
-    preloadedSetup?.configuredInputMode || preloadedSetup?.inputMode || "document",
+    preloadedSetup?.configuredInputMode ||
+      preloadedSetup?.inputMode ||
+      "document",
   );
   const [variables, setVariables] = useState<VarSpec[]>(initialSpecs);
   const [variableValues, setVariableValues] = useState<Record<string, string>>(
-    Object.fromEntries(initialSpecs.map((spec) => [spec.key, spec.default ?? ""])),
+    Object.fromEntries(
+      initialSpecs.map((spec) => [spec.key, spec.default ?? ""]),
+    ),
   );
-  const [inputSlots, setInputSlots] = useState<InputSlot[]>(preloadedSetup?.inputSlots ?? []);
+  const [inputSlots, setInputSlots] = useState<InputSlot[]>(
+    preloadedSetup?.inputSlots ?? [],
+  );
   const [extraInputs, setExtraInputs] = useState<Record<string, string>>({});
-  const [profileConfigSnapshotId, setProfileConfigSnapshotId] = useState<string | null>(
-    preloadedSetup?.profileConfigSnapshotId ?? null,
-  );
+  const [profileConfigSnapshotId, setProfileConfigSnapshotId] = useState<
+    string | null
+  >(preloadedSetup?.profileConfigSnapshotId ?? null);
   const [error, setError] = useState<string | null>(null);
   const [errorCanRetrySetup, setErrorCanRetrySetup] = useState(false);
   const [profileLoading, setProfileLoading] = useState(!preloadedSetup);
@@ -85,14 +93,18 @@ export default function BatchPanel({
   const [preparingStart, setPreparingStart] = useState(false);
   const profileRequest = useRef(0);
 
-  const running = jobs.some((j) => j.status === "running" || j.status === "pending");
+  const running = jobs.some(
+    (j) => j.status === "running" || j.status === "pending",
+  );
   const acceptsBatchInput = inputMode !== "none";
 
   const applySetup = useCallback((setup: BatchSetupEnvelope) => {
     const specs = setup.variables ?? [];
     setInputMode(setup.configuredInputMode || setup.inputMode || "document");
     setVariables(specs);
-    setVariableValues(Object.fromEntries(specs.map((spec) => [spec.key, spec.default ?? ""])));
+    setVariableValues(
+      Object.fromEntries(specs.map((spec) => [spec.key, spec.default ?? ""])),
+    );
     setInputSlots(setup.inputSlots ?? []);
     setExtraInputs({});
     setProfileConfigSnapshotId(setup.profileConfigSnapshotId);
@@ -118,7 +130,11 @@ export default function BatchPanel({
     setErrorCanRetrySetup(false);
     const listenerSetup = Promise.allSettled([
       listen<BatchJob[]>("batch:progress", (e) => setJobs(e.payload)),
-      listen("batch:done", () => invoke<BatchJob[]>("get_batch_status").then(setJobs).catch(() => {})),
+      listen("batch:done", () =>
+        invoke<BatchJob[]>("get_batch_status")
+          .then(setJobs)
+          .catch(() => {}),
+      ),
     ]);
     listenerSetup
       .then((registrations) => {
@@ -167,7 +183,9 @@ export default function BatchPanel({
       })
       .catch((caught) => {
         if (!live || request !== profileRequest.current) return;
-        setError(`Batch setup could not be loaded: ${caught instanceof Error ? caught.message : String(caught)}`);
+        setError(
+          `Batch setup could not be loaded: ${caught instanceof Error ? caught.message : String(caught)}`,
+        );
         setErrorCanRetrySetup(true);
         setProfileLoading(false);
       });
@@ -177,47 +195,51 @@ export default function BatchPanel({
     };
   }, [applySetup, preloadedSetup, setupAttempt]);
 
-  const prepareCurrentSetup = useCallback(async (
-    paperPath?: string | null,
-  ): Promise<BatchSetupEnvelope> => {
-    if (!profileConfigSnapshotId) {
-      throw new Error("The active workflow setup is not ready. Refresh it and review the options.");
-    }
-    const setup = await invoke<BatchSetupEnvelope>("get_execution_plan", {
-      variables: variableValues,
-      extraInputs,
-      expectedProfileConfigSnapshotId: profileConfigSnapshotId,
-      diff: false,
-      paperPath: paperPath ?? null,
-      inputInterpretation: paperPath ? "document" : null,
-    });
-    if ((setup.configuredInputMode || setup.inputMode) === "none") {
-      throw new Error("The active workflow no longer accepts primary inputs. Refresh the setup.");
-    }
-    if (!setup.readiness.ready) {
-      const missing = setup.readiness.deps
-        .filter((dependency) =>
-          dependency.required && (
-            !dependency.found ||
-            dependency.authenticated === false ||
-            (
-              dependency.cli_auth_status === "unknown" &&
-              dependency.authenticated !== true
-            )
-          ),
-        )
-        .map((dependency) =>
-          `${dependency.name}${dependency.hint ? `: ${dependency.hint}` : ""}`,
-        )
-        .join("; ");
-      throw new Error(
-        missing
-          ? `The active workflow is not ready. Missing: ${missing}.`
-          : "The active workflow is not ready. Refresh dependencies and try again.",
-      );
-    }
-    return setup;
-  }, [extraInputs, profileConfigSnapshotId, variableValues]);
+  const prepareCurrentSetup = useCallback(
+    async (paperPath?: string | null): Promise<BatchSetupEnvelope> => {
+      if (!profileConfigSnapshotId) {
+        throw new Error(
+          "The active workflow setup is not ready. Refresh it and review the options.",
+        );
+      }
+      const setup = await invoke<BatchSetupEnvelope>("get_execution_plan", {
+        variables: variableValues,
+        extraInputs,
+        expectedProfileConfigSnapshotId: profileConfigSnapshotId,
+        diff: false,
+        paperPath: paperPath ?? null,
+        inputInterpretation: paperPath ? "document" : null,
+      });
+      if ((setup.configuredInputMode || setup.inputMode) === "none") {
+        throw new Error(
+          "The active workflow no longer accepts primary inputs. Refresh the setup.",
+        );
+      }
+      if (!setup.readiness.ready) {
+        const missing = setup.readiness.deps
+          .filter(
+            (dependency) =>
+              dependency.required &&
+              (!dependency.found ||
+                dependency.authenticated === false ||
+                (dependency.cli_auth_status === "unknown" &&
+                  dependency.authenticated !== true)),
+          )
+          .map(
+            (dependency) =>
+              `${dependency.name}${dependency.hint ? `: ${dependency.hint}` : ""}`,
+          )
+          .join("; ");
+        throw new Error(
+          missing
+            ? `The active workflow is not ready. Missing: ${missing}.`
+            : "The active workflow is not ready. Refresh dependencies and try again.",
+        );
+      }
+      return setup;
+    },
+    [extraInputs, profileConfigSnapshotId, variableValues],
+  );
 
   const pickExtraInput = useCallback(async (slot: InputSlot) => {
     setError(null);
@@ -228,7 +250,14 @@ export default function BatchPanel({
         multiple: false,
         ...(slot.mode === "folder"
           ? {}
-          : { filters: [{ name: slot.label || "Input", extensions: ["pdf", "tex", "docx"] }] }),
+          : {
+              filters: [
+                {
+                  name: slot.label || "Input",
+                  extensions: ["pdf", "tex", "docx"],
+                },
+              ],
+            }),
       });
       if (typeof picked === "string") {
         setExtraInputs((current) => ({ ...current, [slot.key]: picked }));
@@ -250,7 +279,12 @@ export default function BatchPanel({
       const picked = await open({
         directory: false,
         multiple: false,
-        filters: [{ name: spec.label || "Input", extensions: ["pdf", "tex", "txt", "md", "docx", "json", "csv"] }],
+        filters: [
+          {
+            name: spec.label || "Input",
+            extensions: ["pdf", "tex", "txt", "md", "docx", "json", "csv"],
+          },
+        ],
       });
       if (typeof picked === "string") {
         setVariableValues((current) => ({ ...current, [spec.key]: picked }));
@@ -267,9 +301,14 @@ export default function BatchPanel({
     setError(null);
     setErrorCanRetrySetup(false);
     try {
-      const picked = await open({ multiple: true, filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }] });
-      if (Array.isArray(picked)) setStaged((prev) => [...new Set([...prev, ...picked])]);
-      else if (typeof picked === "string") setStaged((prev) => [...new Set([...prev, picked])]);
+      const picked = await open({
+        multiple: true,
+        filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }],
+      });
+      if (Array.isArray(picked))
+        setStaged((prev) => [...new Set([...prev, ...picked])]);
+      else if (typeof picked === "string")
+        setStaged((prev) => [...new Set([...prev, picked])]);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError(`Could not open the file picker: ${message}`);
@@ -290,7 +329,8 @@ export default function BatchPanel({
     if (typeof dir !== "string") return;
     try {
       const files = await invoke<string[]>("list_input_files", { dir });
-      if (files.length === 0) setError("No PDF, LaTeX, or Word files found directly in that folder.");
+      if (files.length === 0)
+        setError("No PDF, LaTeX, or Word files found directly in that folder.");
       setStaged((prev) => [...new Set([...prev, ...files])]);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -298,16 +338,21 @@ export default function BatchPanel({
     }
   }, []);
 
-  const removeStaged = (p: string) => setStaged((prev) => prev.filter((x) => x !== p));
+  const removeStaged = (p: string) =>
+    setStaged((prev) => prev.filter((x) => x !== p));
 
   const start = useCallback(async () => {
     setError(null);
     setErrorCanRetrySetup(false);
     setPreparingStart(true);
     try {
-      const missing = inputSlots.find((slot) => slot.required && !extraInputs[slot.key]);
+      const missing = inputSlots.find(
+        (slot) => slot.required && !extraInputs[slot.key],
+      );
       if (missing) {
-        setError(`Select the required input “${missing.label || missing.key}” before starting.`);
+        setError(
+          `Select the required input “${missing.label || missing.key}” before starting.`,
+        );
         return;
       }
       const setup = await prepareCurrentSetup(representativeBatchPath(staged));
@@ -341,7 +386,9 @@ export default function BatchPanel({
 
   const done = jobs.filter((j) => j.status === "done").length;
   const failed = jobs.filter((j) => j.status === "failed").length;
-  const batchSnapshot = jobs.find((job) => job.profile_id || job.profile_snapshot_id);
+  const batchSnapshot = jobs.find(
+    (job) => job.profile_id || job.profile_snapshot_id,
+  );
   const optionSummary = [
     variables.length > 0
       ? `variables: ${variables.map((spec) => spec.label || spec.key).join(", ")}`
@@ -349,14 +396,19 @@ export default function BatchPanel({
     inputSlots.length > 0
       ? `named inputs: ${inputSlots.map((slot) => slot.label || slot.key).join(", ")}`
       : "",
-  ].filter(Boolean).join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Batch reports</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          Batch reports
+        </h2>
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          Generates one report per input, one at a time, using the active workflow.
+          Generates one report per input, one at a time, using the active
+          workflow.
         </span>
         {showClose && (
           <button
@@ -372,7 +424,10 @@ export default function BatchPanel({
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {error && (
-          <div role="alert" className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">
+          <div
+            role="alert"
+            className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400"
+          >
             <span className="flex-1">{error}</span>
             {errorCanRetrySetup && (
               <button
@@ -393,77 +448,112 @@ export default function BatchPanel({
         )}
 
         {!profileLoading && !acceptsBatchInput && (
-          <div role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200">
-            <p className="font-medium">This workflow does not accept batch inputs.</p>
+          <div
+            role="note"
+            className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
+          >
+            <p className="font-medium">
+              This workflow does not accept batch inputs.
+            </p>
             <p className="mt-1 text-xs leading-5">
-              Switch to a workflow with a document or folder primary input before queuing files.
+              Switch to a workflow with a document or folder primary input
+              before queuing files.
             </p>
           </div>
         )}
 
-        {acceptsBatchInput && (variables.length > 0 || inputSlots.length > 0) && !running && (
-          <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-2">
-            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Shared report options
-            </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              These values are captured once and supplied to every batch job.
-            </p>
-            {variables.map((spec) => {
-              const id = `batch-variable-${spec.key}`;
-              return (
-                <div key={spec.key} className="grid grid-cols-[10rem_minmax(0,1fr)_auto] items-center gap-2 text-sm">
-                  <label htmlFor={id} className="truncate text-gray-700 dark:text-gray-300">
-                    {spec.label || spec.key}
-                  </label>
-                  {spec.kind === "choice" && spec.choices?.length ? (
-                    <select
-                      id={id}
-                      value={variableValues[spec.key] ?? ""}
-                      onChange={(event) => setVariableValues((current) => ({ ...current, [spec.key]: event.target.value }))}
-                      className="min-w-0 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+        {acceptsBatchInput &&
+          (variables.length > 0 || inputSlots.length > 0) &&
+          !running && (
+            <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-2">
+              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Shared report options
+              </h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                These values are captured once and supplied to every batch job.
+              </p>
+              {variables.map((spec) => {
+                const id = `batch-variable-${spec.key}`;
+                return (
+                  <div
+                    key={spec.key}
+                    className="grid grid-cols-[10rem_minmax(0,1fr)_auto] items-center gap-2 text-sm"
+                  >
+                    <label
+                      htmlFor={id}
+                      className="truncate text-gray-700 dark:text-gray-300"
                     >
-                      {spec.choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
-                    </select>
-                  ) : (
-                    <input
-                      id={id}
-                      value={variableValues[spec.key] ?? ""}
-                      onChange={(event) => setVariableValues((current) => ({ ...current, [spec.key]: event.target.value }))}
-                      className="min-w-0 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
-                    />
-                  )}
-                  {spec.kind === "file" ? (
-                    <button
-                      type="button"
-                      onClick={() => pickVariableFile(spec)}
-                      className="rounded border border-gray-300 px-2.5 py-1 text-gray-700 dark:border-gray-600 dark:text-gray-300"
-                    >
-                      Choose…
-                    </button>
-                  ) : <span />}
+                      {spec.label || spec.key}
+                    </label>
+                    {spec.kind === "choice" && spec.choices?.length ? (
+                      <select
+                        id={id}
+                        value={variableValues[spec.key] ?? ""}
+                        onChange={(event) =>
+                          setVariableValues((current) => ({
+                            ...current,
+                            [spec.key]: event.target.value,
+                          }))
+                        }
+                        className="min-w-0 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                      >
+                        {spec.choices.map((choice) => (
+                          <option key={choice} value={choice}>
+                            {choice}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={id}
+                        value={variableValues[spec.key] ?? ""}
+                        onChange={(event) =>
+                          setVariableValues((current) => ({
+                            ...current,
+                            [spec.key]: event.target.value,
+                          }))
+                        }
+                        className="min-w-0 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                      />
+                    )}
+                    {spec.kind === "file" ? (
+                      <button
+                        type="button"
+                        onClick={() => pickVariableFile(spec)}
+                        className="rounded border border-gray-300 px-2.5 py-1 text-gray-700 dark:border-gray-600 dark:text-gray-300"
+                      >
+                        Choose…
+                      </button>
+                    ) : (
+                      <span />
+                    )}
+                  </div>
+                );
+              })}
+              {inputSlots.map((slot) => (
+                <div key={slot.key} className="flex items-center gap-2 text-sm">
+                  <span className="w-40 truncate text-gray-700 dark:text-gray-300">
+                    {slot.label || slot.key}
+                    {slot.required ? " *" : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => pickExtraInput(slot)}
+                    className="px-2.5 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                  >
+                    Choose…
+                  </button>
+                  <span
+                    className="flex-1 truncate text-xs text-gray-500"
+                    title={extraInputs[slot.key]}
+                  >
+                    {extraInputs[slot.key]?.split(/[\\/]/).pop() ||
+                      "Not selected"}
+                  </span>
                 </div>
-              );
-            })}
-            {inputSlots.map((slot) => (
-              <div key={slot.key} className="flex items-center gap-2 text-sm">
-                <span className="w-40 truncate text-gray-700 dark:text-gray-300">
-                  {slot.label || slot.key}{slot.required ? " *" : ""}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => pickExtraInput(slot)}
-                  className="px-2.5 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300"
-                >
-                  Choose…
-                </button>
-                <span className="flex-1 truncate text-xs text-gray-500" title={extraInputs[slot.key]}>
-                  {extraInputs[slot.key]?.split(/[\\/]/).pop() || "Not selected"}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
 
         {/* Staging area (before start) */}
         {acceptsBatchInput && !profileLoading && !running && (
@@ -519,7 +609,9 @@ export default function BatchPanel({
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-gray-500 dark:text-gray-400 px-2">Add files or a folder of PDF, LaTeX, or Word papers to queue.</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
+                Add files or a folder of PDF, LaTeX, or Word papers to queue.
+              </p>
             )}
           </div>
         )}
@@ -529,9 +621,18 @@ export default function BatchPanel({
           <div>
             {batchSnapshot && (
               <p className="mb-2 break-all rounded bg-gray-50 px-3 py-2 text-[11px] text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
-                Captured profile <span className="font-mono">{batchSnapshot.profile_id || "unknown"}</span>
+                Captured profile{" "}
+                <span className="font-mono">
+                  {batchSnapshot.profile_id || "unknown"}
+                </span>
                 {batchSnapshot.profile_snapshot_id && (
-                  <> · snapshot <span className="font-mono">{batchSnapshot.profile_snapshot_id}</span></>
+                  <>
+                    {" "}
+                    · snapshot{" "}
+                    <span className="font-mono">
+                      {batchSnapshot.profile_snapshot_id}
+                    </span>
+                  </>
                 )}
                 {optionSummary && <> · {optionSummary}</>}
               </p>
@@ -539,7 +640,9 @@ export default function BatchPanel({
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
                 Jobs {done + failed}/{jobs.length} done
-                {failed > 0 && <span className="text-red-500"> · {failed} failed</span>}
+                {failed > 0 && (
+                  <span className="text-red-500"> · {failed} failed</span>
+                )}
               </h3>
               {running && (
                 <button
@@ -556,13 +659,22 @@ export default function BatchPanel({
                   key={i}
                   className="flex items-center gap-3 text-sm px-3 py-2 border border-gray-200 dark:border-gray-800 rounded-lg bg-white dark:bg-gray-900"
                 >
-                  <span className="flex-1 truncate text-gray-800 dark:text-gray-200" title={j.path}>
+                  <span
+                    className="flex-1 truncate text-gray-800 dark:text-gray-200"
+                    title={j.path}
+                  >
                     {j.name}
                   </span>
                   {j.duration_secs > 0 && (
-                    <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{fmtDuration(j.duration_secs)}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+                      {fmtDuration(j.duration_secs)}
+                    </span>
                   )}
-                  <span className={`text-xs font-medium ${statusColor(j.status)}`}>{j.status}</span>
+                  <span
+                    className={`text-xs font-medium ${statusColor(j.status)}`}
+                  >
+                    {j.status}
+                  </span>
                   {j.run_id && (
                     <button
                       onClick={() => onOpenRun(j.run_id!)}
@@ -572,7 +684,10 @@ export default function BatchPanel({
                     </button>
                   )}
                   {j.error && (
-                    <span className="text-xs text-red-500 max-w-[16rem] truncate" title={j.error}>
+                    <span
+                      className="text-xs text-red-500 max-w-[16rem] truncate"
+                      title={j.error}
+                    >
                       {j.error}
                     </span>
                   )}

@@ -28,7 +28,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality:
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/build.yml
+
+  prepare:
+    if: github.ref_type == 'tag'
+    needs: quality
+    runs-on: ubuntu-22.04
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Validate complete version history
+        run: node scripts/release/validate-release-identity.mjs --tag "$GITHUB_REF_NAME"
+      - name: Verify signed tag and prepare draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/draft-release.mjs prepare "$GITHUB_REF_NAME"
+
   package:
+    needs: prepare
     if: github.ref_type == 'tag'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -51,10 +75,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Confirm release tag and version
-        shell: bash
-        run: node scripts/release/validate-release-identity.mjs --tag "$GITHUB_REF_NAME"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
@@ -143,7 +163,7 @@ jobs:
           NO_STRIP: ${{ matrix.id == 'linux' && '1' || '' }}
         run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} -- --locked
 
-      - name: Upload installer and publish release
+      - name: Upload immutable installer to draft
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -173,12 +193,19 @@ jobs:
           test -s "$source_path"
           cp "$source_path" "$RUNNER_TEMP/$asset_name"
 
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-              --title "Pipeline $GITHUB_REF_NAME" \
-              --notes "Installers for Pipeline $GITHUB_REF_NAME. macOS builds are signed and notarized; Windows is intentionally unsigned."
-          fi
-          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$asset_name" --clobber
-          if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = "true" ]; then
-            gh release edit "$GITHUB_REF_NAME" --draft=false --latest
-          fi
+          node scripts/release/draft-release.mjs upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$asset_name"
+
+  verify-draft:
+    name: Verify complete draft release
+    needs: package
+    runs-on: ubuntu-22.04
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Verify all four installers and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/draft-release.mjs verify "$GITHUB_REF_NAME"

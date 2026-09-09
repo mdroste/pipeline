@@ -5,6 +5,18 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
+- Removed the deprecated Antigravity CLI adapter, model discovery, authentication
+  probes and installation hints. Google remains API-only and is labeled Google API
+  in readiness checks; older provider IDs and saved settings still load.
+
+- Settings now has seven searchable categories, compact Review model stages,
+  visible separate conversation and Review connections, explicit API-key saving,
+  and validated retention inputs. New device preferences control interface and
+  report text size, source-editor text and wrapping, spacing, message shortcuts,
+  startup restoration, and completion/failure/attention notifications with optional
+  desktop delivery and sound. Backups and cleanup are under Data & Storage;
+  diagnostics and version information are under Advanced & About.
+
 - Workspace Agent profiles now provide searchable built-in and custom profiles,
   blank creation and duplication for one project or all Workspaces, explicit
   system-prompt and tool editing, and Writing, Code review, and Economics research

@@ -221,54 +221,15 @@ fn discovery_key_is_context_bound_without_retaining_secrets() {
 }
 
 #[test]
-fn antigravity_models_parse_json_document_shapes() {
-    // Array wrappers and both snake/camel field spellings must resolve.
-    let mut catalog = base_catalog("antigravity", "cli", "installed_cli");
-    populate_antigravity_models(
-        &mut catalog,
-        r#"{"models":[
-            {"id":"gemini-3.5-flash","displayName":"Gemini 3.5 Flash","isDefault":true},
-            {"modelId":"gemini-3.1-pro","name":"Gemini 3.1 Pro"},
-            {"model":"claude-sonnet"}
-        ]}"#,
-    )
-    .unwrap();
-    assert_eq!(catalog.models.len(), 3);
-    assert_eq!(catalog.models[0].id, "gemini-3.5-flash");
-    assert_eq!(catalog.models[0].display_name, "Gemini 3.5 Flash");
-    assert!(catalog.models[0].is_default);
-    assert_eq!(catalog.default_model.as_deref(), Some("gemini-3.5-flash"));
-    assert_eq!(catalog.models[1].id, "gemini-3.1-pro");
-    assert_eq!(catalog.models[2].id, "claude-sonnet");
-}
-
-#[test]
-fn antigravity_models_parse_text_listing_with_defaults_and_spaced_ids() {
-    // The 1.1.12 subcommand is text-only: banner lines are skipped, marker
-    // and "(default)" decorations are stripped, ids may contain spaces, and
-    // tab-separated records carry a display name.
-    let mut catalog = base_catalog("antigravity", "cli", "installed_cli");
-    populate_antigravity_models(
-        &mut catalog,
-        "Fetching available models...\nAvailable models:\n* Gemini 3.5 Flash (default)\n- Gemini 3.1 Pro\ngemini-3.5-flash-lite\tGemini 3.5 Flash-Lite\n",
-    )
-    .unwrap();
-    assert_eq!(catalog.models.len(), 3);
-    assert_eq!(catalog.models[0].id, "Gemini 3.5 Flash");
-    assert!(catalog.models[0].is_default);
-    assert_eq!(catalog.default_model.as_deref(), Some("Gemini 3.5 Flash"));
-    assert_eq!(catalog.models[1].id, "Gemini 3.1 Pro");
-    assert_eq!(catalog.models[2].id, "gemini-3.5-flash-lite");
-    assert_eq!(catalog.models[2].display_name, "Gemini 3.5 Flash-Lite");
-}
-
-#[test]
-fn antigravity_models_empty_output_is_an_error_not_an_empty_catalog() {
-    // The live list is authoritative for pinned-ID validation, so a parse
-    // that yields nothing must fail discovery instead of emptying the picker.
-    let mut catalog = base_catalog("antigravity", "cli", "installed_cli");
-    assert!(populate_antigravity_models(&mut catalog, "Fetching available models...\n").is_err());
-    assert!(populate_antigravity_models(&mut catalog, "").is_err());
+fn google_cli_discovery_is_rejected_before_any_subprocess() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    assert!(runtime
+        .block_on(cli_catalog("antigravity"))
+        .unwrap_err()
+        .contains("Unknown CLI provider"));
 }
 
 #[test]
@@ -300,8 +261,8 @@ fn antigravity_api_credentials_bind_to_the_google_key() {
     );
     // CLI accounts have no stable fingerprint input, so the key is not bound.
     assert_eq!(
-        catalog_credential_fingerprint("antigravity", "cli", &account_one),
-        catalog_credential_fingerprint("antigravity", "cli", &account_two)
+        catalog_credential_fingerprint("claude", "cli", &account_one),
+        catalog_credential_fingerprint("claude", "cli", &account_two)
     );
 }
 

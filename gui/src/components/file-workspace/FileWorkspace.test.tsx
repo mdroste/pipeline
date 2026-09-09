@@ -209,35 +209,82 @@ it("reloads an unchanged buffer and uses the new disk hash for its next save", a
 
 it("gives tabs scoped panels, manual activation and keyboard closing with draft recovery", async () => {
   const user = (await import("@testing-library/user-event")).default.setup();
-  const adapter: FileAdapter = {id:"accessible-tabs", read: vi.fn(async path => file(path)), save: vi.fn()};
-  render(<FileWorkspace adapter={adapter} paths={["a.py", "b.py"]} initial={{path:"a.py"}}/>);
-  fireEvent.change(await screen.findByLabelText("Source editor: a.py"), {target:{value:"Preserved draft"}});
-  const search = screen.getByRole("textbox", {name:"Quick open file"});
-  await user.type(search, "b.py{Enter}"); await screen.findByLabelText("Source editor: b.py");
-  const a = screen.getByRole("tab", {name:"a.py •"}); const b = screen.getByRole("tab", {name:"b.py"});
-  act(() => b.focus()); await user.keyboard("{ArrowLeft}");
-  expect(a).toHaveFocus(); expect(b).toHaveAttribute("aria-selected", "true");
-  await user.keyboard("{Enter}"); await screen.findByLabelText("Source editor: a.py");
-  expect(screen.getByRole("tabpanel", {name:"a.py •"}).id).toBe(a.getAttribute("aria-controls"));
+  const adapter: FileAdapter = {
+    id: "accessible-tabs",
+    read: vi.fn(async (path) => file(path)),
+    save: vi.fn(),
+  };
+  render(
+    <FileWorkspace
+      adapter={adapter}
+      paths={["a.py", "b.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
+  fireEvent.change(await screen.findByLabelText("Source editor: a.py"), {
+    target: { value: "Preserved draft" },
+  });
+  const search = screen.getByRole("textbox", { name: "Quick open file" });
+  await user.type(search, "b.py{Enter}");
+  await screen.findByLabelText("Source editor: b.py");
+  const a = screen.getByRole("tab", { name: "a.py •" });
+  const b = screen.getByRole("tab", { name: "b.py" });
+  act(() => b.focus());
+  await user.keyboard("{ArrowLeft}");
+  expect(a).toHaveFocus();
+  expect(b).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Enter}");
+  await screen.findByLabelText("Source editor: a.py");
+  expect(screen.getByRole("tabpanel", { name: "a.py •" }).id).toBe(
+    a.getAttribute("aria-controls"),
+  );
   expect(a.querySelector("button")).toBeNull();
   await user.keyboard("{Delete}");
   await waitFor(() => expect(b).toHaveFocus());
-  expect(screen.queryByRole("tab", {name:"a.py •"})).not.toBeInTheDocument();
-  expect(JSON.parse(localStorage.getItem("pipeline.files.draft.accessible-tabs.a.py")!).draft).toBe("Preserved draft");
+  expect(screen.queryByRole("tab", { name: "a.py •" })).not.toBeInTheDocument();
+  expect(
+    JSON.parse(
+      localStorage.getItem("pipeline.files.draft.accessible-tabs.a.py")!,
+    ).draft,
+  ).toBe("Preserved draft");
   await user.type(search, "a.py{Enter}");
-  expect(await screen.findByLabelText("Source editor: a.py")).toHaveValue("Preserved draft");
+  expect(await screen.findByLabelText("Source editor: a.py")).toHaveValue(
+    "Preserved draft",
+  );
 });
 
 it("keeps the last file selection when an earlier read completes late", async () => {
   let finishSlow!: (value: FilePreview) => void;
-  const adapter: FileAdapter = {id:"selection-race", read: path => path === "slow.py" ? new Promise(resolve => {finishSlow = resolve;}) : Promise.resolve(file(path)), save: vi.fn()};
-  render(<FileWorkspace adapter={adapter} paths={["a.py", "slow.py", "b.py"]} initial={{path:"a.py"}}/>);
+  const adapter: FileAdapter = {
+    id: "selection-race",
+    read: (path) =>
+      path === "slow.py"
+        ? new Promise((resolve) => {
+            finishSlow = resolve;
+          })
+        : Promise.resolve(file(path)),
+    save: vi.fn(),
+  };
+  render(
+    <FileWorkspace
+      adapter={adapter}
+      paths={["a.py", "slow.py", "b.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
   await screen.findByLabelText("Source editor: a.py");
   const search = screen.getByLabelText("Quick open file");
-  fireEvent.change(search, {target:{value:"slow.py"}}); fireEvent.keyDown(search, {key:"Enter"});
-  fireEvent.change(search, {target:{value:"b.py"}}); fireEvent.keyDown(search, {key:"Enter"});
+  fireEvent.change(search, { target: { value: "slow.py" } });
+  fireEvent.keyDown(search, { key: "Enter" });
+  fireEvent.change(search, { target: { value: "b.py" } });
+  fireEvent.keyDown(search, { key: "Enter" });
   await screen.findByLabelText("Source editor: b.py");
   await act(async () => finishSlow(file("slow.py")));
-  expect(screen.getByRole("tab", {name:"b.py"})).toHaveAttribute("aria-selected", "true");
-  expect(screen.queryByRole("tab", {name:"slow.py"})).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "b.py" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    screen.queryByRole("tab", { name: "slow.py" }),
+  ).not.toBeInTheDocument();
 });

@@ -2,7 +2,10 @@ import { memo, useId, useState } from "react";
 import useModalDialog from "../../hooks/useModalDialog";
 
 function PromptDialog({
-  title, defaultValue, onSubmit, onCancel,
+  title,
+  defaultValue,
+  onSubmit,
+  onCancel,
 }: {
   title: string;
   defaultValue: string;
@@ -24,8 +27,15 @@ function PromptDialog({
         tabIndex={-1}
         className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-80 p-5"
       >
-        <p id={titleId} className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">{title}</p>
-        <label htmlFor={inputId} className="sr-only">{title}</label>
+        <p
+          id={titleId}
+          className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3"
+        >
+          {title}
+        </p>
+        <label htmlFor={inputId} className="sr-only">
+          {title}
+        </label>
         <input
           id={inputId}
           data-autofocus
@@ -51,7 +61,9 @@ function PromptDialog({
           </button>
           <button
             type="button"
-            onClick={() => { if (value.trim()) onSubmit(value.trim()); }}
+            onClick={() => {
+              if (value.trim()) onSubmit(value.trim());
+            }}
             disabled={!value.trim()}
             className="py-1.5 px-3 text-sm font-medium text-white bg-gray-900 dark:bg-gray-100 dark:text-gray-900 rounded-lg
                        hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-300 dark:disabled:bg-gray-600 transition-colors"

@@ -85,9 +85,16 @@ pub async fn task_control(
     let m = manager(app).await?;
     let _gate = m.gate.lock().await;
     let child_id = id.clone();
-    if m.db(move |s| super::missions::storage::owner(&s, &child_id))
-        .await?
-        .is_some()
+    if m.db(move |s| {
+        let mission = super::missions::storage::owner(&s, &child_id)?;
+        if mission.is_some() {
+            Ok(mission)
+        } else {
+            super::discovery::storage::owner(&s, &child_id)
+        }
+    })
+    .await?
+    .is_some()
     {
         return Err("Use the owning mission's controls for this managed task".into());
     }

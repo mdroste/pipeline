@@ -367,10 +367,17 @@ fn archive_round_trip_is_consistent_and_retires_native_bindings() {
         },
     )
     .unwrap();
-    let agent_profile = research::clone_preset(&source, research::ClonePresetRequest {
-        workspace_id: None, source_workspace_id: None, source_preset_id: "writing".into(),
-        name: "Portable writer".into(), operation_id: "portable-agent-profile".into(),
-    }).unwrap();
+    let agent_profile = research::clone_preset(
+        &source,
+        research::ClonePresetRequest {
+            workspace_id: None,
+            source_workspace_id: None,
+            source_preset_id: "writing".into(),
+            name: "Portable writer".into(),
+            operation_id: "portable-agent-profile".into(),
+        },
+    )
+    .unwrap();
     let binding = source
         .bind_session(&session, "test-runtime", "thread-portable")
         .unwrap();
@@ -378,10 +385,22 @@ fn archive_round_trip_is_consistent_and_retires_native_bindings() {
             "INSERT INTO transcript_items (id,binding_id,turn_id,provider_item_id,item_kind,payload_json,is_final,created_at,updated_at) VALUES ('portable-item',?1,NULL,'provider-portable-item','agentMessage',?2,1,'2026-09-06T00:00:00Z','2026-09-06T00:00:00Z')",
             params![binding.id, json!({"content":[{"type":"output_text","text":"Array-shaped portable message"}]}).to_string()],
         ).unwrap();
-    let collection = crate::workbench::desk::insert(&source,&workspace,"collection","Retained references",json!({"objects":[]}),None,"desk-collection").unwrap();
+    let collection = crate::workbench::desk::insert(
+        &source,
+        &workspace,
+        "collection",
+        "Retained references",
+        json!({"objects":[]}),
+        None,
+        "desk-collection",
+    )
+    .unwrap();
     // Imported immutable records survive, but local execution authority never does.
     source.connection().unwrap().execute("INSERT INTO execution_plan_state(plan_id,fingerprint,authorized,test_status) VALUES(?1,?2,1,'passed')",params![collection.id,collection.content_hash]).unwrap();
-    while !crate::workbench::search::advance(&source,&workspace).unwrap().complete {}
+    while !crate::workbench::search::advance(&source, &workspace)
+        .unwrap()
+        .complete
+    {}
     let archive_dir = tempfile::tempdir().unwrap();
     let archive = archive_dir.path().join("portable.pwrx");
     let report = export_archive(
@@ -435,15 +454,40 @@ fn archive_round_trip_is_consistent_and_retires_native_bindings() {
     )
     .unwrap();
     assert_eq!(restored.workspace_count, 1);
-    let restored_profile = research::harness_catalog(&destination, None).unwrap().presets.into_iter().find(|profile| profile.id == agent_profile.id).unwrap();
+    let restored_profile = research::harness_catalog(&destination, None)
+        .unwrap()
+        .presets
+        .into_iter()
+        .find(|profile| profile.id == agent_profile.id)
+        .unwrap();
     assert_eq!(restored_profile, agent_profile);
-    let restored_collection=crate::workbench::desk::record(&destination,&workspace,&collection.id).unwrap();
-    assert_eq!(restored_collection.content_hash,collection.content_hash);
-    let grants:i64=destination.connection().unwrap().query_row("SELECT COUNT(*) FROM execution_plan_state",[],|r|r.get(0)).unwrap();
-    assert_eq!(grants,0);
-    assert!(!crate::workbench::search::status(&destination,&workspace).unwrap().complete);
-    while !crate::workbench::search::advance(&destination,&workspace).unwrap().complete {}
-    assert!(crate::workbench::search::read_object(&destination,&workspace,&collection.reference(),1000).is_ok());
+    let restored_collection =
+        crate::workbench::desk::record(&destination, &workspace, &collection.id).unwrap();
+    assert_eq!(restored_collection.content_hash, collection.content_hash);
+    let grants: i64 = destination
+        .connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM execution_plan_state", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(grants, 0);
+    assert!(
+        !crate::workbench::search::status(&destination, &workspace)
+            .unwrap()
+            .complete
+    );
+    while !crate::workbench::search::advance(&destination, &workspace)
+        .unwrap()
+        .complete
+    {}
+    assert!(crate::workbench::search::read_object(
+        &destination,
+        &workspace,
+        &collection.reference(),
+        1000
+    )
+    .is_ok());
 
     assert_eq!(destination.workspace(&workspace).unwrap().name, "Research");
     assert_eq!(

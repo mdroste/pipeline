@@ -76,6 +76,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Pin storage before any recovery or background work opens a store.
             // Settings remains accessible if a configured drive is unavailable.
@@ -114,6 +115,15 @@ pub fn run() {
             orchestration::missions::commands::mission_retain_method,
             orchestration::missions::commands::mission_export,
             orchestration::missions::commands::mission_evidence,
+            orchestration::discovery::commands::discovery_start,
+            orchestration::discovery::commands::discovery_list,
+            orchestration::discovery::commands::discovery_get,
+            orchestration::discovery::commands::discovery_candidates,
+            orchestration::discovery::commands::discovery_paper,
+            orchestration::discovery::commands::discovery_select,
+            orchestration::discovery::commands::discovery_control,
+            orchestration::discovery::commands::discovery_export,
+            orchestration::discovery::commands::discovery_events,
             orchestration::commands::task_list,
             orchestration::commands::task_get,
             orchestration::commands::task_events,
@@ -266,6 +276,8 @@ pub fn run() {
             workbench::commands::workbench_project_mutate,
             workbench::commands::workbench_document_read,
             workbench::commands::workbench_file_read,
+            workbench::commands::workbench_conversation_file_open,
+            workbench::commands::workbench_conversation_file_read,
             workbench::commands::workbench_file_reveal,
             workbench::commands::workbench_anchor_mapping,
             workbench::commands::workbench_snapshot_preview,

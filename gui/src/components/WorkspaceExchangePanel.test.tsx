@@ -90,7 +90,7 @@ it("previews a package with the selected kinds and all papers, never conversatio
   ).toBeInTheDocument();
 });
 
-it("defaults an import to a new separate Workspace and records conflicts for review", async () => {
+it("defaults an import to a new separate project and records conflicts for review", async () => {
   mocks.open.mockResolvedValue("/tmp/coauthor.pwex");
   mocks.inspectProjectExchange.mockResolvedValue({
     path: "/tmp/coauthor.pwex",
@@ -130,7 +130,7 @@ it("defaults an import to a new separate Workspace and records conflicts for rev
   render(<WorkspaceExchangePanel {...props()} />);
   fireEvent.click(await screen.findByText("Inspect package…"));
   await screen.findByText("Preview import");
-  expect(screen.getByLabelText("New Workspace name")).toHaveValue(
+  expect(screen.getByLabelText("New project name")).toHaveValue(
     "Coauthor (imported)",
   );
   fireEvent.click(screen.getByText("Preview import"));

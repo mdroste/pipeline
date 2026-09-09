@@ -14,11 +14,14 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
-pub mod relations;
 mod documents;
-mod files;
 mod file_workspace;
-pub use file_workspace::{read_workspace_file, FilePreview, FileReadRequest};
+mod files;
+pub mod relations;
+pub use file_workspace::{
+    read_conversation_file, read_workspace_file, snapshot_conversation_file, FilePreview,
+    FileReadRequest,
+};
 mod studio;
 mod tasks;
 pub use documents::*;
@@ -473,29 +476,92 @@ pub struct Inventory {
 
 /// Bounded, descriptor-relative reads for the explicit task snapshot bridge.
 /// The caller binds the root; this returns bytes, never a writable project handle.
-pub(crate) fn task_capture(root:&Path,path:&Path)->WorkbenchResult<Vec<(String,Vec<u8>)>> {
-    let root=root.canonicalize().map_err(err)?;
-    let selected=path.canonicalize().map_err(err)?;
-    if !selected.starts_with(&root){return Err(WorkbenchError::invalid("Snapshot is outside the task folder"));}
-    let identity=super::store::root_identity(&root)?;
-    let safe=files::SafeRoot::open(&root)?;
-    let mut paths=Vec::new();
-    if selected.is_dir(){
-        let inventory=inventory_at(&selected,&[])?;
-        if !inventory.complete || inventory.files.iter().any(|f|f.status!="current"){return Err(WorkbenchError::invalid("Folder cannot be captured completely; remove symlinks and unsupported files or choose a smaller folder"));}
-        for entry in inventory.files {paths.push((entry.path.clone(),selected.join(&entry.path)));}
-    } else {paths.push((selected.file_name().ok_or_else(||WorkbenchError::invalid("Missing snapshot filename"))?.to_string_lossy().into_owned(),selected.clone()));}
-    let mut total=0;let mut result=Vec::new();
-    for (name,path) in paths {
-        let relative=path.strip_prefix(&root).map_err(err)?.to_string_lossy().replace('\\',"/");
-        let bytes=safe.optional_read(&relative)?.ok_or_else(||WorkbenchError::invalid("Snapshot file disappeared"))?;
-        total+=bytes.len();if total>64*1024*1024{return Err(WorkbenchError::invalid("Snapshot exceeds 64 MiB"));}
-        // Re-read through the same root descriptor to reject edits during capture.
-        if safe.optional_read(&relative)?.as_ref()!=Some(&bytes){return Err(WorkbenchError::conflict("File changed during snapshot; capture again"));}
-        result.push((name,bytes));
+pub(crate) fn materialize_research_files(
+    root: &Path,
+    entries: Vec<(String, Vec<u8>)>,
+) -> WorkbenchResult<()> {
+    let safe = files::SafeRoot::open(root)?;
+    for (name, bytes) in entries {
+        files::relative(&name)?;
+        if let Some(old) = safe.optional_read(&name)? {
+            if old != bytes {
+                return Err(WorkbenchError::conflict(
+                    "Research input changed during preparation",
+                ));
+            }
+        } else {
+            safe.replace(
+                &name,
+                None,
+                false,
+                Some(&bytes),
+                false,
+                &id("discovery-input")?,
+            )?;
+        }
     }
-    if super::store::root_identity(&root)?!=identity{return Err(WorkbenchError::conflict("Task folder changed during capture"));}
-    result.sort_by(|a,b|a.0.cmp(&b.0));Ok(result)
+    Ok(())
+}
+
+pub(crate) fn task_capture(root: &Path, path: &Path) -> WorkbenchResult<Vec<(String, Vec<u8>)>> {
+    let root = root.canonicalize().map_err(err)?;
+    let selected = path.canonicalize().map_err(err)?;
+    if !selected.starts_with(&root) {
+        return Err(WorkbenchError::invalid(
+            "Snapshot is outside the task folder",
+        ));
+    }
+    let identity = super::store::root_identity(&root)?;
+    let safe = files::SafeRoot::open(&root)?;
+    let mut paths = Vec::new();
+    if selected.is_dir() {
+        let inventory = inventory_at(&selected, &[])?;
+        if !inventory.complete || inventory.files.iter().any(|f| f.status != "current") {
+            return Err(WorkbenchError::invalid("Folder cannot be captured completely; remove symlinks and unsupported files or choose a smaller folder"));
+        }
+        for entry in inventory.files {
+            paths.push((entry.path.clone(), selected.join(&entry.path)));
+        }
+    } else {
+        paths.push((
+            selected
+                .file_name()
+                .ok_or_else(|| WorkbenchError::invalid("Missing snapshot filename"))?
+                .to_string_lossy()
+                .into_owned(),
+            selected.clone(),
+        ));
+    }
+    let mut total = 0;
+    let mut result = Vec::new();
+    for (name, path) in paths {
+        let relative = path
+            .strip_prefix(&root)
+            .map_err(err)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let bytes = safe
+            .optional_read(&relative)?
+            .ok_or_else(|| WorkbenchError::invalid("Snapshot file disappeared"))?;
+        total += bytes.len();
+        if total > 64 * 1024 * 1024 {
+            return Err(WorkbenchError::invalid("Snapshot exceeds 64 MiB"));
+        }
+        // Re-read through the same root descriptor to reject edits during capture.
+        if safe.optional_read(&relative)?.as_ref() != Some(&bytes) {
+            return Err(WorkbenchError::conflict(
+                "File changed during snapshot; capture again",
+            ));
+        }
+        result.push((name, bytes));
+    }
+    if super::store::root_identity(&root)? != identity {
+        return Err(WorkbenchError::conflict(
+            "Task folder changed during capture",
+        ));
+    }
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(result)
 }
 fn ignored(path: &str, custom: &[String]) -> bool {
     path.split('/').any(|p| {
@@ -833,27 +899,73 @@ pub(crate) fn execution_lock(store: &Store, workspace_id: &str) -> WorkbenchResu
 
 /// App-owned generated inputs live under the validated project root. This creates
 /// inert files only; profiles and acceptance retain their existing authorization.
-pub(crate) fn program_directory(store: &Store, ws: &str, identity: &str) -> WorkbenchResult<PathBuf> {
-    let _guard=lock(store,ws)?;
-    if identity.len()!=64 || !identity.bytes().all(|b|b.is_ascii_hexdigit()){return Err(WorkbenchError::invalid("Invalid generated directory identity"));}
-    let mut path=root(store,ws)?;
-    for part in [".pipeline-workbench","generated",identity] {
+pub(crate) fn program_directory(
+    store: &Store,
+    ws: &str,
+    identity: &str,
+) -> WorkbenchResult<PathBuf> {
+    let _guard = lock(store, ws)?;
+    if identity.len() != 64 || !identity.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(WorkbenchError::invalid(
+            "Invalid generated directory identity",
+        ));
+    }
+    let mut path = root(store, ws)?;
+    for part in [".pipeline-workbench", "generated", identity] {
         path.push(part);
-        if path.exists(){if fs::symlink_metadata(&path).map_err(err)?.file_type().is_symlink() || !path.is_dir(){return Err(WorkbenchError::invalid("Generated directory is not a private regular directory"));}}
-        else {fs::create_dir(&path).map_err(err)?;#[cfg(unix)]{use std::os::unix::fs::PermissionsExt;fs::set_permissions(&path,fs::Permissions::from_mode(0o700)).map_err(err)?;}}
-    }Ok(path)
+        if path.exists() {
+            if fs::symlink_metadata(&path)
+                .map_err(err)?
+                .file_type()
+                .is_symlink()
+                || !path.is_dir()
+            {
+                return Err(WorkbenchError::invalid(
+                    "Generated directory is not a private regular directory",
+                ));
+            }
+        } else {
+            fs::create_dir(&path).map_err(err)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).map_err(err)?;
+            }
+        }
+    }
+    Ok(path)
 }
 
 /// Read a confined accepted file for an explicit local change check. No content enters chat.
-pub(crate) fn program_file_hash(store:&Store,ws:&str,path:&str)->WorkbenchResult<Option<String>> {
-    let _guard=lock(store,ws)?;files::relative(path)?;
-    let source=files::SafeRoot::open(&root(store,ws)?)?;
-    source.optional_read(path).map(|bytes|bytes.as_deref().map(hash))
+pub(crate) fn program_file_hash(
+    store: &Store,
+    ws: &str,
+    path: &str,
+) -> WorkbenchResult<Option<String>> {
+    let _guard = lock(store, ws)?;
+    files::relative(path)?;
+    let source = files::SafeRoot::open(&root(store, ws)?)?;
+    source
+        .optional_read(path)
+        .map(|bytes| bytes.as_deref().map(hash))
 }
 
 /// Install generated inert input without following symlinks or replacing changed material.
-pub(crate) fn write_program_input(directory:&Path,path:&str,bytes:&[u8])->WorkbenchResult<()> {
-    let root=files::SafeRoot::open(directory)?;
-    if let Some(old)=root.optional_read(path)? {if old==bytes{return Ok(());}return Err(WorkbenchError::conflict("Generated input changed; prepare a new operation"));}
-    let claim=id("input")?;root.replace(path,None,false,Some(bytes),false,&claim)?;root.clear_claim(path,&claim)
+pub(crate) fn write_program_input(
+    directory: &Path,
+    path: &str,
+    bytes: &[u8],
+) -> WorkbenchResult<()> {
+    let root = files::SafeRoot::open(directory)?;
+    if let Some(old) = root.optional_read(path)? {
+        if old == bytes {
+            return Ok(());
+        }
+        return Err(WorkbenchError::conflict(
+            "Generated input changed; prepare a new operation",
+        ));
+    }
+    let claim = id("input")?;
+    root.replace(path, None, false, Some(bytes), false, &claim)?;
+    root.clear_claim(path, &claim)
 }

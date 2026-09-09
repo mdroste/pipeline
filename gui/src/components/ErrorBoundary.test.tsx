@@ -26,7 +26,7 @@ describe("ErrorBoundary", () => {
     render(
       <ErrorBoundary>
         <Boom fail={false} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
     expect(screen.getByText("child-ok")).toBeInTheDocument();
   });
@@ -35,22 +35,26 @@ describe("ErrorBoundary", () => {
     render(
       <ErrorBoundary>
         <Boom fail={true} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
     expect(screen.getByText("kaboom")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /try again/i }),
+    ).toBeInTheDocument();
   });
 
   it("hides raw stack details in release-mode fallback UI", () => {
     render(
       <ErrorBoundary showTechnicalDetails={false}>
         <Boom fail={true} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
 
     expect(screen.getByText("kaboom")).toBeVisible();
-    expect(screen.queryByText(/private\/project\/secret/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/private\/project\/secret/),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
   });
 
@@ -58,7 +62,7 @@ describe("ErrorBoundary", () => {
     render(
       <ErrorBoundary showTechnicalDetails>
         <Boom fail={true} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
 
     expect(screen.getByText("Technical details")).toBeInTheDocument();
@@ -70,7 +74,7 @@ describe("ErrorBoundary", () => {
     const { rerender } = render(
       <ErrorBoundary>
         <Boom fail={true} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
 
@@ -78,7 +82,7 @@ describe("ErrorBoundary", () => {
     rerender(
       <ErrorBoundary>
         <Boom fail={false} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(screen.getByText("child-ok")).toBeInTheDocument();

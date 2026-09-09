@@ -135,7 +135,9 @@ describe("run provenance", () => {
     expect(markdown).toContain("# Pipeline");
     expect(markdown).toContain("**Document:** Networks and Policy");
     expect(markdown).toContain("**Workflow:** Paper Review (Full)");
-    expect(markdown).toContain("**Token usage:** 3,500 input · 350 output · 2,300 cached");
+    expect(markdown).toContain(
+      "**Token usage:** 3,500 input · 350 output · 2,300 cached",
+    );
     expect(markdown).toContain(
       "**Models / providers:** Codex (CLI) / gpt-5.6-sol / effort high; Claude (API) / claude-opus-4-8 / effort max",
     );

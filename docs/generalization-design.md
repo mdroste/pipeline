@@ -5,7 +5,8 @@ sections below retain the original motivation; `CLAUDE.md` is authoritative
 for the current engine. Pipeline is now framed as an agent orchestration suite
 for doing and reviewing academic research: this document concerns its
 deterministic Workflow engine, while the interactive Workspace architecture is
-documented separately in `workbench_plan.md` and `docs/workbench/README.md`.
+documented separately in the historical `notes/workbench_plan.md` and the
+current `docs/workbench/README.md`.
 
 ## Current artifact-access contract
 

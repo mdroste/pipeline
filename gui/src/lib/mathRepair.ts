@@ -106,10 +106,7 @@ const COMMAND_PATTERN = MATH_COMMANDS.join("|");
 const TEX_SIGNAL_RE = new RegExp(
   `\\\\(?:${COMMAND_PATTERN})(?![A-Za-z])|[A-Za-z0-9})]\\s*[_^]\\s*(?:\\{|[A-Za-z0-9\\\\])`,
 );
-const COMMAND_RE = new RegExp(
-  `\\\\(?:${COMMAND_PATTERN})(?![A-Za-z])`,
-  "g",
-);
+const COMMAND_RE = new RegExp(`\\\\(?:${COMMAND_PATTERN})(?![A-Za-z])`, "g");
 const INLINE_ATOM_RE = new RegExp(
   [
     String.raw`\\frac\s*\{[^{}\n]{1,160}\}\s*\{[^{}\n]{1,160}\}`,
@@ -247,7 +244,11 @@ function candidateRanges(value: string): Array<{
     if (match.index === undefined) continue;
     const start = match.index;
     const end = start + match[0].length;
-    if (candidates.some((candidate) => start < candidate.end && end > candidate.start)) {
+    if (
+      candidates.some(
+        (candidate) => start < candidate.end && end > candidate.start,
+      )
+    ) {
       continue;
     }
     const formula = inlineFormula(match[0]);
@@ -280,10 +281,7 @@ function mathMarkdownNode(value: string, display: boolean): MarkdownNode {
     type: "element",
     tagName: "code",
     properties: {
-      className: [
-        "language-math",
-        display ? "math-display" : "math-inline",
-      ],
+      className: ["language-math", display ? "math-display" : "math-inline"],
     },
     children: [{ type: "text", value }],
   };
@@ -437,7 +435,11 @@ function hastText(node: HastNode): string {
   return node.children?.map(hastText).join("") ?? "";
 }
 
-function fallbackNode(source: string, error: unknown, display: boolean): HastNode {
+function fallbackNode(
+  source: string,
+  error: unknown,
+  display: boolean,
+): HastNode {
   const readable = latexToReadableText(source);
   const detail = error instanceof Error ? error.message : String(error);
   return {

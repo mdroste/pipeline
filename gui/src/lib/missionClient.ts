@@ -1,47 +1,339 @@
-import { invoke } from '@tauri-apps/api/core';
-import type { Json, Scope, TaskEvent } from './taskClient';
-import type { OpenResearchObject } from './deskClient';
+import { invoke } from "@tauri-apps/api/core";
+import type { Json, Scope, TaskEvent } from "./taskClient";
+import type { OpenResearchObject } from "./deskClient";
 
-export type MissionMode = 'theory' | 'empirical' | 'quantitative' | 'literature' | 'discovery' | 'maintenance';
-export interface MissionBudget { maxRounds: number; maxActions: number; activeSeconds: number; actionTimeoutSeconds: number; deadlineHours: number; maxStagnantRounds: number }
-export interface MissionPolicy { allowEdits: boolean; commandNetwork: boolean; checkProfileIds: string[]; experimentIds: string[]; reviewProfileId: string | null; monitorIds: string[] }
-export interface MissionDefinition { schemaVersion: 1; name: string; objective: string; background: string; mode: MissionMode; criteria: string[]; budget: MissionBudget; policy: MissionPolicy; methodIds: string[] }
-export interface MissionSummary { id: string; name: string; state: string; reason: string; workspaceId: string; updatedAt: number; rounds: number; openQuestions: number }
-export interface MissionGoal { id: string; question: string; rationale: string; resolvingEvidence: string; parentId: string | null; dependsOn: string[]; state: string; assessment: string; resolvedRound: number | null }
-export interface MissionQuestion { id: string; question: string; whyNeeded: string; goalIds: string[]; answer: string | null }
-export interface MissionCandidate { id: string; goalId: string; question: string; uncertainty: string; rationale: string; possibleOutcomes: string[]; expectedCost: string; instruction: string; kind: 'workspace' | 'check' | 'experiment'; capabilityId: string | null }
-export interface MissionPlan { summary: string; newGoals: Omit<MissionGoal, 'state' | 'assessment' | 'resolvedRound'>[]; candidates: MissionCandidate[]; selectedId: string | null; selectionReason: string; questions: Omit<MissionQuestion, 'answer'>[]; disposition: string }
-export interface MissionFinding { summary: string; outcome: string; method: string; testedDomain: string; limitations: string[]; sources: OpenResearchObject[]; files: string[] }
-export interface MissionCriterion { criterion: number; status: 'met' | 'unmet' | 'unknown'; explanation: string; evidenceIds: string[] }
-export interface MissionMethod { id: string; missionId: string; workspaceId: string; round: number; name: string; whenToUse: string; procedure: string; limitations: string; evidenceIds: string[]; retained: boolean }
-export interface MissionChallenge { summary: string; outcome: string; goalResolved: boolean; missionComplete: boolean; progressMade: boolean; testedDomain: string; limitations: string[]; unresolved: string[]; criteria: MissionCriterion[]; questions: Omit<MissionQuestion, 'answer'>[]; methods: Omit<MissionMethod, 'id' | 'missionId' | 'workspaceId' | 'round' | 'retained'>[] }
-export interface MissionRound { number: number; changeCursor: number; plan: MissionPlan; selected: MissionCandidate | null; finding: MissionFinding | null; evidence: Record<string, Json>; review: Json; challenge: MissionChallenge | null; childIds: string[]; resultFingerprint: string | null }
-export interface MissionCapability { id: string; kind: string; name: string; fingerprint: string; parameters: Json; execution: Json; timeoutSeconds: number }
-export interface Mission { id: string; revision: number; definition: MissionDefinition; state: string; reason: string; sourceSessionId: string; workspaceId: string; scope: Scope; plannerScope: Scope; challengerScope: Scope; capabilities: MissionCapability[]; goals: MissionGoal[]; rounds: MissionRound[]; questions: MissionQuestion[]; methods: MissionMethod[]; selectedMethods: MissionMethod[]; activeChild: string | null; childIds: string[]; phase: string; actionsReserved: number; activeSeconds: number; stagnantRounds: number; createdAt: number; updatedAt: number; deadlineAt: number | null; dueAt: number | null; brief: string; attentionCount: number; changes: Json[] }
-export interface MissionChoices { workspaceId: string; root: string; canEdit: boolean; commandNetwork: boolean; canHostCompute: boolean; checks: { id: string; name: string; testStatus: string }[]; experiments: { id: string; title: string; kind: string }[]; monitors: { id: string; title: string }[] }
+export type MissionMode =
+  | "theory"
+  | "empirical"
+  | "quantitative"
+  | "literature"
+  | "discovery"
+  | "maintenance";
+export interface MissionBudget {
+  maxRounds: number;
+  maxActions: number;
+  activeSeconds: number;
+  actionTimeoutSeconds: number;
+  deadlineHours: number;
+  maxStagnantRounds: number;
+}
+export interface MissionPolicy {
+  allowEdits: boolean;
+  commandNetwork: boolean;
+  checkProfileIds: string[];
+  experimentIds: string[];
+  reviewProfileId: string | null;
+  monitorIds: string[];
+}
+export interface MissionDefinition {
+  schemaVersion: 1;
+  name: string;
+  objective: string;
+  background: string;
+  mode: MissionMode;
+  criteria: string[];
+  budget: MissionBudget;
+  policy: MissionPolicy;
+  methodIds: string[];
+}
+export interface MissionSummary {
+  id: string;
+  name: string;
+  state: string;
+  reason: string;
+  workspaceId: string;
+  updatedAt: number;
+  rounds: number;
+  openQuestions: number;
+}
+export interface MissionGoal {
+  id: string;
+  question: string;
+  rationale: string;
+  resolvingEvidence: string;
+  parentId: string | null;
+  dependsOn: string[];
+  state: string;
+  assessment: string;
+  resolvedRound: number | null;
+}
+export interface MissionQuestion {
+  id: string;
+  question: string;
+  whyNeeded: string;
+  goalIds: string[];
+  answer: string | null;
+}
+export interface MissionCandidate {
+  id: string;
+  goalId: string;
+  question: string;
+  uncertainty: string;
+  rationale: string;
+  possibleOutcomes: string[];
+  expectedCost: string;
+  instruction: string;
+  kind: "workspace" | "check" | "experiment";
+  capabilityId: string | null;
+}
+export interface MissionPlan {
+  summary: string;
+  newGoals: Omit<MissionGoal, "state" | "assessment" | "resolvedRound">[];
+  candidates: MissionCandidate[];
+  selectedId: string | null;
+  selectionReason: string;
+  questions: Omit<MissionQuestion, "answer">[];
+  disposition: string;
+}
+export interface MissionFinding {
+  summary: string;
+  outcome: string;
+  method: string;
+  testedDomain: string;
+  limitations: string[];
+  sources: OpenResearchObject[];
+  files: string[];
+}
+export interface MissionCriterion {
+  criterion: number;
+  status: "met" | "unmet" | "unknown";
+  explanation: string;
+  evidenceIds: string[];
+}
+export interface MissionMethod {
+  id: string;
+  missionId: string;
+  workspaceId: string;
+  round: number;
+  name: string;
+  whenToUse: string;
+  procedure: string;
+  limitations: string;
+  evidenceIds: string[];
+  retained: boolean;
+}
+export interface MissionChallenge {
+  summary: string;
+  outcome: string;
+  goalResolved: boolean;
+  missionComplete: boolean;
+  progressMade: boolean;
+  testedDomain: string;
+  limitations: string[];
+  unresolved: string[];
+  criteria: MissionCriterion[];
+  questions: Omit<MissionQuestion, "answer">[];
+  methods: Omit<
+    MissionMethod,
+    "id" | "missionId" | "workspaceId" | "round" | "retained"
+  >[];
+}
+export interface MissionRound {
+  number: number;
+  changeCursor: number;
+  plan: MissionPlan;
+  selected: MissionCandidate | null;
+  finding: MissionFinding | null;
+  evidence: Record<string, Json>;
+  review: Json;
+  challenge: MissionChallenge | null;
+  childIds: string[];
+  resultFingerprint: string | null;
+}
+export interface MissionCapability {
+  id: string;
+  kind: string;
+  name: string;
+  fingerprint: string;
+  parameters: Json;
+  execution: Json;
+  timeoutSeconds: number;
+}
+export interface Mission {
+  id: string;
+  revision: number;
+  definition: MissionDefinition;
+  state: string;
+  reason: string;
+  sourceSessionId: string;
+  workspaceId: string;
+  scope: Scope;
+  plannerScope: Scope;
+  challengerScope: Scope;
+  capabilities: MissionCapability[];
+  goals: MissionGoal[];
+  rounds: MissionRound[];
+  questions: MissionQuestion[];
+  methods: MissionMethod[];
+  selectedMethods: MissionMethod[];
+  activeChild: string | null;
+  childIds: string[];
+  phase: string;
+  actionsReserved: number;
+  activeSeconds: number;
+  stagnantRounds: number;
+  createdAt: number;
+  updatedAt: number;
+  deadlineAt: number | null;
+  dueAt: number | null;
+  brief: string;
+  attentionCount: number;
+  changes: Json[];
+}
+export interface MissionChoices {
+  workspaceId: string;
+  root: string;
+  canEdit: boolean;
+  commandNetwork: boolean;
+  canHostCompute: boolean;
+  checks: { id: string; name: string; testStatus: string }[];
+  experiments: { id: string; title: string; kind: string }[];
+  monitors: { id: string; title: string }[];
+}
 
 export const missionClient = {
-  prepare: (definition: MissionDefinition, sessionId: string, operationId: string) => invoke<Mission>('mission_prepare', { request: { definition, sessionId, operationId } }),
-  choices: (sessionId: string) => invoke<MissionChoices>('mission_choices', { sessionId }),
-  list: (offset = 0, workspaceId: string | null = null) => invoke<MissionSummary[]>('mission_list', { offset, workspaceId }),
-  get: (id: string) => invoke<Mission>('mission_get', { id }),
-  control: (m: Mission, action: string) => invoke<Mission>('mission_control', { id: m.id, revision: m.revision, action }),
-  answer: (id: string, questionId: string, answer: string, operationId: string) => invoke<Mission>('mission_answer', { id, questionId, answer, operationId }),
-  events: (id: string, after = 0) => invoke<TaskEvent[]>('mission_events', { id, after }),
-  methods: (workspaceId: string) => invoke<MissionMethod[]>('mission_methods', { workspaceId }),
-  retainMethod: (m: Mission, methodId: string, retained: boolean) => invoke<Mission>('mission_retain_method', { id: m.id, revision: m.revision, methodId, retained }),
-  export: (id: string, format: 'markdown' | 'json') => invoke<string | null>('mission_export', { id, format }),
-  evidence: (id: string, evidenceId: string) => invoke<Json>('mission_evidence', { id, evidenceId }),
+  prepare: (
+    definition: MissionDefinition,
+    sessionId: string,
+    operationId: string,
+  ) =>
+    invoke<Mission>("mission_prepare", {
+      request: { definition, sessionId, operationId },
+    }),
+  choices: (sessionId: string) =>
+    invoke<MissionChoices>("mission_choices", { sessionId }),
+  list: (offset = 0, workspaceId: string | null = null) =>
+    invoke<MissionSummary[]>("mission_list", { offset, workspaceId }),
+  get: (id: string) => invoke<Mission>("mission_get", { id }),
+  control: (m: Mission, action: string) =>
+    invoke<Mission>("mission_control", {
+      id: m.id,
+      revision: m.revision,
+      action,
+    }),
+  answer: (
+    id: string,
+    questionId: string,
+    answer: string,
+    operationId: string,
+  ) =>
+    invoke<Mission>("mission_answer", { id, questionId, answer, operationId }),
+  events: (id: string, after = 0) =>
+    invoke<TaskEvent[]>("mission_events", { id, after }),
+  methods: (workspaceId: string) =>
+    invoke<MissionMethod[]>("mission_methods", { workspaceId }),
+  retainMethod: (m: Mission, methodId: string, retained: boolean) =>
+    invoke<Mission>("mission_retain_method", {
+      id: m.id,
+      revision: m.revision,
+      methodId,
+      retained,
+    }),
+  export: (id: string, format: "markdown" | "json") =>
+    invoke<string | null>("mission_export", { id, format }),
+  evidence: (id: string, evidenceId: string) =>
+    invoke<Json>("mission_evidence", { id, evidenceId }),
 };
-export const missionState = (state: string) => ({ draft: 'Ready to start', queued: 'Ready', running: 'Working', waiting: 'Waiting', paused: 'Paused', attention: 'Needs your attention', completed: 'Criteria assessed as met', exhausted: 'Budget reached', stopped: 'Stopped', stopping: 'Stopping' }[state] ?? state);
-export function newMission(mode: MissionMode = 'theory'): MissionDefinition {
-  const examples: Record<MissionMode, { name: string; objective: string; criteria: string[] }> = {
-    theory: { name: 'Investigate a theoretical result', objective: 'Investigate whether the selected theoretical result survives a change in its assumptions. Establish the baseline, choose the smallest useful extension, and look for a discriminating check or counterexample.', criteria: ['State the exact assumptions and reproduce the baseline argument.', 'Resolve the proposed extension or explain precisely where the argument fails.', 'Prepare a research memo linked to the evidence and remaining limitations.'] },
-    empirical: { name: 'Investigate an empirical result', objective: 'Reproduce the selected baseline and investigate its sensitivity to economically justified sample and specification choices. Preserve every attempted variant and distinguish exploratory findings from prespecified checks.', criteria: ['Verify the baseline estimand, sample, units and inference method.', 'Explain substantive differences across the selected checks.', 'Prepare a reproducible evidence-linked memo, including unsuccessful checks.'] },
-    quantitative: { name: 'Investigate a quantitative model', objective: 'Reproduce the baseline calibration, check equilibrium residuals, and investigate which assumptions drive the principal quantitative result.', criteria: ['Reproduce the baseline and document numerical accuracy.', 'Identify a useful sensitivity or mechanism decomposition.', 'Retain the results, domain examined and unresolved numerical limitations.'] },
-    literature: { name: 'Investigate the literature', objective: 'Investigate the selected research question using available primary sources. Compare mechanisms and assumptions, inspect supporting passages, and identify the most useful next research question.', criteria: ['Document the sources inspected and the limits of access and coverage.', 'Compare the closest inspected work using exact source references.', 'Propose a research direction and its first discriminating test.'] },
-    discovery: { name: 'Develop a research direction', objective: 'Develop a feasible research direction within the selected project. Compare candidate questions, identify the closest work actually inspected, and carry out a first discriminating investigation.', criteria: ['Explain the economic mechanism and inspected precedents.', 'Carry out a first discriminating investigation or document its feasibility constraint.', 'Prepare a research memo explaining whether and how to pursue the direction.'] },
-    maintenance: { name: 'Maintain a research project', objective: 'Inspect tracked changes in the selected project, identify the affected results and arguments, and perform the authorized checks needed to assess their implications. Wait for a tracked change when no useful independent work remains.', criteria: ['Identify changed inputs and the affected outputs or arguments.', 'Run the applicable authorized checks and explain discrepancies.', 'Prepare an evidence-linked update identifying any researcher decisions.'] },
+export const missionState = (state: string) =>
+  ({
+    draft: "Ready to start",
+    queued: "Ready",
+    running: "Working",
+    waiting: "Waiting",
+    paused: "Paused",
+    attention: "Needs your attention",
+    completed: "Criteria assessed as met",
+    exhausted: "Budget reached",
+    stopped: "Stopped",
+    stopping: "Stopping",
+  })[state] ?? state;
+export function newMission(mode: MissionMode = "theory"): MissionDefinition {
+  const examples: Record<
+    MissionMode,
+    { name: string; objective: string; criteria: string[] }
+  > = {
+    theory: {
+      name: "Investigate a theoretical result",
+      objective:
+        "Investigate whether the selected theoretical result survives a change in its assumptions. Establish the baseline, choose the smallest useful extension, and look for a discriminating check or counterexample.",
+      criteria: [
+        "State the exact assumptions and reproduce the baseline argument.",
+        "Resolve the proposed extension or explain precisely where the argument fails.",
+        "Prepare a research memo linked to the evidence and remaining limitations.",
+      ],
+    },
+    empirical: {
+      name: "Investigate an empirical result",
+      objective:
+        "Reproduce the selected baseline and investigate its sensitivity to economically justified sample and specification choices. Preserve every attempted variant and distinguish exploratory findings from prespecified checks.",
+      criteria: [
+        "Verify the baseline estimand, sample, units and inference method.",
+        "Explain substantive differences across the selected checks.",
+        "Prepare a reproducible evidence-linked memo, including unsuccessful checks.",
+      ],
+    },
+    quantitative: {
+      name: "Investigate a quantitative model",
+      objective:
+        "Reproduce the baseline calibration, check equilibrium residuals, and investigate which assumptions drive the principal quantitative result.",
+      criteria: [
+        "Reproduce the baseline and document numerical accuracy.",
+        "Identify a useful sensitivity or mechanism decomposition.",
+        "Retain the results, domain examined and unresolved numerical limitations.",
+      ],
+    },
+    literature: {
+      name: "Investigate the literature",
+      objective:
+        "Investigate the selected research question using available primary sources. Compare mechanisms and assumptions, inspect supporting passages, and identify the most useful next research question.",
+      criteria: [
+        "Document the sources inspected and the limits of access and coverage.",
+        "Compare the closest inspected work using exact source references.",
+        "Propose a research direction and its first discriminating test.",
+      ],
+    },
+    discovery: {
+      name: "Develop a research direction",
+      objective:
+        "Develop a feasible research direction within the selected project. Compare candidate questions, identify the closest work actually inspected, and carry out a first discriminating investigation.",
+      criteria: [
+        "Explain the economic mechanism and inspected precedents.",
+        "Carry out a first discriminating investigation or document its feasibility constraint.",
+        "Prepare a research memo explaining whether and how to pursue the direction.",
+      ],
+    },
+    maintenance: {
+      name: "Maintain a research project",
+      objective:
+        "Inspect tracked changes in the selected project, identify the affected results and arguments, and perform the authorized checks needed to assess their implications. Wait for a tracked change when no useful independent work remains.",
+      criteria: [
+        "Identify changed inputs and the affected outputs or arguments.",
+        "Run the applicable authorized checks and explain discrepancies.",
+        "Prepare an evidence-linked update identifying any researcher decisions.",
+      ],
+    },
   };
-  return { schemaVersion: 1, ...examples[mode], mode, background: '', budget: { maxRounds: 8, maxActions: 32, activeSeconds: 21600, actionTimeoutSeconds: 1800, deadlineHours: 24, maxStagnantRounds: 2 }, policy: { allowEdits: false, commandNetwork: false, checkProfileIds: [], experimentIds: [], reviewProfileId: null, monitorIds: [] }, methodIds: [] };
+  return {
+    schemaVersion: 1,
+    ...examples[mode],
+    mode,
+    background: "",
+    budget: {
+      maxRounds: 8,
+      maxActions: 32,
+      activeSeconds: 21600,
+      actionTimeoutSeconds: 1800,
+      deadlineHours: 24,
+      maxStagnantRounds: 2,
+    },
+    policy: {
+      allowEdits: false,
+      commandNetwork: false,
+      checkProfileIds: [],
+      experimentIds: [],
+      reviewProfileId: null,
+      monitorIds: [],
+    },
+    methodIds: [],
+  };
 }

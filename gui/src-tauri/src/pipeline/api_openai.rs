@@ -377,7 +377,6 @@ pub async fn call_openai_api(
             usage.summary()
         ),
     );
-    super::logging::emit_usage(app, usage.call_usage());
 
     if text.trim().is_empty() {
         return Err(format!("{label}: OpenAI API returned empty output"));
@@ -481,7 +480,6 @@ pub async fn call_local_api(
             usage.summary()
         ),
     );
-    super::logging::emit_usage(app, usage.call_usage());
 
     if text.trim().is_empty() {
         return Err(format!("{label}: local server returned empty output"));

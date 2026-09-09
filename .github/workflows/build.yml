@@ -1,6 +1,10 @@
 name: Tests
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -12,8 +16,8 @@ env:
   CARGO_INCREMENTAL: 1
 
 concurrency:
-  group: tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   tests:
@@ -27,6 +31,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
         with:
           toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
 
       - name: Restore Rust cache
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -52,10 +57,67 @@ jobs:
         working-directory: gui
         run: npm ci --no-audit --no-fund
 
+      - name: Check frontend formatting
+        working-directory: gui
+        run: npm run format:check
+
+      - name: Enforce source size budget
+        working-directory: gui
+        run: npm run check:source-size
+
+      - name: Check documentation links
+        working-directory: gui
+        run: npm run check:links
+
+      - name: Check Rust formatting
+        working-directory: gui/src-tauri
+        run: cargo fmt --all -- --check
+
       - name: Frontend tests
         working-directory: gui
         run: npm test -- --run
 
-      - name: Rust library tests
+      - name: Frontend production build
+        working-directory: gui
+        run: npm run build
+
+      - name: Release contract tests
+        working-directory: gui
+        run: npm run test:release
+
+      - name: Strict Rust lint
         working-directory: gui/src-tauri
-        run: cargo test --locked --lib
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Rust all-target tests
+        working-directory: gui/src-tauri
+        run: cargo test --locked --all-targets
+
+  platform-tests:
+    name: Native tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable action
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: gui/src-tauri -> target
+          shared-key: tests-${{ matrix.os }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - name: Install embedded renderer resources
+        working-directory: gui
+        run: npm ci --no-audit --no-fund
+      - name: Native lifecycle and CLI tests
+        working-directory: gui/src-tauri
+        run: cargo test --locked --all-targets

@@ -28,7 +28,13 @@ function shortRoleLabel(role: AutoReviewCatalogRole, group?: string): string {
     : role.label.replace(/^(Method|Genre) — /, "");
 }
 
-function RoleCard({ role, group }: { role: AutoReviewCatalogRole; group?: string }) {
+function RoleCard({
+  role,
+  group,
+}: {
+  role: AutoReviewCatalogRole;
+  group?: string;
+}) {
   const isFallback = role.level === "discipline" || role.level === "family";
   return (
     <article className="rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
@@ -42,7 +48,9 @@ function RoleCard({ role, group }: { role: AutoReviewCatalogRole; group?: string
           </span>
         )}
       </div>
-      <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-300">{role.description}</p>
+      <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-300">
+        {role.description}
+      </p>
     </article>
   );
 }
@@ -60,11 +68,15 @@ function GroupedTab({
   onSelectGroup: (id: string) => void;
   hint?: string;
 }) {
-  const active = groups.find((group) => group.id === selectedGroup) ?? groups[0];
+  const active =
+    groups.find((group) => group.id === selectedGroup) ?? groups[0];
   if (!active) return null;
   return (
     <div className="grid gap-4 md:grid-cols-[13rem_minmax(0,1fr)]">
-      <nav aria-label={navLabel} className="max-h-[58vh] overflow-auto rounded-xl border border-gray-200 bg-white p-1.5 dark:border-gray-800 dark:bg-gray-900">
+      <nav
+        aria-label={navLabel}
+        className="max-h-[58vh] overflow-auto rounded-xl border border-gray-200 bg-white p-1.5 dark:border-gray-800 dark:bg-gray-900"
+      >
         {groups.map((group) => (
           <button
             key={group.id}
@@ -73,14 +85,22 @@ function GroupedTab({
             className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs ${group.id === active.id ? "bg-blue-50 font-medium text-blue-900 dark:bg-blue-950/50 dark:text-blue-100" : "text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800"}`}
           >
             <span>{group.label}</span>
-            <span className="ml-2 text-[10px] text-gray-400">{group.roles.length}</span>
+            <span className="ml-2 text-[10px] text-gray-400">
+              {group.roles.length}
+            </span>
           </button>
         ))}
       </nav>
       <section aria-label={active.label}>
         <div className="mb-3">
-          <h3 className="text-base font-semibold text-gray-950 dark:text-gray-100">{active.label}</h3>
-          {hint && <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">{hint}</p>}
+          <h3 className="text-base font-semibold text-gray-950 dark:text-gray-100">
+            {active.label}
+          </h3>
+          {hint && (
+            <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+              {hint}
+            </p>
+          )}
         </div>
         <div className="grid gap-2 xl:grid-cols-2">
           {active.roles.map((role) => (
@@ -92,7 +112,10 @@ function GroupedTab({
   );
 }
 
-export default function AutoReviewCatalogDialog({ onClose, initialTab = "subjects" }: Props) {
+export default function AutoReviewCatalogDialog({
+  onClose,
+  initialTab = "subjects",
+}: Props) {
   const dialogRef = useModalDialog<HTMLDivElement>(onClose);
   const [catalog, setCatalog] = useState<AutoReviewCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,7 +134,8 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
         setSelectedFamily(value.methodFamilies[0]?.id ?? "");
       })
       .catch((caught) => {
-        if (!stale) setError(caught instanceof Error ? caught.message : String(caught));
+        if (!stale)
+          setError(caught instanceof Error ? caught.message : String(caught));
       });
     return () => {
       stale = true;
@@ -119,19 +143,21 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
   }, []);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const filterGroups = (groups: AutoReviewCatalogGroup[]) => groups
-    .map((group) => ({
-      ...group,
-      roles: group.roles.filter((role) => matches(role, normalizedQuery)),
-    }))
-    .filter((group) => group.roles.length > 0);
+  const filterGroups = (groups: AutoReviewCatalogGroup[]) =>
+    groups
+      .map((group) => ({
+        ...group,
+        roles: group.roles.filter((role) => matches(role, normalizedQuery)),
+      }))
+      .filter((group) => group.roles.length > 0);
   const matchingDisciplines = useMemo(
     () => (catalog && normalizedQuery ? filterGroups(catalog.disciplines) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [catalog, normalizedQuery],
   );
   const matchingFamilies = useMemo(
-    () => (catalog && normalizedQuery ? filterGroups(catalog.methodFamilies) : []),
+    () =>
+      catalog && normalizedQuery ? filterGroups(catalog.methodFamilies) : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [catalog, normalizedQuery],
   );
@@ -170,11 +196,15 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:text-blue-300">
                 Automatic Paper Review
               </p>
-              <h2 id="auto-review-catalog-title" className="mt-1 text-xl font-semibold text-gray-950 dark:text-gray-50">
+              <h2
+                id="auto-review-catalog-title"
+                className="mt-1 text-xl font-semibold text-gray-950 dark:text-gray-50"
+              >
                 Specialist catalog
               </h2>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">
-                Automatic paper review selects 1-2 primary subject agents and 1-4 methodology agents from this catalog.
+                Automatic paper review selects 1-2 primary subject agents and
+                1-4 methodology agents from this catalog.
               </p>
             </div>
             <button
@@ -189,11 +219,15 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
           {catalog && (
             <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-600 dark:text-gray-300">
               <span className="rounded-full bg-blue-50 px-2.5 py-1 dark:bg-blue-950/40">
-                {catalog.disciplines.length} discipline{catalog.disciplines.length === 1 ? "" : "s"}
+                {catalog.disciplines.length} discipline
+                {catalog.disciplines.length === 1 ? "" : "s"}
               </span>
-              <span className="rounded-full bg-blue-50 px-2.5 py-1 dark:bg-blue-950/40">{catalog.subjectCount} subject roles</span>
               <span className="rounded-full bg-blue-50 px-2.5 py-1 dark:bg-blue-950/40">
-                {catalog.methodCount} method roles in {catalog.methodFamilies.length} families
+                {catalog.subjectCount} subject roles
+              </span>
+              <span className="rounded-full bg-blue-50 px-2.5 py-1 dark:bg-blue-950/40">
+                {catalog.methodCount} method roles in{" "}
+                {catalog.methodFamilies.length} families
               </span>
             </div>
           )}
@@ -201,9 +235,19 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
 
         <div className="border-b border-gray-200 bg-white px-5 py-3 dark:border-gray-800 dark:bg-gray-900 sm:px-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="inline-flex w-fit rounded-lg bg-gray-100 p-1 dark:bg-gray-800" role="tablist" aria-label="Specialist type">
-              {tabButton("subjects", `Subjects${catalog ? ` (${catalog.subjectCount})` : ""}`)}
-              {tabButton("methods", `Methods${catalog ? ` (${catalog.methodCount})` : ""}`)}
+            <div
+              className="inline-flex w-fit rounded-lg bg-gray-100 p-1 dark:bg-gray-800"
+              role="tablist"
+              aria-label="Specialist type"
+            >
+              {tabButton(
+                "subjects",
+                `Subjects${catalog ? ` (${catalog.subjectCount})` : ""}`,
+              )}
+              {tabButton(
+                "methods",
+                `Methods${catalog ? ` (${catalog.methodCount})` : ""}`,
+              )}
             </div>
             <label className="relative block w-full sm:max-w-xs">
               <span className="sr-only">Search specialists</span>
@@ -220,8 +264,16 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-5">
-          {!catalog && !error && <p role="status" className="text-sm text-gray-500">Loading specialist catalog…</p>}
-          {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">Could not load the specialist catalog: {error}</p>}
+          {!catalog && !error && (
+            <p role="status" className="text-sm text-gray-500">
+              Loading specialist catalog…
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+              Could not load the specialist catalog: {error}
+            </p>
+          )}
 
           {catalog && tab === "subjects" && !normalizedQuery && (
             <GroupedTab
@@ -250,8 +302,14 @@ export default function AutoReviewCatalogDialog({ onClose, initialTab = "subject
         </div>
 
         <footer className="flex items-center justify-between border-t border-gray-200 bg-white px-5 py-3 dark:border-gray-800 dark:bg-gray-900 sm:px-6">
-          <p className="text-[10px] text-gray-500 dark:text-gray-400">Reviewers check both the subject matter and the methods.</p>
-          <button type="button" onClick={onClose} className="rounded-lg bg-gray-900 px-4 py-2 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900">
+          <p className="text-[10px] text-gray-500 dark:text-gray-400">
+            Reviewers check both the subject matter and the methods.
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+          >
             Done
           </button>
         </footer>
@@ -266,7 +324,9 @@ function SearchGroupResults({ groups }: { groups: AutoReviewCatalogGroup[] }) {
     <div className="space-y-5">
       {groups.map((group) => (
         <section key={group.id}>
-          <h3 className="mb-2 text-sm font-semibold text-gray-950 dark:text-gray-100">{group.label}</h3>
+          <h3 className="mb-2 text-sm font-semibold text-gray-950 dark:text-gray-100">
+            {group.label}
+          </h3>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {group.roles.map((role) => (
               <RoleCard key={role.id} role={role} group={group.label} />
@@ -279,5 +339,9 @@ function SearchGroupResults({ groups }: { groups: AutoReviewCatalogGroup[] }) {
 }
 
 function NoMatches() {
-  return <p className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">No specialists match this search.</p>;
+  return (
+    <p className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+      No specialists match this search.
+    </p>
+  );
 }

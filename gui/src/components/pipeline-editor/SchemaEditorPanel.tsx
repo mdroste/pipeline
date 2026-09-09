@@ -14,15 +14,27 @@ interface ProviderSchemaPreview {
 }
 
 const DIALECT_KEYWORDS: [string, string][] = [
-  ["type", "object, array, string, number, integer, boolean, or null; the artifact root must be object"],
+  [
+    "type",
+    "object, array, string, number, integer, boolean, or null; the artifact root must be object",
+  ],
   ["properties / required", "object fields; required lists the mandatory ones"],
   ["items", "the element schema of an array"],
   ["enum", "closed set of allowed values"],
-  ["minItems / maxItems / uniqueItems", "array bounds; uniqueItems is enforced by Pipeline, not providers"],
+  [
+    "minItems / maxItems / uniqueItems",
+    "array bounds; uniqueItems is enforced by Pipeline, not providers",
+  ],
   ["minLength", "minimum string length; enforced by Pipeline, not providers"],
   ["title / description", "documentation shown here and sent to providers"],
-  ["x-pipeline-schema", "root-only reference to a live host contract (findings-v1)"],
-  ["x-pipeline-preserve-findings-from", "root-only: the response must keep the named step's finding ids, in order"],
+  [
+    "x-pipeline-schema",
+    "root-only reference to a live host contract (findings-v1)",
+  ],
+  [
+    "x-pipeline-preserve-findings-from",
+    "root-only: the response must keep the named step's finding ids, in order",
+  ],
 ];
 
 // UI rendering of crate::output::text_artifact_schema(). Runtime validation
@@ -71,25 +83,41 @@ export default function SchemaEditorPanel({
   target: SchemaEditorTarget;
   scopeKey: string;
   onOrientationSchemaChange: (schema: Record<string, unknown> | null) => void;
-  onStepSchemaChange: (id: string, schema: Record<string, unknown> | null) => void;
+  onStepSchemaChange: (
+    id: string,
+    schema: Record<string, unknown> | null,
+  ) => void;
   onDraftValidityChange: (valid: boolean) => void;
   onBrowseCatalog?: (tab: "subjects" | "methods") => void;
 }) {
-  const targetKey = target.kind === "orientation" ? "orientation" : target.step.id;
+  const targetKey =
+    target.kind === "orientation" ? "orientation" : target.step.id;
   const draftKey = `${scopeKey}:${targetKey}`;
-  const configuredSchema = target.kind === "orientation"
-    ? target.schema ?? null
-    : target.step.output_schema ?? null;
-  const [draft, setDraft] = useState(configuredSchema ? schemaText(configuredSchema) : "");
+  const configuredSchema =
+    target.kind === "orientation"
+      ? (target.schema ?? null)
+      : (target.step.output_schema ?? null);
+  const [draft, setDraft] = useState(
+    configuredSchema ? schemaText(configuredSchema) : "",
+  );
   const [error, setError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<AutoReviewCatalog | null>(null);
-  const [resolvedSchema, setResolvedSchema] = useState<Record<string, unknown> | null>(null);
+  const [resolvedSchema, setResolvedSchema] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   const [resolutionError, setResolutionError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
-  const [providerPreview, setProviderPreview] = useState<ProviderSchemaPreview | null>(null);
-  const [providerPreviewError, setProviderPreviewError] = useState<string | null>(null);
+  const [providerPreview, setProviderPreview] =
+    useState<ProviderSchemaPreview | null>(null);
+  const [providerPreviewError, setProviderPreviewError] = useState<
+    string | null
+  >(null);
   const [previewingProvider, setPreviewingProvider] = useState(false);
-  const [referencedSchema, setReferencedSchema] = useState<Record<string, unknown> | null>(null);
+  const [referencedSchema, setReferencedSchema] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
 
   useEffect(() => {
     setDraft(configuredSchema ? schemaText(configuredSchema) : "");
@@ -116,9 +144,10 @@ export default function SchemaEditorPanel({
     }
   }, [draft]);
 
-  const liveReference = typeof parsedDraft?.["x-pipeline-schema"] === "string"
-    ? parsedDraft["x-pipeline-schema"] as string
-    : null;
+  const liveReference =
+    typeof parsedDraft?.["x-pipeline-schema"] === "string"
+      ? (parsedDraft["x-pipeline-schema"] as string)
+      : null;
 
   // A live reference stands in for the whole contract; fetch the resolved
   // form so the structure view shows what the step actually promises.
@@ -144,7 +173,8 @@ export default function SchemaEditorPanel({
 
   useEffect(() => () => onDraftValidityChange(true), [onDraftValidityChange]);
 
-  const catalogBacked = target.kind === "orientation" && target.autoReview && !!configuredSchema;
+  const catalogBacked =
+    target.kind === "orientation" && target.autoReview && !!configuredSchema;
 
   useEffect(() => {
     if (!catalogBacked) {
@@ -180,7 +210,9 @@ export default function SchemaEditorPanel({
   // machinery.
   const insertFindingsSchema = async () => {
     try {
-      const schema = await invoke<Record<string, unknown>>("get_findings_output_schema");
+      const schema = await invoke<Record<string, unknown>>(
+        "get_findings_output_schema",
+      );
       applyConfiguredSchema(schema);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -194,7 +226,9 @@ export default function SchemaEditorPanel({
     setResolutionError(null);
     if (!next.trim()) {
       if (target.kind === "orientation" && target.autoReview) {
-        setError("Automatic Paper Review requires its generated orientation schema.");
+        setError(
+          "Automatic Paper Review requires its generated orientation schema.",
+        );
         onDraftValidityChange(false);
         return;
       }
@@ -215,18 +249,25 @@ export default function SchemaEditorPanel({
         onDraftValidityChange(false);
         return;
       }
-      if (target.kind === "step" &&
-          (parsed["x-pipeline-contract"] !== undefined ||
-           parsed["x-pipeline-adaptive-agent-count"] !== undefined)) {
-        setError("x-pipeline contract settings are reserved for the orientation schema.");
+      if (
+        target.kind === "step" &&
+        (parsed["x-pipeline-contract"] !== undefined ||
+          parsed["x-pipeline-adaptive-agent-count"] !== undefined)
+      ) {
+        setError(
+          "x-pipeline contract settings are reserved for the orientation schema.",
+        );
         onDraftValidityChange(false);
         return;
       }
-      if (target.kind === "orientation" && target.autoReview &&
-          parsed["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT) {
+      if (
+        target.kind === "orientation" &&
+        target.autoReview &&
+        parsed["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT
+      ) {
         setError(
           `Automatic Paper Review must retain x-pipeline-contract: "${AUTO_REVIEW_CONTRACT}". ` +
-          "Create a separate custom workflow to replace this host-owned contract.",
+            "Create a separate custom workflow to replace this host-owned contract.",
         );
         onDraftValidityChange(false);
         return;
@@ -239,7 +280,9 @@ export default function SchemaEditorPanel({
         onStepSchemaChange(target.step.id, parsed);
       }
     } catch (parseError) {
-      setError(parseError instanceof Error ? parseError.message : "invalid JSON");
+      setError(
+        parseError instanceof Error ? parseError.message : "invalid JSON",
+      );
       onDraftValidityChange(false);
     }
   };
@@ -253,18 +296,25 @@ export default function SchemaEditorPanel({
     try {
       parsed = JSON.parse(draft) as Record<string, unknown>;
     } catch {
-      setProviderPreviewError("Fix the JSON draft before previewing the provider schema.");
+      setProviderPreviewError(
+        "Fix the JSON draft before previewing the provider schema.",
+      );
       return;
     }
     setPreviewingProvider(true);
     setProviderPreviewError(null);
     try {
-      const preview = await invoke<ProviderSchemaPreview>("preview_provider_schema", {
-        schema: parsed,
-      });
+      const preview = await invoke<ProviderSchemaPreview>(
+        "preview_provider_schema",
+        {
+          schema: parsed,
+        },
+      );
       setProviderPreview(preview);
     } catch (caught) {
-      setProviderPreviewError(caught instanceof Error ? caught.message : String(caught));
+      setProviderPreviewError(
+        caught instanceof Error ? caught.message : String(caught),
+      );
     } finally {
       setPreviewingProvider(false);
     }
@@ -279,7 +329,9 @@ export default function SchemaEditorPanel({
     try {
       parsed = JSON.parse(draft) as Record<string, unknown>;
     } catch {
-      setResolutionError("Fix the JSON draft before resolving its catalog references.");
+      setResolutionError(
+        "Fix the JSON draft before resolving its catalog references.",
+      );
       return;
     }
     setResolving(true);
@@ -291,28 +343,36 @@ export default function SchemaEditorPanel({
       );
       setResolvedSchema(resolved);
     } catch (caught) {
-      setResolutionError(caught instanceof Error ? caught.message : String(caught));
+      setResolutionError(
+        caught instanceof Error ? caught.message : String(caught),
+      );
     } finally {
       setResolving(false);
     }
   };
 
-  const title = target.kind === "orientation"
-    ? "Orientation map schema"
-    : `${target.step.label} output schema`;
+  const title =
+    target.kind === "orientation"
+      ? "Orientation map schema"
+      : `${target.step.label} output schema`;
   const isManagedText = target.kind === "step" && !configuredSchema;
-  const isDefaultOrientation = target.kind === "orientation" && !configuredSchema;
+  const isDefaultOrientation =
+    target.kind === "orientation" && !configuredSchema;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b border-gray-200 px-5 py-4 dark:border-gray-700">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{title}</h2>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-            configuredSchema
-              ? "bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
-              : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-          }`}>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+            {title}
+          </h2>
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+              configuredSchema
+                ? "bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
+                : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            }`}
+          >
             {configuredSchema
               ? target.kind === "orientation" && target.autoReview
                 ? "Adaptive contract"
@@ -351,21 +411,31 @@ export default function SchemaEditorPanel({
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   Effective provider schema
                 </h3>
-                <span className="text-[10px] text-gray-500 dark:text-gray-400">Managed by Pipeline</span>
+                <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                  Managed by Pipeline
+                </span>
               </div>
               <pre
-                aria-label={target.kind === "orientation"
-                  ? "Effective orientation schema"
-                  : `Effective schema for ${target.step.label}`}
+                aria-label={
+                  target.kind === "orientation"
+                    ? "Effective orientation schema"
+                    : `Effective schema for ${target.step.label}`
+                }
                 className="overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-4 font-mono text-xs leading-relaxed text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
               >
-                {schemaText(isManagedText ? TEXT_ARTIFACT_SCHEMA : DEFAULT_ORIENTATION_SCHEMA)}
+                {schemaText(
+                  isManagedText
+                    ? TEXT_ARTIFACT_SCHEMA
+                    : DEFAULT_ORIENTATION_SCHEMA,
+                )}
               </pre>
             </div>
 
             <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
               <h3 className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                {isManagedText ? "Need structured JSON instead?" : "Need a more specific survey contract?"}
+                {isManagedText
+                  ? "Need structured JSON instead?"
+                  : "Need a more specific survey contract?"}
               </h3>
               <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
                 {isManagedText
@@ -375,12 +445,18 @@ export default function SchemaEditorPanel({
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => applyConfiguredSchema(
-                    isManagedText ? STARTER_JSON_SCHEMA : DEFAULT_ORIENTATION_SCHEMA,
-                  )}
+                  onClick={() =>
+                    applyConfiguredSchema(
+                      isManagedText
+                        ? STARTER_JSON_SCHEMA
+                        : DEFAULT_ORIENTATION_SCHEMA,
+                    )
+                  }
                   className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
                 >
-                  {isManagedText ? "Create custom JSON schema" : "Customize schema"}
+                  {isManagedText
+                    ? "Create custom JSON schema"
+                    : "Customize schema"}
                 </button>
                 {isManagedText && (
                   <>
@@ -413,7 +489,9 @@ export default function SchemaEditorPanel({
                       Live specialist catalog
                     </h3>
                     <p className="mt-1 max-w-2xl text-xs leading-relaxed text-violet-800/80 dark:text-violet-200/80">
-                      Catalog references keep the saved workflow small. Pipeline expands them into ordinary enums only for the current provider call.
+                      Catalog references keep the saved workflow small. Pipeline
+                      expands them into ordinary enums only for the current
+                      provider call.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -457,7 +535,10 @@ export default function SchemaEditorPanel({
                   </div>
                 )}
                 {resolutionError && (
-                  <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-300">
+                  <p
+                    role="alert"
+                    className="mt-3 text-xs text-red-700 dark:text-red-300"
+                  >
                     Could not resolve catalog references: {resolutionError}
                   </p>
                 )}
@@ -466,10 +547,14 @@ export default function SchemaEditorPanel({
             {liveReference && (
               <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-900 dark:bg-emerald-950/20">
                 <h3 className="text-sm font-medium text-emerald-950 dark:text-emerald-100">
-                  Live contract reference: <span className="font-mono">{liveReference}</span>
+                  Live contract reference:{" "}
+                  <span className="font-mono">{liveReference}</span>
                 </h3>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                  This step follows Pipeline&rsquo;s canonical contract, resolved fresh at each dispatch. The structure below shows the current resolved form; replace the reference with a full schema to customize it.
+                  This step follows Pipeline&rsquo;s canonical contract,
+                  resolved fresh at each dispatch. The structure below shows the
+                  current resolved form; replace the reference with a full
+                  schema to customize it.
                 </p>
               </section>
             )}
@@ -490,7 +575,8 @@ export default function SchemaEditorPanel({
                   Portable JSON Schema
                 </label>
                 <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  Invalid drafts stay local and cannot be saved into the workflow.
+                  Invalid drafts stay local and cannot be saved into the
+                  workflow.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -518,23 +604,30 @@ export default function SchemaEditorPanel({
                     onClick={() => applyConfiguredSchema(null)}
                     className="text-xs font-medium text-gray-600 underline underline-offset-2 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
                   >
-                    {target.kind === "orientation" ? "Use Pipeline default" : "Return to Markdown output"}
+                    {target.kind === "orientation"
+                      ? "Use Pipeline default"
+                      : "Return to Markdown output"}
                   </button>
                 )}
               </div>
             </div>
             <textarea
               id="artifact-schema-editor"
-              aria-label={target.kind === "orientation"
-                ? "Orientation output JSON schema"
-                : `Output JSON schema for ${target.step.label}`}
+              aria-label={
+                target.kind === "orientation"
+                  ? "Orientation output JSON schema"
+                  : `Output JSON schema for ${target.step.label}`
+              }
               value={draft}
               onChange={(event) => changeDraft(event.target.value)}
               spellCheck={false}
               className="min-h-[26rem] w-full resize-y rounded-xl border border-gray-300 bg-white p-4 font-mono text-xs leading-relaxed text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gray-400 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
             />
             {error ? (
-              <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
+              <p
+                role="alert"
+                className="mt-2 text-xs text-red-600 dark:text-red-400"
+              >
                 Invalid schema: {error}
               </p>
             ) : (
@@ -562,16 +655,20 @@ export default function SchemaEditorPanel({
             )}
             {target.kind === "step" && target.publishesFindings && (
               <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                This contract powers the published findings product. Returning to Markdown also turns off findings publication for this step.
+                This contract powers the published findings product. Returning
+                to Markdown also turns off findings publication for this step.
               </p>
             )}
 
             <section className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-medium text-gray-800 dark:text-gray-200">Provider view</h3>
+                  <h3 className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    Provider view
+                  </h3>
                   <p className="mt-1 max-w-2xl text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                    What providers actually receive: references and catalogs resolved, host-only keywords removed.
+                    What providers actually receive: references and catalogs
+                    resolved, host-only keywords removed.
                   </p>
                 </div>
                 <button
@@ -588,7 +685,10 @@ export default function SchemaEditorPanel({
                 </button>
               </div>
               {providerPreviewError && (
-                <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-300">
+                <p
+                  role="alert"
+                  className="mt-3 text-xs text-red-700 dark:text-red-300"
+                >
                   Could not build the provider schema: {providerPreviewError}
                 </p>
               )}
@@ -602,7 +702,9 @@ export default function SchemaEditorPanel({
                           : "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
                       }`}
                     >
-                      {(providerPreview.bytes / 1024).toFixed(1)} KiB of {Math.round(providerPreview.limit / 1024)} KiB transport budget
+                      {(providerPreview.bytes / 1024).toFixed(1)} KiB of{" "}
+                      {Math.round(providerPreview.limit / 1024)} KiB transport
+                      budget
                     </span>
                     <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
                       Anthropic / Gemini: native constraint
@@ -613,11 +715,15 @@ export default function SchemaEditorPanel({
                           ? "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
                           : "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
                       }`}
-                      title={providerPreview.openaiStrict
-                        ? "Every declared property is required, so OpenAI decodes against the exact schema."
-                        : "Optional properties keep OpenAI in advisory json_schema mode; Pipeline still validates the returned artifact."}
+                      title={
+                        providerPreview.openaiStrict
+                          ? "Every declared property is required, so OpenAI decodes against the exact schema."
+                          : "Optional properties keep OpenAI in advisory json_schema mode; Pipeline still validates the returned artifact."
+                      }
                     >
-                      {providerPreview.openaiStrict ? "OpenAI: strict decoding" : "OpenAI: advisory + host validation"}
+                      {providerPreview.openaiStrict
+                        ? "OpenAI: strict decoding"
+                        : "OpenAI: advisory + host validation"}
                     </span>
                   </div>
                   <pre
@@ -636,7 +742,8 @@ export default function SchemaEditorPanel({
                   Example response
                 </summary>
                 <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                  A minimal artifact matching this contract; the model fills real content.
+                  A minimal artifact matching this contract; the model fills
+                  real content.
                 </p>
                 <pre className="mt-2 max-h-[20rem] overflow-auto rounded-lg bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800 dark:bg-gray-950 dark:text-gray-200">
                   {JSON.stringify(exampleInstance(structureSchema), null, 2)}
@@ -649,12 +756,15 @@ export default function SchemaEditorPanel({
                 Supported schema keywords
               </summary>
               <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                Pipeline&rsquo;s portable dialect deliberately rejects anything it cannot enforce on every provider.
+                Pipeline&rsquo;s portable dialect deliberately rejects anything
+                it cannot enforce on every provider.
               </p>
               <dl className="mt-2 space-y-1.5">
                 {DIALECT_KEYWORDS.map(([keyword, note]) => (
                   <div key={keyword} className="flex flex-wrap gap-x-2 text-xs">
-                    <dt className="font-mono font-medium text-gray-800 dark:text-gray-200">{keyword}</dt>
+                    <dt className="font-mono font-medium text-gray-800 dark:text-gray-200">
+                      {keyword}
+                    </dt>
                     <dd className="text-gray-500 dark:text-gray-400">{note}</dd>
                   </div>
                 ))}

@@ -1,6 +1,6 @@
 # Research data folder
 
-Open **Settings → General → Research data folder**, choose an existing dedicated
+Open **Settings → Data & Storage → Research data folder**, choose an existing dedicated
 folder, then quit and reopen Pipeline. Pipeline opens existing records there or
 creates a separate research library if the folder is empty. **Use default
 folder** selects `~/.pipeline/` for the next launch. **Open current folder** opens
@@ -43,7 +43,7 @@ missing mount. Settings remains available to select a different folder, with a
 restart required for recovery.
 
 The `get_storage_settings` and `set_storage_directory` commands run filesystem
-work on blocking workers. `StorageSettings.tsx` loads only in General settings;
+work on blocking workers. `StorageSettings.tsx` loads only in Data & Storage settings;
 it is separate from provider autosave so stale settings snapshots cannot undo a
 pending storage selection. The Workflow CLI uses the same process-pinned root.
 

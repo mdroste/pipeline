@@ -15,7 +15,8 @@ function AgentChips({
       <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
         LLM Agents
         <span className="font-normal text-gray-600 dark:text-gray-400 ml-1">
-          (empty = global setting{multi ? "; select multiple to run in parallel" : ""})
+          (empty = global setting
+          {multi ? "; select multiple to run in parallel" : ""})
         </span>
       </label>
       <div
@@ -32,7 +33,11 @@ function AgentChips({
               aria-pressed={active}
               onClick={() => {
                 if (multi) {
-                  onChange(active ? agents.filter((a) => a !== provider) : [...agents, provider]);
+                  onChange(
+                    active
+                      ? agents.filter((a) => a !== provider)
+                      : [...agents, provider],
+                  );
                 } else {
                   onChange(active ? [] : [provider]);
                 }

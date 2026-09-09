@@ -173,12 +173,13 @@ pub(super) async fn install_paddle_full_parser(
     }
 
     let parser_root = paddle_parser_root()?;
-    match refresh_paddle_parser_sidecar(&parser_root) {
+    match refresh_paddle_parser_sidecar_locked(&parser_root) {
         Ok(true) => {
             for phase in ["runtime", "packages", "models"] {
                 emit_phase(app, spec.id, phase, "done");
             }
-            let installed = paddle_full_parser_paths()?;
+            let installed = paddle_full_parser_paths_at(&parser_root)
+                .ok_or("The refreshed parser sidecar failed its integrity check")?;
             log(
                 app,
                 format!(
@@ -459,7 +460,8 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
             );
         }
     }
-    let installed = paddle_full_parser_paths()?;
+    let installed = paddle_full_parser_paths_at(&parser_root)
+        .ok_or("The managed full-parser installation is incomplete")?;
     log(
         app,
         format!("{} installed at {}", spec.label, installed.script.display()),

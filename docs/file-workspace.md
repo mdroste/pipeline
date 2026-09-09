@@ -10,8 +10,13 @@ services and Workflow artifacts remain read-only in their owning run.
   Quick open accepts a filtered inventory entry or a normalized relative path.
   Cmd/Ctrl+P focuses it. Tabs, back/forward history, two file panes, remembered
   editor/PDF positions, external open, and reveal-in-folder are available.
-- Chat Markdown links open project files. The explicit quoted selection action
-  carries path, content identity, UTF-8 offsets, line and unsaved-draft status.
+- Chat Markdown links open project files. Relative links resolve from the
+  project root; absolute agent-authored links are converted to project-relative
+  paths only when they remain inside the registered root. In unfiled or rootless
+  conversations, an absolute generated-file link opens through a native command
+  only after validation against that conversation's private runtime root. The
+  explicit quoted selection action carries path, content identity, UTF-8
+  offsets, line and unsaved-draft status.
 - Workflow Sources retains its structured bundle/page inspection. **Open in file
   tabs** opens the shared workspace. Report links resolve within the retained
   run and open the referenced source line, PDF page or Markdown heading.
@@ -108,7 +113,7 @@ serves/copies the PDF resources. Workspace reads live in
 `runs/artifacts.rs`. `file_viewer.rs` contains only the neutral native reveal
 helper. No new model protocol, credential store, scheduler or migration is added.
 
-The historical full-editor exclusion in `workbench_plan.md` is superseded for
+The historical full-editor exclusion in `notes/workbench_plan.md` is superseded for
 this feature by the user's explicit implementation request.
 
 Verification covers scoped reads, retained-file tampering, the existing

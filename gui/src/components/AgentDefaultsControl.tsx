@@ -50,35 +50,55 @@ export default function AgentDefaultsControl({
     let next: string[];
     if (multi) {
       if (active && agents.length === 1) return;
-      next = active ? agents.filter((agent) => agent !== provider) : [...agents, provider];
+      next = active
+        ? agents.filter((agent) => agent !== provider)
+        : [...agents, provider];
     } else {
       next = [provider];
     }
     onChange({ agents: next, modelOverrides, effortOverrides });
   };
 
-  const updateModel = (key: string, value: string) => {
+  const updateModel = (provider: Provider, key: string, value: string) => {
     const next = { ...modelOverrides };
     const selection = decodeModelSelection(value);
     if (selection) next[key] = selection;
-    else delete next[key];
+    else {
+      delete next[key];
+      // Old settings used the provider name without a transport suffix. If it
+      // remains, display resolution immediately resurrects the override.
+      delete next[provider];
+    }
     onChange({ agents, modelOverrides: next, effortOverrides });
   };
 
-  const updateEffort = (key: string, value: string) => {
+  const updateEffort = (provider: Provider, key: string, value: string) => {
     const next = { ...effortOverrides };
     if (value) next[key] = value;
-    else delete next[key];
+    else {
+      delete next[key];
+      delete next[provider];
+    }
     onChange({ agents, modelOverrides, effortOverrides: next });
   };
 
   return (
     <div className="space-y-2.5">
       <div>
-        <p className="text-xs font-medium text-gray-700 dark:text-neutral-300">{label}</p>
-        {help && <p className="mt-0.5 text-[11px] leading-4 text-gray-500 dark:text-neutral-500">{help}</p>}
+        <p className="text-xs font-medium text-gray-700 dark:text-neutral-300">
+          {label}
+        </p>
+        {help && (
+          <p className="mt-0.5 text-[13px] leading-4 text-gray-500 dark:text-neutral-500">
+            {help}
+          </p>
+        )}
       </div>
-      <div role="group" aria-label={`${label} providers`} className="flex flex-wrap gap-1.5">
+      <div
+        role="group"
+        aria-label={`${label} providers`}
+        className="flex flex-wrap gap-1.5"
+      >
         {providers.map((provider) => {
           const active = agents.includes(provider);
           return (
@@ -88,7 +108,7 @@ export default function AgentDefaultsControl({
               aria-pressed={active}
               disabled={disabled}
               onClick={() => updateAgents(provider)}
-              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`rounded-full border px-2.5 py-1 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 active
                   ? "border-gray-900 bg-gray-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-950"
                   : "border-gray-300 bg-white text-gray-600 hover:border-gray-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-neutral-500"
@@ -105,17 +125,23 @@ export default function AgentDefaultsControl({
           const transport = providerTransport(settings, provider);
           const key = `${provider}:${transport}`;
           const selection = modelOverrides[key] ?? modelOverrides[provider];
-          const value = selection?.mode === "automatic"
-            ? "inherit"
-            : encodeModelSelection(selection);
+          const value =
+            selection?.mode === "automatic"
+              ? "inherit"
+              : encodeModelSelection(selection);
           const catalog = catalogs[provider];
-          const known = value === "inherit"
-            || catalog?.models.some((model) => value === `pinned:${model.id}`);
-          const efforts = provider === "claude"
-            ? effortOptions(catalog, selection, ["low", "medium", "high", "max"])
-            : provider === "codex"
-              ? effortOptions(catalog, selection, ["low", "medium", "high"])
-              : provider === "antigravity" && transport === "cli"
+          const known =
+            value === "inherit" ||
+            catalog?.models.some((model) => value === `pinned:${model.id}`);
+          const efforts =
+            provider === "claude"
+              ? effortOptions(catalog, selection, [
+                  "low",
+                  "medium",
+                  "high",
+                  "max",
+                ])
+              : provider === "codex"
                 ? effortOptions(catalog, selection, ["low", "medium", "high"])
                 : [];
           return (
@@ -123,40 +149,64 @@ export default function AgentDefaultsControl({
               key={provider}
               className="grid grid-cols-[minmax(64px,0.7fr)_minmax(120px,1.8fr)] items-center gap-2 rounded-md border border-gray-200 px-2.5 py-2 dark:border-neutral-800"
             >
-              <span className="truncate text-[11px] font-medium text-gray-700 dark:text-neutral-300">
+              <span className="truncate text-[13px] font-medium text-gray-700 dark:text-neutral-300">
                 {PROVIDER_LABELS[provider]}
               </span>
-              <div className={`grid gap-1.5 ${efforts.length ? "grid-cols-2" : "grid-cols-1"}`}>
+              <div
+                className={`grid gap-1.5 ${efforts.length ? "grid-cols-2" : "grid-cols-1"}`}
+              >
                 <select
                   aria-label={`${label} ${PROVIDER_LABELS[provider]} model`}
                   value={value}
                   disabled={disabled}
-                  onChange={(event) => updateModel(key, event.target.value)}
-                  className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                  onChange={(event) =>
+                    updateModel(provider, key, event.target.value)
+                  }
+                  className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                 >
-                  <option value="inherit">Provider default · {inheritedModelLabel(settings, provider)}</option>
+                  <option value="inherit">
+                    Provider default · {inheritedModelLabel(settings, provider)}
+                  </option>
                   {!!catalog?.models.length && (
                     <optgroup label="Exact model">
                       {catalog.models.map((model) => (
-                        <option key={model.id} value={`pinned:${model.id}`} disabled={model.deprecated}>
+                        <option
+                          key={model.id}
+                          value={`pinned:${model.id}`}
+                          disabled={model.deprecated}
+                        >
                           {model.display_name || model.id} · {label}
                         </option>
                       ))}
                     </optgroup>
                   )}
-                  {!known && <option value={value}>Saved model (not currently listed)</option>}
+                  {!known && (
+                    <option value={value}>
+                      Saved model:{" "}
+                      {selection?.mode === "pinned"
+                        ? selection.model
+                        : "automatic"}{" "}
+                      (not currently listed)
+                    </option>
+                  )}
                 </select>
                 {!!efforts.length && (
                   <select
                     aria-label={`${label} ${PROVIDER_LABELS[provider]} thinking`}
-                    value={effortOverrides[key] ?? effortOverrides[provider] ?? ""}
+                    value={
+                      effortOverrides[key] ?? effortOverrides[provider] ?? ""
+                    }
                     disabled={disabled}
-                    onChange={(event) => updateEffort(key, event.target.value)}
-                    className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[11px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    onChange={(event) =>
+                      updateEffort(provider, key, event.target.value)
+                    }
+                    className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                   >
                     <option value="">Provider default thinking</option>
                     {efforts.map((effort) => (
-                      <option key={effort} value={effort}>{effort.charAt(0).toUpperCase() + effort.slice(1)}</option>
+                      <option key={effort} value={effort}>
+                        {effort.charAt(0).toUpperCase() + effort.slice(1)}
+                      </option>
                     ))}
                   </select>
                 )}

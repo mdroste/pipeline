@@ -15,10 +15,10 @@ export interface PlaceholderEntry {
 
 /** Editor surface that determines which placeholders are valid. */
 export type PromptContext =
-  | { kind: "parallel" }                     // step.prompt for a Parallel step (no auto-expansion)
-  | { kind: "sequential"; otherStepIds: string[] }  // step.prompt for a Sequential step
-  | { kind: "parallel_template" }            // pipeline-level wrapping template
-  | { kind: "merge" }                        // merge.prompt
+  | { kind: "parallel" } // step.prompt for a Parallel step (no auto-expansion)
+  | { kind: "sequential"; otherStepIds: string[] } // step.prompt for a Sequential step
+  | { kind: "parallel_template" } // pipeline-level wrapping template
+  | { kind: "merge" } // merge.prompt
   | { kind: "orientation"; autoReview?: boolean }; // orientation-map prompt
 
 /** Return the placeholders that the executor will substitute in this context. */
@@ -31,12 +31,30 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
     case "sequential": {
       const base: PlaceholderEntry[] = [
         { token: "{orientation}", description: "Path to orientation map JSON" },
-        { token: "{prior_outputs}", description: "Selected upstream reports concatenated" },
-        { token: "{last_output}", description: "Most recent selected upstream report" },
-        { token: "{input_path}", description: "Path to the extracted input text" },
-        { token: "{document_bundle}", description: "Path to canonical DocumentBundle JSON" },
-        { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
-        { token: "{source_path}", description: "Path to the original input (PDF, .tex, folder)" },
+        {
+          token: "{prior_outputs}",
+          description: "Selected upstream reports concatenated",
+        },
+        {
+          token: "{last_output}",
+          description: "Most recent selected upstream report",
+        },
+        {
+          token: "{input_path}",
+          description: "Path to the extracted input text",
+        },
+        {
+          token: "{document_bundle}",
+          description: "Path to canonical DocumentBundle JSON",
+        },
+        {
+          token: "{paper_path}",
+          description: "Alias of {input_path} (legacy)",
+        },
+        {
+          token: "{source_path}",
+          description: "Path to the original input (PDF, .tex, folder)",
+        },
       ];
       const stepRefs: PlaceholderEntry[] = ctx.otherStepIds.map((id) => ({
         token: `{step:${id}}`,
@@ -47,28 +65,73 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
     case "parallel_template":
       return [
         { token: "{step_prompt}", description: "The individual step's prompt" },
-        { token: "{orientation}", description: "Survey / orientation map reference block" },
-        { token: "{input_path}", description: "Path to the extracted input text" },
-        { token: "{document_bundle}", description: "Path to canonical DocumentBundle JSON" },
-        { token: "{paper_type}", description: "theory / empirical / mixed (paper surveys only; empty otherwise)" },
-        { token: "{figure_hint}", description: "Figure/table access instructions" },
-        { token: "{output_format}", description: "Output delivery instructions (file write or markers)" },
-        { token: "{paper_path}", description: "Alias of {input_path} (legacy)" },
+        {
+          token: "{orientation}",
+          description: "Survey / orientation map reference block",
+        },
+        {
+          token: "{input_path}",
+          description: "Path to the extracted input text",
+        },
+        {
+          token: "{document_bundle}",
+          description: "Path to canonical DocumentBundle JSON",
+        },
+        {
+          token: "{paper_type}",
+          description:
+            "theory / empirical / mixed (paper surveys only; empty otherwise)",
+        },
+        {
+          token: "{figure_hint}",
+          description: "Figure/table access instructions",
+        },
+        {
+          token: "{output_format}",
+          description: "Output delivery instructions (file write or markers)",
+        },
+        {
+          token: "{paper_path}",
+          description: "Alias of {input_path} (legacy)",
+        },
       ];
     case "merge":
       return [
         { token: "{topic}", description: "Step label being merged" },
-        { token: "{agent_reports}", description: "All agent analyses for this step" },
+        {
+          token: "{agent_reports}",
+          description: "All agent analyses for this step",
+        },
       ];
     case "orientation":
       return [
-        { token: "{input_text}", description: "The extracted input text (truncated to 250k chars)" },
-        { token: "{paper_text}", description: "Alias of {input_text} (legacy)" },
-        ...(ctx.autoReview ? [
-          { token: "{subject_catalog}", description: "Live subject-specialist catalog (injected at run time)" },
-          { token: "{method_catalog}", description: "Live method-specialist catalog (injected at run time)" },
-          { token: "{genre_catalog}", description: "Live document-genre catalog (injected at run time)" },
-        ] : []),
+        {
+          token: "{input_text}",
+          description: "The extracted input text (truncated to 250k chars)",
+        },
+        {
+          token: "{paper_text}",
+          description: "Alias of {input_text} (legacy)",
+        },
+        ...(ctx.autoReview
+          ? [
+              {
+                token: "{subject_catalog}",
+                description:
+                  "Live subject-specialist catalog (injected at run time)",
+              },
+              {
+                token: "{method_catalog}",
+                description:
+                  "Live method-specialist catalog (injected at run time)",
+              },
+              {
+                token: "{genre_catalog}",
+                description:
+                  "Live document-genre catalog (injected at run time)",
+              },
+            ]
+          : []),
       ];
   }
 }
@@ -78,9 +141,9 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
 const PLACEHOLDER_RE = /\{([a-zA-Z][a-zA-Z0-9_]*(?::[a-zA-Z0-9_./-]+)?)\}/g;
 
 export interface LintHit {
-  match: string;     // The full "{...}" token as it appears.
-  index: number;     // Character offset in the source text.
-  line: number;      // 1-based line number of the match.
+  match: string; // The full "{...}" token as it appears.
+  index: number; // Character offset in the source text.
+  line: number; // 1-based line number of the match.
 }
 
 /**
@@ -134,7 +197,8 @@ function pointerResolvesInSchema(pointer: string, schema: unknown): boolean {
   if (!pointer.startsWith("/")) return false;
   let current = schema;
   for (const raw of pointer.slice(1).split("/")) {
-    if (!current || typeof current !== "object" || Array.isArray(current)) return true;
+    if (!current || typeof current !== "object" || Array.isArray(current))
+      return true;
     const node = current as Record<string, unknown>;
     // A catalog/live reference or an open object cannot be checked further.
     if (node["x-pipeline-schema"] !== undefined) return true;
@@ -145,7 +209,12 @@ function pointerResolvesInSchema(pointer: string, schema: unknown): boolean {
       continue;
     }
     const properties = node.properties;
-    if (!properties || typeof properties !== "object" || Array.isArray(properties)) return true;
+    if (
+      !properties ||
+      typeof properties !== "object" ||
+      Array.isArray(properties)
+    )
+      return true;
     const child = (properties as Record<string, unknown>)[segment];
     if (child === undefined) return false;
     current = child;
@@ -153,10 +222,14 @@ function pointerResolvesInSchema(pointer: string, schema: unknown): boolean {
   return true;
 }
 
-export function lintCrossStepReferences(config: PipelineConfig): WorkflowLintWarning[] {
+export function lintCrossStepReferences(
+  config: PipelineConfig,
+): WorkflowLintWarning[] {
   const warnings: WorkflowLintWarning[] = [];
   const ids = new Set(config.steps.map((step) => step.id));
-  const enabled = new Set(config.steps.filter((step) => step.enabled).map((step) => step.id));
+  const enabled = new Set(
+    config.steps.filter((step) => step.enabled).map((step) => step.id),
+  );
   const withSchema = new Set(
     config.steps.filter((step) => !!step.output_schema).map((step) => step.id),
   );
@@ -166,13 +239,24 @@ export function lintCrossStepReferences(config: PipelineConfig): WorkflowLintWar
       const reference = match[1].trim();
       const id = reference.split("#")[0].trim();
       if (!id) {
-        warnings.push({ stepId: step.id, message: "prompt contains an empty {step:} reference" });
+        warnings.push({
+          stepId: step.id,
+          message: "prompt contains an empty {step:} reference",
+        });
       } else if (!ids.has(id)) {
-        warnings.push({ stepId: step.id, message: `prompt references unknown step '{step:${id}}'` });
+        warnings.push({
+          stepId: step.id,
+          message: `prompt references unknown step '{step:${id}}'`,
+        });
       } else if (!enabled.has(id)) {
-        warnings.push({ stepId: step.id, message: `prompt references disabled step '{step:${id}}'` });
+        warnings.push({
+          stepId: step.id,
+          message: `prompt references disabled step '{step:${id}}'`,
+        });
       }
-      const pointer = reference.includes("#") ? reference.split("#")[1].trim() : null;
+      const pointer = reference.includes("#")
+        ? reference.split("#")[1].trim()
+        : null;
       if (pointer && !pointer.startsWith("/")) {
         warnings.push({
           stepId: step.id,
@@ -183,9 +267,15 @@ export function lintCrossStepReferences(config: PipelineConfig): WorkflowLintWar
     const condition = step.run_if;
     if (condition?.kind === "output_matches") {
       if (!ids.has(condition.step)) {
-        warnings.push({ stepId: step.id, message: `run_if watches unknown step '${condition.step}'` });
+        warnings.push({
+          stepId: step.id,
+          message: `run_if watches unknown step '${condition.step}'`,
+        });
       } else if (!enabled.has(condition.step)) {
-        warnings.push({ stepId: step.id, message: `run_if watches disabled step '${condition.step}'` });
+        warnings.push({
+          stepId: step.id,
+          message: `run_if watches disabled step '${condition.step}'`,
+        });
       } else if (withSchema.has(condition.step)) {
         warnings.push({
           stepId: step.id,
@@ -194,7 +284,9 @@ export function lintCrossStepReferences(config: PipelineConfig): WorkflowLintWar
       }
     }
     if (condition?.kind === "survey_path" && config.orientation_schema) {
-      if (!pointerResolvesInSchema(condition.pointer, config.orientation_schema)) {
+      if (
+        !pointerResolvesInSchema(condition.pointer, config.orientation_schema)
+      ) {
         warnings.push({
           stepId: step.id,
           message: `run_if survey pointer '${condition.pointer}' does not exist in the orientation schema`,
@@ -233,17 +325,25 @@ export interface SequentialWave {
 
 export type Wave = ParallelWave | SequentialWave;
 
-export function computeWaves(steps: StepConfig[], includeDisabled = false): Wave[] {
+export function computeWaves(
+  steps: StepConfig[],
+  includeDisabled = false,
+): Wave[] {
   const eligible = includeDisabled ? steps : steps.filter((s) => s.enabled);
   const eligibleIds = new Set(eligible.map((step) => step.id));
-  const dependencies = eligible.map((step) =>
-    new Set([
-      ...(step.after ?? []),
-      ...(step.context?.include ?? [])
-        .filter((selector) => selector.kind === "step")
-        .map((selector) => selector.step),
-      ...(step.for_each?.artifact?.step ? [step.for_each.artifact.step] : []),
-    ].filter((id) => eligibleIds.has(id))),
+  const dependencies = eligible.map(
+    (step) =>
+      new Set(
+        [
+          ...(step.after ?? []),
+          ...(step.context?.include ?? [])
+            .filter((selector) => selector.kind === "step")
+            .map((selector) => selector.step),
+          ...(step.for_each?.artifact?.step
+            ? [step.for_each.artifact.step]
+            : []),
+        ].filter((id) => eligibleIds.has(id)),
+      ),
   );
   const waves: Wave[] = [];
   const done = new Set<string>();
@@ -258,15 +358,23 @@ export function computeWaves(steps: StepConfig[], includeDisabled = false): Wave
       // graph error when the user saves.
       const index = remaining[0];
       const step = eligible[index];
-      waves.push(step.phase === "parallel"
-        ? { kind: "parallel", steps: [step], hasMultiAgent: (step.agents?.length ?? 0) > 1 }
-        : { kind: "sequential", step });
+      waves.push(
+        step.phase === "parallel"
+          ? {
+              kind: "parallel",
+              steps: [step],
+              hasMultiAgent: (step.agents?.length ?? 0) > 1,
+            }
+          : { kind: "sequential", step },
+      );
       done.add(step.id);
       remaining = remaining.filter((candidate) => candidate !== index);
       continue;
     }
 
-    const readyParallel = ready.filter((index) => eligible[index].phase === "parallel");
+    const readyParallel = ready.filter(
+      (index) => eligible[index].phase === "parallel",
+    );
     if (readyParallel.length) {
       const waveSteps = readyParallel.map((index) => eligible[index]);
       waves.push({

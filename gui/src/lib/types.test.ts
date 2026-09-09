@@ -17,9 +17,9 @@ describe("isPaperOrientation", () => {
   });
 
   it("rejects custom survey schemas", () => {
-    expect(
-      isPaperOrientation({ overview: "a codebase", structure: [] }),
-    ).toBe(false);
+    expect(isPaperOrientation({ overview: "a codebase", structure: [] })).toBe(
+      false,
+    );
   });
 
   it("rejects null, undefined, and non-objects", () => {

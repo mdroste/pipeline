@@ -18,8 +18,12 @@ function setup(inputMode = "document") {
     profileConfigSnapshotId: "config-exact",
     profileSnapshotId: "runtime-exact",
     inputMode,
-    variables: [{ key: "tone", label: "Tone", kind: "text", default: "neutral" }],
-    inputSlots: [{ key: "rubric", label: "Rubric", mode: "document", required: true }],
+    variables: [
+      { key: "tone", label: "Tone", kind: "text", default: "neutral" },
+    ],
+    inputSlots: [
+      { key: "rubric", label: "Rubric", mode: "document", required: true },
+    ],
     readiness: { deps: [], ready: true },
     stages: [],
   };
@@ -57,9 +61,16 @@ describe("BatchPanel profile semantics", () => {
       />,
     );
 
-    expect(screen.getByRole("textbox", { name: "Tone" })).toHaveValue("neutral");
-    expect(screen.queryByText("Loading active workflow…")).not.toBeInTheDocument();
-    expect(invoke).not.toHaveBeenCalledWith("get_execution_plan", expect.anything());
+    expect(screen.getByRole("textbox", { name: "Tone" })).toHaveValue(
+      "neutral",
+    );
+    expect(
+      screen.queryByText("Loading active workflow…"),
+    ).not.toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "get_execution_plan",
+      expect.anything(),
+    );
   });
 
   it("collects and passes the full active profile options", async () => {
@@ -108,7 +119,9 @@ describe("BatchPanel profile semantics", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not open the file picker: dialog plugin unavailable",
     );
-    expect(screen.queryByRole("button", { name: "Retry setup" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry setup" }),
+    ).not.toBeInTheDocument();
   });
 
   it("identifies the field when a named-input picker fails", async () => {
@@ -147,20 +160,23 @@ describe("BatchPanel profile semantics", () => {
     await user.click(screen.getByRole("button", { name: "Add files…" }));
     await user.click(screen.getByRole("button", { name: "Start batch (2)" }));
 
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
-      variables: { tone: "neutral" },
-      extraInputs: { rubric: "/inputs/rubric.pdf" },
-      expectedProfileConfigSnapshotId: "config-exact",
-      diff: false,
-      paperPath: "/papers/second.pdf",
-      inputInterpretation: "document",
-    }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
+        variables: { tone: "neutral" },
+        extraInputs: { rubric: "/inputs/rubric.pdf" },
+        expectedProfileConfigSnapshotId: "config-exact",
+        diff: false,
+        paperPath: "/papers/second.pdf",
+        inputInterpretation: "document",
+      }),
+    );
   });
 
   it("accepts queued documents for a folder-profile batch", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_execution_plan") return Promise.resolve(folderSetup());
+      if (command === "get_execution_plan")
+        return Promise.resolve(folderSetup());
       if (command === "start_batch") return Promise.resolve();
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
@@ -175,37 +191,46 @@ describe("BatchPanel profile semantics", () => {
     await user.click(screen.getByRole("button", { name: "Add files…" }));
     await user.click(screen.getByRole("button", { name: "Start batch (1)" }));
 
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
-      "start_batch",
-      expect.objectContaining({ paths: ["/papers/paper.pdf"] }),
-    ));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "start_batch",
+        expect.objectContaining({ paths: ["/papers/paper.pdf"] }),
+      ),
+    );
   });
 
   it("gates batch processing only for workflows with no primary input", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_execution_plan") return Promise.resolve(setup("none"));
+      if (command === "get_execution_plan")
+        return Promise.resolve(setup("none"));
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
     render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
 
-    expect(await screen.findByText("This workflow does not accept batch inputs.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Add files…" })).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("This workflow does not accept batch inputs."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Add files…" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the exact captured profile and snapshot for a batch", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") {
-        return Promise.resolve([{
-          path: "/papers/a.pdf",
-          name: "a.pdf",
-          status: "done",
-          run_id: "run-a",
-          error: null,
-          duration_secs: 1,
-          profile_id: "review",
-          profile_snapshot_id: "batch-snapshot-exact",
-        }]);
+        return Promise.resolve([
+          {
+            path: "/papers/a.pdf",
+            name: "a.pdf",
+            status: "done",
+            run_id: "run-a",
+            error: null,
+            duration_secs: 1,
+            profile_id: "review",
+            profile_snapshot_id: "batch-snapshot-exact",
+          },
+        ]);
       }
       if (command === "get_execution_plan") return Promise.resolve(setup());
       return Promise.reject(new Error(`unexpected command: ${command}`));
@@ -227,9 +252,13 @@ describe("BatchPanel profile semantics", () => {
     });
     render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("batch listener denied");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "batch listener denied",
+    );
     expect(cleanups[0]).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "Start batch (0)" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Start batch (0)" }),
+    ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Retry setup" })).toBeEnabled();
   });
 
@@ -257,9 +286,10 @@ describe("BatchPanel profile semantics", () => {
     await user.click(screen.getByRole("button", { name: "Add files…" }));
     await user.click(screen.getByRole("button", { name: "Start batch (1)" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("profile config snapshot changed");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "profile config snapshot changed",
+    );
     expect(screen.getByRole("alert")).toHaveTextContent("review its options");
     expect(invoke).not.toHaveBeenCalledWith("start_batch", expect.anything());
   });
-
 });

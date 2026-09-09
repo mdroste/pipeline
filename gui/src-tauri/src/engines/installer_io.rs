@@ -81,7 +81,7 @@ pub(super) const INSTALL_LOG_LINE_BYTES: usize = 64 * 1024;
 pub(super) const INSTALL_OUTPUT_GRACE_SECS: u64 = 2;
 pub(super) const INSTALL_OUTPUT_POST_KILL_SECS: u64 = 2;
 
-pub(super) struct InstallGuard {
+pub(crate) struct InstallGuard {
     lock_file: std::fs::File,
     installing: bool,
 }
@@ -494,6 +494,7 @@ pub(super) fn unpack_llama_archive(
             .map_err(|error| format!("Failed to open llama.cpp archive: {error}"))?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|error| format!("Invalid llama.cpp zip: {error}"))?;
+        ensure_llama_archive_entry_count(archive.len())?;
         let mut total = 0u64;
         for index in 0..archive.len() {
             let mut entry = archive
@@ -542,10 +543,15 @@ pub(super) fn unpack_llama_archive(
         let decoder = flate2::read::GzDecoder::new(file);
         let mut archive = tar::Archive::new(decoder);
         let mut total = 0u64;
+        let mut entries_seen = 0usize;
         for entry in archive
             .entries()
             .map_err(|error| format!("Invalid llama.cpp archive: {error}"))?
         {
+            entries_seen = entries_seen
+                .checked_add(1)
+                .ok_or("llama.cpp archive entry count overflow")?;
+            ensure_llama_archive_entry_count(entries_seen)?;
             let mut entry =
                 entry.map_err(|error| format!("Invalid llama.cpp archive entry: {error}"))?;
             let kind = entry.header().entry_type();
@@ -620,6 +626,14 @@ pub(super) fn unpack_llama_archive(
         return Err("llama-server was not found in the downloaded runtime".to_string());
     }
     Ok(())
+}
+
+pub(super) fn ensure_llama_archive_entry_count(entries: usize) -> Result<(), String> {
+    if entries > MAX_LLAMA_ARCHIVE_ENTRIES {
+        Err("llama.cpp archive exceeds its entry limit".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 pub(super) fn unpack_uv_archive(
@@ -925,3 +939,7 @@ pub(super) async fn ensure_uv(app: &crate::emit::EventBus) -> Result<PathBuf, St
     log(app, format!("Installed managed uv {UV_VERSION}"));
     Ok(uv_path)
 }
+
+#[cfg(test)]
+#[path = "lease_tests.rs"]
+mod lease_tests;

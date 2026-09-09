@@ -35,15 +35,21 @@ describe("ExportControls", () => {
     render(<ExportControls markdown="# report" />);
     expect(screen.getAllByRole("button")).toHaveLength(1);
     await openMenu();
-    expect(screen.getByRole("menuitem", { name: "Save Markdown…" })).toBeVisible();
-    expect(screen.getByRole("menuitem", { name: "Print / save as PDF…" })).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: "Save Markdown…" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: "Print / save as PDF…" }),
+    ).toBeVisible();
   });
 
   it("saves Markdown without accepting a webview-controlled path", async () => {
     invoke.mockResolvedValueOnce("/tmp/report.md");
     render(<ExportControls markdown="# report" />);
     await openMenu();
-    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Save Markdown…" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: "Save Markdown…" }));
     const [command, args] = invoke.mock.calls[0];
     expect(command).toBe("save_report_md");
     expect(args.markdown).toBe("# report");
@@ -53,9 +59,17 @@ describe("ExportControls", () => {
 
   it("opens the native print view with clean content and provenance", async () => {
     invoke.mockResolvedValueOnce(undefined);
-    render(<ExportControls markdown="# raw" pdfMarkdown="## Clean" provenanceMarkdown="# Provenance" />);
+    render(
+      <ExportControls
+        markdown="# raw"
+        pdfMarkdown="## Clean"
+        provenanceMarkdown="# Provenance"
+      />,
+    );
     await openMenu();
-    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Print / save as PDF…" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: "Print / save as PDF…" }));
     expect(invoke).toHaveBeenCalledWith("print_report_html", {
       markdown: "## Clean",
       provenanceMarkdown: "# Provenance",
@@ -65,9 +79,15 @@ describe("ExportControls", () => {
   it("offers safe, forensic, and custom packages only for saved runs", async () => {
     render(<ExportControls runId="saved-run" markdown="# report" />);
     await openMenu();
-    expect(screen.getByRole("menuitem", { name: /Shareable report/ })).toHaveTextContent("No source or raw responses");
-    expect(screen.getByRole("menuitem", { name: /Forensic archive/ })).toHaveTextContent("Sensitive");
-    expect(screen.getByRole("menuitem", { name: "Custom selection…" })).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: /Shareable report/ }),
+    ).toHaveTextContent("No source or raw responses");
+    expect(
+      screen.getByRole("menuitem", { name: /Forensic archive/ }),
+    ).toHaveTextContent("Sensitive");
+    expect(
+      screen.getByRole("menuitem", { name: "Custom selection…" }),
+    ).toBeVisible();
   });
 
   it("exports the safe shareable selection by default and displays its checksum", async () => {
@@ -82,7 +102,9 @@ describe("ExportControls", () => {
     });
     render(<ExportControls runId="saved-run" markdown="# report" />);
     await openMenu();
-    await userEvent.setup().click(screen.getByRole("menuitem", { name: /Shareable report/ }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: /Shareable report/ }));
     expect(confirmDialog).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledWith("export_run_package", {
       runId: "saved-run",
@@ -107,8 +129,12 @@ describe("ExportControls", () => {
     confirmDialog.mockResolvedValueOnce(false);
     render(<ExportControls runId="saved-run" markdown="# report" />);
     await openMenu();
-    await userEvent.setup().click(screen.getByRole("menuitem", { name: /Forensic archive/ }));
-    expect(confirmDialog.mock.calls[0][0]).toMatch(/source documents, raw model responses, logs/i);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: /Forensic archive/ }));
+    expect(confirmDialog.mock.calls[0][0]).toMatch(
+      /source documents, raw model responses, logs/i,
+    );
     expect(openDialog).not.toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -117,10 +143,18 @@ describe("ExportControls", () => {
     confirmDialog.mockResolvedValueOnce(false);
     render(<ExportControls runId="saved-run" markdown="# report" />);
     await openMenu();
-    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Custom selection…" }));
-    await userEvent.setup().click(screen.getByRole("checkbox", { name: "Source documents · Sensitive" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: "Custom selection…" }));
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("checkbox", { name: "Source documents · Sensitive" }),
+      );
     expect(screen.getByText(/selection is sensitive/i)).toBeVisible();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Export selected items…" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Export selected items…" }));
     expect(confirmDialog).toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -128,21 +162,44 @@ describe("ExportControls", () => {
   it("reveals only the exact completed package path returned by the backend", async () => {
     openDialog.mockResolvedValueOnce("/tmp/exports");
     invoke
-      .mockResolvedValueOnce({ exportedPath: "/tmp/exports/package", fileCount: 1, bytes: 10, checksum: "abc", mode: "shareable", sensitivity: "shareable" })
+      .mockResolvedValueOnce({
+        exportedPath: "/tmp/exports/package",
+        fileCount: 1,
+        bytes: 10,
+        checksum: "abc",
+        mode: "shareable",
+        sensitivity: "shareable",
+      })
       .mockResolvedValueOnce(undefined);
     render(<ExportControls runId="saved-run" markdown="# report" />);
     await openMenu();
-    await userEvent.setup().click(screen.getByRole("menuitem", { name: /Shareable report/ }));
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Reveal in folder" }));
-    expect(invoke).toHaveBeenLastCalledWith("reveal_export_in_folder", { path: "/tmp/exports/package" });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: /Shareable report/ }));
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: "Reveal in folder" }));
+    expect(invoke).toHaveBeenLastCalledWith("reveal_export_in_folder", {
+      path: "/tmp/exports/package",
+    });
   });
 
   it("keeps an unsaved core package inside the same menu", async () => {
     openDialog.mockResolvedValueOnce("/tmp/core");
     invoke.mockResolvedValueOnce(undefined);
-    render(<ExportControls markdown="# report" report={fakeReport} extractedText="text" />);
+    render(
+      <ExportControls
+        markdown="# report"
+        report={fakeReport}
+        extractedText="text"
+      />,
+    );
     await openMenu();
-    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Export unsaved core package…" }));
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("menuitem", { name: "Export unsaved core package…" }),
+      );
     expect(invoke).toHaveBeenCalledWith("save_all_artifacts", {
       dir: "/tmp/core",
       markdown: "# report",

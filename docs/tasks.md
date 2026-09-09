@@ -1,10 +1,12 @@
-# Tasks
+# Automations
 
-Task chains connect Workspace conversations, immutable paper snapshots, Workflow profiles,
-and follow-ups. Open **Tasks** in the navigation rail, or choose **Run a task chain** in
-the Workspace composer menu. The built-in starting points are **Review and revise**,
-**Follow up**, and **Wait for input**. Prepare the task chain to inspect its conversation,
-folder, saved Workflow profiles, and limits; **Start task chain** begins that exact scope.
+Automations connect project conversations, immutable paper snapshots, Review profiles,
+and follow-ups. Open **Automations** under Tools, or choose **Run an automation** in
+the conversation menu. The built-in starting points are **Review and revise**,
+**Follow up**, and **Wait for input**. Prepare the automation to inspect its conversation,
+folder, saved Review profiles, and limits; **Start automation** begins that exact scope.
+The native compatibility namespace and portable schema continue to use `task` and
+`chain`; those are implementation terms rather than separate product objects.
 
 The Review-and-revise template produces a complete Markdown paper or captures an
 existing document, reviews it, and revises only when another review is permitted.
@@ -15,19 +17,19 @@ another Review run on the same bytes. Findings and quality limitations remain
 available with the result; completing the sequence does not establish scientific
 correctness.
 
-The Active, Scheduled and History tabs show task chains. Project **Action items**
-are local research objectives; they do not start a chain or a mission. Tabs use
+The Active, Scheduled and History tabs show automations. Project **Action items**
+are local research objectives; they do not start an automation. Tabs use
 Arrow/Home/End to move focus and Enter/Space to activate, avoiding native reads
 while moving across labels.
 
-## Research missions
+## Research automations
 
-**Tasks → Missions** provides persistent adaptive research agendas. A mission
+**Automations → Research** provides persistent adaptive research agendas. A research automation
 creates separate planner, investigator and challenger conversations, chooses
 bounded investigations, retains evidence and negative results, and replans after
 assessment or researcher input. Prepared criteria, permissions and cumulative
-limits remain fixed. Child actions are inspected from the mission's Activity tab;
-pause, stop and recovery belong to the parent mission. See
+limits remain fixed. Child actions are inspected from the automation's Activity tab;
+pause, stop and recovery belong to the parent automation. See
 [Research missions](research-missions.md) for the full contract and walkthrough.
 
 ## Timing and input
@@ -62,22 +64,22 @@ the native [Tauri system tray APIs](https://tauri.app/learn/system-tray/).
 files, or save content-addressed versions in **Saved chains**. The authoritative
 schema is [schema.json](../gui/src-tauri/src/orchestration/schema.json).
 
-| Step | Meaning |
-|---|---|
-| `workspace` | Submit a turn to the bound conversation without changing its draft |
-| `snapshot` | Capture text, a scoped file, or a source/TeX folder as an immutable artifact |
-| `review` | Run a pinned Workflow profile against a captured artifact |
-| `check` | Run a configured, tested, explicitly authorized Workspace execution profile |
-| `capturedCheck` | Run an exact authorized captured plan (`planId`) in a fresh execution directory |
-| `deliver` | Copy a bounded immutable result into the conversation's task exchanges |
-| `delay`, `until` | Suspend until an elapsed duration or absolute UTC timestamp |
-| `input` | Suspend until a researcher supplies input, optionally with a timeout |
-| `if` | Select and persist one branch |
-| `repeat` | Run a bounded body, testing the stop condition after each iteration |
-| `while` | Test before entering each bounded iteration |
-| `parallel` | Run independent branches and join before the next step |
-| `forEach` | Process a captured bounded input array, exposing `item` and `index` |
-| `chain` | Embed a versioned chain definition |
+| Step             | Meaning                                                                         |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `workspace`      | Submit a turn to the bound conversation without changing its draft              |
+| `snapshot`       | Capture text, a scoped file, or a source/TeX folder as an immutable artifact    |
+| `review`         | Run a pinned Workflow profile against a captured artifact                       |
+| `check`          | Run a configured, tested, explicitly authorized Workspace execution profile     |
+| `capturedCheck`  | Run an exact authorized captured plan (`planId`) in a fresh execution directory |
+| `deliver`        | Copy a bounded immutable result into the conversation's task exchanges          |
+| `delay`, `until` | Suspend until an elapsed duration or absolute UTC timestamp                     |
+| `input`          | Suspend until a researcher supplies input, optionally with a timeout            |
+| `if`             | Select and persist one branch                                                   |
+| `repeat`         | Run a bounded body, testing the stop condition after each iteration             |
+| `while`          | Test before entering each bounded iteration                                     |
+| `parallel`       | Run independent branches and join before the next step                          |
+| `forEach`        | Process a captured bounded input array, exposing `item` and `index`             |
+| `chain`          | Embed a versioned chain definition                                              |
 
 Step IDs are unique throughout the definition, including embedded chains.
 Bindings select a literal, a named input, a step output with a JSON pointer, or

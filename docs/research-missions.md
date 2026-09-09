@@ -1,6 +1,6 @@
-# Autonomous research missions
+# Autonomous research automations
 
-The first desktop implementation is available in **Tasks → Missions**. This
+The first desktop implementation is available in **Automations → Research**. This
 document describes the implemented contract and qualification limits.
 
 ## Product contract
@@ -11,24 +11,24 @@ investigation, challenges its result in a separate conversation, and updates its
 agenda. Refutations and well-supported negative results are useful outcomes.
 The original research remit and authorization remain researcher-owned.
 
-Missions appear in Tasks. Preparation shows the exact project, conversations,
+Research automations appear under Automations. Preparation shows the exact project, conversations,
 permissions, available checks, experiment variants and limits. Starting that
 prepared mission authorizes its child actions within those limits. Pause lets
 active work settle; Stop cancels only the mission's child. Inputs and observed project
 changes can wake a waiting mission. A brief retains findings, source references,
 limitations, unresolved questions, activity and proposed reusable methods.
 
-## Starting a mission
+## Starting a research automation
 
-1. Open **Tasks → Missions → New mission** and choose a project conversation.
+1. Open **Automations → Research → New research automation** and choose a project conversation.
 2. Choose a theory, empirical, quantitative, literature, discovery or maintenance
    starting point. Set the remit, current understanding and completion criteria.
 3. Set limits on rounds, managed actions, active execution time, each action's
    duration, elapsed deadline and consecutive rounds without substantive progress.
 4. Select existing authorized checks, prepared experiment variants, project
-   monitors, an optional additional Workflow review and any retained methods.
-5. **Prepare mission** creates a durable preview and scoped role conversations.
-   **Start mission** delegates the displayed work within its recorded limits.
+   monitors, an optional additional Review and any retained methods.
+5. **Prepare research automation** creates a durable preview and scoped role conversations.
+   **Start research automation** delegates the displayed work within its recorded limits.
 
 Agenda shows the original criteria, evolving goals and selected investigation.
 Findings retains alternatives, reasoning, negative outcomes and evidence. Decisions

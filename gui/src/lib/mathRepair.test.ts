@@ -24,7 +24,9 @@ describe("math repair", () => {
 
   it("creates a readable fallback without inventing mathematical content", () => {
     expect(
-      latexToReadableText(String.raw`\frac{\alpha_t}{\sqrt{x}} \notARealCommand{z}`),
+      latexToReadableText(
+        String.raw`\frac{\alpha_t}{\sqrt{x}} \notARealCommand{z}`,
+      ),
     ).toBe("(α_t)/(√(x)) notARealCommandz");
   });
 

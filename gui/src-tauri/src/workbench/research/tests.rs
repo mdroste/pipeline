@@ -776,56 +776,114 @@ fn a_project_profile_can_be_copied_to_all_workspaces() {
 #[test]
 fn base_prompt_overrides_survive_copies_legacy_updates_and_snapshots() {
     let fixture = fixture();
-    let copy = clone_preset(&fixture.store, ClonePresetRequest {
-        workspace_id: None, source_workspace_id: None, source_preset_id: "writing".into(),
-        name: "Writer".into(), operation_id: "base-clone".into(),
-    }).unwrap();
-    assert_eq!(copy.base_instructions, find_preset(&fixture.store, None, "writing").unwrap().base_instructions);
+    let copy = clone_preset(
+        &fixture.store,
+        ClonePresetRequest {
+            workspace_id: None,
+            source_workspace_id: None,
+            source_preset_id: "writing".into(),
+            name: "Writer".into(),
+            operation_id: "base-clone".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        copy.base_instructions,
+        find_preset(&fixture.store, None, "writing")
+            .unwrap()
+            .base_instructions
+    );
     assert!(copy.base_instructions.is_some());
     select_preset(&fixture, &copy.id, "inspect");
     let before = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
     let request = |revision, change: Option<Value>| {
         let mut value = json!({"presetId":copy.id,"expectedRevision":revision,"name":"Writer","description":"","instructions":"Additional writing guidance","modules":[],"operationId":format!("base-update-{revision}")});
-        if let Some(change) = change { value["basePrompt"] = change; }
+        if let Some(change) = change {
+            value["basePrompt"] = change;
+        }
         serde_json::from_value::<UpdatePresetRequest>(value).unwrap()
     };
     let text = "You are a custom writer.\nPreserve this exact whitespace.\n";
-    let updated = update_preset(&fixture.store, request(1, Some(json!({"mode":"replace","text":text})))).unwrap();
+    let updated = update_preset(
+        &fixture.store,
+        request(1, Some(json!({"mode":"replace","text":text}))),
+    )
+    .unwrap();
     assert_eq!(updated.base_instructions.as_deref(), Some(text));
     let prepared = prepare_turn(&fixture.store, &fixture.session_id).unwrap();
     assert_ne!(before.fingerprint, prepared.effective.fingerprint);
-    assert_eq!(prepared.effective.preset.base_instructions.as_deref(), Some(text));
+    assert_eq!(
+        prepared.effective.preset.base_instructions.as_deref(),
+        Some(text)
+    );
     assert!(!prepared.effective.developer_instructions.contains(text));
-    assert!(!prepared.effective.developer_instructions.contains("Preserve Codex base instructions."));
-    assert!(prepared.effective.developer_instructions.contains("Additional writing guidance"));
-    let snapshot: EffectiveHarness = serde_json::from_value(serde_json::to_value(&prepared.effective).unwrap()).unwrap();
+    assert!(!prepared
+        .effective
+        .developer_instructions
+        .contains("Preserve Codex base instructions."));
+    assert!(prepared
+        .effective
+        .developer_instructions
+        .contains("Additional writing guidance"));
+    let snapshot: EffectiveHarness =
+        serde_json::from_value(serde_json::to_value(&prepared.effective).unwrap()).unwrap();
     assert_eq!(snapshot.preset.base_instructions.as_deref(), Some(text));
     let legacy_update = update_preset(&fixture.store, request(2, None)).unwrap();
     assert_eq!(legacy_update.base_instructions.as_deref(), Some(text));
-    let inherited = update_preset(&fixture.store, request(3, Some(json!({"mode":"codexDefault"})))).unwrap();
+    let inherited = update_preset(
+        &fixture.store,
+        request(3, Some(json!({"mode":"codexDefault"}))),
+    )
+    .unwrap();
     assert!(inherited.base_instructions.is_none());
     let inherited = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
     assert_ne!(prepared.effective.fingerprint, inherited.fingerprint);
-    assert!(inherited.developer_instructions.contains("Preserve Codex base instructions."));
+    assert!(inherited
+        .developer_instructions
+        .contains("Preserve Codex base instructions."));
     let value = serde_json::to_value(&inherited).unwrap();
     assert!(value["preset"].get("baseInstructions").is_none());
     let legacy: EffectiveHarness = serde_json::from_value(value).unwrap();
     assert!(legacy.preset.base_instructions.is_none());
-    for invalid in ["   ".to_string(), "NUL\0prompt".into(), "x".repeat(MAX_INSTRUCTIONS_BYTES + 1)] {
-        assert!(update_preset(&fixture.store, request(4, Some(json!({"mode":"replace","text":invalid})))).is_err());
+    for invalid in [
+        "   ".to_string(),
+        "NUL\0prompt".into(),
+        "x".repeat(MAX_INSTRUCTIONS_BYTES + 1),
+    ] {
+        assert!(update_preset(
+            &fixture.store,
+            request(4, Some(json!({"mode":"replace","text":invalid})))
+        )
+        .is_err());
     }
-    assert_eq!(find_preset(&fixture.store, None, &copy.id).unwrap().revision, 4);
+    assert_eq!(
+        find_preset(&fixture.store, None, &copy.id)
+            .unwrap()
+            .revision,
+        4
+    );
 }
 
 #[test]
 fn schema_13_custom_profiles_migrate_to_inheriting_the_native_default() {
     let fixture = fixture();
-    let copy = clone_preset(&fixture.store, ClonePresetRequest {
-        workspace_id: None, source_workspace_id: None, source_preset_id: "plain".into(),
-        name: "Existing profile".into(), operation_id: "legacy-base-clone".into(),
-    }).unwrap();
+    let copy = clone_preset(
+        &fixture.store,
+        ClonePresetRequest {
+            workspace_id: None,
+            source_workspace_id: None,
+            source_preset_id: "plain".into(),
+            name: "Existing profile".into(),
+            operation_id: "legacy-base-clone".into(),
+        },
+    )
+    .unwrap();
     let connection = fixture.store.connection().unwrap();
-    connection.execute_batch("ALTER TABLE presets DROP COLUMN base_instructions; PRAGMA user_version = 13;").unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE discovery_roles; ALTER TABLE presets DROP COLUMN base_instructions; PRAGMA user_version = 13;",
+        )
+        .unwrap();
     drop(connection);
     let migrated = Store::open_at(fixture.store.root_path()).unwrap();
     assert_eq!(find_preset(&migrated, None, &copy.id).unwrap(), copy);

@@ -1128,7 +1128,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
             // Callers like switch_profile() do load() -> mutate -> save(); without
             // the quarantine that save would overwrite the user's settings
             // (including encrypted API keys) with defaults.
-            match quarantine_corrupt_file(&path) {
+            match quarantine_corrupt_file(&path, &content) {
                 Some(backup) => warnings.push(format!(
                     "Settings file has invalid JSON: {e}. It was moved to {} — fix and rename it back, or re-enter your settings.",
                     backup.display()
@@ -1337,23 +1337,8 @@ fn load_raw_settings_required(path: &std::path::Path) -> Result<Settings, String
     Ok(settings)
 }
 
-/// Move an unparseable settings file to `<name>.corrupt` so a subsequent
-/// save() cannot destroy the user's data. Returns the backup path on success.
-fn quarantine_corrupt_file(path: &std::path::Path) -> Option<PathBuf> {
-    let mut backup = path.as_os_str().to_owned();
-    backup.push(".corrupt");
-    let backup = PathBuf::from(backup);
-    match fs::rename(path, &backup) {
-        Ok(()) => Some(backup),
-        Err(e) => {
-            eprintln!(
-                "WARNING: could not quarantine corrupt settings file {}: {e}",
-                path.display()
-            );
-            None
-        }
-    }
-}
+mod quarantine;
+use quarantine::quarantine_corrupt_file;
 
 static SETTINGS_WRITE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

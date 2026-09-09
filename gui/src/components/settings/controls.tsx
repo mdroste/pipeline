@@ -1,3 +1,5 @@
+import { SettingsCardId } from "./SaveState";
+import { useId } from "react";
 import type { ModelCatalog } from "../../lib/types";
 
 import InfoButton from "../InfoButton";
@@ -10,9 +12,11 @@ export function SettingsCard({
   children: React.ReactNode;
 }) {
   return (
-    <section id={id} tabIndex={-1} className="settings-card settings-anchor">
-      {children}
-    </section>
+    <SettingsCardId.Provider value={id}>
+      <section id={id} tabIndex={-1} className="settings-card settings-anchor">
+        {children}
+      </section>
+    </SettingsCardId.Provider>
   );
 }
 
@@ -122,11 +126,11 @@ export function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div>
+    <div className="settings-field">
       <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-neutral-300">
         <span>{label}</span>
-        {help && <InfoButton label={label}>{help}</InfoButton>}
       </div>
+      {help && <div className="settings-field-help">{help}</div>}
       {children}
     </div>
   );
@@ -158,15 +162,20 @@ export function Toggle({
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
+  const descriptionId = useId();
   return (
-    <div
-      onClick={() => onChange(!checked)}
-      className="flex cursor-pointer items-start gap-3 rounded-lg p-3 transition-colors hover:bg-gray-50 dark:hover:bg-neutral-800/40"
-    >
+    <div className="settings-toggle">
+      <div className="settings-row-copy">
+        <span className="settings-row-label">{label}</span>
+        <p id={descriptionId} className="settings-row-description">
+          {description}
+        </p>
+      </div>
       <button
         type="button"
         role="switch"
         aria-label={label}
+        aria-describedby={descriptionId}
         aria-checked={checked}
         onClick={(event) => {
           event.stopPropagation();
@@ -184,12 +193,6 @@ export function Toggle({
           }`}
         />
       </button>
-      <div className="flex-1">
-        <div className="flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-neutral-100">
-          <span>{label}</span>
-          <InfoButton label={label}>{description}</InfoButton>
-        </div>
-      </div>
     </div>
   );
 }

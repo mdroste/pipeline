@@ -27,3 +27,23 @@ it("opens scoped source locations and retains loaded relative images across rere
   await waitFor(() => expect(image).toHaveBeenCalledTimes(1));
   expect(container.querySelector(".hljs-keyword")).not.toBeNull();
 });
+
+it("loads an absolute image through a conversation-scoped backend", async () => {
+  const image = vi.fn(async () => "data:image/png;base64,AA==");
+  render(
+    <FileNavigationScope
+      value={{
+        path: "conversation.md",
+        open: vi.fn(),
+        openAbsolute: vi.fn(),
+        image,
+      }}
+    >
+      <ReactMarkdown components={fileMarkdownComponents}>
+        {"![Generated](/private/session/figure.png)"}
+      </ReactMarkdown>
+    </FileNavigationScope>,
+  );
+  expect(await screen.findByRole("img", { name: "Generated" })).toBeVisible();
+  expect(image).toHaveBeenCalledWith("/private/session/figure.png");
+});

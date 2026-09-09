@@ -17,7 +17,8 @@ function cell(value: unknown): string {
   let text: string;
   if (value === null || value === undefined) text = "";
   else if (typeof value === "string") text = value;
-  else if (typeof value === "number" || typeof value === "boolean") text = String(value);
+  else if (typeof value === "number" || typeof value === "boolean")
+    text = String(value);
   else text = JSON.stringify(value);
   return text.replace(/\|/g, "\\|").replace(/\s*\n\s*/g, " ");
 }
@@ -44,8 +45,10 @@ function renderObjectArray(rows: Record<string, unknown>[]): string {
 
 function renderValue(value: unknown): string {
   if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value.trim() ? `${value.trim()}\n\n` : "";
-  if (typeof value === "number" || typeof value === "boolean") return `${value}\n\n`;
+  if (typeof value === "string")
+    return value.trim() ? `${value.trim()}\n\n` : "";
+  if (typeof value === "number" || typeof value === "boolean")
+    return `${value}\n\n`;
   if (Array.isArray(value)) {
     if (value.length === 0) return "";
     if (value.every(isPlainObject)) {
@@ -54,9 +57,14 @@ function renderValue(value: unknown): string {
     return value.map((v) => `- ${cell(v)}`).join("\n") + "\n\n";
   }
   if (isPlainObject(value)) {
-    const entries = Object.entries(value).filter(([, v]) => v !== null && v !== undefined);
+    const entries = Object.entries(value).filter(
+      ([, v]) => v !== null && v !== undefined,
+    );
     if (entries.length === 0) return "";
-    return entries.map(([k, v]) => `- **${titleCase(k)}**: ${cell(v)}`).join("\n") + "\n\n";
+    return (
+      entries.map(([k, v]) => `- **${titleCase(k)}**: ${cell(v)}`).join("\n") +
+      "\n\n"
+    );
   }
   return "";
 }
@@ -84,7 +92,8 @@ function renderOrientationMap(orientation: OrientationMap): string {
   const metadata = (orientation.metadata ?? {}) as Partial<PaperMetadata>;
   let md = `# Orientation Map\n\n`;
   md += `**Title**: ${metadata.title ?? ""}  \n`;
-  if (metadata.authors?.length) md += `**Authors**: ${metadata.authors.join(", ")}  \n`;
+  if (metadata.authors?.length)
+    md += `**Authors**: ${metadata.authors.join(", ")}  \n`;
   md += `**Type**: ${metadata.paper_type ?? "unknown"}`;
   if (metadata.page_count) md += ` · **Pages**: ${metadata.page_count}`;
   md += `  \n`;
@@ -100,7 +109,8 @@ function renderOrientationMap(orientation: OrientationMap): string {
     if (plan.paper_forms?.length) {
       md += `**Paper form**: ${plan.paper_forms.map(titleCase).join(", ")}  \n`;
     }
-    if (plan.methods?.length) md += `**Methods**: ${plan.methods.join(", ")}  \n`;
+    if (plan.methods?.length)
+      md += `**Methods**: ${plan.methods.join(", ")}  \n`;
     if (plan.genre && plan.genre !== "research_article") {
       md += `**Document genre**: ${titleCase(plan.genre.replace(/^genre_/, ""))}  \n`;
     }
@@ -117,11 +127,13 @@ function renderOrientationMap(orientation: OrientationMap): string {
         ...(plan.subject_specialist_ids ?? []),
         ...(plan.method_specialist_ids ?? []),
       ].filter(Boolean);
-      if (ids.length) md += ids.map((id) => `- ${titleCase(id)}`).join("\n") + "\n\n";
+      if (ids.length)
+        md += ids.map((id) => `- ${titleCase(id)}`).join("\n") + "\n\n";
     }
     if (plan.routing_uncertainty?.length) {
       md += `### Routing Uncertainty\n\n`;
-      for (const uncertainty of plan.routing_uncertainty) md += `- ${uncertainty}\n`;
+      for (const uncertainty of plan.routing_uncertainty)
+        md += `- ${uncertainty}\n`;
       md += `\n`;
     }
   }
@@ -133,7 +145,9 @@ function renderOrientationMap(orientation: OrientationMap): string {
     md += `## Sections\n\n| # | Title | Pages |\n|---|-------|-------|\n`;
     for (const section of orientation.sections) {
       const pages = section.page_start
-        ? (section.page_end ? `${section.page_start}–${section.page_end}` : `${section.page_start}`)
+        ? section.page_end
+          ? `${section.page_start}–${section.page_end}`
+          : `${section.page_start}`
         : "";
       md += `| ${section.number} | ${section.title} | ${pages} |\n`;
     }
@@ -166,7 +180,8 @@ function renderOrientationMap(orientation: OrientationMap): string {
   }
   if (orientation.key_references?.length) {
     md += `## Key References\n\n`;
-    for (const reference of orientation.key_references) md += `- ${reference}\n`;
+    for (const reference of orientation.key_references)
+      md += `- ${reference}\n`;
     md += `\n`;
   }
   if (orientation.extraction_quality_notes?.length) {
@@ -180,7 +195,9 @@ function renderOrientationMap(orientation: OrientationMap): string {
 }
 
 /** Render any survey JSON: paper view when paper-shaped, generic sections otherwise. */
-export function renderSurvey(orientation: PipelineReport["orientation"]): string {
+export function renderSurvey(
+  orientation: PipelineReport["orientation"],
+): string {
   return isPaperOrientation(orientation)
     ? renderOrientationMap(orientation)
     : renderGenericSurvey(orientation);

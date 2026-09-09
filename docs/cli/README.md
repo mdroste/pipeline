@@ -213,7 +213,9 @@ determines which variables and named inputs are valid or required.
 ## Batch runs
 
 `batch` scans one directory non-recursively for PDF, TeX, and DOCX files and
-runs them sequentially. Hidden files are skipped:
+runs them sequentially. It captures the workflow and execution settings once
+before the first item, so edits made during a batch apply to the next batch.
+Hidden files are skipped:
 
 ```bash
 ./target/debug/pipeline-cli batch \

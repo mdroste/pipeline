@@ -7,11 +7,31 @@ import PromptEditor from "../PromptEditor";
 import { MemoizedExtraInputsEditor as ExtraInputsEditor } from "./ProfileSettingsEditors";
 
 const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
-  { value: "", label: "Inherit from global Settings", hint: "Use whatever PDF extractor is configured globally." },
-  { value: "auto", label: "Auto", hint: "Try the global setting; same as inherit." },
-  { value: "llm", label: "LLM", hint: "Your selected model transcribes the PDF a few pages at a time, with checks for missing text. Slower, but retains equations and original typos." },
-  { value: "paddleocr-vl-full", label: "Local engine: PaddleOCR-VL 1.6 Full Parser", hint: "Official layout-aware client with structured regions, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses Pipeline's managed llama.cpp server." },
-  { value: "pdftotext", label: "pdftotext (basic)", hint: "Fast, but equations are lost. Uses bundled poppler." },
+  {
+    value: "",
+    label: "Inherit from global Settings",
+    hint: "Use whatever PDF extractor is configured globally.",
+  },
+  {
+    value: "auto",
+    label: "Auto",
+    hint: "Try the global setting; same as inherit.",
+  },
+  {
+    value: "llm",
+    label: "LLM",
+    hint: "Your selected model transcribes the PDF a few pages at a time, with checks for missing text. Slower, but retains equations and original typos.",
+  },
+  {
+    value: "paddleocr-vl-full",
+    label: "Local engine: PaddleOCR-VL 1.6 Full Parser",
+    hint: "Official layout-aware client with structured regions, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses Pipeline's managed llama.cpp server.",
+  },
+  {
+    value: "pdftotext",
+    label: "pdftotext (basic)",
+    hint: "Fast, but equations are lost. Uses bundled poppler.",
+  },
 ];
 
 function ExtractionEditor({
@@ -29,10 +49,12 @@ function ExtractionEditor({
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
       <div className="p-4 space-y-5">
         <div>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Input & PDF Extraction</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
+            Input & PDF Extraction
+          </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-            Stage 0a. What the workflow takes as input, and how text is pulled from it before
-            any LLM call.
+            Stage 0a. What the workflow takes as input, and how text is pulled
+            from it before any LLM call.
           </p>
         </div>
 
@@ -48,13 +70,17 @@ function ExtractionEditor({
                        text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
                        focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
           >
-            <option value="document">Document — a PDF, LaTeX, or Word file</option>
-            <option value="folder">Folder — inventory a directory; steps Read files on demand</option>
+            <option value="document">
+              Document — a PDF, LaTeX, or Word file
+            </option>
+            <option value="folder">
+              Folder — inventory a directory; steps Read files on demand
+            </option>
             <option value="none">None — run from the step prompts alone</option>
           </select>
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5 leading-relaxed">
-            Selecting a folder in the main window uses folder mode automatically, whatever this
-            is set to.
+            Selecting a folder in the main window uses folder mode
+            automatically, whatever this is set to.
           </p>
         </div>
 
@@ -83,23 +109,24 @@ function ExtractionEditor({
                        focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
           >
             {EXTRACTION_METHODS.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
             ))}
           </select>
           {hint && (
-            <p
-              className="text-[11px] mt-1.5 leading-relaxed text-gray-500 dark:text-gray-400"
-            >
+            <p className="text-[11px] mt-1.5 leading-relaxed text-gray-500 dark:text-gray-400">
               {hint}
             </p>
           )}
         </div>
 
         <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
-          The chosen PDF method is authoritative: incomplete or failed extraction stops before
-          orientation instead of silently switching engines. Parser-specific speed, memory, OCR,
-          and image settings are configured once in Settings → Reviews → PDF Extraction. LaTeX inputs bypass
-          PDF extraction.
+          The chosen PDF method is authoritative: incomplete or failed
+          extraction stops before orientation instead of silently switching
+          engines. Parser-specific speed, memory, OCR, and image settings are
+          configured once in Settings → Reviews → PDF Extraction. LaTeX inputs
+          bypass PDF extraction.
         </div>
       </div>
     </div>
@@ -123,10 +150,13 @@ function OrientationEditor({
 }) {
   const resetRequest = useRef(0);
   const mounted = useRef(true);
-  useEffect(() => () => {
-    mounted.current = false;
-    resetRequest.current += 1;
-  }, []);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+      resetRequest.current += 1;
+    },
+    [],
+  );
 
   const insertDefault = async (name: string) => {
     const request = ++resetRequest.current;
@@ -217,12 +247,24 @@ function OrientationEditor({
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
             {autoReview ? (
-              <>Stage 0b. One LLM call builds the paper orientation map and classifies the review it needs. Alongside sections, formal results, tables, and notation, the validated map includes a compact <span className="font-mono">review_plan</span> that selects the subject and method specialists assembled for this report and classifies the document genre shared with every reviewer.</>
+              <>
+                Stage 0b. One LLM call builds the paper orientation map and
+                classifies the review it needs. Alongside sections, formal
+                results, tables, and notation, the validated map includes a
+                compact <span className="font-mono">review_plan</span> that
+                selects the subject and method specialists assembled for this
+                report and classifies the document genre shared with every
+                reviewer.
+              </>
             ) : (
-              <>Stage 0b. One LLM call that builds a structured JSON survey of the input before any
-              step runs — for a paper: sections, theorems, tables, notation. Steps that select the
-              survey receive it via {"{orientation}"}, which keeps them grounded in what the input
-              actually contains. The survey can use any JSON schema your prompt asks for.</>
+              <>
+                Stage 0b. One LLM call that builds a structured JSON survey of
+                the input before any step runs — for a paper: sections,
+                theorems, tables, notation. Steps that select the survey receive
+                it via {"{orientation}"}, which keeps them grounded in what the
+                input actually contains. The survey can use any JSON schema your
+                prompt asks for.
+              </>
             )}
           </p>
         </div>
@@ -309,16 +351,20 @@ function OrientationEditor({
         </div>
         {autoReview && (
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
-            Catalog placeholders are populated from the live specialist manifests only when the
-            workflow runs. The saved prompt stays compact; browse the Catalog tabs to inspect roles.
+            Catalog placeholders are populated from the live specialist
+            manifests only when the workflow runs. The saved prompt stays
+            compact; browse the Catalog tabs to inspect roles.
           </p>
         )}
         {prompt.trim() === "" && (
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
-            Empty — using the bundled default: <span className="font-mono">prompts/orientation.md</span>{" "}
-            for document inputs, <span className="font-mono">prompts/orientation_folder.md</span> for
-            folder inputs (overridable at <span className="font-mono">~/.pipeline/prompts/</span>).
-            Stock prompts adapt to the input mode; a customized prompt is used as-is.
+            Empty — using the bundled default:{" "}
+            <span className="font-mono">prompts/orientation.md</span> for
+            document inputs,{" "}
+            <span className="font-mono">prompts/orientation_folder.md</span> for
+            folder inputs (overridable at{" "}
+            <span className="font-mono">~/.pipeline/prompts/</span>). Stock
+            prompts adapt to the input mode; a customized prompt is used as-is.
           </p>
         )}
       </div>

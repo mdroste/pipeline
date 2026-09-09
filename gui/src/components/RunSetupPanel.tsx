@@ -3,7 +3,11 @@ import PaperSelector from "./PaperSelector";
 import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkflowPanel from "./WorkflowPanel";
 import RunParallelAgents from "./RunParallelAgents";
-import type { PipelineConfig, PrimaryInputSelection, RunParallelOverrides } from "../lib/types";
+import type {
+  PipelineConfig,
+  PrimaryInputSelection,
+  RunParallelOverrides,
+} from "../lib/types";
 
 const PRIVACY_NOTICE_KEY = "pipeline.privacyNoticeAcknowledged.v1";
 
@@ -116,19 +120,33 @@ export default function RunSetupPanel({
 
         <div className="mt-auto pt-6">
           {configError && (
-            <div role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300">
+            <div
+              role="alert"
+              className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
+            >
               <p className="font-medium">Workflow setup could not be loaded.</p>
               <p className="mt-1 break-words">{configError}</p>
-              <button type="button" onClick={onRetryConfig} className="mt-2 font-medium underline underline-offset-2">
+              <button
+                type="button"
+                onClick={onRetryConfig}
+                className="mt-2 font-medium underline underline-offset-2"
+              >
                 Retry workflow
               </button>
             </div>
           )}
           {dependenciesError && (
-            <div role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300">
+            <div
+              role="alert"
+              className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
+            >
               <p className="font-medium">System readiness check failed.</p>
               <p className="mt-1 break-words">{dependenciesError}</p>
-              <button type="button" onClick={onRetryDependencies} className="mt-2 font-medium underline underline-offset-2">
+              <button
+                type="button"
+                onClick={onRetryDependencies}
+                className="mt-2 font-medium underline underline-offset-2"
+              >
                 Retry system check
               </button>
             </div>
@@ -141,9 +159,10 @@ export default function RunSetupPanel({
                          text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
             >
               <p>
-                Your selected source and the context granted to a step may be sent to its
-                configured model provider. WebSearch steps also send queries to an external
-                search service. Report records and artifacts persist locally until removed.
+                Your selected source and the context granted to a step may be
+                sent to its configured model provider. WebSearch steps also send
+                queries to an external search service. Report records and
+                artifacts persist locally until removed.
               </p>
               <div className="mt-2 flex items-center gap-3">
                 <button
@@ -189,8 +208,19 @@ export default function RunSetupPanel({
                   ? "Preparing event stream…"
                   : "Review report"}
             {!configLoading && !preparingRun && listenersReady && (
-              <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="m9 5 7 7-7 7" />
+              <svg
+                aria-hidden="true"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.7}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="m9 5 7 7-7 7"
+                />
               </svg>
             )}
           </button>

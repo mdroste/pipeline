@@ -39,7 +39,11 @@
     "test:release": "node --test ../scripts/release/release.test.mjs && node ../scripts/release/validate-release-identity.mjs",
     "test:e2e": "wdio run ./wdio.conf.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "check:source-size": "node ../scripts/source-size-report.mjs --check",
+    "check:links": "node ../scripts/check-markdown-links.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -52,6 +56,7 @@
     "@codemirror/view": "^6.43.11",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-notification": "^2.4.0",
     "@tauri-apps/plugin-shell": "^2",
     "codemirror": "^6.0.2",
     "diff": "8.0.4",
@@ -84,6 +89,7 @@
     "autoprefixer": "^10.5.4",
     "jsdom": "^30.0.1",
     "postcss": "^8.5.26",
+    "prettier": "3.9.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",

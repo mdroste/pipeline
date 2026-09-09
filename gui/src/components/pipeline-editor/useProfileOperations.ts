@@ -92,6 +92,7 @@ export function useProfileOperations(
             window.localStorage.removeItem(draftKey);
           }
         }
+        if (!live) return;
         replaceDraft(restored, normalized, a, false);
         setProfiles(p);
         setActiveProfile(a);
@@ -538,19 +539,23 @@ export function useProfileOperations(
             ))
           )
             return;
-          await invoke("import_bundle", { path });
-          const [c, p, a] = await Promise.all([
-            invoke<PipelineConfig>("get_pipeline_config"),
-            invoke<ProfileSummary[]>("list_profiles"),
-            invoke<string>("get_active_profile"),
-          ]);
-          setConfig(normalizeConfig(c));
-          setProfiles(p);
-          setActiveProfile(a);
-          setEditing(null);
-          setDirty(false);
-          setSchemaDraftValid(true);
-          setSchemaEditorEpoch((current) => current + 1);
+          const request = beginProfileMutation();
+          if (request === null) return;
+          try {
+            await invoke("import_bundle", { path });
+            const [c, p, a] = await Promise.all([
+              invoke<PipelineConfig>("get_pipeline_config"),
+              invoke<ProfileSummary[]>("list_profiles"),
+              invoke<string>("get_active_profile"),
+            ]);
+            if (!profileMutationIsCurrent(request)) return;
+            const normalized = normalizeConfig(c);
+            replaceDraft(normalized, normalized, a, true);
+            setProfiles(p);
+            onProfileChange?.();
+          } finally {
+            finishProfileMutation(request);
+          }
           break;
         }
       }

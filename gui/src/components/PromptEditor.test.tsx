@@ -13,7 +13,9 @@ describe("PromptEditor", () => {
         ariaLabel="Merge prompt"
       />,
     );
-    expect(screen.getByRole("textbox", { name: "Merge prompt" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Merge prompt" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Insert:")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "{topic}" })).toBeInTheDocument();
     expect(
@@ -59,7 +61,9 @@ describe("PromptEditor", () => {
       />,
     );
     expect(screen.getByText("1 unknown placeholder:")).toBeInTheDocument();
-    expect(screen.getByText(/\{unknown_thing\} \(line 2\)/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/\{unknown_thing\} \(line 2\)/),
+    ).toBeInTheDocument();
   });
 
   it("shows no lint warning for valid placeholders", () => {

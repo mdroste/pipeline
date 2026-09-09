@@ -175,282 +175,267 @@ export function ExtractionSection({
           />
         </div>
 
-        {paddleInstalled && (
-          <details className="settings-disclosure">
-            <summary>
-              Advanced parser settings{" "}
-              <span>Performance & document structure</span>
-            </summary>
-            <div className="space-y-6 pt-5">
-              <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
-                <SubsectionHeader
-                  label="PaddleOCR-VL recognition server"
-                  help="The Full Parser uses Pipeline's managed llama.cpp server for recognition; no separate llama.cpp installation is needed."
-                />
-                <div className="space-y-3 pl-4">
-                  <Field
-                    label="Concurrent pages"
-                    help="Automatic uses two slots on Apple Silicon and one elsewhere. Each slot receives a full 16K context."
+        <details className="settings-disclosure">
+          <summary>
+            Advanced parser settings{" "}
+            <span>Performance & document structure</span>
+          </summary>
+          {!paddleInstalled && (
+            <p className="settings-row-description mt-3">
+              These preferences apply when the local parser is installed and
+              selected above.
+            </p>
+          )}
+          <div className="space-y-6 pt-5">
+            <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
+              <SubsectionHeader
+                label="PaddleOCR-VL recognition server"
+                help="The Full Parser uses Pipeline's managed llama.cpp server for recognition; no separate llama.cpp installation is needed."
+              />
+              <div className="space-y-3 pl-4">
+                <Field
+                  label="Concurrent pages"
+                  help="Automatic uses two slots on Apple Silicon and one elsewhere. Each slot receives a full 16K context."
+                >
+                  <select
+                    aria-label="PaddleOCR-VL concurrent pages"
+                    value={settings.paddle_page_concurrency}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        paddle_page_concurrency: parseInt(e.target.value, 10),
+                      })
+                    }
+                    className={selectClass}
                   >
-                    <select
-                      aria-label="PaddleOCR-VL concurrent pages"
-                      value={settings.paddle_page_concurrency}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          paddle_page_concurrency: parseInt(e.target.value, 10),
-                        })
-                      }
-                      className={selectClass}
-                    >
-                      <option value={0}>Automatic (recommended)</option>
-                      <option value={1}>1 page — lowest memory</option>
-                      <option value={2}>2 pages — higher throughput</option>
-                      <option value={3}>
-                        3 pages — high-memory workstation
-                      </option>
-                      <option value={4}>4 pages — maximum throughput</option>
-                    </select>
-                  </Field>
+                    <option value={0}>Automatic (recommended)</option>
+                    <option value={1}>1 page — lowest memory</option>
+                    <option value={2}>2 pages — higher throughput</option>
+                    <option value={3}>3 pages — high-memory workstation</option>
+                    <option value={4}>4 pages — maximum throughput</option>
+                  </select>
+                </Field>
 
-                  <Field
-                    label="Vision encoder batch"
-                    help="Larger batches can speed image encoding when enough GPU memory is available. They do not reduce OCR resolution."
+                <Field
+                  label="Vision encoder batch"
+                  help="Larger batches can speed image encoding when enough GPU memory is available. They do not reduce OCR resolution."
+                >
+                  <select
+                    aria-label="PaddleOCR-VL vision encoder batch"
+                    value={settings.paddle_mtmd_batch_tokens}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        paddle_mtmd_batch_tokens: parseInt(e.target.value, 10),
+                      })
+                    }
+                    className={selectClass}
                   >
-                    <select
-                      aria-label="PaddleOCR-VL vision encoder batch"
-                      value={settings.paddle_mtmd_batch_tokens}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          paddle_mtmd_batch_tokens: parseInt(
-                            e.target.value,
-                            10,
-                          ),
-                        })
-                      }
-                      className={selectClass}
-                    >
-                      <option value={0}>Automatic (recommended)</option>
-                      <option value={512}>512 tokens — lower memory</option>
-                      <option value={1024}>1,024 tokens — conservative</option>
-                      <option value={2048}>
-                        2,048 tokens — faster prefill
-                      </option>
-                      <option value={4096}>
-                        4,096 tokens — highest peak memory
-                      </option>
-                    </select>
-                  </Field>
+                    <option value={0}>Automatic (recommended)</option>
+                    <option value={512}>512 tokens — lower memory</option>
+                    <option value={1024}>1,024 tokens — conservative</option>
+                    <option value={2048}>2,048 tokens — faster prefill</option>
+                    <option value={4096}>
+                      4,096 tokens — highest peak memory
+                    </option>
+                  </select>
+                </Field>
 
-                  <Field label="Maximum page output">
-                    <select
-                      aria-label="PaddleOCR-VL maximum page output"
-                      value={settings.paddle_max_output_tokens}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          paddle_max_output_tokens: parseInt(
-                            e.target.value,
-                            10,
-                          ),
-                        })
-                      }
-                      className={selectClass}
-                    >
-                      <option value={2048}>2,048 tokens — shorter pages</option>
-                      <option value={4096}>4,096 tokens — recommended</option>
-                      <option value={8192}>
-                        8,192 tokens — unusually dense pages
-                      </option>
-                    </select>
-                  </Field>
-
-                  <Field
-                    label="Page retries"
-                    help="Suspicious layout-aware pages are retried before the Full Parser records an extraction failure."
+                <Field label="Maximum page output">
+                  <select
+                    aria-label="PaddleOCR-VL maximum page output"
+                    value={settings.paddle_max_output_tokens}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        paddle_max_output_tokens: parseInt(e.target.value, 10),
+                      })
+                    }
+                    className={selectClass}
                   >
-                    <select
-                      aria-label="PaddleOCR-VL page retries"
-                      value={settings.paddle_page_retries}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          paddle_page_retries: parseInt(e.target.value, 10),
-                        })
-                      }
-                      className={selectClass}
-                    >
-                      <option value={0}>No retries</option>
-                      <option value={1}>1 retry — recommended</option>
-                      <option value={2}>2 retries</option>
-                      <option value={3}>3 retries</option>
-                    </select>
-                  </Field>
+                    <option value={2048}>2,048 tokens — shorter pages</option>
+                    <option value={4096}>4,096 tokens — recommended</option>
+                    <option value={8192}>
+                      8,192 tokens — unusually dense pages
+                    </option>
+                  </select>
+                </Field>
 
-                  <Field
-                    label="Flash Attention"
-                    help="Automatic is safest across platforms. Force it on when benchmarking a supported GPU; turn it off for compatibility troubleshooting."
+                <Field
+                  label="Page retries"
+                  help="Suspicious layout-aware pages are retried before the Full Parser records an extraction failure."
+                >
+                  <select
+                    aria-label="PaddleOCR-VL page retries"
+                    value={settings.paddle_page_retries}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        paddle_page_retries: parseInt(e.target.value, 10),
+                      })
+                    }
+                    className={selectClass}
                   >
-                    <select
-                      aria-label="PaddleOCR-VL Flash Attention"
-                      value={settings.paddle_flash_attention}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          paddle_flash_attention: e.target.value,
-                        })
-                      }
-                      className={selectClass}
-                    >
-                      <option value="auto">Automatic (default)</option>
-                      <option value="on">On</option>
-                      <option value="off">Off</option>
-                    </select>
-                  </Field>
-                </div>
-              </div>
+                    <option value={0}>No retries</option>
+                    <option value={1}>1 retry — recommended</option>
+                    <option value={2}>2 retries</option>
+                    <option value={3}>3 retries</option>
+                  </select>
+                </Field>
 
-              <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
-                <SubsectionHeader
-                  label="Full parser structure"
-                  help="These options are included in the Full Parser cache fingerprint, so changing one creates a distinct cached result."
-                />
-                <div className="space-y-3 pl-4">
-                  <Toggle
-                    label="Layout detection and reading order"
-                    description="Run PP-DocLayoutV3 before recognition and retain semantic regions, coordinates, and reading order."
-                    checked={settings.paddle_full_layout_detection}
-                    onChange={(v) =>
+                <Field
+                  label="Flash Attention"
+                  help="Automatic is safest across platforms. Force it on when benchmarking a supported GPU; turn it off for compatibility troubleshooting."
+                >
+                  <select
+                    aria-label="PaddleOCR-VL Flash Attention"
+                    value={settings.paddle_flash_attention}
+                    onChange={(e) =>
                       setSettings({
                         ...settings,
-                        paddle_full_layout_detection: v,
+                        paddle_flash_attention: e.target.value,
                       })
                     }
-                  />
-                  <Field label="Layout confidence threshold">
-                    <select
-                      aria-label="PaddleOCR-VL layout confidence threshold"
-                      value={settings.paddle_full_layout_threshold}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          paddle_full_layout_threshold: parseFloat(
-                            e.target.value,
-                          ),
-                        })
-                      }
-                      className={selectClass}
-                    >
-                      <option value={0.3}>0.30 — retain more regions</option>
-                      <option value={0.5}>0.50 — recommended</option>
-                      <option value={0.7}>0.70 — higher precision</option>
-                    </select>
-                  </Field>
-                  <Toggle
-                    label="Layout NMS"
-                    description="Suppress overlapping layout detections before region recognition."
-                    checked={settings.paddle_full_layout_nms}
-                    onChange={(v) =>
-                      setSettings({ ...settings, paddle_full_layout_nms: v })
-                    }
-                  />
-                  <Field label="Overlapping layout boxes">
-                    <select
-                      aria-label="PaddleOCR-VL overlapping layout boxes"
-                      value={settings.paddle_full_layout_merge_bboxes_mode}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          paddle_full_layout_merge_bboxes_mode: e.target.value,
-                        })
-                      }
-                      className={selectClass}
-                    >
-                      <option value="large">
-                        Keep outer region — recommended
-                      </option>
-                      <option value="small">Keep inner region</option>
-                      <option value="union">Keep both</option>
-                    </select>
-                  </Field>
-                  <Toggle
-                    label="Merge layout blocks"
-                    description="Join cross-column or vertically staggered regions before producing reading-order blocks."
-                    checked={settings.paddle_full_merge_layout_blocks}
-                    onChange={(v) =>
-                      setSettings({
-                        ...settings,
-                        paddle_full_merge_layout_blocks: v,
-                      })
-                    }
-                  />
-                  <Toggle
-                    label="OCR text inside images"
-                    description="Recognize labels and other text within image regions."
-                    checked={settings.paddle_full_ocr_image_blocks}
-                    onChange={(v) =>
-                      setSettings({
-                        ...settings,
-                        paddle_full_ocr_image_blocks: v,
-                      })
-                    }
-                  />
-                  <Toggle
-                    label="Format block content"
-                    description="Retain block-level Markdown for tables, formulas, lists, and other semantic regions."
-                    checked={settings.paddle_full_format_block_content}
-                    onChange={(v) =>
-                      setSettings({
-                        ...settings,
-                        paddle_full_format_block_content: v,
-                      })
-                    }
-                  />
-                  <Toggle
-                    label="Merge tables across pages"
-                    description="Reconstruct a continuing table as one logical table when page boundaries divide it."
-                    checked={settings.paddle_full_merge_tables}
-                    onChange={(v) =>
-                      setSettings({ ...settings, paddle_full_merge_tables: v })
-                    }
-                  />
-                  <Toggle
-                    label="Relevel titles"
-                    description="Reconstruct a consistent multi-level heading hierarchy across the document."
-                    checked={settings.paddle_full_relevel_titles}
-                    onChange={(v) =>
-                      setSettings({
-                        ...settings,
-                        paddle_full_relevel_titles: v,
-                      })
-                    }
-                  />
-                  <Toggle
-                    label="Retain formula numbers"
-                    description="Keep equation numbers in the Markdown and structured formula evidence."
-                    checked={settings.paddle_full_show_formula_numbers}
-                    onChange={(v) =>
-                      setSettings({
-                        ...settings,
-                        paddle_full_show_formula_numbers: v,
-                      })
-                    }
-                  />
-                </div>
+                    className={selectClass}
+                  >
+                    <option value="auto">Automatic (default)</option>
+                    <option value="on">On</option>
+                    <option value="off">Off</option>
+                  </select>
+                </Field>
               </div>
             </div>
-          </details>
-        )}
 
-        <Toggle
-          label="Reuse verified extraction cache"
-          description="Reuse exact source-and-settings matches. PaddleOCR-VL Full Parser reuses its validated structure and image cache; verified LLM transcriptions avoid another provider call."
-          checked={settings.reuse_pdf_extraction_cache}
-          onChange={(v) =>
-            setSettings({ ...settings, reuse_pdf_extraction_cache: v })
-          }
-        />
+            <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
+              <SubsectionHeader
+                label="Full parser structure"
+                help="These options are included in the Full Parser cache fingerprint, so changing one creates a distinct cached result."
+              />
+              <div className="space-y-3 pl-4">
+                <Toggle
+                  label="Layout detection and reading order"
+                  description="Run PP-DocLayoutV3 before recognition and retain semantic regions, coordinates, and reading order."
+                  checked={settings.paddle_full_layout_detection}
+                  onChange={(v) =>
+                    setSettings({
+                      ...settings,
+                      paddle_full_layout_detection: v,
+                    })
+                  }
+                />
+                <Field label="Layout confidence threshold">
+                  <select
+                    aria-label="PaddleOCR-VL layout confidence threshold"
+                    value={settings.paddle_full_layout_threshold}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        paddle_full_layout_threshold: parseFloat(
+                          e.target.value,
+                        ),
+                      })
+                    }
+                    className={selectClass}
+                  >
+                    <option value={0.3}>0.30 — retain more regions</option>
+                    <option value={0.5}>0.50 — recommended</option>
+                    <option value={0.7}>0.70 — higher precision</option>
+                  </select>
+                </Field>
+                <Toggle
+                  label="Layout NMS"
+                  description="Suppress overlapping layout detections before region recognition."
+                  checked={settings.paddle_full_layout_nms}
+                  onChange={(v) =>
+                    setSettings({ ...settings, paddle_full_layout_nms: v })
+                  }
+                />
+                <Field label="Overlapping layout boxes">
+                  <select
+                    aria-label="PaddleOCR-VL overlapping layout boxes"
+                    value={settings.paddle_full_layout_merge_bboxes_mode}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        paddle_full_layout_merge_bboxes_mode: e.target.value,
+                      })
+                    }
+                    className={selectClass}
+                  >
+                    <option value="large">
+                      Keep outer region — recommended
+                    </option>
+                    <option value="small">Keep inner region</option>
+                    <option value="union">Keep both</option>
+                  </select>
+                </Field>
+                <Toggle
+                  label="Merge layout blocks"
+                  description="Join cross-column or vertically staggered regions before producing reading-order blocks."
+                  checked={settings.paddle_full_merge_layout_blocks}
+                  onChange={(v) =>
+                    setSettings({
+                      ...settings,
+                      paddle_full_merge_layout_blocks: v,
+                    })
+                  }
+                />
+                <Toggle
+                  label="OCR text inside images"
+                  description="Recognize labels and other text within image regions."
+                  checked={settings.paddle_full_ocr_image_blocks}
+                  onChange={(v) =>
+                    setSettings({
+                      ...settings,
+                      paddle_full_ocr_image_blocks: v,
+                    })
+                  }
+                />
+                <Toggle
+                  label="Format block content"
+                  description="Retain block-level Markdown for tables, formulas, lists, and other semantic regions."
+                  checked={settings.paddle_full_format_block_content}
+                  onChange={(v) =>
+                    setSettings({
+                      ...settings,
+                      paddle_full_format_block_content: v,
+                    })
+                  }
+                />
+                <Toggle
+                  label="Merge tables across pages"
+                  description="Reconstruct a continuing table as one logical table when page boundaries divide it."
+                  checked={settings.paddle_full_merge_tables}
+                  onChange={(v) =>
+                    setSettings({ ...settings, paddle_full_merge_tables: v })
+                  }
+                />
+                <Toggle
+                  label="Relevel titles"
+                  description="Reconstruct a consistent multi-level heading hierarchy across the document."
+                  checked={settings.paddle_full_relevel_titles}
+                  onChange={(v) =>
+                    setSettings({
+                      ...settings,
+                      paddle_full_relevel_titles: v,
+                    })
+                  }
+                />
+                <Toggle
+                  label="Retain formula numbers"
+                  description="Keep equation numbers in the Markdown and structured formula evidence."
+                  checked={settings.paddle_full_show_formula_numbers}
+                  onChange={(v) =>
+                    setSettings({
+                      ...settings,
+                      paddle_full_show_formula_numbers: v,
+                    })
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        </details>
 
         <Field
           label="Extraction time budget"

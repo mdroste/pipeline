@@ -2,8 +2,7 @@
 
 > The 1.1–2.0 numbers in this document are historical development milestones,
 > not published package versions. The current package version is recorded in
-> `gui/package.json`; see [CHANGELOG.md](CHANGELOG.md) and GitHub Releases for
-> what actually shipped.
+> `gui/package.json`; see GitHub Releases for what actually shipped.
 
 This plan guided Pipeline's expansion from a referee-report generator with
 configurable steps into a general-purpose desktop harness for multi-pass LLM

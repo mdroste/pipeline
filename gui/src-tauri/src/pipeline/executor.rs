@@ -19,6 +19,7 @@ mod sequential;
 mod step_call;
 mod units;
 
+pub(crate) use paths::step_slug;
 pub use run::{execute_steps, ExecutionResult};
 pub use schedule::{dependents_of, execution_plan, input_processing_label, ExecutionPlanStage};
 

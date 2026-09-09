@@ -78,6 +78,9 @@ pub enum Action {
     CapturedCheck {
         plan_id: String,
     },
+    LiteratureLookup {
+        query: String,
+    },
     Deliver {
         input: Binding,
     },
@@ -267,6 +270,11 @@ fn validate_steps(steps: &[Step], depth: usize, ids: &mut BTreeSet<String>) -> R
             return Err("Chain has too many steps or an invalid label".into());
         }
         match &step.action {
+            Action::LiteratureLookup { query }
+                if query.trim().is_empty() || query.len() > 500 || query.contains('\0') =>
+            {
+                return Err("Literature lookup requires 1–500 bytes of public topic terms".into());
+            }
             Action::Workspace { prompt, .. } if prompt.is_empty() || prompt.len() > 65536 => {
                 return Err("Workspace prompt must contain 1–65536 bytes".into())
             }

@@ -36,7 +36,12 @@ html.theme-transitioning,
 html.theme-transitioning *,
 html.theme-transitioning *::before,
 html.theme-transitioning *::after {
-  transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, fill 0.3s ease, stroke 0.3s ease !important;
+  transition:
+    color 0.3s ease,
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    fill 0.3s ease,
+    stroke 0.3s ease !important;
 }
 
 /* Respect platform accessibility preferences across both authored CSS and
@@ -99,9 +104,24 @@ html.theme-transitioning *::after {
   flex-shrink: 0;
   display: block;
 }
-.toc-nav.toc-compact { max-height: 40%; border-right: 0; border-bottom: 1px solid theme("colors.gray.200"); padding: 0.75rem 1rem; }
-.reader-contents-toggle { display:flex; justify-content:space-between; flex-shrink:0; padding:8px 14px; border-bottom:1px solid theme("colors.gray.200"); font-size:12px; }
-.dark .toc-nav.toc-compact, .dark .reader-contents-toggle { border-bottom-color:theme("colors.gray.800"); }
+.toc-nav.toc-compact {
+  max-height: 40%;
+  border-right: 0;
+  border-bottom: 1px solid theme("colors.gray.200");
+  padding: 0.75rem 1rem;
+}
+.reader-contents-toggle {
+  display: flex;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid theme("colors.gray.200");
+  font-size: 12px;
+}
+.dark .toc-nav.toc-compact,
+.dark .reader-contents-toggle {
+  border-bottom-color: theme("colors.gray.800");
+}
 
 /* Semantic navigation colors: normal text remains readable in both themes. */
 .toc-nav {
@@ -128,11 +148,18 @@ html.theme-transitioning *::after {
   hyphens: auto;
   text-align: left;
   text-decoration: none;
-  transition: color 0.15s, background-color 0.15s;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
   line-height: 1.4;
 }
-.toc-h1 { font-weight: 600; }
-.toc-h2 { padding-left: 1.25rem; color: var(--toc-secondary); }
+.toc-h1 {
+  font-weight: 600;
+}
+.toc-h2 {
+  padding-left: 1.25rem;
+  color: var(--toc-secondary);
+}
 .toc-issue {
   display: grid;
   grid-template-columns: 2rem minmax(0, 1fr);
@@ -538,4 +565,16 @@ mark.search-hit.current {
   }
 }
 
-.report-reader.reader-compact .report-content { padding-left: 1.5rem; padding-right: 1.5rem; }
+.report-reader.reader-compact .report-content {
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+/* Local density affects repeated navigation and research rows, not document content. */
+[data-density="compact"] .workspace-transcript-content {
+  gap: 1.25rem;
+}
+[data-density="compact"] .workspace-transcript {
+  padding-top: 1.5rem;
+  padding-bottom: 1.5rem;
+}

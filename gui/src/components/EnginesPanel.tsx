@@ -35,7 +35,9 @@ export default function EnginesPanel({
   const [listenersReady, setListenersReady] = useState(false);
   const [listenerError, setListenerError] = useState<string | null>(null);
   const [listenerAttempt, setListenerAttempt] = useState(0);
-  const [engineStatusError, setEngineStatusError] = useState<string | null>(null);
+  const [engineStatusError, setEngineStatusError] = useState<string | null>(
+    null,
+  );
   const [refreshingStatus, setRefreshingStatus] = useState(true);
   const [openDirError, setOpenDirError] = useState<string | null>(null);
   const [openingPipelineDir, setOpeningPipelineDir] = useState(false);
@@ -67,8 +69,11 @@ export default function EnginesPanel({
         if (refreshGeneration.current !== generation) return;
         setEngines([]);
         onEngineStatusChange?.([]);
-        const detail = reason instanceof Error ? reason.message : String(reason);
-        setEngineStatusError(`Local engine status could not be loaded: ${detail}`);
+        const detail =
+          reason instanceof Error ? reason.message : String(reason);
+        setEngineStatusError(
+          `Local engine status could not be loaded: ${detail}`,
+        );
       },
     );
     void Promise.allSettled([engineRequest]).then(() => {
@@ -102,12 +107,15 @@ export default function EnginesPanel({
     setListenersReady(false);
     setListenerError(null);
     void Promise.allSettled([
-      listen<{ engine: string; phase: string; status: string }>("engines:phase", (e) => {
-        setPhases((p) => ({
-          ...p,
-          [e.payload.phase]: e.payload.status as PhaseStatus,
-        }));
-      }),
+      listen<{ engine: string; phase: string; status: string }>(
+        "engines:phase",
+        (e) => {
+          setPhases((p) => ({
+            ...p,
+            [e.payload.phase]: e.payload.status as PhaseStatus,
+          }));
+        },
+      ),
       listen<{ line: string }>("engines:log", (e) => {
         setLogLines((l) => [...l.slice(-(MAX_LOG_LINES - 1)), e.payload.line]);
       }),
@@ -124,7 +132,9 @@ export default function EnginesPanel({
         if (live && failed) {
           setListenerError(
             `Engine progress connection failed: ${
-              failed.reason instanceof Error ? failed.reason.message : String(failed.reason)
+              failed.reason instanceof Error
+                ? failed.reason.message
+                : String(failed.reason)
             }. Retry before installing or removing an engine.`,
           );
         }
@@ -162,10 +172,16 @@ export default function EnginesPanel({
   };
 
   const uninstall = async (id: string) => {
-    if (!(await confirmDialog(
-      "Uninstall this engine? Its managed runtime, packages, and model files will be removed.",
-      { title: "Uninstall engine", confirmLabel: "Uninstall", destructive: true },
-    ))) {
+    if (
+      !(await confirmDialog(
+        "Uninstall this engine? Its managed runtime, packages, and model files will be removed.",
+        {
+          title: "Uninstall engine",
+          confirmLabel: "Uninstall",
+          destructive: true,
+        },
+      ))
+    ) {
       return;
     }
     setBusy(id);
@@ -224,7 +240,10 @@ export default function EnginesPanel({
       )}
 
       {engineStatusError && (
-        <div role="alert" className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+        >
           <span className="flex-1">{engineStatusError}</span>
           <button
             type="button"
@@ -237,7 +256,10 @@ export default function EnginesPanel({
       )}
 
       {listenerError && (
-        <div role="alert" className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+        >
           <span className="flex-1">{listenerError}</span>
           <button
             type="button"
@@ -326,8 +348,12 @@ export default function EnginesPanel({
 
               {isBusy && (
                 <div className="space-y-2">
-                  <p className="text-xs text-blue-700 dark:text-blue-300" role="status">
-                    Installation continues in the background if you leave Settings.
+                  <p
+                    className="text-xs text-blue-700 dark:text-blue-300"
+                    role="status"
+                  >
+                    Installation continues in the background if you leave
+                    Settings.
                   </p>
                   <div className="flex items-center gap-2">
                     {PHASES.map((phase) => {

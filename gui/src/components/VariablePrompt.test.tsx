@@ -11,7 +11,9 @@ function Harness() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)}>Open options</button>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open options
+      </button>
       {open && (
         <VariablePrompt
           variables={[{ key: "audience", label: "Audience", kind: "text" }]}
@@ -50,7 +52,9 @@ describe("VariablePrompt accessibility", () => {
     expect(audience).toHaveFocus();
 
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Report options" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Report options" }),
+    ).not.toBeInTheDocument();
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
@@ -64,10 +68,12 @@ describe("VariablePrompt accessibility", () => {
     expect(open).toHaveBeenCalledWith({
       multiple: false,
       directory: false,
-      filters: [{
-        name: "Rubric",
-        extensions: ["pdf", "tex", "docx"],
-      }],
+      filters: [
+        {
+          name: "Rubric",
+          extensions: ["pdf", "tex", "docx"],
+        },
+      ],
     });
   });
 

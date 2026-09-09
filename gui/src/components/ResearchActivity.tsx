@@ -91,8 +91,8 @@ export default function ResearchActivity({
       </div>
       {error && <p role="alert">{error}</p>}
       <p className={`${muted} my-3`}>
-        {activity?.pendingRequests.length ?? 0} unresolved Workspace requests ·{" "}
-        {activity?.researchAttention ?? 0} research attention items
+        {activity?.pendingRequests.length ?? 0} unresolved conversation requests
+        · {activity?.researchAttention ?? 0} research attention items
       </p>
       {activity?.turns.map((t) => (
         <section
@@ -100,7 +100,7 @@ export default function ResearchActivity({
           key={`${t.sessionId}:${t.turnId}`}
         >
           <h3>{t.title}</h3>
-          <p className={muted}>Workspace turn · {t.state}</p>
+          <p className={muted}>Conversation · {t.state}</p>
           <button className={button} onClick={() => onSession(t.sessionId)}>
             Open conversation and requests
           </button>
@@ -144,7 +144,7 @@ export default function ResearchActivity({
           <section className="space-y-2 border-t py-3" key={t.id}>
             <h3>{t.name}</h3>
             <p className={muted}>
-              Task coordinator · {t.state} · {t.reason}
+              Automation · {t.state} · {t.reason}
             </p>
             <button className={button} onClick={() => onTasks(t.id)}>
               Open task controls
@@ -156,7 +156,7 @@ export default function ResearchActivity({
         .map((r) => (
           <section className="space-y-2 border-t py-3" key={r.run_id}>
             <h3>{r.title || r.input_name}</h3>
-            <p className={muted}>Review workflow · {r.status}</p>
+            <p className={muted}>Review · {r.status}</p>
             <button className={button} onClick={() => onReview(r.run_id)}>
               Open Review controls
             </button>
@@ -164,7 +164,7 @@ export default function ResearchActivity({
         ))}
       <p className={`${muted} mt-4`}>
         Each runtime retains its own Stop and recovery controls. Stopping a
-        Review does not cancel Workspace jobs.
+        Stopping a review does not cancel project jobs.
       </p>
     </aside>
   );

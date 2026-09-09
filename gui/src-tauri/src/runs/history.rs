@@ -123,6 +123,7 @@ pub(super) fn recover_resumable_run_dir(
 
     let mut outputs = Vec::new();
     let mut checkpoint_failures = Vec::new();
+    let mut completed = std::collections::HashSet::<String>::new();
     for path in &checkpoints {
         let Ok(json) = read_utf8_at_most(path, MAX_REPORT_BYTES, "Step checkpoint") else {
             continue;
@@ -130,7 +131,24 @@ pub(super) fn recover_resumable_run_dir(
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&json) else {
             continue;
         };
-        if let Some(failure) = value
+        if value
+            .get("checkpointVersion")
+            .and_then(serde_json::Value::as_u64)
+            == Some(1)
+        {
+            if let (Ok(steps), Ok(wave)) = (
+                serde_json::from_value::<Vec<String>>(value["steps"].clone()),
+                serde_json::from_value::<Vec<crate::models::StepOutput>>(value["outputs"].clone()),
+            ) {
+                outputs.retain(|o: &crate::models::StepOutput| {
+                    !steps
+                        .iter()
+                        .any(|s| o.step_id.split('/').next() == Some(s.as_str()))
+                });
+                completed.extend(steps);
+                outputs.extend(wave);
+            }
+        } else if let Some(failure) = value
             .get("failure")
             .cloned()
             .and_then(|failure| serde_json::from_value(failure).ok())
@@ -139,6 +157,28 @@ pub(super) fn recover_resumable_run_dir(
         } else if let Ok(output) = serde_json::from_value::<crate::models::StepOutput>(value) {
             outputs.push(output);
         }
+    }
+
+    // Legacy and provisional checkpoints are valuable evidence, but cannot
+    // prove a logical step completed. Rerun that entire step conservatively.
+    let incomplete: std::collections::BTreeSet<_> = outputs
+        .iter()
+        .map(|o| {
+            o.step_id
+                .split('/')
+                .next()
+                .unwrap_or(&o.step_id)
+                .to_string()
+        })
+        .filter(|id| !completed.contains(id))
+        .collect();
+    for id in incomplete {
+        checkpoint_failures.push(crate::models::StepFailure {
+            step_label: id.clone(),
+            step_id: id,
+            phase: "recovery".into(),
+            error: "Interrupted before logical-step completion was durably recorded".into(),
+        });
     }
 
     let orientation = read_utf8_at_most(
@@ -151,6 +191,11 @@ pub(super) fn recover_resumable_run_dir(
     .unwrap_or(serde_json::Value::Null);
     let failed_steps = if checkpoint_failures.is_empty() {
         recovery_failure(manifest)
+    } else if manifest.status == "cancelled" {
+        // Preserve why the run stopped alongside incomplete logical-step IDs.
+        let mut failures = recovery_failure(manifest);
+        failures.extend(checkpoint_failures);
+        failures
     } else {
         checkpoint_failures
     };
@@ -618,7 +663,9 @@ fn trash_runs_dir() -> Result<PathBuf, String> {
 /// Trash lives beside the run store on the same filesystem.
 pub fn delete_run(run_id: &str) -> Result<(), String> {
     validate_run_id(run_id)?;
-    if runs_dir()?.join(run_id).join(".task-pin").exists() { return Err("This run is retained by a task that has not yet adopted its result".into()); }
+    if runs_dir()?.join(run_id).join(".task-pin").exists() {
+        return Err("This run is retained by a task that has not yet adopted its result".into());
+    }
     let manifest = load_manifest(run_id)?;
     if manifest.status == "running" {
         return Err("A running job cannot be deleted".to_string());

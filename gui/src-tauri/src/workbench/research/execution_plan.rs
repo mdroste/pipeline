@@ -132,8 +132,8 @@ pub fn capture(store: &Store, r: CapturePlanRequest) -> WorkbenchResult<DeskReco
         ));
     }
     for input in &r.research_inputs {
-        if ["result","record"].contains(&input.kind.as_str()) {
-            crate::workbench::search::read_object(store,&profile.workspace_id,input,1)?;
+        if ["result", "record"].contains(&input.kind.as_str()) {
+            crate::workbench::search::read_object(store, &profile.workspace_id, input, 1)?;
             continue;
         }
         let d = desk::record(store, &profile.workspace_id, &input.id)?;

@@ -2,9 +2,7 @@
 use super::artifact_context::{
     prepare_selected_shared_context, resolve_artifact_context, ArtifactRuntime,
 };
-use super::checkpoints::{
-    checkpoint_failures, checkpoint_outputs, remove_checkpoints_from, OutputBudget,
-};
+use super::checkpoints::{checkpoint_failures, checkpoint_outputs, checkpoint_wave, OutputBudget};
 use super::findings::collapse_findings_fan_out;
 use super::outputs::{effective_output_schema, enforce_merge_output_schemas};
 use super::parallel::run_parallel_wave;
@@ -243,6 +241,8 @@ pub async fn execute_steps(
                         "pipeline:pass",
                         serde_json::json!({"name": step.id, "status": "done"}),
                     );
+                    checkpoint_wave(write_dir, all_outputs.len(), vec![step.id.clone()], cached)
+                        .await?;
                     done.insert(step.id.clone());
                     if !cached.is_empty() {
                         successful.insert(step.id.clone());
@@ -392,8 +392,13 @@ pub async fn execute_steps(
                     wave_outputs,
                     &output_budget,
                 );
-                remove_checkpoints_from(write_dir, all_outputs.len()).await?;
-                checkpoint_outputs(app, write_dir, all_outputs.len(), &wave_outputs).await?;
+                checkpoint_wave(
+                    write_dir,
+                    all_outputs.len(),
+                    to_run.iter().map(|s| s.id.clone()).collect(),
+                    &wave_outputs,
+                )
+                .await?;
                 all_outputs.extend(wave_outputs);
             } else if planned_merge {
                 app.emit_event(
@@ -473,6 +478,7 @@ pub async fn execute_steps(
                 "pipeline:pass",
                 serde_json::json!({"name": step.id, "status": "done"}),
             );
+            checkpoint_wave(write_dir, all_outputs.len(), vec![step.id.clone()], cached).await?;
             done.insert(step.id.clone());
             if !cached.is_empty() {
                 successful.insert(step.id.clone());
@@ -541,6 +547,13 @@ pub async fn execute_steps(
                 );
                 done.insert(step.id.clone());
                 successful.insert(step.id.clone());
+                checkpoint_wave(
+                    write_dir,
+                    all_outputs.len(),
+                    vec![step.id.clone()],
+                    std::slice::from_ref(&output),
+                )
+                .await?;
                 all_outputs.push(output);
             }
             Err(e) => {

@@ -350,7 +350,36 @@ pub(super) fn parser_runtime_reusable_for_sidecar_refresh(root: &Path) -> bool {
     verified_parser_runtime_at(root).is_some()
 }
 
-pub(super) fn refresh_paddle_parser_sidecar(root: &Path) -> Result<bool, String> {
+fn atomic_replace_runtime_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Managed runtime path has no parent: {}", path.display()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("Failed to create parser refresh file: {error}"))?;
+    temporary
+        .write_all(bytes)
+        .map_err(|error| format!("Failed to write parser refresh file: {error}"))?;
+    temporary
+        .flush()
+        .map_err(|error| format!("Failed to flush parser refresh file: {error}"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| format!("Failed to sync parser refresh file: {error}"))?;
+    temporary
+        .persist(path)
+        .map_err(|error| format!("Failed to publish parser refresh file: {}", error.error))?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("Failed to sync parser runtime directory: {error}"))?;
+    Ok(())
+}
+
+/// Caller must hold the managed-engine guard. Each file replacement is atomic;
+/// if the process stops between the sidecar and manifest swaps, the next
+/// guarded resolution observes the digest mismatch and completes the refresh.
+pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<bool, String> {
     if !parser_runtime_reusable_for_sidecar_refresh(root) {
         return Ok(false);
     }
@@ -375,16 +404,14 @@ pub(super) fn refresh_paddle_parser_sidecar(root: &Path) -> Result<bool, String>
         return Ok(false);
     }
 
-    std::fs::write(&script, PADDLE_PARSER_SCRIPT)
-        .map_err(|error| format!("Failed to refresh parser sidecar: {error}"))?;
+    atomic_replace_runtime_file(&script, PADDLE_PARSER_SCRIPT.as_bytes())?;
     manifest["sidecar_sha256"] = serde_json::Value::String(expected_digest);
     manifest["sidecar_contract"] = serde_json::Value::from(2);
-    std::fs::write(
+    atomic_replace_runtime_file(
         &manifest_path,
-        serde_json::to_vec_pretty(&manifest)
+        &serde_json::to_vec_pretty(&manifest)
             .map_err(|error| format!("Failed to serialize parser manifest: {error}"))?,
-    )
-    .map_err(|error| format!("Failed to refresh parser manifest: {error}"))?;
+    )?;
     if paddle_full_parser_paths_at(root).is_none() {
         return Err("The refreshed parser sidecar failed its integrity check".to_string());
     }
@@ -393,18 +420,39 @@ pub(super) fn refresh_paddle_parser_sidecar(root: &Path) -> Result<bool, String>
 
 /// Resolve the managed full parser and the native VLM stack it depends on.
 pub fn paddle_full_parser_paths() -> Result<PaddleFullParserPaths, String> {
+    let (paths, _lease) = paddle_full_parser_lease()?;
+    Ok(paths)
+}
+
+/// Keep the managed installation fixed through validation and native extraction.
+/// The same cross-process gate protects install, repair, cleanup and uninstall.
+pub(crate) fn paddle_full_parser_lease() -> Result<
+    (
+        PaddleFullParserPaths,
+        std::sync::Arc<super::installer_io::InstallGuard>,
+    ),
+    String,
+> {
+    let lease = std::sync::Arc::new(acquire_engine_guard(false)?);
     full_parser_support()?;
     let root = paddle_parser_root()?;
     // An app update may bundle a newer sidecar than the one on disk. When the
     // pinned runtime still verifies, refresh the sidecar in place so installs
     // provisioned by older app builds keep working without a reinstall; on
-    // any failure the strict resolution below reports the actionable error.
-    let _ = refresh_paddle_parser_sidecar(&root);
-    paddle_full_parser_paths_at(&root).ok_or_else(|| {
-        "PaddleOCR-VL Full Parser is not installed or failed verification. \
+    // any failure is surfaced instead of being collapsed into a generic
+    // "not installed" message.
+    if parser_runtime_reusable_for_sidecar_refresh(&root)
+        && paddle_full_parser_paths_at(&root).is_none()
+    {
+        refresh_paddle_parser_sidecar_locked(&root)?;
+    }
+    paddle_full_parser_paths_at(&root)
+        .map(|paths| (paths, lease))
+        .ok_or_else(|| {
+            "PaddleOCR-VL Full Parser is not installed or failed verification. \
          Install or repair it from Settings → PDF Extraction."
-            .to_string()
-    })
+                .to_string()
+        })
 }
 
 /// Runtime environment for the private parser process. Model weights and

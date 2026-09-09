@@ -33,15 +33,7 @@ pub(crate) fn notify(m: &Coordinator, mission: &Mission, previous: &str) {
             && (mission.terminal() || matches!(mission.state.as_str(), "attention" | "waiting"))
         {
             let _=app.emit("missions:notice",json!({"id":mission.id,"name":mission.definition.name,"state":mission.state,"reason":mission.reason}));
-            if m.background.load(std::sync::atomic::Ordering::Acquire) {
-                use tauri::Manager;
-                if let Some(window) = app.get_webview_window("main") {
-                    if window.is_visible().is_ok_and(|v| !v) {
-                        let _ = window
-                            .request_user_attention(Some(tauri::UserAttentionType::Informational));
-                    }
-                }
-            }
+            // Notification delivery belongs to the shell's device preferences.
         }
     }
 }

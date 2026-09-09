@@ -9,6 +9,7 @@ import {
   PROVIDERS,
 } from "../../lib/providers";
 
+import ModelStage from "./ModelStage";
 import AgentDefaultsControl from "../AgentDefaultsControl";
 
 import { selectClass, SectionHeader, Field } from "./controls";
@@ -37,97 +38,136 @@ export function ModelDefaultsSection({
       <div className="space-y-0">
         <section className="space-y-5">
           <div className="divide-y divide-gray-200 dark:divide-neutral-800">
-            <div className="pb-5">
-              <AgentDefaultsControl
+            <div>
+              <ModelStage
+                title="Input assessment"
                 agents={[orientationAgent]}
-                modelOverrides={settings.default_orientation_model_overrides}
-                effortOverrides={settings.default_orientation_effort_overrides}
+                models={settings.default_orientation_model_overrides}
+                efforts={settings.default_orientation_effort_overrides}
                 settings={settings}
                 catalogs={catalogs}
-                providers={PROVIDERS}
-                label="Orientation map"
-                help="Select one default model to use for processing inputs and classifying adaptive workflow steps."
-                onChange={(next) =>
-                  setSettings({
-                    ...settings,
-                    default_orientation_agent: next.agents[0],
-                    default_orientation_model_overrides: next.modelOverrides,
-                    default_orientation_effort_overrides: next.effortOverrides,
-                  })
-                }
-              />
+              >
+                <AgentDefaultsControl
+                  agents={[orientationAgent]}
+                  modelOverrides={settings.default_orientation_model_overrides}
+                  effortOverrides={
+                    settings.default_orientation_effort_overrides
+                  }
+                  settings={settings}
+                  catalogs={catalogs}
+                  providers={PROVIDERS}
+                  label="Orientation map"
+                  help="Select one default model to use for processing inputs and classifying adaptive workflow steps."
+                  onChange={(next) =>
+                    setSettings({
+                      ...settings,
+                      default_orientation_agent: next.agents[0],
+                      default_orientation_model_overrides: next.modelOverrides,
+                      default_orientation_effort_overrides:
+                        next.effortOverrides,
+                    })
+                  }
+                />
+              </ModelStage>
             </div>
-            <div className="py-5">
-              <AgentDefaultsControl
+            <div>
+              <ModelStage
+                title="Parallel review"
                 agents={parallelAgents}
-                modelOverrides={settings.default_parallel_model_overrides}
-                effortOverrides={settings.default_parallel_effort_overrides}
+                models={settings.default_parallel_model_overrides}
+                efforts={settings.default_parallel_effort_overrides}
                 settings={settings}
                 catalogs={catalogs}
-                providers={PROVIDERS}
-                multi
-                label="Parallel steps"
-                help={
-                  <>
-                    Select one{" "}
-                    <strong className="font-semibold">or more</strong> default
-                    model to use for parallel workflow steps.
-                  </>
-                }
-                onChange={(next) =>
-                  setSettings({
-                    ...settings,
-                    default_parallel_agents: next.agents,
-                    default_parallel_model_overrides: next.modelOverrides,
-                    default_parallel_effort_overrides: next.effortOverrides,
-                  })
-                }
-              />
+              >
+                <AgentDefaultsControl
+                  agents={parallelAgents}
+                  modelOverrides={settings.default_parallel_model_overrides}
+                  effortOverrides={settings.default_parallel_effort_overrides}
+                  settings={settings}
+                  catalogs={catalogs}
+                  providers={PROVIDERS}
+                  multi
+                  label="Parallel steps"
+                  help={
+                    <>
+                      Select one{" "}
+                      <strong className="font-semibold">or more</strong> default
+                      model to use for parallel workflow steps.
+                    </>
+                  }
+                  onChange={(next) =>
+                    setSettings({
+                      ...settings,
+                      default_parallel_agents: next.agents,
+                      default_parallel_model_overrides: next.modelOverrides,
+                      default_parallel_effort_overrides: next.effortOverrides,
+                    })
+                  }
+                />
+              </ModelStage>
             </div>
-            <div className="py-5">
-              <AgentDefaultsControl
+            <div>
+              <ModelStage
+                title="Combine results"
                 agents={[mergeAgent]}
-                modelOverrides={defaultMergeModelOverrides(settings)}
-                effortOverrides={defaultMergeEffortOverrides(settings)}
+                models={defaultMergeModelOverrides(settings)}
+                efforts={defaultMergeEffortOverrides(settings)}
                 settings={settings}
                 catalogs={catalogs}
-                providers={PROVIDERS}
-                label="Merge"
-                help="Select one default model to combine outputs when a Parallel step runs with multiple providers."
-                onChange={(next) =>
-                  setSettings({
-                    ...settings,
-                    default_merge_agent: next.agents[0],
-                    default_merge_model_overrides: next.modelOverrides,
-                    default_merge_effort_overrides: next.effortOverrides,
-                  })
-                }
-              />
+              >
+                <AgentDefaultsControl
+                  agents={[mergeAgent]}
+                  modelOverrides={defaultMergeModelOverrides(settings)}
+                  effortOverrides={defaultMergeEffortOverrides(settings)}
+                  settings={settings}
+                  catalogs={catalogs}
+                  providers={PROVIDERS}
+                  label="Merge"
+                  help="Select one default model to combine outputs when a Parallel step runs with multiple providers."
+                  onChange={(next) =>
+                    setSettings({
+                      ...settings,
+                      default_merge_agent: next.agents[0],
+                      default_merge_model_overrides: next.modelOverrides,
+                      default_merge_effort_overrides: next.effortOverrides,
+                    })
+                  }
+                />
+              </ModelStage>
             </div>
-            <div className="py-5">
-              <AgentDefaultsControl
+            <div>
+              <ModelStage
+                title="Sequential steps"
                 agents={[sequentialAgent]}
-                modelOverrides={settings.default_sequential_model_overrides}
-                effortOverrides={settings.default_sequential_effort_overrides}
+                models={settings.default_sequential_model_overrides}
+                efforts={settings.default_sequential_effort_overrides}
                 settings={settings}
                 catalogs={catalogs}
-                providers={PROVIDERS}
-                label="Sequential steps"
-                help={
-                  <>
-                    Select <strong className="font-semibold">one</strong>{" "}
-                    default model to use for sequential workflow steps.
-                  </>
-                }
-                onChange={(next) =>
-                  setSettings({
-                    ...settings,
-                    default_sequential_agent: next.agents[0],
-                    default_sequential_model_overrides: next.modelOverrides,
-                    default_sequential_effort_overrides: next.effortOverrides,
-                  })
-                }
-              />
+              >
+                <AgentDefaultsControl
+                  agents={[sequentialAgent]}
+                  modelOverrides={settings.default_sequential_model_overrides}
+                  effortOverrides={settings.default_sequential_effort_overrides}
+                  settings={settings}
+                  catalogs={catalogs}
+                  providers={PROVIDERS}
+                  label="Sequential steps"
+                  help={
+                    <>
+                      Select <strong className="font-semibold">one</strong>{" "}
+                      default model to use for sequential workflow steps.
+                    </>
+                  }
+                  onChange={(next) =>
+                    setSettings({
+                      ...settings,
+                      default_sequential_agent: next.agents[0],
+                      default_sequential_model_overrides: next.modelOverrides,
+                      default_sequential_effort_overrides: next.effortOverrides,
+                    })
+                  }
+                />
+              </ModelStage>
             </div>
             <div
               id="usage-limit-fallback"

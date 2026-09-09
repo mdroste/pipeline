@@ -48,7 +48,12 @@ export default function UpdateBanner() {
       role="status"
       className="flex items-center gap-3 px-6 py-2 bg-blue-50 dark:bg-blue-950 border-b border-blue-200 dark:border-blue-900 text-sm text-blue-800 dark:text-blue-200"
     >
-      <svg className="w-4 h-4 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <svg
+        className="w-4 h-4 shrink-0"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+        aria-hidden="true"
+      >
         <path
           fillRule="evenodd"
           d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a1 1 0 0 0 0 2v3a1 1 0 0 0 1 1h1a1 1 0 1 0 0-2v-3a1 1 0 0 0-1-1H9Z"
@@ -56,11 +61,14 @@ export default function UpdateBanner() {
         />
       </svg>
       <span className="flex-1 min-w-0 truncate">
-        <span className="font-medium">Update available:</span>{" "}
-        v{info.current} &rarr; v{info.latest}
+        <span className="font-medium">Update available:</span> v{info.current}{" "}
+        &rarr; v{info.latest}
       </span>
       {openError && (
-        <span role="alert" className="min-w-0 truncate text-xs text-red-700 dark:text-red-300">
+        <span
+          role="alert"
+          className="min-w-0 truncate text-xs text-red-700 dark:text-red-300"
+        >
           Could not open the release page: {openError}
         </span>
       )}

@@ -729,9 +729,10 @@ async fn shutdown_signal() {
 async fn run_with_interrupt(
     bus: EventBus,
     options: commands::HeadlessRunOptions,
+    batch: Option<&commands::HeadlessBatchSnapshot>,
 ) -> Result<serde_json::Value, String> {
     use std::future::Future as _;
-    let mut run = std::pin::pin!(commands::run_headless_with_options(bus, options));
+    let mut run = std::pin::pin!(commands::run_headless_batch_item(bus, options, batch));
     let mut signal = std::pin::pin!(shutdown_signal());
     let completed = std::future::poll_fn(|cx| {
         if let std::task::Poll::Ready(result) = run.as_mut().poll(cx) {
@@ -799,7 +800,7 @@ async fn cmd_run(args: RunArgs) -> i32 {
         extra_inputs: args.extra_inputs,
     };
     let bus: EventBus = Arc::new(CliEvents);
-    match run_with_interrupt(bus, options).await {
+    match run_with_interrupt(bus, options, None).await {
         Ok(value) => finish_single_run(&value, args.out.as_deref(), args.force),
         Err(error) => report_run_error(&error),
     }
@@ -959,24 +960,16 @@ async fn cmd_batch(args: BatchArgs) -> i32 {
         }
     };
     let selected_profile = args.profile_id.clone();
-    let config = if let Some(workflow) = workflow.as_ref() {
-        workflow.document.config.clone()
-    } else {
-        let profile_id = selected_profile
-            .clone()
-            .unwrap_or_else(pipeline_config::get_active_profile_id);
-        match pipeline_config::load_required_profile_for(&profile_id) {
-            Ok((config, _)) => config,
-            Err(error) => {
-                eprintln!("Error: {error}");
-                return 2;
-            }
+    let snapshot = match commands::HeadlessBatchSnapshot::capture(
+        selected_profile.as_deref(),
+        workflow.as_ref(),
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return 2;
         }
     };
-    if config.extraction.input_mode.trim() == "none" {
-        eprintln!("Error: batch processing requires a workflow that accepts input");
-        return 2;
-    }
 
     let files = match commands::scan_input_files(&args.input_dir) {
         Ok(files) if !files.is_empty() => files,
@@ -1013,7 +1006,7 @@ async fn cmd_batch(args: BatchArgs) -> i32 {
             variables: args.variables.clone(),
             extra_inputs: args.extra_inputs.clone(),
         };
-        match run_with_interrupt(bus, options).await {
+        match run_with_interrupt(bus, options, Some(&snapshot)).await {
             Ok(value) => {
                 let markdown = match report_markdown(&value) {
                     Ok(markdown) => markdown,

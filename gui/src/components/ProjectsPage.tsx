@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Project, ProjectsResponse, RunSummary, TrashedProject } from "../lib/types";
+import type {
+  Project,
+  ProjectsResponse,
+  RunSummary,
+  TrashedProject,
+} from "../lib/types";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
 import { confirmDialog, notify } from "./DialogService";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
@@ -31,7 +36,11 @@ function sameInputLineage(left: RunSummary, right: RunSummary): boolean {
   return Boolean(left.input_path && left.input_path === right.input_path);
 }
 
-export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerChange }: Props) {
+export default function ProjectsPage({
+  onOpenRun,
+  onDirtyChange,
+  onSaveHandlerChange,
+}: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -50,7 +59,9 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
   const detailsTimer = useRef<number | null>(null);
   const [savingDetails, setSavingDetails] = useState(false);
   const [addRunId, setAddRunId] = useState("");
-  const [detailsStatus, setDetailsStatus] = useState<"saved" | "saving" | "unsaved" | "failed">("saved");
+  const [detailsStatus, setDetailsStatus] = useState<
+    "saved" | "saving" | "unsaved" | "failed"
+  >("saved");
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashedProjects, setTrashedProjects] = useState<TrashedProject[]>([]);
   const [trashLoading, setTrashLoading] = useState(false);
@@ -67,7 +78,8 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
       setWarnings(projectResponse.warnings);
       setRuns(runResponse);
       setSelectedId((current) =>
-        current && projectResponse.projects.some((project) => project.id === current)
+        current &&
+        projectResponse.projects.some((project) => project.id === current)
           ? current
           : (projectResponse.projects[0]?.id ?? null),
       );
@@ -85,7 +97,9 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
   const refreshTrash = async () => {
     setTrashLoading(true);
     try {
-      setTrashedProjects(await invoke<TrashedProject[]>("list_trashed_projects"));
+      setTrashedProjects(
+        await invoke<TrashedProject[]>("list_trashed_projects"),
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -97,9 +111,12 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
     if (trashOpen) void refreshTrash();
   }, [trashOpen]);
 
-  const selected = projects.find((project) => project.id === selectedId) ?? null;
-  const detailsDirty = Boolean(selected) && draftProjectId.current === selected?.id
-    && (editName !== selected?.name || editDescription !== selected?.description);
+  const selected =
+    projects.find((project) => project.id === selectedId) ?? null;
+  const detailsDirty =
+    Boolean(selected) &&
+    draftProjectId.current === selected?.id &&
+    (editName !== selected?.name || editDescription !== selected?.description);
   const detailsRef = useRef({ selected, editName, editDescription });
   detailsRef.current = { selected, editName, editDescription };
   useEffect(() => {
@@ -113,7 +130,8 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
   // Autosave, explicit Save, collection switching, and route leaving share one
   // write. Edits made during a write are drained in order before leaving.
   const saveProject = useCallback((): Promise<boolean> => {
-    if (detailsTimer.current !== null) window.clearTimeout(detailsTimer.current);
+    if (detailsTimer.current !== null)
+      window.clearTimeout(detailsTimer.current);
     detailsTimer.current = null;
     if (saveInFlight.current) return saveInFlight.current;
     const save = async () => {
@@ -123,32 +141,58 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
           const draft = detailsRef.current;
           const record = draft.selected;
           if (!record || draftProjectId.current !== record.id) return true;
-          if (draft.editName === record.name && draft.editDescription === record.description) return true;
+          if (
+            draft.editName === record.name &&
+            draft.editDescription === record.description
+          )
+            return true;
           if (!draft.editName.trim()) {
             setDetailsStatus("failed");
-            setError("Enter a project name before leaving. Your changes have been kept.");
+            setError(
+              "Enter a project name before leaving. Your changes have been kept.",
+            );
             return false;
           }
           setDetailsStatus("saving");
           setError(null);
           const updated = await invoke<Project>("update_project", {
-            id: record.id, name: draft.editName, description: draft.editDescription,
+            id: record.id,
+            name: draft.editName,
+            description: draft.editDescription,
           });
-          setProjects(current => current.map(project => project.id === updated.id ? updated : project));
+          setProjects((current) =>
+            current.map((project) =>
+              project.id === updated.id ? updated : project,
+            ),
+          );
           const latest = detailsRef.current;
           if (latest.selected?.id !== record.id) return false;
           // Accept normalization only if the user has not edited that field
           // since this write began. Never replace a newer draft with a response.
-          const name = latest.editName === draft.editName ? updated.name : latest.editName;
-          const description = latest.editDescription === draft.editDescription ? updated.description : latest.editDescription;
-          detailsRef.current = { selected: updated, editName: name, editDescription: description };
+          const name =
+            latest.editName === draft.editName ? updated.name : latest.editName;
+          const description =
+            latest.editDescription === draft.editDescription
+              ? updated.description
+              : latest.editDescription;
+          detailsRef.current = {
+            selected: updated,
+            editName: name,
+            editDescription: description,
+          };
           setEditName(name);
           setEditDescription(description);
-          setDetailsStatus(name === updated.name && description === updated.description ? "saved" : "unsaved");
+          setDetailsStatus(
+            name === updated.name && description === updated.description
+              ? "saved"
+              : "unsaved",
+          );
         }
       } catch (caught) {
         setDetailsStatus("failed");
-        setError(`${caught instanceof Error ? caught.message : String(caught)}. Your changes have been kept. Retry Save details to continue.`);
+        setError(
+          `${caught instanceof Error ? caught.message : String(caught)}. Your changes have been kept. Retry Save details to continue.`,
+        );
         return false;
       } finally {
         setSavingDetails(false);
@@ -156,22 +200,34 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
     };
     const operation = save();
     saveInFlight.current = operation;
-    void operation.finally(() => { if (saveInFlight.current === operation) saveInFlight.current = null; });
+    void operation.finally(() => {
+      if (saveInFlight.current === operation) saveInFlight.current = null;
+    });
     return operation;
   }, []);
 
   useEffect(() => {
     if (draftProjectId.current !== selected?.id || !detailsDirty) return;
     setDetailsStatus("unsaved");
-    detailsTimer.current = window.setTimeout(() => { void saveProject(); }, 700);
-    return () => { if (detailsTimer.current !== null) window.clearTimeout(detailsTimer.current); };
+    detailsTimer.current = window.setTimeout(() => {
+      void saveProject();
+    }, 700);
+    return () => {
+      if (detailsTimer.current !== null)
+        window.clearTimeout(detailsTimer.current);
+    };
     // A failed save waits for an edit or explicit retry, not an automatic loop.
   }, [editName, editDescription, selected?.id, saveProject]);
 
-  useEffect(() => { onDirtyChange?.(detailsDirty || savingDetails); }, [detailsDirty, savingDetails, onDirtyChange]);
+  useEffect(() => {
+    onDirtyChange?.(detailsDirty || savingDetails);
+  }, [detailsDirty, savingDetails, onDirtyChange]);
   useEffect(() => {
     onSaveHandlerChange?.(saveProject);
-    return () => { onSaveHandlerChange?.(null); onDirtyChange?.(false); };
+    return () => {
+      onSaveHandlerChange?.(null);
+      onDirtyChange?.(false);
+    };
   }, [onSaveHandlerChange, onDirtyChange, saveProject]);
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
@@ -188,7 +244,10 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
     [runs],
   );
   const projectRuns = selected
-    ? selected.run_ids.map((runId) => ({ runId, run: runsById.get(runId) ?? null }))
+    ? selected.run_ids.map((runId) => ({
+        runId,
+        run: runsById.get(runId) ?? null,
+      }))
     : [];
   const availableRuns = selected
     ? runs.filter((run) => !selected.run_ids.includes(run.run_id))
@@ -196,7 +255,9 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
 
   const replaceProject = (project: Project) => {
     setProjects((current) =>
-      current.map((candidate) => candidate.id === project.id ? project : candidate),
+      current.map((candidate) =>
+        candidate.id === project.id ? project : candidate,
+      ),
     );
   };
 
@@ -242,11 +303,13 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
     setPending(true);
     setError(null);
     try {
-      replaceProject(await invoke<Project>("set_project_run", {
-        projectId: selected.id,
-        runId,
-        included,
-      }));
+      replaceProject(
+        await invoke<Project>("set_project_run", {
+          projectId: selected.id,
+          runId,
+          included,
+        }),
+      );
       setAddRunId("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -257,8 +320,10 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
 
   const addRelatedRuns = async () => {
     if (!selected || pending) return;
-    const members = projectRuns.flatMap(({ run }) => run ? [run] : []);
-    const related = availableRuns.filter((run) => members.some((member) => sameInputLineage(member, run)));
+    const members = projectRuns.flatMap(({ run }) => (run ? [run] : []));
+    const related = availableRuns.filter((run) =>
+      members.some((member) => sameInputLineage(member, run)),
+    );
     if (related.length === 0) return;
     if (!(await saveProject())) return;
     setPending(true);
@@ -282,19 +347,28 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
 
   const deleteSelected = async () => {
     if (!selected || pending) return;
-    if (!(await confirmDialog(
-      `Move the run collection “${selected.name}” to Trash? Its reports will be kept, and the collection can be restored.`,
-      { title: "Move collection to Trash", confirmLabel: "Move to Trash", destructive: true },
-    ))) return;
+    if (
+      !(await confirmDialog(
+        `Move the review collection “${selected.name}” to Trash? Its reports will be kept, and the collection can be restored.`,
+        {
+          title: "Move collection to Trash",
+          confirmLabel: "Move to Trash",
+          destructive: true,
+        },
+      ))
+    )
+      return;
     if (!(await saveProject())) return;
     setPending(true);
     setError(null);
     try {
       await invoke("delete_project", { id: selected.id });
-      const remaining = projects.filter((project) => project.id !== selected.id);
+      const remaining = projects.filter(
+        (project) => project.id !== selected.id,
+      );
       setProjects(remaining);
       setSelectedId(remaining[0]?.id ?? null);
-      notify("Run collection moved to Trash.", "success");
+      notify("Review collection moved to Trash.", "success");
       if (trashOpen) void refreshTrash();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -309,7 +383,7 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
     setError(null);
     try {
       await invoke("restore_trashed_project", { id: entry.project.id });
-      notify("Run collection restored.", "success");
+      notify("Review collection restored.", "success");
       await Promise.all([refresh(), refreshTrash()]);
       setSelectedId(entry.project.id);
     } catch (caught) {
@@ -320,16 +394,25 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
   };
 
   const permanentlyDeleteProject = async (entry: TrashedProject) => {
-    if (!(await confirmDialog(
-      `Permanently delete the run collection “${entry.project.name}” and its issue history? Reports will remain. This cannot be undone.`,
-      { title: "Delete collection forever", confirmLabel: "Delete forever", destructive: true },
-    ))) return;
+    if (
+      !(await confirmDialog(
+        `Permanently delete the review collection “${entry.project.name}” and its issue history? Reports will remain. This cannot be undone.`,
+        {
+          title: "Delete collection forever",
+          confirmLabel: "Delete forever",
+          destructive: true,
+        },
+      ))
+    )
+      return;
     if (!(await saveProject())) return;
     setPending(true);
     setError(null);
     try {
-      await invoke("permanently_delete_trashed_project", { id: entry.project.id });
-      notify("Run collection permanently deleted.", "success");
+      await invoke("permanently_delete_trashed_project", {
+        id: entry.project.id,
+      });
+      notify("Review collection permanently deleted.", "success");
       await refreshTrash();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -343,8 +426,12 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
       <aside className="flex w-72 shrink-0 flex-col border-r border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-950">
         <div className="flex items-center gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-semibold text-gray-950 dark:text-gray-50">Run collections</h1>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Track reports and findings over time.</p>
+            <h1 className="text-base font-semibold text-gray-950 dark:text-gray-50">
+              Review collections
+            </h1>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              Track reports and findings over time.
+            </p>
           </div>
           <button
             type="button"
@@ -373,7 +460,13 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
               className="w-full resize-none rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
             />
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setCreating(false)} className="px-2 py-1 text-xs text-gray-500">Cancel</button>
+              <button
+                type="button"
+                onClick={() => setCreating(false)}
+                className="px-2 py-1 text-xs text-gray-500"
+              >
+                Cancel
+              </button>
               <button
                 type="button"
                 disabled={!createName.trim() || pending}
@@ -399,15 +492,20 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
                   : "hover:bg-white/70 dark:hover:bg-gray-900"
               }`}
             >
-              <span className="block truncate text-sm font-medium text-gray-900 dark:text-gray-100">{project.name}</span>
+              <span className="block truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                {project.name}
+              </span>
               <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-                {project.run_ids.length} run{project.run_ids.length === 1 ? "" : "s"} · {formatDate(project.updated)}
+                {project.run_ids.length} run
+                {project.run_ids.length === 1 ? "" : "s"} ·{" "}
+                {formatDate(project.updated)}
               </span>
             </button>
           ))}
           {!loading && projects.length === 0 && (
             <p className="px-3 py-8 text-center text-xs leading-5 text-gray-500 dark:text-gray-400">
-              Create a run collection, then add reports from your saved history.
+              Create a review collection, then add reports from your saved
+              history.
             </p>
           )}
         </div>
@@ -422,21 +520,52 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
             Trash{trashedProjects.length ? ` (${trashedProjects.length})` : ""}
           </button>
           {trashOpen && (
-            <div id="project-trash" className="mt-1 space-y-1" aria-label="Run collection Trash">
+            <div
+              id="project-trash"
+              className="mt-1 space-y-1"
+              aria-label="Review collection Trash"
+            >
               {trashLoading ? (
-                <p className="px-3 py-2 text-xs text-gray-500">Loading Trash…</p>
+                <p className="px-3 py-2 text-xs text-gray-500">
+                  Loading Trash…
+                </p>
               ) : trashedProjects.length === 0 ? (
-                <p className="px-3 py-2 text-xs text-gray-500">Trash is empty.</p>
-              ) : trashedProjects.map((entry) => (
-                <div key={entry.project.id} className="rounded-lg border border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-900">
-                  <p className="truncate text-xs font-medium text-gray-900 dark:text-gray-100">{entry.project.name}</p>
-                  <p className="mt-0.5 text-[10px] text-gray-500">Moved {formatDate(entry.deleted_at)}</p>
-                  <div className="mt-1 flex gap-2">
-                    <button type="button" disabled={pending} onClick={() => void restoreProject(entry)} className="text-[11px] text-gray-700 disabled:opacity-40 dark:text-gray-300">Restore</button>
-                    <button type="button" disabled={pending} onClick={() => void permanentlyDeleteProject(entry)} className="text-[11px] text-red-600 disabled:opacity-40 dark:text-red-400">Delete forever</button>
+                <p className="px-3 py-2 text-xs text-gray-500">
+                  Trash is empty.
+                </p>
+              ) : (
+                trashedProjects.map((entry) => (
+                  <div
+                    key={entry.project.id}
+                    className="rounded-lg border border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-900"
+                  >
+                    <p className="truncate text-xs font-medium text-gray-900 dark:text-gray-100">
+                      {entry.project.name}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-gray-500">
+                      Moved {formatDate(entry.deleted_at)}
+                    </p>
+                    <div className="mt-1 flex gap-2">
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => void restoreProject(entry)}
+                        className="text-[11px] text-gray-700 disabled:opacity-40 dark:text-gray-300"
+                      >
+                        Restore
+                      </button>
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => void permanentlyDeleteProject(entry)}
+                        className="text-[11px] text-red-600 disabled:opacity-40 dark:text-red-400"
+                      >
+                        Delete forever
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           )}
         </div>
@@ -444,22 +573,37 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
 
       <main className="min-w-0 flex-1 overflow-auto">
         {error && (
-          <div role="alert" className="m-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+          <div
+            role="alert"
+            className="m-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+          >
             {error}
           </div>
         )}
         {warnings.length > 0 && (
-          <div role="status" className="mx-6 mt-6 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
-            {warnings.length} collection file{warnings.length === 1 ? " was" : "s were"} skipped because it could not be read.
+          <div
+            role="status"
+            className="mx-6 mt-6 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
+          >
+            {warnings.length} collection file
+            {warnings.length === 1 ? " was" : "s were"} skipped because it could
+            not be read.
           </div>
         )}
         {loading ? (
-          <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading run collections…</div>
+          <div className="flex h-full items-center justify-center text-sm text-gray-400">
+            Loading review collections…
+          </div>
         ) : selected ? (
           <div className="mx-auto max-w-5xl p-8">
             <div className="flex items-start gap-4">
               <div className="min-w-0 flex-1">
-                <label className="text-xs font-medium text-gray-500 dark:text-gray-400" htmlFor="project-name">Collection name</label>
+                <label
+                  className="text-xs font-medium text-gray-500 dark:text-gray-400"
+                  htmlFor="project-name"
+                >
+                  Collection name
+                </label>
                 <input
                   id="project-name"
                   disabled={pending}
@@ -476,40 +620,79 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
                   rows={2}
                   className="mt-3 w-full resize-y rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300"
                 />
-                <p role="status" aria-live="polite" className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  {detailsStatus === "saving" ? "Saving…" : detailsStatus === "failed" ? "Save failed · changes kept" : detailsDirty ? "Unsaved changes" : "Saved"}
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="mt-1 text-[11px] text-gray-500 dark:text-gray-400"
+                >
+                  {detailsStatus === "saving"
+                    ? "Saving…"
+                    : detailsStatus === "failed"
+                      ? "Save failed · changes kept"
+                      : detailsDirty
+                        ? "Unsaved changes"
+                        : "Saved"}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">
                 <button
                   type="button"
-                  disabled={pending || savingDetails || !editName.trim() || (editName === selected.name && editDescription === selected.description)}
+                  disabled={
+                    pending ||
+                    savingDetails ||
+                    !editName.trim() ||
+                    (editName === selected.name &&
+                      editDescription === selected.description)
+                  }
                   onClick={() => void saveProject()}
                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300"
                 >
                   Save details
                 </button>
-                <button type="button" disabled={pending} onClick={() => void deleteSelected()} className="rounded-lg px-3 py-1.5 text-xs text-red-600 disabled:opacity-40 dark:text-red-400">
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => void deleteSelected()}
+                  className="rounded-lg px-3 py-1.5 text-xs text-red-600 disabled:opacity-40 dark:text-red-400"
+                >
                   Delete collection
                 </button>
               </div>
             </div>
 
             <div className="mt-10 border-t border-gray-200 pt-8 dark:border-gray-800">
-              <ProjectIssueLedgerPanel project={selected} runs={runs} onOpenRun={(id, source) => { void openRun(id, source); }} />
+              <ProjectIssueLedgerPanel
+                project={selected}
+                runs={runs}
+                onOpenRun={(id, source) => {
+                  void openRun(id, source);
+                }}
+              />
             </div>
 
             <section className="mt-10 border-t border-gray-200 pt-8 dark:border-gray-800">
               <div className="flex items-center gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Reports</h2>
-                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Adding a report keeps the saved version. A report can belong to several collections.</p>
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    Reports
+                  </h2>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    Adding a report keeps the saved version. A report can belong
+                    to several collections.
+                  </p>
                 </div>
                 <div className="ml-auto flex items-center gap-2">
                   {projectRuns.some(({ run }) => run) && (
                     <button
                       type="button"
-                      disabled={pending || !availableRuns.some((run) => projectRuns.some(({ run: member }) => member ? sameInputLineage(member, run) : false))}
+                      disabled={
+                        pending ||
+                        !availableRuns.some((run) =>
+                          projectRuns.some(({ run: member }) =>
+                            member ? sameInputLineage(member, run) : false,
+                          ),
+                        )
+                      }
                       onClick={() => void addRelatedRuns()}
                       className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs text-gray-600 disabled:opacity-40 dark:border-gray-700 dark:text-gray-400"
                     >
@@ -524,7 +707,9 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
                   >
                     <option value="">Add an existing report…</option>
                     {availableRuns.map((run) => (
-                      <option key={run.run_id} value={run.run_id}>{runLabel(run)} · {formatDate(run.created)}</option>
+                      <option key={run.run_id} value={run.run_id}>
+                        {runLabel(run)} · {formatDate(run.created)}
+                      </option>
                     ))}
                   </select>
                   <button
@@ -540,27 +725,51 @@ export default function ProjectsPage({ onOpenRun, onDirtyChange, onSaveHandlerCh
 
               <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
                 {projectRuns.map(({ runId, run }, index) => (
-                  <div key={runId} className={`flex items-center gap-4 px-4 py-3 ${index ? "border-t border-gray-200 dark:border-gray-800" : ""}`}>
+                  <div
+                    key={runId}
+                    className={`flex items-center gap-4 px-4 py-3 ${index ? "border-t border-gray-200 dark:border-gray-800" : ""}`}
+                  >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{run ? runLabel(run) : runId}</p>
+                      <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {run ? runLabel(run) : runId}
+                      </p>
                       <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
-                        {run ? `${run.profile_name} · ${formatDate(run.created)} · ${run.status}` : "Report no longer exists"}
+                        {run
+                          ? `${run.profile_name} · ${formatDate(run.created)} · ${run.status}`
+                          : "Report no longer exists"}
                       </p>
                     </div>
                     {run && (
-                      <button type="button" onClick={() => void openRun(run.run_id)} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs dark:border-gray-700">Open</button>
+                      <button
+                        type="button"
+                        onClick={() => void openRun(run.run_id)}
+                        className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs dark:border-gray-700"
+                      >
+                        Open
+                      </button>
                     )}
-                    <button type="button" disabled={pending} onClick={() => void setRunMembership(runId, false)} className="px-2 py-1 text-xs text-gray-500 disabled:opacity-40">Remove</button>
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => void setRunMembership(runId, false)}
+                      className="px-2 py-1 text-xs text-gray-500 disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
                   </div>
                 ))}
                 {projectRuns.length === 0 && (
-                  <p className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">No reports have been added yet.</p>
+                  <p className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+                    No reports have been added yet.
+                  </p>
                 )}
               </div>
             </section>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">Create a run collection to begin.</div>
+          <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+            Create a review collection to begin.
+          </div>
         )}
       </main>
     </div>

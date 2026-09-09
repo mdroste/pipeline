@@ -1,10 +1,69 @@
-# Refactored feature map (R0–R5)
+# Feature module map
 
-Use this map to find an owner before reading an entire feature. Public APIs,
-IPC command names, stored JSON, provider supervision and product runtime
-boundaries are unchanged. The [implementation record](r0-r5-progress.md)
-contains validation evidence; the [full plan](../refactoring-plan.md) tracks
-later stages.
+Use this map to find an owner before reading an entire feature. Preserve public
+APIs, IPC command names, stored JSON, provider supervision, and the separate
+product runtimes. This map follows the current checkout, including
+splits after R0–R5; it does not establish release qualification. The
+[R0–R5 implementation record](r0-r5-progress.md) contains evidence for that
+stage; the [full plan](../refactoring-plan.md) tracks the broader work.
+
+## App, Workspace, and Tasks presentation
+
+- `App.tsx` composes the desktop shell; `hooks/useAppController.ts`
+  owns navigation, application state, events, and Review launch coordination.
+  `lib/appRunPreparation.ts` owns pure launch-preparation helpers and types;
+  `lib/appClient.ts` is the typed IPC boundary for shell-owned runtime commands.
+- `components/WorkspacePage.tsx` composes project and conversation views;
+  `hooks/useWorkspacePageController.ts` owns navigation, transcript paging,
+  pending requests, and serialized composer saves. `hooks/useWorkbenchEvents.ts`
+  isolates the live event subscription, coalesced streams, and terminal-turn
+  cleanup.
+- `components/WorkspaceResearchPanel.tsx` renders the research inspector;
+  `components/research-panel/useResearchPanelController.ts` owns its scoped
+  loading, drafts, and mutations.
+- `components/TasksPage.tsx` owns task navigation, selection, refresh, and events.
+  `components/tasks/` contains `Builder.tsx`, `Detail.tsx`, `Timing.tsx`,
+  `ScheduleCard.tsx`, and shared presentation helpers. All task IPC is routed
+  through `lib/taskClient.ts`.
+
+Paths in this section are relative to `gui/src/`. These controller extractions
+do not merge the owning runtime or storage boundaries.
+
+The About dialog's easter egg lives in `components/FlappyBirdGame.tsx` (pilot
+selection and game loop). `components/flappy/` owns shared game dimensions and
+types in `model.ts`, canvas sprites and composition in `render.ts`, and the
+scrolling San Francisco artwork in `scenery.ts`.
+
+## Workspace backend
+
+Under `gui/src-tauri/src/workbench/`:
+
+- `commands.rs` retains database workers, archive gates, and active-turn state.
+  `commands/codex.rs` owns turn submission, requests, and the event bridge;
+  `commands/{desk,project,research}.rs` group the remaining feature handlers.
+- `store.rs` retains shared records, store setup, migrations, and journal
+  mechanics. `store/workspaces.rs`, `sessions.rs`, `runtime.rs`, and `views.rs`
+  own workspace roots, conversations, binding/turn/event persistence, and
+  snapshots/preferences/root reconciliation respectively.
+- `research.rs` retains harness resolution and shared persistence helpers.
+  `research/types.rs` owns the public harness DTOs and `catalog.rs` owns stock
+  modules and presets. `research/{papers,sources,notes,ledger,tools}.rs` own the
+  corresponding services; `execution.rs`, `execution_plan.rs`, and `jobs.rs`
+  own local work.
+
+See the [Workspace guide](../workbench/README.md) for contracts and invariants.
+
+## Workflow provider calls
+
+Under `gui/src-tauri/src/pipeline/`, `api_common.rs` retains shared constants,
+HTTP clients, and the public facade. `api_common/loops.rs` owns tool loops,
+`execution.rs` owns host-tool execution, `retry.rs` owns HTTP retry/error policy,
+and `models.rs` owns provider types, usage, and bounded tool file access.
+
+`claude.rs` remains the compatibility facade. `claude/dispatch.rs` routes model
+calls; `claude_cli.rs`, `cli_workspace.rs`, `artifacts.rs`, and `process.rs`
+own Claude CLI calls, staging, artifact handling, and process helpers. Preserve
+the supervised `pipeline/call.rs` boundary when changing these adapters.
 
 ## Artifact Explorer
 
@@ -34,7 +93,13 @@ immutable snapshots and one serialized autosave queue. `useProviderCatalogs.ts`
 owns credential/transport-sensitive discovery, request identity and stale-data
 invalidation; successful saves explicitly notify this owner. Navigation,
 controls and each settings section are separate modules. Workspace account
-state remains in its existing isolated connection component.
+state remains in its existing isolated connection component. `CredentialField.tsx`
+keeps edits private until Save; `SaveState.tsx` aggregates pending operations for
+navigation without merging stores. `search.ts` owns searchable preference metadata.
+`lib/appPreferences.ts` owns device presentation preferences; `useAppAppearance.ts`
+and the reader/editor/composer consume them. `useAppNotifications.ts` adapts shell
+outcome events into `lib/appNotifications.ts`; it never shares runtime ownership.
+See [Settings behavior and validation](../settings.md).
 
 `gui/src/components/PipelinePage.tsx` composes the selected workflow editor.
 Under `components/pipeline-editor/`:
@@ -89,8 +154,27 @@ large inline test modules moved beside their original source under
 Run `node scripts/source-size-report.mjs` from the repository root. It reports
 source/tests above 1,200 lines or 50,000 bytes, long physical lines, and growth
 relative to `source-size-baseline.json`. `--json` exposes the full inventory.
-This is report-only: current debt does not fail unrelated work. Generated-file
-exceptions, ownership and review triggers are in `scripts/source-size-policy.json`.
-Do not refresh the baseline simply to hide new growth. R6 onward retain the
-remaining large-file work; formatting exposed additional debt in WorkspacePage
-and TasksPage, whose controller extraction remains R9.
+The default is report-only. Add `--check` (or run `npm run check:source-size`
+from `gui/`) to fail on newly oversized files or growth beyond the baseline;
+unchanged existing debt does not fail the check. Generated-file exceptions,
+ownership and review triggers are in `scripts/source-size-policy.json`.
+Do not refresh the baseline simply to hide new growth. Use the current report
+to locate remaining size debt rather than inferring it from a milestone label.
+
+## September review fixes
+
+- `commands/reuse_artifacts.rs` owns bounded immutable source snapshots and
+  producer-file copies for reruns. Snapshot hashes detect altered retained sources.
+- `pipeline/executor/checkpoints.rs` publishes atomic wave completion receipts;
+  `runs/history.rs` overlays them on provisional unit checkpoints during recovery.
+- `pipeline/extract/paddle_full.rs` owns full-parser invocation under its engine
+  lease; `settings/quarantine.rs` owns serialized, non-overwriting recovery backups.
+- `scripts/release/draft-release.mjs` verifies signed tag identity and coordinates
+  immutable draft assets. The active workflow is documented in `RELEASING.md`.
+
+- `pipeline/extract/staged.rs` records and resolves captured LaTeX references, including nearby external includes, without reopening the live project.
+
+Google Review calls and model discovery use the Gemini API under the existing
+`antigravity` provider ID. The retired CLI adapter and probe mechanics have been
+removed; only saved-settings compatibility fields remain. `deps/checks.rs` owns
+the API-key readiness record labeled Google API.

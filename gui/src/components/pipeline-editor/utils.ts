@@ -9,19 +9,25 @@ import type {
 import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
 
 /** Mirror the backend's effective graph and return transitive upstreams. */
-export function conditionUpstreamIds(steps: StepConfig[], targetId: string): string[] {
+export function conditionUpstreamIds(
+  steps: StepConfig[],
+  targetId: string,
+): string[] {
   const enabled = steps.filter((step) => step.enabled);
   const ids = new Set(enabled.map((step) => step.id));
   const dependencies = new Map<string, string[]>();
   for (const step of enabled) {
     const selectedProducers = (step.context?.include ?? [])
-      .filter((selector): selector is Extract<ArtifactSelector, { kind: "step" }> =>
-        selector.kind === "step")
+      .filter(
+        (selector): selector is Extract<ArtifactSelector, { kind: "step" }> =>
+          selector.kind === "step",
+      )
       .map((selector) => selector.step);
     dependencies.set(
       step.id,
-      [...new Set([...(step.after ?? []), ...selectedProducers])]
-        .filter((id) => ids.has(id)),
+      [...new Set([...(step.after ?? []), ...selectedProducers])].filter((id) =>
+        ids.has(id),
+      ),
     );
   }
   const upstream = new Set<string>();
@@ -54,19 +60,27 @@ export function defaultStepContext(
   }
   if (useOrientation) include.push({ kind: "survey" });
   if (phase === "sequential") {
-    include.push(...priorSteps
-      .filter((step) => step.enabled)
-      .map((step): ArtifactSelector => ({
-        kind: "step",
-        step: step.id,
-        parts: ["report"],
-      })));
+    include.push(
+      ...priorSteps
+        .filter((step) => step.enabled)
+        .map((step): ArtifactSelector => ({
+          kind: "step",
+          step: step.id,
+          parts: ["report"],
+        })),
+    );
   }
   return { include };
 }
 
 const OUTPUT_SCHEMA_TYPES = new Set([
-  "object", "array", "string", "number", "integer", "boolean", "null",
+  "object",
+  "array",
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "null",
 ]);
 
 /** Deterministic example instance for a portable schema, so users see the
@@ -74,19 +88,28 @@ const OUTPUT_SCHEMA_TYPES = new Set([
  *  max(minItems, 1) elements (capped at 3); when a schema declares required
  *  properties, only those appear. */
 export function exampleInstance(schema: unknown, depth = 0): unknown {
-  if (depth > 16 || !schema || typeof schema !== "object" || Array.isArray(schema)) return null;
+  if (
+    depth > 16 ||
+    !schema ||
+    typeof schema !== "object" ||
+    Array.isArray(schema)
+  )
+    return null;
   const object = schema as Record<string, unknown>;
   if (Array.isArray(object.enum) && object.enum.length) return object.enum[0];
   switch (object.type) {
     case "object": {
       const required = new Set(
         Array.isArray(object.required)
-          ? (object.required as unknown[]).filter((key): key is string => typeof key === "string")
+          ? (object.required as unknown[]).filter(
+              (key): key is string => typeof key === "string",
+            )
           : [],
       );
-      const properties = object.properties && typeof object.properties === "object"
-        ? object.properties as Record<string, unknown>
-        : {};
+      const properties =
+        object.properties && typeof object.properties === "object"
+          ? (object.properties as Record<string, unknown>)
+          : {};
       const out: Record<string, unknown> = {};
       for (const [key, child] of Object.entries(properties)) {
         if (required.size === 0 || required.has(key)) {
@@ -99,96 +122,157 @@ export function exampleInstance(schema: unknown, depth = 0): unknown {
       const min = typeof object.minItems === "number" ? object.minItems : 0;
       const count = Math.min(Math.max(min, 1), 3);
       return Array.from({ length: count }, () =>
-        object.items !== undefined ? exampleInstance(object.items, depth + 1) : "…");
+        object.items !== undefined
+          ? exampleInstance(object.items, depth + 1)
+          : "…",
+      );
     }
-    case "string": return "…";
-    case "integer": return 1;
-    case "number": return 1.5;
-    case "boolean": return true;
-    case "null": return null;
-    default: return {};
+    case "string":
+      return "…";
+    case "integer":
+      return 1;
+    case "number":
+      return 1.5;
+    case "boolean":
+      return true;
+    case "null":
+      return null;
+    default:
+      return {};
   }
 }
 const OUTPUT_SCHEMA_KEYWORDS = new Set([
-  "type", "enum", "minItems", "maxItems", "minLength", "uniqueItems", "title",
-  "description", "required", "properties", "items", "x-pipeline-contract",
-  "x-pipeline-catalog", "x-pipeline-catalog-policy",
-  "x-pipeline-adaptive-agent-count", "x-pipeline-preserve-findings-from",
+  "type",
+  "enum",
+  "minItems",
+  "maxItems",
+  "minLength",
+  "uniqueItems",
+  "title",
+  "description",
+  "required",
+  "properties",
+  "items",
+  "x-pipeline-contract",
+  "x-pipeline-catalog",
+  "x-pipeline-catalog-policy",
+  "x-pipeline-adaptive-agent-count",
+  "x-pipeline-preserve-findings-from",
   "x-pipeline-schema",
 ]);
 const OUTPUT_SCHEMA_CATALOGS = new Set([
-  "auto-review.subjects", "auto-review.methods", "auto-review.genres",
+  "auto-review.subjects",
+  "auto-review.methods",
+  "auto-review.genres",
 ]);
 
 function schemaTypeMatches(type: unknown, value: unknown): boolean {
   switch (type) {
-    case "object": return !!value && typeof value === "object" && !Array.isArray(value);
-    case "array": return Array.isArray(value);
-    case "string": return typeof value === "string";
-    case "number": return typeof value === "number" && Number.isFinite(value);
-    case "integer": return typeof value === "number" && Number.isSafeInteger(value);
-    case "boolean": return typeof value === "boolean";
-    case "null": return value === null;
-    default: return false;
+    case "object":
+      return !!value && typeof value === "object" && !Array.isArray(value);
+    case "array":
+      return Array.isArray(value);
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return typeof value === "number" && Number.isSafeInteger(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "null":
+      return value === null;
+    default:
+      return false;
   }
 }
 
-export function outputSchemaError(schema: unknown, path = "$", depth = 0): string | null {
+export function outputSchemaError(
+  schema: unknown,
+  path = "$",
+  depth = 0,
+): string | null {
   if (depth > 32) return `${path}: nesting exceeds 32 levels`;
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
     return `${path}: schema must be a JSON object`;
   }
   const object = schema as Record<string, unknown>;
-  const unknownKeyword = Object.keys(object).find((key) => !OUTPUT_SCHEMA_KEYWORDS.has(key));
+  const unknownKeyword = Object.keys(object).find(
+    (key) => !OUTPUT_SCHEMA_KEYWORDS.has(key),
+  );
   if (unknownKeyword) {
     return `${path}.${unknownKeyword}: unsupported keyword in Pipeline's portable schema dialect`;
   }
-  if (object.type !== undefined &&
-      (typeof object.type !== "string" || !OUTPUT_SCHEMA_TYPES.has(object.type))) {
+  if (
+    object.type !== undefined &&
+    (typeof object.type !== "string" || !OUTPUT_SCHEMA_TYPES.has(object.type))
+  ) {
     return `${path}.type: unsupported type`;
   }
   if (depth === 0 && object.type !== "object") {
     return `${path}.type: artifact schema root must explicitly be 'object' for all-provider portability`;
   }
-  for (const keyword of ["title", "description", "x-pipeline-contract",
-    "x-pipeline-catalog", "x-pipeline-catalog-policy",
-    "x-pipeline-preserve-findings-from", "x-pipeline-schema"] as const) {
+  for (const keyword of [
+    "title",
+    "description",
+    "x-pipeline-contract",
+    "x-pipeline-catalog",
+    "x-pipeline-catalog-policy",
+    "x-pipeline-preserve-findings-from",
+    "x-pipeline-schema",
+  ] as const) {
     if (object[keyword] !== undefined && typeof object[keyword] !== "string") {
       return `${path}.${keyword}: expected a string`;
     }
   }
-  if (object["x-pipeline-contract"] !== undefined &&
-      object["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT) {
+  if (
+    object["x-pipeline-contract"] !== undefined &&
+    object["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT
+  ) {
     return `${path}.x-pipeline-contract: unsupported contract`;
   }
-  if (object["x-pipeline-catalog"] !== undefined &&
-      !OUTPUT_SCHEMA_CATALOGS.has(object["x-pipeline-catalog"] as string)) {
+  if (
+    object["x-pipeline-catalog"] !== undefined &&
+    !OUTPUT_SCHEMA_CATALOGS.has(object["x-pipeline-catalog"] as string)
+  ) {
     return `${path}.x-pipeline-catalog: unknown Pipeline catalog`;
   }
-  if (object["x-pipeline-catalog-policy"] !== undefined &&
-      object["x-pipeline-catalog-policy"] !== "live") {
+  if (
+    object["x-pipeline-catalog-policy"] !== undefined &&
+    object["x-pipeline-catalog-policy"] !== "live"
+  ) {
     return `${path}.x-pipeline-catalog-policy: only 'live' is supported`;
   }
-  if (object["x-pipeline-adaptive-agent-count"] !== undefined &&
-      (typeof object["x-pipeline-adaptive-agent-count"] !== "number" ||
-       !Number.isSafeInteger(object["x-pipeline-adaptive-agent-count"]) ||
-       object["x-pipeline-adaptive-agent-count"] < 0)) {
+  if (
+    object["x-pipeline-adaptive-agent-count"] !== undefined &&
+    (typeof object["x-pipeline-adaptive-agent-count"] !== "number" ||
+      !Number.isSafeInteger(object["x-pipeline-adaptive-agent-count"]) ||
+      object["x-pipeline-adaptive-agent-count"] < 0)
+  ) {
     return `${path}.x-pipeline-adaptive-agent-count: expected a non-negative integer`;
   }
-  if (object["x-pipeline-adaptive-agent-count"] !== undefined &&
-      object["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT) {
+  if (
+    object["x-pipeline-adaptive-agent-count"] !== undefined &&
+    object["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT
+  ) {
     return `${path}.x-pipeline-adaptive-agent-count: requires the Auto Review contract`;
   }
-  if (depth > 0 && (object["x-pipeline-contract"] !== undefined ||
+  if (
+    depth > 0 &&
+    (object["x-pipeline-contract"] !== undefined ||
       object["x-pipeline-catalog-policy"] !== undefined ||
       object["x-pipeline-adaptive-agent-count"] !== undefined ||
       object["x-pipeline-preserve-findings-from"] !== undefined ||
-      object["x-pipeline-schema"] !== undefined)) {
+      object["x-pipeline-schema"] !== undefined)
+  ) {
     return `${path}: contract, policy, adaptive-count, preserve-findings, and schema-reference settings are root-only`;
   }
   if (object["x-pipeline-schema"] !== undefined) {
-    const extra = Object.keys(object).find((key) =>
-      !key.startsWith("x-pipeline-") && !["type", "title", "description"].includes(key));
+    const extra = Object.keys(object).find(
+      (key) =>
+        !key.startsWith("x-pipeline-") &&
+        !["type", "title", "description"].includes(key),
+    );
     if (extra) {
       return `${path}.${extra}: a schema reference replaces the whole contract; remove structural keywords or the x-pipeline-schema marker`;
     }
@@ -204,13 +288,18 @@ export function outputSchemaError(schema: unknown, path = "$", depth = 0): strin
     if (new Set(encoded).size !== encoded.length) {
       return `${path}.enum: entries must be unique`;
     }
-    if (object.type !== undefined &&
-        object.enum.some((value) => !schemaTypeMatches(object.type, value))) {
+    if (
+      object.type !== undefined &&
+      object.enum.some((value) => !schemaTypeMatches(object.type, value))
+    ) {
       return `${path}.enum: every entry must match the declared type`;
     }
   }
   if (object.required !== undefined) {
-    if (!Array.isArray(object.required) || object.required.some((key) => typeof key !== "string")) {
+    if (
+      !Array.isArray(object.required) ||
+      object.required.some((key) => typeof key !== "string")
+    ) {
       return `${path}.required: expected an array of strings`;
     }
     if (new Set(object.required).size !== object.required.length) {
@@ -221,15 +310,22 @@ export function outputSchemaError(schema: unknown, path = "$", depth = 0): strin
     }
   }
   if (object.properties !== undefined) {
-    if (!object.properties || typeof object.properties !== "object" ||
-        Array.isArray(object.properties)) {
+    if (
+      !object.properties ||
+      typeof object.properties !== "object" ||
+      Array.isArray(object.properties)
+    ) {
       return `${path}.properties: expected an object`;
     }
     if (object.type !== undefined && object.type !== "object") {
       return `${path}.properties: only valid for an object schema`;
     }
     for (const [key, child] of Object.entries(object.properties)) {
-      const error = outputSchemaError(child, `${path}.properties.${key}`, depth + 1);
+      const error = outputSchemaError(
+        child,
+        `${path}.properties.${key}`,
+        depth + 1,
+      );
       if (error) return error;
     }
   }
@@ -242,21 +338,33 @@ export function outputSchemaError(schema: unknown, path = "$", depth = 0): strin
   }
   for (const keyword of ["minItems", "maxItems"] as const) {
     const value = object[keyword];
-    if (value !== undefined &&
-        (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)) {
+    if (
+      value !== undefined &&
+      (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    ) {
       return `${path}.${keyword}: expected a non-negative integer`;
     }
-    if (value !== undefined && object.type !== undefined && object.type !== "array") {
+    if (
+      value !== undefined &&
+      object.type !== undefined &&
+      object.type !== "array"
+    ) {
       return `${path}.${keyword}: only valid for an array schema`;
     }
   }
-  if (typeof object.minItems === "number" && typeof object.maxItems === "number" &&
-      object.minItems > object.maxItems) {
+  if (
+    typeof object.minItems === "number" &&
+    typeof object.maxItems === "number" &&
+    object.minItems > object.maxItems
+  ) {
     return `${path}: minItems cannot exceed maxItems`;
   }
   if (object.minLength !== undefined) {
-    if (typeof object.minLength !== "number" || !Number.isSafeInteger(object.minLength) ||
-        object.minLength < 0) {
+    if (
+      typeof object.minLength !== "number" ||
+      !Number.isSafeInteger(object.minLength) ||
+      object.minLength < 0
+    ) {
       return `${path}.minLength: expected a non-negative integer`;
     }
     if (object.type !== undefined && object.type !== "string") {

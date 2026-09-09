@@ -6,23 +6,23 @@ research. Workspace is its persistent, interactive orchestration mode;
 (formerly Workflows) is the suite's deterministic orchestration mode. A workflow
 remains a saved dependency graph; code and storage names are unchanged.
 
-| Term | Meaning |
-|---|---|
-| Workflow | A deterministic dependency graph of isolated model calls for repeatable research or review tasks |
-| Workspace | Persistent ChatGPT conversations plus optional research capabilities |
-| Agent profile (harness preset internally) | Resolved instructions, context providers, tools, inspectors, and permissions for a Workspace turn |
-| Recipe | Optional versioned conversation instructions, input requirements, and completion checks; not a scheduler |
-| Review handoff | Explicit copy of one immutable Workspace paper revision into the normal Workflow launch preview |
+| Term                                      | Meaning                                                                                                  |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Workflow                                  | A deterministic dependency graph of isolated model calls for repeatable research or review tasks         |
+| Workspace                                 | Persistent ChatGPT conversations plus optional research capabilities                                     |
+| Agent profile (harness preset internally) | Resolved instructions, context providers, tools, inspectors, and permissions for a Workspace turn        |
+| Recipe                                    | Optional versioned conversation instructions, input requirements, and completion checks; not a scheduler |
+| Review handoff                            | Explicit copy of one immutable Workspace paper revision into the normal Workflow launch preview          |
 
-The product plan and current WB-step status live in
-[`../../workbench_plan.md`](../../workbench_plan.md). Canonical repository-wide
-architecture remains in [`../../CLAUDE.md`](../../CLAUDE.md). This page is the
-short implementation map.
+This page is the current implementation map. The older WB milestone plan is
+retained as historical context in
+[`../../notes/workbench_plan.md`](../../notes/workbench_plan.md). Canonical
+repository-wide architecture remains in [`../../CLAUDE.md`](../../CLAUDE.md).
 
 ## Product boundary
 
 The research directory defaults to `~/.pipeline/workbench/` and follows
-Settings → General → Research data folder after restart. Native credentials and
+Settings → Data & Storage → Research data folder after restart. Native credentials and
 session files stay in local `~/.pipeline/workbench/codex/`. See
 [storage selection](../storage.md) for scope and transfer limitations.
 
@@ -41,15 +41,21 @@ other's mutable runtime state.
 
 ## Workspace layout
 
-Workspace opens with a project working area and companion chat below one
-compact bar. The project-name button opens navigation as a bounded drawer;
+The suite opens on a project-centered Home that routes users by outcome:
+assistant work, paper review, or an automation. Home and Projects are the
+primary destinations; recent projects appear directly in the suite rail, while
+lower-level Review and automation controls remain under Tools. This navigation
+layer does not merge the underlying Workspace, Review, or Tasks runtimes.
+
+Projects opens with a project working area and companion chat below one compact
+bar. The project-name button opens navigation as a bounded drawer;
 Keep navigation open pins it when space permits. Navigation is closed by
-default. The current-tool button opens a searchable picker, also available
-with Command/Ctrl K. It exposes every named tool, with the project's ordered
-pins first. Navigation groups tools into Overview, Library, Analyses, Writing,
-Notes & evidence, and Action items; Customize supports up to four shortcuts.
+default. The current-view button opens a searchable picker, also available
+with Command/Ctrl K. It exposes specialized project views without making them
+peer sections. Navigation has six stable areas: Overview, Library, Analyze,
+Write, Automate, and Activity.
 The Chat toggle hides/reopens chat, and the layout menu provides focus and
-reset controls. Reset layout and shortcuts also restores pins and sidebar width.
+reset controls.
 
 Model, Thinking and the Assistant settings gear are below the message.
 Settings opens preset, access, instructions, modules and recipes inside the
@@ -59,13 +65,13 @@ an empty source list occupies no space. Project setup and project notes also
 start collapsed; Overview shows a brief and up to three open action items.
 The full assistant editor
 uses the project area and adapts to a single section picker at narrow widths.
-Whole-store backups, retention and diagnostics are under Settings → General →
-Research data; selective exchange and Send for review remain project tools.
+Whole-store backups and retention are under Settings → Data & Storage;
+diagnostics are under Settings → Advanced & About; selective exchange and Send for review remain project tools.
 
 Pinned navigation collapses when the remaining working area cannot fit both
 panes. Below 848 pixels of working space, Project and Chat switch views while
 retaining mounted drafts. Widening restores a preferred split. View, assistant
-width, navigation pinning, project destination, last conversation and pins are local preferences;
+width, navigation pinning, project destination, and last conversation are local preferences;
 they do not change project permissions. Research tools mount on first visit
 and retain unsaved edits when switching destinations; polling stops for hidden
 job, grid, check and execution views. These drafts remain scoped to the current
@@ -169,9 +175,10 @@ and verification status.
 
 ### Frontend
 
-- `gui/src/components/WorkspacePage.tsx` owns project/session navigation,
-  the companion assistant, bounded transcript window, streaming, pending
-  App Server requests and serialized composer saves. `WorkspaceDesk.tsx`
+- `gui/src/components/WorkspacePage.tsx` composes the project and companion
+  assistant. `gui/src/hooks/useWorkspacePageController.ts` owns project/session
+  navigation, bounded transcripts, streaming, pending App Server requests,
+  and serialized composer saves. `WorkspaceDesk.tsx`
   owns the actual project/chat sizing; `WorkspaceProjectNavigation.tsx` and
   `lib/workspaceNavigation.ts` own named destinations and local pins.
   `WorkspaceToolPicker.tsx` provides searchable keyboard navigation and
@@ -186,8 +193,9 @@ and verification status.
   visible models/reasoning effort, and quota display.
 - `WorkspaceResearchPanel.tsx` supplies the embedded assistant settings and
   the project tools for sources, notes, evidence, results, execution, review
-  and exchange. `WorkspaceAssistantPresetForm.tsx` saves quick instruction and
-  module edits as an explicit new preset copy for the current conversation.
+  and exchange; `research-panel/useResearchPanelController.ts` owns scoped
+  loading, drafts, and mutations. `WorkspaceAssistantPresetForm.tsx` saves quick
+  instruction and module edits as a new preset copy for the current conversation.
   `WorkspaceRecipesPanel.tsx` and `WorkspaceReleasePanel.tsx` isolate recipe and
   release/archive concerns.
 - `WorkspaceHarnessEditor.tsx` is the lazy two-pane harness editor (preset
@@ -210,10 +218,13 @@ and verification status.
 
 - `gui/src-tauri/src/workbench/commands.rs` is the Tauri facade and owns bounded
   blocking database workers, the shared archive database gate, global turn
-  serialization, active-turn identity, and the epoch-scoped event bridge.
-- `store.rs` owns the versioned SQLite store, migrations, optimistic revisions,
-  operation IDs, conversations, native bindings, turns/items, and root
-  reconciliation. `store/tests.rs` contains persistence and migration tests.
+  serialization, and active-turn identity. `commands/codex.rs` owns submission,
+  server requests, and the epoch-scoped event bridge; `commands/` also groups
+  desk, project, and research handlers through the same database gates.
+- `store.rs` owns SQLite setup, migrations, shared records, and the journal;
+  `store/{workspaces,sessions,runtime,views}.rs` implement roots, conversations,
+  bindings/turns/event persistence, and snapshots/reconciliation with optimistic
+  revisions. `store/tests.rs` contains persistence and migration tests.
 - `codex/` owns Workspace configuration, App Server supervision, native thread
   bindings, and durable event projection. Shared JSONL transport, compatibility,
   process ownership, account/model/quota operations, and simulation live in
@@ -221,8 +232,9 @@ and verification status.
   [Workflow backend](../workflow-codex.md) does not share runtime state or
   credentials. The development-only `workbench_probe` exercises the no-model
   native boundary.
-- `research.rs` owns harness resolution, immutable paper/source revisions,
-  dynamic research tools, notes, claims, and evidence.
+- `research.rs` owns harness resolution and shared research record types;
+  `research/{papers,sources,notes,ledger,tools}.rs` own immutable revisions,
+  notes, claims/evidence, and dynamic research tools.
   `research/execution.rs` owns tested execution profiles, process isolation,
   artifacts, structured results, comparisons, and verification receipts.
 - `research/jobs.rs` owns the bounded local queue, turn/detached ownership,
@@ -320,7 +332,7 @@ npm run build
 
 cd src-tauri
 cargo fmt --all -- --check
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets
 cargo run --locked --bin workbench_probe  # opt-in; no model turn
 ```

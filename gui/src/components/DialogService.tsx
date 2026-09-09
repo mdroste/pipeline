@@ -21,19 +21,25 @@ let confirmHandler: ((request: ConfirmRequest) => void) | null = null;
 let toastHandler: ((toast: Toast) => void) | null = null;
 let nextToastId = 1;
 
-export function confirmDialog(message: string, options: ConfirmOptions = {}): Promise<boolean> {
+export function confirmDialog(
+  message: string,
+  options: ConfirmOptions = {},
+): Promise<boolean> {
   if (!confirmHandler) return Promise.resolve(false);
-  return new Promise((resolve) => confirmHandler?.({ message, resolve, ...options }));
+  return new Promise((resolve) =>
+    confirmHandler?.({ message, resolve, ...options }),
+  );
 }
 
-export function notify(
-  message: string,
-  kind: Toast["kind"] = "error",
-): void {
+export function notify(message: string, kind: Toast["kind"] = "error"): void {
   toastHandler?.({ id: nextToastId++, message, kind });
 }
 
-export default function DialogService({ children }: { children: React.ReactNode }) {
+export default function DialogService({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [request, setRequest] = useState<ConfirmRequest | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -44,7 +50,9 @@ export default function DialogService({ children }: { children: React.ReactNode 
     toastHandler = (toast) => {
       setToasts((current) => [...current.slice(-3), toast]);
       window.setTimeout(() => {
-        setToasts((current) => current.filter((candidate) => candidate.id !== toast.id));
+        setToasts((current) =>
+          current.filter((candidate) => candidate.id !== toast.id),
+        );
       }, 6000);
     };
     return () => {
@@ -56,9 +64,10 @@ export default function DialogService({ children }: { children: React.ReactNode 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog || !request) return;
-    priorFocus.current = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    priorFocus.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     if (!dialog.open) dialog.showModal();
   }, [request]);
 
@@ -84,11 +93,18 @@ export default function DialogService({ children }: { children: React.ReactNode 
         className="m-auto w-[min(30rem,calc(100%-2rem))] rounded-xl border border-gray-200 bg-white p-0 text-gray-900 shadow-2xl backdrop:bg-black/45 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
       >
         {request && (
-          <form method="dialog" className="p-6" onSubmit={(event) => event.preventDefault()}>
+          <form
+            method="dialog"
+            className="p-6"
+            onSubmit={(event) => event.preventDefault()}
+          >
             <h2 id="pipeline-confirm-title" className="text-lg font-semibold">
               {request.title || "Please confirm"}
             </h2>
-            <p id="pipeline-confirm-description" className="mt-3 whitespace-pre-line text-sm leading-6 text-gray-600 dark:text-gray-300">
+            <p
+              id="pipeline-confirm-description"
+              className="mt-3 whitespace-pre-line text-sm leading-6 text-gray-600 dark:text-gray-300"
+            >
               {request.message}
             </p>
             <div className="mt-6 flex justify-end gap-2">
@@ -104,7 +120,9 @@ export default function DialogService({ children }: { children: React.ReactNode 
                 type="button"
                 onClick={() => finish(true)}
                 className={`rounded-lg px-3 py-2 text-sm font-medium text-white ${
-                  request.destructive ? "bg-red-600 hover:bg-red-700" : "bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900"
+                  request.destructive
+                    ? "bg-red-600 hover:bg-red-700"
+                    : "bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900"
                 }`}
               >
                 {request.confirmLabel || "Continue"}
@@ -131,11 +149,17 @@ export default function DialogService({ children }: { children: React.ReactNode 
             }`}
           >
             <div className="flex gap-3">
-              <span className="min-w-0 flex-1 whitespace-pre-line">{toast.message}</span>
+              <span className="min-w-0 flex-1 whitespace-pre-line">
+                {toast.message}
+              </span>
               <button
                 type="button"
                 aria-label="Dismiss notification"
-                onClick={() => setToasts((current) => current.filter((candidate) => candidate.id !== toast.id))}
+                onClick={() =>
+                  setToasts((current) =>
+                    current.filter((candidate) => candidate.id !== toast.id),
+                  )
+                }
                 className="pointer-events-auto shrink-0 rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
               >
                 ×

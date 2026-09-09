@@ -271,13 +271,26 @@ fn projected(store: &Store, ws: &str) -> WorkbenchResult<Vec<Relation>> {
             }
         }
     }
-    for kind in ["sample", "decision", "publication_asset", "asset_inclusion", "deliverable", "symbol", "assumption_branch", "revision_campaign", "coauthor_review", "deliverable_role"] {
+    for kind in [
+        "sample",
+        "decision",
+        "publication_asset",
+        "asset_inclusion",
+        "deliverable",
+        "symbol",
+        "assumption_branch",
+        "revision_campaign",
+        "coauthor_review",
+        "deliverable_role",
+    ] {
         for record in desk::records(store, ws, kind)? {
             let field = if kind == "sample" {
                 "datasets"
             } else if kind == "decision" {
                 "assumptions"
-            } else { "sources" };
+            } else {
+                "sources"
+            };
             for value in record.body[field].as_array().into_iter().flatten() {
                 if let Ok(input) = serde_json::from_value(value.clone()) {
                     out.push(Relation {

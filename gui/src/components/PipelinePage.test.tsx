@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PipelinePage from "./PipelinePage";
 import type {
@@ -36,7 +42,10 @@ function makeConfig(): PipelineConfig {
         agents: ["claude"],
         context: {
           include: [
-            { kind: "primary", parts: ["text", "structure", "visuals", "source"] },
+            {
+              kind: "primary",
+              parts: ["text", "structure", "visuals", "source"],
+            },
             { kind: "survey" },
           ],
         },
@@ -63,7 +72,12 @@ function makeConfig(): PipelineConfig {
 }
 
 const profiles: ProfileSummary[] = [
-  { id: "deep-review", name: "Paper Review (Full)", step_count: 2, builtin: true },
+  {
+    id: "deep-review",
+    name: "Paper Review (Full)",
+    step_count: 2,
+    builtin: true,
+  },
 ];
 
 function mockLoad(config: PipelineConfig, extra: Record<string, unknown> = {}) {
@@ -95,28 +109,38 @@ const adaptiveCatalog: AutoReviewCatalog = {
   subjectCount: 1,
   methodCount: 1,
   genreCount: 10,
-  disciplines: [{
-    id: "economics",
-    label: "Economics",
-    roles: [{
-      id: "subject_economics_macro",
-      label: "Economics — Macroeconomics",
-      level: "subfield",
-      description: "Macroeconomics, policy, growth, business cycles, and aggregate dynamics.",
-      exclusions: "the contribution is primarily microeconomic.",
-    }],
-  }],
-  methodFamilies: [{
-    id: "formal_conceptual",
-    label: "Formal Theory & Conceptual Analysis",
-    roles: [{
-    id: "formal_proofs",
-    label: "Method — Formal Proofs",
-    level: "method",
-    description: "Central theorems and derivations require proof verification.",
-    exclusions: "routine algebra.",
-    }],
-  }],
+  disciplines: [
+    {
+      id: "economics",
+      label: "Economics",
+      roles: [
+        {
+          id: "subject_economics_macro",
+          label: "Economics — Macroeconomics",
+          level: "subfield",
+          description:
+            "Macroeconomics, policy, growth, business cycles, and aggregate dynamics.",
+          exclusions: "the contribution is primarily microeconomic.",
+        },
+      ],
+    },
+  ],
+  methodFamilies: [
+    {
+      id: "formal_conceptual",
+      label: "Formal Theory & Conceptual Analysis",
+      roles: [
+        {
+          id: "formal_proofs",
+          label: "Method — Formal Proofs",
+          level: "method",
+          description:
+            "Central theorems and derivations require proof verification.",
+          exclusions: "routine algebra.",
+        },
+      ],
+    },
+  ],
 };
 
 async function addBlankStep(
@@ -128,7 +152,9 @@ async function addBlankStep(
   await user.click(screen.getByRole("tab", { name: "Blank step" }));
   await user.type(screen.getByRole("textbox", { name: "Step name" }), name);
   if (phase === "sequential") {
-    await user.click(screen.getByRole("radio", { name: /After earlier steps/ }));
+    await user.click(
+      screen.getByRole("radio", { name: /After earlier steps/ }),
+    );
   }
   await user.click(screen.getByRole("button", { name: "Create step" }));
 }
@@ -163,14 +189,14 @@ describe("PipelinePage", () => {
     const user = userEvent.setup();
     const onOpenGallery = vi.fn();
     mockLoad(makeConfig());
-    render(
-      <PipelinePage onClose={() => {}} onOpenGallery={onOpenGallery} />,
-    );
+    render(<PipelinePage onClose={() => {}} onOpenGallery={onOpenGallery} />);
 
     await user.click(await screen.findByRole("button", { name: "Gallery" }));
 
     expect(onOpenGallery).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("button", { name: "From URL…" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "From URL…" }),
+    ).not.toBeInTheDocument();
   });
 
   it("surfaces import and export dialog plugin failures", async () => {
@@ -221,7 +247,8 @@ describe("PipelinePage", () => {
       if (cmd === "list_profiles") return Promise.resolve(availableProfiles);
       if (cmd === "get_active_profile") return Promise.resolve("deep-review");
       if (cmd === "switch_profile") return switchResult;
-      if (cmd === "get_settings") return Promise.reject(new Error("not needed"));
+      if (cmd === "get_settings")
+        return Promise.reject(new Error("not needed"));
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     render(<PipelinePage onClose={() => {}} />);
@@ -234,7 +261,9 @@ describe("PipelinePage", () => {
     expect(selector).toBeDisabled();
     expect(selector).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
-    expect(invoke.mock.calls.filter((call) => call[0] === "switch_profile")).toHaveLength(1);
+    expect(
+      invoke.mock.calls.filter((call) => call[0] === "switch_profile"),
+    ).toHaveLength(1);
 
     const quickConfig = makeConfig();
     quickConfig.steps[0].label = "Quick Technical";
@@ -259,7 +288,8 @@ describe("PipelinePage", () => {
       if (cmd === "list_profiles") return Promise.resolve(profiles);
       if (cmd === "get_active_profile") return Promise.resolve("deep-review");
       if (cmd === "reset_pipeline_config") return resetResult;
-      if (cmd === "get_settings") return Promise.reject(new Error("not needed"));
+      if (cmd === "get_settings")
+        return Promise.reject(new Error("not needed"));
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     const onProfileChange = vi.fn();
@@ -283,7 +313,12 @@ describe("PipelinePage", () => {
       finishDelete = resolve;
     });
     const remaining: ProfileSummary[] = [
-      { id: "auto-review", name: "Automatic Paper Review (Full)", step_count: 5, builtin: true },
+      {
+        id: "auto-review",
+        name: "Automatic Paper Review (Full)",
+        step_count: 5,
+        builtin: true,
+      },
     ];
     const customProfiles: ProfileSummary[] = [
       ...remaining,
@@ -299,7 +334,8 @@ describe("PipelinePage", () => {
       if (cmd === "get_active_profile") return Promise.resolve("custom");
       if (cmd === "delete_profile") return deleteResult;
       if (cmd === "switch_profile") return Promise.resolve(makeConfig());
-      if (cmd === "get_settings") return Promise.reject(new Error("not needed"));
+      if (cmd === "get_settings")
+        return Promise.reject(new Error("not needed"));
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     render(<PipelinePage onClose={() => {}} />);
@@ -315,7 +351,9 @@ describe("PipelinePage", () => {
     expect(screen.getByRole("button", { name: "Duplicate" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
-    expect(invoke.mock.calls.some(([command]) => command === "switch_profile")).toBe(false);
+    expect(
+      invoke.mock.calls.some(([command]) => command === "switch_profile"),
+    ).toBe(false);
 
     await act(async () => finishDelete());
     await waitFor(() => {
@@ -323,7 +361,9 @@ describe("PipelinePage", () => {
       expect(selector).toHaveValue("auto-review");
     });
     expect(invoke).toHaveBeenCalledWith("delete_profile", { id: "custom" });
-    expect(invoke).toHaveBeenCalledWith("switch_profile", { id: "auto-review" });
+    expect(invoke).toHaveBeenCalledWith("switch_profile", {
+      id: "auto-review",
+    });
   });
 
   it("disables Save until the config is dirty", async () => {
@@ -362,13 +402,18 @@ describe("PipelinePage", () => {
       (c) => c[0] === "save_pipeline_config",
     );
     expect(saveCall?.[1].config.steps.length).toBe(3);
-    expect(saveCall?.[1].config.steps.find(
-      (step: { id: string }) => step.id === "custom_step",
-    )).toMatchObject({
+    expect(
+      saveCall?.[1].config.steps.find(
+        (step: { id: string }) => step.id === "custom_step",
+      ),
+    ).toMatchObject({
       after: [],
       context: {
         include: [
-          { kind: "primary", parts: ["text", "structure", "visuals", "source"] },
+          {
+            kind: "primary",
+            parts: ["text", "structure", "visuals", "source"],
+          },
           { kind: "survey" },
         ],
       },
@@ -382,7 +427,9 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     await user.click(screen.getByRole("button", { name: "+ Add step" }));
-    expect(screen.getByRole("dialog", { name: "Add workflow step" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Add workflow step" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create step" })).toBeDisabled();
     await user.type(
       screen.getByRole("textbox", { name: "Step name" }),
@@ -392,24 +439,41 @@ describe("PipelinePage", () => {
       screen.getByRole("textbox", { name: "What should this step do?" }),
       "Check whether each empirical claim follows from the stated design.",
     );
-    await user.click(screen.getByRole("radio", { name: /After earlier steps/ }));
+    await user.click(
+      screen.getByRole("radio", { name: /After earlier steps/ }),
+    );
     await user.click(screen.getByRole("radio", { name: /Structured issues/ }));
     await user.click(screen.getByRole("button", { name: "Create step" }));
     await useAdvancedEditor(user);
 
-    expect(screen.getByRole("textbox", { name: "Step label" })).toHaveValue("Identification audit");
+    expect(screen.getByRole("textbox", { name: "Step label" })).toHaveValue(
+      "Identification audit",
+    );
     expect(screen.getByTestId("step-summary")).toHaveTextContent(
       "Runs after its selected dependencies using the profile’s default provider",
     );
-    expect(screen.getByTestId("step-summary")).toHaveTextContent("Produces structured issues JSON");
-    expect(screen.getByRole("tab", { name: "Prompt" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Inputs & dependencies" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Execution rules" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Model & agents" })).toBeInTheDocument();
+    expect(screen.getByTestId("step-summary")).toHaveTextContent(
+      "Produces structured issues JSON",
+    );
+    expect(screen.getByRole("tab", { name: "Prompt" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("tab", { name: "Inputs & dependencies" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Execution rules" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Model & agents" }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       const added = saveCall?.[1].config.steps.find(
         (step: { id: string }) => step.id === "identification_audit",
       );
@@ -439,14 +503,22 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Consolidate Issues");
     await useAdvancedEditor(user);
 
-    await user.click(screen.getAllByRole("button", { name: "Consolidate Issues" })[0]);
+    await user.click(
+      screen.getAllByRole("button", { name: "Consolidate Issues" })[0],
+    );
     await user.click(screen.getByRole("tab", { name: "Execution rules" }));
-    await user.click(screen.getByRole("checkbox", { name: /Use as the primary report/ }));
-    await user.click(screen.getByRole("checkbox", { name: /Publish findings to Projects/ }));
+    await user.click(
+      screen.getByRole("checkbox", { name: /Use as the primary report/ }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: /Publish findings to Projects/ }),
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       expect(saveCall?.[1].config.outputs).toEqual({
         primary_step: "consolidate",
         findings_step: "consolidate",
@@ -470,12 +542,18 @@ describe("PipelinePage", () => {
     await user.click(screen.getByRole("button", { name: "+ Add step" }));
     await user.click(screen.getByRole("tab", { name: "Adaptive agent" }));
     expect(await screen.findByText("Choose an adaptive agent")).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Guided setup" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Guided setup" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Blank step" })).toBeInTheDocument();
 
-    const search = screen.getByRole("searchbox", { name: "Search adaptive agents" });
+    const search = screen.getByRole("searchbox", {
+      name: "Search adaptive agents",
+    });
     await user.type(search, "macro");
-    await user.click(screen.getByRole("button", { name: "Economics — Macroeconomics" }));
+    await user.click(
+      screen.getByRole("button", { name: "Economics — Macroeconomics" }),
+    );
     expect(screen.getByText(/adds an editable snapshot/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Copy step" }));
 
@@ -488,7 +566,9 @@ describe("PipelinePage", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       const copied = saveCall?.[1].config.steps.find(
         (step: { id: string }) => step.id === "manual_subject_economics_macro",
       );
@@ -498,7 +578,10 @@ describe("PipelinePage", () => {
         phase: "parallel",
         context: {
           include: [
-            { kind: "primary", parts: ["text", "structure", "visuals", "source"] },
+            {
+              kind: "primary",
+              parts: ["text", "structure", "visuals", "source"],
+            },
             { kind: "survey" },
           ],
         },
@@ -525,9 +608,7 @@ describe("PipelinePage", () => {
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     const onDirtyChange = vi.fn();
-    render(
-      <PipelinePage onClose={() => {}} onDirtyChange={onDirtyChange} />,
-    );
+    render(<PipelinePage onClose={() => {}} onDirtyChange={onDirtyChange} />);
     await screen.findAllByText("Technical");
 
     await addBlankStep(user, "First custom step");
@@ -552,16 +633,26 @@ describe("PipelinePage", () => {
     await useAdvancedEditor(user);
 
     await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
-    await user.click(screen.getByRole("tab", { name: "Inputs & dependencies" }));
-    expect(screen.queryByRole("button", { name: "Prior reports" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: "Report" })).not.toBeInTheDocument();
-    const readableText = screen.getByRole("checkbox", { name: "Readable text" });
+    await user.click(
+      screen.getByRole("tab", { name: "Inputs & dependencies" }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Prior reports" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Report" }),
+    ).not.toBeInTheDocument();
+    const readableText = screen.getByRole("checkbox", {
+      name: "Readable text",
+    });
     expect(readableText).toBeChecked();
     await user.click(readableText);
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       const technical = saveCall?.[1].config.steps.find(
         (step: { id: string }) => step.id === "technical",
       );
@@ -579,13 +670,19 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Consolidate Issues");
     await useAdvancedEditor(user);
 
-    await user.click(screen.getAllByRole("button", { name: "Consolidate Issues" })[0]);
+    await user.click(
+      screen.getAllByRole("button", { name: "Consolidate Issues" })[0],
+    );
     await user.click(screen.getByRole("tab", { name: "Execution rules" }));
-    await user.click(screen.getByRole("button", { name: "Independently (parallel)" }));
+    await user.click(
+      screen.getByRole("button", { name: "Independently (parallel)" }),
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       const consolidate = saveCall?.[1].config.steps.find(
         (step: { id: string }) => step.id === "consolidate",
       );
@@ -615,16 +712,18 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Move Consolidate Issues down" }));
+    await user.click(
+      screen.getByRole("button", { name: "Move Consolidate Issues down" }),
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
-      expect(saveCall?.[1].config.steps.map((step: { id: string }) => step.id)).toEqual([
-        "technical",
-        "validate",
-        "consolidate",
-      ]);
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
+      expect(
+        saveCall?.[1].config.steps.map((step: { id: string }) => step.id),
+      ).toEqual(["technical", "validate", "consolidate"]);
     });
   });
 
@@ -637,21 +736,31 @@ describe("PipelinePage", () => {
     expect(
       screen.getByRole("combobox", { name: "Active workflow profile" }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Move Technical up" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Move Technical down" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Move Technical up" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Move Technical down" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTitle("Drag to reorder")).not.toBeInTheDocument();
     expect(container.querySelector('[draggable="true"]')).toBeNull();
 
-    const moveDown = screen.getByRole("button", { name: "Move Consolidate Issues down" });
+    const moveDown = screen.getByRole("button", {
+      name: "Move Consolidate Issues down",
+    });
     expect(moveDown).toHaveClass("h-6", "w-6");
 
     await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
-    expect(screen.getByRole("textbox", { name: "Step label" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Step label" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("textbox", { name: "Prompt for Technical" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Input & extraction" }));
+    await user.click(
+      screen.getByRole("button", { name: "Input & extraction" }),
+    );
     expect(
       screen.getByRole("combobox", { name: "Workflow input mode" }),
     ).toBeInTheDocument();
@@ -685,7 +794,8 @@ describe("PipelinePage", () => {
       if (cmd === "get_pipeline_config") return Promise.resolve(config);
       if (cmd === "list_profiles") return Promise.resolve(profiles);
       if (cmd === "get_active_profile") return Promise.resolve("deep-review");
-      if (cmd === "get_settings") return Promise.reject(new Error("not needed"));
+      if (cmd === "get_settings")
+        return Promise.reject(new Error("not needed"));
       if (cmd === "get_default_prompt") {
         return new Promise<string>((resolve) => {
           resolveTemplate = resolve;
@@ -700,12 +810,16 @@ describe("PipelinePage", () => {
 
     await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
     await user.click(screen.getByRole("button", { name: "Reset to generic" }));
-    await user.click(screen.getByRole("switch", { name: "Reuse shared input context" }));
+    await user.click(
+      screen.getByRole("switch", { name: "Reuse shared input context" }),
+    );
     await act(async () => resolveTemplate("new default template"));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       expect(saveCall?.[1].config).toMatchObject({
         context_cache: { enabled: true },
         parallel_context_template: "new default template",
@@ -741,7 +855,9 @@ describe("PipelinePage", () => {
 
     notify.mockClear();
     await user.click(screen.getByRole("button", { name: "Orientation map" }));
-    await user.click(screen.getByRole("button", { name: "Insert generic survey" }));
+    await user.click(
+      screen.getByRole("button", { name: "Insert generic survey" }),
+    );
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith(
         "Failed to load the default orientation prompt: orientation prompt unavailable",
@@ -767,11 +883,15 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     await user.click(screen.getByRole("button", { name: "Orientation map" }));
-    await user.click(screen.getByRole("button", { name: "Insert generic survey" }));
+    await user.click(
+      screen.getByRole("button", { name: "Insert generic survey" }),
+    );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       expect(saveCall?.[1].config).toMatchObject({
         orientation_prompt: "Build the generic survey. {input_text}",
         orientation_schema: schema,
@@ -793,7 +913,9 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     expect(onDirtyChange).toHaveBeenCalledWith(false);
-    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Back" }),
+    ).not.toBeInTheDocument();
 
     await addBlankStep(user);
     await waitFor(() => expect(onDirtyChange).toHaveBeenCalledWith(true));
@@ -815,10 +937,14 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
-    const toggle = screen.getByRole("switch", { name: "Reuse shared input context" });
+    const toggle = screen.getByRole("switch", {
+      name: "Reuse shared input context",
+    });
     expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("Automatic review default")).toBeInTheDocument();
-    expect(screen.getByText(/Automatic Paper Review enables this by default/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Automatic Paper Review enables this by default/),
+    ).toBeInTheDocument();
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "false");
 
@@ -846,8 +972,12 @@ describe("PipelinePage", () => {
     await user.click(orientation);
 
     expect(screen.getByText("Runs before every workflow")).toBeInTheDocument();
-    expect(screen.queryByRole("switch", { name: "Build orientation map" })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Orientation map prompt" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "Build orientation map" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Orientation map prompt" }),
+    ).toBeInTheDocument();
   });
 
   it("offers an overview without duplicating it in the primary step list", async () => {
@@ -870,32 +1000,68 @@ describe("PipelinePage", () => {
     await useAdvancedEditor(user);
 
     await user.click(screen.getByRole("tab", { name: "Schemas" }));
-    expect(screen.getByRole("tab", { name: "Schemas" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: "Orientation schema" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Technical output schema" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Consolidate Issues output schema" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Orientation map schema" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Effective orientation schema")).toHaveTextContent('"type": "object"');
+    expect(screen.getByRole("tab", { name: "Schemas" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("button", { name: "Orientation schema" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Technical output schema" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Consolidate Issues output schema" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Orientation map schema" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Effective orientation schema"),
+    ).toHaveTextContent('"type": "object"');
 
-    await user.click(screen.getByRole("button", { name: "Technical output schema" }));
-    expect(screen.getByRole("heading", { name: "Technical output schema" })).toBeInTheDocument();
-    expect(screen.getByText(/stores only its content field as the step’s Markdown report/i)).toBeInTheDocument();
-    expect(screen.getByLabelText("Effective schema for Technical")).toHaveTextContent('"content"');
-    expect(screen.queryByRole("textbox", { name: "Output JSON schema for Technical" })).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Technical output schema" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Technical output schema" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /stores only its content field as the step’s Markdown report/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Effective schema for Technical"),
+    ).toHaveTextContent('"content"');
+    expect(
+      screen.queryByRole("textbox", {
+        name: "Output JSON schema for Technical",
+      }),
+    ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Create custom JSON schema" }));
-    const editor = screen.getByRole("textbox", { name: "Output JSON schema for Technical" });
+    await user.click(
+      screen.getByRole("button", { name: "Create custom JSON schema" }),
+    );
+    const editor = screen.getByRole("textbox", {
+      name: "Output JSON schema for Technical",
+    });
     expect((editor as HTMLTextAreaElement).value).toContain('"result"');
     fireEvent.change(editor, {
       target: {
-        value: '{"type":"object","required":["score"],"properties":{"score":{"type":"number"}}}',
+        value:
+          '{"type":"object","required":["score"],"properties":{"score":{"type":"number"}}}',
       },
     });
-    expect(screen.getByText("Valid portable Pipeline artifact schema.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Valid portable Pipeline artifact schema."),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       expect(saveCall?.[1].config.steps[0].output_schema).toEqual({
         type: "object",
         required: ["score"],
@@ -918,11 +1084,16 @@ describe("PipelinePage", () => {
     await useAdvancedEditor(user);
 
     await user.click(screen.getByRole("tab", { name: "Schemas" }));
-    await user.click(screen.getByRole("button", { name: "Technical output schema" }));
-    const editor = screen.getByRole("textbox", { name: "Output JSON schema for Technical" });
+    await user.click(
+      screen.getByRole("button", { name: "Technical output schema" }),
+    );
+    const editor = screen.getByRole("textbox", {
+      name: "Output JSON schema for Technical",
+    });
     fireEvent.change(editor, {
       target: {
-        value: '{"type":"object","required":["score"],"properties":{"score":{"type":"number"}}}',
+        value:
+          '{"type":"object","required":["score"],"properties":{"score":{"type":"number"}}}',
       },
     });
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
@@ -934,15 +1105,21 @@ describe("PipelinePage", () => {
     fireEvent.change(editor, {
       target: { value: '{"type":"array","items":{"type":"string"}}' },
     });
-    expect(screen.getByRole("alert")).toHaveTextContent("root must explicitly be 'object'");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "root must explicitly be 'object'",
+    );
     fireEvent.change(editor, { target: { value: '{"type":' } });
     expect(screen.getByRole("alert")).toHaveTextContent("Invalid schema");
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
     await user.click(screen.getByRole("tab", { name: "Steps" }));
     await user.click(screen.getByRole("tab", { name: "Execution rules" }));
-    expect(screen.queryByRole("textbox", { name: "Output JSON schema" })).not.toBeInTheDocument();
-    expect(screen.getByText(/Output contracts live in the Schemas tab/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Output JSON schema" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Output contracts live in the Schemas tab/),
+    ).toBeInTheDocument();
   });
 
   it("keeps Auto Review schemas compact while exposing the resolved provider contract", async () => {
@@ -958,7 +1135,10 @@ describe("PipelinePage", () => {
           properties: {
             subject_specialist_ids: {
               type: "array",
-              items: { type: "string", "x-pipeline-catalog": "auto-review.subjects" },
+              items: {
+                type: "string",
+                "x-pipeline-catalog": "auto-review.subjects",
+              },
             },
           },
         },
@@ -993,13 +1173,25 @@ describe("PipelinePage", () => {
     expect(screen.getByText("1 subject roles")).toBeVisible();
     expect(screen.getByText("1 method roles")).toBeVisible();
     expect(screen.getByText("10 document genres")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Browse catalog" })).toBeVisible();
-    const editor = screen.getByRole("textbox", { name: "Orientation output JSON schema" });
-    expect((editor as HTMLTextAreaElement).value).toContain('"x-pipeline-catalog": "auto-review.subjects"');
-    expect((editor as HTMLTextAreaElement).value).not.toContain("subject_economics_macro");
+    expect(
+      screen.getByRole("button", { name: "Browse catalog" }),
+    ).toBeVisible();
+    const editor = screen.getByRole("textbox", {
+      name: "Orientation output JSON schema",
+    });
+    expect((editor as HTMLTextAreaElement).value).toContain(
+      '"x-pipeline-catalog": "auto-review.subjects"',
+    );
+    expect((editor as HTMLTextAreaElement).value).not.toContain(
+      "subject_economics_macro",
+    );
 
-    await user.click(screen.getByRole("button", { name: "View resolved provider schema" }));
-    const resolvedPreview = await screen.findByLabelText("Resolved orientation provider schema");
+    await user.click(
+      screen.getByRole("button", { name: "View resolved provider schema" }),
+    );
+    const resolvedPreview = await screen.findByLabelText(
+      "Resolved orientation provider schema",
+    );
     expect(resolvedPreview).toHaveTextContent("subject_economics_macro");
     expect(invoke).toHaveBeenCalledWith("resolve_orientation_schema_catalogs", {
       schema: config.orientation_schema,
@@ -1007,7 +1199,9 @@ describe("PipelinePage", () => {
 
     const withoutContract = structuredClone(config.orientation_schema);
     delete withoutContract["x-pipeline-contract"];
-    fireEvent.change(editor, { target: { value: JSON.stringify(withoutContract) } });
+    fireEvent.change(editor, {
+      target: { value: JSON.stringify(withoutContract) },
+    });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Automatic Paper Review must retain x-pipeline-contract",
     );
@@ -1027,45 +1221,109 @@ describe("PipelinePage", () => {
       "<paper>{paper_text}</paper>",
     ].join("\n\n");
     config.steps = [
-      { ...config.steps[0], id: "auto_contribution", label: "Contribution & Literature" },
-      { ...config.steps[0], id: "auto_consistency", label: "Claims & Consistency" },
-      { ...config.steps[0], id: "auto_exposition", label: "Exposition & Architecture" },
+      {
+        ...config.steps[0],
+        id: "auto_contribution",
+        label: "Contribution & Literature",
+      },
+      {
+        ...config.steps[0],
+        id: "auto_consistency",
+        label: "Claims & Consistency",
+      },
+      {
+        ...config.steps[0],
+        id: "auto_exposition",
+        label: "Exposition & Architecture",
+      },
       { ...config.steps[1], id: "auto_synthesis", label: "Consolidate" },
     ];
     mockLoad(config);
     render(<PipelinePage onClose={() => {}} />);
 
-    const orientation = await screen.findByRole("button", { name: "Orientation & classification" });
-    expect(screen.getByRole("button", { name: "Adaptive agents — Automatic, 2–6 agents" })).toBeInTheDocument();
-    expect(screen.getAllByText("Auto-filled from orientation").length).toBeGreaterThan(0);
+    const orientation = await screen.findByRole("button", {
+      name: "Orientation & classification",
+    });
+    expect(
+      screen.getByRole("button", {
+        name: "Adaptive agents — Automatic, 2–6 agents",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Auto-filled from orientation").length,
+    ).toBeGreaterThan(0);
 
     await user.click(orientation);
-    expect(screen.getByRole("heading", { name: "Orientation & Classification" })).toBeInTheDocument();
-    expect(screen.getByText(/One LLM call builds the paper orientation map/)).toBeInTheDocument();
-    const promptEditor = screen.getByRole("textbox", { name: "Orientation map prompt" });
-    expect((promptEditor as HTMLTextAreaElement).value).toContain("{subject_catalog}");
-    expect((promptEditor as HTMLTextAreaElement).value).not.toContain("subject_physics_general");
-    expect(screen.getByText(/Catalog placeholders are populated from the live specialist manifests/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Orientation & Classification" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/One LLM call builds the paper orientation map/),
+    ).toBeInTheDocument();
+    const promptEditor = screen.getByRole("textbox", {
+      name: "Orientation map prompt",
+    });
+    expect((promptEditor as HTMLTextAreaElement).value).toContain(
+      "{subject_catalog}",
+    );
+    expect((promptEditor as HTMLTextAreaElement).value).not.toContain(
+      "subject_physics_general",
+    );
+    expect(
+      screen.getByText(
+        /Catalog placeholders are populated from the live specialist manifests/,
+      ),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Adaptive agents — Automatic, 2–6 agents" }));
-    expect(screen.getByRole("heading", { name: "Adaptive agents" })).toBeInTheDocument();
-    expect(screen.getByText(/Every adaptive-agent report feeds directly/)).toBeInTheDocument();
-    expect(screen.getByText(/alongside Contribution & Literature/)).toBeInTheDocument();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Number of adaptive agents" }), "4");
-    expect(screen.getByRole("button", { name: "Adaptive agents — 4 agents" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Browse method catalog" }));
-    expect(screen.getByRole("dialog", { name: "Specialist catalog" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Methods" })).toHaveAttribute("aria-selected", "true");
-    await user.click(screen.getByRole("button", { name: "Close specialist catalog" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: "Adaptive agents — Automatic, 2–6 agents",
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Adaptive agents" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Every adaptive-agent report feeds directly/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/alongside Contribution & Literature/),
+    ).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Number of adaptive agents" }),
+      "4",
+    );
+    expect(
+      screen.getByRole("button", { name: "Adaptive agents — 4 agents" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Browse method catalog" }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "Specialist catalog" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Methods" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Close specialist catalog" }),
+    );
 
     await user.click(screen.getByRole("tab", { name: "Overview" }));
-    expect(screen.getByRole("button", { name: "Orient + classify" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Adaptive agents (4)" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Orient + classify" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Adaptive agents (4)" }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Steps" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
-      const saveCall = invoke.mock.calls.find((call) => call[0] === "save_pipeline_config");
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
       expect(saveCall?.[1].config.orientation_schema).toMatchObject({
         "x-pipeline-contract": "auto-review-v2",
         "x-pipeline-adaptive-agent-count": 4,
@@ -1088,9 +1346,21 @@ describe("PipelinePage", () => {
       },
     };
     config.steps = [
-      { ...config.steps[0], id: "auto_consistency", label: "Claims & Consistency" },
-      { ...config.steps[0], id: "auto_exposition", label: "Exposition & Architecture" },
-      { ...config.steps[1], id: "auto_synthesis", label: "Consolidate Feedback" },
+      {
+        ...config.steps[0],
+        id: "auto_consistency",
+        label: "Claims & Consistency",
+      },
+      {
+        ...config.steps[0],
+        id: "auto_exposition",
+        label: "Exposition & Architecture",
+      },
+      {
+        ...config.steps[1],
+        id: "auto_synthesis",
+        label: "Consolidate Feedback",
+      },
     ];
     mockLoad(config, { get_active_profile: "auto-review-quick" });
     render(<PipelinePage onClose={() => {}} />);
@@ -1100,14 +1370,26 @@ describe("PipelinePage", () => {
     });
     await user.click(adaptive);
 
-    const count = screen.getByRole("combobox", { name: "Number of adaptive agents" });
-    expect(screen.getByRole("option", { name: "Automatic (2–4)" })).toBeInTheDocument();
+    const count = screen.getByRole("combobox", {
+      name: "Number of adaptive agents",
+    });
+    expect(
+      screen.getByRole("option", { name: "Automatic (2–4)" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "5" })).not.toBeInTheDocument();
     expect(screen.getByText(/1 to 2 method reviewers/)).toBeInTheDocument();
-    expect(screen.getByText(/alongside Claims & Consistency, Exposition & Architecture/)).toBeInTheDocument();
-    expect(screen.queryByText(/Contribution & Literature/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /alongside Claims & Consistency, Exposition & Architecture/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Contribution & Literature/),
+    ).not.toBeInTheDocument();
 
     await user.selectOptions(count, "4");
-    expect(screen.getByRole("button", { name: "Adaptive agents — 4 agents" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Adaptive agents — 4 agents" }),
+    ).toBeInTheDocument();
   });
 });

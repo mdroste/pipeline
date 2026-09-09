@@ -30,16 +30,24 @@ export function lineDiff(a: string, b: string): DiffOp[] {
   if (n * m > MAX_MATRIX_CELLS || a.length + b.length > MAX_DETAILED_CHARS) {
     return [
       { type: "del", text: preview(a) },
-      { type: "same", text: "… detailed line diff omitted because the outputs are too large …" },
+      {
+        type: "same",
+        text: "… detailed line diff omitted because the outputs are too large …",
+      },
       { type: "add", text: preview(b) },
     ];
   }
 
   // dp[i][j] = LCS length of aLines[i..] and bLines[j..].
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  const dp: number[][] = Array.from({ length: n + 1 }, () =>
+    new Array(m + 1).fill(0),
+  );
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = aLines[i] === bLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      dp[i][j] =
+        aLines[i] === bLines[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
     }
   }
 

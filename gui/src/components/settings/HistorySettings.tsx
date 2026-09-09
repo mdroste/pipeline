@@ -5,6 +5,7 @@ import { confirmDialog } from "../DialogService";
 import type { Settings } from "../../lib/types";
 
 import InfoButton from "../InfoButton";
+import ValidatedNumber from "./ValidatedNumber";
 
 export function RunRetention({
   settings,
@@ -111,10 +112,10 @@ export function RunRetention({
           Report history retention
         </span>
         <InfoButton label="Report history retention">
-          Past reports and their artifacts are stored under{" "}
-          <code>~/.pipeline/runs/</code>. After each report, Pipeline removes
-          the oldest completed reports until both limits hold. Set a limit to 0
-          to disable it.
+          Past reports and their artifacts are stored in your active research
+          data folder. After each report, Pipeline moves to Trash the oldest
+          completed reports until both limits hold. Set a limit to 0 to disable
+          it.
         </InfoButton>
         {usage && (
           <span className="ml-auto text-xs font-normal text-gray-500 dark:text-neutral-400">
@@ -124,37 +125,28 @@ export function RunRetention({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          aria-label="Maximum saved reports"
-          type="number"
-          min={0}
+        <ValidatedNumber
+          label="Maximum saved reports"
           value={settings.max_saved_runs}
-          onChange={(e) =>
-            setSettings({
-              ...settings,
-              max_saved_runs: Math.max(0, parseInt(e.target.value, 10) || 0),
-            })
+          max={1000000}
+          onChange={(value) =>
+            setSettings({ ...settings, max_saved_runs: value })
           }
-          className="w-24 py-2 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
         />
         <span className="text-xs text-gray-500">reports and</span>
-        <input
-          aria-label="Report history size limit in GB"
-          type="number"
-          min={0}
+        <ValidatedNumber
+          label="Report history size limit in GB"
+          value={
+            (settings.max_saved_run_bytes ?? 5_000_000_000) / 1_000_000_000
+          }
           max={1000}
-          step={1}
-          value={Math.round(
-            (settings.max_saved_run_bytes ?? 5_000_000_000) / 1_000_000_000,
-          )}
-          onChange={(e) =>
+          step={0.1}
+          onChange={(value) =>
             setSettings({
               ...settings,
-              max_saved_run_bytes:
-                Math.max(0, parseInt(e.target.value, 10) || 0) * 1_000_000_000,
+              max_saved_run_bytes: Math.round(value * 1_000_000_000),
             })
           }
-          className="w-24 py-2 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20"
         />
         <span className="text-xs text-gray-500">GB</span>
         <button
@@ -167,13 +159,18 @@ export function RunRetention({
           className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-neutral-600 text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           title={
             settings.max_saved_runs === 0 && settings.max_saved_run_bytes === 0
-              ? "Set a limit above 0 to purge"
-              : "Delete reports beyond the limits now"
+              ? "Set a limit above 0 to review cleanup"
+              : "Preview reports beyond these limits"
           }
         >
-          {purging ? "Purging…" : "Purge now"}
+          {purging ? "Preparing cleanup…" : "Review cleanup…"}
         </button>
       </div>
+      <p className="settings-row-description mt-3">
+        Set either limit to 0 for unlimited. Reports beyond these limits move to
+        Trash after a review finishes. Review cleanup previews the exact reports
+        before making changes.
+      </p>
       {purgeError && (
         <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
           {purgeError}

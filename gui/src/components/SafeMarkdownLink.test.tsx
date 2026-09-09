@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SafeMarkdownLink, { safeExternalHref } from "./SafeMarkdownLink";
+import { FileNavigationScope } from "./file-workspace/FileNavigation";
 
 const openExternal = vi.hoisted(() => vi.fn());
 const notify = vi.hoisted(() => vi.fn());
@@ -18,23 +19,20 @@ describe("SafeMarkdownLink", () => {
     ["http", "http://example.com/paper"],
     ["https", "https://example.com/paper"],
     ["mailto", "mailto:editor@example.com"],
-  ])(
-    "opens an allowed %s link outside the WebView",
-    (_scheme, href) => {
-      render(<SafeMarkdownLink href={href}>External source</SafeMarkdownLink>);
-      const link = screen.getByRole("link", { name: "External source" });
-      const event = new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-      });
+  ])("opens an allowed %s link outside the WebView", (_scheme, href) => {
+    render(<SafeMarkdownLink href={href}>External source</SafeMarkdownLink>);
+    const link = screen.getByRole("link", { name: "External source" });
+    const event = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    });
 
-      link.dispatchEvent(event);
+    link.dispatchEvent(event);
 
-      expect(event.defaultPrevented).toBe(true);
-      expect(openExternal).toHaveBeenCalledOnce();
-      expect(openExternal).toHaveBeenCalledWith(href);
-    },
-  );
+    expect(event.defaultPrevented).toBe(true);
+    expect(openExternal).toHaveBeenCalledOnce();
+    expect(openExternal).toHaveBeenCalledWith(href);
+  });
 
   it.each([
     "javascript:alert(document.domain)",
@@ -58,6 +56,70 @@ describe("SafeMarkdownLink", () => {
 
     expect(link).toHaveAttribute("href", "#footnote-1");
     fireEvent.click(link);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("opens absolute PDF and source links through the registered project", () => {
+    const open = vi.fn();
+    const navigation = {
+      path: "conversation.md",
+      root: "/Users/example/Research Project",
+      open,
+      image: vi.fn(),
+    };
+    render(
+      <FileNavigationScope value={navigation}>
+        <SafeMarkdownLink href="/Users/example/Research Project/output.pdf#page=2">
+          PDF
+        </SafeMarkdownLink>
+        <SafeMarkdownLink href="/Users/example/Research Project/source.tex#L14">
+          Source
+        </SafeMarkdownLink>
+        <SafeMarkdownLink href="/Users/example/private.txt">
+          Outside
+        </SafeMarkdownLink>
+      </FileNavigationScope>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "PDF" }));
+    fireEvent.click(screen.getByRole("link", { name: "Source" }));
+
+    expect(open).toHaveBeenNthCalledWith(1, {
+      path: "output.pdf",
+      page: 2,
+    });
+    expect(open).toHaveBeenNthCalledWith(2, {
+      path: "source.tex",
+      line: 14,
+    });
+    expect(
+      screen.queryByRole("link", { name: "Outside" }),
+    ).not.toBeInTheDocument();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("delegates an unfiled absolute path to its conversation boundary", () => {
+    const openAbsolute = vi.fn();
+    render(
+      <FileNavigationScope
+        value={{
+          path: "conversation.md",
+          open: vi.fn(),
+          openAbsolute,
+          image: vi.fn(),
+        }}
+      >
+        <SafeMarkdownLink href="/private/conversation/output.pdf">
+          Generated PDF
+        </SafeMarkdownLink>
+      </FileNavigationScope>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Generated PDF" }));
+
+    expect(openAbsolute).toHaveBeenCalledWith(
+      "/private/conversation/output.pdf",
+    );
     expect(openExternal).not.toHaveBeenCalled();
   });
 

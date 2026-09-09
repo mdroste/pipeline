@@ -394,7 +394,6 @@ pub async fn call_anthropic_api(
             usage.summary()
         ),
     );
-    super::logging::emit_usage(app, usage.call_usage());
 
     if text.trim().is_empty() {
         return Err(format!("{label}: Anthropic API returned empty output"));

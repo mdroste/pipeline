@@ -16,8 +16,10 @@ export function persistFlappyHighScore(
   current: number,
   storage: Pick<Storage, "setItem"> = localStorage,
 ): number {
-  const safeCandidate = Number.isSafeInteger(candidate) && candidate > 0 ? candidate : 0;
-  const safeCurrent = Number.isSafeInteger(current) && current > 0 ? current : 0;
+  const safeCandidate =
+    Number.isSafeInteger(candidate) && candidate > 0 ? candidate : 0;
+  const safeCurrent =
+    Number.isSafeInteger(current) && current > 0 ? current : 0;
   const best = Math.max(safeCandidate, safeCurrent);
   try {
     storage.setItem(FLAPPY_HIGH_SCORE_KEY, String(best));

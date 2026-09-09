@@ -8,7 +8,13 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 
 const issues = [
-  { id: "i1", title: "First issue", severity: "high", section: "1", body: "Details" },
+  {
+    id: "i1",
+    title: "First issue",
+    severity: "high",
+    section: "1",
+    body: "Details",
+  },
 ];
 
 describe("IssuesTable annotation lifecycle", () => {
@@ -20,16 +26,28 @@ describe("IssuesTable annotation lifecycle", () => {
     const resolvers = new Map<string, (value: string) => void>();
     invoke.mockImplementation((command: string, args: { runId: string }) => {
       if (command !== "get_annotations") return Promise.resolve();
-      return new Promise<string>((resolve) => resolvers.set(args.runId, resolve));
+      return new Promise<string>((resolve) =>
+        resolvers.set(args.runId, resolve),
+      );
     });
 
     const view = render(<IssuesTable issues={issues} runId="run-a" />);
     view.rerender(<IssuesTable issues={issues} runId="run-b" />);
-    await act(async () => resolvers.get("run-b")?.(JSON.stringify({ i1: { status: "", note: "new" } })));
-    await userEvent.setup().click(screen.getByRole("button", { name: /^First issue/i }));
+    await act(async () =>
+      resolvers.get("run-b")?.(
+        JSON.stringify({ i1: { status: "", note: "new" } }),
+      ),
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /^First issue/i }));
     expect(screen.getByPlaceholderText("Add a note…")).toHaveValue("new");
 
-    await act(async () => resolvers.get("run-a")?.(JSON.stringify({ i1: { status: "", note: "stale" } })));
+    await act(async () =>
+      resolvers.get("run-a")?.(
+        JSON.stringify({ i1: { status: "", note: "stale" } }),
+      ),
+    );
     expect(screen.getByPlaceholderText("Add a note…")).toHaveValue("new");
   });
 
@@ -38,7 +56,11 @@ describe("IssuesTable annotation lifecycle", () => {
       command === "get_annotations" ? Promise.resolve("{}") : Promise.resolve(),
     );
     const view = render(<IssuesTable issues={issues} runId="run-a" />);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_annotations", { runId: "run-a" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("get_annotations", {
+        runId: "run-a",
+      }),
+    );
     await userEvent.setup().click(screen.getByTitle("accept"));
     view.unmount();
     await waitFor(() =>
@@ -59,12 +81,22 @@ describe("IssuesTable annotation lifecycle", () => {
       return Promise.resolve();
     });
     render(<IssuesTable issues={issues} runId="run-a" />);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_annotations", { runId: "run-a" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("get_annotations", {
+        runId: "run-a",
+      }),
+    );
     await userEvent.setup().click(screen.getByTitle("accept"));
-    expect(await screen.findByRole("alert", {}, { timeout: 1500 })).toHaveTextContent("disk full");
+    expect(
+      await screen.findByRole("alert", {}, { timeout: 1500 }),
+    ).toHaveTextContent("disk full");
 
-    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
     expect(invoke).toHaveBeenLastCalledWith(
       "save_annotations",
       expect.objectContaining({
@@ -93,11 +125,13 @@ describe("IssuesTable annotation lifecycle", () => {
 
     const view = render(<IssuesTable issues={issues} runId="run-a" />);
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("get_annotations", { runId: "run-a" }),
+      expect(invoke).toHaveBeenCalledWith("get_annotations", {
+        runId: "run-a",
+      }),
     );
-    await userEvent.setup().click(
-      screen.getByRole("button", { name: "accept issue: First issue" }),
-    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "accept issue: First issue" }));
     await waitFor(
       () =>
         expect(invoke).toHaveBeenCalledWith(
@@ -108,7 +142,9 @@ describe("IssuesTable annotation lifecycle", () => {
     );
 
     view.rerender(<IssuesTable issues={issues} runId="run-b" />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("run-b load failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "run-b load failed",
+    );
     await act(async () => finishOldSave());
 
     expect(screen.getByRole("alert")).toHaveTextContent("run-b load failed");
@@ -127,7 +163,9 @@ describe("IssuesTable annotation lifecycle", () => {
     await user.click(
       screen.getByRole("button", { name: "accept issue: First issue" }),
     );
-    await user.click(screen.getByRole("button", { name: "Export all decisions" }));
+    await user.click(
+      screen.getByRole("button", { name: "Export all decisions" }),
+    );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Decision export failed: dialog plugin unavailable",
@@ -139,16 +177,26 @@ describe("IssuesTable annotation lifecycle", () => {
     const user = userEvent.setup();
     render(
       <IssuesTable
-        issues={[{
-          ...issues[0],
-          evidence: [{ page: 7, nodeId: "paragraph-12", description: "Identification claim" }],
-        }]}
+        issues={[
+          {
+            ...issues[0],
+            evidence: [
+              {
+                page: 7,
+                nodeId: "paragraph-12",
+                description: "Identification claim",
+              },
+            ],
+          },
+        ]}
         runId=""
         onOpenEvidence={onOpenEvidence}
       />,
     );
     await user.click(screen.getByRole("button", { name: /^First issue/i }));
-    await user.click(screen.getByRole("button", { name: "View Page 7 evidence" }));
+    await user.click(
+      screen.getByRole("button", { name: "View Page 7 evidence" }),
+    );
     expect(onOpenEvidence).toHaveBeenCalledWith({
       page: 7,
       nodeId: "paragraph-12",
@@ -161,20 +209,28 @@ describe("IssuesTable annotation lifecycle", () => {
     const user = userEvent.setup();
     render(
       <IssuesTable
-        issues={[{
-          ...issues[0],
-          evidence: [{
-            page: 7,
-            nodeId: "paragraph-12",
-            artifactPath: "artifacts/pages/page-7.png",
-            description: "Identification claim",
-          }],
-        }]}
+        issues={[
+          {
+            ...issues[0],
+            evidence: [
+              {
+                page: 7,
+                nodeId: "paragraph-12",
+                artifactPath: "artifacts/pages/page-7.png",
+                description: "Identification claim",
+              },
+            ],
+          },
+        ]}
         runId=""
       />,
     );
-    await user.click(screen.getByRole("button", { name: "accept issue: First issue" }));
-    await user.click(screen.getByRole("button", { name: "Export all decisions" }));
+    await user.click(
+      screen.getByRole("button", { name: "accept issue: First issue" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Export all decisions" }),
+    );
 
     expect(invoke).toHaveBeenCalledWith("save_text_file", {
       suggestedName: "issue-decisions.md",
@@ -195,23 +251,29 @@ describe("IssuesTable annotation lifecycle", () => {
     };
     render(
       <IssuesTable
-        issues={[{
-          ...issues[0],
-          title: "Source invariant",
-          section: "Correctness",
-          evidence: [evidence],
-        }]}
+        issues={[
+          {
+            ...issues[0],
+            title: "Source invariant",
+            section: "Correctness",
+            evidence: [evidence],
+          },
+        ]}
         runId=""
         onOpenEvidence={onOpenEvidence}
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /^Source invariant/i }));
+    await user.click(
+      screen.getByRole("button", { name: /^Source invariant/i }),
+    );
     const button = screen.getByRole("button", {
       name: "View chapters/model.tex:42–44 evidence",
     });
     expect(button).toBeVisible();
-    expect(screen.queryByText(/context\/source-evidence/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/context\/source-evidence/),
+    ).not.toBeInTheDocument();
     await user.click(button);
     expect(onOpenEvidence).toHaveBeenCalledWith(evidence);
   });

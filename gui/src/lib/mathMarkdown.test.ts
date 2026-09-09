@@ -49,7 +49,7 @@ describe("normalizeMathDelimiters", () => {
     const input = [
       "R<sup>2</sup> and x<sub>t</sub><br>Next",
       "",
-      "<div><span id=\"finding\">Finding</span></div>",
+      '<div><span id="finding">Finding</span></div>',
       "",
       "`<sup>literal</sup>` <https://example.com>",
       "",

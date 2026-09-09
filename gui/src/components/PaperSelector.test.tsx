@@ -14,7 +14,9 @@ describe("PaperSelector", () => {
 
   it("renders the default placeholder when nothing is selected", () => {
     render(<PaperSelector onPathChange={() => {}} disabled={false} />);
-    expect(screen.getByRole("button", { name: /select file/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /select file/i }),
+    ).toBeInTheDocument();
   });
 
   it("disables both buttons when disabled=true", () => {
@@ -35,7 +37,9 @@ describe("PaperSelector", () => {
         disabled={false}
       />,
     );
-    await userEvent.setup().click(screen.getByRole("button", { name: /select file/i }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /select file/i }));
 
     expect(openDialog).toHaveBeenCalledWith({
       multiple: true,
@@ -47,7 +51,9 @@ describe("PaperSelector", () => {
       interpretation: "document",
       selectionKind: "file",
     });
-    expect(screen.getByRole("button", { name: "draft.pdf" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "draft.pdf" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("/papers/example/draft.pdf")).toBeInTheDocument();
   });
 
@@ -56,7 +62,9 @@ describe("PaperSelector", () => {
     openDialog.mockResolvedValueOnce(null);
 
     render(<PaperSelector onPathChange={onPathChange} disabled={false} />);
-    await userEvent.setup().click(screen.getByRole("button", { name: /select file/i }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /select file/i }));
 
     expect(onPathChange).not.toHaveBeenCalled();
   });
@@ -69,12 +77,17 @@ describe("PaperSelector", () => {
     const folderBtn = screen.getByTitle("Select folder");
     await userEvent.setup().click(folderBtn);
 
-    expect(openDialog).toHaveBeenCalledWith({ directory: true, multiple: false });
+    expect(openDialog).toHaveBeenCalledWith({
+      directory: true,
+      multiple: false,
+    });
     expect(onPathChange).toHaveBeenCalledWith("/papers/latex-project");
-    expect(screen.getByRole("combobox", { name: "Input interpretation" })).toHaveValue(
-      "latex_project",
-    );
-    expect(screen.queryByRole("option", { name: "Watch for new documents" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Input interpretation" }),
+    ).toHaveValue("latex_project");
+    expect(
+      screen.queryByRole("option", { name: "Watch for new documents" }),
+    ).not.toBeInTheDocument();
   });
 
   it("turns several selected files into an explicit batch", async () => {
@@ -88,14 +101,18 @@ describe("PaperSelector", () => {
       />,
     );
 
-    await userEvent.setup().click(screen.getByRole("button", { name: /select files/i }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /select files/i }));
 
     expect(onSelectionChange).toHaveBeenCalledWith({
       paths: ["/papers/a.pdf", "/papers/b.docx"],
       interpretation: "batch",
       selectionKind: "file",
     });
-    expect(screen.getByRole("combobox", { name: "Input interpretation" })).toHaveValue("batch");
+    expect(
+      screen.getByRole("combobox", { name: "Input interpretation" }),
+    ).toHaveValue("batch");
   });
 
   it("lets a selected folder be reinterpreted as a source tree", async () => {
@@ -127,7 +144,9 @@ describe("PaperSelector", () => {
     const onPathChange = vi.fn();
 
     render(<PaperSelector onPathChange={onPathChange} disabled={false} />);
-    await userEvent.setup().click(screen.getByRole("button", { name: /select file/i }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /select file/i }));
 
     expect(onPathChange).not.toHaveBeenCalled();
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -143,7 +162,10 @@ describe("PaperSelector", () => {
     await user.click(screen.getByRole("button", { name: /select file/i }));
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(onPathChange).toHaveBeenLastCalledWith(null);
-    await user.selectOptions(screen.getByRole("combobox", { name: "Choose a recent input" }), "0");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Choose a recent input" }),
+      "0",
+    );
     expect(onPathChange).toHaveBeenLastCalledWith("/papers/first.pdf");
     openDialog.mockResolvedValueOnce("/papers/replacement.pdf");
     await user.click(screen.getByRole("button", { name: "Replace" }));

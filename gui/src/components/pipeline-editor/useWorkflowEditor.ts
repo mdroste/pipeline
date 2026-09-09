@@ -48,6 +48,8 @@ export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
   }, [config]);
 
   useEffect(() => {
+    // Loading must inspect recovery storage before any save/discard effect.
+    if (!config) return;
     const key = `pipeline.workflowDraft.${activeProfile}`;
     if (dirty && config) {
       window.localStorage.setItem(key, JSON.stringify(config));

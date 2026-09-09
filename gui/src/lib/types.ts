@@ -44,7 +44,13 @@ export interface ModelCatalog {
 /** Deterministic guard controlling whether a step runs (mirrors RunCondition). */
 export type RunCondition =
   | { kind: "output_matches"; step: string; pattern: string; negate?: boolean }
-  | { kind: "survey_path"; pointer: string; equals?: unknown; exists?: boolean; contains?: unknown };
+  | {
+      kind: "survey_path";
+      pointer: string;
+      equals?: unknown;
+      exists?: boolean;
+      contains?: unknown;
+    };
 
 export type PrimaryArtifactPart = "text" | "structure" | "visuals" | "source";
 export type NamedInputArtifactPart = "text" | "source";
@@ -126,10 +132,7 @@ export interface InputSlot {
 
 /** Run-time meaning assigned to the primary file-system selection. */
 export type InputInterpretation =
-  | "document"
-  | "latex_project"
-  | "source_tree"
-  | "batch";
+  "document" | "latex_project" | "source_tree" | "batch";
 
 /** One primary selection may contain several paths when it represents a batch. */
 export interface PrimaryInputSelection {
@@ -356,7 +359,10 @@ export interface RunProducts {
   named?: NamedRunProduct[];
 }
 
-export interface NamedRunProduct extends Omit<NamedProductSpec, "step" | "schema"> {
+export interface NamedRunProduct extends Omit<
+  NamedProductSpec,
+  "step" | "schema"
+> {
   source_step_id: string;
   content: unknown;
 }
@@ -597,7 +603,8 @@ export interface TrashedProject {
   deleted_at: string;
 }
 
-export type ProjectIssueStatus = "open" | "addressed" | "dismissed" | "regressed";
+export type ProjectIssueStatus =
+  "open" | "addressed" | "dismissed" | "regressed";
 
 export interface ProjectIssueEvidence {
   page?: number;
@@ -712,9 +719,10 @@ export interface Settings {
   codex_cli_model_selection?: ModelSelection;
   codex_api_model_selection?: ModelSelection;
   codex_effort: string;
+  /** Retired CLI selection retained for saved-settings compatibility. */
   antigravity_cli_model_selection?: ModelSelection;
   antigravity_api_model_selection?: ModelSelection;
-  /** agy CLI reasoning effort: "" (default) | "low" | "medium" | "high". */
+  /** Legacy effort retained for saved-settings compatibility. */
   antigravity_effort: string;
   /** "llm" | "auto" | "paddleocr-vl-full" | "pdftotext". */
   pdf_extractor: string;
@@ -848,7 +856,12 @@ export type ExportEnvelope =
       parallel_context_template?: string;
       variables?: VarSpec[];
     }
-  | { type: "bundle"; settings: Settings; profiles: ProfileExport[]; active_profile: string };
+  | {
+      type: "bundle";
+      settings: Settings;
+      profiles: ProfileExport[];
+      active_profile: string;
+    };
 
 /** Mirrors engines::EngineStatus. */
 export interface EngineInstallProgress {

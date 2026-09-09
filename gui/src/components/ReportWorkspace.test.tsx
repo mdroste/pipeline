@@ -83,21 +83,26 @@ describe("ReportWorkspace", () => {
       "tabindex",
       "-1",
     );
-    expect(await screen.findByRole("tabpanel", { name: "Report" }, lazyPanelWait)).toHaveAttribute(
-      "aria-labelledby",
-      expect.stringMatching(/-tab-report$/),
-    );
+    expect(
+      await screen.findByRole("tabpanel", { name: "Report" }, lazyPanelWait),
+    ).toHaveAttribute("aria-labelledby", expect.stringMatching(/-tab-report$/));
     expect(screen.getByText("Monetary Policy and Networks")).toBeVisible();
     expect(screen.getByRole("tab", { name: "Provenance" })).toHaveAttribute(
       "aria-selected",
       "false",
     );
-    expect(screen.queryByRole("region", { name: "Report provenance" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Report provenance" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("gpt-5.6-sol")).toBeVisible();
-    expect(await screen.findByRole("heading", { name: "Referee Report" })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Referee Report" }),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("tab", { name: "Provenance" }));
-    expect(await screen.findByRole("region", { name: "Report provenance" })).toBeVisible();
+    expect(
+      await screen.findByRole("region", { name: "Report provenance" }),
+    ).toBeVisible();
     expect(screen.getByRole("columnheader", { name: "Step" })).toBeVisible();
     expect(screen.getByRole("cell", { name: "Technical" })).toBeVisible();
     expect(screen.getAllByText("1,200")[0]).toBeVisible();
@@ -155,47 +160,69 @@ describe("ReportWorkspace", () => {
     const user = userEvent.setup();
     render(
       <ReportWorkspace
-        markdown={"I will now prepare the requested report.\n\n# Referee Report\n\nBody."}
+        markdown={
+          "I will now prepare the requested report.\n\n# Referee Report\n\nBody."
+        }
         report={makeReport()}
       />,
     );
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Output-quality warning");
-    expect(screen.queryByText("I will now prepare the requested report.")).not.toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Output-quality warning",
+    );
+    expect(
+      screen.queryByText("I will now prepare the requested report."),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Raw output" }));
-    expect(screen.getByText("I will now prepare the requested report.")).toBeVisible();
+    expect(
+      screen.getByText("I will now prepare the requested report."),
+    ).toBeVisible();
   });
 
   it("does not present a specialist analysis as the report when synthesis failed", async () => {
     const user = userEvent.setup();
     const report = makeReport();
-    report.failed_steps = [{
-      step_id: "synthesis",
-      step_label: "Consolidate issues",
-      phase: "sequential",
-      error: "invalid terminal report",
-    }];
+    report.failed_steps = [
+      {
+        step_id: "synthesis",
+        step_label: "Consolidate issues",
+        phase: "sequential",
+        error: "invalid terminal report",
+      },
+    ];
 
     render(
       <ReportWorkspace
-        markdown={"# Referee Report\n\nThis is only the technical specialist analysis."}
+        markdown={
+          "# Referee Report\n\nThis is only the technical specialist analysis."
+        }
         report={report}
         extractedText="Extracted paper."
       />,
     );
 
-    expect(await screen.findByText("No final report was produced.")).toBeVisible();
-    expect(screen.getByText(/did not substitute an individual agent analysis/i)).toBeVisible();
-    expect(screen.queryByText("This is only the technical specialist analysis.")).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("No final report was produced."),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/did not substitute an individual agent analysis/i),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("This is only the technical specialist analysis."),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("partial report")).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Inspect preserved outputs" }));
+    await user.click(
+      screen.getByRole("button", { name: "Inspect preserved outputs" }),
+    );
     expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(await screen.findByRole("button", { name: "Technical" })).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: "Technical" }),
+    ).toBeVisible();
   });
 
   it("quarantines an apparent refusal in a historical report", async () => {
@@ -206,15 +233,21 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    expect(await screen.findByText("No final report was produced.")).toBeVisible();
+    expect(
+      await screen.findByText("No final report was produced."),
+    ).toBeVisible();
     expect(screen.getByText(/apparent refusal/i)).toBeVisible();
-    expect(screen.queryByText("I'm unable to provide the requested report.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("I'm unable to provide the requested report."),
+    ).not.toBeInTheDocument();
   });
 
   it("treats a whitespace-only artifact as missing report content", async () => {
     render(<ReportWorkspace markdown={"  \n\t"} report={makeReport()} />);
 
-    expect(await screen.findByText("No final report was produced.")).toBeVisible();
+    expect(
+      await screen.findByText("No final report was produced."),
+    ).toBeVisible();
     expect(screen.getByText(/report is empty/i)).toBeVisible();
   });
 
@@ -228,7 +261,9 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Extracted text" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Extracted text" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Sources" }));
     expect(
       await screen.findByRole("button", { name: "Extracted text" }),
@@ -260,10 +295,9 @@ describe("ReportWorkspace", () => {
     expect(sourcesTab).toHaveAttribute("aria-selected", "true");
     expect(sourcesTab).toHaveAttribute("tabindex", "0");
     expect(reportTab).toHaveAttribute("tabindex", "-1");
-    expect(await screen.findByRole("tabpanel", { name: "Sources" }, lazyPanelWait)).toHaveAttribute(
-      "id",
-      expect.stringMatching(/-panel-sources$/),
-    );
+    expect(
+      await screen.findByRole("tabpanel", { name: "Sources" }, lazyPanelWait),
+    ).toHaveAttribute("id", expect.stringMatching(/-panel-sources$/));
 
     await user.keyboard("{ArrowLeft}");
     expect(provenanceTab).toHaveFocus();
@@ -295,7 +329,10 @@ describe("ReportWorkspace", () => {
     const provenanceTab = screen.getByRole("tab", { name: "Provenance" });
     const issuesTab = screen.getByRole("tab", { name: /Issues/ });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
-    expect(issuesTab).toHaveAttribute("id", expect.stringMatching(/-tab-issues$/));
+    expect(issuesTab).toHaveAttribute(
+      "id",
+      expect.stringMatching(/-tab-issues$/),
+    );
     expect(issuesTab).toHaveAttribute(
       "aria-controls",
       expect.stringMatching(/-panel-issues$/),
@@ -309,10 +346,9 @@ describe("ReportWorkspace", () => {
     await user.keyboard("{ArrowRight}");
     expect(issuesTab).toHaveFocus();
     expect(issuesTab).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("tabpanel", { name: /Issues/ }, lazyPanelWait)).toHaveAttribute(
-      "aria-labelledby",
-      expect.stringMatching(/-tab-issues$/),
-    );
+    expect(
+      await screen.findByRole("tabpanel", { name: /Issues/ }, lazyPanelWait),
+    ).toHaveAttribute("aria-labelledby", expect.stringMatching(/-tab-issues$/));
 
     await user.keyboard("{ArrowRight}");
     expect(sourcesTab).toHaveFocus();
@@ -334,7 +370,9 @@ describe("ReportWorkspace", () => {
     expect(
       await screen.findByRole("heading", { name: "Historical Report" }),
     ).toBeVisible();
-    expect(invoke).toHaveBeenCalledWith("get_run_report", { runId: "saved_run" });
+    expect(invoke).toHaveBeenCalledWith("get_run_report", {
+      runId: "saved_run",
+    });
     expect(invoke).toHaveBeenCalledWith("read_artifact", {
       runId: "saved_run",
       relPath: "report.md",
@@ -344,57 +382,69 @@ describe("ReportWorkspace", () => {
 
   it("keeps preserved agent reports reachable when canonical report files are malformed", async () => {
     const user = userEvent.setup();
-    const responsePath = "artifacts/agent-responses/technical-codex-attempt-01-rejected-envelope.md";
-    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
-      if (command === "get_run_manifest") {
-        return Promise.resolve({
-          run_id: "broken_run",
-          created: "2026-08-10T12:00:00Z",
-          input_path: "/papers/example.pdf",
-          input_mode: "document",
-          profile_name: "Referee report",
-          provider: "codex",
-          status: "partial",
-          artifacts: [{
-            rel_path: responsePath,
-            label: "Technical · Codex · Attempt 1 · Rejected envelope",
+    const responsePath =
+      "artifacts/agent-responses/technical-codex-attempt-01-rejected-envelope.md";
+    invoke.mockImplementation(
+      (command: string, args?: Record<string, unknown>) => {
+        if (command === "get_run_manifest") {
+          return Promise.resolve({
+            run_id: "broken_run",
+            created: "2026-08-10T12:00:00Z",
+            input_path: "/papers/example.pdf",
+            input_mode: "document",
+            profile_name: "Referee report",
+            provider: "codex",
+            status: "partial",
+            artifacts: [
+              {
+                rel_path: responsePath,
+                label: "Technical · Codex · Attempt 1 · Rejected envelope",
+                kind: "markdown",
+                bytes: 120,
+                sha256: "abcdef1234567890",
+                group: "agent_response",
+              },
+            ],
+          });
+        }
+        if (command === "get_run_report") {
+          return Promise.reject(new Error("Invalid report data"));
+        }
+        if (command === "read_artifact" && args?.relPath === "report.md") {
+          return Promise.reject(new Error("Report artifact is malformed"));
+        }
+        if (command === "read_artifact" && args?.relPath === responsePath) {
+          return Promise.resolve({
             kind: "markdown",
             bytes: 120,
-            sha256: "abcdef1234567890",
-            group: "agent_response",
-          }],
-        });
-      }
-      if (command === "get_run_report") {
-        return Promise.reject(new Error("Invalid report data"));
-      }
-      if (command === "read_artifact" && args?.relPath === "report.md") {
-        return Promise.reject(new Error("Report artifact is malformed"));
-      }
-      if (command === "read_artifact" && args?.relPath === responsePath) {
-        return Promise.resolve({
-          kind: "markdown",
-          bytes: 120,
-          text: "# Useful agent report\n\nThe delimiter was missing, but the analysis survived.",
-          base64: null,
-          truncated: false,
-          abs_path: `/runs/broken_run/${responsePath}`,
-        });
-      }
-      if (command === "read_artifact" && args?.relPath === "context/document.md") {
-        return Promise.reject(new Error("No readable document"));
-      }
-      return Promise.reject(new Error(`unexpected command: ${command}`));
-    });
+            text: "# Useful agent report\n\nThe delimiter was missing, but the analysis survived.",
+            base64: null,
+            truncated: false,
+            abs_path: `/runs/broken_run/${responsePath}`,
+          });
+        }
+        if (
+          command === "read_artifact" &&
+          args?.relPath === "context/document.md"
+        ) {
+          return Promise.reject(new Error("No readable document"));
+        }
+        return Promise.reject(new Error(`unexpected command: ${command}`));
+      },
+    );
 
     render(<ReportWorkspace runId="broken_run" />);
 
-    expect(await screen.findByText("Canonical report is incomplete.")).toBeVisible();
+    expect(
+      await screen.findByText("Canonical report is incomplete."),
+    ).toBeVisible();
     expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(screen.queryByText("Could not open this report.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Could not open this report."),
+    ).not.toBeInTheDocument();
     const preserved = await screen.findByRole("button", {
       name: "Technical · Codex · Attempt 1 · Rejected envelope",
     });
@@ -406,22 +456,27 @@ describe("ReportWorkspace", () => {
   });
 
   it("keeps source bytes lazy until an artifact is selected", async () => {
-    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
-      if (command === "get_run_manifest") {
-        return Promise.resolve({ run_id: "saved_run", artifacts: [] });
-      }
-      if (command === "read_artifact" && args?.relPath === "context/document.md") {
-        return Promise.resolve({
-          kind: "markdown",
-          bytes: 20,
-          text: "# Readable document",
-          base64: null,
-          truncated: false,
-          abs_path: "/runs/saved_run/context/document.md",
-        });
-      }
-      return Promise.reject(new Error(`unexpected command: ${command}`));
-    });
+    invoke.mockImplementation(
+      (command: string, args?: Record<string, unknown>) => {
+        if (command === "get_run_manifest") {
+          return Promise.resolve({ run_id: "saved_run", artifacts: [] });
+        }
+        if (
+          command === "read_artifact" &&
+          args?.relPath === "context/document.md"
+        ) {
+          return Promise.resolve({
+            kind: "markdown",
+            bytes: 20,
+            text: "# Readable document",
+            base64: null,
+            truncated: false,
+            abs_path: "/runs/saved_run/context/document.md",
+          });
+        }
+        return Promise.reject(new Error(`unexpected command: ${command}`));
+      },
+    );
 
     render(
       <ReportWorkspace
@@ -431,7 +486,9 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    expect(invoke).toHaveBeenCalledWith("get_run_manifest", { runId: "saved_run" });
+    expect(invoke).toHaveBeenCalledWith("get_run_manifest", {
+      runId: "saved_run",
+    });
     expect(invoke).not.toHaveBeenCalledWith("read_artifact", {
       runId: "saved_run",
       relPath: "context/document.md",
@@ -514,11 +571,13 @@ describe("splitUnexpectedPreamble", () => {
 describe("canonicalReportProblem", () => {
   it("recognizes conventional final-step failures in reports saved before phases", () => {
     const report = makeReport();
-    report.failed_steps = [{
-      step_id: "editor_synthesis",
-      step_label: "Consolidate issues",
-      error: "missing envelope",
-    }];
+    report.failed_steps = [
+      {
+        step_id: "editor_synthesis",
+        step_label: "Consolidate issues",
+        error: "missing envelope",
+      },
+    ];
     expect(canonicalReportProblem(report, "# Report\n\nParallel output.")).toBe(
       "failed-final-step",
     );

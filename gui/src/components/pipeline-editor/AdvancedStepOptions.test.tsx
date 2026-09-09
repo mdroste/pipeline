@@ -38,7 +38,9 @@ describe("AdvancedStepOptions artifact fan-out", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Fan-out source type")).toHaveValue("artifact");
+    expect(screen.getByLabelText("Fan-out source type")).toHaveValue(
+      "artifact",
+    );
     fireEvent.change(screen.getByLabelText("Fan-out JSON pointer"), {
       target: { value: "/findings/0/evidence" },
     });

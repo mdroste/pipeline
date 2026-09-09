@@ -24,39 +24,73 @@ const DEFAULT_RANGE: AdaptiveAgentRange = {
 };
 
 export function isAutoReview(config: PipelineConfig): boolean {
-  return config.orientation_schema?.["x-pipeline-contract"] === AUTO_REVIEW_CONTRACT;
+  return (
+    config.orientation_schema?.["x-pipeline-contract"] === AUTO_REVIEW_CONTRACT
+  );
 }
 
-function boundedSchemaInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
-  return typeof value === "number"
-    && Number.isInteger(value)
-    && value >= minimum
-    && value <= maximum
+function boundedSchemaInteger(
+  value: unknown,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= minimum &&
+    value <= maximum
     ? value
     : fallback;
 }
 
 export function adaptiveAgentRange(config: PipelineConfig): AdaptiveAgentRange {
   const reviewPlan = config.orientation_schema?.properties;
-  const planSchema = reviewPlan && typeof reviewPlan === "object"
-    ? (reviewPlan as Record<string, unknown>).review_plan
-    : undefined;
-  const planProperties = planSchema && typeof planSchema === "object"
-    ? (planSchema as Record<string, unknown>).properties
-    : undefined;
-  const properties = planProperties && typeof planProperties === "object"
-    ? planProperties as Record<string, unknown>
-    : {};
-  const subjectSchema = properties.subject_specialist_ids && typeof properties.subject_specialist_ids === "object"
-    ? properties.subject_specialist_ids as Record<string, unknown>
-    : {};
-  const methodSchema = properties.method_specialist_ids && typeof properties.method_specialist_ids === "object"
-    ? properties.method_specialist_ids as Record<string, unknown>
-    : {};
-  const subjectMin = boundedSchemaInteger(subjectSchema.minItems, DEFAULT_RANGE.subjectMin, 1, 2);
-  const subjectMax = boundedSchemaInteger(subjectSchema.maxItems, DEFAULT_RANGE.subjectMax, subjectMin, 2);
-  const methodMin = boundedSchemaInteger(methodSchema.minItems, DEFAULT_RANGE.methodMin, 1, 4);
-  const methodMax = boundedSchemaInteger(methodSchema.maxItems, DEFAULT_RANGE.methodMax, methodMin, 4);
+  const planSchema =
+    reviewPlan && typeof reviewPlan === "object"
+      ? (reviewPlan as Record<string, unknown>).review_plan
+      : undefined;
+  const planProperties =
+    planSchema && typeof planSchema === "object"
+      ? (planSchema as Record<string, unknown>).properties
+      : undefined;
+  const properties =
+    planProperties && typeof planProperties === "object"
+      ? (planProperties as Record<string, unknown>)
+      : {};
+  const subjectSchema =
+    properties.subject_specialist_ids &&
+    typeof properties.subject_specialist_ids === "object"
+      ? (properties.subject_specialist_ids as Record<string, unknown>)
+      : {};
+  const methodSchema =
+    properties.method_specialist_ids &&
+    typeof properties.method_specialist_ids === "object"
+      ? (properties.method_specialist_ids as Record<string, unknown>)
+      : {};
+  const subjectMin = boundedSchemaInteger(
+    subjectSchema.minItems,
+    DEFAULT_RANGE.subjectMin,
+    1,
+    2,
+  );
+  const subjectMax = boundedSchemaInteger(
+    subjectSchema.maxItems,
+    DEFAULT_RANGE.subjectMax,
+    subjectMin,
+    2,
+  );
+  const methodMin = boundedSchemaInteger(
+    methodSchema.minItems,
+    DEFAULT_RANGE.methodMin,
+    1,
+    4,
+  );
+  const methodMax = boundedSchemaInteger(
+    methodSchema.maxItems,
+    DEFAULT_RANGE.methodMax,
+    methodMin,
+    4,
+  );
   return {
     subjectMin,
     subjectMax,
@@ -71,10 +105,10 @@ export function adaptiveAgentRange(config: PipelineConfig): AdaptiveAgentRange {
 export function adaptiveAgentCount(config: PipelineConfig): number | null {
   const value = config.orientation_schema?.[ADAPTIVE_AGENT_COUNT_KEY];
   const range = adaptiveAgentRange(config);
-  return typeof value === "number"
-    && Number.isInteger(value)
-    && value >= range.totalMin
-    && value <= range.totalMax
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= range.totalMin &&
+    value <= range.totalMax
     ? value
     : null;
 }

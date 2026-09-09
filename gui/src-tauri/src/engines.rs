@@ -33,6 +33,7 @@ const PADDLE_MMPROJ_SHA256: &str =
 const MAX_PADDLE_MODEL_BYTES: u64 = 1_100_000_000;
 const MAX_LLAMA_ARCHIVE_BYTES: u64 = 500_000_000;
 const MAX_LLAMA_EXTRACTED_BYTES: u64 = 1_000_000_000;
+const MAX_LLAMA_ARCHIVE_ENTRIES: usize = 100_000;
 
 // The full parser is an optional, app-owned Python sidecar. uv is used only
 // while provisioning that private runtime; extraction never consults a
@@ -527,3 +528,5 @@ use process::*;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use runtime::paddle_full_parser_lease;

@@ -40,17 +40,19 @@ export const MergeEditorPanel = memo(function MergeEditorPanel({
               merge.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
             }`}
           >
-            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-              merge.enabled ? "translate-x-3.5" : "translate-x-0.5"
-            }`} />
+            <div
+              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                merge.enabled ? "translate-x-3.5" : "translate-x-0.5"
+              }`}
+            />
           </button>
           <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
             Cross-agent merge {merge.enabled ? "enabled" : "disabled"}
           </span>
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-          When a step runs on multiple LLM agents, this merges their independent outputs
-          into a single report. Only runs when needed.
+          When a step runs on multiple LLM agents, this merges their independent
+          outputs into a single report. Only runs when needed.
         </p>
         <AgentChips
           agents={merge.agents ?? []}
@@ -69,135 +71,152 @@ export const MergeEditorPanel = memo(function MergeEditorPanel({
   );
 });
 
-export const PipelineSettingsEditorPanel = memo(function PipelineSettingsEditorPanel({
-  config,
-  activeProfile,
-  onContextCacheChange,
-  onVariablesChange,
-  onCalibrationAppend,
-  onResetParallelTemplate,
-  onParallelTemplateChange,
-}: {
-  config: PipelineConfig;
-  activeProfile: string;
-  onContextCacheChange: (enabled: boolean) => void;
-  onVariablesChange: (variables: VarSpec[]) => void;
-  onCalibrationAppend: (stepId: string, text: string) => void;
-  onResetParallelTemplate: (source: "generic" | "paper") => void;
-  onParallelTemplateChange: (template: string) => void;
-}) {
-  return (
-    <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-      <div className="p-4 space-y-5">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
-            Pipeline Settings
-          </h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Settings that apply to all steps in this profile.
-          </p>
-        </div>
-
-        <div className="flex items-start gap-3">
-          <button
-            type="button"
-            role="switch"
-            aria-label="Reuse shared input context"
-            aria-checked={config.context_cache?.enabled ?? false}
-            onClick={() => onContextCacheChange(!(config.context_cache?.enabled ?? false))}
-            className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
-              config.context_cache?.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
-            }`}
-          >
-            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-              config.context_cache?.enabled ? "translate-x-3.5" : "translate-x-0.5"
-            }`} />
-          </button>
+export const PipelineSettingsEditorPanel = memo(
+  function PipelineSettingsEditorPanel({
+    config,
+    activeProfile,
+    onContextCacheChange,
+    onVariablesChange,
+    onCalibrationAppend,
+    onResetParallelTemplate,
+    onParallelTemplateChange,
+  }: {
+    config: PipelineConfig;
+    activeProfile: string;
+    onContextCacheChange: (enabled: boolean) => void;
+    onVariablesChange: (variables: VarSpec[]) => void;
+    onCalibrationAppend: (stepId: string, text: string) => void;
+    onResetParallelTemplate: (source: "generic" | "paper") => void;
+    onParallelTemplateChange: (template: string) => void;
+  }) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+        <div className="p-4 space-y-5">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                Reuse shared input context
-              </span>
-              <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
-                {["auto-review", "auto-review-quick"].includes(activeProfile) ? "Automatic review default" : "Optional"}
-              </span>
-            </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              Automatic Paper Review enables this by default. It prepares the extracted input
-              and orientation map once for all review steps.
-              Pipeline automatically uses provider prompt caches for API calls and forked
-              base sessions for Claude or Codex CLI. For other profiles, turn it on for
-              large, multi-step reviews; unsupported providers fall back safely to ordinary
-              calls.
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
+              Pipeline Settings
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Settings that apply to all steps in this profile.
             </p>
-            {config.context_cache?.enabled && (
-              <p className="text-[11px] text-green-700 dark:text-green-400 mt-1">
-                Enabled for this profile. Cache reads and writes will appear in token usage.
+          </div>
+
+          <div className="flex items-start gap-3">
+            <button
+              type="button"
+              role="switch"
+              aria-label="Reuse shared input context"
+              aria-checked={config.context_cache?.enabled ?? false}
+              onClick={() =>
+                onContextCacheChange(!(config.context_cache?.enabled ?? false))
+              }
+              className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
+                config.context_cache?.enabled
+                  ? "bg-green-600"
+                  : "bg-gray-300 dark:bg-gray-600"
+              }`}
+            >
+              <div
+                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                  config.context_cache?.enabled
+                    ? "translate-x-3.5"
+                    : "translate-x-0.5"
+                }`}
+              />
+            </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                  Reuse shared input context
+                </span>
+                <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
+                  {["auto-review", "auto-review-quick"].includes(activeProfile)
+                    ? "Automatic review default"
+                    : "Optional"}
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Automatic Paper Review enables this by default. It prepares the
+                extracted input and orientation map once for all review steps.
+                Pipeline automatically uses provider prompt caches for API calls
+                and forked base sessions for Claude or Codex CLI. For other
+                profiles, turn it on for large, multi-step reviews; unsupported
+                providers fall back safely to ordinary calls.
               </p>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">
-            Required
-          </span>
-          <div>
-            <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-              Build orientation map
-            </span>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              One LLM call surveys the input into structured JSON before every workflow runs.
-              It keeps steps grounded in what the input actually
-              contains — e.g. it stops a review step criticizing something covered
-              elsewhere in the document.
-            </p>
-          </div>
-        </div>
-
-        <VariablesEditor variables={config.variables ?? []} onChange={onVariablesChange} />
-        <CalibrateSection onAppend={onCalibrationAppend} />
-
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              Parallel step context template
-            </label>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => onResetParallelTemplate("generic")}
-                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-                title="Neutral wrapper for any input: survey + instructions + input path."
-              >
-                Reset to generic
-              </button>
-              <button
-                type="button"
-                onClick={() => onResetParallelTemplate("paper")}
-                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-                title="Referee briefing for academic papers: paper type, figure hints, issue-focused framing."
-              >
-                Reset to paper review
-              </button>
+              {config.context_cache?.enabled && (
+                <p className="text-[11px] text-green-700 dark:text-green-400 mt-1">
+                  Enabled for this profile. Cache reads and writes will appear
+                  in token usage.
+                </p>
+              )}
             </div>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-            Wraps each parallel step's prompt. Controls what context the LLM receives.
-          </p>
-          <PromptEditor
-            value={config.parallel_context_template}
-            onChange={onParallelTemplateChange}
-            context={{ kind: "parallel_template" }}
-            ariaLabel="Parallel step context template"
-            rows={16}
-            fillHeight={false}
+
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">
+              Required
+            </span>
+            <div>
+              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                Build orientation map
+              </span>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                One LLM call surveys the input into structured JSON before every
+                workflow runs. It keeps steps grounded in what the input
+                actually contains — e.g. it stops a review step criticizing
+                something covered elsewhere in the document.
+              </p>
+            </div>
+          </div>
+
+          <VariablesEditor
+            variables={config.variables ?? []}
+            onChange={onVariablesChange}
           />
+          <CalibrateSection onAppend={onCalibrationAppend} />
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Parallel step context template
+              </label>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onResetParallelTemplate("generic")}
+                  className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                  title="Neutral wrapper for any input: survey + instructions + input path."
+                >
+                  Reset to generic
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onResetParallelTemplate("paper")}
+                  className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                  title="Referee briefing for academic papers: paper type, figure hints, issue-focused framing."
+                >
+                  Reset to paper review
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+              Wraps each parallel step's prompt. Controls what context the LLM
+              receives.
+            </p>
+            <PromptEditor
+              value={config.parallel_context_template}
+              onChange={onParallelTemplateChange}
+              context={{ kind: "parallel_template" }}
+              ariaLabel="Parallel step context template"
+              rows={16}
+              fillHeight={false}
+            />
+          </div>
         </div>
       </div>
-    </div>
-  );
-});
+    );
+  },
+);
 
 export const StepEditorPanel = memo(function StepEditorPanel({
   step,
@@ -224,28 +243,34 @@ export const StepEditorPanel = memo(function StepEditorPanel({
     enabled: boolean,
   ) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<"prompt" | "inputs" | "execution" | "model">("prompt");
+  const [activeTab, setActiveTab] = useState<
+    "prompt" | "inputs" | "execution" | "model"
+  >("prompt");
   useEffect(() => setActiveTab("prompt"), [step.id]);
 
   const otherSteps = config.steps
     .filter((candidate) => candidate.enabled && candidate.id !== step.id)
     .map(({ id, label }) => ({ id, label }));
   const defaultReportStepIds = config.steps
-    .slice(0, config.steps.findIndex((candidate) => candidate.id === step.id))
+    .slice(
+      0,
+      config.steps.findIndex((candidate) => candidate.id === step.id),
+    )
     .filter((candidate) => candidate.enabled)
     .map((candidate) => candidate.id);
   const summary = describeStep(step, config);
-  const tabs: Array<["prompt" | "inputs" | "execution" | "model", string]> = advanced
-    ? [
-        ["prompt", "Prompt"],
-        ["inputs", "Inputs & dependencies"],
-        ["execution", "Execution rules"],
-        ["model", "Model & agents"],
-      ]
-    : [
-        ["prompt", "Prompt"],
-        ["inputs", "Inputs"],
-      ];
+  const tabs: Array<["prompt" | "inputs" | "execution" | "model", string]> =
+    advanced
+      ? [
+          ["prompt", "Prompt"],
+          ["inputs", "Inputs & dependencies"],
+          ["execution", "Execution rules"],
+          ["model", "Model & agents"],
+        ]
+      : [
+          ["prompt", "Prompt"],
+          ["inputs", "Inputs"],
+        ];
 
   useEffect(() => {
     if (!advanced && (activeTab === "execution" || activeTab === "model")) {
@@ -255,12 +280,13 @@ export const StepEditorPanel = memo(function StepEditorPanel({
 
   const handleTabKeyDown = (
     event: KeyboardEvent<HTMLButtonElement>,
-    current: typeof tabs[number][0],
+    current: (typeof tabs)[number][0],
   ) => {
     const index = tabs.findIndex(([id]) => id === current);
     let next = index;
     if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
-    else if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+    else if (event.key === "ArrowLeft")
+      next = (index - 1 + tabs.length) % tabs.length;
     else if (event.key === "Home") next = 0;
     else if (event.key === "End") next = tabs.length - 1;
     else return;
@@ -275,26 +301,39 @@ export const StepEditorPanel = memo(function StepEditorPanel({
       <div className="px-5 pt-4 pb-3 border-b border-gray-200 dark:border-gray-700 space-y-2.5">
         <div className="flex items-end gap-3">
           <div className="min-w-0 flex-1">
-            <label className="block text-xs font-medium text-gray-500 mb-1">Step name</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              Step name
+            </label>
             <input
               type="text"
               aria-label="Step label"
               value={step.label}
-              onChange={(event) => onUpdate(step.id, { label: event.target.value })}
+              onChange={(event) =>
+                onUpdate(step.id, { label: event.target.value })
+              }
               className="w-full py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 transition-colors"
             />
           </div>
-          <span className={`mb-0.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-            step.enabled
+          <span
+            className={`mb-0.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+              step.enabled
+                ? step.phase === "parallel"
+                  ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
+                  : "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300"
+                : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+            }`}
+          >
+            {step.enabled
               ? step.phase === "parallel"
-                ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
-                : "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300"
-              : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
-          }`}>
-            {step.enabled ? step.phase === "parallel" ? "Parallel" : "Sequential" : "Disabled"}
+                ? "Parallel"
+                : "Sequential"
+              : "Disabled"}
           </span>
         </div>
-        <p className="text-xs leading-relaxed text-gray-600 dark:text-gray-400" data-testid="step-summary">
+        <p
+          className="text-xs leading-relaxed text-gray-600 dark:text-gray-400"
+          data-testid="step-summary"
+        >
           {summary.sentence}
         </p>
       </div>
@@ -337,14 +376,16 @@ export const StepEditorPanel = memo(function StepEditorPanel({
           value={step.prompt}
           onChange={(prompt) => onUpdate(step.id, { prompt })}
           ariaLabel={`Prompt for ${step.label}`}
-          context={step.phase === "sequential"
-            ? {
-                kind: "sequential",
-                otherStepIds: config.steps
-                  .filter((candidate) => candidate.id !== step.id)
-                  .map((candidate) => candidate.id),
-              }
-            : { kind: "parallel" }}
+          context={
+            step.phase === "sequential"
+              ? {
+                  kind: "sequential",
+                  otherStepIds: config.steps
+                    .filter((candidate) => candidate.id !== step.id)
+                    .map((candidate) => candidate.id),
+                }
+              : { kind: "parallel" }
+          }
         />
       </section>
 
@@ -356,9 +397,12 @@ export const StepEditorPanel = memo(function StepEditorPanel({
         className="flex-1 min-h-0 overflow-y-auto p-5"
       >
         <div className="mb-4">
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Inputs &amp; dependencies</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+            Inputs &amp; dependencies
+          </h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Choose exactly what this step can read. Selecting an earlier report also makes this step wait for it.
+            Choose exactly what this step can read. Selecting an earlier report
+            also makes this step wait for it.
           </p>
         </div>
         <AdvancedStepOptions
@@ -383,13 +427,18 @@ export const StepEditorPanel = memo(function StepEditorPanel({
         className="flex-1 min-h-0 overflow-y-auto p-5"
       >
         <div className="mb-5">
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Execution rules</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+            Execution rules
+          </h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Control timing, conditions, publication, and file-by-file fan-out. Output contracts live in the Schemas tab.
+            Control timing, conditions, publication, and file-by-file fan-out.
+            Output contracts live in the Schemas tab.
           </p>
         </div>
         <div className="mb-5">
-          <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">When it runs</label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">
+            When it runs
+          </label>
           <div className="flex gap-2">
             {(["parallel", "sequential"] as const).map((phase) => (
               <button
@@ -405,7 +454,9 @@ export const StepEditorPanel = memo(function StepEditorPanel({
                     : "bg-white dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-600 hover:border-gray-400"
                 }`}
               >
-                {phase === "parallel" ? "Independently (parallel)" : "After dependencies (sequential)"}
+                {phase === "parallel"
+                  ? "Independently (parallel)"
+                  : "After dependencies (sequential)"}
               </button>
             ))}
           </div>
@@ -416,7 +467,8 @@ export const StepEditorPanel = memo(function StepEditorPanel({
               Published results
             </h4>
             <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-              Tell Pipeline which step is the report people read and which structured findings Projects tracks.
+              Tell Pipeline which step is the report people read and which
+              structured findings Projects tracks.
             </p>
           </div>
           <label className="flex items-start gap-2 text-xs text-gray-700 dark:text-gray-300">
@@ -425,7 +477,13 @@ export const StepEditorPanel = memo(function StepEditorPanel({
               className="mt-0.5"
               disabled={!step.enabled || step.phase !== "sequential"}
               checked={config.outputs?.primary_step === step.id}
-              onChange={(event) => onOutputRoleChange(step.id, "primary_step", event.target.checked)}
+              onChange={(event) =>
+                onOutputRoleChange(
+                  step.id,
+                  "primary_step",
+                  event.target.checked,
+                )
+              }
             />
             <span>
               Use as the primary report
@@ -440,12 +498,19 @@ export const StepEditorPanel = memo(function StepEditorPanel({
               className="mt-0.5"
               disabled={!step.enabled || step.phase !== "sequential"}
               checked={config.outputs?.findings_step === step.id}
-              onChange={(event) => onOutputRoleChange(step.id, "findings_step", event.target.checked)}
+              onChange={(event) =>
+                onOutputRoleChange(
+                  step.id,
+                  "findings_step",
+                  event.target.checked,
+                )
+              }
             />
             <span>
               Publish findings to Projects
               <span className="block text-[10px] text-gray-500 dark:text-gray-400">
-                Pipeline adds an issues contract automatically; review it in the Schemas tab.
+                Pipeline adds an issues contract automatically; review it in the
+                Schemas tab.
               </span>
             </span>
           </label>
@@ -477,25 +542,36 @@ export const StepEditorPanel = memo(function StepEditorPanel({
         className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5"
       >
         <div>
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Model &amp; agents</h3>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+            Model &amp; agents
+          </h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Choose providers and tools, or inherit the profile-wide defaults.
           </p>
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1.5">Tools</label>
+          <label className="block text-xs font-medium text-gray-500 mb-1.5">
+            Tools
+          </label>
           {["WebSearch"].map((tool) => {
             const active = step.tools?.includes(tool) ?? false;
             return (
-              <label key={tool} className="flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
+              <label
+                key={tool}
+                className="flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300 cursor-pointer"
+              >
                 <input
                   type="checkbox"
                   checked={active}
-                  onChange={() => onUpdate(step.id, {
-                    tools: active
-                      ? (step.tools ?? []).filter((candidate) => candidate !== tool)
-                      : [...(step.tools ?? []), tool],
-                  })}
+                  onChange={() =>
+                    onUpdate(step.id, {
+                      tools: active
+                        ? (step.tools ?? []).filter(
+                            (candidate) => candidate !== tool,
+                          )
+                        : [...(step.tools ?? []), tool],
+                    })
+                  }
                   className="rounded"
                 />
                 Web search

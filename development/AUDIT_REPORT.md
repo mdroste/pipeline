@@ -5,9 +5,8 @@ Date: 2026-07-18
 > **Archived audit snapshot.** This document preserves evidence and remediation
 > notes for the tree audited on the date above. It is not the current issue
 > tracker, release recommendation, supported-version policy, or test report.
-> File/line references and toolchain versions are historical. See
-> [CHANGELOG.md](CHANGELOG.md), [SUPPORT.md](SUPPORT.md), current CI, and GitHub
-> issues for current status.
+> File/line references and toolchain versions are historical. See the current
+> repository documentation, current CI, and GitHub issues for current status.
 
 ## Executive summary
 

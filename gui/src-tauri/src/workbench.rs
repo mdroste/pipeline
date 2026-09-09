@@ -6,6 +6,7 @@
 
 pub mod codex;
 pub mod commands;
+pub(crate) mod discovery;
 pub(crate) mod missions;
 pub mod project;
 pub mod release;

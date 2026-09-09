@@ -1160,3 +1160,48 @@ fn file_workspace_source_tree_assets_use_retained_hashes() {
     fs::write(stored, "Tampered").unwrap();
     assert!(read_workspace_file(&f.store, request()).is_err());
 }
+
+#[test]
+fn conversation_file_links_stay_inside_the_session_runtime_root() {
+    let f = fixture();
+    let session = f
+        .store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Generated files".into(),
+            operation_id: id("session").unwrap(),
+        })
+        .unwrap()
+        .record;
+    let root = f.store.runtime_root(&session.id).unwrap();
+    fs::write(root.join("output.pdf"), b"%PDF fixture").unwrap();
+    fs::write(f.root.join("outside.pdf"), b"%PDF outside").unwrap();
+
+    let relative = read_conversation_file(&f.store, &session.id, "output.pdf").unwrap();
+    assert_eq!(relative.path, "output.pdf");
+    assert_eq!(relative.mime, "application/pdf");
+    assert_eq!(relative.base64.as_deref(), Some("JVBERiBmaXh0dXJl"));
+    assert_eq!(
+        read_conversation_file(
+            &f.store,
+            &session.id,
+            root.join("output.pdf").to_str().unwrap(),
+        )
+        .unwrap()
+        .hash,
+        relative.hash
+    );
+    let snapshot = snapshot_conversation_file(&f.store, &session.id, "output.pdf").unwrap();
+    assert!(snapshot.starts_with(f.store.root_path().join("opened-conversation-files")));
+    assert_eq!(fs::read(snapshot).unwrap(), b"%PDF fixture");
+    assert!(read_conversation_file(&f.store, &session.id, "../outside.pdf").is_err());
+    assert!(read_conversation_file(
+        &f.store,
+        &session.id,
+        f.root.join("outside.pdf").to_str().unwrap(),
+    )
+    .is_err());
+
+    std::os::unix::fs::symlink(f.root.join("outside.pdf"), root.join("linked.pdf")).unwrap();
+    assert!(read_conversation_file(&f.store, &session.id, "linked.pdf").is_err());
+}

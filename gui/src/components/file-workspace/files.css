@@ -207,6 +207,18 @@
   color: #bfdbfe;
 }
 
-.file-tab-panel { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; overflow:hidden; }
-.file-tab-panel[hidden] { display:none; }
-.file-tab-panel > .file-pane, .split-view-content > .file-pane { flex:1; }
+.file-tab-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.file-tab-panel[hidden] {
+  display: none;
+}
+.file-tab-panel > .file-pane,
+.split-view-content > .file-pane {
+  flex: 1;
+}

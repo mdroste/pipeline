@@ -1,5 +1,9 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import type { LlmRequestDetails, LogEntry, UsageState } from "../hooks/usePipeline";
+import type {
+  LlmRequestDetails,
+  LogEntry,
+  UsageState,
+} from "../hooks/usePipeline";
 
 interface Props {
   logs: LogEntry[];
@@ -16,7 +20,10 @@ const CONSOLE_VIEWPORT_MARGIN = 96;
 const MAX_RENDERED_LOG_LINES = 600;
 
 function maxConsoleHeight(): number {
-  return Math.max(MIN_CONSOLE_HEIGHT, window.innerHeight - CONSOLE_VIEWPORT_MARGIN);
+  return Math.max(
+    MIN_CONSOLE_HEIGHT,
+    window.innerHeight - CONSOLE_VIEWPORT_MARGIN,
+  );
 }
 
 function clampConsoleHeight(height: number): number {
@@ -25,7 +32,8 @@ function clampConsoleHeight(height: number): number {
 
 // Compact token count: 1_234_567 → "1.2M", 45_678 → "45.7k", 832 → "832".
 function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000_000)
+    return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
   return String(n);
 }
@@ -45,8 +53,13 @@ function logLineClass(entry: LogEntry): string {
   if (isWarn(entry)) return "text-amber-600 dark:text-yellow-400";
   if (entry.level === "stderr" || entry.line.startsWith("[stderr]"))
     return "text-orange-600 dark:text-orange-400";
-  if (entry.line.startsWith("Still waiting")) return "text-amber-700 dark:text-yellow-500";
-  if (entry.level === "stdout" || entry.line.startsWith("$") || entry.line.startsWith("Wrote"))
+  if (entry.line.startsWith("Still waiting"))
+    return "text-amber-700 dark:text-yellow-500";
+  if (
+    entry.level === "stdout" ||
+    entry.line.startsWith("$") ||
+    entry.line.startsWith("Wrote")
+  )
     return "text-gray-600 dark:text-gray-400";
   return "text-gray-700 dark:text-gray-300";
 }
@@ -88,18 +101,18 @@ function requestText(request: LlmRequestDetails): string {
   if (request.system_prompt) {
     parts.push(
       `SYSTEM PROMPT${request.system_prompt_truncated ? " (PREVIEW TRUNCATED)" : ""}` +
-      `\n\n${request.system_prompt}`,
+        `\n\n${request.system_prompt}`,
     );
   }
   if (request.shared_context) {
     parts.push(
       `SHARED CONTEXT${request.shared_context_truncated ? " (PREVIEW TRUNCATED)" : ""}` +
-      `\n\n${request.shared_context}`,
+        `\n\n${request.shared_context}`,
     );
   }
   parts.push(
     `TASK PROMPT${request.prompt_truncated ? " (PREVIEW TRUNCATED)" : ""}` +
-    `\n\n${request.prompt}`,
+      `\n\n${request.prompt}`,
   );
   return parts.join("\n\n" + "=".repeat(72) + "\n\n");
 }
@@ -129,7 +142,9 @@ function RequestDetails({
       : `${fmtCount(request.max_output_tokens)} max output tokens`;
   const access = [
     request.pdf_attached ? "PDF attached" : null,
-    request.shared_context ? `shared context (${fmtCount(request.shared_context_chars)} chars)` : null,
+    request.shared_context
+      ? `shared context (${fmtCount(request.shared_context_chars)} chars)`
+      : null,
     request.write_enabled ? "artifact writes enabled" : "read-only",
   ]
     .filter(Boolean)
@@ -150,12 +165,14 @@ function RequestDetails({
         <span className="text-gray-500 dark:text-gray-400">Model</span>
         <span>
           {request.model}{" "}
-          <span className="text-gray-500 dark:text-gray-400">({request.model_policy})</span>
+          <span className="text-gray-500 dark:text-gray-400">
+            ({request.model_policy})
+          </span>
         </span>
         <span className="text-gray-500 dark:text-gray-400">Settings</span>
         <span>
-          effort {request.effort} · tools {toolText} · timeout {fmtCount(request.timeout_secs)}s ·{" "}
-          {outputLimit}
+          effort {request.effort} · tools {toolText} · timeout{" "}
+          {fmtCount(request.timeout_secs)}s · {outputLimit}
         </span>
         <span className="text-gray-500 dark:text-gray-400">Context</span>
         <span>{access}</span>
@@ -170,15 +187,19 @@ function RequestDetails({
                      dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
         >
           <span>
-            {showPrompt ? "Hide" : "View"} prompt ({fmtCount(request.prompt_chars)} task characters)
+            {showPrompt ? "Hide" : "View"} prompt (
+            {fmtCount(request.prompt_chars)} task characters)
           </span>
-          {!showPrompt && <TruncatedPreviewBadge truncated={Boolean(hasTruncatedPreview)} />}
+          {!showPrompt && (
+            <TruncatedPreviewBadge truncated={Boolean(hasTruncatedPreview)} />
+          )}
         </button>
         {showPrompt && (
           <div className="border-t border-gray-200 px-3 py-2 dark:border-gray-800">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-gray-500 dark:text-gray-400">
-                System, shared context, and task prompt are shown separately in dispatch order.
+                System, shared context, and task prompt are shown separately in
+                dispatch order.
                 {hasTruncatedPreview &&
                   " Long fields are shortened; Copy prompt copies only the visible text."}
               </span>
@@ -198,28 +219,41 @@ function RequestDetails({
                       ? ` (${fmtCount(request.system_prompt_chars)} characters)`
                       : ""}
                   </span>
-                  <TruncatedPreviewBadge truncated={request.system_prompt_truncated} />
+                  <TruncatedPreviewBadge
+                    truncated={request.system_prompt_truncated}
+                  />
                 </div>
-                <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">{request.system_prompt}</pre>
+                <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+                  {request.system_prompt}
+                </pre>
               </section>
             )}
             {request.shared_context && (
               <section className="mb-3">
                 <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
                   <span>
-                    Shared context ({fmtCount(request.shared_context_chars)} characters)
+                    Shared context ({fmtCount(request.shared_context_chars)}{" "}
+                    characters)
                   </span>
-                  <TruncatedPreviewBadge truncated={request.shared_context_truncated} />
+                  <TruncatedPreviewBadge
+                    truncated={request.shared_context_truncated}
+                  />
                 </div>
-                <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">{request.shared_context}</pre>
+                <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+                  {request.shared_context}
+                </pre>
               </section>
             )}
             <section>
               <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
-                <span>Task prompt ({fmtCount(request.prompt_chars)} characters)</span>
+                <span>
+                  Task prompt ({fmtCount(request.prompt_chars)} characters)
+                </span>
                 <TruncatedPreviewBadge truncated={request.prompt_truncated} />
               </div>
-              <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">{request.prompt}</pre>
+              <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+                {request.prompt}
+              </pre>
             </section>
           </div>
         )}
@@ -235,19 +269,25 @@ function RequestDetails({
           <div className="border-t border-gray-200 px-3 py-2 text-gray-600 dark:border-gray-800 dark:text-gray-400">
             {request.working_directory && (
               <div>
-                <span className="text-gray-500 dark:text-gray-400">Working directory: </span>
+                <span className="text-gray-500 dark:text-gray-400">
+                  Working directory:{" "}
+                </span>
                 {request.working_directory}
               </div>
             )}
             {request.read_directories.map((path) => (
               <div key={path}>
-                <span className="text-gray-500 dark:text-gray-400">Read root: </span>
+                <span className="text-gray-500 dark:text-gray-400">
+                  Read root:{" "}
+                </span>
                 {path}
               </div>
             ))}
             {request.write_directory && (
               <div>
-                <span className="text-gray-500 dark:text-gray-400">Write root: </span>
+                <span className="text-gray-500 dark:text-gray-400">
+                  Write root:{" "}
+                </span>
                 {request.write_directory}
               </div>
             )}
@@ -264,7 +304,9 @@ function RequestDetails({
 export default function Console({ logs, usage, active = true }: Props) {
   const [open, setOpen] = useState(true);
   const [height, setHeight] = useState(DEFAULT_CONSOLE_HEIGHT);
-  const [selectedSession, setSelectedSession] = useState<number | "master">("master");
+  const [selectedSession, setSelectedSession] = useState<number | "master">(
+    "master",
+  );
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState<LevelFilter>("all");
   const [showTimestamps, setShowTimestamps] = useState(false);
@@ -298,7 +340,8 @@ export default function Console({ logs, usage, active = true }: Props) {
       resizeCleanupRef.current?.();
 
       const consoleElement = event.currentTarget.parentElement;
-      const measuredHeight = consoleElement?.getBoundingClientRect().height ?? 0;
+      const measuredHeight =
+        consoleElement?.getBoundingClientRect().height ?? 0;
       const startHeight = measuredHeight > 0 ? measuredHeight : height;
       const startY = event.clientY;
 
@@ -321,17 +364,20 @@ export default function Console({ logs, usage, active = true }: Props) {
     [height, stopResizing],
   );
 
-  const resizeWithKeyboard = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    const delta = event.shiftKey ? 48 : 16;
-    let next: number | null = null;
-    if (event.key === "ArrowUp") next = height + delta;
-    if (event.key === "ArrowDown") next = height - delta;
-    if (event.key === "Home") next = MIN_CONSOLE_HEIGHT;
-    if (event.key === "End") next = maxConsoleHeight();
-    if (next == null) return;
-    event.preventDefault();
-    setHeight(clampConsoleHeight(next));
-  }, [height]);
+  const resizeWithKeyboard = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const delta = event.shiftKey ? 48 : 16;
+      let next: number | null = null;
+      if (event.key === "ArrowUp") next = height + delta;
+      if (event.key === "ArrowDown") next = height - delta;
+      if (event.key === "Home") next = MIN_CONSOLE_HEIGHT;
+      if (event.key === "End") next = maxConsoleHeight();
+      if (next == null) return;
+      event.preventDefault();
+      setHeight(clampConsoleHeight(next));
+    },
+    [height],
+  );
 
   // Build the session summary and global error count in one pass. This runs
   // whenever the buffered log snapshot changes, so avoid separate full-log
@@ -353,7 +399,12 @@ export default function Console({ logs, usage, active = true }: Props) {
       if (e.session == null) continue;
       let s = map.get(e.session);
       if (!s) {
-        s = { id: e.session, label: e.label || `Session ${e.session}`, count: 0, hasError: false };
+        s = {
+          id: e.session,
+          label: e.label || `Session ${e.session}`,
+          count: 0,
+          hasError: false,
+        };
         map.set(e.session, s);
       }
       s.count++;
@@ -369,7 +420,8 @@ export default function Console({ logs, usage, active = true }: Props) {
 
   // A stale selection (previous run's session id) falls back to the master view.
   const activeSession =
-    selectedSession !== "master" && !sessions.some((s) => s.id === selectedSession)
+    selectedSession !== "master" &&
+    !sessions.some((s) => s.id === selectedSession)
       ? "master"
       : selectedSession;
   const activeRequest =
@@ -380,7 +432,8 @@ export default function Console({ logs, usage, active = true }: Props) {
   const needle = search.trim().toLowerCase();
   const visibleLogs = useMemo(() => {
     return logs.filter((e) => {
-      if (activeSession !== "master" && e.session !== activeSession) return false;
+      if (activeSession !== "master" && e.session !== activeSession)
+        return false;
       if (level === "error" && !isError(e)) return false;
       if (level === "warn" && !isError(e) && !isWarn(e)) return false;
       if (needle && !e.line.toLowerCase().includes(needle)) return false;
@@ -439,40 +492,39 @@ export default function Console({ logs, usage, active = true }: Props) {
       visibleLogs
         .map((e) => (showTimestamps ? `[${fmtClock(e.t)}] ${e.line}` : e.line))
         .join("\n"),
-    [visibleLogs, showTimestamps]
+    [visibleLogs, showTimestamps],
   );
 
-  const copyText = useCallback(
-    async (text: string) => {
+  const copyText = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyError(null);
+      return true;
+    } catch {
+      // Fallback for webviews without async clipboard access.
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      let copied = false;
       try {
-        await navigator.clipboard.writeText(text);
-        setCopyError(null);
-        return true;
+        copied = document.execCommand("copy");
       } catch {
-        // Fallback for webviews without async clipboard access.
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        let copied = false;
-        try {
-          copied = document.execCommand("copy");
-        } catch {
-          copied = false;
-        }
-        document.body.removeChild(ta);
-        if (!copied) {
-          setCopyError("Clipboard access failed. Select the text and copy it manually.");
-          return false;
-        }
-        setCopyError(null);
-        return true;
+        copied = false;
       }
-    },
-    []
-  );
+      document.body.removeChild(ta);
+      if (!copied) {
+        setCopyError(
+          "Clipboard access failed. Select the text and copy it manually.",
+        );
+        return false;
+      }
+      setCopyError(null);
+      return true;
+    }
+  }, []);
 
   const copyAll = useCallback(async () => {
     if (await copyText(visibleText())) {
@@ -511,14 +563,20 @@ export default function Console({ logs, usage, active = true }: Props) {
             className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-sm transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-200"
           >
             <span>{open ? "▼" : "▲"}</span>
-            <span>{active ? "Active run console" : "Completed run console"}</span>
+            <span>
+              {active ? "Active run console" : "Completed run console"}
+            </span>
           </button>
           {sessions.length > 0 && (
             <select
-              value={activeSession === "master" ? "master" : String(activeSession)}
+              value={
+                activeSession === "master" ? "master" : String(activeSession)
+              }
               onChange={(e) => {
                 const next =
-                  e.target.value === "master" ? "master" : Number(e.target.value);
+                  e.target.value === "master"
+                    ? "master"
+                    : Number(e.target.value);
                 setSelectedSession(next);
                 if (next !== "master") {
                   setFollow(false);
@@ -531,7 +589,9 @@ export default function Console({ logs, usage, active = true }: Props) {
               <option value="master">All sessions</option>
               {sessions.map((s) => {
                 const u = usage.bySession[s.id];
-                const cacheRead = u?.cached ? ` + ${fmtTokens(u.cached)} cache read` : "";
+                const cacheRead = u?.cached
+                  ? ` + ${fmtTokens(u.cached)} cache read`
+                  : "";
                 const cacheWrite = u?.cacheWrite
                   ? ` + ${fmtTokens(u.cacheWrite)} cache write`
                   : "";
@@ -575,7 +635,11 @@ export default function Console({ logs, usage, active = true }: Props) {
                         : "text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
                     }`}
                     title={
-                      lv === "all" ? "All lines" : lv === "warn" ? "Warnings + errors" : "Errors only"
+                      lv === "all"
+                        ? "All lines"
+                        : lv === "warn"
+                          ? "Warnings + errors"
+                          : "Errors only"
                     }
                   >
                     {lv === "all" ? "All" : lv === "warn" ? "Warn" : "Err"}
@@ -643,7 +707,11 @@ export default function Console({ logs, usage, active = true }: Props) {
             onClick={copyAll}
             disabled={visibleLogs.length === 0}
             className="cursor-pointer rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 disabled:cursor-default disabled:opacity-40 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-            title={activeSession === "master" ? "Copy all shown lines" : "Copy this session's lines"}
+            title={
+              activeSession === "master"
+                ? "Copy all shown lines"
+                : "Copy this session's lines"
+            }
           >
             {copied ? "Copied ✓" : "Copy"}
           </button>
@@ -651,13 +719,20 @@ export default function Console({ logs, usage, active = true }: Props) {
       </div>
 
       {copyError && (
-        <div role="alert" className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+        <div
+          role="alert"
+          className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+        >
           {copyError}
         </div>
       )}
 
       {open && (
-        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-auto px-4 py-2 min-h-0 relative">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="flex-1 overflow-auto px-4 py-2 min-h-0 relative"
+        >
           {activeRequest && (
             <RequestDetails
               key={String(activeSession)}
@@ -666,8 +741,12 @@ export default function Console({ logs, usage, active = true }: Props) {
             />
           )}
           {visibleLogs.length > renderedLogs.length && (
-            <div role="status" className="mb-1 font-mono text-xs text-gray-400 dark:text-gray-600">
-              Showing {renderedLogs.length} of {visibleLogs.length} matching lines. Copy includes all.
+            <div
+              role="status"
+              className="mb-1 font-mono text-xs text-gray-400 dark:text-gray-600"
+            >
+              Showing {renderedLogs.length} of {visibleLogs.length} matching
+              lines. Copy includes all.
             </div>
           )}
           <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
@@ -678,7 +757,9 @@ export default function Console({ logs, usage, active = true }: Props) {
                 className={`group flex gap-2 ${logLineClass(entry)}`}
               >
                 {showTimestamps && (
-                  <span className="shrink-0 select-none text-gray-400 dark:text-gray-600">{fmtClock(entry.t)}</span>
+                  <span className="shrink-0 select-none text-gray-400 dark:text-gray-600">
+                    {fmtClock(entry.t)}
+                  </span>
                 )}
                 <span className="flex-1 min-w-0">{entry.line}</span>
                 <button

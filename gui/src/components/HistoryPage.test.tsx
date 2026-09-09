@@ -55,7 +55,8 @@ describe("HistoryPage", () => {
     });
     invoke.mockImplementation((command: string) => {
       if (command === "list_runs") return Promise.resolve([cachedRun]);
-      if (command === "runs_disk_usage") return Promise.resolve({ count: 1, bytes: 1024 });
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 1, bytes: 1024 });
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
     render(<HistoryPage onClose={vi.fn()} />);
@@ -90,8 +91,10 @@ describe("HistoryPage", () => {
       resumable: false,
     });
     invoke.mockImplementation((command: string) => {
-      if (command === "list_runs") return Promise.resolve([resumable, unrecoverable]);
-      if (command === "runs_disk_usage") return Promise.resolve({ count: 2, bytes: 1024 });
+      if (command === "list_runs")
+        return Promise.resolve([resumable, unrecoverable]);
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 2, bytes: 1024 });
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
     const onRerun = vi.fn();
@@ -114,7 +117,8 @@ describe("HistoryPage", () => {
     });
     invoke.mockImplementation((command: string) => {
       if (command === "list_runs") return Promise.resolve([resumable]);
-      if (command === "runs_disk_usage") return Promise.resolve({ count: 1, bytes: 1024 });
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 1, bytes: 1024 });
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
     const onRerun = vi.fn();
@@ -124,8 +128,14 @@ describe("HistoryPage", () => {
     const regenerate = screen.getByRole("button", { name: "Regenerate" });
     expect(resume).toBeDisabled();
     expect(regenerate).toBeDisabled();
-    expect(resume).toHaveAttribute("title", "A report is already being generated");
-    expect(regenerate).toHaveAttribute("title", "A report is already being generated");
+    expect(resume).toHaveAttribute(
+      "title",
+      "A report is already being generated",
+    );
+    expect(regenerate).toHaveAttribute(
+      "title",
+      "A report is already being generated",
+    );
 
     const user = userEvent.setup();
     await user.click(resume);
@@ -146,8 +156,10 @@ describe("HistoryPage", () => {
     });
     invoke.mockImplementation((command: string) => {
       if (command === "list_runs") return Promise.resolve([newer, older]);
-      if (command === "runs_disk_usage") return Promise.resolve({ count: 2, bytes: 1024 });
-      if (command === "get_run_report") return Promise.resolve({ step_outputs: [] });
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 2, bytes: 1024 });
+      if (command === "get_run_report")
+        return Promise.resolve({ step_outputs: [] });
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
     const user = userEvent.setup();
@@ -155,12 +167,18 @@ describe("HistoryPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "Compare" }));
     // Select the newer run first to reproduce the historical inversion.
-    await user.click(screen.getByRole("checkbox", { name: "Select Newer run for comparison" }));
-    await user.click(screen.getByRole("checkbox", { name: "Select Older run for comparison" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select Newer run for comparison" }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select Older run for comparison" }),
+    );
     await user.click(screen.getByRole("button", { name: "Compare selected" }));
 
     await waitFor(() => {
-      const reportCalls = invoke.mock.calls.filter(([command]) => command === "get_run_report");
+      const reportCalls = invoke.mock.calls.filter(
+        ([command]) => command === "get_run_report",
+      );
       expect(reportCalls).toEqual([
         ["get_run_report", { runId: "older" }],
         ["get_run_report", { runId: "newer" }],
@@ -172,7 +190,9 @@ describe("HistoryPage", () => {
     const listResolvers: Array<(runs: RunSummary[]) => void> = [];
     invoke.mockImplementation((command: string) => {
       if (command === "list_runs") {
-        return new Promise<RunSummary[]>((resolve) => listResolvers.push(resolve));
+        return new Promise<RunSummary[]>((resolve) =>
+          listResolvers.push(resolve),
+        );
       }
       if (command === "runs_disk_usage") {
         return Promise.resolve({ count: 1, bytes: 1024 });
@@ -199,16 +219,19 @@ describe("HistoryPage", () => {
   });
 
   it("filters by status and provider, sorts by name, and paginates large histories", async () => {
-    const runs = Array.from({ length: 27 }, (_, index) => run({
-      run_id: `run-${index}`,
-      title: `Report ${String(index).padStart(2, "0")}`,
-      provider: index % 2 === 0 ? "codex" : "claude",
-      status: index % 3 === 0 ? "partial" : "done",
-      created: `2026-08-${String((index % 23) + 1).padStart(2, "0")}T12:00:00Z`,
-    }));
+    const runs = Array.from({ length: 27 }, (_, index) =>
+      run({
+        run_id: `run-${index}`,
+        title: `Report ${String(index).padStart(2, "0")}`,
+        provider: index % 2 === 0 ? "codex" : "claude",
+        status: index % 3 === 0 ? "partial" : "done",
+        created: `2026-08-${String((index % 23) + 1).padStart(2, "0")}T12:00:00Z`,
+      }),
+    );
     invoke.mockImplementation((command: string) => {
       if (command === "list_runs") return Promise.resolve(runs);
-      if (command === "runs_disk_usage") return Promise.resolve({ count: runs.length, bytes: 1024 });
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: runs.length, bytes: 1024 });
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
     const user = userEvent.setup();
@@ -217,11 +240,22 @@ describe("HistoryPage", () => {
     expect(await screen.findByText("Page 1 of 2")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Page 2 of 2")).toBeVisible();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by status" }), "partial");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by provider" }), "codex");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+      "partial",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Filter by provider" }),
+      "codex",
+    );
     expect(screen.getByText("5 matching")).toBeVisible();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Sort reports" }), "name");
-    const reportButtons = screen.getAllByRole("button", { name: /^Report \d+$/ });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Sort reports" }),
+      "name",
+    );
+    const reportButtons = screen.getAllByRole("button", {
+      name: /^Report \d+$/,
+    });
     expect(reportButtons[0]).toHaveTextContent("Report 00");
   });
 });

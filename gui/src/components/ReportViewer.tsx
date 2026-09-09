@@ -1,3 +1,4 @@
+import { useAppPreferences } from "../lib/appPreferences";
 import useContainerWidth from "../hooks/useContainerWidth";
 import React, { memo, useId, useMemo, useRef, useState } from "react";
 import { reportAnchorPlugin } from "../lib/reportAnchors";
@@ -71,7 +72,10 @@ class ReportRenderErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: unknown) {
-    console.error("Report rendering failed, falling back to plain text:", error);
+    console.error(
+      "Report rendering failed, falling back to plain text:",
+      error,
+    );
   }
 
   componentDidUpdate(previous: { markdown: string }) {
@@ -85,8 +89,12 @@ class ReportRenderErrorBoundary extends React.Component<
     const truncated = this.props.markdown.length > MAX_RENDER_CHARS;
     return (
       <div className="h-full overflow-auto p-6">
-        <div role="alert" className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-          This response could not be rendered as Markdown. Showing its preserved plain text instead.
+        <div
+          role="alert"
+          className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+        >
+          This response could not be rendered as Markdown. Showing its preserved
+          plain text instead.
         </div>
         <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-gray-800 dark:text-gray-200">
           {this.props.markdown.slice(0, MAX_RENDER_CHARS)}
@@ -125,7 +133,10 @@ class MathErrorBoundary extends React.Component<
     return { hasError: true };
   }
   componentDidCatch(error: unknown) {
-    console.error("Math rendering failed, falling back to plain markdown:", error);
+    console.error(
+      "Math rendering failed, falling back to plain markdown:",
+      error,
+    );
   }
   componentDidUpdate(prev: { resetKey: string }) {
     if (prev.resetKey !== this.props.resetKey && this.state.hasError) {
@@ -187,7 +198,9 @@ function visitAst(
   node.children?.forEach((child) => visitAst(child, visitor));
 }
 
-function issueFromParagraph(node: MarkdownAstNode): { number: string; text: string } | null {
+function issueFromParagraph(
+  node: MarkdownAstNode,
+): { number: string; text: string } | null {
   if (node.type !== "paragraph" || node.children?.length !== 1) return null;
   const strong = node.children[0];
   if (strong.type !== "strong") return null;
@@ -308,9 +321,8 @@ export function plainHeadingText(markdown: string): string {
     .replace(/\s+#+\s*$/, "")
     // Preserve literal formatting characters in code spans and escapes.
     .replace(/(`+)(.*?)\1/g, (_match, _ticks, value: string) => protect(value))
-    .replace(
-      /\\([\\`*_[\]{}()#+\-.!<>])/g,
-      (_match, value: string) => protect(value),
+    .replace(/\\([\\`*_[\]{}()#+\-.!<>])/g, (_match, value: string) =>
+      protect(value),
     )
     .replace(/<!--.*?-->/g, "")
     .replace(/<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*?)?\s*\/?>/g, "")
@@ -324,7 +336,10 @@ export function plainHeadingText(markdown: string): string {
     previous = text;
     text = text
       .replace(/(\*\*|__|~~)(.+?)\1/g, "$2")
-      .replace(/(^|[\s([{"'])([*_])(?=\S)(.+?\S)\2(?=$|[\s)\]}"'.,!?;:])/g, "$1$3");
+      .replace(
+        /(^|[\s([{"'])([*_])(?=\S)(.+?\S)\2(?=$|[\s)\]}"'.,!?;:])/g,
+        "$1$3",
+      );
   }
 
   // TOC labels are plain text, so leaving inline math delimiters untouched
@@ -413,20 +428,15 @@ const ReportMarkdown = memo(function ReportMarkdown({
         <>
           {fallback && (
             <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-              Some math in this report could not be rendered — formulas
-              are shown as raw LaTeX notation.
+              Some math in this report could not be rendered — formulas are
+              shown as raw LaTeX notation.
             </div>
           )}
           <ReactMarkdown
             remarkPlugins={
               fallback
                 ? [remarkGfm, remarkNavigationIds]
-                : [
-                    remarkGfm,
-                    remarkMath,
-                    remarkRepairMath,
-                    remarkNavigationIds,
-                  ]
+                : [remarkGfm, remarkMath, remarkRepairMath, remarkNavigationIds]
             }
             rehypePlugins={
               fallback
@@ -451,7 +461,10 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
   const instanceId = useId();
   const anchorPrefix = `report-${instanceId.replace(/[^a-zA-Z0-9_-]/g, "")}-`;
-  const rehypeAnchors = useMemo(() => reportAnchorPlugin(anchorPrefix), [anchorPrefix]);
+  const rehypeAnchors = useMemo(
+    () => reportAnchorPlugin(anchorPrefix),
+    [anchorPrefix],
+  );
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
   const [contentsOpen, setContentsOpen] = useState(initialContentsOpen);
   const [readerRef, readerWidth] = useContainerWidth<HTMLDivElement>();
@@ -460,11 +473,14 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
   const outlineVisible = compact ? compactContentsOpen : contentsOpen;
   const contentsToggle = useRef<HTMLButtonElement>(null);
   const hideContents = () => {
-    if (compact) setCompactContentsOpen(false); else setContentsOpen(false);
+    if (compact) setCompactContentsOpen(false);
+    else setContentsOpen(false);
     requestAnimationFrame(() => contentsToggle.current?.focus());
   };
   const outlineId = `${instanceId}-contents`;
-  const [fontScale, setFontScale] = useState(100);
+  const { reportScale } = useAppPreferences();
+  const [fontOverride, setFontScale] = useState<number | null>(null);
+  const fontScale = fontOverride ?? reportScale;
   const [wideReading, setWideReading] = useState(false);
   const [relaxedLeading, setRelaxedLeading] = useState(true);
   const [contentsWidth, setContentsWidth] = usePersistentPanelWidth(
@@ -512,23 +528,35 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
   }, [navigationIndex.headings, navigationIndex.issues]);
 
   return (
-    <div ref={readerRef} className={`report-reader flex h-full min-h-0 min-w-0 relative ${compact ? "reader-compact flex-col" : ""}`} onClickCapture={event => {
-      const link = event.target instanceof Element ? event.target.closest("a[href^='#']") : null;
-      const href = link?.getAttribute("href");
-      if (!href) return;
-      // Never let a missing fragment navigate another reader or the app shell.
-      event.preventDefault();
-      let id: string;
-      try { id = decodeURIComponent(href.slice(1)); } catch { return; }
-      const target = Array.from(contentRef.current?.querySelectorAll<HTMLElement>("[id]") ?? [])
-        .find(node => node.id === id);
-      if (!target) return;
-      setActiveAnchor(id);
-      if (compact) setCompactContentsOpen(false);
-      target.scrollIntoView({ block: "start" });
-      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
-      target.focus({ preventScroll: true });
-    }}>
+    <div
+      ref={readerRef}
+      className={`report-reader flex h-full min-h-0 min-w-0 relative ${compact ? "reader-compact flex-col" : ""}`}
+      onClickCapture={(event) => {
+        const link =
+          event.target instanceof Element
+            ? event.target.closest("a[href^='#']")
+            : null;
+        const href = link?.getAttribute("href");
+        if (!href) return;
+        // Never let a missing fragment navigate another reader or the app shell.
+        event.preventDefault();
+        let id: string;
+        try {
+          id = decodeURIComponent(href.slice(1));
+        } catch {
+          return;
+        }
+        const target = Array.from(
+          contentRef.current?.querySelectorAll<HTMLElement>("[id]") ?? [],
+        ).find((node) => node.id === id);
+        if (!target) return;
+        setActiveAnchor(id);
+        if (compact) setCompactContentsOpen(false);
+        target.scrollIntoView({ block: "start" });
+        if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+      }}
+    >
       {find.open && (
         <div className="absolute top-2 right-3 z-20 flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg px-2 py-1">
           <input
@@ -537,7 +565,10 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
             value={find.query}
             onChange={(e) => find.setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? find.prev() : find.next(); }
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.shiftKey ? find.prev() : find.next();
+              }
               if (e.key === "Escape") find.close();
             }}
             placeholder="Find in report…"
@@ -548,15 +579,54 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
               ? `${find.current + 1}/${find.count}${find.capped ? "+" : ""}`
               : "0/0"}
           </span>
-          <button aria-label="Previous match" onClick={find.prev} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Previous (Shift+Enter)">↑</button>
-          <button aria-label="Next match" onClick={find.next} disabled={find.count === 0} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30" title="Next (Enter)">↓</button>
-          <button aria-label="Close find" onClick={find.close} className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100" title="Close (Esc)">✕</button>
+          <button
+            aria-label="Previous match"
+            onClick={find.prev}
+            disabled={find.count === 0}
+            className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30"
+            title="Previous (Shift+Enter)"
+          >
+            ↑
+          </button>
+          <button
+            aria-label="Next match"
+            onClick={find.next}
+            disabled={find.count === 0}
+            className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-30"
+            title="Next (Enter)"
+          >
+            ↓
+          </button>
+          <button
+            aria-label="Close find"
+            onClick={find.close}
+            className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100"
+            title="Close (Esc)"
+          >
+            ✕
+          </button>
         </div>
       )}
       {/* Table of contents */}
-      {compact && contents.length > 0 && <button ref={contentsToggle} type="button" aria-expanded={outlineVisible} aria-controls={outlineId} onClick={() => setCompactContentsOpen(value => !value)} className="reader-contents-toggle">Contents <span aria-hidden="true">{outlineVisible ? "−" : "+"}</span></button>}
+      {compact && contents.length > 0 && (
+        <button
+          ref={contentsToggle}
+          type="button"
+          aria-expanded={outlineVisible}
+          aria-controls={outlineId}
+          onClick={() => setCompactContentsOpen((value) => !value)}
+          className="reader-contents-toggle"
+        >
+          Contents <span aria-hidden="true">{outlineVisible ? "−" : "+"}</span>
+        </button>
+      )}
       {contents.length > 0 && outlineVisible && (
-        <nav id={outlineId} aria-label="Table of contents" className={`toc-nav relative ${compact ? "toc-compact" : ""}`} style={{ width: compact ? "100%" : contentsWidth }}>
+        <nav
+          id={outlineId}
+          aria-label="Table of contents"
+          className={`toc-nav relative ${compact ? "toc-compact" : ""}`}
+          style={{ width: compact ? "100%" : contentsWidth }}
+        >
           <div className="mb-4 flex items-center justify-between gap-2">
             <h4 className="text-[11px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
               Contents
@@ -569,43 +639,64 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
                          dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
             >
-              <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="m9 6 6 6-6 6" />
+              <svg
+                aria-hidden="true"
+                className="h-3.5 w-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.8}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="m9 6 6 6-6 6"
+                />
               </svg>
             </button>
           </div>
           <ul className="space-y-0.5">
             {contents.map((entry) => (
-                <li key={entry.id}>
-                  <a
-                    href={`#${anchorPrefix}${entry.id}`}
-                    aria-current={activeAnchor === anchorPrefix + entry.id ? "location" : undefined}
-                    className={`toc-link ${
-                      entry.kind === "issue"
-                        ? "toc-issue"
-                        : entry.level === 1 ? "toc-h1" : "toc-h2"
-                    }`}
-                  >
-                    {entry.kind === "issue" && (
-                      <span className="toc-issue-number">#{entry.number}</span>
-                    )}
-                    <span>{entry.text}</span>
-                  </a>
-                </li>
-              ))}
+              <li key={entry.id}>
+                <a
+                  href={`#${anchorPrefix}${entry.id}`}
+                  aria-current={
+                    activeAnchor === anchorPrefix + entry.id
+                      ? "location"
+                      : undefined
+                  }
+                  className={`toc-link ${
+                    entry.kind === "issue"
+                      ? "toc-issue"
+                      : entry.level === 1
+                        ? "toc-h1"
+                        : "toc-h2"
+                  }`}
+                >
+                  {entry.kind === "issue" && (
+                    <span className="toc-issue-number">#{entry.number}</span>
+                  )}
+                  <span>{entry.text}</span>
+                </a>
+              </li>
+            ))}
           </ul>
-          {!compact && <ResizeHandle
-            minRemaining={420}
-            currentWidth={contentsWidth}
-            defaultWidth={240}
-            label="Resize table of contents"
-            min={184}
-            max={360}
-            onResize={setContentsWidth}
-          />}
+          {!compact && (
+            <ResizeHandle
+              minRemaining={420}
+              currentWidth={contentsWidth}
+              defaultWidth={240}
+              label="Resize table of contents"
+              min={184}
+              max={360}
+              onResize={setContentsWidth}
+            />
+          )}
         </nav>
       )}
-      {contents.length > 0 && !outlineVisible && <nav id={outlineId} aria-label="Table of contents" hidden />}
+      {contents.length > 0 && !outlineVisible && (
+        <nav id={outlineId} aria-label="Table of contents" hidden />
+      )}
       {contents.length > 0 && !compact && !contentsOpen && (
         <button
           type="button"
@@ -619,8 +710,19 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
                      focus-visible:ring-inset focus-visible:ring-gray-400 dark:border-gray-800 dark:hover:bg-gray-900
                      dark:text-gray-400 dark:hover:text-gray-100"
         >
-          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h11M8 12h11M8 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />
+          <svg
+            aria-hidden="true"
+            className="h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={1.7}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M8 6h11M8 12h11M8 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"
+            />
           </svg>
         </button>
       )}
@@ -628,11 +730,45 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
       {/* Report content */}
       <div className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
         <div className="sticky right-3 top-2 z-10 ml-auto mr-3 flex max-w-full flex-wrap w-fit items-center gap-1 rounded-lg border border-gray-200 bg-white/95 p-1 text-xs shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
-          <button aria-label="Decrease report text size" onClick={() => setFontScale((value) => Math.max(85, value - 5))} className="rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">A−</button>
-          <button aria-label="Reset report text size" onClick={() => setFontScale(100)} className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">{fontScale}%</button>
-          <button aria-label="Increase report text size" onClick={() => setFontScale((value) => Math.min(130, value + 5))} className="rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800">A+</button>
-          <button aria-pressed={wideReading} onClick={() => setWideReading((value) => !value)} className="rounded border-l border-gray-200 px-2 py-1 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800">{wideReading ? "Comfort width" : "Wide text"}</button>
-          <button aria-pressed={relaxedLeading} onClick={() => setRelaxedLeading((value) => !value)} className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">{relaxedLeading ? "Compact lines" : "Relaxed lines"}</button>
+          <button
+            aria-label="Decrease report text size"
+            onClick={() =>
+              setFontScale((value) => Math.max(85, (value ?? reportScale) - 5))
+            }
+            className="rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            A−
+          </button>
+          <button
+            aria-label="Reset report text size"
+            onClick={() => setFontScale(null)}
+            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            {fontScale}%
+          </button>
+          <button
+            aria-label="Increase report text size"
+            onClick={() =>
+              setFontScale((value) => Math.min(150, (value ?? reportScale) + 5))
+            }
+            className="rounded px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            A+
+          </button>
+          <button
+            aria-pressed={wideReading}
+            onClick={() => setWideReading((value) => !value)}
+            className="rounded border-l border-gray-200 px-2 py-1 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+          >
+            {wideReading ? "Comfort width" : "Wide text"}
+          </button>
+          <button
+            aria-pressed={relaxedLeading}
+            onClick={() => setRelaxedLeading((value) => !value)}
+            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            {relaxedLeading ? "Compact lines" : "Relaxed lines"}
+          </button>
         </div>
         {/* Key on the content so a change fully remounts this subtree. The
             find bar mutates these DOM nodes (wrapping matches in <mark>); a
@@ -650,7 +786,8 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
         >
           {previewTruncated && (
             <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-              This unusually large response is truncated in the interactive preview. The saved artifact remains unchanged.
+              This unusually large response is truncated in the interactive
+              preview. The saved artifact remains unchanged.
             </div>
           )}
           <ReportMarkdown

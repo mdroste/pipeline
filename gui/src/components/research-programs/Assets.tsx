@@ -350,8 +350,9 @@ export default function Assets(props: DeskProps) {
             label="Plot source, numeric inputs, command and output manifest"
           />
           <p className={muted}>
-            Python runs with your computer’s file permissions. The figure is saved
-            as SVG, PDF, and PNG, along with the matplotlib version and run details.
+            Python runs with your computer’s file permissions. The figure is
+            saved as SVG, PDF, and PNG, along with the matplotlib version and
+            run details.
           </p>
           <button
             className={button}

@@ -39,7 +39,8 @@ function useKonamiCode(onComplete: () => void) {
   useEffect(() => {
     let position = 0;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey)
+        return;
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
       if (key === KONAMI_CODE[position]) {
         position += 1;
@@ -73,10 +74,13 @@ export default function AboutPage({
     let live = true;
     void invoke<ProfileSummary[]>("list_profiles")
       .then((profiles) => {
-        if (live) setBuiltinProfiles(profiles.filter((profile) => profile.builtin));
+        if (live)
+          setBuiltinProfiles(profiles.filter((profile) => profile.builtin));
       })
       .catch(() => undefined);
-    return () => { live = false; };
+    return () => {
+      live = false;
+    };
   }, []);
 
   return (
@@ -132,9 +136,10 @@ function HelpContent({
     <div className="space-y-8">
       {/* Overview */}
       <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-        Pipeline orchestrates AI agents for doing and reviewing academic research.
-        Use Workspace for persistent research conversations and Reviews for
-        repeatable, structured tasks over papers, proposals, and other research material.
+        Pipeline orchestrates AI agents for doing and reviewing academic
+        research. Projects keep conversations, files, and evidence together;
+        Reviews provide repeatable, structured assessments of papers, proposals,
+        and other research material.
       </p>
 
       {/* Setup */}
@@ -145,12 +150,11 @@ function HelpContent({
             badgeColor="text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/30"
             title="An AI provider"
           >
-            Sign in to ChatGPT in Settings → Providers or through Claude Code; add an
-            Anthropic, OpenAI, or Google API key in Settings; or connect a
-            local OpenAI-compatible server. A Claude or ChatGPT
-            subscription works without an API key; Google always uses a
-            Gemini API key. The status button in the lower-left corner shows
-            what Pipeline found.
+            Sign in to ChatGPT in Settings → Providers or through Claude Code;
+            add an Anthropic, OpenAI, or Google API key in Settings; or connect
+            a local OpenAI-compatible server. A Claude or ChatGPT subscription
+            works without an API key; Google always uses a Gemini API key. The
+            status button in the lower-left corner shows what Pipeline found.
             <NavLink
               onClick={onNavigate && (() => onNavigate("settings"))}
               label="Open Settings"
@@ -161,17 +165,17 @@ function HelpContent({
             badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
             title="PDF tools"
           >
-            The tools that render PDF pages, check extraction completeness,
-            and run pdftotext are bundled. Nothing else is required.
+            The tools that render PDF pages, check extraction completeness, and
+            run pdftotext are bundled. Nothing else is required.
           </BadgeRow>
           <BadgeRow
             badge="Highly recommended"
             badgeColor="text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-900/30"
             title="PaddleOCR-VL Full Parser"
           >
-            A local PDF parser that recovers reading order, headings,
-            formulas, and tables, with no extra model calls. Install it once
-            under Settings → Reviews → PDF Extraction.
+            A local PDF parser that recovers reading order, headings, formulas,
+            and tables, with no extra model calls. Install it once under
+            Settings → Reviews → PDF Extraction.
             <NavLink onClick={onOpenPdfSettings} label="Install in Settings" />
           </BadgeRow>
         </div>
@@ -182,8 +186,8 @@ function HelpContent({
         <div className="grid gap-3">
           <StageCard
             number="1"
-            title="Choose a workflow and input"
-            description="On New run, pick a workflow, then select files or a folder and say how Pipeline should treat the selection — one document, a LaTeX project, a browsable folder, or a batch."
+            title="Choose a review and input"
+            description="On New review, pick a review design, then select files or a folder and say how Pipeline should treat the selection — one document, a LaTeX project, a browsable folder, or a batch."
           />
           <StageCard
             number="2"
@@ -198,40 +202,63 @@ function HelpContent({
         </div>
       </Section>
 
-      <Section title="Workspace for research conversations">
+      <Section title="Projects and conversations">
         <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Use Workspace to chat with ChatGPT. Start a conversation, or create a project
-          to keep papers, files, notes, and related conversations together. Add research
-          tools and saved instructions when you need them.
+          Chat with the assistant in an unfiled conversation, or create a
+          project to keep papers, files, notes, and related conversations
+          together. Add research tools and saved instructions when you need
+          them.
         </p>
         <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Backups include your projects, research files, and conversation transcripts.
-          After restoring, sign in to ChatGPT to continue from your reviewed notes
-          and selected evidence.
+          Backups include your projects, research files, and conversation
+          transcripts. After restoring, sign in to ChatGPT to continue from your
+          reviewed notes and selected evidence.
         </p>
         <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Choose “Review this revision” to review a saved copy of the paper.
-          The preview lets you choose the workflow and models before starting.
-          Each run uses the settings and provider sign-in configured for Reviews.
+          Choose “Review this revision” to review a saved copy of the paper. The
+          preview lets you choose the review design and models before starting.
+          Each run uses the settings and provider sign-in configured for
+          Reviews.
         </p>
-        <NavLink onClick={onNavigate && (() => onNavigate("workspace"))} label="Open Workspace" />
+        <NavLink
+          onClick={onNavigate && (() => onNavigate("workspace"))}
+          label="Open Projects"
+        />
       </Section>
 
       {/* Reference sections, collapsed by default */}
       <div className="border-t border-gray-200 dark:border-gray-800">
         <Collapsible title="Reviews">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            A workflow is a saved recipe: its steps, prompts, and settings.
-            Pick one on New run; edit the active one in Reviews → Designer.
-            Steps run as soon as their prerequisites finish, and independent
-            steps run at the same time.
+            A review design contains saved steps, prompts, and settings. Pick
+            one in New review; edit the active one in Review designer. Steps run
+            as soon as their prerequisites finish, and independent steps run at
+            the same time.
           </p>
           <div className="space-y-1.5">
-            {(builtinProfiles.length > 0 ? builtinProfiles : [
-              { id: "auto-review", name: "Automatic Paper Review (Full)", step_count: 5, builtin: true },
-              { id: "auto-review-quick", name: "Automatic Paper Review (Quick)", step_count: 4, builtin: true },
-              { id: "grant-review", name: "Grant Proposal Review", step_count: 4, builtin: true },
-            ]).map((profile) => (
+            {(builtinProfiles.length > 0
+              ? builtinProfiles
+              : [
+                  {
+                    id: "auto-review",
+                    name: "Automatic Paper Review (Full)",
+                    step_count: 5,
+                    builtin: true,
+                  },
+                  {
+                    id: "auto-review-quick",
+                    name: "Automatic Paper Review (Quick)",
+                    step_count: 4,
+                    builtin: true,
+                  },
+                  {
+                    id: "grant-review",
+                    name: "Grant Proposal Review",
+                    step_count: 4,
+                    builtin: true,
+                  },
+                ]
+            ).map((profile) => (
               <BuiltinRow
                 key={profile.id}
                 name={profile.name}
@@ -267,8 +294,12 @@ function HelpContent({
 
         <Collapsible title="Reading your report">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            A finished report can expose {REPORT_WORKSPACE_TABS.length} views: {REPORT_WORKSPACE_TABS.map((tab) => tab.label).join(", ")}.
-            {" "}{REPORT_WORKSPACE_TABS.map((tab) => `${tab.label} contains ${tab.description} (${tab.availability}).`).join(" ")}
+            A finished report can expose {REPORT_WORKSPACE_TABS.length} views:{" "}
+            {REPORT_WORKSPACE_TABS.map((tab) => tab.label).join(", ")}.{" "}
+            {REPORT_WORKSPACE_TABS.map(
+              (tab) =>
+                `${tab.label} contains ${tab.description} (${tab.availability}).`,
+            ).join(" ")}
           </p>
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
             Use Export for a safe shareable package, a clearly marked sensitive
@@ -277,7 +308,7 @@ function HelpContent({
           </p>
         </Collapsible>
 
-        <Collapsible title="History & run collections">
+        <Collapsible title="Review history & collections">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
             History lists every saved report. Rename, tag, or delete reports;
             resume an interrupted one; rerun one from scratch; or compare two
@@ -286,8 +317,9 @@ function HelpContent({
             document.
           </p>
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Run collections group related reports and revisions and keep a running
-            ledger of issues across them, without moving or deleting anything.
+            Review collections group related reports and revisions and keep a
+            running ledger of issues across them, without moving or deleting
+            anything.
           </p>
           <div className="flex gap-4">
             <NavLink
@@ -296,7 +328,7 @@ function HelpContent({
             />
             <NavLink
               onClick={onNavigate && (() => onNavigate("projects"))}
-              label="Open run collections"
+              label="Open review collections"
             />
           </div>
         </Collapsible>
@@ -305,8 +337,8 @@ function HelpContent({
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
             Pipeline prepares a text version of each document before the
             workflow begins. LaTeX and Word files are read directly. For PDFs,
-            pick a method in the workflow or inherit the choice from
-            Settings → Reviews → PDF Extraction.
+            pick a method in the workflow or inherit the choice from Settings →
+            Reviews → PDF Extraction.
           </p>
           <div className="space-y-2">
             <BadgeRow
@@ -340,18 +372,18 @@ function HelpContent({
               badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
               title="pdftotext"
             >
-              Fast local plain-text extraction. Fine for simple text;
-              equations and complex layouts may not survive.
+              Fast local plain-text extraction. Fine for simple text; equations
+              and complex layouts may not survive.
             </BadgeRow>
           </div>
         </Collapsible>
 
         <Collapsible title="Batch reports">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            To review several documents with the same workflow, select
-            multiple files on New run, or choose a folder and set its
-            meaning to Batch of documents. Each document becomes an
-            independent report and the queue appears under Current batch.
+            To review several documents with the same workflow, select multiple
+            files on New run, or choose a folder and set its meaning to Batch of
+            documents. Each document becomes an independent report and the queue
+            appears under Current batch.
           </p>
         </Collapsible>
 
@@ -369,24 +401,26 @@ function HelpContent({
               until you delete them or set a retention limit in Settings.
             </li>
             <li>
-              Workspace conversations, research records, saved attachments, and separate
-              Codex state are stored under{" "}
+              Project conversations, research records, saved attachments, and
+              separate assistant state are stored under{" "}
               <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">
                 ~/.pipeline/workbench/
               </code>
-              . Workspace archives exclude Codex credentials, but the exported archive or
-              transcript is a sensitive ordinary file wherever you save it.
+              . Project archives exclude assistant credentials, but the exported
+              archive or transcript is a sensitive ordinary file wherever you
+              save it.
             </li>
             <li>
-              Each step reads only the material its workflow allows. When a
-              step runs on a cloud provider, that material is sent through the
+              Each step reads only the material its workflow allows. When a step
+              runs on a cloud provider, that material is sent through the
               provider's CLI or API and is subject to your provider account's
               plan and data-use terms.
             </li>
             <li>
-              Workspace sends conversation content and selected research context or tool
-              results through its managed ChatGPT account. Imported material stays local until
-              selected as context or returned by an enabled tool.
+              The project assistant sends conversation content and selected
+              research context or tool results through its managed ChatGPT
+              account. Imported material stays local until selected as context
+              or returned by an enabled tool.
             </li>
             <li>
               If a workflow enables web search and the provider supports it,
@@ -407,8 +441,8 @@ function HelpContent({
             keys, and tools.
           </li>
           <li>
-            The Console at the bottom of the workspace has per-step logs;
-            failed steps keep their error output.
+            The Console at the bottom of the workspace has per-step logs; failed
+            steps keep their error output.
           </li>
           <li>Found a bug? Open an issue through the GitHub link below.</li>
         </ul>
@@ -419,7 +453,13 @@ function HelpContent({
 
 // --- Help page components ---
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
       <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
@@ -467,13 +507,7 @@ function Collapsible({
   );
 }
 
-function NavLink({
-  onClick,
-  label,
-}: {
-  onClick?: () => void;
-  label: string;
-}) {
+function NavLink({ onClick, label }: { onClick?: () => void; label: string }) {
   if (!onClick) return null;
   return (
     <button
@@ -486,25 +520,47 @@ function NavLink({
   );
 }
 
-function StageCard({ number, title, description }: { number: string; title: string; description: string }) {
+function StageCard({
+  number,
+  title,
+  description,
+}: {
+  number: string;
+  title: string;
+  description: string;
+}) {
   return (
     <div className="flex gap-3 items-start p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
       <span className="w-6 h-6 rounded-full bg-gray-900 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
         {number}
       </span>
       <div>
-        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{title}</p>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{description}</p>
+        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+          {title}
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+          {description}
+        </p>
       </div>
     </div>
   );
 }
 
-function BuiltinRow({ name, description }: { name: string; description: string }) {
+function BuiltinRow({
+  name,
+  description,
+}: {
+  name: string;
+  description: string;
+}) {
   return (
     <div className="flex items-baseline gap-2">
-      <span className="text-sm font-medium text-gray-800 dark:text-gray-200 shrink-0">{name}</span>
-      <span className="text-xs text-gray-500 dark:text-gray-400">{description}</span>
+      <span className="text-sm font-medium text-gray-800 dark:text-gray-200 shrink-0">
+        {name}
+      </span>
+      <span className="text-xs text-gray-500 dark:text-gray-400">
+        {description}
+      </span>
     </div>
   );
 }
@@ -512,8 +568,16 @@ function BuiltinRow({ name, description }: { name: string; description: string }
 function CheckItem({ text }: { text: string }) {
   return (
     <li className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
-      <svg className="w-4 h-4 text-green-700 dark:text-green-400 mt-0.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-        <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+      <svg
+        className="w-4 h-4 text-green-700 dark:text-green-400 mt-0.5 shrink-0"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+      >
+        <path
+          fillRule="evenodd"
+          d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
+          clipRule="evenodd"
+        />
       </svg>
       {text}
     </li>
@@ -533,18 +597,30 @@ function BadgeRow({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 whitespace-nowrap ${badgeColor}`}>
+      <span
+        className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 whitespace-nowrap ${badgeColor}`}
+      >
         {badge}
       </span>
       <div>
-        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{title}</p>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{children}</p>
+        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+          {title}
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+          {children}
+        </p>
       </div>
     </div>
   );
 }
 
-function ExternalLink({ url, children }: { url: string; children: React.ReactNode }) {
+function ExternalLink({
+  url,
+  children,
+}: {
+  url: string;
+  children: React.ReactNode;
+}) {
   const [error, setError] = useState("");
 
   const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -568,7 +644,10 @@ function ExternalLink({ url, children }: { url: string; children: React.ReactNod
         {children}
       </a>
       {error && (
-        <p role="alert" className="mt-1 text-xs leading-relaxed text-red-700 dark:text-red-300">
+        <p
+          role="alert"
+          className="mt-1 text-xs leading-relaxed text-red-700 dark:text-red-300"
+        >
           {error}
         </p>
       )}
@@ -583,10 +662,15 @@ function AboutFooter() {
   const [linkError, setLinkError] = useState<string>("");
 
   useEffect(() => {
-    getVersion().then(setVersion).catch(() => setVersion(""));
+    getVersion()
+      .then(setVersion)
+      .catch(() => setVersion(""));
   }, []);
 
-  const openExternal = (event: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+  const openExternal = (
+    event: React.MouseEvent<HTMLAnchorElement>,
+    url: string,
+  ) => {
     event.preventDefault();
     setLinkError("");
     void openUrl(url).catch((error) => {
@@ -606,7 +690,9 @@ function AboutFooter() {
         {" · "}Michael Droste{" · "}MIT license{" · "}
         <a
           href="https://github.com/mdroste/pipeline"
-          onClick={(event) => openExternal(event, "https://github.com/mdroste/pipeline")}
+          onClick={(event) =>
+            openExternal(event, "https://github.com/mdroste/pipeline")
+          }
           className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline cursor-pointer"
         >
           github.com/mdroste/pipeline

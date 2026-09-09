@@ -18,6 +18,7 @@ mod folder;
 mod latex;
 mod pdf;
 mod rendering;
+mod staged;
 mod structured;
 
 use core::*;
@@ -37,6 +38,7 @@ pub(crate) use pdf::extract_pdftotext;
 pub use rendering::{
     render_pdf_page_preview, render_pdf_pages, RenderedPdfPagePreview, RenderedPdfPages,
 };
+pub(crate) use staged::reference as captured_reference;
 #[allow(unused_imports)]
 pub(crate) use structured::{
     paddle_full_image_inventory, read_paddle_structure_for_method,

@@ -21,7 +21,7 @@ impl Drop for RunStateGuard {
     }
 }
 
-/// PIDs of active child processes (claude/codex/agy subprocesses).
+/// PIDs of active child processes (provider and extraction subprocesses).
 /// Populated by `register_child_pid`, cleared by `unregister_child_pid`.
 pub(super) static CHILD_PIDS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
 

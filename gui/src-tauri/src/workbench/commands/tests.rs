@@ -73,3 +73,59 @@ fn transcript_export_text_accepts_string_and_content_parts() {
         Some("one\ntwo")
     );
 }
+
+#[test]
+fn approval_card_epoch_is_claimed_once_even_when_ids_are_reused() {
+    let pending = crate::workbench::codex::NormalizedEvent::ServerRequest {
+        epoch: 8,
+        request_id: json!(42),
+        method: "item/fileChange/requestApproval".into(),
+        params: json!({"threadId":"new-thread","turnId":"new-turn"}),
+    };
+    let mut registry = HashMap::from([("42".into(), pending)]);
+    let mut response = ResolveServerRequest {
+        epoch: 7,
+        request_id: json!(42),
+        method: "item/fileChange/requestApproval".into(),
+        result: Some(json!({"decision":"accept"})),
+        decline_message: None,
+    };
+    assert!(codex::claim_pending_request(&mut registry, &response, 8).is_err());
+    assert_eq!(registry.len(), 1);
+    response.epoch = 8;
+    assert!(codex::claim_pending_request(&mut registry, &response, 8).is_ok());
+    assert!(codex::claim_pending_request(&mut registry, &response, 8).is_err());
+}
+
+#[test]
+fn acknowledged_turn_keeps_permit_on_bookkeeping_failure() {
+    let queue = Arc::new(Semaphore::new(1));
+    let mut state = ActiveTurnState {
+        setup_in_progress: true,
+        epoch: Some(8),
+        thread_id: Some("thread".into()),
+        turn_id: Some("turn".into()),
+        permit: Some(queue.clone().try_acquire_owned().unwrap()),
+        ..Default::default()
+    };
+    state.finish_setup(true);
+    assert!(queue.clone().try_acquire_owned().is_err());
+    state.completion_during_setup = Some(("thread".into(), "stale-turn".into()));
+    state.finish_setup(true);
+    assert!(queue.clone().try_acquire_owned().is_err());
+    state.completion_during_setup = Some(("thread".into(), "turn".into()));
+    state.finish_setup(true);
+    assert!(queue.try_acquire_owned().is_ok());
+}
+
+#[test]
+fn lag_recovery_requires_the_exact_native_thread_and_terminal_turn() {
+    let snapshot = json!({"thread":{"id":"thread","turns":[
+        {"id":"old","status":"completed"}, {"id":"current","status":"inProgress"}
+    ]}});
+    assert!(codex::recovered_terminal(&snapshot, "thread", "current").is_none());
+    assert!(codex::recovered_terminal(&snapshot, "other-thread", "old").is_none());
+    let complete =
+        json!({"thread":{"id":"thread","turns":[{"id":"current","status":"completed"}]}});
+    assert!(codex::recovered_terminal(&complete, "thread", "current").is_some());
+}

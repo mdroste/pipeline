@@ -343,8 +343,9 @@ export default function Responses({
             </>
           )}
           <p className="text-xs text-gray-500">
-            Imported findings link to the original reports. Your existing decisions
-            are preserved; edits here do not change the Workflow reports.
+            Imported findings link to the original reports. Your existing
+            decisions are preserved; edits here do not change the Workflow
+            reports.
           </p>
         </section>
       </div>
@@ -571,10 +572,7 @@ export default function Responses({
                 value={decision.resolvingCheck}
                 onChange={(s) => set("resolvingCheck", s)}
               />
-              <Inspect
-                value={current.body.source}
-                label="Imported source"
-              />
+              <Inspect value={current.body.source} label="Imported source" />
               <button
                 className={button}
                 onClick={() =>

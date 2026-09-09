@@ -45,7 +45,10 @@ function passStepId(key: string): string {
   return key.split("/")[0];
 }
 
-function formatPassName(key: string, stepLabels = new Map<string, string>()): string {
+function formatPassName(
+  key: string,
+  stepLabels = new Map<string, string>(),
+): string {
   // Handle "merge/stepId" keys
   if (key.startsWith("merge/")) {
     const base = key.slice(6);
@@ -90,17 +93,18 @@ function historyPlan(history: RuntimeStage[]): ExecutionPlanStage[] {
   const stages: ExecutionPlanStage[] = history.map((entry) => {
     const occurrence = (counts[entry.kind] ?? 0) + 1;
     counts[entry.kind] = occurrence;
-    const fallbackLabel = entry.kind === "extracting"
-      ? "Creating document bundle"
-      : entry.kind === "orienting"
-        ? "Creating orientation map"
-        : entry.kind === "dispatching"
-          ? "Parallel agent wave"
-          : entry.kind === "merging"
-            ? `Merge parallel wave ${occurrence}`
-            : entry.kind === "synthesizing"
-              ? "Sequential agent wave"
-              : "Complete";
+    const fallbackLabel =
+      entry.kind === "extracting"
+        ? "Creating document bundle"
+        : entry.kind === "orienting"
+          ? "Creating orientation map"
+          : entry.kind === "dispatching"
+            ? "Parallel agent wave"
+            : entry.kind === "merging"
+              ? `Merge parallel wave ${occurrence}`
+              : entry.kind === "synthesizing"
+                ? "Sequential agent wave"
+                : "Complete";
     return {
       id: entry.id,
       kind: entry.kind,
@@ -138,19 +142,35 @@ function routedAdaptiveSpecialists(routing: ReviewRoutingSummary): Array<{
   label: string;
 }> {
   const grouped = [
-    { kind: "subject", ids: routing.subjectIds ?? [], labels: routing.subjectLabels ?? [] },
-    { kind: "method", ids: routing.methodIds ?? [], labels: routing.methodLabels ?? [] },
+    {
+      kind: "subject",
+      ids: routing.subjectIds ?? [],
+      labels: routing.subjectLabels ?? [],
+    },
+    {
+      kind: "method",
+      ids: routing.methodIds ?? [],
+      labels: routing.methodLabels ?? [],
+    },
   ];
   if (grouped.some(({ ids, labels }) => ids.length > 0 || labels.length > 0)) {
     return grouped.flatMap(({ kind, ids, labels }) =>
-      Array.from({ length: Math.max(ids.length, labels.length) }, (_, index) => {
-        const id = ids[index] || `${kind}-${index}`;
-        return { id, label: labels[index] || titleize(id) };
-      }),
+      Array.from(
+        { length: Math.max(ids.length, labels.length) },
+        (_, index) => {
+          const id = ids[index] || `${kind}-${index}`;
+          return { id, label: labels[index] || titleize(id) };
+        },
+      ),
     );
   }
   return Array.from(
-    { length: Math.max(routing.specialistIds.length, routing.specialistLabels.length) },
+    {
+      length: Math.max(
+        routing.specialistIds.length,
+        routing.specialistLabels.length,
+      ),
+    },
     (_, index) => {
       const id = routing.specialistIds[index] || `specialist-${index}`;
       return { id, label: routing.specialistLabels[index] || titleize(id) };
@@ -159,19 +179,30 @@ function routedAdaptiveSpecialists(routing: ReviewRoutingSummary): Array<{
 }
 
 function processingLabel(stage: DisplayStage): string {
-  if (stage.kind === "orienting") return stage.label || "Creating orientation map";
-  if (/source.?tree|inventory/i.test(stage.label)) return "Creating source-tree inventory";
-  if (/workflow context|prepare run/i.test(stage.label)) return "Preparing workflow context";
+  if (stage.kind === "orienting")
+    return stage.label || "Creating orientation map";
+  if (/source.?tree|inventory/i.test(stage.label))
+    return "Creating source-tree inventory";
+  if (/workflow context|prepare run/i.test(stage.label))
+    return "Preparing workflow context";
   return "Creating document bundle";
 }
 
 function combinedProcessingStatus(stages: DisplayStage[]): DisplayStatus {
   if (stages.some((stage) => stage.status === "failed")) return "failed";
   if (stages.some((stage) => stage.status === "active")) return "active";
-  if (stages.every((stage) => stage.status === "done" || stage.status === "skipped")) {
+  if (
+    stages.every(
+      (stage) => stage.status === "done" || stage.status === "skipped",
+    )
+  ) {
     return "done";
   }
-  if (stages.some((stage) => stage.status === "done" || stage.status === "skipped")) {
+  if (
+    stages.some(
+      (stage) => stage.status === "done" || stage.status === "skipped",
+    )
+  ) {
     return "active";
   }
   return "pending";
@@ -181,10 +212,18 @@ function combinedSequentialStatus(stages: DisplayStage[]): DisplayStatus {
   if (stages.some((stage) => stage.status === "failed")) return "failed";
   if (stages.some((stage) => stage.status === "active")) return "active";
   if (stages.every((stage) => stage.status === "skipped")) return "skipped";
-  if (stages.every((stage) => stage.status === "done" || stage.status === "skipped")) {
+  if (
+    stages.every(
+      (stage) => stage.status === "done" || stage.status === "skipped",
+    )
+  ) {
     return "done";
   }
-  if (stages.some((stage) => stage.status === "done" || stage.status === "skipped")) {
+  if (
+    stages.some(
+      (stage) => stage.status === "done" || stage.status === "skipped",
+    )
+  ) {
     return "active";
   }
   return "pending";
@@ -208,8 +247,18 @@ function StatusDot({ status }: { status: DisplayStatus }) {
   if (status === "done") {
     return (
       <div className="w-5 h-5 rounded-full bg-green-600 flex items-center justify-center">
-        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+        <svg
+          className="w-3 h-3 text-white"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={3}
+            d="M5 13l4 4L19 7"
+          />
         </svg>
       </div>
     );
@@ -217,8 +266,18 @@ function StatusDot({ status }: { status: DisplayStatus }) {
   if (status === "failed") {
     return (
       <div className="w-5 h-5 rounded-full bg-red-600 flex items-center justify-center">
-        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+        <svg
+          className="w-3 h-3 text-white"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={3}
+            d="M6 18L18 6M6 6l12 12"
+          />
         </svg>
       </div>
     );
@@ -237,21 +296,39 @@ function StatusDot({ status }: { status: DisplayStatus }) {
       </div>
     );
   }
-  return <div className="w-5 h-5 rounded-full border-2 border-gray-400 dark:border-gray-500" />;
+  return (
+    <div className="w-5 h-5 rounded-full border-2 border-gray-400 dark:border-gray-500" />
+  );
 }
 
 function PassStatusIcon({ status }: { status: PassStatus }) {
   switch (status) {
     case "done":
-      return <span className="text-green-700 dark:text-green-400 text-xs">done</span>;
+      return (
+        <span className="text-green-700 dark:text-green-400 text-xs">done</span>
+      );
     case "running":
-      return <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse">running</span>;
+      return (
+        <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse">
+          running
+        </span>
+      );
     case "error":
-      return <span className="text-red-600 dark:text-red-400 text-xs">failed</span>;
+      return (
+        <span className="text-red-600 dark:text-red-400 text-xs">failed</span>
+      );
     case "skipped":
-      return <span className="text-gray-500 dark:text-gray-400 text-xs italic">skipped</span>;
+      return (
+        <span className="text-gray-500 dark:text-gray-400 text-xs italic">
+          skipped
+        </span>
+      );
     default:
-      return <span className="text-gray-500 dark:text-gray-400 text-xs">pending</span>;
+      return (
+        <span className="text-gray-500 dark:text-gray-400 text-xs">
+          pending
+        </span>
+      );
   }
 }
 
@@ -264,7 +341,8 @@ export default function PipelineProgress({
   reviewRouting,
 }: Props) {
   const isError = state.kind === "error";
-  const isCancelled = isError && state.message?.toLowerCase().includes("cancelled");
+  const isCancelled =
+    isError && state.message?.toLowerCase().includes("cancelled");
   const failedAtKey = isError ? (state.failedAt ?? "done") : state.kind;
 
   // Tick once a second while the run is active so elapsed clocks update live.
@@ -276,7 +354,8 @@ export default function PipelineProgress({
     return () => clearInterval(id);
   }, [running]);
 
-  const runElapsed = runStartedAt != null ? fmtElapsed(now - runStartedAt) : null;
+  const runElapsed =
+    runStartedAt != null ? fmtElapsed(now - runStartedAt) : null;
 
   // Elapsed time for one pass: end−start if finished, else now−start if active.
   const passElapsed = (name: string): string | null => {
@@ -287,29 +366,33 @@ export default function PipelineProgress({
   };
 
   const mergeStageOrder = stageIndex("merging", BASE_STAGES);
-  const currentBaseIdx = stageIndex(isError ? failedAtKey : state.kind, BASE_STAGES);
-  const legacyPlan: ExecutionPlanStage[] = BASE_STAGES
-    .filter((stage) =>
+  const currentBaseIdx = stageIndex(
+    isError ? failedAtKey : state.kind,
+    BASE_STAGES,
+  );
+  const legacyPlan: ExecutionPlanStage[] = BASE_STAGES.filter(
+    (stage) =>
       stage.key !== "merging" ||
       state.kind === "merging" ||
-      currentBaseIdx > mergeStageOrder
-    )
-    .map((stage) => ({
-      id: stage.key,
-      kind: stage.key as ExecutionPlanStage["kind"],
-      label: stage.label,
-      stepIds: [],
-    }));
+      currentBaseIdx > mergeStageOrder,
+  ).map((stage) => ({
+    id: stage.key,
+    kind: stage.key as ExecutionPlanStage["kind"],
+    label: stage.label,
+    stepIds: [],
+  }));
   const effectivePlan = plan?.length
     ? plan
     : stageHistory.length
       ? historyPlan(stageHistory)
       : legacyPlan;
-  const isAdaptiveReview = Boolean(reviewRouting) || effectivePlan.some(
-    (stage) =>
-      stage.stepIds.includes("auto_synthesis") ||
-      (stage.kind === "orienting" && /review plan/i.test(stage.label)),
-  );
+  const isAdaptiveReview =
+    Boolean(reviewRouting) ||
+    effectivePlan.some(
+      (stage) =>
+        stage.stepIds.includes("auto_synthesis") ||
+        (stage.kind === "orienting" && /review plan/i.test(stage.label)),
+    );
   const adaptiveWaveIndex = isAdaptiveReview
     ? effectivePlan.findIndex((stage) => stage.kind === "dispatching")
     : -1;
@@ -321,7 +404,9 @@ export default function PipelineProgress({
   let legacySearchFrom = 0;
   let usedLegacyMatching = false;
   for (const runtime of stageHistory) {
-    let index = effectivePlan.findIndex((candidate) => candidate.id === runtime.id);
+    let index = effectivePlan.findIndex(
+      (candidate) => candidate.id === runtime.id,
+    );
     if (index === -1) {
       usedLegacyMatching = true;
       index = effectivePlan.findIndex(
@@ -338,8 +423,14 @@ export default function PipelineProgress({
     : -1;
 
   let fallbackIndex = -1;
-  if (stageHistory.length === 0 && state.kind !== "idle" && state.kind !== "done") {
-    fallbackIndex = effectivePlan.findIndex((stage) => stage.kind === failedAtKey);
+  if (
+    stageHistory.length === 0 &&
+    state.kind !== "idle" &&
+    state.kind !== "done"
+  ) {
+    fallbackIndex = effectivePlan.findIndex(
+      (stage) => stage.kind === failedAtKey,
+    );
   }
 
   const plannedStages: DisplayStage[] = effectivePlan.map((stage, index) => {
@@ -348,20 +439,22 @@ export default function PipelineProgress({
     // steps are multi-provider. Its merge metadata is available before the
     // merge stage itself begins, including for adaptive steps unknown at
     // preflight time.
-    const dispatchForMerge = stage.kind === "merging" && index > 0
-      ? runtimeByPlanIndex.get(index - 1)
-      : undefined;
+    const dispatchForMerge =
+      stage.kind === "merging" && index > 0
+        ? runtimeByPlanIndex.get(index - 1)
+        : undefined;
     let status: DisplayStatus = "pending";
     if (runtime?.status === "skipped") {
       status = "skipped";
     } else if (state.kind === "done") {
       status = "done";
     } else if (runtime) {
-      status = runtime.status === "active"
-        ? "active"
-        : runtime.status === "failed"
-          ? "failed"
-          : "done";
+      status =
+        runtime.status === "active"
+          ? "active"
+          : runtime.status === "failed"
+            ? "failed"
+            : "done";
     } else if (usedLegacyMatching && index < furthestRuntimeIndex) {
       // No event means a planned stage was skipped (for example a guarded
       // step); a later event proves the executor advanced beyond it.
@@ -383,20 +476,25 @@ export default function PipelineProgress({
       ? runtime.stepLabels
       : dispatchForMerge?.mergeStepLabels?.length
         ? dispatchForMerge.mergeStepLabels
-        : stage.stepLabels ?? [];
+        : (stage.stepLabels ?? []);
     const stepLabels = new Map(
-      stepIds.map((stepId, stepIndex) => [stepId, stepLabelValues[stepIndex] || titleize(stepId)]),
+      stepIds.map((stepId, stepIndex) => [
+        stepId,
+        stepLabelValues[stepIndex] || titleize(stepId),
+      ]),
     );
     const coveredStepIds = new Set<string>();
-    const subitems: DisplaySubitem[] = Object.entries(currentPasses).map(([name, passStatus]) => {
-      coveredStepIds.add(passStepId(name));
-      return {
-        key: name,
-        label: formatPassName(name, stepLabels),
-        status: passStatus,
-        passKey: name,
-      };
-    });
+    const subitems: DisplaySubitem[] = Object.entries(currentPasses).map(
+      ([name, passStatus]) => {
+        coveredStepIds.add(passStepId(name));
+        return {
+          key: name,
+          label: formatPassName(name, stepLabels),
+          status: passStatus,
+          passKey: name,
+        };
+      },
+    );
     for (const stepId of stepIds) {
       if (coveredStepIds.has(stepId)) continue;
       const label = stepLabels.get(stepId) || titleize(stepId);
@@ -412,9 +510,10 @@ export default function PipelineProgress({
         ? routedAdaptiveSpecialists(reviewRouting)
         : [];
       const routedIds = new Set(routedSpecialists.map(({ id }) => id));
-      const runtimeHasAdaptiveSpecialists = runtime?.stepIds.some(
-        (stepId) => routedIds.has(stepId) || !plannedStepIds.has(stepId),
-      ) ?? false;
+      const runtimeHasAdaptiveSpecialists =
+        runtime?.stepIds.some(
+          (stepId) => routedIds.has(stepId) || !plannedStepIds.has(stepId),
+        ) ?? false;
       if (!runtimeHasAdaptiveSpecialists) {
         if (reviewRouting) {
           for (const specialist of routedSpecialists) {
@@ -480,9 +579,13 @@ export default function PipelineProgress({
       aria-busy={running}
     >
       <div className="flex items-baseline justify-between mb-2">
-        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Progress</h3>
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          Progress
+        </h3>
         {runElapsed && (
-          <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{runElapsed}</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+            {runElapsed}
+          </span>
         )}
       </div>
 
@@ -492,16 +595,20 @@ export default function PipelineProgress({
             Auto-detected review
           </p>
           <p className="mt-0.5 text-xs font-medium text-blue-950 dark:text-blue-100">
-            {[reviewRouting.primaryDomain, reviewRouting.subject].filter(Boolean).join(" · ")}
+            {[reviewRouting.primaryDomain, reviewRouting.subject]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
           {(reviewRouting.subjectLabels?.length ?? 0) > 0 && (
             <p className="mt-1 text-[11px] leading-4 text-blue-800 dark:text-blue-300">
-              <span className="font-medium">Subject:</span> {reviewRouting.subjectLabels?.join(", ")}
+              <span className="font-medium">Subject:</span>{" "}
+              {reviewRouting.subjectLabels?.join(", ")}
             </p>
           )}
           {(reviewRouting.methodLabels?.length ?? 0) > 0 && (
             <p className="text-[11px] leading-4 text-blue-800 dark:text-blue-300">
-              <span className="font-medium">Methods:</span> {reviewRouting.methodLabels?.join(", ")}
+              <span className="font-medium">Methods:</span>{" "}
+              {reviewRouting.methodLabels?.join(", ")}
             </p>
           )}
           {!reviewRouting.subjectLabels && (
@@ -528,7 +635,7 @@ export default function PipelineProgress({
                           ? "text-gray-500 dark:text-gray-400"
                           : status === "skipped"
                             ? "text-gray-500 dark:text-gray-400"
-                          : "text-gray-500 dark:text-gray-400"
+                            : "text-gray-500 dark:text-gray-400"
                   }`}
                 >
                   {stage.label}
@@ -539,42 +646,56 @@ export default function PipelineProgress({
                   </span>
                 )}
                 {status === "active" && stage.subitems.length === 0 && (
-                  <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse ml-auto">running…</span>
+                  <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse ml-auto">
+                    running…
+                  </span>
                 )}
                 {status === "skipped" && (
-                  <span className="text-gray-500 dark:text-gray-400 text-xs ml-auto">skipped</span>
+                  <span className="text-gray-500 dark:text-gray-400 text-xs ml-auto">
+                    skipped
+                  </span>
                 )}
               </div>
 
               {stage.subitems.length > 0 && (
-                  <div className="ml-7 mt-1.5 space-y-1">
-                    {stage.subitems.map((subitem) => {
-                      const el = subitem.passKey ? passElapsed(subitem.passKey) : null;
-                      return (
-                        <div
-                          key={subitem.key}
-                          className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400"
-                        >
-                          <span>{subitem.label}</span>
-                          <span className="flex items-center gap-2">
-                            {el && <span className="text-gray-500 dark:text-gray-400 tabular-nums">{el}</span>}
-                            <PassStatusIcon status={subitem.status} />
-                            {subitem.status === "running" && subitem.passKey && (
-                              <button
-                                type="button"
-                                onClick={() => invoke("cancel_pass", { passKey: subitem.passKey }).catch(() => {})}
-                                aria-label={`Cancel ${subitem.label}`}
-                                className="text-gray-600 hover:text-red-700 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
-                              >
-                                ✕
-                              </button>
-                            )}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <div className="ml-7 mt-1.5 space-y-1">
+                  {stage.subitems.map((subitem) => {
+                    const el = subitem.passKey
+                      ? passElapsed(subitem.passKey)
+                      : null;
+                    return (
+                      <div
+                        key={subitem.key}
+                        className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400"
+                      >
+                        <span>{subitem.label}</span>
+                        <span className="flex items-center gap-2">
+                          {el && (
+                            <span className="text-gray-500 dark:text-gray-400 tabular-nums">
+                              {el}
+                            </span>
+                          )}
+                          <PassStatusIcon status={subitem.status} />
+                          {subitem.status === "running" && subitem.passKey && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                invoke("cancel_pass", {
+                                  passKey: subitem.passKey,
+                                }).catch(() => {})
+                              }
+                              aria-label={`Cancel ${subitem.label}`}
+                              className="text-gray-600 hover:text-red-700 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}

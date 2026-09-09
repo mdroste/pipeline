@@ -45,7 +45,6 @@ fn cli_setup_recommendation(
         let url = match product {
             "Claude Code" => "https://code.claude.com/docs/en/installation",
             "Codex CLI" => "https://developers.openai.com/codex/cli/",
-            "Antigravity CLI" => "https://antigravity.google/docs/cli",
             _ => {
                 return (
                     format!("{action} {product} using its official Windows instructions."),
@@ -104,8 +103,8 @@ pub(crate) use command::{find_on_path, resolve_command, ResolvedCommand};
 
 #[cfg(test)]
 use checks::{
-    antigravity_version_supported, check_antigravity_auth, check_claude_auth, cli_auth_status,
-    parse_host_port, pdf_dependency_requirements, pdf_extraction_may_run, required_providers,
+    check_claude_auth, cli_auth_status, google_dependency, parse_host_port,
+    pdf_dependency_requirements, pdf_extraction_may_run, required_providers,
 };
 #[cfg(test)]
 use command::{resolve_command_in, windows_pathexts};

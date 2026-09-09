@@ -31,7 +31,10 @@ export default function PromptEditor({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const placeholders = useMemo(() => placeholdersFor(context), [context]);
-  const lintHits = useMemo(() => findUnknownPlaceholders(value, context), [value, context]);
+  const lintHits = useMemo(
+    () => findUnknownPlaceholders(value, context),
+    [value, context],
+  );
 
   const insertAtCursor = (token: string) => {
     const ta = textareaRef.current;
@@ -52,7 +55,9 @@ export default function PromptEditor({
   };
 
   return (
-    <div className={fillHeight ? "flex flex-col h-full min-h-0" : "flex flex-col"}>
+    <div
+      className={fillHeight ? "flex flex-col h-full min-h-0" : "flex flex-col"}
+    >
       {placeholders.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap mb-2 text-[10px]">
           <span className="text-gray-500 dark:text-gray-400 mr-1">Insert:</span>
@@ -85,8 +90,10 @@ export default function PromptEditor({
                     focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent`}
       />
       {lintHits.length > 0 && (
-        <div className="mt-2 px-2 py-1.5 rounded border border-amber-300 dark:border-amber-700
-                        bg-amber-50 dark:bg-amber-950/40 text-[11px] text-amber-800 dark:text-amber-300">
+        <div
+          className="mt-2 px-2 py-1.5 rounded border border-amber-300 dark:border-amber-700
+                        bg-amber-50 dark:bg-amber-950/40 text-[11px] text-amber-800 dark:text-amber-300"
+        >
           <span className="font-medium">
             {lintHits.length === 1
               ? "1 unknown placeholder"

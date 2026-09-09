@@ -30,17 +30,28 @@ interface Props {
   onSelect: (id: WaveSelection) => void;
 }
 
-export default function WaveDiagram({ steps, merge, adaptiveReview = false, adaptiveAgentCount = null, adaptiveAgentRange, selectedId, onSelect }: Props) {
+export default function WaveDiagram({
+  steps,
+  merge,
+  adaptiveReview = false,
+  adaptiveAgentCount = null,
+  adaptiveAgentRange,
+  selectedId,
+  onSelect,
+}: Props) {
   const waves = computeWaves(steps, false);
   const noEnabledSteps = waves.length === 0;
   const enabledSteps = steps.filter((step) => step.enabled);
   const stepCalls = enabledSteps.reduce(
-    (total, step) => total + Math.max(1, step.agents?.length ?? 0) * (step.for_each?.max ?? 1),
+    (total, step) =>
+      total + Math.max(1, step.agents?.length ?? 0) * (step.for_each?.max ?? 1),
     0,
   );
   const mergeCalls = merge.enabled
     ? enabledSteps.reduce(
-        (total, step) => total + ((step.agents?.length ?? 0) > 1 ? step.for_each?.max ?? 1 : 0),
+        (total, step) =>
+          total +
+          ((step.agents?.length ?? 0) > 1 ? (step.for_each?.max ?? 1) : 0),
         0,
       )
     : 0;
@@ -61,7 +72,11 @@ export default function WaveDiagram({ steps, merge, adaptiveReview = false, adap
   let foundParallelWave = false;
   for (const w of waves) {
     if (w.kind === "parallel") {
-      rows.push({ kind: "parallel", steps: w.steps, adaptive: adaptiveReview && !foundParallelWave });
+      rows.push({
+        kind: "parallel",
+        steps: w.steps,
+        adaptive: adaptiveReview && !foundParallelWave,
+      });
       foundParallelWave = true;
       if (w.hasMultiAgent && merge.enabled) rows.push({ kind: "merge" });
     } else {
@@ -81,10 +96,22 @@ export default function WaveDiagram({ steps, merge, adaptiveReview = false, adap
             : `${enabledSteps.length} enabled ${enabledSteps.length === 1 ? "step" : "steps"} in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}; up to ${providerCalls} provider ${providerCalls === 1 ? "call" : "calls"} before retries.`}
         </p>
       </div>
-      <div className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400" aria-label="Overview legend">
-        <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-200 dark:bg-blue-800" />Parallel</span>
-        <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-orange-200 dark:bg-orange-800" />Sequential</span>
-        <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-amber-200 dark:bg-amber-800" />Merge</span>
+      <div
+        className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400"
+        aria-label="Overview legend"
+      >
+        <span>
+          <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-200 dark:bg-blue-800" />
+          Parallel
+        </span>
+        <span>
+          <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-orange-200 dark:bg-orange-800" />
+          Sequential
+        </span>
+        <span>
+          <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-amber-200 dark:bg-amber-800" />
+          Merge
+        </span>
       </div>
       {noEnabledSteps && (
         <div className="px-1 pb-2 text-[10px] text-gray-600 dark:text-gray-400 italic">
@@ -219,10 +246,21 @@ function SequentialRow({
   );
 }
 
-function MergeRow({ selected, onClick }: { selected: boolean; onClick: () => void }) {
+function MergeRow({
+  selected,
+  onClick,
+}: {
+  selected: boolean;
+  onClick: () => void;
+}) {
   return (
     <div className="flex justify-center">
-      <Node label="Merge" selected={selected} variant="merge" onClick={onClick} />
+      <Node
+        label="Merge"
+        selected={selected}
+        variant="merge"
+        onClick={onClick}
+      />
     </div>
   );
 }
@@ -238,7 +276,12 @@ function PreprocessRow({
 }) {
   return (
     <div className="flex justify-center">
-      <Node label={label} selected={selected} variant="preprocess" onClick={onClick} />
+      <Node
+        label={label}
+        selected={selected}
+        variant="preprocess"
+        onClick={onClick}
+      />
     </div>
   );
 }
@@ -282,7 +325,11 @@ function Node({
     }
   })();
   return (
-    <button onClick={onClick} title={label} className={`${base} ${sizing} ${palette}`}>
+    <button
+      onClick={onClick}
+      title={label}
+      className={`${base} ${sizing} ${palette}`}
+    >
       {label}
     </button>
   );

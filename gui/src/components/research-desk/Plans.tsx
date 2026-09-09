@@ -1,19 +1,235 @@
-import { useCallback,useEffect,useState } from 'react';
-import { deskClient,reference,type DeskRecord,type PlanStatus } from '../../lib/deskClient';
-import { workbenchClient } from '../../lib/workbenchClient';
-import { workbenchErrorMessage } from '../../lib/workbenchError';
-import type { ExecutionProfile } from '../../lib/workbenchTypes';
-import Jobs from '../research-studio/Jobs';
-import { button,input,card,muted,type DeskProps } from './shared';
-export default function Plans({workspaceId,onError}:DeskProps){
- const [inputs,setInputs]=useState<DeskRecord[]>([]);const [selectedInputs,setSelectedInputs]=useState<string[]>([]);
- const [profiles,setProfiles]=useState<ExecutionProfile[]>([]);const [plans,setPlans]=useState<DeskRecord[]>([]);const [profileId,setProfileId]=useState('');const [parameters,setParameters]=useState('{}');const [seed,setSeed]=useState('');const [version,setVersion]=useState('');const [busy,setBusy]=useState(false);const [preview,setPreview]=useState<PlanStatus|null>(null);
- const refresh=useCallback(async()=>{const [p,c]=await Promise.all([workbenchClient.listExecutionProfiles(workspaceId),deskClient.records(workspaceId,'execution_plan')]);setProfiles(p);setPlans(c);setInputs([...(await deskClient.records(workspaceId,'dataset')),...(await deskClient.records(workspaceId,'sample'))]);},[workspaceId]);useEffect(()=>{void refresh().catch(e=>onError(workbenchErrorMessage(e)));},[refresh,onError]);
- const run=async(fn:()=>Promise<unknown>)=>{if(busy)return;setBusy(true);try{await fn();await refresh();}catch(e){onError(workbenchErrorMessage(e));}finally{setBusy(false);}};
- const queue=(testOnly:boolean)=>run(async()=>{if(!preview)return;const profile=preview.record.body.profile as ExecutionProfile;await workbenchClient.runExecution({profileId:profile.id,planId:preview.record.id,sessionId:null,testOnly,operationId:`plan-run-${crypto.randomUUID()}`});});
- return <div className="space-y-5"><section className={card}><h2 className="font-semibold">Captured execution plans</h2><p className={muted}>Capture a configured profile's scripts and declared inputs. Each test or replay copies those bytes into a fresh private directory. The process retains host access.</p><select aria-label="Execution profile to capture" className={input} value={profileId} onChange={e=>setProfileId(e.target.value)}><option value="">Choose a configured profile</option>{profiles.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><p className={muted}>Configure profiles in conversation Research → Results, or the execution setup tool. Use relative script paths and declare every input and package lockfile.</p><fieldset className="space-y-1"><legend className="text-xs">Exact datasets and declared sample (optional)</legend>{inputs.map(i=><label className="flex gap-2 text-xs" key={i.id}><input type="checkbox" checked={selectedInputs.includes(i.id)} onChange={e=>setSelectedInputs(old=>e.target.checked?[...old,i.id]:old.filter(id=>id!==i.id))}/>{i.kind}: {i.title} · {i.contentHash.slice(0,8)}</label>)}</fieldset><textarea aria-label="Execution parameters" className={input} value={parameters} onChange={e=>setParameters(e.target.value)} placeholder="JSON parameters"/><input aria-label="Random seed" className={input} value={seed} onChange={e=>setSeed(e.target.value)} placeholder="Optional seed, exposed as PIPELINE_RANDOM_SEED"/><input aria-label="Toolchain version" className={input} value={version} onChange={e=>setVersion(e.target.value)} placeholder="Declared toolchain version or environment description"/><button className={button} disabled={busy||!profileId||!version.trim()} onClick={()=>void run(async()=>{const r=await deskClient.capture(profileId,JSON.parse(parameters) as Record<string,unknown>,seed||null,version,inputs.filter(i=>selectedInputs.includes(i.id)).map(reference));setPreview(await deskClient.planStatus(workspaceId,r.id));})}>Capture inputs and review plan</button></section>
- {plans.map(p=><button key={p.id} className={`${card} block w-full text-left`} onClick={()=>void run(async()=>setPreview(await deskClient.planStatus(workspaceId,p.id)))}><span className="font-semibold">{p.title}</span><p className={muted}>{new Date(p.createdAt).toLocaleString()} · {p.contentHash.slice(0,12)}</p></button>)}
- {preview&&<section className={card}><h2 className="font-semibold">Review exact plan</h2><p className="text-sm">This command runs with your host operating-system access. Captured inputs do not contain its filesystem or network access.</p><pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(preview.record.body,null,2)}</pre><p className={muted}>Authorization: {preview.authorized?'granted for this fingerprint':'required'} · Captured-plan test: {preview.testStatus??'not tested'}</p>{!preview.authorized&&<button className={button} disabled={busy} onClick={()=>void run(async()=>setPreview(await deskClient.authorizePlan(workspaceId,preview.record.id,preview.record.contentHash)))}>Authorize this exact host plan</button>}<button className={button} disabled={busy||!preview.authorized} onClick={()=>void queue(true)}>Test captured plan</button><button className={button} disabled={busy||!preview.authorized||preview.testStatus!=='passed'} onClick={()=>void queue(false)}>Run / replay in a fresh directory</button></section>}
- <Jobs workspaceId={workspaceId} onCompleted={()=>{void refresh();if(preview)void deskClient.planStatus(workspaceId,preview.record.id).then(setPreview).catch(e=>onError(workbenchErrorMessage(e)));}}/>
- </div>;
+import { useCallback, useEffect, useState } from "react";
+import {
+  deskClient,
+  reference,
+  type DeskRecord,
+  type PlanStatus,
+} from "../../lib/deskClient";
+import { workbenchClient } from "../../lib/workbenchClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import type { ExecutionProfile } from "../../lib/workbenchTypes";
+import Jobs from "../research-studio/Jobs";
+import { button, input, card, muted, type DeskProps } from "./shared";
+export default function Plans({ workspaceId, onError }: DeskProps) {
+  const [inputs, setInputs] = useState<DeskRecord[]>([]);
+  const [selectedInputs, setSelectedInputs] = useState<string[]>([]);
+  const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
+  const [plans, setPlans] = useState<DeskRecord[]>([]);
+  const [profileId, setProfileId] = useState("");
+  const [parameters, setParameters] = useState("{}");
+  const [seed, setSeed] = useState("");
+  const [version, setVersion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<PlanStatus | null>(null);
+  const refresh = useCallback(async () => {
+    const [p, c] = await Promise.all([
+      workbenchClient.listExecutionProfiles(workspaceId),
+      deskClient.records(workspaceId, "execution_plan"),
+    ]);
+    setProfiles(p);
+    setPlans(c);
+    setInputs([
+      ...(await deskClient.records(workspaceId, "dataset")),
+      ...(await deskClient.records(workspaceId, "sample")),
+    ]);
+  }, [workspaceId]);
+  useEffect(() => {
+    void refresh().catch((e) => onError(workbenchErrorMessage(e)));
+  }, [refresh, onError]);
+  const run = async (fn: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fn();
+      await refresh();
+    } catch (e) {
+      onError(workbenchErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const queue = (testOnly: boolean) =>
+    run(async () => {
+      if (!preview) return;
+      const profile = preview.record.body.profile as ExecutionProfile;
+      await workbenchClient.runExecution({
+        profileId: profile.id,
+        planId: preview.record.id,
+        sessionId: null,
+        testOnly,
+        operationId: `plan-run-${crypto.randomUUID()}`,
+      });
+    });
+  return (
+    <div className="space-y-5">
+      <section className={card}>
+        <h2 className="font-semibold">Captured execution plans</h2>
+        <p className={muted}>
+          Capture a configured profile's scripts and declared inputs. Each test
+          or replay copies those bytes into a fresh private directory. The
+          process retains host access.
+        </p>
+        <select
+          aria-label="Execution profile to capture"
+          className={input}
+          value={profileId}
+          onChange={(e) => setProfileId(e.target.value)}
+        >
+          <option value="">Choose a configured profile</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <p className={muted}>
+          Configure profiles in conversation Research → Results, or the
+          execution setup tool. Use relative script paths and declare every
+          input and package lockfile.
+        </p>
+        <fieldset className="space-y-1">
+          <legend className="text-xs">
+            Exact datasets and declared sample (optional)
+          </legend>
+          {inputs.map((i) => (
+            <label className="flex gap-2 text-xs" key={i.id}>
+              <input
+                type="checkbox"
+                checked={selectedInputs.includes(i.id)}
+                onChange={(e) =>
+                  setSelectedInputs((old) =>
+                    e.target.checked
+                      ? [...old, i.id]
+                      : old.filter((id) => id !== i.id),
+                  )
+                }
+              />
+              {i.kind}: {i.title} · {i.contentHash.slice(0, 8)}
+            </label>
+          ))}
+        </fieldset>
+        <textarea
+          aria-label="Execution parameters"
+          className={input}
+          value={parameters}
+          onChange={(e) => setParameters(e.target.value)}
+          placeholder="JSON parameters"
+        />
+        <input
+          aria-label="Random seed"
+          className={input}
+          value={seed}
+          onChange={(e) => setSeed(e.target.value)}
+          placeholder="Optional seed, exposed as PIPELINE_RANDOM_SEED"
+        />
+        <input
+          aria-label="Toolchain version"
+          className={input}
+          value={version}
+          onChange={(e) => setVersion(e.target.value)}
+          placeholder="Declared toolchain version or environment description"
+        />
+        <button
+          className={button}
+          disabled={busy || !profileId || !version.trim()}
+          onClick={() =>
+            void run(async () => {
+              const r = await deskClient.capture(
+                profileId,
+                JSON.parse(parameters) as Record<string, unknown>,
+                seed || null,
+                version,
+                inputs
+                  .filter((i) => selectedInputs.includes(i.id))
+                  .map(reference),
+              );
+              setPreview(await deskClient.planStatus(workspaceId, r.id));
+            })
+          }
+        >
+          Capture inputs and review plan
+        </button>
+      </section>
+      {plans.map((p) => (
+        <button
+          key={p.id}
+          className={`${card} block w-full text-left`}
+          onClick={() =>
+            void run(async () =>
+              setPreview(await deskClient.planStatus(workspaceId, p.id)),
+            )
+          }
+        >
+          <span className="font-semibold">{p.title}</span>
+          <p className={muted}>
+            {new Date(p.createdAt).toLocaleString()} ·{" "}
+            {p.contentHash.slice(0, 12)}
+          </p>
+        </button>
+      ))}
+      {preview && (
+        <section className={card}>
+          <h2 className="font-semibold">Review exact plan</h2>
+          <p className="text-sm">
+            This command runs with your host operating-system access. Captured
+            inputs do not contain its filesystem or network access.
+          </p>
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs">
+            {JSON.stringify(preview.record.body, null, 2)}
+          </pre>
+          <p className={muted}>
+            Authorization:{" "}
+            {preview.authorized ? "granted for this fingerprint" : "required"} ·
+            Captured-plan test: {preview.testStatus ?? "not tested"}
+          </p>
+          {!preview.authorized && (
+            <button
+              className={button}
+              disabled={busy}
+              onClick={() =>
+                void run(async () =>
+                  setPreview(
+                    await deskClient.authorizePlan(
+                      workspaceId,
+                      preview.record.id,
+                      preview.record.contentHash,
+                    ),
+                  ),
+                )
+              }
+            >
+              Authorize this exact host plan
+            </button>
+          )}
+          <button
+            className={button}
+            disabled={busy || !preview.authorized}
+            onClick={() => void queue(true)}
+          >
+            Test captured plan
+          </button>
+          <button
+            className={button}
+            disabled={
+              busy || !preview.authorized || preview.testStatus !== "passed"
+            }
+            onClick={() => void queue(false)}
+          >
+            Run / replay in a fresh directory
+          </button>
+        </section>
+      )}
+      <Jobs
+        workspaceId={workspaceId}
+        onCompleted={() => {
+          void refresh();
+          if (preview)
+            void deskClient
+              .planStatus(workspaceId, preview.record.id)
+              .then(setPreview)
+              .catch((e) => onError(workbenchErrorMessage(e)));
+        }}
+      />
+    </div>
+  );
 }

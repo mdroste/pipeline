@@ -358,15 +358,15 @@ export default function WorkspaceExchangePanel({
                 }
               >
                 <option value="newWorkspace">
-                  Into a new separate Workspace (default)
+                  Into a new separate project (default)
                 </option>
                 <option value="existingWorkspace">
-                  Merge into this Workspace
+                  Merge into this project
                 </option>
               </select>
               {targetKind === "newWorkspace" && (
                 <input
-                  aria-label="New Workspace name"
+                  aria-label="New project name"
                   className={input}
                   value={targetName}
                   onChange={(e) => setTargetName(e.target.value)}
@@ -496,7 +496,9 @@ export default function WorkspaceExchangePanel({
         )}
       </section>
 
-      {showStorage && <WorkspaceStorageRetention busy={busy} onAction={onAction} />}
+      {showStorage && (
+        <WorkspaceStorageRetention busy={busy} onAction={onAction} />
+      )}
 
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -504,9 +506,9 @@ export default function WorkspaceExchangePanel({
         </h3>
         <p className="mt-1 text-xs text-gray-500">
           Builds a portable Workflow definition from completed tasks and recipe
-          runs for inspection. Save it and import it in Reviews → Designer; validation
-          and the launch preview happen there. Nothing is installed or run from
-          here, and local computations remain listed prerequisites.
+          runs for inspection. Save it and import it in Reviews → Designer;
+          validation and the launch preview happen there. Nothing is installed
+          or run from here, and local computations remain listed prerequisites.
         </p>
         <div className="mt-2 grid gap-2 text-xs md:grid-cols-2">
           <div>

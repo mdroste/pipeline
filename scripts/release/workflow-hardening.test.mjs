@@ -39,56 +39,20 @@ test("CI and release use the repository's exact toolchains", () => {
   }
 });
 
-test("tests are manual, Linux-only, and limited to library and frontend tests", () => {
+test("automatic CI gates production builds and all native targets", () => {
   const contents = readText(".github", "workflows", "build.yml");
-  assert.ok(contents.includes("workflow_dispatch:"));
-  assert.equal([...contents.matchAll(/runs-on:\s+ubuntu-22\.04/g)].length, 1);
-  assert.ok(contents.includes("cargo test --locked --lib"));
-  assert.ok(contents.includes("npm test -- --run"));
-  assert.ok(contents.includes("cache-workspace-crates: true"));
-  assert.doesNotMatch(contents, /^\s+(?:push|pull_request|schedule):\s*$/m);
-  assert.doesNotMatch(contents, /cargo (?:clippy|audit)|npm audit|MSRV|macos|windows/i);
-  assert.ok(contents.split("\n").length < 80, "test workflow should remain small");
+  for (const required of ["push:", "pull_request:", "workflow_call:", "npm run build", "npm run test:release",
+    "cargo clippy --locked --all-targets --all-features -- -D warnings", "cargo test --locked --all-targets", "macos-15", "windows-2022"])
+    assert.ok(contents.includes(required), required);
 });
 
-test("release builds only installers from an explicit tag and keeps retries platform-local", () => {
+test("release has one draft coordinator behind quality gates and no publication or overwrite", () => {
   const contents = readText(".github", "workflows", "release.yml");
-  for (const required of [
-    "workflow_dispatch:",
-    "platform:",
-    "default: macos-arm64",
-    "if: github.ref_type == 'tag'",
-    '"id":"macos-arm64"',
-    '"id":"macos-x64"',
-    '"id":"windows"',
-    '"id":"linux"',
-    "cache-workspace-crates: true",
-    "cache-on-failure: true",
-    "bundle-poppler.sh",
-    "Import Apple signing certificate",
-    "APPLE_SIGNING_IDENTITY",
-    "APPLE_ID",
-    "APPLE_PASSWORD",
-    "APPLE_TEAM_ID",
-    "--bundles ${{ matrix.bundle }}",
-    "Build unsigned package",
-    "gh release upload",
-    "--clobber",
-    "gh release edit",
-  ]) {
-    assert.ok(contents.includes(required), `release workflow is missing ${required}`);
-  }
-
-  assert.doesNotMatch(contents, /^\s+(?:push|pull_request|schedule):\s*$/m);
-  assert.doesNotMatch(
-    contents,
-    /cargo (?:test|clippy|audit)|npm (?:test|audit)|SBOM|provenance|attest|qualify|smoke|Gatekeeper/i,
-  );
-  assert.doesNotMatch(
-    contents,
-    /WINDOWS_CERTIFICATE|Get-AuthenticodeSignature|tauri\.windows-signing/i,
-  );
-  assert.ok(contents.split("\n").length < 230, "release workflow should remain small");
+  for (const required of ["workflow_dispatch:", "needs: quality", "needs: prepare", "needs: package", "fetch-depth: 0",
+    "draft-release.mjs prepare", "draft-release.mjs upload", "draft-release.mjs verify", "bundle-poppler.sh",
+    "Build unsigned package", "Import Apple signing certificate"])
+    assert.ok(contents.includes(required), required);
+  assert.doesNotMatch(contents, /--clobber|--draft=false|gh release edit/);
 });
 
 test("Tauri packages only the GUI and uses a cache-friendly release profile", () => {

@@ -271,7 +271,7 @@ impl AppServerSupervisor {
             .request(
                 "thread/start",
                 json!({
-                    "approvalPolicy": "untrusted",
+                    "approvalPolicy": approval_policy(&expected_permissions),
                     "approvalsReviewer": "user",
                     "cwd": request.cwd,
                     "developerInstructions": request.developer_instructions,
@@ -531,6 +531,14 @@ impl AppServerSupervisor {
     }
 
     pub async fn start_turn(&self, request: StartTurnRequest) -> Result<String, RequestError> {
+        self.start_turn_with_acceptance(request, |_| {}).await
+    }
+
+    pub(crate) async fn start_turn_with_acceptance(
+        &self,
+        request: StartTurnRequest,
+        accepted: impl FnOnce(&str),
+    ) -> Result<String, RequestError> {
         validate_identifier("Workbench binding id", &request.workbench_binding_id)?;
         validate_identifier("thread id", &request.thread_id)?;
         validate_identifier("client user message id", &request.client_user_message_id)?;
@@ -558,6 +566,8 @@ impl AppServerSupervisor {
             )
             .await?;
         let turn_id = required_string(&result, &["turn", "id"], "turn/start response")?;
+        // Publish ownership before a fallible projection write.
+        accepted(&turn_id);
         if self.projection_enabled {
             record_turn_projection(
                 request.workbench_binding_id,
@@ -762,7 +772,9 @@ fn validate_thread_request(request: &StartThreadRequest) -> Result<(), RequestEr
     }
     if let Some(text) = &request.base_instructions {
         if text.trim().is_empty() || text.len() > 256 * 1024 || text.contains('\0') {
-            return Err(RequestError::invalid("Replacement base prompt must contain 1 to 256 KiB and no NUL characters"));
+            return Err(RequestError::invalid(
+                "Replacement base prompt must contain 1 to 256 KiB and no NUL characters",
+            ));
         }
     }
     validate_identifier("permissions profile", &request.permissions)?;
@@ -848,6 +860,14 @@ fn parse_thread_connection(value: Value) -> Result<ThreadConnection, RequestErro
     })
 }
 
+fn approval_policy(permissions: &str) -> &'static str {
+    if matches!(permissions, "discovery-inspect" | "discovery-edit") {
+        "never"
+    } else {
+        "untrusted"
+    }
+}
+
 fn validate_thread_contract(
     connection: &ThreadConnection,
     expected_cwd: Option<&str>,
@@ -889,7 +909,7 @@ fn validate_thread_contract(
             "Codex App Server did not activate Workspace permission profile {expected_permissions}"
         )));
     }
-    if connection.approval_policy.as_deref() != Some("untrusted")
+    if connection.approval_policy.as_deref() != Some(approval_policy(expected_permissions))
         || connection.approvals_reviewer.as_deref() != Some("user")
     {
         return Err(RequestError::unavailable(

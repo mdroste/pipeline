@@ -9,10 +9,8 @@ then-uncommitted release and model-catalog changes
 > **Archived audit snapshot.** This is not the current issue tracker or a
 > release checklist. It preserves original evidence, proposed fixes, and the
 > remediation record; line numbers, dependency versions, test counts, and
-> “current working tree” references are historical. See
-> [CHANGELOG.md](CHANGELOG.md), [SUPPORT.md](SUPPORT.md),
-> [RELEASING.md](RELEASING.md), current CI, and GitHub issues for present
-> status.
+> “current working tree” references are historical. See the current repository
+> documentation, current CI, and GitHub issues for present status.
 
 ## How to use this list
 

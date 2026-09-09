@@ -12,10 +12,11 @@ pub(crate) mod batch;
 pub(crate) mod config;
 pub(crate) mod export;
 mod guard;
-pub(crate) mod orchestration;
 pub(crate) mod lifecycle;
+pub(crate) mod orchestration;
 mod profile_import;
 pub(crate) mod rerun;
+mod reuse_artifacts;
 mod run;
 mod run_context;
 pub(crate) mod run_entry;
@@ -36,8 +37,9 @@ pub(crate) use lifecycle::{
 };
 pub use rerun::*;
 pub use run_entry::{
-    check_headless_dependencies, check_headless_plan, run_headless, run_headless_with_options,
-    run_pipeline, HeadlessCheckReport, HeadlessRunOptions, HeadlessWorkflow,
+    check_headless_dependencies, check_headless_plan, run_headless, run_headless_batch_item,
+    run_headless_with_options, run_pipeline, HeadlessBatchSnapshot, HeadlessCheckReport,
+    HeadlessRunOptions, HeadlessWorkflow,
 };
 
 use guard::*;

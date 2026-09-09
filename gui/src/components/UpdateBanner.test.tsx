@@ -34,7 +34,9 @@ describe("UpdateBanner", () => {
   it("renders nothing when no update is available", async () => {
     invoke.mockResolvedValueOnce(info({ update_available: false }));
     const { container } = render(<UpdateBanner />);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("check_for_update"));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("check_for_update"),
+    );
     // After the async check resolves, still nothing rendered.
     await new Promise((r) => setTimeout(r, 0));
     expect(container.firstChild).toBeNull();
@@ -54,7 +56,9 @@ describe("UpdateBanner", () => {
     expect(await screen.findByText(/Update available:/)).toBeInTheDocument();
     expect(screen.getByText(/v1\.0\.0/)).toBeInTheDocument();
     expect(screen.getByText(/v1\.1\.0/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /view release/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /view release/i }),
+    ).toBeInTheDocument();
   });
 
   it("opens the release URL via the shell plugin when 'View release' is clicked", async () => {
@@ -62,7 +66,9 @@ describe("UpdateBanner", () => {
     render(<UpdateBanner />);
     const btn = await screen.findByRole("button", { name: /view release/i });
     await userEvent.setup().click(btn);
-    expect(openUrl).toHaveBeenCalledWith("https://github.com/mdroste/pipeline/releases/tag/v1.1.0");
+    expect(openUrl).toHaveBeenCalledWith(
+      "https://github.com/mdroste/pipeline/releases/tag/v1.1.0",
+    );
   });
 
   it("shows a shell-plugin error when the release page cannot be opened", async () => {
@@ -87,7 +93,7 @@ describe("UpdateBanner", () => {
 
     expect(localStorage.getItem(DISMISS_KEY)).toBe("1.1.0");
     await waitFor(() =>
-      expect(screen.queryByText(/Update available:/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Update available:/)).not.toBeInTheDocument(),
     );
   });
 

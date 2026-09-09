@@ -105,7 +105,7 @@ executor and a 1,529-line `tests.rs` and calling the work complete.
 | [pipeline_config/tests.rs](../gui/src-tauri/src/pipeline_config/tests.rs) | 1,392 | Split by built-ins/migrations, dependency and selector validation, portable workflow parsing, persistence/profile operations |
 | [commands/tests.rs](../gui/src-tauri/src/commands/tests.rs) | 1,239 | Split by launch/resume, artifact handling, package export, print rendering, profile import; keep small common fixtures |
 | [CLAUDE.md](../CLAUDE.md) | 1,339 | Reduce the mandatory read to an architecture map, invariants and commands; move detailed topic material into linked developer documents |
-| [SOL_AUG23_FULLSEND_FEATURES.md](../SOL_AUG23_FULLSEND_FEATURES.md) | 1,637 | Historical proposal; keep as an archive/reference, outside mandatory agent reading. No mechanical split needed |
+| [SOL_AUG23_FULLSEND_FEATURES.md](../notes/SOL_AUG23_FULLSEND_FEATURES.md) | 1,637 | Historical proposal; keep as an archive/reference, outside mandatory agent reading. No mechanical split needed |
 | [experimental.schemas.json](workbench/protocol/0.147.0/experimental.schemas.json) | 26,014 | Immutable vendor protocol reference; retain exact bytes/checksum. Provide a generated method/type index for targeted reads |
 | [stable.schemas.json](workbench/protocol/0.147.0/stable.schemas.json) | 22,658 | Same treatment; do not hand-edit or reformat to meet a line threshold |
 | [gui/package-lock.json](../gui/package-lock.json) | 13,388 | Dependency lockfile; exclude from source-size policy |
@@ -615,9 +615,10 @@ and do not introduce code generation as a prerequisite for ordinary file splits.
 - Workflow finding status, Workspace research evidence, and human acceptance
   are different provenance classes. A common finding DTO does not imply a
   shared mutable ledger.
-- Dormant `pipeline/antigravity.rs` and legacy Codex support are documented
-  compatibility paths. Removing them is a product/support decision separate
-  from this refactor; file size alone does not justify deletion.
+- Legacy Codex support remains a compatibility path. Its removal requires a
+  product/support decision; file size alone does not justify deletion. The
+  deprecated Antigravity CLI was removed in the September 9 review follow-up;
+  Google remains API-only, with legacy saved provider fields preserved.
 
 ## 7. Reviewable implementation sequence
 

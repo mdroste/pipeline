@@ -13,7 +13,9 @@ describe("issues parsing", () => {
   it("extracts JSON from plain, fenced, and prose forms", () => {
     expect(extractJson('{"a":1}')).toEqual({ a: 1 });
     expect(extractJson("```json\n[1,2]\n```")).toEqual([1, 2]);
-    expect(extractJson('the answer is {"ok": true} really')).toEqual({ ok: true });
+    expect(extractJson('the answer is {"ok": true} really')).toEqual({
+      ok: true,
+    });
     expect(extractJson("no json here")).toBeNull();
   });
 
@@ -21,13 +23,21 @@ describe("issues parsing", () => {
     expect(extractJson('bad [x] then {"items":[{"text":"} ]"}]}')).toEqual({
       items: [{ text: "} ]" }],
     });
-    expect(extractJson("```json\n{bad}\n```\n```json\n[1,2]\n```")).toEqual([1, 2]);
+    expect(extractJson("```json\n{bad}\n```\n```json\n[1,2]\n```")).toEqual([
+      1, 2,
+    ]);
   });
 
   it("parses an { issues: [...] } object", () => {
     const text = JSON.stringify({
       issues: [
-        { id: "1", title: "Identification is weak", severity: "High", section: "4", body: "The IV..." },
+        {
+          id: "1",
+          title: "Identification is weak",
+          severity: "High",
+          section: "4",
+          body: "The IV...",
+        },
         { id: "2", title: "Typo in Table 2", severity: "low", body: "Minor." },
       ],
     });
@@ -44,15 +54,19 @@ describe("issues parsing", () => {
   });
 
   it("parses the canonical findings envelope", () => {
-    const issues = parseIssues(JSON.stringify({
-      findings: [{
-        id: "support-condition",
-        title: "Support condition is missing",
-        priority: "major",
-        category: "Correctness",
-        body: "Details",
-      }],
-    }))!;
+    const issues = parseIssues(
+      JSON.stringify({
+        findings: [
+          {
+            id: "support-condition",
+            title: "Support condition is missing",
+            priority: "major",
+            category: "Correctness",
+            body: "Details",
+          },
+        ],
+      }),
+    )!;
     expect(issues[0]).toMatchObject({
       id: "support-condition",
       severity: "high",
@@ -61,16 +75,27 @@ describe("issues parsing", () => {
   });
 
   it("normalizes bounded evidence links and drops unsafe artifact paths", () => {
-    const issues = parseIssues(JSON.stringify({
-      issues: [{
-        title: "Evidence-backed issue",
-        evidence: [
-          { page: 4, node_id: "node-12", description: "Proposition statement" },
-          { artifact_path: "artifacts/figures/figure-2.png", asset_id: "figure-2" },
-          { artifact_path: "../outside.txt", page: -1 },
+    const issues = parseIssues(
+      JSON.stringify({
+        issues: [
+          {
+            title: "Evidence-backed issue",
+            evidence: [
+              {
+                page: 4,
+                node_id: "node-12",
+                description: "Proposition statement",
+              },
+              {
+                artifact_path: "artifacts/figures/figure-2.png",
+                asset_id: "figure-2",
+              },
+              { artifact_path: "../outside.txt", page: -1 },
+            ],
+          },
         ],
-      }],
-    }))!;
+      }),
+    )!;
     expect(issues[0].evidence).toEqual([
       { page: 4, nodeId: "node-12", description: "Proposition statement" },
       { assetId: "figure-2", artifactPath: "artifacts/figures/figure-2.png" },
@@ -82,38 +107,59 @@ describe("issues parsing", () => {
       'metadata: {"model":"x"}\nresult: {"issues":[{"title":"Actual issue","severity":"major"}]}',
     )!;
     expect(issues).toHaveLength(1);
-    expect(issues[0]).toMatchObject({ title: "Actual issue", severity: "high" });
+    expect(issues[0]).toMatchObject({
+      title: "Actual issue",
+      severity: "high",
+    });
   });
 
   it("handles a large unmatched-brace prefix in linear time and recovers later JSON", () => {
-    const text = "{".repeat(30_000) +
+    const text =
+      "{".repeat(30_000) +
       JSON.stringify({ issues: [{ title: "Recovered issue" }] });
     expect(parseIssues(text)?.[0].title).toBe("Recovered issue");
   });
 
   it("bounds nesting state for a hostile near-limit unmatched prefix", () => {
-    const text = "{".repeat(900_000) +
-      JSON.stringify({ issues: [{ title: "Recovered after hostile nesting" }] });
-    expect(parseIssues(text)?.[0].title).toBe("Recovered after hostile nesting");
+    const text =
+      "{".repeat(900_000) +
+      JSON.stringify({
+        issues: [{ title: "Recovered after hostile nesting" }],
+      });
+    expect(parseIssues(text)?.[0].title).toBe(
+      "Recovered after hostile nesting",
+    );
   });
 
   it("rejects issue arrays above the rendering safety cap", () => {
     const text = JSON.stringify({
-      issues: Array.from({ length: 1_001 }, (_, i) => ({ title: `Issue ${i}` })),
+      issues: Array.from({ length: 1_001 }, (_, i) => ({
+        title: `Issue ${i}`,
+      })),
     });
     expect(parseIssues(text)).toBeNull();
   });
 
   it("canonicalizes severity aliases and makes duplicate ids unique", () => {
-    const issues = parseIssues(JSON.stringify({
-      issues: [
-        { id: "same", title: "A", severity: "critical" },
-        { id: "same", title: "B", severity: "moderate" },
-        { id: "same", title: "C", severity: "suggestion" },
-      ],
-    }))!;
-    expect(issues.map((issue) => issue.id)).toEqual(["same", "same#2", "same#3"]);
-    expect(issues.map((issue) => issue.severity)).toEqual(["high", "medium", "low"]);
+    const issues = parseIssues(
+      JSON.stringify({
+        issues: [
+          { id: "same", title: "A", severity: "critical" },
+          { id: "same", title: "B", severity: "moderate" },
+          { id: "same", title: "C", severity: "suggestion" },
+        ],
+      }),
+    )!;
+    expect(issues.map((issue) => issue.id)).toEqual([
+      "same",
+      "same#2",
+      "same#3",
+    ]);
+    expect(issues.map((issue) => issue.severity)).toEqual([
+      "high",
+      "medium",
+      "low",
+    ]);
   });
 
   it("rejects non-issue JSON", () => {
@@ -131,8 +177,20 @@ describe("issues parsing", () => {
   it("detectReportIssues picks the last issues-shaped step", () => {
     const report = {
       step_outputs: [
-        { step_id: "a", step_label: "A", phase: "parallel", agent: "", raw_text: "prose" },
-        { step_id: "s", step_label: "Synth", phase: "sequential", agent: "", raw_text: '{"issues":[{"title":"X"}]}' },
+        {
+          step_id: "a",
+          step_label: "A",
+          phase: "parallel",
+          agent: "",
+          raw_text: "prose",
+        },
+        {
+          step_id: "s",
+          step_label: "Synth",
+          phase: "sequential",
+          agent: "",
+          raw_text: '{"issues":[{"title":"X"}]}',
+        },
       ],
       report_date: "2026-01-01",
       paper_hash: "h",
@@ -152,35 +210,41 @@ describe("issues parsing", () => {
           schema_version: 1,
           source_step_id: "validate",
           source_step_label: "Validate",
-          findings: [{
-            id: "missing-support",
-            title: "Support condition is missing",
-            category: "Correctness",
-            priority: "major",
-            body: "The proposition needs an additional restriction.",
-            sources: ["technical", "econometrics"],
-            evidence: [{ source_path: "chapters/model.tex", line_start: 42 }],
-          }],
+          findings: [
+            {
+              id: "missing-support",
+              title: "Support condition is missing",
+              category: "Correctness",
+              priority: "major",
+              body: "The proposition needs an additional restriction.",
+              sources: ["technical", "econometrics"],
+              evidence: [{ source_path: "chapters/model.tex", line_start: 42 }],
+            },
+          ],
         },
       },
-      step_outputs: [{
-        step_id: "legacy",
-        step_label: "Legacy",
-        phase: "sequential",
-        agent: "",
-        raw_text: '{"issues":[{"title":"Wrong fallback"}]}',
-      }],
+      step_outputs: [
+        {
+          step_id: "legacy",
+          step_label: "Legacy",
+          phase: "sequential",
+          agent: "",
+          raw_text: '{"issues":[{"title":"Wrong fallback"}]}',
+        },
+      ],
     } as unknown as PipelineReport;
 
-    expect(detectReportIssues(report)).toEqual([{
-      id: "missing-support",
-      title: "Support condition is missing",
-      severity: "high",
-      section: "Correctness",
-      body: "The proposition needs an additional restriction.",
-      sources: ["technical", "econometrics"],
-      evidence: [{ sourcePath: "chapters/model.tex", lineStart: 42 }],
-    }]);
+    expect(detectReportIssues(report)).toEqual([
+      {
+        id: "missing-support",
+        title: "Support condition is missing",
+        severity: "high",
+        section: "Correctness",
+        body: "The proposition needs an additional restriction.",
+        sources: ["technical", "econometrics"],
+        evidence: [{ sourcePath: "chapters/model.tex", lineStart: 42 }],
+      },
+    ]);
   });
 
   it("does not infer a different product when a current report publishes no findings", () => {
@@ -195,13 +259,15 @@ describe("issues parsing", () => {
           findings: [],
         },
       },
-      step_outputs: [{
-        step_id: "legacy",
-        step_label: "Legacy",
-        phase: "sequential",
-        agent: "",
-        raw_text: '{"issues":[{"title":"Wrong fallback"}]}',
-      }],
+      step_outputs: [
+        {
+          step_id: "legacy",
+          step_label: "Legacy",
+          phase: "sequential",
+          agent: "",
+          raw_text: '{"issues":[{"title":"Wrong fallback"}]}',
+        },
+      ],
     } as unknown as PipelineReport;
 
     expect(detectReportIssues(report)).toEqual([]);
@@ -211,14 +277,16 @@ describe("issues parsing", () => {
 describe("renderSpecialistMarkdown", () => {
   it("renders specialist findings back to the referee format", () => {
     const text = JSON.stringify({
-      findings: [{
-        title: "Sign error",
-        in_the_paper: "Claim",
-        problem: "Analysis",
-        consequence: "Effect",
-        what_would_help: "Fix",
-        evidence: [{ page: 12, quote: "the sign flips" }],
-      }],
+      findings: [
+        {
+          title: "Sign error",
+          in_the_paper: "Claim",
+          problem: "Analysis",
+          consequence: "Effect",
+          what_would_help: "Fix",
+          evidence: [{ page: 12, quote: "the sign flips" }],
+        },
+      ],
     });
     const markdown = renderSpecialistMarkdown(text);
     expect(markdown).toContain("**#1. Sign error**");
@@ -227,21 +295,32 @@ describe("renderSpecialistMarkdown", () => {
   });
 
   it("renders an empty specialist report as the sentinel sentence", () => {
-    expect(renderSpecialistMarkdown('{"findings": []}')).toBe("No material issues identified.");
+    expect(renderSpecialistMarkdown('{"findings": []}')).toBe(
+      "No material issues identified.",
+    );
   });
 
   it("rejects canonical findings and prose", () => {
-    expect(renderSpecialistMarkdown('{"findings":[{"id":"a","title":"T","body":"B"}]}')).toBeNull();
+    expect(
+      renderSpecialistMarkdown(
+        '{"findings":[{"id":"a","title":"T","body":"B"}]}',
+      ),
+    ).toBeNull();
     expect(renderSpecialistMarkdown("plain report text")).toBeNull();
   });
 });
 
 describe("renderStructuredMarkdown", () => {
   it("renders arrays of objects as tables and objects as sections", () => {
-    const markdown = renderStructuredMarkdown(JSON.stringify({
-      summary: "Two entries",
-      rows: [{ name: "a", value: 1 }, { name: "b", value: 2 }],
-    }));
+    const markdown = renderStructuredMarkdown(
+      JSON.stringify({
+        summary: "Two entries",
+        rows: [
+          { name: "a", value: 1 },
+          { name: "b", value: 2 },
+        ],
+      }),
+    );
     expect(markdown).toContain("**summary**: Two entries");
     expect(markdown).toContain("| name | value |");
     expect(markdown).toContain("| a | 1 |");

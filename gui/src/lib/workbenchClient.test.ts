@@ -28,7 +28,10 @@ describe("Workbench DTO boundary", () => {
     expect(
       isSessionSnapshot({
         ...snapshotFixture,
-        session: { ...snapshotFixture.session, workspaceId: "another-workspace" },
+        session: {
+          ...snapshotFixture.session,
+          workspaceId: "another-workspace",
+        },
       }),
     ).toBe(false);
   });
@@ -48,21 +51,41 @@ describe("Workbench DTO boundary", () => {
       draft: "Updated draft",
     };
     await workbenchClient.updateSession(request);
-    expect(invoke).toHaveBeenLastCalledWith("workbench_update_session", { request });
+    expect(invoke).toHaveBeenLastCalledWith("workbench_update_session", {
+      request,
+    });
 
-    const move = { sessionId: "session_fixture", expectedRevision: 3, operationId: "operation-4", workspaceId: null };
+    const move = {
+      sessionId: "session_fixture",
+      expectedRevision: 3,
+      operationId: "operation-4",
+      workspaceId: null,
+    };
     await workbenchClient.moveSession(move);
-    expect(invoke).toHaveBeenLastCalledWith("workbench_move_session", { request: move });
-    const removal = { sessionId: "session_fixture", operationId: "operation-5" };
+    expect(invoke).toHaveBeenLastCalledWith("workbench_move_session", {
+      request: move,
+    });
+    const removal = {
+      sessionId: "session_fixture",
+      operationId: "operation-5",
+    };
     await workbenchClient.deleteSession(removal);
-    expect(invoke).toHaveBeenLastCalledWith("workbench_delete_session", { request: removal });
+    expect(invoke).toHaveBeenLastCalledWith("workbench_delete_session", {
+      request: removal,
+    });
     await workbenchClient.titlePreferences();
     expect(invoke).toHaveBeenLastCalledWith("workbench_get_title_preferences");
     const preferences = { enabled: false, model: "gpt-mini", effort: null };
     await workbenchClient.saveTitlePreferences(preferences);
-    expect(invoke).toHaveBeenLastCalledWith("workbench_save_title_preferences", { preferences });
+    expect(invoke).toHaveBeenLastCalledWith(
+      "workbench_save_title_preferences",
+      { preferences },
+    );
     await workbenchClient.generateSessionTitle("session_fixture");
-    expect(invoke).toHaveBeenLastCalledWith("workbench_generate_session_title", { sessionId: "session_fixture" });
+    expect(invoke).toHaveBeenLastCalledWith(
+      "workbench_generate_session_title",
+      { sessionId: "session_fixture" },
+    );
 
     await workbenchClient.accountState(true);
     expect(invoke).toHaveBeenLastCalledWith("workbench_codex_account_state", {
@@ -93,9 +116,12 @@ describe("Workbench DTO boundary", () => {
     await workbenchClient.pendingRequests();
     expect(invoke).toHaveBeenLastCalledWith("workbench_codex_pending_requests");
     await workbenchClient.reconcileSession("session_fixture");
-    expect(invoke).toHaveBeenLastCalledWith("workbench_codex_reconcile_session", {
-      sessionId: "session_fixture",
-    });
+    expect(invoke).toHaveBeenLastCalledWith(
+      "workbench_codex_reconcile_session",
+      {
+        sessionId: "session_fixture",
+      },
+    );
     await workbenchClient.exportConversation("session_fixture", "/tmp/chat.md");
     expect(invoke).toHaveBeenLastCalledWith("workbench_export_conversation", {
       sessionId: "session_fixture",
@@ -106,7 +132,12 @@ describe("Workbench DTO boundary", () => {
     expect(invoke).toHaveBeenLastCalledWith("workbench_harness_catalog", {
       workspaceId: "workspace_fixture",
     });
-    await workbenchClient.paperSearch("workspace_fixture", "revision_fixture", "Euler equation", 12);
+    await workbenchClient.paperSearch(
+      "workspace_fixture",
+      "revision_fixture",
+      "Euler equation",
+      12,
+    );
     expect(invoke).toHaveBeenLastCalledWith("workbench_paper_search", {
       workspaceId: "workspace_fixture",
       revisionId: "revision_fixture",
@@ -143,27 +174,36 @@ describe("Workbench DTO boundary", () => {
       metadata: { label: "revision" },
       operationId: "handoff-operation",
     });
-    expect(invoke).toHaveBeenLastCalledWith("workbench_prepare_review_handoff", {
-      request: {
-        workspaceId: "workspace_fixture",
-        sessionId: "session_fixture",
-        paperId: "paper_fixture",
-        metadata: { label: "revision" },
-        operationId: "handoff-operation",
+    expect(invoke).toHaveBeenLastCalledWith(
+      "workbench_prepare_review_handoff",
+      {
+        request: {
+          workspaceId: "workspace_fixture",
+          sessionId: "session_fixture",
+          paperId: "paper_fixture",
+          metadata: { label: "revision" },
+          operationId: "handoff-operation",
+        },
       },
-    });
+    );
     await workbenchClient.inspectResearchArchive("/tmp/research.pwrx");
-    expect(invoke).toHaveBeenLastCalledWith("workbench_inspect_research_archive", {
-      request: { path: "/tmp/research.pwrx" },
-    });
+    expect(invoke).toHaveBeenLastCalledWith(
+      "workbench_inspect_research_archive",
+      {
+        request: { path: "/tmp/research.pwrx" },
+      },
+    );
     await workbenchClient.importResearchArchive("/tmp/research.pwrx", {
       "/old/root": "/new/root",
     });
-    expect(invoke).toHaveBeenLastCalledWith("workbench_import_research_archive", {
-      request: {
-        path: "/tmp/research.pwrx",
-        rootMappings: { "/old/root": "/new/root" },
+    expect(invoke).toHaveBeenLastCalledWith(
+      "workbench_import_research_archive",
+      {
+        request: {
+          path: "/tmp/research.pwrx",
+          rootMappings: { "/old/root": "/new/root" },
+        },
       },
-    });
+    );
   });
 });

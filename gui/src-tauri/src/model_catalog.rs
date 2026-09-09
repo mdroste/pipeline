@@ -645,10 +645,7 @@ pub(crate) use discovery::rpc_exchange;
 pub use resolution::{discover, price_for_model, resolve};
 
 #[cfg(test)]
-use discovery::{
-    populate_antigravity_models, populate_claude_models, provider_discovery_error,
-    read_discovery_output,
-};
+use discovery::{populate_claude_models, provider_discovery_error, read_discovery_output};
 #[cfg(test)]
 use resolution::{discovery_key, single_flight_discovery};
 

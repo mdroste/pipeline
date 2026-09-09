@@ -24,9 +24,17 @@ describe("WaveDiagram", () => {
     render(
       <WaveDiagram
         steps={[
-          step({ id: "technical", label: "Technical", agents: ["claude", "antigravity"] }),
+          step({
+            id: "technical",
+            label: "Technical",
+            agents: ["claude", "antigravity"],
+          }),
           step({ id: "empirical", label: "Empirical" }),
-          step({ id: "consolidate", label: "Consolidate", phase: "sequential" }),
+          step({
+            id: "consolidate",
+            label: "Consolidate",
+            phase: "sequential",
+          }),
         ]}
         merge={merge}
         selectedId={null}
@@ -35,9 +43,13 @@ describe("WaveDiagram", () => {
     );
     expect(screen.getByRole("button", { name: "Extract" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Orient" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Technical" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Technical" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Merge" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Consolidate" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Consolidate" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the required orient node when merge is disabled", () => {
@@ -50,7 +62,9 @@ describe("WaveDiagram", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Orient" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Merge" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Merge" }),
+    ).not.toBeInTheDocument();
   });
 
   it("reports selections for steps and pseudo-nodes", async () => {
@@ -93,10 +107,18 @@ describe("WaveDiagram", () => {
         onSelect={() => {}}
       />,
     );
-    expect(screen.getByRole("heading", { name: "Workflow overview" })).toBeInTheDocument();
-    expect(screen.getByText(/1 enabled step in 1 execution wave/)).toBeInTheDocument();
-    expect(screen.getByText(/up to 1 provider call before retries/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Technical" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Workflow overview" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/1 enabled step in 1 execution wave/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/up to 1 provider call before retries/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Technical" }),
+    ).toBeInTheDocument();
   });
 
   it("represents Auto Review as a combined orientation call and two adaptive slots", async () => {
@@ -108,7 +130,11 @@ describe("WaveDiagram", () => {
           step({ id: "auto_contribution", label: "Contribution & Literature" }),
           step({ id: "auto_consistency", label: "Claims & Consistency" }),
           step({ id: "auto_exposition", label: "Exposition & Architecture" }),
-          step({ id: "auto_synthesis", label: "Consolidate", phase: "sequential" }),
+          step({
+            id: "auto_synthesis",
+            label: "Consolidate",
+            phase: "sequential",
+          }),
         ]}
         merge={merge}
         adaptiveReview={true}
@@ -117,11 +143,19 @@ describe("WaveDiagram", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Orient + classify" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Adaptive agents (2–6)" })).toBeInTheDocument();
-    expect(screen.getByText(/4 saved steps plus 2–6 auto-selected specialists/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Orient + classify" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Adaptive agents (2–6)" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/4 saved steps plus 2–6 auto-selected specialists/),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Adaptive agents (2–6)" }));
+    await user.click(
+      screen.getByRole("button", { name: "Adaptive agents (2–6)" }),
+    );
     expect(onSelect).toHaveBeenLastCalledWith("auto_adaptive_agents");
   });
 });

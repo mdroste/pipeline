@@ -1,6 +1,9 @@
+import {
+  useResearchPanelController,
+  operation,
+} from "./research-panel/useResearchPanelController";
 import WorkspaceAssistantPresetForm from "./WorkspaceAssistantPresetForm";
-import { projectClient, type HostExecutionPreview } from "../lib/projectClient";
-import { useCallback, useEffect, useState } from "react";
+import { projectClient } from "../lib/projectClient";
 import { open } from "@tauri-apps/plugin-dialog";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
@@ -8,7 +11,6 @@ import WorkspaceRecipesPanel from "./WorkspaceRecipesPanel";
 import WorkspaceReleasePanel from "./WorkspaceReleasePanel";
 import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkspaceIcon from "./WorkspaceIcon";
-import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import {
   compactAccessSummary,
   compactModuleSummary,
@@ -16,22 +18,12 @@ import {
 } from "./harness-editor/harnessHelpers";
 import type {
   ConversationSnapshot,
-  EffectiveHarness,
   ExecutionProfile,
-  HarnessCatalog,
-  PaperSearchHit,
-  PaperWithRevision,
-  ResearchExecution,
-  ResearchLedger,
   ResearchNote,
   ReviewHandoff,
-  SourceRecord,
   Workspace,
 } from "../lib/workbenchTypes";
 
-function operation(prefix: string) {
-  return `${prefix}-${crypto.randomUUID()}`;
-}
 function lines(value: string) {
   return value
     .split("\n")
@@ -92,184 +84,70 @@ export default function WorkspaceResearchPanel({
   /** Opens the move dialog so an unfiled conversation can be filed in a project. */
   onMove?: () => void;
 }) {
-  const [width, setWidth] = usePersistentPanelWidth(
-    "pipeline.workspace.researchWidth",
-    432,
-    320,
-    560,
-  );
-  const workspace = projectWorkspace ?? snapshot?.workspace;
-  const workspaceId = workspace?.id ?? snapshot?.session.workspaceId ?? null;
-  const [hostPreview, setHostPreview] = useState<{
-    preview: HostExecutionPreview;
-    testOnly: boolean;
-  } | null>(null);
-  const [tab, setTab] = useState<ResearchTab>(initialTab);
-  const [catalog, setCatalog] = useState<HarnessCatalog | null>(null);
-  const [effective, setEffective] = useState<EffectiveHarness | null>(null);
-  const [papers, setPapers] = useState<PaperWithRevision[]>([]);
-  const [projectPaperId, setProjectPaperId] = useState<string | null>(null);
-  const [sources, setSources] = useState<SourceRecord[]>([]);
-  const [notes, setNotes] = useState<ResearchNote[]>([]);
-  const [ledger, setLedger] = useState<ResearchLedger | null>(null);
-  const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
-  const [executions, setExecutions] = useState<ResearchExecution[]>([]);
-  const [busy, setBusy] = useState(false);
-  const hasActiveExecution = executions.some((e) =>
-    ["queued", "running"].includes(e.outcome),
-  );
-  useEffect(() => {
-    if (!active || tab !== "results" || !workspaceId || (!busy && !hasActiveExecution))
-      return;
-    let disposed = false,
-      pending = false;
-    const timer = setInterval(() => {
-      if (pending) return;
-      pending = true;
-      void workbenchClient
-        .listExecutions(workspaceId)
-        .then((value) => {
-          if (!disposed) setExecutions(value);
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          pending = false;
-        });
-    }, 500);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-  }, [active, busy, hasActiveExecution, tab, workspaceId]);
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<PaperSearchHit[]>([]);
-  const [noteBody, setNoteBody] = useState("");
-  const [noteKind, setNoteKind] = useState<ResearchNote["kind"]>("next_step");
-  const [claim, setClaim] = useState("");
-  const [profileName, setProfileName] = useState("Research command");
-  const [adapter, setAdapter] =
-    useState<ExecutionProfile["adapter"]>("command");
-  const [argv, setArgv] = useState('["/usr/bin/true"]');
-  const [inputs, setInputs] = useState("");
-  const [outputs, setOutputs] = useState("");
-
-  const loadBase = useCallback(async () => {
-    if (!snapshot || tab !== "setup") return;
-    const base = await Promise.all([
-      workbenchClient.harnessCatalog(workspaceId),
-      workbenchClient.effectiveHarness(snapshot.session.id),
-    ]);
-    setCatalog(base[0]);
-    setEffective(base[1]);
-  }, [snapshot?.session.id, workspaceId, tab]);
-
-  const loadTab = useCallback(async () => {
-    if (!workspaceId) {
-      setPapers([]);
-      setSources([]);
-      setNotes([]);
-      setLedger(null);
-      setProfiles([]);
-      setExecutions([]);
-      return;
-    }
-    if (tab === "documents") {
-      const [nextPapers, nextSources] = await Promise.all([
-        workbenchClient.listPapers(workspaceId),
-        workbenchClient.listSources(workspaceId),
-      ]);
-      setPapers(nextPapers);
-      setSources(nextSources);
-    } else if (tab === "memory") {
-      setNotes(await workbenchClient.listNotes(workspaceId, true));
-    } else if (tab === "evidence") {
-      setLedger(await workbenchClient.researchLedger(workspaceId));
-    } else if (tab === "results") {
-      const [nextProfiles, nextExecutions] = await Promise.all([
-        workbenchClient.listExecutionProfiles(workspaceId),
-        workbenchClient.listExecutions(workspaceId),
-      ]);
-      setProfiles(nextProfiles);
-      setExecutions(nextExecutions);
-    } else if (tab === "release") {
-      setPapers(await workbenchClient.listPapers(workspaceId));
-    }
-  }, [tab, workspaceId]);
-
-  useEffect(() => {
-    if (!active) return;
-    void loadBase().catch((cause) => onError(workbenchErrorMessage(cause)));
-  }, [active, loadBase, onError]);
-  useEffect(() => {
-    if (!active) return;
-    void loadTab().catch((cause) => onError(workbenchErrorMessage(cause)));
-  }, [active, loadTab, onError]);
-
-  const act = async (fn: () => Promise<void>) => {
-    setBusy(true);
-    onBusy?.(true);
-    try {
-      await beforeChange?.();
-      await fn();
-      await Promise.all([loadBase(), loadTab()]);
-    } catch (cause) {
-      onError(workbenchErrorMessage(cause));
-    } finally {
-      setBusy(false);
-      onBusy?.(false);
-    }
-  };
-
-  const patchSession = async (
-    values: Partial<{
-      presetId: string;
-      paperId: string | null;
-      overrides: Record<string, unknown>;
-    }>,
-  ) => {
-    if (!snapshot) return;
-    const latest = await workbenchClient.conversationSnapshot(
-      snapshot.session.id,
-    );
-    const updated = await workbenchClient.updateSession({
-      sessionId: latest.session.id,
-      expectedRevision: latest.session.revision,
-      operationId: operation("research-session"),
-      presetId: values.presetId,
-      paperId: values.paperId ?? undefined,
-      clearPaper: values.paperId === null,
-      overrides: values.overrides,
-    });
-    const next = {
-      ...latest,
-      session: updated.record,
-      sequence: updated.sequence,
-    };
-    onSnapshot(next);
-    return next;
-  };
-
-  const selectedPaper =
-    papers.find((item) => item.paper.id === (projectPaperId ?? snapshot?.session.paperId)) ?? null;
-  const successor = Boolean(
-    snapshot?.activeBinding?.harnessFingerprint &&
-    effective &&
-    snapshot.activeBinding.harnessFingerprint !== effective.fingerprint,
-  );
-  const tabs: Array<[ResearchTab, string]> = [
-    ["setup", "Assistant settings"],
-    ["documents", "Documents"],
-    ["recipes", "Recipes"],
-    ["memory", "Notes"],
-    ["evidence", "Evidence"],
-    ["results", "Results"],
-    ["release", "Sharing & backup"],
-  ];
+  const {
+    width,
+    setWidth,
+    workspace,
+    workspaceId,
+    hostPreview,
+    setHostPreview,
+    tab,
+    setTab,
+    catalog,
+    effective,
+    papers,
+    setProjectPaperId,
+    sources,
+    notes,
+    ledger,
+    profiles,
+    executions,
+    busy,
+    query,
+    setQuery,
+    hits,
+    setHits,
+    noteBody,
+    setNoteBody,
+    noteKind,
+    setNoteKind,
+    claim,
+    setClaim,
+    profileName,
+    setProfileName,
+    adapter,
+    setAdapter,
+    argv,
+    setArgv,
+    inputs,
+    setInputs,
+    outputs,
+    setOutputs,
+    act,
+    patchSession,
+    selectedPaper,
+    successor,
+    tabs,
+  } = useResearchPanelController({
+    snapshot,
+    onSnapshot,
+    onError,
+    workspace: projectWorkspace,
+    initialTab,
+    active,
+    onBusy,
+    beforeChange,
+  });
 
   return (
     <SidebarPanel
       fill={embedded}
-      onKeyDown={event => { if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); } }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !busy) {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
       aria-label={embedded ? title : "Research workspace"}
       side="right"
       width={width}
@@ -294,22 +172,28 @@ export default function WorkspaceResearchPanel({
         }
       >
         <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400">
-          {tab === "setup" ? effective?.preset.name ?? "Loading assistant settings…" : workspace?.name}
+          {tab === "setup"
+            ? (effective?.preset.name ?? "Loading assistant settings…")
+            : workspace?.name}
         </p>
       </SidebarHeader>
-      {(!allowedTabs || allowedTabs.length > 1) && <div className="workspace-research-tabs flex shrink-0 flex-wrap gap-1 border-b border-gray-200 px-5 pb-4 dark:border-gray-800">
-        {tabs.filter(([id]) => !allowedTabs || allowedTabs.includes(id)).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={tab === id}
-            onClick={() => setTab(id)}
-            className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${tab === id ? "bg-gray-100 text-gray-950 dark:bg-gray-800 dark:text-gray-100" : "text-gray-500 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800/60 dark:hover:text-gray-100"}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>}
+      {(!allowedTabs || allowedTabs.length > 1) && (
+        <div className="workspace-research-tabs flex shrink-0 flex-wrap gap-1 border-b border-gray-200 px-5 pb-4 dark:border-gray-800">
+          {tabs
+            .filter(([id]) => !allowedTabs || allowedTabs.includes(id))
+            .map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={tab === id}
+                onClick={() => setTab(id)}
+                className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${tab === id ? "bg-gray-100 text-gray-950 dark:bg-gray-800 dark:text-gray-100" : "text-gray-500 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800/60 dark:hover:text-gray-100"}`}
+              >
+                {label}
+              </button>
+            ))}
+        </div>
+      )}
       <div className="workspace-research-content min-h-0 min-w-0 flex-1 overflow-auto p-5 text-sm">
         {!workspaceId && tab !== "setup" && (
           <div className="rounded border border-amber-200 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
@@ -334,7 +218,9 @@ export default function WorkspaceResearchPanel({
         {tab === "setup" && snapshot && effective && catalog && (
           <div className="space-y-4">
             <label className="block">
-              <span className="text-xs font-medium">Agent profile · This conversation</span>
+              <span className="text-xs font-medium">
+                Agent profile · This conversation
+              </span>
               <select
                 value={snapshot.session.presetId ?? "plain"}
                 disabled={busy || settingsDisabled}
@@ -363,11 +249,17 @@ export default function WorkspaceResearchPanel({
               <span className="text-xs font-medium">Access mode</span>
               <select
                 aria-label="Access mode"
-                value={typeof snapshot.session.overrides.mode === "string" ? snapshot.session.overrides.mode : ""}
+                value={
+                  typeof snapshot.session.overrides.mode === "string"
+                    ? snapshot.session.overrides.mode
+                    : ""
+                }
                 disabled={busy || settingsDisabled}
                 onChange={(event) =>
                   void act(async () => {
-                    const latest = await workbenchClient.conversationSnapshot(snapshot.session.id);
+                    const latest = await workbenchClient.conversationSnapshot(
+                      snapshot.session.id,
+                    );
                     const overrides = { ...latest.session.overrides };
                     if (event.target.value) overrides.mode = event.target.value;
                     else delete overrides.mode;
@@ -376,7 +268,10 @@ export default function WorkspaceResearchPanel({
                 }
                 className="mt-1 w-full rounded border bg-white p-2 dark:bg-neutral-950"
               >
-                <option value="">Use inherited · {effective.mode === "inspect" ? "Read only" : "Allow edits"}</option>
+                <option value="">
+                  Use inherited ·{" "}
+                  {effective.mode === "inspect" ? "Read only" : "Allow edits"}
+                </option>
                 <option value="inspect">Read only</option>
                 <option value="edit">Allow edits</option>
               </select>
@@ -399,12 +294,32 @@ export default function WorkspaceResearchPanel({
                 {item}
               </p>
             ))}
-            <WorkspaceAssistantPresetForm key={`${effective.preset.id}:${effective.preset.revision}`} effective={effective} catalog={catalog}
-              disabled={busy || settingsDisabled} onSave={(name, instructions, modules) => void act(async () => {
-                const copy = await workbenchClient.clonePreset({ workspaceId, sourcePresetId: effective.preset.id, name, operationId: operation("assistant-copy") });
-                await workbenchClient.updatePreset({ presetId: copy.id, expectedRevision: copy.revision, name, description: effective.preset.description, instructions, modules, operationId: operation("assistant-customize") });
-                await patchSession({ presetId: copy.id });
-              })} />
+            <WorkspaceAssistantPresetForm
+              key={`${effective.preset.id}:${effective.preset.revision}`}
+              effective={effective}
+              catalog={catalog}
+              disabled={busy || settingsDisabled}
+              onSave={(name, instructions, modules) =>
+                void act(async () => {
+                  const copy = await workbenchClient.clonePreset({
+                    workspaceId,
+                    sourcePresetId: effective.preset.id,
+                    name,
+                    operationId: operation("assistant-copy"),
+                  });
+                  await workbenchClient.updatePreset({
+                    presetId: copy.id,
+                    expectedRevision: copy.revision,
+                    name,
+                    description: effective.preset.description,
+                    instructions,
+                    modules,
+                    operationId: operation("assistant-customize"),
+                  });
+                  await patchSession({ presetId: copy.id });
+                })
+              }
+            />
             {onEditHarness && (
               <div className="border-t border-gray-200 pt-3 dark:border-neutral-800">
                 <button
@@ -416,7 +331,8 @@ export default function WorkspaceResearchPanel({
                   Manage agent profiles…
                 </button>
                 <p className="mt-1 text-[11px] text-gray-500">
-                  Create profiles, view system prompts, and choose allowed tools.
+                  Create profiles, view system prompts, and choose allowed
+                  tools.
                 </p>
               </div>
             )}
@@ -467,7 +383,8 @@ export default function WorkspaceResearchPanel({
                       operationId: operation("paper-import"),
                     });
                     setProjectPaperId(result.paper.id);
-                    if (!projectWorkspace) await patchSession({ paperId: result.paper.id });
+                    if (!projectWorkspace)
+                      await patchSession({ paperId: result.paper.id });
                   })
                 }
                 className="rounded bg-gray-900 px-3 py-2 text-xs font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
@@ -500,7 +417,8 @@ export default function WorkspaceResearchPanel({
                       operationId: operation("tree-import"),
                     });
                     setProjectPaperId(result.paper.id);
-                    if (!projectWorkspace) await patchSession({ paperId: result.paper.id });
+                    if (!projectWorkspace)
+                      await patchSession({ paperId: result.paper.id });
                   })
                 }
                 className="rounded border px-3 py-2 text-xs"
@@ -571,7 +489,8 @@ export default function WorkspaceResearchPanel({
                     onClick={() =>
                       void act(async () => {
                         setProjectPaperId(item.paper.id);
-                        if (!projectWorkspace) await patchSession({ paperId: item.paper.id });
+                        if (!projectWorkspace)
+                          await patchSession({ paperId: item.paper.id });
                       })
                     }
                     className={`block w-full rounded border p-3 text-left ${item.paper.id === selectedPaper?.paper.id ? "border-blue-400 bg-blue-50 dark:bg-blue-950/20" : "bg-white dark:bg-neutral-950"}`}
@@ -669,11 +588,13 @@ export default function WorkspaceResearchPanel({
         )}
 
         {tab === "recipes" && snapshot && (
-          <fieldset disabled={settingsDisabled}><WorkspaceRecipesPanel
-            snapshot={snapshot}
-            onSnapshot={onSnapshot}
-            onError={onError}
-          /></fieldset>
+          <fieldset disabled={settingsDisabled}>
+            <WorkspaceRecipesPanel
+              snapshot={snapshot}
+              onSnapshot={onSnapshot}
+              onError={onError}
+            />
+          </fieldset>
         )}
 
         {tab === "memory" && workspaceId && (
@@ -1189,27 +1110,43 @@ export default function WorkspaceResearchPanel({
 
         {tab === "release" && (
           <>
-          {(releaseView === "all" || releaseView === "review") && <label className="mb-4 block text-xs">
-            Paper to review
-            <select aria-label="Paper to review" className="mt-2 block w-full rounded border bg-transparent p-2" value={selectedPaper?.paper.id ?? ""}
-              disabled={busy} onChange={event => setProjectPaperId(event.target.value)}>
-              <option value="">Choose a paper…</option>
-              {papers.map(item => <option key={item.paper.id} value={item.paper.id}>{item.paper.title}</option>)}
-            </select>
-            {selectedPaper?.revision && <span className="mt-2 block text-gray-500">Saved revision · {compactHash(selectedPaper.revision.contentHash)}</span>}
-          </label>}
-          <WorkspaceReleasePanel
-            snapshot={snapshot}
-            workspaceId={workspaceId}
-            view={releaseView}
-            selectedPaper={selectedPaper}
-            busy={busy}
-            onAction={(action) => {
-              void act(action);
-            }}
-            onError={onError}
-            onReviewHandoff={onReviewHandoff}
-          />
+            {(releaseView === "all" || releaseView === "review") && (
+              <label className="mb-4 block text-xs">
+                Paper to review
+                <select
+                  aria-label="Paper to review"
+                  className="mt-2 block w-full rounded border bg-transparent p-2"
+                  value={selectedPaper?.paper.id ?? ""}
+                  disabled={busy}
+                  onChange={(event) => setProjectPaperId(event.target.value)}
+                >
+                  <option value="">Choose a paper…</option>
+                  {papers.map((item) => (
+                    <option key={item.paper.id} value={item.paper.id}>
+                      {item.paper.title}
+                    </option>
+                  ))}
+                </select>
+                {selectedPaper?.revision && (
+                  <span className="mt-2 block text-gray-500">
+                    Saved revision ·{" "}
+                    {compactHash(selectedPaper.revision.contentHash)}
+                  </span>
+                )}
+              </label>
+            )}
+            <WorkspaceReleasePanel
+              snapshot={snapshot}
+              workspaceId={workspaceId}
+              view={releaseView}
+              selectedPaper={selectedPaper}
+              busy={busy}
+              onAction={(action) => {
+                void act(action);
+              }}
+              onError={onError}
+              onReviewHandoff={onReviewHandoff}
+            />
           </>
         )}
       </div>

@@ -28,6 +28,21 @@ pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> 
     flatten(&chain.steps, &mut all);
     for step in all {
         match &step.action {
+            Action::LiteratureLookup { .. } => {
+                let ws = scope
+                    .workspace_id
+                    .clone()
+                    .ok_or("Literature lookup requires a project")?;
+                if !run_store(move |s| crate::workbench::acquisition::network_enabled(&s, &ws))
+                    .await
+                    .map_err(|e| e.message)?
+                {
+                    return Err(
+                        "Enable the project's literature acquisition before preparing this lookup"
+                            .into(),
+                    );
+                }
+            }
             Action::Workspace { .. } | Action::Deliver { .. } if scope.session_id.is_none() => {
                 return Err("Choose a Workspace conversation for this chain".into())
             }
@@ -290,6 +305,17 @@ pub async fn execute(
         }
     }
     let result = match &ready.step.action {
+        Action::LiteratureLookup { query } => {
+            crate::workbench::discovery::acquire(
+                run.scope
+                    .workspace_id
+                    .clone()
+                    .ok_or("Literature lookup needs a project")?,
+                query.clone(),
+                operation.clone(),
+            )
+            .await?
+        }
         Action::Snapshot {
             input,
             filename,

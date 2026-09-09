@@ -7,7 +7,8 @@ import type {
 } from "../../lib/types";
 import useModalDialog from "../../hooks/useModalDialog";
 
-export type StepContextPreset = "standard" | "input" | "prior_reports" | "isolated";
+export type StepContextPreset =
+  "standard" | "input" | "prior_reports" | "isolated";
 
 export interface AddStepDraft {
   mode: "guided" | "adaptive" | "blank";
@@ -44,11 +45,13 @@ function ChoiceCard({
   onChange: () => void;
 }) {
   return (
-    <label className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors ${
-      checked
-        ? "border-gray-700 bg-gray-50 dark:border-gray-300 dark:bg-gray-800"
-        : "border-gray-200 hover:border-gray-400 dark:border-gray-700 dark:hover:border-gray-500"
-    } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}>
+    <label
+      className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 transition-colors ${
+        checked
+          ? "border-gray-700 bg-gray-50 dark:border-gray-300 dark:bg-gray-800"
+          : "border-gray-200 hover:border-gray-400 dark:border-gray-700 dark:hover:border-gray-500"
+      } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+    >
       <input
         type="radio"
         name={name}
@@ -59,7 +62,9 @@ function ChoiceCard({
         className="mt-0.5"
       />
       <span>
-        <span className="block text-xs font-medium text-gray-800 dark:text-gray-200">{title}</span>
+        <span className="block text-xs font-medium text-gray-800 dark:text-gray-200">
+          {title}
+        </span>
         <span className="mt-0.5 block text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
           {description}
         </span>
@@ -98,7 +103,9 @@ function AdaptiveRoleCard({
       }`}
     >
       <span className="flex items-start justify-between gap-3">
-        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{role.label}</span>
+        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+          {role.label}
+        </span>
         <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-400">
           {role.level === "discipline" ? "Broad" : group}
         </span>
@@ -126,7 +133,8 @@ function AddStepDialog({
   const [label, setLabel] = useState("");
   const [instructions, setInstructions] = useState("");
   const [phase, setPhase] = useState<Phase>("parallel");
-  const [contextPreset, setContextPreset] = useState<StepContextPreset>("standard");
+  const [contextPreset, setContextPreset] =
+    useState<StepContextPreset>("standard");
   const [output, setOutput] = useState<"report" | "issues">("report");
   const [catalog, setCatalog] = useState<AutoReviewCatalog | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -153,14 +161,17 @@ function AddStepDialog({
         if (stale) return;
         setCatalog(value);
         setSelectedDiscipline(
-          value.disciplines.find((discipline) => discipline.id === "economics")?.id
-            ?? value.disciplines[0]?.id
-            ?? "",
+          value.disciplines.find((discipline) => discipline.id === "economics")
+            ?.id ??
+            value.disciplines[0]?.id ??
+            "",
         );
       })
       .catch((caught) => {
         if (!stale) {
-          setCatalogError(caught instanceof Error ? caught.message : String(caught));
+          setCatalogError(
+            caught instanceof Error ? caught.message : String(caught),
+          );
         }
       })
       .finally(() => {
@@ -173,7 +184,10 @@ function AddStepDialog({
 
   useEffect(() => {
     if (mode !== "adaptive") return;
-    const timer = window.setTimeout(() => adaptiveSearchRef.current?.focus(), 0);
+    const timer = window.setTimeout(
+      () => adaptiveSearchRef.current?.focus(),
+      0,
+    );
     return () => window.clearTimeout(timer);
   }, [mode]);
 
@@ -181,27 +195,35 @@ function AddStepDialog({
   const listedRoles = useMemo<ListedRole[]>(() => {
     if (!catalog) return [];
     if (catalogTab === "methods") {
-      return catalog.methodFamilies.flatMap((family) => family.roles
-        .filter((role) => roleMatches(role, normalizedQuery))
-        .map((role) => ({ role, group: family.label })));
+      return catalog.methodFamilies.flatMap((family) =>
+        family.roles
+          .filter((role) => roleMatches(role, normalizedQuery))
+          .map((role) => ({ role, group: family.label })),
+      );
     }
     const disciplines = normalizedQuery
       ? catalog.disciplines
-      : catalog.disciplines.filter((discipline) => discipline.id === selectedDiscipline);
-    return disciplines.flatMap((discipline) => discipline.roles
-      .filter((role) => roleMatches(role, normalizedQuery))
-      .map((role) => ({ role, group: discipline.label })));
+      : catalog.disciplines.filter(
+          (discipline) => discipline.id === selectedDiscipline,
+        );
+    return disciplines.flatMap((discipline) =>
+      discipline.roles
+        .filter((role) => roleMatches(role, normalizedQuery))
+        .map((role) => ({ role, group: discipline.label })),
+    );
   }, [catalog, catalogTab, normalizedQuery, selectedDiscipline]);
 
   const selectedRole = useMemo(() => {
     if (!catalog || !selectedRoleId) return null;
-    return catalog.methodFamilies
-      .flatMap((family) => family.roles)
-      .find((role) => role.id === selectedRoleId)
-      ?? catalog.disciplines
+    return (
+      catalog.methodFamilies
+        .flatMap((family) => family.roles)
+        .find((role) => role.id === selectedRoleId) ??
+      catalog.disciplines
         .flatMap((discipline) => discipline.roles)
-        .find((role) => role.id === selectedRoleId)
-      ?? null;
+        .find((role) => role.id === selectedRoleId) ??
+      null
+    );
   }, [catalog, selectedRoleId]);
 
   const choosePhase = (next: Phase) => {
@@ -210,9 +232,10 @@ function AddStepDialog({
       setContextPreset("standard");
     }
   };
-  const canCreate = mode === "adaptive"
-    ? !!selectedRole
-    : !!label.trim() && (mode === "blank" || !!instructions.trim());
+  const canCreate =
+    mode === "adaptive"
+      ? !!selectedRole
+      : !!label.trim() && (mode === "blank" || !!instructions.trim());
 
   const submit = async () => {
     if (!canCreate || submitting) return;
@@ -221,7 +244,7 @@ function AddStepDialog({
     try {
       await onCreate({
         mode,
-        label: mode === "adaptive" ? selectedRole?.label ?? "" : label.trim(),
+        label: mode === "adaptive" ? (selectedRole?.label ?? "") : label.trim(),
         instructions: instructions.trim(),
         phase: mode === "adaptive" ? "parallel" : phase,
         contextPreset,
@@ -255,11 +278,24 @@ function AddStepDialog({
         className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900"
       >
         <div className="border-b border-gray-200 px-6 pt-5 dark:border-gray-700">
-          <h2 id={titleId} className="text-base font-semibold text-gray-900 dark:text-gray-100">Add workflow step</h2>
-          <p id={descriptionId} className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Design a new step or add a configurable agent from the adaptive review suite.
+          <h2
+            id={titleId}
+            className="text-base font-semibold text-gray-900 dark:text-gray-100"
+          >
+            Add workflow step
+          </h2>
+          <p
+            id={descriptionId}
+            className="mt-1 text-xs text-gray-500 dark:text-gray-400"
+          >
+            Design a new step or add a configurable agent from the adaptive
+            review suite.
           </p>
-          <div role="tablist" aria-label="Add step method" className="mt-4 flex gap-5">
+          <div
+            role="tablist"
+            aria-label="Add step method"
+            className="mt-4 flex gap-5"
+          >
             <button
               type="button"
               role="tab"
@@ -294,20 +330,32 @@ function AddStepDialog({
           {mode === "adaptive" ? (
             <div className="space-y-4">
               <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/30">
-                <p className="text-xs font-medium text-blue-950 dark:text-blue-100">Choose an adaptive agent</p>
+                <p className="text-xs font-medium text-blue-950 dark:text-blue-100">
+                  Choose an adaptive agent
+                </p>
                 <p className="mt-1 text-[11px] leading-4 text-blue-800 dark:text-blue-200">
-                  Choose a subject or method specialist. Its complete prompt and execution settings are copied into this workflow, where you can configure them like any other step.
+                  Choose a subject or method specialist. Its complete prompt and
+                  execution settings are copied into this workflow, where you
+                  can configure them like any other step.
                 </p>
               </div>
 
               {catalogLoading && !catalog && (
-                <p role="status" className="rounded-lg border border-gray-200 p-6 text-center text-sm text-gray-500 dark:border-gray-700">
+                <p
+                  role="status"
+                  className="rounded-lg border border-gray-200 p-6 text-center text-sm text-gray-500 dark:border-gray-700"
+                >
                   Loading adaptive agents…
                 </p>
               )}
               {catalogError && !catalog && (
-                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
-                  <p>Could not load the adaptive-agent catalog: {catalogError}</p>
+                <div
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+                >
+                  <p>
+                    Could not load the adaptive-agent catalog: {catalogError}
+                  </p>
                   <button
                     type="button"
                     onClick={() => setCatalogAttempt((attempt) => attempt + 1)}
@@ -321,7 +369,11 @@ function AddStepDialog({
               {catalog && (
                 <>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                    <div className="inline-flex w-fit rounded-lg bg-gray-100 p-1 dark:bg-gray-800" role="tablist" aria-label="Adaptive agent type">
+                    <div
+                      className="inline-flex w-fit rounded-lg bg-gray-100 p-1 dark:bg-gray-800"
+                      role="tablist"
+                      aria-label="Adaptive agent type"
+                    >
                       <button
                         type="button"
                         role="tab"
@@ -347,7 +399,9 @@ function AddStepDialog({
                         <select
                           aria-label="Subject discipline"
                           value={selectedDiscipline}
-                          onChange={(event) => setSelectedDiscipline(event.target.value)}
+                          onChange={(event) =>
+                            setSelectedDiscipline(event.target.value)
+                          }
                           className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-900 outline-none focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
                         >
                           {catalog.disciplines.map((discipline) => (
@@ -395,7 +449,10 @@ function AddStepDialog({
           ) : (
             <div className="space-y-5">
               <div>
-                <label htmlFor="new-step-name" className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                <label
+                  htmlFor="new-step-name"
+                  className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+                >
                   Step name
                 </label>
                 <input
@@ -410,7 +467,10 @@ function AddStepDialog({
 
               {mode === "guided" && (
                 <div>
-                  <label htmlFor="new-step-instructions" className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                  <label
+                    htmlFor="new-step-instructions"
+                    className="block text-xs font-medium text-gray-700 dark:text-gray-300"
+                  >
                     What should this step do?
                   </label>
                   <textarea
@@ -425,7 +485,9 @@ function AddStepDialog({
               )}
 
               <fieldset>
-                <legend className="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">When can it run?</legend>
+                <legend className="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">
+                  When can it run?
+                </legend>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <ChoiceCard
                     name="new-step-phase"
@@ -449,14 +511,20 @@ function AddStepDialog({
               {mode === "guided" && (
                 <>
                   <fieldset>
-                    <legend className="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">What should it receive?</legend>
+                    <legend className="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">
+                      What should it receive?
+                    </legend>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <ChoiceCard
                         name="new-step-context"
                         value="standard"
                         checked={contextPreset === "standard"}
                         title="Recommended context"
-                        description={phase === "parallel" ? "Primary input and orientation map." : "Earlier reports and orientation map."}
+                        description={
+                          phase === "parallel"
+                            ? "Primary input and orientation map."
+                            : "Earlier reports and orientation map."
+                        }
                         onChange={() => setContextPreset("standard")}
                       />
                       <ChoiceCard
@@ -488,7 +556,9 @@ function AddStepDialog({
                   </fieldset>
 
                   <fieldset>
-                    <legend className="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">What should it produce?</legend>
+                    <legend className="mb-2 text-xs font-medium text-gray-700 dark:text-gray-300">
+                      What should it produce?
+                    </legend>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <ChoiceCard
                         name="new-step-output"
@@ -513,7 +583,10 @@ function AddStepDialog({
 
               {mode === "blank" && (
                 <p className="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed text-gray-600 dark:bg-gray-800 dark:text-gray-400">
-                  A starter prompt and the standard context for the selected phase will be added. The new step opens immediately so you can configure its prompt, inputs, execution rules, models, and agents.
+                  A starter prompt and the standard context for the selected
+                  phase will be added. The new step opens immediately so you can
+                  configure its prompt, inputs, execution rules, models, and
+                  agents.
                 </p>
               )}
             </div>
@@ -522,7 +595,10 @@ function AddStepDialog({
 
         <div className="border-t border-gray-200 px-6 py-4 dark:border-gray-700">
           {submitError && (
-            <p role="alert" className="mb-3 text-xs text-red-700 dark:text-red-300">
+            <p
+              role="alert"
+              className="mb-3 text-xs text-red-700 dark:text-red-300"
+            >
               Could not copy this step: {submitError}
             </p>
           )}
@@ -533,7 +609,11 @@ function AddStepDialog({
                 : "All choices remain editable after creation."}
             </p>
             <div className="flex shrink-0 gap-2">
-              <button type="button" onClick={onCancel} className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800">
+              <button
+                type="button"
+                onClick={onCancel}
+                className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+              >
                 Cancel
               </button>
               <button
@@ -542,7 +622,11 @@ function AddStepDialog({
                 onClick={() => void submit()}
                 className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:bg-gray-300 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200 dark:disabled:bg-gray-700"
               >
-                {submitting ? "Copying…" : mode === "adaptive" ? "Copy step" : "Create step"}
+                {submitting
+                  ? "Copying…"
+                  : mode === "adaptive"
+                    ? "Copy step"
+                    : "Create step"}
               </button>
             </div>
           </div>

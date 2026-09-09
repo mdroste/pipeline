@@ -35,7 +35,12 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
     [preview, setPreview] = useState<GridStatus | null>(null),
     [sort, setSort] = useState<"ordinal" | "state">("ordinal");
   useEffect(() => {
-    if (props.active === false || !preview || !["running", "paused"].includes(preview.run.state)) return;
+    if (
+      props.active === false ||
+      !preview ||
+      !["running", "paused"].includes(preview.run.state)
+    )
+      return;
     let alive = true;
     const timer = setInterval(() => {
       void p
@@ -373,8 +378,7 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
                       {r.attempt?.state === "completed" &&
                         (
                           r.attempt.receipt.outputManifest?.artifacts as
-                            | { path: string; artifactId: string }[]
-                            | undefined
+                            { path: string; artifactId: string }[] | undefined
                         )
                           ?.filter((a) => a.path.endsWith(".json"))
                           .map((a) => (

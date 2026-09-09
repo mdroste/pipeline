@@ -659,7 +659,7 @@ fn cancelled_run_becomes_resumable_from_its_last_checkpoint() {
     assert!(recover_resumable_run_dir(&run_dir, &mut manifest).unwrap());
     assert_eq!(manifest.status, "cancelled");
     assert_eq!(manifest.step_count, 1);
-    assert_eq!(manifest.failed_steps, vec!["Run cancelled"]);
+    assert_eq!(manifest.failed_steps, vec!["Run cancelled", "technical"]);
     assert!(run_has_resume_files(&run_dir, &manifest));
     let report: crate::models::PipelineReport =
         serde_json::from_str(&fs::read_to_string(run_dir.join("report.json")).unwrap()).unwrap();
@@ -869,4 +869,67 @@ fn unlisted_artifact_scan_removes_fifo_without_opening_it() {
 
     assert_eq!(writer.register_unlisted("artifacts", "files"), 0);
     assert!(!fifo.exists());
+}
+
+#[test]
+fn recovery_requires_logical_receipts_and_atomically_overlays_final_waves() {
+    for (published, unit_count) in [(false, 1), (false, 2), (true, 2)] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = RunWriter::create_in(temp.path(), "wave-recovery").unwrap();
+        writer
+            .add_text(DOCUMENT_TEXT_PATH, "Document", "document", "paper")
+            .unwrap();
+        let run = writer.dir().to_path_buf();
+        let checkpoints = run.join("artifacts/checkpoints");
+        fs::create_dir_all(&checkpoints).unwrap();
+        let unit = crate::models::StepOutput {
+            step_id: "technical/claude".into(),
+            step_label: "Technical".into(),
+            raw_text: "first result".into(),
+            ..Default::default()
+        };
+        fs::write(
+            checkpoints.join("0000_unit.json"),
+            serde_json::to_vec(&unit).unwrap(),
+        )
+        .unwrap();
+        let second = crate::models::StepOutput {
+            step_id: "technical/codex".into(),
+            raw_text: "second result".into(),
+            ..unit.clone()
+        };
+        if unit_count == 2 {
+            fs::write(
+                checkpoints.join("0001_unit.json"),
+                serde_json::to_vec(&second).unwrap(),
+            )
+            .unwrap();
+        }
+        // A failed/incomplete publication is ignored without deleting either
+        // previously committed unit. A complete publication replaces them once.
+        if published {
+            let merged = crate::models::StepOutput {
+                step_id: "technical".into(),
+                raw_text: "merged result".into(),
+                ..unit.clone()
+            };
+            fs::write(checkpoints.join("wave_0000.json"), serde_json::to_vec(&serde_json::json!({"checkpointVersion":1,"steps":["technical"],"outputs":[merged]})).unwrap()).unwrap();
+        } else {
+            fs::write(checkpoints.join("wave_0000.json"), "{incomplete write").unwrap();
+        }
+        let mut manifest: RunManifest =
+            serde_json::from_str(&fs::read_to_string(run.join("manifest.json")).unwrap()).unwrap();
+        assert!(recover_resumable_run_dir(&run, &mut manifest).unwrap());
+        let report: crate::models::PipelineReport =
+            serde_json::from_str(&fs::read_to_string(run.join("report.json")).unwrap()).unwrap();
+        assert_eq!(
+            report.step_outputs.len(),
+            if published { 1 } else { unit_count }
+        );
+        assert_eq!(
+            report.failed_steps.iter().any(|f| f.step_id == "technical"),
+            !published
+        );
+        assert!(checkpoints.join("0000_unit.json").exists());
+    }
 }

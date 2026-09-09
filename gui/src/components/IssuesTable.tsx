@@ -26,7 +26,10 @@ const SEVERITY_STYLES: Record<string, string> = {
 };
 
 function sevStyle(sev: string): string {
-  return SEVERITY_STYLES[sev] || "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
+  return (
+    SEVERITY_STYLES[sev] ||
+    "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+  );
 }
 
 const VERDICT_STYLES: Record<Verdict, string> = {
@@ -49,9 +52,10 @@ function evidenceCitation(item: IssueEvidence): string {
     item.sourceHash ? `source hash ${item.sourceHash}` : "",
   ].filter(Boolean);
   const location = references.join(", ") || item.description || "source";
-  const description = item.description && item.description !== location
-    ? ` — ${item.description}`
-    : "";
+  const description =
+    item.description && item.description !== location
+      ? ` — ${item.description}`
+      : "";
   return `${location}${description}${item.quote ? ` (“${item.quote}”)` : ""}`;
 }
 
@@ -61,7 +65,8 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
   const [verdictFilter, setVerdictFilter] = useState<string>("all");
   const [issueSearch, setIssueSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkVerdict, setBulkVerdict] = useState<Exclude<Verdict, "">>("accept");
+  const [bulkVerdict, setBulkVerdict] =
+    useState<Exclude<Verdict, "">>("accept");
   const [bulkRationale, setBulkRationale] = useState("");
   const [annotationsLoaded, setAnnotationsLoaded] = useState(!runId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -87,7 +92,9 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
     const content = JSON.stringify(value);
     const request = saveChainRef.current
       .catch(() => undefined)
-      .then(() => invoke<void>("save_annotations", { runId: targetRun, content }));
+      .then(() =>
+        invoke<void>("save_annotations", { runId: targetRun, content }),
+      );
     saveChainRef.current = request.catch(() => undefined);
     return { request, content };
   };
@@ -147,7 +154,12 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
 
   // Debounced, serialized persistence after a user edit.
   useEffect(() => {
-    if (!runId || loadedRunRef.current !== runId || dirtyRunRef.current !== runId) return;
+    if (
+      !runId ||
+      loadedRunRef.current !== runId ||
+      dirtyRunRef.current !== runId
+    )
+      return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     const snapshot = JSON.stringify(annotations);
     saveTimerRef.current = setTimeout(() => {
@@ -188,12 +200,21 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
   const setVerdict = (id: string, status: Verdict) => {
     if (runId && loadedRunRef.current !== runId) return;
     if (runId) dirtyRunRef.current = runId;
-    setAnnotations((prev) => ({ ...prev, [id]: { status: prev[id]?.status === status ? "" : status, note: prev[id]?.note ?? "" } }));
+    setAnnotations((prev) => ({
+      ...prev,
+      [id]: {
+        status: prev[id]?.status === status ? "" : status,
+        note: prev[id]?.note ?? "",
+      },
+    }));
   };
   const setNote = (id: string, note: string) => {
     if (runId && loadedRunRef.current !== runId) return;
     if (runId) dirtyRunRef.current = runId;
-    setAnnotations((prev) => ({ ...prev, [id]: { status: prev[id]?.status ?? "", note } }));
+    setAnnotations((prev) => ({
+      ...prev,
+      [id]: { status: prev[id]?.status ?? "", note },
+    }));
   };
 
   const toggleExpand = (id: string) =>
@@ -204,20 +225,36 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
     });
 
   const sorted = useMemo(
-    () => [...issues].sort((a, b) => severityRank(a.severity) - severityRank(b.severity)),
-    [issues]
+    () =>
+      [...issues].sort(
+        (a, b) => severityRank(a.severity) - severityRank(b.severity),
+      ),
+    [issues],
   );
   const visible = useMemo(
-    () => sorted.filter((issue) => {
-      if (severityFilter !== "all" && issue.severity !== severityFilter) return false;
-      const verdict = annotations[issue.id]?.status ?? "";
-      if (verdictFilter === "unreviewed" && verdict) return false;
-      if (verdictFilter !== "all" && verdictFilter !== "unreviewed" && verdict !== verdictFilter) return false;
-      const needle = issueSearch.trim().toLowerCase();
-      return !needle || [issue.title, issue.body, issue.section, ...(issue.sources ?? [])]
-        .filter(Boolean).join(" ").toLowerCase().includes(needle);
-    }),
-    [annotations, issueSearch, sorted, severityFilter, verdictFilter]
+    () =>
+      sorted.filter((issue) => {
+        if (severityFilter !== "all" && issue.severity !== severityFilter)
+          return false;
+        const verdict = annotations[issue.id]?.status ?? "";
+        if (verdictFilter === "unreviewed" && verdict) return false;
+        if (
+          verdictFilter !== "all" &&
+          verdictFilter !== "unreviewed" &&
+          verdict !== verdictFilter
+        )
+          return false;
+        const needle = issueSearch.trim().toLowerCase();
+        return (
+          !needle ||
+          [issue.title, issue.body, issue.section, ...(issue.sources ?? [])]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(needle)
+        );
+      }),
+    [annotations, issueSearch, sorted, severityFilter, verdictFilter],
   );
 
   const counts = useMemo(() => {
@@ -242,7 +279,10 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
     try {
       // The backend runs the native save dialog and writes only to the
       // user-chosen path; the webview never supplies a filesystem path.
-      await invoke("save_text_file", { content: md, suggestedName: "issue-decisions.md" });
+      await invoke("save_text_file", {
+        content: md,
+        suggestedName: "issue-decisions.md",
+      });
     } catch (error) {
       setPersistenceError({
         operation: "export",
@@ -264,9 +304,7 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
         .then(() => {
           if (runId !== loadedRunRef.current) return;
           setPersistenceError(null);
-          if (
-            JSON.stringify(annotationsRef.current) === snapshot
-          ) {
+          if (JSON.stringify(annotationsRef.current) === snapshot) {
             dirtyRunRef.current = null;
             setSaved(true);
             if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
@@ -287,7 +325,8 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
   const severities = ["all", "high", "medium", "low"];
 
   const applyBulkDecision = () => {
-    if (!annotationsLoaded || selected.size === 0 || !bulkRationale.trim()) return;
+    if (!annotationsLoaded || selected.size === 0 || !bulkRationale.trim())
+      return;
     if (runId) dirtyRunRef.current = runId;
     setAnnotations((current) => {
       const next = { ...current };
@@ -303,7 +342,9 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
   return (
     <div className="max-w-4xl mx-auto p-6">
       <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Issues ({issues.length})</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          Issues ({issues.length})
+        </h2>
         <div className="flex items-center gap-1 ml-2">
           {severities.map((s) => (
             <button
@@ -320,18 +361,39 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
             </button>
           ))}
         </div>
-        <select aria-label="Filter by decision" value={verdictFilter} onChange={(event) => setVerdictFilter(event.target.value)} className="rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900">
+        <select
+          aria-label="Filter by decision"
+          value={verdictFilter}
+          onChange={(event) => setVerdictFilter(event.target.value)}
+          className="rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
+        >
           <option value="all">All decisions</option>
           <option value="unreviewed">Unreviewed ({counts[""]})</option>
           <option value="accept">Accepted</option>
           <option value="reject">Rejected</option>
           <option value="done">Done</option>
         </select>
-        <input aria-label="Search issues" value={issueSearch} onChange={(event) => setIssueSearch(event.target.value)} placeholder="Search title, text, reviewer…" className="min-w-48 rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900" />
+        <input
+          aria-label="Search issues"
+          value={issueSearch}
+          onChange={(event) => setIssueSearch(event.target.value)}
+          placeholder="Search title, text, reviewer…"
+          className="min-w-48 rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
+        />
         <div className="ml-auto flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-          {counts.accept > 0 && <span className="text-green-700 dark:text-green-400">{counts.accept} accepted</span>}
-          {counts.reject > 0 && <span className="text-red-600 dark:text-red-400">{counts.reject} rejected</span>}
-          {saved && <span className="text-gray-500 dark:text-gray-400">saved ✓</span>}
+          {counts.accept > 0 && (
+            <span className="text-green-700 dark:text-green-400">
+              {counts.accept} accepted
+            </span>
+          )}
+          {counts.reject > 0 && (
+            <span className="text-red-600 dark:text-red-400">
+              {counts.reject} rejected
+            </span>
+          )}
+          {saved && (
+            <span className="text-gray-500 dark:text-gray-400">saved ✓</span>
+          )}
           {!annotationsLoaded && <span role="status">Loading decisions…</span>}
           <button
             onClick={exportDecisions}
@@ -346,17 +408,47 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
       {selected.size > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs dark:border-gray-800 dark:bg-gray-900/60">
           <span className="font-medium">{selected.size} selected</span>
-          <select aria-label="Bulk decision" value={bulkVerdict} onChange={(event) => setBulkVerdict(event.target.value as Exclude<Verdict, "">)} className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900">
-            <option value="accept">Accept</option><option value="reject">Reject</option><option value="done">Done</option>
+          <select
+            aria-label="Bulk decision"
+            value={bulkVerdict}
+            onChange={(event) =>
+              setBulkVerdict(event.target.value as Exclude<Verdict, "">)
+            }
+            className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+          >
+            <option value="accept">Accept</option>
+            <option value="reject">Reject</option>
+            <option value="done">Done</option>
           </select>
-          <textarea rows={2} aria-label="Bulk decision rationale" value={bulkRationale} onChange={(event) => setBulkRationale(event.target.value)} placeholder="Required rationale" className="min-w-56 flex-1 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900" />
-          <button onClick={applyBulkDecision} disabled={!bulkRationale.trim() || !annotationsLoaded} className="rounded bg-gray-900 px-2 py-1 text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900">Apply decision</button>
-          <button onClick={() => setSelected(new Set())} className="px-2 py-1 text-gray-500">Clear</button>
+          <textarea
+            rows={2}
+            aria-label="Bulk decision rationale"
+            value={bulkRationale}
+            onChange={(event) => setBulkRationale(event.target.value)}
+            placeholder="Required rationale"
+            className="min-w-56 flex-1 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+          />
+          <button
+            onClick={applyBulkDecision}
+            disabled={!bulkRationale.trim() || !annotationsLoaded}
+            className="rounded bg-gray-900 px-2 py-1 text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
+          >
+            Apply decision
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="px-2 py-1 text-gray-500"
+          >
+            Clear
+          </button>
         </div>
       )}
 
       {persistenceError && (
-        <div role="alert" className="mb-4 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300">
+        <div
+          role="alert"
+          className="mb-4 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300"
+        >
           <span className="font-medium">
             {persistenceError.operation === "export"
               ? "Decision export failed:"
@@ -396,13 +488,19 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                   aria-label={`Select issue: ${issue.title}`}
                   checked={selected.has(issue.id)}
                   disabled={!annotationsLoaded}
-                  onChange={() => setSelected((current) => {
-                    const next = new Set(current);
-                    next.has(issue.id) ? next.delete(issue.id) : next.add(issue.id);
-                    return next;
-                  })}
+                  onChange={() =>
+                    setSelected((current) => {
+                      const next = new Set(current);
+                      next.has(issue.id)
+                        ? next.delete(issue.id)
+                        : next.add(issue.id);
+                      return next;
+                    })
+                  }
                 />
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}
+                >
                   {issue.severity || "—"}
                 </span>
                 <button
@@ -410,11 +508,19 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                   aria-expanded={isOpen}
                   className="flex-1 text-left min-w-0"
                 >
-                  <span className="text-sm text-gray-900 dark:text-gray-100">{issue.title}</span>
-                  {issue.section && <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">§{issue.section}</span>}
+                  <span className="text-sm text-gray-900 dark:text-gray-100">
+                    {issue.title}
+                  </span>
+                  {issue.section && (
+                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
+                      §{issue.section}
+                    </span>
+                  )}
                 </button>
                 {ann?.status && (
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${VERDICT_STYLES[ann.status]}`}>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${VERDICT_STYLES[ann.status]}`}
+                  >
                     {ann.status}
                   </span>
                 )}
@@ -450,16 +556,22 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                   </div>
                   {issue.sources && issue.sources.length > 0 && (
                     <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
-                      <span className="font-semibold uppercase tracking-[0.1em] text-[10px]">Reviewers:</span>{" "}
+                      <span className="font-semibold uppercase tracking-[0.1em] text-[10px]">
+                        Reviewers:
+                      </span>{" "}
                       {issue.sources.join(", ")}
                     </p>
                   )}
                   {issue.evidence && issue.evidence.length > 0 && (
                     <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900/70">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">Evidence</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
+                        Evidence
+                      </p>
                       <div className="mt-2 space-y-2">
                         {issue.evidence.map((evidence, evidenceIndex) => {
-                          const canOpen = !!onOpenEvidence && (!!evidence.page || !!evidence.artifactPath);
+                          const canOpen =
+                            !!onOpenEvidence &&
+                            (!!evidence.page || !!evidence.artifactPath);
                           const lineLabel = evidence.lineStart
                             ? `:${evidence.lineStart}${evidence.lineEnd && evidence.lineEnd !== evidence.lineStart ? `–${evidence.lineEnd}` : ""}`
                             : "";
@@ -469,18 +581,28 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                               ? `${evidence.sourcePath}${lineLabel}`
                               : evidence.artifactPath
                                 ? `${evidence.artifactPath}${lineLabel}`
-                                : evidence.description || evidence.assetId || evidence.nodeId || (lineLabel ? `Line ${lineLabel.slice(1)}` : `Source ${evidenceIndex + 1}`);
+                                : evidence.description ||
+                                  evidence.assetId ||
+                                  evidence.nodeId ||
+                                  (lineLabel
+                                    ? `Line ${lineLabel.slice(1)}`
+                                    : `Source ${evidenceIndex + 1}`);
                           const location = (
-                            <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-medium ${
-                              canOpen
-                                ? "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:text-gray-950 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:text-white"
-                                : "border-gray-200 text-gray-500 dark:border-gray-800 dark:text-gray-400"
-                            }`}>
+                            <span
+                              className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-medium ${
+                                canOpen
+                                  ? "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:text-gray-950 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:text-white"
+                                  : "border-gray-200 text-gray-500 dark:border-gray-800 dark:text-gray-400"
+                              }`}
+                            >
                               {label}
                             </span>
                           );
                           return (
-                            <div key={`${evidence.page ?? ""}-${evidence.sourcePath ?? ""}-${evidence.nodeId ?? ""}-${evidenceIndex}`} className="text-xs text-gray-600 dark:text-gray-400">
+                            <div
+                              key={`${evidence.page ?? ""}-${evidence.sourcePath ?? ""}-${evidence.nodeId ?? ""}-${evidenceIndex}`}
+                              className="text-xs text-gray-600 dark:text-gray-400"
+                            >
                               <div className="flex flex-wrap items-center gap-2">
                                 {canOpen ? (
                                   <button
@@ -490,9 +612,18 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                                   >
                                     {location}
                                   </button>
-                                ) : location}
-                                {evidence.description && evidence.description !== label && <span>{evidence.description}</span>}
-                                {evidence.nodeId && <span className="font-mono text-[10px] text-gray-400">{evidence.nodeId}</span>}
+                                ) : (
+                                  location
+                                )}
+                                {evidence.description &&
+                                  evidence.description !== label && (
+                                    <span>{evidence.description}</span>
+                                  )}
+                                {evidence.nodeId && (
+                                  <span className="font-mono text-[10px] text-gray-400">
+                                    {evidence.nodeId}
+                                  </span>
+                                )}
                               </div>
                               {evidence.quote && (
                                 <blockquote className="mt-1.5 border-l-2 border-gray-300 pl-2 text-[11px] italic text-gray-500 dark:border-gray-700 dark:text-gray-400">
@@ -507,9 +638,9 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                   )}
                   <input
                     aria-label={`Note for issue: ${issue.title}`}
-                      value={ann?.note ?? ""}
-                      onChange={(e) => setNote(issue.id, e.target.value)}
-                      disabled={!annotationsLoaded}
+                    value={ann?.note ?? ""}
+                    onChange={(e) => setNote(issue.id, e.target.value)}
+                    disabled={!annotationsLoaded}
                     placeholder="Add a note…"
                     className="mt-2 w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
                   />
@@ -518,10 +649,16 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
             </div>
           );
         })}
-        {visible.length === 0 && <p className="text-sm text-gray-500 dark:text-gray-400 px-2">No issues at this severity.</p>}
+        {visible.length === 0 && (
+          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
+            No issues at this severity.
+          </p>
+        )}
       </div>
       {!runId && (
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-4">Annotations aren't saved for this view (no saved report).</p>
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-4">
+          Annotations aren't saved for this view (no saved report).
+        </p>
       )}
     </div>
   );

@@ -328,7 +328,6 @@ pub async fn call_google_api(
             usage.summary()
         ),
     );
-    super::logging::emit_usage(app, usage.call_usage());
 
     if text.trim().is_empty() {
         return Err(format!("{label}: Google API returned empty output"));

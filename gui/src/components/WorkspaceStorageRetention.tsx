@@ -1,16 +1,35 @@
 import { useRef, useState } from "react";
 import { workbenchClient } from "../lib/workbenchClient";
 import type { StorageReport, PrunePlan } from "../lib/workbenchTypes";
-const button = "rounded border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
-const mib = (bytes: number) => `${(bytes / 1048576).toFixed(bytes < 1048576 ? 2 : 1)} MiB`;
-export default function WorkspaceStorageRetention({ busy, onAction }: { busy: boolean; onAction: (action: () => Promise<void>) => void }) {
+const button =
+  "rounded border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
+const mib = (bytes: number) =>
+  `${(bytes / 1048576).toFixed(bytes < 1048576 ? 2 : 1)} MiB`;
+export default function WorkspaceStorageRetention({
+  busy,
+  onAction,
+}: {
+  busy: boolean;
+  onAction: (action: () => Promise<void>) => void;
+}) {
   const [storage, setStorage] = useState<StorageReport | null>(null);
   const [pruneKeys, setPruneKeys] = useState<string[]>([]);
   const [prunePlan, setPrunePlan] = useState<PrunePlan | null>(null);
   const pruneGeneration = useRef(0);
   const [notice, setNotice] = useState("");
-  const toggle = (list: string[], set: (v: string[]) => void, key: string, on: boolean) => set(on ? [...list, key] : list.filter(k => k !== key));
-  return <div className="min-w-0 overflow-x-auto">{notice && <p role="status" className="mb-3 text-sm">{notice}</p>}
+  const toggle = (
+    list: string[],
+    set: (v: string[]) => void,
+    key: string,
+    on: boolean,
+  ) => set(on ? [...list, key] : list.filter((k) => k !== key));
+  return (
+    <div className="min-w-0 overflow-x-auto">
+      {notice && (
+        <p role="status" className="mb-3 text-sm">
+          {notice}
+        </p>
+      )}
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
           Storage and retention
@@ -171,6 +190,6 @@ export default function WorkspaceStorageRetention({ busy, onAction }: { busy: bo
           </div>
         )}
       </section>
-
-  </div>;
+    </div>
+  );
 }

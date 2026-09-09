@@ -3,7 +3,9 @@ import { renderGenericSurvey, renderSurvey } from "./surveyMarkdown";
 
 describe("renderGenericSurvey", () => {
   it("renders string values as titled sections", () => {
-    const md = renderGenericSurvey({ overview: "A replication package for a paper." });
+    const md = renderGenericSurvey({
+      overview: "A replication package for a paper.",
+    });
     expect(md).toContain("## Overview");
     expect(md).toContain("A replication package for a paper.");
   });
@@ -22,7 +24,9 @@ describe("renderGenericSurvey", () => {
   });
 
   it("renders arrays of strings as bullet lists", () => {
-    const md = renderGenericSurvey({ conventions: ["snake_case files", "figures in fig/"] });
+    const md = renderGenericSurvey({
+      conventions: ["snake_case files", "figures in fig/"],
+    });
     expect(md).toContain("- snake_case files");
     expect(md).toContain("- figures in fig/");
   });
@@ -105,7 +109,10 @@ describe("renderSurvey", () => {
         subject_specialist_ids: ["subject_economics_macro"],
         method_specialist_ids: ["formal_proofs", "quantitative_computation"],
         selection_notes: [
-          { id: "formal_proofs", reason: "The main result depends on four propositions." },
+          {
+            id: "formal_proofs",
+            reason: "The main result depends on four propositions.",
+          },
         ],
         routing_uncertainty: [],
       },
@@ -119,6 +126,8 @@ describe("renderSurvey", () => {
     });
     expect(md).toContain("## Detected Review Plan");
     expect(md).toContain("**Subject**: Quantitative macroeconomics");
-    expect(md).toContain("**Formal Proofs**: The main result depends on four propositions.");
+    expect(md).toContain(
+      "**Formal Proofs**: The main result depends on four propositions.",
+    );
   });
 });

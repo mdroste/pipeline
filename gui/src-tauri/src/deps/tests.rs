@@ -1,10 +1,10 @@
+#[cfg(unix)]
+use super::{check_claude_auth, probe_resolved};
 use super::{
-    antigravity_version_supported, cli_auth_status, cli_setup_recommendation, dependency_ready,
+    cli_auth_status, cli_setup_recommendation, dependency_ready, google_dependency,
     parse_host_port, pdf_dependency_requirements, pdf_extraction_may_run, required_providers,
     resolve_command_in, windows_pathexts, CliAuthStatus, DepStatus,
 };
-#[cfg(unix)]
-use super::{check_antigravity_auth, check_claude_auth, probe_resolved};
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
@@ -85,19 +85,21 @@ fn parse_rejects_garbage() {
 }
 
 #[test]
-fn antigravity_version_gate_requires_headless_capable_release() {
-    // 1.1.12 fixed --mode/--model/--effort in headless runs; older builds
-    // silently ignore them and must fail the check.
-    assert_eq!(antigravity_version_supported("1.1.12"), Some(true));
-    assert_eq!(antigravity_version_supported("1.2.0"), Some(true));
-    assert_eq!(antigravity_version_supported("2.0.0"), Some(true));
-    assert_eq!(antigravity_version_supported("1.1.11"), Some(false));
-    assert_eq!(antigravity_version_supported("0.9.9"), Some(false));
-    // Unparseable output is unknown, not evidence either way.
-    assert_eq!(antigravity_version_supported("1.1"), None);
-    assert_eq!(antigravity_version_supported("1.1.12-beta"), None);
-    assert_eq!(antigravity_version_supported(""), None);
-    assert_eq!(antigravity_version_supported("dev"), None);
+fn google_readiness_is_api_only_for_legacy_subscription_settings() {
+    for key in ["", "   ", "configured-key"] {
+        let settings = crate::settings::Settings {
+            antigravity_access_mode: "subscription".into(),
+            google_api_key: key.into(),
+            ..Default::default()
+        };
+        let dependency = google_dependency(&settings, true);
+        assert_eq!(settings.model_transport("antigravity"), "api");
+        assert_eq!(dependency.name, "Google API");
+        assert_eq!(dependency_ready(&dependency), !key.trim().is_empty());
+        assert_eq!(dependency.cli_auth_status, None);
+        assert!(dependency.path.is_empty());
+        assert!(dependency_ready(&google_dependency(&settings, false)));
+    }
 }
 
 #[test]
@@ -593,11 +595,6 @@ fn windows_cli_setup_uses_official_guides_instead_of_npm_commands() {
             "npm install -g @openai/codex",
             "https://developers.openai.com/codex/cli/",
         ),
-        (
-            "Antigravity CLI",
-            "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-            "https://antigravity.google/docs/cli",
-        ),
     ] {
         let (hint, url) = cli_setup_recommendation(product, command, false, true);
         assert!(!hint.contains("npm") && !hint.contains("curl"));
@@ -605,12 +602,8 @@ fn windows_cli_setup_uses_official_guides_instead_of_npm_commands() {
         assert_eq!(url.as_deref(), Some(expected_url));
     }
 
-    let (hint, url) = cli_setup_recommendation(
-        "Antigravity CLI",
-        "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-        true,
-        true,
-    );
+    let (hint, url) =
+        cli_setup_recommendation("Codex CLI", "npm install -g @openai/codex", true, true);
     assert!(hint.starts_with("Upgrade"));
     assert!(!hint.contains("curl"));
     assert!(url.is_some());
@@ -637,46 +630,9 @@ fn unverified_cli_authentication_fails_closed() {
         authenticated: None,
         cli_auth_status: Some(CliAuthStatus::Unknown),
     };
-    assert!(!dependency_ready(&status("Antigravity CLI", true)));
-    assert!(!dependency_ready(&status("Antigravity CLI", false)));
+    assert!(!dependency_ready(&status("Codex CLI", true)));
+    assert!(!dependency_ready(&status("Codex CLI", false)));
     assert!(!dependency_ready(&status("Claude CLI", true)));
-}
-
-#[test]
-#[cfg(unix)]
-fn antigravity_auth_probe_reads_agy_models_deterministically() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = tempfile::tempdir().unwrap();
-    let bin = temp.path().join("bin");
-
-    // Signed in: `agy models` exits 0 with the listing.
-    let signed_in = bin.join("signed-in");
-    write_fixture(&signed_in, "#!/bin/sh\nprintf 'gemini-3.5-flash\\n'\n");
-    std::fs::set_permissions(&signed_in, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let command = resolve_command_in("signed-in", std::slice::from_ref(&bin), false, None).unwrap();
-    assert_eq!(check_antigravity_auth(&command), Some(true));
-
-    // Signed out: fast failure with the sign-in diagnostic on stderr.
-    let signed_out = bin.join("signed-out");
-    write_fixture(
-        &signed_out,
-        "#!/bin/sh\nprintf 'Error: Please sign in to view available models.\\n' >&2\nexit 1\n",
-    );
-    std::fs::set_permissions(&signed_out, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let command =
-        resolve_command_in("signed-out", std::slice::from_ref(&bin), false, None).unwrap();
-    assert_eq!(check_antigravity_auth(&command), Some(false));
-
-    // Any other failure (network, crash) is unknown, not signed-out.
-    let broken = bin.join("broken");
-    write_fixture(
-        &broken,
-        "#!/bin/sh\nprintf 'dial tcp: timeout\\n' >&2\nexit 1\n",
-    );
-    std::fs::set_permissions(&broken, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let command = resolve_command_in("broken", &[bin], false, None).unwrap();
-    assert_eq!(check_antigravity_auth(&command), None);
 }
 
 #[test]
@@ -696,7 +652,7 @@ fn model_access_requires_every_required_provider() {
     // one — readiness is per required provider, not an OR over all of them.
     let missing_required = status("Claude CLI", true, false, None);
     let available_unrequired = status("Codex CLI", false, true, Some(true));
-    let available_required = status("Antigravity CLI", true, true, Some(true));
+    let available_required = status("Google API", true, true, Some(true));
     assert!(![&missing_required, &available_unrequired]
         .into_iter()
         .all(dependency_ready));
@@ -745,4 +701,20 @@ fn unix_resolution_skips_non_executable_shadows() {
     // instead of a file that would fail to spawn with EACCES.
     let directories = vec![dir_a.path().to_path_buf()];
     assert!(resolve_command_in("claude", &directories, false, None).is_none());
+}
+
+#[test]
+fn local_ipv6_urls_use_standard_authority_parsing() {
+    assert_eq!(
+        parse_host_port("http://[::1]/v1"),
+        Some(("[::1]".into(), 80))
+    );
+    assert_eq!(
+        parse_host_port("https://[::1]/v1"),
+        Some(("[::1]".into(), 443))
+    );
+    assert_eq!(
+        parse_host_port("http://[::1]:11434/v1"),
+        Some(("[::1]".into(), 11434))
+    );
 }

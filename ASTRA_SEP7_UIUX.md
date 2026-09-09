@@ -545,6 +545,6 @@ Line anchors refer to the audited working tree and may move during implementatio
 | S28 | [SidebarPanel.tsx](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/SidebarPanel.tsx), [useModalDialog.ts](/Users/Mike/Documents/GitHub/pipeline/gui/src/hooks/useModalDialog.ts), and [DialogService.tsx](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/DialogService.tsx) — existing reusable foundations |
 | S29 | [file-workspace.md](/Users/Mike/Documents/GitHub/pipeline/docs/file-workspace.md) — editor/reader adapters and expected-hash boundary |
 | S30 | [tauri.conf.json:19](/Users/Mike/Documents/GitHub/pipeline/gui/src-tauri/tauri.conf.json:19) — minimum native window size |
-| S31 | [CLAUDE.md](/Users/Mike/Documents/GitHub/pipeline/CLAUDE.md), [workbench_plan.md](/Users/Mike/Documents/GitHub/pipeline/workbench_plan.md), and [release-qualification.md](/Users/Mike/Documents/GitHub/pipeline/docs/workbench/release-qualification.md) — architecture, scope and qualification limits |
+| S31 | [CLAUDE.md](/Users/Mike/Documents/GitHub/pipeline/CLAUDE.md), [workbench_plan.md](/Users/Mike/Documents/GitHub/pipeline/notes/workbench_plan.md), and [release-qualification.md](/Users/Mike/Documents/GitHub/pipeline/docs/workbench/release-qualification.md) — architecture, scope and qualification limits |
 
 The first implementation slice should address UI-01 and demonstrate UI-05 on the project desk. Those two changes resolve concrete failures and make the proposed modular design reviewable before it spreads through the rest of the suite.

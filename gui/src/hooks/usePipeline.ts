@@ -114,8 +114,8 @@ export interface TokenTotals {
 }
 
 /** Token usage aggregated over a run: a grand total plus per-session counts.
- *  Every current provider reports usage — codex CLI, claude CLI JSON, the
- *  agy JSON envelope, and the direct APIs. */
+ *  Every current provider reports usage — Codex, Claude CLI JSON,
+ *  and the direct APIs. */
 export interface UsageState {
   total: TokenTotals;
   bySession: Record<number, TokenTotals>;
@@ -146,7 +146,13 @@ export type PipelineState =
   | { kind: "dispatching"; passes: Record<string, PassStatus> }
   | { kind: "merging"; passes: Record<string, PassStatus> }
   | { kind: "synthesizing"; passes: Record<string, PassStatus> }
-  | { kind: "done"; markdown: string; report: PipelineReport; extractedText: string; runId: string | null }
+  | {
+      kind: "done";
+      markdown: string;
+      report: PipelineReport;
+      extractedText: string;
+      runId: string | null;
+    }
   | { kind: "error"; message: string; failedAt?: string };
 
 /** Interval (ms) at which buffered log lines are flushed to state. */
@@ -165,8 +171,11 @@ export function usePipeline() {
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [passTimes, setPassTimes] = useState<Record<string, PassTiming>>({});
   const [stageHistory, setStageHistory] = useState<RuntimeStage[]>([]);
-  const [reviewRouting, setReviewRouting] = useState<ReviewRoutingSummary | null>(null);
-  const [providerLimitNotices, setProviderLimitNotices] = useState<ProviderLimitNotice[]>([]);
+  const [reviewRouting, setReviewRouting] =
+    useState<ReviewRoutingSummary | null>(null);
+  const [providerLimitNotices, setProviderLimitNotices] = useState<
+    ProviderLimitNotice[]
+  >([]);
   const stageSequence = useRef(0);
   // Tauri events and invoke responses travel over separate channels. Once the
   // command has reached a terminal state, ignore any earlier stage event that
@@ -207,12 +216,15 @@ export function usePipeline() {
             mergeStepLabels = [],
             skipped = false,
           } = event.payload;
-          if (stage !== "extracting" &&
-              stage !== "orienting" &&
-              stage !== "dispatching" &&
-              stage !== "merging" &&
-              stage !== "synthesizing" &&
-              stage !== "done") return;
+          if (
+            stage !== "extracting" &&
+            stage !== "orienting" &&
+            stage !== "dispatching" &&
+            stage !== "merging" &&
+            stage !== "synthesizing" &&
+            stage !== "done"
+          )
+            return;
           const kind = stage as RuntimeStageKind;
           setStageHistory((previous) => {
             const next = previous.map((entry, index) =>
@@ -274,17 +286,27 @@ export function usePipeline() {
             return { ...prev, [name]: { start: cur?.start ?? now, end: now } };
           });
           setState((prev) => {
-            if (prev.kind !== "dispatching" && prev.kind !== "merging" && prev.kind !== "synthesizing") return prev;
+            if (
+              prev.kind !== "dispatching" &&
+              prev.kind !== "merging" &&
+              prev.kind !== "synthesizing"
+            )
+              return prev;
             return {
               ...prev,
               passes: { ...prev.passes, [name]: status as PassStatus },
             };
           });
-          setStageHistory((previous) => previous.map((entry, index) =>
-            index === previous.length - 1 && entry.status === "active"
-              ? { ...entry, passes: { ...entry.passes, [name]: status as PassStatus } }
-              : entry,
-          ));
+          setStageHistory((previous) =>
+            previous.map((entry, index) =>
+              index === previous.length - 1 && entry.status === "active"
+                ? {
+                    ...entry,
+                    passes: { ...entry.passes, [name]: status as PassStatus },
+                  }
+                : entry,
+            ),
+          );
         }),
         listen<ReviewRoutingSummary>("pipeline:routing", (event) => {
           if (!mounted) return;
@@ -293,7 +315,9 @@ export function usePipeline() {
         listen<ProviderLimitNotice>("pipeline:provider-limit", (event) => {
           if (!mounted) return;
           setProviderLimitNotices((previous) => {
-            const next = previous.filter((notice) => notice.pass_key !== event.payload.pass_key);
+            const next = previous.filter(
+              (notice) => notice.pass_key !== event.payload.pass_key,
+            );
             next.push(event.payload);
             return next.slice(-20);
           });
@@ -304,20 +328,19 @@ export function usePipeline() {
           label?: string | null;
           level?: string;
           request?: LlmRequestDetails;
-        }>(
-          "pipeline:log",
-          (event) => {
-            if (!mounted) return;
-            logBuffer.current.push({
-              line: event.payload.line,
-              session: event.payload.session ?? null,
-              label: event.payload.label ?? null,
-              level: event.payload.level ?? "info",
-              t: Date.now(),
-              ...(event.payload.request ? { request: event.payload.request } : {}),
-            });
-          }
-        ),
+        }>("pipeline:log", (event) => {
+          if (!mounted) return;
+          logBuffer.current.push({
+            line: event.payload.line,
+            session: event.payload.session ?? null,
+            label: event.payload.label ?? null,
+            level: event.payload.level ?? "info",
+            t: Date.now(),
+            ...(event.payload.request
+              ? { request: event.payload.request }
+              : {}),
+          });
+        }),
         listen<{
           session: number | null;
           input_tokens: number;
@@ -326,73 +349,75 @@ export function usePipeline() {
           cache_write_input_tokens?: number;
           model_round_trips?: number;
           tool_calls?: Partial<ToolCallCounts>;
-        }>(
-          "pipeline:usage",
-          (event) => {
-            if (!mounted) return;
-            const {
-              session,
-              input_tokens,
-              output_tokens,
-              cached_input_tokens = 0,
-              cache_write_input_tokens = 0,
-              model_round_trips = 0,
-              tool_calls = {},
-            } = event.payload;
-            // Usage events are infrequent (one per LLM call), so update state
-            // directly rather than through the log buffer.
-            setUsage((prev) => {
-              const total = {
-                input: prev.total.input + input_tokens,
-                output: prev.total.output + output_tokens,
-                cached: prev.total.cached + cached_input_tokens,
-                cacheWrite: prev.total.cacheWrite + cache_write_input_tokens,
-                modelRoundTrips: prev.total.modelRoundTrips + model_round_trips,
+        }>("pipeline:usage", (event) => {
+          if (!mounted) return;
+          const {
+            session,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens = 0,
+            cache_write_input_tokens = 0,
+            model_round_trips = 0,
+            tool_calls = {},
+          } = event.payload;
+          // Usage events are infrequent (one per LLM call), so update state
+          // directly rather than through the log buffer.
+          setUsage((prev) => {
+            const total = {
+              input: prev.total.input + input_tokens,
+              output: prev.total.output + output_tokens,
+              cached: prev.total.cached + cached_input_tokens,
+              cacheWrite: prev.total.cacheWrite + cache_write_input_tokens,
+              modelRoundTrips: prev.total.modelRoundTrips + model_round_trips,
+              toolCalls: {
+                text_file:
+                  prev.total.toolCalls.text_file + (tool_calls.text_file ?? 0),
+                image: prev.total.toolCalls.image + (tool_calls.image ?? 0),
+                web: prev.total.toolCalls.web + (tool_calls.web ?? 0),
+                shell_or_other:
+                  prev.total.toolCalls.shell_or_other +
+                  (tool_calls.shell_or_other ?? 0),
+                unknown:
+                  prev.total.toolCalls.unknown + (tool_calls.unknown ?? 0),
+              },
+            };
+            const bySession = { ...prev.bySession };
+            if (session != null) {
+              const cur = bySession[session] ?? {
+                input: 0,
+                output: 0,
+                cached: 0,
+                cacheWrite: 0,
+                modelRoundTrips: 0,
                 toolCalls: {
-                  text_file: prev.total.toolCalls.text_file + (tool_calls.text_file ?? 0),
-                  image: prev.total.toolCalls.image + (tool_calls.image ?? 0),
-                  web: prev.total.toolCalls.web + (tool_calls.web ?? 0),
-                  shell_or_other:
-                    prev.total.toolCalls.shell_or_other + (tool_calls.shell_or_other ?? 0),
-                  unknown: prev.total.toolCalls.unknown + (tool_calls.unknown ?? 0),
+                  text_file: 0,
+                  image: 0,
+                  web: 0,
+                  shell_or_other: 0,
+                  unknown: 0,
                 },
               };
-              const bySession = { ...prev.bySession };
-              if (session != null) {
-                const cur = bySession[session] ?? {
-                  input: 0,
-                  output: 0,
-                  cached: 0,
-                  cacheWrite: 0,
-                  modelRoundTrips: 0,
-                  toolCalls: {
-                    text_file: 0,
-                    image: 0,
-                    web: 0,
-                    shell_or_other: 0,
-                    unknown: 0,
-                  },
-                };
-                bySession[session] = {
-                  input: cur.input + input_tokens,
-                  output: cur.output + output_tokens,
-                  cached: cur.cached + cached_input_tokens,
-                  cacheWrite: cur.cacheWrite + cache_write_input_tokens,
-                  modelRoundTrips: cur.modelRoundTrips + model_round_trips,
-                  toolCalls: {
-                    text_file: cur.toolCalls.text_file + (tool_calls.text_file ?? 0),
-                    image: cur.toolCalls.image + (tool_calls.image ?? 0),
-                    web: cur.toolCalls.web + (tool_calls.web ?? 0),
-                    shell_or_other:
-                      cur.toolCalls.shell_or_other + (tool_calls.shell_or_other ?? 0),
-                    unknown: cur.toolCalls.unknown + (tool_calls.unknown ?? 0),
-                  },
-                };
-              }
-              return { total, bySession };
-            });
-          }
-        ),
+              bySession[session] = {
+                input: cur.input + input_tokens,
+                output: cur.output + output_tokens,
+                cached: cur.cached + cached_input_tokens,
+                cacheWrite: cur.cacheWrite + cache_write_input_tokens,
+                modelRoundTrips: cur.modelRoundTrips + model_round_trips,
+                toolCalls: {
+                  text_file:
+                    cur.toolCalls.text_file + (tool_calls.text_file ?? 0),
+                  image: cur.toolCalls.image + (tool_calls.image ?? 0),
+                  web: cur.toolCalls.web + (tool_calls.web ?? 0),
+                  shell_or_other:
+                    cur.toolCalls.shell_or_other +
+                    (tool_calls.shell_or_other ?? 0),
+                  unknown: cur.toolCalls.unknown + (tool_calls.unknown ?? 0),
+                },
+              };
+            }
+            return { total, bySession };
+          });
+        }),
       ]);
       const unlisteners = registrations.flatMap((registration) =>
         registration.status === "fulfilled" ? [registration.value] : [],
@@ -424,17 +449,23 @@ export function usePipeline() {
               const retainedSessions = new Set(
                 tail
                   .filter((entry) => entry.request && entry.session != null)
-                  .map((entry) => entry.session as number)
+                  .map((entry) => entry.session as number),
               );
               const earlierRequests = new Map<number, LogEntry>();
               for (const entry of next.slice(0, -LOG_KEEP)) {
-                if (entry.request && entry.session != null && !retainedSessions.has(entry.session)) {
+                if (
+                  entry.request &&
+                  entry.session != null &&
+                  !retainedSessions.has(entry.session)
+                ) {
                   earlierRequests.set(entry.session, entry);
                 }
               }
-              const protectedRequests = Array.from(earlierRequests.values()).slice(-LOG_KEEP);
+              const protectedRequests = Array.from(
+                earlierRequests.values(),
+              ).slice(-LOG_KEEP);
               const retained = protectedRequests.concat(
-                tail.slice(protectedRequests.length)
+                tail.slice(protectedRequests.length),
               );
               return [
                 {
@@ -526,9 +557,13 @@ export function usePipeline() {
           extractedText: result.extracted_text,
           runId: result.run_id ?? null,
         });
-        setStageHistory((previous) => previous.map((entry) =>
-          entry.status === "active" ? { ...entry, status: "done" as const } : entry,
-        ));
+        setStageHistory((previous) =>
+          previous.map((entry) =>
+            entry.status === "active"
+              ? { ...entry, status: "done" as const }
+              : entry,
+          ),
+        );
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         terminalState.current = true;
@@ -537,16 +572,23 @@ export function usePipeline() {
           message,
           failedAt: prev.kind === "error" ? undefined : prev.kind,
         }));
-        setStageHistory((previous) => previous.map((entry) =>
-          entry.status === "active" ? { ...entry, status: "failed" as const } : entry,
-        ));
+        setStageHistory((previous) =>
+          previous.map((entry) =>
+            entry.status === "active"
+              ? { ...entry, status: "failed" as const }
+              : entry,
+          ),
+        );
       }
     },
-    []
+    [],
   );
 
   const rerunPipeline = useCallback(
-    async (runId: string, opts?: { fromStep?: string; onlyFailed?: boolean }) => {
+    async (
+      runId: string,
+      opts?: { fromStep?: string; onlyFailed?: boolean },
+    ) => {
       terminalState.current = false;
       setState({ kind: "extracting" });
       setLogs([]);
@@ -574,9 +616,13 @@ export function usePipeline() {
           extractedText: result.extracted_text,
           runId: result.run_id ?? null,
         });
-        setStageHistory((previous) => previous.map((entry) =>
-          entry.status === "active" ? { ...entry, status: "done" as const } : entry,
-        ));
+        setStageHistory((previous) =>
+          previous.map((entry) =>
+            entry.status === "active"
+              ? { ...entry, status: "done" as const }
+              : entry,
+          ),
+        );
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
         terminalState.current = true;
@@ -585,12 +631,16 @@ export function usePipeline() {
           message,
           failedAt: prev.kind === "error" ? undefined : prev.kind,
         }));
-        setStageHistory((previous) => previous.map((entry) =>
-          entry.status === "active" ? { ...entry, status: "failed" as const } : entry,
-        ));
+        setStageHistory((previous) =>
+          previous.map((entry) =>
+            entry.status === "active"
+              ? { ...entry, status: "failed" as const }
+              : entry,
+          ),
+        );
       }
     },
-    []
+    [],
   );
 
   const cancel = useCallback(async () => {

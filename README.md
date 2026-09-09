@@ -36,8 +36,11 @@ questions or tasks, the material each step may read, the providers to use, and
 the outputs that feed later steps. Pipeline handles extraction, scheduling,
 validation, and durable artifacts. Paper Review is the principal built-in use
 case, while the engine and portable workflow format also support broader
-research tasks. In the sidebar, Reviews groups **New run**, **History**,
-**Run collections**, and **Designer**. Designer includes the workflow Gallery.
+research tasks. The application now opens on a project-centered Home with
+outcome-first actions for assistant work, paper review, and reusable plans.
+**Projects** and recent projects are the primary navigation; the collapsed
+**Tools** menu retains direct access to Plans, New review, review history,
+Review projects, and the Review designer.
 
 Workspace recipes configure an interactive conversation; they are not
 Workflows and do not invoke the Workflow scheduler. The two modes keep their

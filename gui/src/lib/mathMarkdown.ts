@@ -7,10 +7,7 @@ function fenceMarker(line: string): { marker: string; count: number } | null {
   return count >= 3 ? { marker, count } : null;
 }
 
-const DISPLAY_ENVIRONMENTS: Record<
-  string,
-  { open: string; close: string }
-> = {
+const DISPLAY_ENVIRONMENTS: Record<string, { open: string; close: string }> = {
   equation: { open: "$$", close: "$$" },
   "equation*": { open: "$$", close: "$$" },
   displaymath: { open: "$$", close: "$$" },

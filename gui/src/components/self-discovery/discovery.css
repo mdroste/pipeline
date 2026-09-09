@@ -1,0 +1,59 @@
+.discovery-builder details,
+.discovery-detail > details {
+  padding: 12px 0;
+  border-top: 1px solid var(--border-color, #ddd);
+}
+.discovery-builder details > label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+.discovery-funnel {
+  padding: 12px;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 8px;
+  line-height: 1.6;
+}
+.discovery-candidates {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+}
+.discovery-candidate {
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.discovery-candidate h3,
+.discovery-candidate h4 {
+  margin-top: 0;
+}
+.discovery-review {
+  border-top: 1px solid var(--border-color, #ddd);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.discovery-selection {
+  padding: 12px 0;
+}
+.discovery-manuscript {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.7;
+  max-height: 70vh;
+  overflow: auto;
+}
+.discovery-paper {
+  border-top: 2px solid var(--border-color, #ddd);
+  padding-top: 20px;
+}
+.discovery-detail summary,
+.discovery-builder summary {
+  cursor: pointer;
+}
+.discovery-detail .task-actions {
+  flex-wrap: wrap;
+}

@@ -17,14 +17,11 @@ const PROVIDER_DEPENDENCIES = new Set([
   "Claude CLI",
   "Codex CLI",
   "Workflow ChatGPT",
-  "Antigravity CLI",
+  "Google API",
   "Local LLM server",
 ]);
 
-const BUNDLED_PDF_DEPENDENCIES = new Set([
-  "pdftoppm",
-  "pdftotext",
-]);
+const BUNDLED_PDF_DEPENDENCIES = new Set(["pdftoppm", "pdftotext"]);
 
 const HIDDEN_DEPENDENCIES = new Set([
   "Local LLM server",
@@ -32,11 +29,15 @@ const HIDDEN_DEPENDENCIES = new Set([
   ...BUNDLED_PDF_DEPENDENCIES,
 ]);
 
-const TONE_STYLES: Record<StatusTone, { row: string; icon: string; badge: string }> = {
+const TONE_STYLES: Record<
+  StatusTone,
+  { row: string; icon: string; badge: string }
+> = {
   success: {
     row: "bg-emerald-50/70 dark:bg-emerald-950/20",
     icon: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
-    badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+    badge:
+      "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
   },
   warning: {
     row: "bg-amber-50/70 dark:bg-amber-950/20",
@@ -55,7 +56,8 @@ const TONE_STYLES: Record<StatusTone, { row: string; icon: string; badge: string
   },
 };
 
-const isProviderDependency = (dep: Dependency) => PROVIDER_DEPENDENCIES.has(dep.name);
+const isProviderDependency = (dep: Dependency) =>
+  PROVIDER_DEPENDENCIES.has(dep.name);
 
 const hasConfiguredApiKey = (dep: Dependency) =>
   dep.authenticated === true && /API key configured/i.test(dep.hint);
@@ -75,7 +77,10 @@ const hasAuthWarning = (dep: Dependency) =>
 
 const shouldShowHint = (dep: Dependency) => Boolean(dep.hint);
 
-const openSetupGuide = (event: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+const openSetupGuide = (
+  event: React.MouseEvent<HTMLAnchorElement>,
+  url: string,
+) => {
   event.preventDefault();
   void openUrl(url).catch((error) => {
     console.warn("Unable to open dependency setup guide:", error);
@@ -89,10 +94,7 @@ const missingDependencyLabel = (dep: Dependency) => {
   return dep.required ? "required" : "optional";
 };
 
-function dependencyTone(
-  dep: Dependency,
-  group: DependencyGroup,
-): StatusTone {
+function dependencyTone(dep: Dependency, group: DependencyGroup): StatusTone {
   if (dependencyAvailable(dep)) {
     return hasAuthWarning(dep) ? "warning" : "success";
   }
@@ -103,21 +105,62 @@ function dependencyTone(
 function StatusIcon({ tone }: { tone: StatusTone }) {
   const styles = TONE_STYLES[tone];
   return (
-    <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${styles.icon}`}>
+    <span
+      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${styles.icon}`}
+    >
       {tone === "success" ? (
-        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M5 13l4 4L19 7" />
+        <svg
+          aria-hidden="true"
+          className="h-3 w-3"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2.4}
+            d="M5 13l4 4L19 7"
+          />
         </svg>
       ) : tone === "danger" ? (
-        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 18L18 6M6 6l12 12" />
+        <svg
+          aria-hidden="true"
+          className="h-3 w-3"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2.4}
+            d="M6 18L18 6M6 6l12 12"
+          />
         </svg>
       ) : tone === "warning" ? (
-        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 8v5m0 3h.01" />
+        <svg
+          aria-hidden="true"
+          className="h-3 w-3"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2.2}
+            d="M12 8v5m0 3h.01"
+          />
         </svg>
       ) : (
-        <svg aria-hidden="true" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg
+          aria-hidden="true"
+          className="h-3 w-3"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
           <path strokeLinecap="round" strokeWidth={2.2} d="M7 12h10" />
         </svg>
       )}
@@ -147,7 +190,8 @@ function DependencyRow({
   const tone = dependencyTone(dep, group);
   const styles = TONE_STYLES[tone];
   const status = authLabel(dep);
-  const unavailableAlternative = group === "models" && !dep.required && !available;
+  const unavailableAlternative =
+    group === "models" && !dep.required && !available;
   const badge = available
     ? status
     : dep.found && status
@@ -174,14 +218,18 @@ function DependencyRow({
       <StatusIcon tone={tone} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="font-medium text-gray-900 dark:text-gray-100">{dep.name === "Workflow ChatGPT" ? "Reviews ChatGPT" : dep.name}</span>
+          <span className="font-medium text-gray-900 dark:text-gray-100">
+            {dep.name === "Workflow ChatGPT" ? "Reviews ChatGPT" : dep.name}
+          </span>
           {dep.found && dep.version && dep.version !== "direct API" && (
             <span className="max-w-40 truncate text-xs text-gray-500 dark:text-gray-400">
               {dep.version}
             </span>
           )}
           {badge && (
-            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ${styles.badge}`}>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ${styles.badge}`}
+            >
               {badge}
             </span>
           )}
@@ -203,7 +251,9 @@ function DependencyRow({
                 </a>
                 {hint.slice(pdfSettingsIndex + pdfSettingsLabel.length)}
               </>
-            ) : hint}
+            ) : (
+              hint
+            )}
             {dep.help_url && (
               <>
                 {" "}
@@ -220,7 +270,9 @@ function DependencyRow({
           </p>
         )}
         {dep.found && dep.path && (
-          <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{dep.path}</p>
+          <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+            {dep.path}
+          </p>
         )}
       </div>
     </div>
@@ -229,11 +281,13 @@ function DependencyRow({
 
 function SectionStatus({ ready }: { ready: boolean }) {
   return (
-    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-      ready
-        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-        : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
-    }`}>
+    <span
+      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+        ready
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+          : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+      }`}
+    >
       {ready ? "Ready" : "Needs attention"}
     </span>
   );
@@ -251,29 +305,40 @@ export default function DepsCheck({
   const dialogRef = useModalDialog<HTMLDivElement>(onDismiss);
   const providerDeps = report.deps.filter(isProviderDependency);
   const pdfDeps = report.deps.filter((dep) => !isProviderDependency(dep));
-  const visible = (dep: Dependency) => !HIDDEN_DEPENDENCIES.has(dep.name)
-    || (dep.required && !dependencyAvailable(dep) && !BUNDLED_PDF_DEPENDENCIES.has(dep.name));
-  const modelAccessReady = providerDeps.every((dep) => !dep.required || dependencyAvailable(dep));
-  const bundledPdfUnavailable = report.deps.some(
-    (dep) => BUNDLED_PDF_DEPENDENCIES.has(dep.name)
-      && dep.required
-      && !dependencyAvailable(dep),
+  const visible = (dep: Dependency) =>
+    !HIDDEN_DEPENDENCIES.has(dep.name) ||
+    (dep.required &&
+      !dependencyAvailable(dep) &&
+      !BUNDLED_PDF_DEPENDENCIES.has(dep.name));
+  const modelAccessReady = providerDeps.every(
+    (dep) => !dep.required || dependencyAvailable(dep),
   );
-  const pdfReady = !bundledPdfUnavailable
-    && pdfDeps.every((dep) => !dep.required || dependencyAvailable(dep));
+  const bundledPdfUnavailable = report.deps.some(
+    (dep) =>
+      BUNDLED_PDF_DEPENDENCIES.has(dep.name) &&
+      dep.required &&
+      !dependencyAvailable(dep),
+  );
+  const pdfReady =
+    !bundledPdfUnavailable &&
+    pdfDeps.every((dep) => !dep.required || dependencyAvailable(dep));
   const hasBlockers = !report.ready;
-  const blockerMessage = !modelAccessReady && !pdfReady
-    ? "Model access and PDF parsing need attention."
-    : !modelAccessReady
-      ? "Check the required model connections in Settings → Providers."
-      : bundledPdfUnavailable
-        ? "Bundled PDF tools are unavailable. Reinstall Pipeline."
-        : !pdfReady
-          ? "Required PDF parsing tools are missing."
-          : "Workflow dependencies are not ready.";
+  const blockerMessage =
+    !modelAccessReady && !pdfReady
+      ? "Model access and PDF parsing need attention."
+      : !modelAccessReady
+        ? "Check the required model connections in Settings → Providers."
+        : bundledPdfUnavailable
+          ? "Bundled PDF tools are unavailable. Reinstall Pipeline."
+          : !pdfReady
+            ? "Required PDF parsing tools are missing."
+            : "Workflow dependencies are not ready.";
 
   return (
-    <div data-testid="dependencies-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div
+      data-testid="dependencies-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    >
       <div
         ref={dialogRef}
         role="dialog"
@@ -283,24 +348,38 @@ export default function DepsCheck({
         tabIndex={-1}
         className="max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto rounded-2xl border border-gray-200/80 bg-white p-6 shadow-2xl dark:border-gray-800 dark:bg-gray-900"
       >
-        <h2 id={titleId} className="text-xl font-semibold tracking-tight text-gray-950 dark:text-gray-50">
+        <h2
+          id={titleId}
+          className="text-xl font-semibold tracking-tight text-gray-950 dark:text-gray-50"
+        >
           Dependencies
         </h2>
-        <p id={descriptionId} className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+        <p
+          id={descriptionId}
+          className="mt-1 text-sm text-gray-600 dark:text-gray-300"
+        >
           {hasBlockers
             ? "Complete the highlighted setup before running this workflow."
             : "Pipeline has the model access and parsing tools it needs."}
         </p>
 
         <div className="mt-5 space-y-4">
-          <section aria-labelledby={modelsTitleId} className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+          <section
+            aria-labelledby={modelsTitleId}
+            className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
+          >
             <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
               <div>
-                <h3 id={modelsTitleId} className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                <h3
+                  id={modelsTitleId}
+                  className="text-sm font-semibold text-gray-900 dark:text-gray-100"
+                >
                   Model access
                 </h3>
                 <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Each provider selected by this workflow must be ready. ChatGPT uses the Reviews connection selected in Settings → Providers; Workspace has its own sign-in.
+                  Each provider selected by this workflow must be ready. ChatGPT
+                  uses the Reviews connection selected in Settings → Providers;
+                  Workspace has its own sign-in.
                 </p>
               </div>
               <SectionStatus ready={modelAccessReady} />
@@ -317,14 +396,21 @@ export default function DepsCheck({
             </div>
           </section>
 
-          <section aria-labelledby={pdfTitleId} className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
+          <section
+            aria-labelledby={pdfTitleId}
+            className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
+          >
             <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
               <div>
-                <h3 id={pdfTitleId} className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                <h3
+                  id={pdfTitleId}
+                  className="text-sm font-semibold text-gray-900 dark:text-gray-100"
+                >
                   PDF parsing
                 </h3>
                 <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Text extraction, page rendering, and document structure tools for PDF workflows.
+                  Text extraction, page rendering, and document structure tools
+                  for PDF workflows.
                 </p>
               </div>
               <SectionStatus ready={pdfReady} />

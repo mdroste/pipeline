@@ -1,6 +1,6 @@
 # Research programs — NF-07 through NF-14
 
-Implemented September 7, 2026 as the bounded first slices in [SEP7_ASTRA_NEWFEATURES.md](../../SEP7_ASTRA_NEWFEATURES.md). These features build on the [research desk](research-desk.md), the [research studio](research-studio.md), and captured execution. This guide describes implementation and development checks, not a packaged-release qualification.
+Implemented September 7, 2026 as the bounded first slices in [SEP7_ASTRA_NEWFEATURES.md](../../notes/SEP7_ASTRA_NEWFEATURES.md). These features build on the [research desk](research-desk.md), the [research studio](research-studio.md), and captured execution. This guide describes implementation and development checks, not a packaged-release qualification.
 
 ## Navigation
 
@@ -8,14 +8,14 @@ Open a Workspace project and choose **Open project**. The new destinations are a
 
 | Feature | Destination | Implemented behavior |
 |---|---|---|
-| NF-07 | Analyses → Specification grids | Review a complete bounded family, explicitly start serial captured executions, inspect every attempt and exclusion, export receipts |
-| NF-08 | Writing → Publication assets | Generate tables and configured Python figures from exact numeric results; export or stage them for ordinary acceptance |
-| NF-09 | Analyses → Symbols & assumptions | Scoped notation, lexical candidates, alternative-assumption branches, captured executable check records |
-| NF-10 | Writing → Revision campaigns | Immutable rounds, response evidence and current-file checks, researcher judgment, ordinary scoped Review preview |
+| NF-07 | Analyze → Specification grids | Review a complete bounded family, explicitly start serial captured executions, inspect every attempt and exclusion, export receipts |
+| NF-08 | Write → Publication assets | Generate tables and configured Python figures from exact numeric results; export or stage them for ordinary acceptance |
+| NF-09 | Analyze → Symbols & assumptions | Scoped notation, lexical candidates, alternative-assumption branches, captured executable check records |
+| NF-10 | Automate → Revision automations | Immutable rounds, response evidence and current-file checks, researcher judgment, ordinary scoped Review preview |
 | NF-11 | Conversation → Next message; rail → Activity | Persist an editable next draft, explicitly queue/run/reorder/cancel, inspect runtime owners, create a context branch |
-| NF-12 | Writing → Coauthors & replication | Coauthor briefs and `.pwex` conflicts; separate inert `.pwrc` replication materials and numeric verification |
-| NF-13 | Writing → Deliverables & kits | Seven small starter kits, ordered Markdown/TeX assembly, asset bundle export, additive deliverable roles |
-| NF-14 | Tasks → Scheduled checks | Explicit app-open local checks and opted-in Crossref refresh, quiet baselines, deduplicated attention and backoff |
+| NF-12 | Write → Coauthors & replication | Coauthor briefs and `.pwex` conflicts; separate inert `.pwrc` replication materials and numeric verification |
+| NF-13 | Write → Deliverables & kits | Seven small starter kits, ordered Markdown/TeX assembly, asset bundle export, additive deliverable roles |
+| NF-14 | Automate → Scheduled checks | Explicit app-open local checks and opted-in Crossref refresh, quiet baselines, deduplicated attention and backoff |
 
 Native Workspace turns, captured jobs, task-coordinator runs and Review Workflows retain separate ownership. Research programs call those existing services; they do not create another orchestration mode or broaden execution grants.
 

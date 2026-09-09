@@ -1,6 +1,9 @@
+import { useAppPreferences, shouldSendMessage } from "../lib/appPreferences";
+import { isMac } from "../lib/platform";
 import { useEffect, useMemo, useState } from "react";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
 import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
+import { workbenchClient } from "../lib/workbenchClient";
 import type { ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -119,12 +122,16 @@ export default function WorkspaceConversationView({
   const [following, setFollowing] = useState(true);
   useEffect(() => setFollowing(true), [snapshot?.session.id]);
   const fileNavigation = useMemo(() => {
+    const sessionId = snapshot?.session.id;
+    if (!sessionId) return null;
     const workspaceId = snapshot?.workspace?.id;
-    if (!workspaceId) return null;
-    const adapter = workspaceFileAdapter({ workspaceId });
+    const adapter = workspaceId ? workspaceFileAdapter({ workspaceId }) : null;
     return {
       path: "conversation.md",
+      root: snapshot.workspace?.root ?? undefined,
       open: (location: import("../lib/fileLinks").FileLocation) => {
+        if (!workspaceId || !snapshot.workspace?.root)
+          return workbenchClient.openConversationFile(sessionId, location.path);
         sessionStorage.setItem(
           `pipeline.openFile.${workspaceId}`,
           JSON.stringify(location),
@@ -135,36 +142,57 @@ export default function WorkspaceConversationView({
           }),
         );
       },
+      openAbsolute: (path: string) =>
+        workbenchClient.openConversationFile(sessionId, path),
       image: async (path: string) => {
-        const file = await adapter.read(path);
+        const file = adapter
+          ? await adapter.read(path)
+          : await workbenchClient.readConversationFile(sessionId, path);
         if (!file.base64 || !file.mime.startsWith("image/"))
           throw new Error("Image unavailable");
         return `data:${file.mime};base64,${file.base64}`;
       },
     };
-  }, [snapshot?.workspace?.id]);
+  }, [
+    snapshot?.session.id,
+    snapshot?.workspace?.id,
+    snapshot?.workspace?.root,
+  ]);
+  const { sendShortcut } = useAppPreferences();
   return (
     <FileNavigationContext.Provider value={fileNavigation}>
       {header}
-      {inspector && <div hidden={!inspectorOpen} className="workspace-assistant-inspector">{inspector}</div>}
+      {inspector && (
+        <div hidden={!inspectorOpen} className="workspace-assistant-inspector">
+          {inspector}
+        </div>
+      )}
       <div
         hidden={inspectorOpen}
         ref={transcriptRef}
         onScroll={(event) => {
           const node = event.currentTarget;
-          const follow = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
-          setFollowing(follow); onFollow(follow);
+          const follow =
+            node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+          setFollowing(follow);
+          onFollow(follow);
         }}
         className="workspace-transcript min-h-0 flex-1 overflow-auto"
       >
-        {(!following || transcriptEnd < totalItems) && <div className="workspace-latest-control"><button
-                  type="button"
-                  onClick={() => { setFollowing(true); onLatest(); }}
-                  className="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-neutral-800"
-                >
-                  ↓ Latest
-                </button>
-        </div>}
+        {(!following || transcriptEnd < totalItems) && (
+          <div className="workspace-latest-control">
+            <button
+              type="button"
+              onClick={() => {
+                setFollowing(true);
+                onLatest();
+              }}
+              className="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-neutral-800"
+            >
+              ↓ Latest
+            </button>
+          </div>
+        )}
         <div className="workspace-transcript-content">
           {(!snapshot || (!totalItems && !pendingUser && !stream)) && (
             <div className="workspace-chat-empty">
@@ -273,15 +301,15 @@ export default function WorkspaceConversationView({
         </div>
       </div>
       <div className="workspace-conversation-notices">
-          {requests}
-          {error && (
-            <div
-              role="alert"
-              className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
-            >
-              {error}
-            </div>
-          )}
+        {requests}
+        {error && (
+          <div
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+          >
+            {error}
+          </div>
+        )}
       </div>
       <div className="workspace-composer-dock" aria-busy={contextBusy}>
         <div className="mx-auto max-w-3xl">
@@ -295,9 +323,21 @@ export default function WorkspaceConversationView({
               onChange={(event) => onDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.nativeEvent.isComposing
+                  !disabled &&
+                  !active &&
+                  !submitting &&
+                  draft.trim() &&
+                  shouldSendMessage(
+                    {
+                      key: event.key,
+                      shiftKey: event.shiftKey,
+                      metaKey: event.metaKey,
+                      ctrlKey: event.ctrlKey,
+                      altKey: event.altKey,
+                      isComposing: event.nativeEvent.isComposing,
+                    },
+                    sendShortcut,
+                  )
                 ) {
                   event.preventDefault();
                   onSend();
@@ -344,7 +384,10 @@ export default function WorkspaceConversationView({
             </div>
           </div>
           <p className="mt-2 text-center text-[11px] text-gray-400">
-            Enter to send · Shift+Enter for a new line
+            {sendShortcut === "enter"
+              ? "Enter"
+              : `${isMac ? "Command" : "Ctrl"}+Enter`}{" "}
+            to send · Shift+Enter for a new line
           </p>
         </div>
       </div>

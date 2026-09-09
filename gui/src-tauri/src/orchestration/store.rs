@@ -136,7 +136,7 @@ impl Store {
         let version: i64 = c
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(err)?;
-        if version > 2 {
+        if version > 3 {
             return Err("Task store was written by a newer Pipeline version".into());
         }
         if version == 0 {
@@ -161,6 +161,16 @@ impl Store {
                 }
             }
             c.execute_batch(include_str!("missions/schema.sql"))
+                .map_err(err)?;
+        }
+        if version < 3 {
+            if version > 0 {
+                let backup = root.join("tasks-before-discovery-v3.sqlite3");
+                if !backup.exists() {
+                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                }
+            }
+            c.execute_batch(include_str!("discovery/schema.sql"))
                 .map_err(err)?;
         }
         Ok(store)
@@ -340,7 +350,7 @@ impl Store {
             "ready" => "state IN ('queued','running','waiting')",
             _ => "state NOT IN ('finished','cancelled','failed')",
         };
-        let sql=format!("SELECT id,revision,json_extract(body,'$.name'),state,json_extract(body,'$.reason'),json_extract(body,'$.createdAt'),updated_at,due_at,session_id,schedule_id FROM runs WHERE {predicate} AND NOT EXISTS (SELECT 1 FROM mission_children mc WHERE mc.task_id=runs.id) AND (?1 IS NULL OR session_id=?1) ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?2");
+        let sql=format!("SELECT id,revision,json_extract(body,'$.name'),state,json_extract(body,'$.reason'),json_extract(body,'$.createdAt'),updated_at,due_at,session_id,schedule_id FROM runs WHERE {predicate} AND NOT EXISTS (SELECT 1 FROM mission_children mc WHERE mc.task_id=runs.id) AND NOT EXISTS (SELECT 1 FROM discovery_children dc WHERE dc.task_id=runs.id) AND (?1 IS NULL OR session_id=?1) ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?2");
         let mut s = c.prepare(&sql).map_err(err)?;
         let result = s
             .query_map(params![session, offset], |r| {
@@ -373,7 +383,7 @@ impl Store {
         Ok(result)
     }
     pub fn next_due(&self) -> Result<Option<i64>> {
-        self.connection()?.query_row("SELECT MIN(t) FROM (SELECT due_at t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM missions WHERE state IN ('queued','running','waiting','paused','stopping') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM missions WHERE state IN ('queued','running','waiting') UNION ALL SELECT next_due_at t FROM schedules s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')))",[],|r|r.get(0)).map_err(err)
+        self.connection()?.query_row("SELECT MIN(t) FROM (SELECT due_at t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM missions WHERE state IN ('queued','running','waiting','paused','stopping') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM missions WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT deadline_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT next_due_at t FROM schedules s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')))",[],|r|r.get(0)).map_err(err)
     }
     pub fn events(&self, id: &str, after: i64) -> Result<Vec<Event>> {
         let c = self.connection()?;

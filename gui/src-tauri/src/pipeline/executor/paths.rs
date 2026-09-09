@@ -7,7 +7,7 @@ use crate::pipeline::claude::normalize_cli_root;
 /// Collision-resistant filesystem key for a step. Replacement-based slugs
 /// made valid IDs such as `a.b` and `a_b` share one report file, so one step
 /// could silently ingest another step's output.
-pub(super) fn step_slug(step_key: &str) -> String {
+pub(crate) fn step_slug(step_key: &str) -> String {
     use sha2::{Digest as _, Sha256};
     let mut readable = String::new();
     let mut previous_dash = false;

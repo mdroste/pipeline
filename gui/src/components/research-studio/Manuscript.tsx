@@ -1,4 +1,6 @@
-import SourceEditor, { type SourceEditorHandle } from "../file-workspace/SourceEditor";
+import SourceEditor, {
+  type SourceEditorHandle,
+} from "../file-workspace/SourceEditor";
 import SourceDiff from "../file-workspace/SourceDiff";
 import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
 const PdfComparison = lazy(() => import("../file-workspace/PdfComparison"));
@@ -156,8 +158,13 @@ export default function Manuscript({
     try {
       if (current.file) {
         const key = `${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`;
-        if (current.draft !== current.file.content) { localStorage.setItem(draftKey, JSON.stringify(current)); localStorage.setItem(key, JSON.stringify(current)); }
-        else { localStorage.removeItem(draftKey); localStorage.removeItem(key); }
+        if (current.draft !== current.file.content) {
+          localStorage.setItem(draftKey, JSON.stringify(current));
+          localStorage.setItem(key, JSON.stringify(current));
+        } else {
+          localStorage.removeItem(draftKey);
+          localStorage.removeItem(key);
+        }
       }
     } catch {
       setNotice(
@@ -175,10 +182,15 @@ export default function Manuscript({
       try {
         if (current.file && current.draft !== current.file.content) {
           localStorage.setItem(draftKey, JSON.stringify(current));
-          localStorage.setItem(`${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`, JSON.stringify(current));
+          localStorage.setItem(
+            `${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`,
+            JSON.stringify(current),
+          );
         } else if (current.file) {
           localStorage.removeItem(draftKey);
-          localStorage.removeItem(`${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`);
+          localStorage.removeItem(
+            `${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`,
+          );
         }
       } catch {
         /* Current save state already discloses draft-storage failure. */
@@ -207,7 +219,9 @@ export default function Manuscript({
         path,
         checkpoint || null,
       );
-      const retained = readDraft(`${draftKey}.${checkpoint || "working"}.${path}`) ?? cached.current;
+      const retained =
+        readDraft(`${draftKey}.${checkpoint || "working"}.${path}`) ??
+        cached.current;
       if (
         retained?.file.path === next.path &&
         retained.file.checkpointId === next.checkpointId
@@ -227,19 +241,51 @@ export default function Manuscript({
     });
   const jumpLine = (line: number) => editor.current?.goToLine(line);
   const navigateSource = async (target: string, line: number) => {
-    if (file?.path === target) { setSourceLine(line); jumpLine(line); return; }
-    if (dirty && file) localStorage.setItem(`${draftKey}.${file.checkpointId ?? "working"}.${file.path}`, JSON.stringify({file,draft}));
-    const next = await studioClient.editor(workspaceId, target, checkpoint || null);
-    const retained = readDraft(`${draftKey}.${checkpoint || "working"}.${target}`);
-    setPath(target); setFile(retained?.file ?? next); setDraft(retained?.draft ?? next.content); setSourceLine(line);
-    setNotice("Opened source at the build location. The working source may have changed since this build; previous unsaved drafts remain retained by file.");
+    if (file?.path === target) {
+      setSourceLine(line);
+      jumpLine(line);
+      return;
+    }
+    if (dirty && file)
+      localStorage.setItem(
+        `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
+        JSON.stringify({ file, draft }),
+      );
+    const next = await studioClient.editor(
+      workspaceId,
+      target,
+      checkpoint || null,
+    );
+    const retained = readDraft(
+      `${draftKey}.${checkpoint || "working"}.${target}`,
+    );
+    setPath(target);
+    setFile(retained?.file ?? next);
+    setDraft(retained?.draft ?? next.content);
+    setSourceLine(line);
+    setNotice(
+      "Opened source at the build location. The working source may have changed since this build; previous unsaved drafts remain retained by file.",
+    );
   };
   useEffect(() => {
     let live = true;
-    const candidates = (data.inventory?.body.files ?? []).filter(f=>/\.(bib|tex)$/i.test(f.path)).slice(0, 40);
-    void Promise.all(candidates.map(f=>studioClient.editor(workspaceId,f.path,checkpoint||null).then(v=>v.content).catch(()=>""))).then(texts=>{if(live)setCompletionTexts(texts);});
-    return()=>{live=false;};
-  },[workspaceId,checkpoint,data.inventory]);
+    const candidates = (data.inventory?.body.files ?? [])
+      .filter((f) => /\.(bib|tex)$/i.test(f.path))
+      .slice(0, 40);
+    void Promise.all(
+      candidates.map((f) =>
+        studioClient
+          .editor(workspaceId, f.path, checkpoint || null)
+          .then((v) => v.content)
+          .catch(() => ""),
+      ),
+    ).then((texts) => {
+      if (live) setCompletionTexts(texts);
+    });
+    return () => {
+      live = false;
+    };
+  }, [workspaceId, checkpoint, data.inventory]);
 
   return (
     <div className="space-y-5">
@@ -297,7 +343,10 @@ export default function Manuscript({
                   cached.current = null;
                   try {
                     localStorage.removeItem(draftKey);
-                    if(file)localStorage.removeItem(`${draftKey}.${file.checkpointId ?? "working"}.${file.path}`);
+                    if (file)
+                      localStorage.removeItem(
+                        `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
+                      );
                   } catch {
                     /* Saving still succeeded. */
                   }
@@ -317,7 +366,10 @@ export default function Manuscript({
                 cached.current = null;
                 try {
                   localStorage.removeItem(draftKey);
-                  if(file)localStorage.removeItem(`${draftKey}.${file.checkpointId ?? "working"}.${file.path}`);
+                  if (file)
+                    localStorage.removeItem(
+                      `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
+                    );
                 } catch {
                   /* Current draft is still discarded. */
                 }
@@ -350,11 +402,64 @@ export default function Manuscript({
           </p>
           {file && (
             <>
-              <div className={beside ? "grid h-[38rem] grid-cols-2 gap-3" : "h-96"}>
-                <SourceEditor ref={editor} label="Manuscript source editor" readOnly={busy} path={`${workspaceId}/${checkpoint || "working"}/${file.path}`} value={draft} onChange={setDraft} line={sourceLine} onSave={()=>saveButton.current?.click()} completionTexts={completionTexts}/>
-                {beside && receipt?.pdf?.revision && <Suspense fallback={<p>Loading build PDF…</p>}><PdfReader documentKey={`${workspaceId}:${receipt.pdf.revision.id}`} title="Exact build PDF" initialPage={pdfPage} load={async()=>{const preview=await workspaceFileAdapter({workspaceId,revisionId:receipt.pdf!.revision!.id}).read("");if(!preview.base64)throw new Error("Build PDF unavailable");return preview.base64;}} onSource={point=>void run(async()=>{const mapped=await studioClient.sync(workspaceId,receipt.executionId,point);setSyncCandidates(mapped.candidates);const first=mapped.candidates.find(c=>c.sourcePath&&c.line);if(first)await navigateSource(first.sourcePath!,first.line!);})}/></Suspense>}
+              <div
+                className={beside ? "grid h-[38rem] grid-cols-2 gap-3" : "h-96"}
+              >
+                <SourceEditor
+                  ref={editor}
+                  label="Manuscript source editor"
+                  readOnly={busy}
+                  path={`${workspaceId}/${checkpoint || "working"}/${file.path}`}
+                  value={draft}
+                  onChange={setDraft}
+                  line={sourceLine}
+                  onSave={() => saveButton.current?.click()}
+                  completionTexts={completionTexts}
+                />
+                {beside && receipt?.pdf?.revision && (
+                  <Suspense fallback={<p>Loading build PDF…</p>}>
+                    <PdfReader
+                      documentKey={`${workspaceId}:${receipt.pdf.revision.id}`}
+                      title="Exact build PDF"
+                      initialPage={pdfPage}
+                      load={async () => {
+                        const preview = await workspaceFileAdapter({
+                          workspaceId,
+                          revisionId: receipt.pdf!.revision!.id,
+                        }).read("");
+                        if (!preview.base64)
+                          throw new Error("Build PDF unavailable");
+                        return preview.base64;
+                      }}
+                      onSource={(point) =>
+                        void run(async () => {
+                          const mapped = await studioClient.sync(
+                            workspaceId,
+                            receipt.executionId,
+                            point,
+                          );
+                          setSyncCandidates(mapped.candidates);
+                          const first = mapped.candidates.find(
+                            (c) => c.sourcePath && c.line,
+                          );
+                          if (first)
+                            await navigateSource(
+                              first.sourcePath!,
+                              first.line!,
+                            );
+                        })
+                      }
+                    />
+                  </Suspense>
+                )}
               </div>
-              {receipt?.pdf?.revision && <button className={button} onClick={()=>setBeside(!beside)}>{beside ? "Close PDF beside source" : "Show build PDF beside source"}</button>}
+              {receipt?.pdf?.revision && (
+                <button className={button} onClick={() => setBeside(!beside)}>
+                  {beside
+                    ? "Close PDF beside source"
+                    : "Show build PDF beside source"}
+                </button>
+              )}
               <details>
                 <summary className="cursor-pointer text-sm">
                   Review unsaved changes
@@ -377,7 +482,26 @@ export default function Manuscript({
                     labels and citations.
                   </p>
                 )}
-                {diffMode === "source" ? <SourceDiff before={file.content} after={draft} path={file.path}/> : <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{diff.map((line,i)=><div key={i}>{line.type === "add" ? "+ " : line.type === "del" ? "− " : "  "}{line.text}</div>)}</pre>}
+                {diffMode === "source" ? (
+                  <SourceDiff
+                    before={file.content}
+                    after={draft}
+                    path={file.path}
+                  />
+                ) : (
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">
+                    {diff.map((line, i) => (
+                      <div key={i}>
+                        {line.type === "add"
+                          ? "+ "
+                          : line.type === "del"
+                            ? "− "
+                            : "  "}
+                        {line.text}
+                      </div>
+                    ))}
+                  </pre>
+                )}
               </details>
             </>
           )}
@@ -594,7 +718,7 @@ export default function Manuscript({
                   <button
                     className="text-blue-600 underline"
                     onClick={() => {
-                      void run(()=>navigateSource(d.path!,d.line!));
+                      void run(() => navigateSource(d.path!, d.line!));
                     }}
                   >
                     {d.path}:{d.line}
@@ -731,11 +855,49 @@ export default function Manuscript({
                     {sync}
                   </pre>
                 )}
-                <div className="h-[42rem]"><Suspense fallback={<p>Loading PDF comparison…</p>}><PdfComparison workspaceId={workspaceId} primary={{id:receipt.pdf.revision.id,title:"Selected build"}} secondary={comparison?.pdf?.revision?{id:comparison.pdf.revision.id,title:"Comparison build"}:undefined} page={pdfPage} onSource={point=>void run(async()=>{const mapped=await studioClient.sync(workspaceId,receipt.executionId,point);setSyncCandidates(mapped.candidates);const first=mapped.candidates.find(c=>c.sourcePath&&c.line);if(first)await navigateSource(first.sourcePath!,first.line!);})}/></Suspense></div>
+                <div className="h-[42rem]">
+                  <Suspense fallback={<p>Loading PDF comparison…</p>}>
+                    <PdfComparison
+                      workspaceId={workspaceId}
+                      primary={{
+                        id: receipt.pdf.revision.id,
+                        title: "Selected build",
+                      }}
+                      secondary={
+                        comparison?.pdf?.revision
+                          ? {
+                              id: comparison.pdf.revision.id,
+                              title: "Comparison build",
+                            }
+                          : undefined
+                      }
+                      page={pdfPage}
+                      onSource={(point) =>
+                        void run(async () => {
+                          const mapped = await studioClient.sync(
+                            workspaceId,
+                            receipt.executionId,
+                            point,
+                          );
+                          setSyncCandidates(mapped.candidates);
+                          const first = mapped.candidates.find(
+                            (c) => c.sourcePath && c.line,
+                          );
+                          if (first)
+                            await navigateSource(
+                              first.sourcePath!,
+                              first.line!,
+                            );
+                        })
+                      }
+                    />
+                  </Suspense>
+                </div>
               </>
             ) : (
               <p className="text-sm">
-                This build did not produce a PDF. Select an earlier successful build to view its PDF.
+                This build did not produce a PDF. Select an earlier successful
+                build to view its PDF.
               </p>
             )}
             <Inspect

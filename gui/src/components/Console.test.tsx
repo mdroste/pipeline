@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Console from "./Console";
-import type { LlmRequestDetails, LogEntry, UsageState } from "../hooks/usePipeline";
+import type {
+  LlmRequestDetails,
+  LogEntry,
+  UsageState,
+} from "../hooks/usePipeline";
 
 const NO_TOOL_CALLS = {
   text_file: 0,
@@ -24,7 +28,11 @@ const EMPTY_USAGE: UsageState = {
   bySession: {},
 };
 
-function log(line: string, level = "info", session: number | null = null): LogEntry {
+function log(
+  line: string,
+  level = "info",
+  session: number | null = null,
+): LogEntry {
   return { line, level, session, label: null, t: 1_700_000_000_000 };
 }
 
@@ -54,11 +62,21 @@ const REQUEST: LlmRequestDetails = {
 
 describe("Console", () => {
   it("collapses when its active run reaches a terminal state", () => {
-    const { rerender } = render(<Console logs={[log("done")]} usage={EMPTY_USAGE} active />);
-    expect(screen.getByRole("separator", { name: "Resize console" })).toBeVisible();
-    rerender(<Console logs={[log("done")]} usage={EMPTY_USAGE} active={false} />);
-    expect(screen.queryByRole("separator", { name: "Resize console" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Completed run console/ })).toBeVisible();
+    const { rerender } = render(
+      <Console logs={[log("done")]} usage={EMPTY_USAGE} active />,
+    );
+    expect(
+      screen.getByRole("separator", { name: "Resize console" }),
+    ).toBeVisible();
+    rerender(
+      <Console logs={[log("done")]} usage={EMPTY_USAGE} active={false} />,
+    );
+    expect(
+      screen.queryByRole("separator", { name: "Resize console" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Completed run console/ }),
+    ).toBeVisible();
   });
 
   it("surfaces clipboard failures instead of reporting a false success", async () => {
@@ -73,7 +91,9 @@ describe("Console", () => {
     });
     render(<Console logs={[log("copy me")]} usage={EMPTY_USAGE} />);
     await user.click(screen.getByRole("button", { name: "Copy" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Clipboard access failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Clipboard access failed",
+    );
     expect(screen.getByRole("button", { name: "Copy" })).toBeVisible();
     Reflect.deleteProperty(navigator, "clipboard");
     Reflect.deleteProperty(document, "execCommand");
@@ -82,9 +102,13 @@ describe("Console", () => {
   it("renders all lines by default", () => {
     render(
       <Console
-        logs={[log("hello world"), log("WARNING: careful", "warn"), log("ERROR: boom", "error")]}
+        logs={[
+          log("hello world"),
+          log("WARNING: careful", "warn"),
+          log("ERROR: boom", "error"),
+        ]}
         usage={EMPTY_USAGE}
-      />
+      />,
     );
     expect(screen.getByText("hello world")).toBeInTheDocument();
     expect(screen.getByText("WARNING: careful")).toBeInTheDocument();
@@ -132,7 +156,12 @@ describe("Console", () => {
 
   it("filters by search text", async () => {
     const user = userEvent.setup();
-    render(<Console logs={[log("apple pie"), log("banana split")]} usage={EMPTY_USAGE} />);
+    render(
+      <Console
+        logs={[log("apple pie"), log("banana split")]}
+        usage={EMPTY_USAGE}
+      />,
+    );
     await user.type(screen.getByPlaceholderText("Search…"), "banana");
     expect(screen.queryByText("apple pie")).not.toBeInTheDocument();
     expect(screen.getByText("banana split")).toBeInTheDocument();
@@ -143,9 +172,13 @@ describe("Console", () => {
     const user = userEvent.setup();
     render(
       <Console
-        logs={[log("info line"), log("WARNING: w", "warn"), log("ERROR: e", "error")]}
+        logs={[
+          log("info line"),
+          log("WARNING: w", "warn"),
+          log("ERROR: e", "error"),
+        ]}
         usage={EMPTY_USAGE}
-      />
+      />,
     );
     await user.click(screen.getByTitle("Errors only"));
     expect(screen.queryByText("info line")).not.toBeInTheDocument();
@@ -156,12 +189,18 @@ describe("Console", () => {
   it("shows an error count that reflects the whole log, not the filter", () => {
     render(
       <Console
-        logs={[log("ok"), log("ERROR: one", "error"), log("ERROR: two", "error")]}
+        logs={[
+          log("ok"),
+          log("ERROR: one", "error"),
+          log("ERROR: two", "error"),
+        ]}
         usage={EMPTY_USAGE}
-      />
+      />,
     );
     // The jump-to-error control is labelled with the total error count.
-    expect(screen.getByTitle("Scroll to the first error")).toHaveTextContent("2 errors");
+    expect(screen.getByTitle("Scroll to the first error")).toHaveTextContent(
+      "2 errors",
+    );
   });
 
   it("bounds live DOM rows while preserving counts and error navigation", async () => {
@@ -197,7 +236,7 @@ describe("Console", () => {
           },
           bySession: {},
         }}
-      />
+      />,
     );
     const summary = screen.getByLabelText(
       /50,000 logical input tokens equals 2,000 fresh input tokens plus 40,000 cache-read tokens plus 8,000 cache-write tokens/,
@@ -251,18 +290,26 @@ describe("Console", () => {
           },
         ]}
         usage={EMPTY_USAGE}
-      />
+      />,
     );
 
     await user.selectOptions(screen.getByRole("combobox"), "7");
-    expect(screen.getByText(/Anthropic \(claude\) · Direct API/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Anthropic \(claude\) · Direct API/),
+    ).toBeInTheDocument();
     expect(screen.getAllByText(/claude-sonnet-4-6/)).not.toHaveLength(0);
-    expect(screen.getByText(/effort high · tools Read · timeout 600s/)).toBeInTheDocument();
-    expect(screen.queryByText("Transcribe the attached paper.")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/effort high · tools Read · timeout 600s/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Transcribe the attached paper."),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByText(/View prompt/));
     expect(screen.getByText("Return Markdown.")).toBeInTheDocument();
-    expect(screen.getByText("Transcribe the attached paper.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Transcribe the attached paper."),
+    ).toBeInTheDocument();
   });
 
   it("shows a CLI provider and transport without repeating CLI", () => {
@@ -314,7 +361,7 @@ describe("Console", () => {
             },
           },
         }}
-      />
+      />,
     );
 
     const selector = screen.getByRole("combobox");
@@ -328,7 +375,9 @@ describe("Console", () => {
     const summary = screen.getByLabelText(/50,000 logical input tokens/);
     expect(summary.getAttribute("title")).not.toContain("tool calls");
     expect(summary.getAttribute("title")).not.toContain("model round trips");
-    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
   });
 
   it("labels bounded request fields when their previews are truncated", async () => {
@@ -364,7 +413,9 @@ describe("Console", () => {
 
     expect(screen.getAllByText("Preview truncated")).toHaveLength(3);
     expect(screen.getByText("System prompt (24,000 characters)")).toBeVisible();
-    expect(screen.getByText("Shared context (72,000 characters)")).toBeVisible();
+    expect(
+      screen.getByText("Shared context (72,000 characters)"),
+    ).toBeVisible();
     expect(screen.getByText("Task prompt (48,000 characters)")).toBeVisible();
     expect(
       screen.getByText(/Copy prompt copies only the visible text/),

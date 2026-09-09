@@ -42,7 +42,10 @@ describe("provider model utilities", () => {
     // subscription mode from an older build is ignored.
     expect(providerTransport(settings(), "antigravity")).toBe("api");
     expect(
-      providerTransport(settings({ google_api_key: "configured" }), "antigravity"),
+      providerTransport(
+        settings({ google_api_key: "configured" }),
+        "antigravity",
+      ),
     ).toBe("api");
   });
 
@@ -59,10 +62,12 @@ describe("provider model utilities", () => {
       models: [{ id: "m", supported_efforts: ["low", "high"] }],
       roles: [],
     } as unknown as ModelCatalog;
-    expect(effortOptions(catalog, { mode: "pinned", model: "m" }, ["medium"]))
-      .toEqual(["low", "high"]);
-    expect(effortOptions(undefined, { mode: "automatic" }, ["medium"]))
-      .toEqual(["medium"]);
+    expect(
+      effortOptions(catalog, { mode: "pinned", model: "m" }, ["medium"]),
+    ).toEqual(["low", "high"]);
+    expect(effortOptions(undefined, { mode: "automatic" }, ["medium"])).toEqual(
+      ["medium"],
+    );
   });
 
   it("keeps legacy Merge defaults aligned with Sequential settings", () => {

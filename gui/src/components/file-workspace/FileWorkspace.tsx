@@ -167,8 +167,13 @@ export default function FileWorkspace({
     async (location: FileLocation) => {
       const sequence = ++navigationSequence.current;
       setError("");
-      try { await load(location.path); }
-      catch (error) { if (sequence === navigationSequence.current && alive.current) throw error; return; }
+      try {
+        await load(location.path);
+      } catch (error) {
+        if (sequence === navigationSequence.current && alive.current)
+          throw error;
+        return;
+      }
       if (sequence !== navigationSequence.current || !alive.current) return;
       if (location.line)
         setModes((old) => ({ ...old, [location.path]: "source" }));
@@ -317,7 +322,7 @@ export default function FileWorkspace({
     const next = source[source.length - 1];
     if (!next) return;
     navigationSequence.current++;
-    setTabs(old => old.includes(next.path) ? old : [...old, next.path]);
+    setTabs((old) => (old.includes(next.path) ? old : [...old, next.path]));
     if (back) {
       setHistory(source.slice(0, -1));
       if (active) setForward((old) => [...old, active]);
@@ -340,16 +345,26 @@ export default function FileWorkspace({
         .map((b) => b.draft),
     [buffers],
   );
-  const tabList = useTabList(tabs, active?.path ?? "", path => { void open({ path }).catch(e => setError(String(e))); }, "manual");
+  const tabList = useTabList(
+    tabs,
+    active?.path ?? "",
+    (path) => {
+      void open({ path }).catch((e) => setError(String(e)));
+    },
+    "manual",
+  );
   const closeTab = (path: string) => {
     navigationSequence.current++;
     retain(latest.current);
-    const remaining = tabs.filter(p => p !== path);
+    const remaining = tabs.filter((p) => p !== path);
     const next = remaining[Math.min(tabs.indexOf(path), remaining.length - 1)];
     setTabs(remaining);
     if (active?.path === path) setActive(next ? { path: next } : null);
     if (split === path) setSplit(null);
-    requestAnimationFrame(() => { if (next) tabList.focus(next); else search.current?.focus(); });
+    requestAnimationFrame(() => {
+      if (next) tabList.focus(next);
+      else search.current?.focus();
+    });
   };
   const renderPane = (location: FileLocation) => {
     const buffer = buffers[location.path];
@@ -538,7 +553,14 @@ export default function FileWorkspace({
               {renderedPreview}
             </div>
           ) : (
-            <SplitView key={`${adapter.id}:${file.path}`} storageKey={`pipeline.files.sourceSplit.${adapter.id}.${file.path}`} firstLabel="Source" secondLabel="Preview" first={editor} second={renderedPreview} />
+            <SplitView
+              key={`${adapter.id}:${file.path}`}
+              storageKey={`pipeline.files.sourceSplit.${adapter.id}.${file.path}`}
+              firstLabel="Source"
+              secondLabel="Preview"
+              first={editor}
+              second={renderedPreview}
+            />
           )}
         </div>
       </FileNavigationScope>
@@ -615,17 +637,41 @@ export default function FileWorkspace({
         </div>
       )}
       <div className="file-tabs" role="tablist" aria-label="Open files">
-        {tabs.map(path => {
+        {tabs.map((path) => {
           const props = tabList.tabProps(path);
-          return <div key={path} className="file-tab" role="presentation" data-active={active?.path === path}>
-            <button {...props} title={`${path} · Delete to close`} onKeyDown={event => {
-              if (event.key === "Delete") { event.preventDefault(); closeTab(path); }
-              else props.onKeyDown(event);
-            }}>
-              {path.split("/").pop()}{buffers[path]?.file.editable && buffers[path].draft !== buffers[path].file.text ? " •" : ""}
-            </button>
-            <button type="button" tabIndex={active?.path === path ? 0 : -1} aria-label={`Close ${path}`} onClick={() => closeTab(path)}>×</button>
-          </div>;
+          return (
+            <div
+              key={path}
+              className="file-tab"
+              role="presentation"
+              data-active={active?.path === path}
+            >
+              <button
+                {...props}
+                title={`${path} · Delete to close`}
+                onKeyDown={(event) => {
+                  if (event.key === "Delete") {
+                    event.preventDefault();
+                    closeTab(path);
+                  } else props.onKeyDown(event);
+                }}
+              >
+                {path.split("/").pop()}
+                {buffers[path]?.file.editable &&
+                buffers[path].draft !== buffers[path].file.text
+                  ? " •"
+                  : ""}
+              </button>
+              <button
+                type="button"
+                tabIndex={active?.path === path ? 0 : -1}
+                aria-label={`Close ${path}`}
+                onClick={() => closeTab(path)}
+              >
+                ×
+              </button>
+            </div>
+          );
         })}
       </div>
       {error && (
@@ -633,15 +679,36 @@ export default function FileWorkspace({
           {error}
         </p>
       )}
-      {tabs.filter(path => path !== active?.path).map(path => <div key={path} {...tabList.panelProps(path)} hidden />)}
+      {tabs
+        .filter((path) => path !== active?.path)
+        .map((path) => (
+          <div key={path} {...tabList.panelProps(path)} hidden />
+        ))}
       {split && active ? (
-        <SplitView storageKey={`pipeline.files.split.${adapter.id}`} firstLabel="Primary file" secondLabel="Second file"
-          first={<div {...tabList.panelProps(active.path)} className="file-tab-panel">{renderPane(active)}</div>}
-          second={renderPane({ path: split })} />
+        <SplitView
+          storageKey={`pipeline.files.split.${adapter.id}`}
+          firstLabel="Primary file"
+          secondLabel="Second file"
+          first={
+            <div
+              {...tabList.panelProps(active.path)}
+              className="file-tab-panel"
+            >
+              {renderPane(active)}
+            </div>
+          }
+          second={renderPane({ path: split })}
+        />
       ) : active ? (
-        <div {...tabList.panelProps(active.path)} className="file-tab-panel">{renderPane(active)}</div>
-      ) : <p className="file-status">Find a file above to open it. Unsaved drafts are retained when switching files.</p>}
-
+        <div {...tabList.panelProps(active.path)} className="file-tab-panel">
+          {renderPane(active)}
+        </div>
+      ) : (
+        <p className="file-status">
+          Find a file above to open it. Unsaved drafts are retained when
+          switching files.
+        </p>
+      )}
     </div>
   );
 }

@@ -374,6 +374,10 @@ pub(super) fn stage_latex_project(
     let mut visited = HashSet::new();
     let mut total_bytes = 0u64;
     let mut skipped = Vec::new();
+    let mut source_map = staged::SourceMap {
+        main: main_file.strip_prefix(&project_root).unwrap().into(),
+        ..Default::default()
+    };
     while let Some((source, recurse)) = pending.pop_front() {
         if !visited.insert(source.clone()) {
             continue;
@@ -423,11 +427,29 @@ pub(super) fn stage_latex_project(
             match resolve_latex_reference(&reference, current_dir, &project_root) {
                 Some(
                     ResolvedLatexReference::Internal(path) | ResolvedLatexReference::External(path),
-                ) => pending.push_back((path, reference.recursive)),
+                ) => {
+                    let mapped = match path.strip_prefix(&project_root) {
+                        Ok(relative) => destination_root.join(relative),
+                        Err(_) => {
+                            external_staging_destination(&path, &project_root, destination_root)?
+                        }
+                    };
+                    source_map.insert(
+                        destination
+                            .parent()
+                            .unwrap()
+                            .strip_prefix(destination_root)
+                            .unwrap(),
+                        &reference.target,
+                        mapped.strip_prefix(destination_root).unwrap().into(),
+                    );
+                    pending.push_back((path, reference.recursive));
+                }
                 None => {}
             }
         }
     }
+    source_map.save(destination_root)?;
     // This stage has no console/quality-note channel, so record skips inside
     // the staged view itself: the models reading this root (and any user
     // inspecting it) see why a referenced file is absent. Best-effort — a
@@ -641,7 +663,10 @@ fn expand_latex_includes(
         // document explicitly references, which keeps traversal like
         // \input{../../../../etc/passwd} blocked while sibling-output layouts
         // (\input{../output/estimates/numbers.tex}) still resolve.
-        let canonical = include_path.canonicalize().ok();
+        let canonical = match staged::reference(root_dir, parent, include_name) {
+            Some(captured) => captured,
+            None => include_path.canonicalize().ok(),
+        };
         let internal = canonical
             .as_ref()
             .is_some_and(|resolved| resolved.starts_with(root_dir) && resolved.is_file());

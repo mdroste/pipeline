@@ -1,4 +1,10 @@
-import { useState, useCallback, useEffect, useRef, type RefObject } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type RefObject,
+} from "react";
 
 /** Highlighting is DOM work proportional to the match count; cap it so a
  *  short query over a huge report cannot freeze the UI. */
@@ -31,9 +37,13 @@ export function applyHighlights(
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) => {
       const text = node.textContent;
-      if (!text || !text.toLowerCase().includes(q)) return NodeFilter.FILTER_REJECT;
+      if (!text || !text.toLowerCase().includes(q))
+        return NodeFilter.FILTER_REJECT;
       const parent = (node as Text).parentElement;
-      if (parent && (parent.tagName === "SCRIPT" || parent.tagName === "STYLE")) {
+      if (
+        parent &&
+        (parent.tagName === "SCRIPT" || parent.tagName === "STYLE")
+      ) {
         return NodeFilter.FILTER_REJECT;
       }
       // KaTeX renders a hidden MathML copy of the raw LaTeX; matches inside it
@@ -64,7 +74,8 @@ export function applyHighlights(
         capped = true;
         break;
       }
-      if (idx > from) frag.appendChild(document.createTextNode(text.slice(from, idx)));
+      if (idx > from)
+        frag.appendChild(document.createTextNode(text.slice(from, idx)));
       const mark = document.createElement("mark");
       mark.className = "search-hit";
       mark.textContent = text.slice(idx, idx + q.length);
@@ -73,7 +84,8 @@ export function applyHighlights(
       from = idx + q.length;
       idx = lower.indexOf(q, from);
     }
-    if (from < text.length) frag.appendChild(document.createTextNode(text.slice(from)));
+    if (from < text.length)
+      frag.appendChild(document.createTextNode(text.slice(from)));
     textNode.parentNode?.replaceChild(frag, textNode);
   }
   return { marks, capped };
@@ -81,7 +93,10 @@ export function applyHighlights(
 
 /** Find-bar state and behavior over a scrollable content container.
  *  Ctrl/Cmd-F opens it; Escape closes; Enter/Shift-Enter cycle matches. */
-export function useFindBar(containerRef: RefObject<HTMLElement | null>, resetKey: unknown) {
+export function useFindBar(
+  containerRef: RefObject<HTMLElement | null>,
+  resetKey: unknown,
+) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [count, setCount] = useState(0);
@@ -147,8 +162,16 @@ export function useFindBar(containerRef: RefObject<HTMLElement | null>, resetKey
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-        if (e.defaultPrevented || !containerRef.current || containerRef.current.closest(".hidden, [hidden]")) return;
-        const pane = e.target instanceof Element ? e.target.closest(".file-pane, .pdf-reader") : null;
+        if (
+          e.defaultPrevented ||
+          !containerRef.current ||
+          containerRef.current.closest(".hidden, [hidden]")
+        )
+          return;
+        const pane =
+          e.target instanceof Element
+            ? e.target.closest(".file-pane, .pdf-reader")
+            : null;
         if (pane && !pane.contains(containerRef.current)) return;
         e.preventDefault();
         setOpen(true);
@@ -158,5 +181,16 @@ export function useFindBar(containerRef: RefObject<HTMLElement | null>, resetKey
     return () => window.removeEventListener("keydown", handler);
   }, [containerRef]);
 
-  return { open, setOpen, query, setQuery, count, capped, current, next, prev, close };
+  return {
+    open,
+    setOpen,
+    query,
+    setQuery,
+    count,
+    capped,
+    current,
+    next,
+    prev,
+    close,
+  };
 }

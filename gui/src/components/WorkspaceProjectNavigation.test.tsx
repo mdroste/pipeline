@@ -3,24 +3,49 @@ import { beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectNavigation from "./WorkspaceProjectNavigation";
 import { loadWorkspacePins } from "../lib/workspaceNavigation";
 beforeEach(() => localStorage.clear());
-it("persists pin order per project and resets only the current project's preferences", () => {
-  const reset = vi.fn(); const navigate = vi.fn();
-  render(<WorkspaceProjectNavigation workspaceId="one" destination="overview" disabled={false} onNavigate={navigate} onResetLayout={reset} />);
-  fireEvent.click(screen.getByRole("button", { name: "Customize" }));
-  fireEvent.click(screen.getByRole("button", { name: "Move Results up" }));
-  fireEvent.change(screen.getByLabelText("Pin a project tool"), { target: { value: "evidence" } });
-  expect(loadWorkspacePins("one")).toEqual(["files", "results", "writing", "evidence"]);
-  expect(loadWorkspacePins("two")).toEqual(["files", "writing", "results"]);
-  expect(screen.getByLabelText("Pin a project tool")).toBeDisabled();
-  fireEvent.click(within(screen.getByRole("navigation", { name: "Pinned project tools" })).getByRole("button", { name: "Claims & evidence" }));
-  expect(navigate).toHaveBeenCalledWith("evidence");
-  fireEvent.click(screen.getByRole("button", { name: "Reset layout and shortcuts" }));
-  expect(loadWorkspacePins("one")).toEqual(["files", "writing", "results"]);
-  expect(reset).toHaveBeenCalledOnce();
+it("exposes six stable project areas and routes each to its default view", () => {
+  const navigate = vi.fn();
+  render(
+    <WorkspaceProjectNavigation
+      destination="theory"
+      disabled={false}
+      onNavigate={navigate}
+    />,
+  );
+  const sections = within(
+    screen.getByRole("navigation", { name: "Project sections" }),
+  );
+  expect(
+    sections
+      .getAllByRole("button")
+      .map((button) => button.querySelector("span")?.textContent),
+  ).toEqual([
+    "Overview",
+    "Library",
+    "Analyze",
+    "Write",
+    "Automate",
+    "Activity",
+  ]);
+  expect(sections.getByRole("button", { name: /Analyze/ })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  fireEvent.click(sections.getByRole("button", { name: /Activity/ }));
+  expect(navigate).toHaveBeenCalledWith("memory");
 });
 it("rejects corrupt destinations, duplicates, and unsupported preference versions", () => {
-  localStorage.setItem("pipeline.workspace.pins.one", JSON.stringify({ version: 1, pins: ["files", "files", "__proto__", "removed", "results"] }));
+  localStorage.setItem(
+    "pipeline.workspace.pins.one",
+    JSON.stringify({
+      version: 1,
+      pins: ["files", "files", "__proto__", "removed", "results"],
+    }),
+  );
   expect(loadWorkspacePins("one")).toEqual(["files", "results"]);
-  localStorage.setItem("pipeline.workspace.pins.one", JSON.stringify({ version: 999, pins: ["evidence"] }));
+  localStorage.setItem(
+    "pipeline.workspace.pins.one",
+    JSON.stringify({ version: 999, pins: ["evidence"] }),
+  );
   expect(loadWorkspacePins("one")).toEqual(["files", "writing", "results"]);
 });

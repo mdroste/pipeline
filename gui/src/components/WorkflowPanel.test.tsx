@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WorkflowPanel from "./WorkflowPanel";
-import type { AutoReviewCatalog, PipelineConfig, ProfileSummary } from "../lib/types";
+import type {
+  AutoReviewCatalog,
+  PipelineConfig,
+  ProfileSummary,
+} from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -64,8 +68,18 @@ function makeConfig(): PipelineConfig {
 }
 
 const profiles: ProfileSummary[] = [
-  { id: "auto-review", name: "Automatic Paper Review (Full)", step_count: 5, builtin: true },
-  { id: "auto-review-quick", name: "Automatic Paper Review (Quick)", step_count: 4, builtin: true },
+  {
+    id: "auto-review",
+    name: "Automatic Paper Review (Full)",
+    step_count: 5,
+    builtin: true,
+  },
+  {
+    id: "auto-review-quick",
+    name: "Automatic Paper Review (Quick)",
+    step_count: 4,
+    builtin: true,
+  },
   { id: "deep", name: "Paper Review (Full)", step_count: 3, builtin: false },
   { id: "quick", name: "Paper Review (Quick)", step_count: 2, builtin: false },
 ];
@@ -76,37 +90,44 @@ const catalog: AutoReviewCatalog = {
   subjectCount: 2,
   methodCount: 1,
   genreCount: 10,
-  disciplines: [{
-    id: "mathematics",
-    label: "Mathematics",
-    roles: [
-      {
-        id: "subject_mathematics_general",
-        label: "Mathematics — General",
-        level: "discipline",
-        description: "Mathematics spanning several subfields.",
-        exclusions: "a listed subfield clearly fits.",
-      },
-      {
-        id: "subject_mathematics_pde",
-        label: "Mathematics — PDE & Calculus of Variations",
-        level: "subfield",
-        description: "Partial differential equations and variational problems.",
-        exclusions: "the paper has no PDE or variational contribution.",
-      },
-    ],
-  }],
-  methodFamilies: [{
-    id: "formal_conceptual",
-    label: "Formal Theory & Conceptual Analysis",
-    roles: [{
-    id: "formal_proofs",
-    label: "Method — Formal Proofs",
-    level: "method",
-    description: "Central theorems require proof verification.",
-    exclusions: "proofs are routine and immaterial.",
-    }],
-  }],
+  disciplines: [
+    {
+      id: "mathematics",
+      label: "Mathematics",
+      roles: [
+        {
+          id: "subject_mathematics_general",
+          label: "Mathematics — General",
+          level: "discipline",
+          description: "Mathematics spanning several subfields.",
+          exclusions: "a listed subfield clearly fits.",
+        },
+        {
+          id: "subject_mathematics_pde",
+          label: "Mathematics — PDE & Calculus of Variations",
+          level: "subfield",
+          description:
+            "Partial differential equations and variational problems.",
+          exclusions: "the paper has no PDE or variational contribution.",
+        },
+      ],
+    },
+  ],
+  methodFamilies: [
+    {
+      id: "formal_conceptual",
+      label: "Formal Theory & Conceptual Analysis",
+      roles: [
+        {
+          id: "formal_proofs",
+          label: "Method — Formal Proofs",
+          level: "method",
+          description: "Central theorems require proof verification.",
+          exclusions: "proofs are routine and immaterial.",
+        },
+      ],
+    },
+  ],
 };
 
 function mockLoad(config: PipelineConfig, active = "deep") {
@@ -120,7 +141,9 @@ function mockLoad(config: PipelineConfig, active = "deep") {
   });
 }
 
-function renderPanel(overrides: Partial<React.ComponentProps<typeof WorkflowPanel>> = {}) {
+function renderPanel(
+  overrides: Partial<React.ComponentProps<typeof WorkflowPanel>> = {},
+) {
   return render(
     <WorkflowPanel
       disabled={false}
@@ -129,7 +152,7 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof WorkflowPane
       onProfileChange={() => {}}
       refreshKey={0}
       {...overrides}
-    />
+    />,
   );
 }
 
@@ -144,8 +167,12 @@ describe("WorkflowPanel", () => {
 
     const select = await screen.findByRole("combobox");
     expect(select).toHaveValue("deep");
-    expect(screen.getByRole("option", { name: "Paper Review (Full)" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Paper Review (Quick)" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Paper Review (Full)" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Paper Review (Quick)" }),
+    ).toBeInTheDocument();
   });
 
   it("lists enabled steps grouped by phase, hiding disabled steps", async () => {
@@ -222,27 +249,40 @@ describe("WorkflowPanel", () => {
     mockLoad(autoConfig, "auto-review");
     renderPanel();
 
-    expect(await screen.findByText("Adaptive agents")).toHaveClass("text-blue-700");
+    expect(await screen.findByText("Adaptive agents")).toHaveClass(
+      "text-blue-700",
+    );
     expect(
       await screen.findByText(
         "Adaptive agents: 2–6 additional subject and method reviewers tailored to each document.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/conditional specialist/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/conditional specialist/i),
+    ).not.toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Browse specialist catalog" }));
-    expect(await screen.findByRole("dialog", { name: "Specialist catalog" })).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "Browse specialist catalog" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Specialist catalog" }),
+    ).toBeVisible();
     expect(screen.getByText("1 discipline")).toBeVisible();
     expect(screen.getByText("PDE & Calculus of Variations")).toBeVisible();
 
     await user.click(screen.getByRole("tab", { name: "Methods (1)" }));
     expect(screen.getByText("Formal Proofs")).toBeVisible();
-    await user.type(screen.getByRole("searchbox", { name: "Search specialists" }), "unmatched role");
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search specialists" }),
+      "unmatched role",
+    );
     expect(screen.getByText("No specialists match this search.")).toBeVisible();
 
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Specialist catalog" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Specialist catalog" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the Quick profile's narrower adaptive range", async () => {
@@ -262,6 +302,10 @@ describe("WorkflowPanel", () => {
     renderPanel();
 
     expect(await screen.findByText("2–4")).toBeInTheDocument();
-    expect(screen.getByText(/Adaptive agents: 2–4 additional subject and method reviewers/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Adaptive agents: 2–4 additional subject and method reviewers/,
+      ),
+    ).toBeInTheDocument();
   });
 });

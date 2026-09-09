@@ -20,7 +20,9 @@ describe("lineDiff", () => {
 
   it("detects a deleted line", () => {
     const ops = lineDiff("a\nb\nc", "a\nc");
-    expect(ops.filter((o) => o.type === "del")).toEqual([{ type: "del", text: "b" }]);
+    expect(ops.filter((o) => o.type === "del")).toEqual([
+      { type: "del", text: "b" },
+    ]);
   });
 
   it("detects a changed line as del + add", () => {
@@ -32,12 +34,18 @@ describe("lineDiff", () => {
   });
 
   it("handles one side empty", () => {
-    expect(lineDiff("", "a\nb").every((o) => o.type === "add" || o.text === "")).toBe(true);
-    expect(lineDiff("a\nb", "").filter((o) => o.type === "del")).toHaveLength(2);
+    expect(
+      lineDiff("", "a\nb").every((o) => o.type === "add" || o.text === ""),
+    ).toBe(true);
+    expect(lineDiff("a\nb", "").filter((o) => o.type === "del")).toHaveLength(
+      2,
+    );
   });
 
   it("uses a bounded fallback for oversized comparisons", () => {
-    const before = Array.from({ length: 5000 }, (_, i) => `old ${i}`).join("\n");
+    const before = Array.from({ length: 5000 }, (_, i) => `old ${i}`).join(
+      "\n",
+    );
     const after = Array.from({ length: 5000 }, (_, i) => `new ${i}`).join("\n");
     const ops = lineDiff(before, after);
     expect(ops).toHaveLength(3);

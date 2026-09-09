@@ -21,10 +21,12 @@ const config: PipelineConfig = {
       phase: "parallel",
       tools: ["WebSearch"],
       agents: ["claude", "antigravity"],
-      context: { include: [
-        { kind: "primary", parts: ["text", "visuals"] },
-        { kind: "survey" },
-      ] },
+      context: {
+        include: [
+          { kind: "primary", parts: ["text", "visuals"] },
+          { kind: "survey" },
+        ],
+      },
       for_each: { glob: "*.tex", max: 3 },
     },
     {
@@ -35,7 +37,9 @@ const config: PipelineConfig = {
       phase: "sequential",
       tools: [],
       agents: ["local"],
-      context: { include: [{ kind: "step", step: "analysis", parts: ["report"] }] },
+      context: {
+        include: [{ kind: "step", step: "analysis", parts: ["report"] }],
+      },
     },
   ],
 };
@@ -51,8 +55,19 @@ describe("RunPreview", () => {
           inputMode: "document",
           inputInterpretation: "document",
           stages: [
-            { id: "extract", kind: "extracting", label: "Create bundle", stepIds: [] },
-            { id: "wave", kind: "dispatching", label: "Parallel wave", stepIds: ["analysis"], stepLabels: ["Analysis"] },
+            {
+              id: "extract",
+              kind: "extracting",
+              label: "Create bundle",
+              stepIds: [],
+            },
+            {
+              id: "wave",
+              kind: "dispatching",
+              label: "Parallel wave",
+              stepIds: ["analysis"],
+              stepLabels: ["Analysis"],
+            },
             { id: "done", kind: "done", label: "Complete", stepIds: [] },
           ],
         }}
@@ -62,10 +77,14 @@ describe("RunPreview", () => {
       />,
     );
 
-    expect(screen.getByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
+    expect(
+      screen.getByRole("dialog", { name: "Review the execution plan" }),
+    ).toBeVisible();
     expect(screen.getByText(/2 documents · document/)).toBeVisible();
     expect(screen.getByTitle("4–16")).toBeVisible();
-    expect(screen.getByTitle("claude, antigravity, local, default provider")).toBeVisible();
+    expect(
+      screen.getByTitle("claude, antigravity, local, default provider"),
+    ).toBeVisible();
     expect(screen.getByText("Primary text, visuals")).toBeVisible();
     expect(screen.getByText("Output: analysis")).toBeVisible();
     expect(screen.getAllByText("WebSearch").length).toBeGreaterThan(0);
@@ -79,7 +98,12 @@ describe("RunPreview", () => {
       <RunPreview
         config={{ ...config, steps: [] }}
         inputPath="/papers/draft.pdf"
-        plan={{ profileId: "review", inputMode: "document", inputInterpretation: "document", stages: [] }}
+        plan={{
+          profileId: "review",
+          inputMode: "document",
+          inputInterpretation: "document",
+          stages: [],
+        }}
         onCancel={onCancel}
         onRun={onRun}
       />,
@@ -95,19 +119,26 @@ describe("RunPreview", () => {
         config={{
           ...config,
           use_orientation: true,
-          steps: [{
-            ...config.steps[1],
-            id: "conditional",
-            label: "Conditional",
-            run_if: {
-              kind: "survey_path",
-              pointer: "/review_plan/specialist_ids",
-              contains: "formal_proofs",
+          steps: [
+            {
+              ...config.steps[1],
+              id: "conditional",
+              label: "Conditional",
+              run_if: {
+                kind: "survey_path",
+                pointer: "/review_plan/specialist_ids",
+                contains: "formal_proofs",
+              },
             },
-          }],
+          ],
         }}
         inputPath="/papers/draft.pdf"
-        plan={{ profileId: "auto-review", inputMode: "document", inputInterpretation: "document", stages: [] }}
+        plan={{
+          profileId: "auto-review",
+          inputMode: "document",
+          inputInterpretation: "document",
+          stages: [],
+        }}
         onCancel={() => {}}
         onRun={() => {}}
       />,
@@ -120,7 +151,10 @@ describe("RunPreview", () => {
   it("shows bounded runtime-assembled specialists for Auto Review", () => {
     const coreContext = {
       include: [
-        { kind: "primary" as const, parts: ["text" as const, "visuals" as const] },
+        {
+          kind: "primary" as const,
+          parts: ["text" as const, "visuals" as const],
+        },
         { kind: "survey" as const },
       ],
     };
@@ -163,16 +197,40 @@ describe("RunPreview", () => {
           inputMode: "document",
           inputInterpretation: "document",
           stages: [
-            { id: "extract", kind: "extracting", label: "Creating document bundle", stepIds: [] },
-            { id: "orient", kind: "orienting", label: "Creating orientation map & review plan", stepIds: [] },
+            {
+              id: "extract",
+              kind: "extracting",
+              label: "Creating document bundle",
+              stepIds: [],
+            },
+            {
+              id: "orient",
+              kind: "orienting",
+              label: "Creating orientation map & review plan",
+              stepIds: [],
+            },
             {
               id: "parallel-1",
               kind: "dispatching",
               label: "Parallel agent wave",
-              stepIds: ["auto_contribution", "auto_consistency", "auto_exposition"],
-              stepLabels: ["Contribution & Literature", "Claims & Consistency", "Exposition & Architecture"],
+              stepIds: [
+                "auto_contribution",
+                "auto_consistency",
+                "auto_exposition",
+              ],
+              stepLabels: [
+                "Contribution & Literature",
+                "Claims & Consistency",
+                "Exposition & Architecture",
+              ],
             },
-            { id: "synthesis", kind: "synthesizing", label: "Sequential agent wave", stepIds: ["auto_synthesis"], stepLabels: ["Consolidate"] },
+            {
+              id: "synthesis",
+              kind: "synthesizing",
+              label: "Sequential agent wave",
+              stepIds: ["auto_synthesis"],
+              stepLabels: ["Consolidate"],
+            },
             { id: "done", kind: "done", label: "Complete", stepIds: [] },
           ],
         }}
@@ -183,11 +241,19 @@ describe("RunPreview", () => {
     expect(screen.getByText("4 fixed")).toBeVisible();
     expect(screen.getByText("+ 2–6 adaptive agents per report")).toBeVisible();
     expect(screen.getByTitle("7–11")).toBeVisible();
-    expect(screen.getByText(/assembles 2–6 subject and method specialists/)).toBeVisible();
-    expect(screen.getByText("Adaptive agents (2–6, auto-selected)")).toBeVisible();
+    expect(
+      screen.getByText(/assembles 2–6 subject and method specialists/),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Adaptive agents (2–6, auto-selected)"),
+    ).toBeVisible();
     expect(screen.getByText("Adaptive agents")).toBeVisible();
-    expect(screen.getByText("Reports: selected adaptive agents (2–6)")).toBeVisible();
-    expect(screen.getAllByText("Exposition & Architecture")[0]).not.toHaveClass("truncate");
+    expect(
+      screen.getByText("Reports: selected adaptive agents (2–6)"),
+    ).toBeVisible();
+    expect(screen.getAllByText("Exposition & Architecture")[0]).not.toHaveClass(
+      "truncate",
+    );
     expect(screen.getByText("4 fixed")).not.toHaveClass("truncate");
   });
 
@@ -213,8 +279,16 @@ describe("RunPreview", () => {
       },
       steps: [
         { ...parallel, id: "auto_consistency", label: "Claims & Consistency" },
-        { ...parallel, id: "auto_exposition", label: "Exposition & Architecture" },
-        { ...config.steps[1], id: "auto_synthesis", label: "Consolidate Feedback" },
+        {
+          ...parallel,
+          id: "auto_exposition",
+          label: "Exposition & Architecture",
+        },
+        {
+          ...config.steps[1],
+          id: "auto_synthesis",
+          label: "Consolidate Feedback",
+        },
       ],
     };
     render(
@@ -225,13 +299,15 @@ describe("RunPreview", () => {
           profileId: "auto-review-quick",
           inputMode: "document",
           inputInterpretation: "document",
-          stages: [{
-            id: "parallel",
-            kind: "dispatching",
-            label: "Parallel agent wave",
-            stepIds: ["auto_consistency", "auto_exposition"],
-            stepLabels: ["Claims & Consistency", "Exposition & Architecture"],
-          }],
+          stages: [
+            {
+              id: "parallel",
+              kind: "dispatching",
+              label: "Parallel agent wave",
+              stepIds: ["auto_consistency", "auto_exposition"],
+              stepLabels: ["Claims & Consistency", "Exposition & Architecture"],
+            },
+          ],
         }}
         onCancel={() => {}}
         onRun={() => {}}
@@ -240,7 +316,11 @@ describe("RunPreview", () => {
 
     expect(screen.getByText("+ 2–4 adaptive agents per report")).toBeVisible();
     expect(screen.getByTitle("6–8")).toBeVisible();
-    expect(screen.getByText(/assembles 2–4 subject and method specialists/)).toBeVisible();
-    expect(screen.getByText("Adaptive agents (2–4, auto-selected)")).toBeVisible();
+    expect(
+      screen.getByText(/assembles 2–4 subject and method specialists/),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Adaptive agents (2–4, auto-selected)"),
+    ).toBeVisible();
   });
 });

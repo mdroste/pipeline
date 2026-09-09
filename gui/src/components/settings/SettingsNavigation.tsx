@@ -25,7 +25,17 @@ export function SettingsNavigation({
     <div style={{ width: navWidth }} className="settings-sidebar">
       <h2 className="settings-sidebar-title">Settings</h2>
       <nav aria-label="Settings categories" className="space-y-1 flex-1">
-        {(["general", "providers", "workflow"] as const).map((id) => (
+        {(
+          [
+            "general",
+            "providers",
+            "conversations",
+            "workflow",
+            "storage",
+            "notifications",
+            "advanced",
+          ] as const
+        ).map((id) => (
           <button
             key={id}
             type="button"

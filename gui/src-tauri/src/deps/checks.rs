@@ -31,29 +31,6 @@ fn probe(name: &str, version_args: &[&str]) -> ProbeResult {
     }
 }
 
-/// Minimum agy release whose headless mode honors `--mode`, `--model`, and
-/// `--effort` and whose print envelope carries usage accounting. Older
-/// releases silently ignored those flags, so they fail the dependency check.
-const ANTIGRAVITY_MIN_VERSION: [u64; 3] = [1, 1, 12];
-
-/// Signed-in `agy models` fetches the list over the network, so it gets a
-/// longer bound than the local version probes.
-const ANTIGRAVITY_AUTH_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Parse agy's bare `X.Y.Z` version output and gate on the minimum release.
-/// Unparseable output is unknown, not evidence either way.
-/// Retained (test-covered) while Google subscription dispatch is disabled;
-/// the startup check no longer probes agy.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) fn antigravity_version_supported(version: &str) -> Option<bool> {
-    let mut parts = version.trim().split('.');
-    let mut parsed = [0u64; 3];
-    for slot in parsed.iter_mut() {
-        *slot = parts.next()?.trim().parse().ok()?;
-    }
-    Some(parsed >= ANTIGRAVITY_MIN_VERSION)
-}
-
 /// Check if Claude CLI is authenticated via `claude auth status`. Claude
 /// returns JSON even when the user is signed out, and documents exit 0 as
 /// signed in and exit 1 as signed out. Require both signals for a positive
@@ -115,39 +92,25 @@ pub(super) fn check_codex_auth(
     Some(output.status.success())
 }
 
-/// Check the Antigravity CLI's own sign-in state. `agy models` is free and
-/// deterministic: signed in it lists models and exits 0; signed out it fails
-/// fast with a "please sign in" diagnostic. A `-p` probe would instead start
-/// an interactive OAuth wait (~60s stall printing a login URL), so print mode
-/// is never used for probing.
-/// Retained (test-covered) while Google subscription dispatch is disabled;
-/// the startup check no longer probes agy.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) fn check_antigravity_auth(command: &ResolvedCommand) -> Option<bool> {
-    let mut process = command.command(["models"]);
-    configure_probe_command(&mut process);
-    let output = crate::process::run_bounded(
-        &mut process,
-        ANTIGRAVITY_AUTH_PROBE_TIMEOUT,
-        PROBE_OUTPUT_LIMIT,
-    )
-    .ok()?;
-    if output.stdout_truncated || output.stderr_truncated {
-        return None;
+/// Google readiness uses only the configured API key, including legacy profiles.
+/// It has no executable, version, or CLI authentication probe.
+pub(super) fn google_dependency(settings: &crate::settings::Settings, required: bool) -> DepStatus {
+    let configured = !settings.google_api_key.trim().is_empty();
+    DepStatus {
+        name: "Google API".into(),
+        found: configured,
+        version: "direct API".into(),
+        path: String::new(),
+        required,
+        hint: if configured {
+            "API key configured.".into()
+        } else {
+            "Add a Google AI API key in Settings → Providers → Google.".into()
+        },
+        help_url: None,
+        authenticated: Some(configured),
+        cli_auth_status: None,
     }
-    if output.status.success() {
-        return Some(true);
-    }
-    let diagnostic = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-    .to_ascii_lowercase();
-    if diagnostic.contains("sign in") || diagnostic.contains("authentication") {
-        return Some(false);
-    }
-    None
 }
 
 pub(super) fn cli_auth_status(found: bool, authenticated: Option<bool>) -> Option<CliAuthStatus> {
@@ -161,29 +124,11 @@ pub(super) fn cli_auth_status(found: bool, authenticated: Option<bool>) -> Optio
 /// Parse "http(s)://host[:port]/..." into (host, port) for a TCP probe.
 /// Returns None for URLs we can't parse; the probe then reports unreachable.
 pub(super) fn parse_host_port(base_url: &str) -> Option<(String, u16)> {
-    let rest = base_url
-        .trim()
-        .strip_prefix("http://")
-        .or_else(|| base_url.trim().strip_prefix("https://"))?;
-    let default_port = if base_url.trim_start().starts_with("https://") {
-        443
-    } else {
-        80
-    };
-    let authority = rest.split('/').next()?;
-    if authority.is_empty() {
+    let url = reqwest::Url::parse(base_url.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
         return None;
     }
-    match authority.rsplit_once(':') {
-        Some((host, port)) => {
-            let port = port.parse::<u16>().ok()?;
-            if host.is_empty() {
-                return None;
-            }
-            Some((host.to_string(), port))
-        }
-        None => Some((authority.to_string(), default_port)),
-    }
+    Some((url.host_str()?.to_owned(), url.port_or_known_default()?))
 }
 
 /// Protocol-level probe for the local OpenAI-compatible server. A listener is
@@ -400,7 +345,6 @@ fn check_all_for(
     let effective_extractor = config.map(|config| effective_pdf_extractor(settings, config));
     let has_anthropic_key = !settings.anthropic_api_key.trim().is_empty();
     let has_openai_key = !settings.openai_api_key.trim().is_empty();
-    let has_google_key = !settings.google_api_key.trim().is_empty();
     let claude_api_mode = settings.model_transport("claude") == "api";
     let codex_api_mode = settings.model_transport("codex") == "api";
     let local_base_url = settings.local_base_url.clone();
@@ -431,10 +375,6 @@ fn check_all_for(
                 .and_then(|command| check_codex_auth(command, settings));
             (command.is_some(), version, path, auth)
         });
-
-        // The agy CLI is not probed: Google subscription dispatch is disabled
-        // (see Settings::model_transport), so agy is never invoked — not even
-        // for its signed-in `agy models` readiness check.
 
         // Poppler binaries are normally bundled, with a system fallback.
         let pdftoppm_h = s.spawn(|| find_on_path("pdftoppm"));
@@ -570,26 +510,7 @@ fn check_all_for(
             },
         };
 
-        // Google is API-only: subscription (agy CLI) dispatch is disabled
-        // because Google's Antigravity terms do not permit third-party
-        // software to use an Antigravity sign-in. Readiness is the key alone.
-        let antigravity_hint = if has_google_key {
-            "API key configured — CLI not required.".to_string()
-        } else {
-            "Google runs through the Gemini API. Add a Google AI API key in Settings → API Keys."
-                .to_string()
-        };
-        let antigravity = DepStatus {
-            name: "Antigravity CLI".into(),
-            found: has_google_key,
-            version: "direct API".into(),
-            path: String::new(),
-            required: required_providers.contains("antigravity"),
-            hint: antigravity_hint,
-            help_url: None,
-            authenticated: Some(has_google_key),
-            cli_auth_status: None,
-        };
+        let google = google_dependency(settings, required_providers.contains("antigravity"));
 
         // Classify a found binary as bundled (under our resource dir) or system.
         let bundled_dir = env::bundled_poppler_dir();
@@ -742,7 +663,7 @@ fn check_all_for(
         // CLI, or this preflight's actionable hint degrades into a mid-run
         // "No launchable … CLI" failure. PDF parsing requirements remain
         // independently enforced.
-        let model_access_ready = [&claude, &codex, &antigravity, &local]
+        let model_access_ready = [&claude, &codex, &google, &local]
             .into_iter()
             .all(dependency_ready);
         let pdf_dependencies_ready = [&pdftoppm, &pdftotext, &paddle_full, &extractor]
@@ -752,7 +673,7 @@ fn check_all_for(
         let deps = vec![
             claude,
             codex,
-            antigravity,
+            google,
             local,
             pdftoppm,
             pdftotext,

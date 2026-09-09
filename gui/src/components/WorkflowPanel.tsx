@@ -81,16 +81,26 @@ export default function WorkflowPanel({
 
   if (loading) {
     return (
-      <div role="status" className="border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+      <div
+        role="status"
+        className="border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400"
+      >
         Loading workflow…
       </div>
     );
   }
   if (error || !config) {
     return (
-      <div role="alert" className="border-t border-gray-200 pt-4 text-xs text-red-600 dark:border-gray-700 dark:text-red-400">
+      <div
+        role="alert"
+        className="border-t border-gray-200 pt-4 text-xs text-red-600 dark:border-gray-700 dark:text-red-400"
+      >
         <p>Workflow unavailable{error ? `: ${error}` : "."}</p>
-        <button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)} className="mt-1 font-medium underline">
+        <button
+          type="button"
+          onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+          className="mt-1 font-medium underline"
+        >
           Retry
         </button>
       </div>
@@ -100,16 +110,18 @@ export default function WorkflowPanel({
   const enabledSteps = config.steps.filter((s) => s.enabled);
   const disabledCount = config.steps.length - enabledSteps.length;
   const autoAssembled = isAutoReview(config);
-  const autoReview = autoAssembled || ["auto-review", "auto-review-quick"].includes(activeId);
+  const autoReview =
+    autoAssembled || ["auto-review", "auto-review-quick"].includes(activeId);
   const configuredAdaptiveCount = adaptiveAgentCount(config);
   const configuredAdaptiveRange = adaptiveAgentRange(config);
 
   const groups = computeWaves(config.steps).reduce<
     { phase: StepConfig["phase"]; steps: StepConfig[] }[]
   >((result, wave) => {
-    const group = wave.kind === "parallel"
-      ? { phase: "parallel" as const, steps: wave.steps }
-      : { phase: "sequential" as const, steps: [wave.step] };
+    const group =
+      wave.kind === "parallel"
+        ? { phase: "parallel" as const, steps: wave.steps }
+        : { phase: "sequential" as const, steps: [wave.step] };
     const previous = result[result.length - 1];
     if (group.phase === "sequential" && previous?.phase === "sequential") {
       previous.steps.push(...group.steps);
@@ -146,7 +158,14 @@ export default function WorkflowPanel({
           </option>
         ))}
       </select>
-      {switching && <p role="status" className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Switching workflow…</p>}
+      {switching && (
+        <p
+          role="status"
+          className="mt-1 text-[11px] text-gray-500 dark:text-gray-400"
+        >
+          Switching workflow…
+        </p>
+      )}
 
       {/* Read-only summary — steps are managed in the pipeline editor */}
       <div className="mt-3">
@@ -155,56 +174,73 @@ export default function WorkflowPanel({
             <p className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">
               {group.phase === "parallel" ? "Parallel" : "Sequential"}
             </p>
-            {group.steps.filter((step) => !step.run_if).map((step) => (
-              <div key={step.id} className="flex items-center gap-2 py-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
-                <span className="text-xs text-gray-600 dark:text-gray-400 truncate">
-                  {step.label}
-                </span>
-                {step.agents?.length > 1 && (
-                  <span className="text-[10px] text-gray-500 dark:text-gray-400 shrink-0">
-                    {step.agents.map((a) => a.charAt(0).toUpperCase()).join("+")}
+            {group.steps
+              .filter((step) => !step.run_if)
+              .map((step) => (
+                <div key={step.id} className="flex items-center gap-2 py-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
+                  <span className="text-xs text-gray-600 dark:text-gray-400 truncate">
+                    {step.label}
                   </span>
-                )}
-              </div>
-            ))}
-            {autoReview && group.phase === "parallel" && gi === groups.findIndex((candidate) => candidate.phase === "parallel") && (
-              <button
-                type="button"
-                onClick={() => setCatalogOpen(true)}
-                className="flex w-full items-center gap-2 py-0.5 text-left"
-                title="Browse the adaptive-agent catalog"
-              >
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400 dark:bg-blue-500" />
-                <span className="truncate text-xs font-medium text-blue-700 dark:text-blue-300">
-                  Adaptive agents
-                </span>
-                <span className="ml-auto shrink-0 text-[10px] text-blue-600/80 dark:text-blue-300/80">
-                  {adaptiveAgentCountLabel(configuredAdaptiveCount, configuredAdaptiveRange)}
-                </span>
-              </button>
-            )}
-            {!autoReview && (() => {
-              const conditional = group.steps.filter((step) => !!step.run_if);
-              if (conditional.length === 0) return null;
-              return (
-                <details className="mt-1 rounded-md border border-gray-200 px-2 py-1 dark:border-gray-700">
-                  <summary className="cursor-pointer text-[11px] text-gray-600 dark:text-gray-400">
-                    {conditional.length} conditional specialist{conditional.length === 1 ? "" : "s"}
-                  </summary>
-                  <div className="mt-1 border-t border-gray-100 pt-1 dark:border-gray-800">
-                    {conditional.map((step) => (
-                      <div key={step.id} className="flex items-center gap-2 py-0.5">
-                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300 dark:bg-gray-600" />
-                        <span className="truncate text-xs text-gray-600 dark:text-gray-400">
-                          {step.label}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              );
-            })()}
+                  {step.agents?.length > 1 && (
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400 shrink-0">
+                      {step.agents
+                        .map((a) => a.charAt(0).toUpperCase())
+                        .join("+")}
+                    </span>
+                  )}
+                </div>
+              ))}
+            {autoReview &&
+              group.phase === "parallel" &&
+              gi ===
+                groups.findIndex(
+                  (candidate) => candidate.phase === "parallel",
+                ) && (
+                <button
+                  type="button"
+                  onClick={() => setCatalogOpen(true)}
+                  className="flex w-full items-center gap-2 py-0.5 text-left"
+                  title="Browse the adaptive-agent catalog"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400 dark:bg-blue-500" />
+                  <span className="truncate text-xs font-medium text-blue-700 dark:text-blue-300">
+                    Adaptive agents
+                  </span>
+                  <span className="ml-auto shrink-0 text-[10px] text-blue-600/80 dark:text-blue-300/80">
+                    {adaptiveAgentCountLabel(
+                      configuredAdaptiveCount,
+                      configuredAdaptiveRange,
+                    )}
+                  </span>
+                </button>
+              )}
+            {!autoReview &&
+              (() => {
+                const conditional = group.steps.filter((step) => !!step.run_if);
+                if (conditional.length === 0) return null;
+                return (
+                  <details className="mt-1 rounded-md border border-gray-200 px-2 py-1 dark:border-gray-700">
+                    <summary className="cursor-pointer text-[11px] text-gray-600 dark:text-gray-400">
+                      {conditional.length} conditional specialist
+                      {conditional.length === 1 ? "" : "s"}
+                    </summary>
+                    <div className="mt-1 border-t border-gray-100 pt-1 dark:border-gray-800">
+                      {conditional.map((step) => (
+                        <div
+                          key={step.id}
+                          className="flex items-center gap-2 py-0.5"
+                        >
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300 dark:bg-gray-600" />
+                          <span className="truncate text-xs text-gray-600 dark:text-gray-400">
+                            {step.label}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                );
+              })()}
           </div>
         ))}
         {enabledSteps.length === 0 && (
@@ -215,7 +251,12 @@ export default function WorkflowPanel({
         {autoReview && (
           <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 dark:border-blue-900/70 dark:bg-blue-950/25">
             <p className="text-[11px] leading-4 text-blue-900 dark:text-blue-200">
-              Adaptive agents: {adaptiveAgentCountLabel(configuredAdaptiveCount, configuredAdaptiveRange)} additional subject and method reviewers tailored to each document.
+              Adaptive agents:{" "}
+              {adaptiveAgentCountLabel(
+                configuredAdaptiveCount,
+                configuredAdaptiveRange,
+              )}{" "}
+              additional subject and method reviewers tailored to each document.
             </p>
             <button
               type="button"
@@ -242,7 +283,9 @@ export default function WorkflowPanel({
       >
         Edit workflow…
       </button>
-      {catalogOpen && <AutoReviewCatalogDialog onClose={() => setCatalogOpen(false)} />}
+      {catalogOpen && (
+        <AutoReviewCatalogDialog onClose={() => setCatalogOpen(false)} />
+      )}
     </div>
   );
 }

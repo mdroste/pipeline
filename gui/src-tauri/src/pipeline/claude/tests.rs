@@ -10,6 +10,10 @@ fn read_only_calls_deny_every_write_tool() {
     assert!(denies.contains(&"Write".to_string()));
     assert!(denies.contains(&"NotebookEdit".to_string()));
     assert!(denies.contains(&"WebSearch".to_string()));
+    assert!(denies.contains(&"Bash".to_string()));
+    assert!(denies.contains(&"WebFetch".to_string()));
+    assert!(denies.contains(&"mcp__*".to_string()));
+    assert!(denies.contains(&"Task".to_string()));
 }
 
 #[test]
@@ -40,6 +44,17 @@ fn allowed_websearch_is_not_denied() {
 }
 
 #[test]
+fn ambient_read_and_discovery_tools_are_denied() {
+    let denies = cli_disallowed_tools(&["Read"], &[], false);
+    for tool in ["Glob", "Grep", "Agent", "Skill", "AskUserQuestion"] {
+        assert!(
+            denies.contains(&tool.to_string()),
+            "missing deny for {tool}"
+        );
+    }
+}
+
+#[test]
 fn webview_request_previews_are_utf8_safe_and_bounded() {
     let short = event_text_preview("short request");
     assert_eq!(short.text, "short request");
@@ -57,7 +72,6 @@ fn webview_request_previews_are_utf8_safe_and_bounded() {
 fn request_provider_labels_do_not_repeat_the_transport() {
     assert_eq!(request_provider_label("claude", "cli"), "Claude Code");
     assert_eq!(request_provider_label("codex", "cli"), "Codex");
-    assert_eq!(request_provider_label("antigravity", "cli"), "Antigravity");
     assert_eq!(request_provider_label("claude", "api"), "Anthropic");
     assert_eq!(request_provider_label("codex", "api"), "OpenAI");
     assert_eq!(request_provider_label("antigravity", "api"), "Google");
@@ -93,20 +107,6 @@ fn request_effort_reports_what_each_transport_sends() {
         request_effort("codex", "cli", "gpt-5.6", &settings, &codex_medium),
         "medium"
     );
-    let antigravity_low = LlmOverrides {
-        effort: Some("low"),
-        ..Default::default()
-    };
-    assert_eq!(
-        request_effort(
-            "antigravity",
-            "cli",
-            "gemini-3.6-flash",
-            &settings,
-            &antigravity_low
-        ),
-        "low"
-    );
     assert_eq!(
         request_effort(
             "antigravity",
@@ -116,19 +116,6 @@ fn request_effort_reports_what_each_transport_sends() {
             &overrides
         ),
         "Not configurable"
-    );
-    assert_eq!(
-        request_effort(
-            "antigravity",
-            "cli",
-            "gemini-3.6-flash",
-            &settings,
-            &LlmOverrides {
-                effort: Some("max"),
-                ..Default::default()
-            }
-        ),
-        "Not sent (unsupported value)"
     );
 }
 

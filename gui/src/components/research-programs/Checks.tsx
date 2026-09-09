@@ -55,8 +55,8 @@ export default function Checks(props: DeskProps & { active?: boolean }) {
       <section className={card}>
         <h2 className="font-semibold">Scheduled research checks</h2>
         <p className={muted}>
-          Check project records or refresh a literature search while Pipeline is open.
-          The first check sets a baseline; later checks report changes.
+          Check project records or refresh a literature search while Pipeline is
+          open. The first check sets a baseline; later checks report changes.
           Missed checks are combined into one.
         </p>
         <Field label="Check title">

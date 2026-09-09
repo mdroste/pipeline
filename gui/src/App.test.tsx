@@ -40,6 +40,15 @@ function runSetup(
   };
 }
 
+async function openTools(user: {
+  click: (element: Element) => Promise<unknown>;
+}) {
+  const disclosure = screen.getByRole("button", { name: "Tools" });
+  if (disclosure.getAttribute("aria-expanded") !== "true") {
+    await user.click(disclosure);
+  }
+}
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("@tauri-apps/api/window", () => ({
@@ -81,30 +90,42 @@ vi.mock("./components/PaperSelector", () => ({
   }) => (
     <>
       <span>Primary mode: {inputMode}</span>
-      <button onClick={() => {
-        onPathChange("/tmp/test-paper.pdf");
-        onSelectionChange?.({
-          paths: ["/tmp/test-paper.pdf"],
-          interpretation: "document",
-          selectionKind: "file",
-        });
-      }}>Choose test paper</button>
-      <button onClick={() => {
-        onPathChange("/tmp/test-paper.docx");
-        onSelectionChange?.({
-          paths: ["/tmp/test-paper.docx"],
-          interpretation: "document",
-          selectionKind: "file",
-        });
-      }}>Choose DOCX</button>
-      <button onClick={() => {
-        onPathChange("/tmp/a.pdf");
-        onSelectionChange?.({
-          paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
-          interpretation: "batch",
-          selectionKind: "file",
-        });
-      }}>Choose two papers</button>
+      <button
+        onClick={() => {
+          onPathChange("/tmp/test-paper.pdf");
+          onSelectionChange?.({
+            paths: ["/tmp/test-paper.pdf"],
+            interpretation: "document",
+            selectionKind: "file",
+          });
+        }}
+      >
+        Choose test paper
+      </button>
+      <button
+        onClick={() => {
+          onPathChange("/tmp/test-paper.docx");
+          onSelectionChange?.({
+            paths: ["/tmp/test-paper.docx"],
+            interpretation: "document",
+            selectionKind: "file",
+          });
+        }}
+      >
+        Choose DOCX
+      </button>
+      <button
+        onClick={() => {
+          onPathChange("/tmp/a.pdf");
+          onSelectionChange?.({
+            paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
+            interpretation: "batch",
+            selectionKind: "file",
+          });
+        }}
+      >
+        Choose two papers
+      </button>
     </>
   ),
 }));
@@ -112,30 +133,42 @@ vi.mock("./components/WorkflowPanel", () => ({
   default: () => <div>Test workflow</div>,
 }));
 vi.mock("./components/RunParallelAgents", () => ({
-  default: ({ onChange }: {
+  default: ({
+    onChange,
+  }: {
     onChange: (value: {
       agents: string[];
       model_overrides: Record<string, never>;
       effort_overrides: Record<string, never>;
     }) => void;
   }) => (
-    <button onClick={() => onChange({
-      agents: ["codex"],
-      model_overrides: {},
-      effort_overrides: {},
-    })}>
+    <button
+      onClick={() =>
+        onChange({
+          agents: ["codex"],
+          model_overrides: {},
+          effort_overrides: {},
+        })
+      }
+    >
       Change report agents
     </button>
   ),
 }));
 vi.mock("./components/ProjectsPage", () => ({
-  default: ({ onSaveHandlerChange, onDirtyChange }: {
+  default: ({
+    onSaveHandlerChange,
+    onDirtyChange,
+  }: {
     onSaveHandlerChange: (save: (() => Promise<boolean>) | null) => void;
     onDirtyChange: (dirty: boolean) => void;
   }) => {
     useEffect(() => {
       onSaveHandlerChange(saveCollection);
-      return () => { onSaveHandlerChange(null); onDirtyChange(false); };
+      return () => {
+        onSaveHandlerChange(null);
+        onDirtyChange(false);
+      };
     }, [onSaveHandlerChange, onDirtyChange]);
     return <button onClick={() => onDirtyChange(true)}>Edit collection</button>;
   },
@@ -164,9 +197,7 @@ vi.mock("./components/PipelinePage", () => ({
     onClose: () => void;
     onDirtyChange?: (dirty: boolean) => void;
     onOpenGallery?: () => void;
-    onProfileChange?: (config?: {
-      extraction: { input_mode: string };
-    }) => void;
+    onProfileChange?: (config?: { extraction: { input_mode: string } }) => void;
   }) => (
     <div>
       Workflow workspace
@@ -218,9 +249,20 @@ vi.mock("./components/SettingsPage", () => ({
       <div>Current theme: {theme}</div>
       <button onClick={() => onThemeChange?.("light")}>Use light theme</button>
       <button onClick={() => onThemeChange?.("dark")}>Use dark theme</button>
-      <button onClick={() => onThemeChange?.("system")}>Use system theme</button>
+      <button onClick={() => onThemeChange?.("system")}>
+        Use system theme
+      </button>
       <button onClick={() => onDirtyChange?.(true)}>Make settings dirty</button>
       <button onClick={() => onSystemChange?.()}>Save mocked settings</button>
+    </div>
+  ),
+}));
+vi.mock("./components/ResearchActivity", () => ({
+  default: ({ onProject }: { onProject: (id: string) => void }) => (
+    <div role="dialog" aria-label="Research activity">
+      <button onClick={() => onProject("activity-project")}>
+        Open activity project
+      </button>
     </div>
   ),
 }));
@@ -243,16 +285,23 @@ describe("App run options", () => {
     systemIsDark = false;
     systemThemeListener = undefined;
     localStorage.clear();
+    localStorage.setItem("pipeline.ui.page", "main");
     document.documentElement.classList.remove("dark", "theme-transitioning");
     document.documentElement.style.colorScheme = "";
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn(() => ({
         matches: systemIsDark,
-        addEventListener: (_event: string, listener: (event: MediaQueryListEvent) => void) => {
+        addEventListener: (
+          _event: string,
+          listener: (event: MediaQueryListEvent) => void,
+        ) => {
           systemThemeListener = listener;
         },
-        removeEventListener: (_event: string, listener: (event: MediaQueryListEvent) => void) => {
+        removeEventListener: (
+          _event: string,
+          listener: (event: MediaQueryListEvent) => void,
+        ) => {
           if (systemThemeListener === listener) systemThemeListener = undefined;
         },
       })),
@@ -260,7 +309,8 @@ describe("App run options", () => {
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
+      if (command === "get_pipeline_config")
+        return Promise.resolve(previewConfig);
       if (command === "get_run_setup") return Promise.resolve(runSetup());
       if (command === "get_execution_plan") {
         return Promise.resolve({
@@ -272,7 +322,12 @@ describe("App run options", () => {
           inputSlots: [],
           readiness: { deps: [], ready: true },
           stages: [
-            { id: "extracting", kind: "extracting", label: "Extract input", stepIds: [] },
+            {
+              id: "extracting",
+              kind: "extracting",
+              label: "Extract input",
+              stepIds: [],
+            },
             { id: "done", kind: "done", label: "Complete", stepIds: [] },
           ],
         });
@@ -280,6 +335,29 @@ describe("App run options", () => {
       if (command === "start_batch") return Promise.resolve();
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
+  });
+
+  it("opens on the project-centered Home and starts a review from an outcome card", async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem("pipeline.ui.page");
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Move your research forward.",
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Home" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("button", { name: "Tools" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    await user.click(screen.getByRole("button", { name: /Review a paper/ }));
+    expect(await screen.findByTestId("run-setup-panel")).toBeVisible();
   });
 
   it("rechecks dependencies when reopening a stale setup warning", async () => {
@@ -290,10 +368,23 @@ describe("App run options", () => {
       const result = await defaultInvoke(command, args);
       if (command !== "get_execution_plan") return result;
       checks += 1;
-      return { ...result, readiness: { ready, deps: [{
-        name: "Workflow ChatGPT", found: true, required: true, version: "0.153.4",
-        path: "", hint: ready ? "" : "Sign in to the Workflow connection.", authenticated: ready,
-      }] } };
+      return {
+        ...result,
+        readiness: {
+          ready,
+          deps: [
+            {
+              name: "Workflow ChatGPT",
+              found: true,
+              required: true,
+              version: "0.153.4",
+              path: "",
+              hint: ready ? "" : "Sign in to the Workflow connection.",
+              authenticated: ready,
+            },
+          ],
+        },
+      };
     });
     const user = userEvent.setup();
     render(<App />);
@@ -302,7 +393,9 @@ describe("App run options", () => {
     await user.click(screen.getByRole("button", { name: "Setup needed" }));
     expect(await screen.findByRole("button", { name: "Close" })).toBeVisible();
     expect(screen.getByText("signed in")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Setup needed" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Setup needed" }),
+    ).not.toBeInTheDocument();
     expect(checks).toBe(2);
   });
 
@@ -318,7 +411,9 @@ describe("App run options", () => {
     });
 
     await user.click(await screen.findByRole("button", { name: "Settings" }));
-    await user.click(await screen.findByRole("button", { name: "Use light theme" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Use light theme" }),
+    );
     expect(localStorage.getItem("theme")).toBe("light");
     expect(document.documentElement).not.toHaveClass("dark");
     expect(setWindowTheme).toHaveBeenLastCalledWith("light");
@@ -326,7 +421,9 @@ describe("App run options", () => {
     act(() => systemThemeListener?.({ matches: true } as MediaQueryListEvent));
     expect(document.documentElement).not.toHaveClass("dark");
 
-    await user.click(await screen.findByRole("button", { name: "Use system theme" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Use system theme" }),
+    );
     expect(localStorage.getItem("theme")).toBe("system");
     expect(setWindowTheme).toHaveBeenLastCalledWith(null);
     expect(document.documentElement).toHaveClass("dark");
@@ -345,7 +442,9 @@ describe("App run options", () => {
 
     await user.click(screen.getByRole("button", { name: "Choose test paper" }));
     await user.click(screen.getByRole("button", { name: "Review report" }));
-    expect(await screen.findByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
+    expect(
+      await screen.findByRole("dialog", { name: "Review the execution plan" }),
+    ).toBeVisible();
     expect(startPipeline).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Generate report" }));
     await waitFor(() => {
@@ -373,7 +472,9 @@ describe("App run options", () => {
     render(<App />);
 
     await screen.findByRole("button", { name: "Review report" });
-    expect(screen.queryByRole("button", { name: "Batch" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Batch" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens Gallery from Designer instead of the primary navigation", async () => {
@@ -381,172 +482,239 @@ describe("App run options", () => {
     render(<App />);
 
     await screen.findByRole("button", { name: "Review report" });
-    expect(screen.queryByRole("button", { name: "Gallery" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Gallery" }),
+    ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Designer" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "Review designer" }));
     await user.click(await screen.findByRole("button", { name: "Gallery" }));
 
     expect(await screen.findByText("Gallery workspace")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Designer" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(
+      screen.getByRole("button", { name: "Review designer" }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it("does not rebuild the execution plan when per-report agents change", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
-    await waitFor(() => expect(
-      screen.getByRole("button", { name: "Review report" }),
-    ).toBeEnabled());
-    await waitFor(() => expect(invoke.mock.calls.filter(
-      ([command]) => command === "get_execution_plan",
-    )).toHaveLength(1));
-    await user.click(screen.getByRole("button", { name: "Change report agents" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Choose test paper" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Review report" }),
+      ).toBeEnabled(),
+    );
+    await waitFor(() =>
+      expect(
+        invoke.mock.calls.filter(
+          ([command]) => command === "get_execution_plan",
+        ),
+      ).toHaveLength(1),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Change report agents" }),
+    );
 
     expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Loading workflow…" })).not.toBeInTheDocument();
-    expect(invoke.mock.calls.filter(
-      ([command]) => command === "get_execution_plan",
-    )).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "Loading workflow…" }),
+    ).not.toBeInTheDocument();
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "get_execution_plan"),
+    ).toHaveLength(1);
   });
 
-  it("launches several selected documents as a batch from New run", async () => {
+  it("launches several selected documents as a batch from New review", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Choose two papers" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Choose two papers" }),
+    );
     await user.click(screen.getByRole("button", { name: "Review report" }));
     expect(await screen.findByText(/2 documents · document/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Generate report" }));
 
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_batch", {
-      paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
-      variables: null,
-      extraInputs: null,
-      expectedProfileConfigSnapshotId: "config-test",
-    }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("start_batch", {
+        paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
+        variables: null,
+        extraInputs: null,
+        expectedProfileConfigSnapshotId: "config-test",
+      }),
+    );
     expect(await screen.findByText("Batch workspace · no setup")).toBeVisible();
-    expect(screen.getByRole("button", { name: /Current batch/ })).toBeVisible();
-    expect(screen.getByRole("button", { name: "New run" })).toBeDisabled();
+    await openTools(user);
+    expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /Current batch/ }),
+    ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Review history" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /Current batch/ }));
-    expect(await screen.findByText("Batch workspace · no setup")).toBeVisible();
     expect(startPipeline).not.toHaveBeenCalled();
   });
 
   it("defers exact DOCX readiness checks until the user reviews the report", async () => {
-    invoke.mockImplementation((command: string, args?: { paperPath?: string | null }) => {
-      if (command === "mark_smoke_ready") return Promise.resolve(true);
-      if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
-      if (command === "get_run_setup") {
-        return Promise.resolve(runSetup("document-review", "doc-config"));
-      }
-      if (command === "get_execution_plan") {
-        const exactInput = args?.paperPath === "/tmp/test-paper.docx";
-        return Promise.resolve({
-          profileId: "document-review",
-          profileConfigSnapshotId: "doc-config",
-          profileSnapshotId: "doc-runtime",
-          inputMode: "document",
-          variables: [],
-          inputSlots: [],
-          readiness: exactInput
-            ? { deps: [], ready: true }
-            : {
-                ready: false,
-                deps: [{
-                  name: "PDF extractor",
-                  found: false,
-                  version: "",
-                  path: "",
-                  required: true,
-                  hint: "Only needed for PDF inputs.",
-                }],
-              },
-          stages: [],
-        });
-      }
-      return Promise.reject(new Error(`unexpected command: ${command}`));
-    });
+    invoke.mockImplementation(
+      (command: string, args?: { paperPath?: string | null }) => {
+        if (command === "mark_smoke_ready") return Promise.resolve(true);
+        if (command === "get_batch_status") return Promise.resolve([]);
+        if (command === "get_pipeline_config")
+          return Promise.resolve(previewConfig);
+        if (command === "get_run_setup") {
+          return Promise.resolve(runSetup("document-review", "doc-config"));
+        }
+        if (command === "get_execution_plan") {
+          const exactInput = args?.paperPath === "/tmp/test-paper.docx";
+          return Promise.resolve({
+            profileId: "document-review",
+            profileConfigSnapshotId: "doc-config",
+            profileSnapshotId: "doc-runtime",
+            inputMode: "document",
+            variables: [],
+            inputSlots: [],
+            readiness: exactInput
+              ? { deps: [], ready: true }
+              : {
+                  ready: false,
+                  deps: [
+                    {
+                      name: "PDF extractor",
+                      found: false,
+                      version: "",
+                      path: "",
+                      required: true,
+                      hint: "Only needed for PDF inputs.",
+                    },
+                  ],
+                },
+            stages: [],
+          });
+        }
+        return Promise.reject(new Error(`unexpected command: ${command}`));
+      },
+    );
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Choose DOCX" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled());
-    expect(invoke.mock.calls.filter(
-      ([command, args]) =>
-        command === "get_execution_plan" &&
-        (args as { paperPath?: string } | undefined)?.paperPath === "/tmp/test-paper.docx",
-    )).toHaveLength(0);
-    expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("button", { name: "Choose DOCX" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Review report" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      invoke.mock.calls.filter(
+        ([command, args]) =>
+          command === "get_execution_plan" &&
+          (args as { paperPath?: string } | undefined)?.paperPath ===
+            "/tmp/test-paper.docx",
+      ),
+    ).toHaveLength(0);
+    expect(
+      screen.queryByRole("button", { name: "Refresh" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     await user.click(screen.getByRole("button", { name: "Review report" }));
-    expect(await screen.findByRole("dialog", { name: "Review the execution plan" })).toBeVisible();
+    expect(
+      await screen.findByRole("dialog", { name: "Review the execution plan" }),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Generate report" }));
 
-    await waitFor(() => expect(startPipeline).toHaveBeenCalledWith(
-      "/tmp/test-paper.docx",
-      "document",
-      false,
-      undefined,
-      undefined,
-      "doc-runtime",
-    ));
-    expect(invoke.mock.calls.filter(
-      ([command, args]) =>
-        command === "get_execution_plan" &&
-        (args as { paperPath?: string } | undefined)?.paperPath === "/tmp/test-paper.docx",
-    )).toHaveLength(1);
+    await waitFor(() =>
+      expect(startPipeline).toHaveBeenCalledWith(
+        "/tmp/test-paper.docx",
+        "document",
+        false,
+        undefined,
+        undefined,
+        "doc-runtime",
+      ),
+    );
+    expect(
+      invoke.mock.calls.filter(
+        ([command, args]) =>
+          command === "get_execution_plan" &&
+          (args as { paperPath?: string } | undefined)?.paperPath ===
+            "/tmp/test-paper.docx",
+      ),
+    ).toHaveLength(1);
   });
 
   it("does not rerun workflow preflight after a same-mode workflow save", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Choose DOCX" }));
-    await user.click(screen.getByRole("button", { name: "Designer" }));
-    await user.click(await screen.findByRole("button", {
-      name: "Save document workflow",
-    }));
-    await user.click(screen.getByRole("button", {
-      name: "Close workflow editor",
-    }));
+    await user.click(
+      await screen.findByRole("button", { name: "Choose DOCX" }),
+    );
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Save document workflow",
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Close workflow editor",
+      }),
+    );
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled());
-    expect(invoke.mock.calls.filter(
-      ([command, args]) =>
-        command === "get_execution_plan" &&
-        (args as { paperPath?: string } | undefined)?.paperPath === "/tmp/test-paper.docx",
-    )).toHaveLength(0);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Review report" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      invoke.mock.calls.filter(
+        ([command, args]) =>
+          command === "get_execution_plan" &&
+          (args as { paperPath?: string } | undefined)?.paperPath ===
+            "/tmp/test-paper.docx",
+      ),
+    ).toHaveLength(0);
   });
 
   it("clears an incompatible primary selection when the workflow input mode changes", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
-    await user.click(screen.getByRole("button", { name: "Designer" }));
-    await user.click(await screen.findByRole("button", {
-      name: "Switch to folder workflow",
-    }));
-    await user.click(screen.getByRole("button", {
-      name: "Close workflow editor",
-    }));
+    await user.click(
+      await screen.findByRole("button", { name: "Choose test paper" }),
+    );
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Switch to folder workflow",
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Close workflow editor",
+      }),
+    );
 
     expect(await screen.findByText("Primary mode: folder")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Review report" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Review report" }),
+    ).toBeDisabled();
     expect(invoke).toHaveBeenCalledWith("get_run_setup");
-    expect(invoke.mock.calls.filter(
-      ([command, args]) =>
-        command === "get_execution_plan" &&
-        (args as { paperPath?: string } | undefined)?.paperPath !== null,
-    )).toHaveLength(0);
+    expect(
+      invoke.mock.calls.filter(
+        ([command, args]) =>
+          command === "get_execution_plan" &&
+          (args as { paperPath?: string } | undefined)?.paperPath !== null,
+      ),
+    ).toHaveLength(0);
   });
 
   it("reloads the new settings snapshot without comparing it to the old fingerprint", async () => {
@@ -555,9 +723,11 @@ describe("App run options", () => {
     await screen.findByRole("button", { name: "Review report" });
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
-    await user.click(await screen.findByRole("button", {
-      name: "Save mocked settings",
-    }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Save mocked settings",
+      }),
+    );
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
@@ -620,21 +790,25 @@ describe("App run options", () => {
         inputSlots: [],
         readiness: {
           ready: false,
-          deps: [{
-            name: "Claude CLI",
-            found: false,
-            version: "",
-            path: "",
-            required: true,
-            hint: "Install or configure model access.",
-          }],
+          deps: [
+            {
+              name: "Claude CLI",
+              found: false,
+              version: "",
+              path: "",
+              required: true,
+              hint: "Install or configure model access.",
+            },
+          ],
         },
         stages: [],
       });
     });
 
     expect(screen.getByText("Settings workspace")).toBeVisible();
-    expect(screen.queryByRole("dialog", { name: "Dependencies" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Dependencies" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Setup needed" })).toBeVisible();
   });
 
@@ -654,14 +828,16 @@ describe("App run options", () => {
           inputSlots: [],
           readiness: {
             ready: false,
-            deps: [{
-              name: "PaddleOCR-VL Full Parser",
-              found: false,
-              version: "",
-              path: "",
-              required: true,
-              hint: "Recommended for PDFs: Install from Settings → Reviews → PDF Extraction.",
-            }],
+            deps: [
+              {
+                name: "PaddleOCR-VL Full Parser",
+                found: false,
+                version: "",
+                path: "",
+                required: true,
+                hint: "Recommended for PDFs: Install from Settings → Reviews → PDF Extraction.",
+              },
+            ],
           },
           stages: [],
         });
@@ -671,14 +847,22 @@ describe("App run options", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("link", {
-      name: "Settings → Reviews → PDF Extraction",
-    }));
+    await user.click(
+      await screen.findByRole("link", {
+        name: "Settings → Reviews → PDF Extraction",
+      }),
+    );
 
-    expect(screen.queryByRole("dialog", { name: "Dependencies" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Dependencies" }),
+    ).not.toBeInTheDocument();
     expect(await screen.findByText("Settings workspace")).toBeVisible();
-    expect(screen.getByText("Initial settings section: extraction")).toBeVisible();
-    expect(screen.getByText("Settings target: paddleocr-local-engine")).toBeVisible();
+    expect(
+      screen.getByText("Initial settings section: extraction"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Settings target: paddleocr-local-engine"),
+    ).toBeVisible();
   });
 
   it("fails closed when fresh profile readiness reports a secondary provider missing", async () => {
@@ -686,7 +870,8 @@ describe("App run options", () => {
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
+      if (command === "get_pipeline_config")
+        return Promise.resolve(previewConfig);
       if (command === "get_run_setup") {
         return Promise.resolve(runSetup("mixed-providers", "mixed-config"));
       }
@@ -699,19 +884,22 @@ describe("App run options", () => {
           inputMode: "document",
           variables: [],
           inputSlots: [],
-          readiness: checks === 1
-            ? { deps: [], ready: true }
-            : {
-                ready: false,
-                deps: [{
-                  name: "Antigravity CLI",
-                  found: false,
-                  version: "",
-                  path: "",
-                  required: true,
-                  hint: "Required by the explicit empirical agent.",
-                }],
-              },
+          readiness:
+            checks === 1
+              ? { deps: [], ready: true }
+              : {
+                  ready: false,
+                  deps: [
+                    {
+                      name: "Google API",
+                      found: false,
+                      version: "",
+                      path: "",
+                      required: true,
+                      hint: "Required by the explicit empirical agent.",
+                    },
+                  ],
+                },
           stages: [],
         });
       }
@@ -720,11 +908,17 @@ describe("App run options", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Choose test paper" }),
+    );
     await user.click(screen.getByRole("button", { name: "Review report" }));
 
-    expect(await screen.findByRole("dialog", { name: "Dependencies" })).toBeVisible();
-    expect(screen.getByText(/Check the required model connections/)).toBeVisible();
+    expect(
+      await screen.findByRole("dialog", { name: "Dependencies" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Check the required model connections/),
+    ).toBeVisible();
     expect(startPipeline).not.toHaveBeenCalled();
     expect(checks).toBe(2);
   });
@@ -734,13 +928,15 @@ describe("App run options", () => {
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_batch_status") return Promise.resolve([]);
-      if (command === "get_pipeline_config") return Promise.resolve(previewConfig);
+      if (command === "get_pipeline_config")
+        return Promise.resolve(previewConfig);
       if (command === "get_run_setup") {
         return Promise.resolve(runSetup("first", "first-config"));
       }
       if (command === "get_execution_plan") {
         plans += 1;
-        if (plans > 1) return Promise.reject(new Error("active profile changed"));
+        if (plans > 1)
+          return Promise.reject(new Error("active profile changed"));
         return Promise.resolve({
           profileId: "first",
           profileConfigSnapshotId: "first-config",
@@ -757,32 +953,36 @@ describe("App run options", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Choose test paper" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Choose test paper" }),
+    );
     await user.click(screen.getByRole("button", { name: "Review report" }));
 
-    expect((await screen.findAllByText(/active profile changed/)).length).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText(/active profile changed/)).length,
+    ).toBeGreaterThan(0);
     expect(startPipeline).not.toHaveBeenCalled();
   });
 
-  it("shows run setup only in the new-run workspace", async () => {
+  it("shows run setup only in the new-review workspace", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
-    expect(screen.getByRole("button", { name: "New run" })).toHaveAttribute(
+    await openTools(user);
+    expect(screen.getByRole("button", { name: "New review" })).toHaveAttribute(
       "aria-current",
       "page",
     );
 
-    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Review history" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
     expect(screen.queryByTestId("run-setup-panel")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "History" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(
+      screen.getByRole("button", { name: "Review history" }),
+    ).toHaveAttribute("aria-current", "page");
 
-    await user.click(screen.getByRole("button", { name: "New run" }));
+    await user.click(screen.getByRole("button", { name: "New review" }));
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
   });
 
@@ -790,15 +990,21 @@ describe("App run options", () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);
 
-    expect(screen.getByRole("note", { name: "Data and privacy" })).toBeVisible();
+    expect(
+      screen.getByRole("note", { name: "Data and privacy" }),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Got it" }));
-    expect(screen.queryByRole("note", { name: "Data and privacy" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Data and privacy" }),
+    ).not.toBeInTheDocument();
     await screen.findByRole("button", { name: "Review report" });
 
     firstRender.unmount();
     render(<App />);
-    expect(screen.queryByRole("note", { name: "Data and privacy" })).not.toBeInTheDocument();
-    await screen.findByRole("button", { name: "Review report" });
+    expect(
+      screen.queryByRole("note", { name: "Data and privacy" }),
+    ).not.toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Move your research forward." });
   });
 
   it("links the first-run notice to the detailed privacy explanation", async () => {
@@ -817,11 +1023,17 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Help" }));
-    await user.click(await screen.findByRole("button", { name: "Install in Settings" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Install in Settings" }),
+    );
 
     expect(await screen.findByText("Settings workspace")).toBeVisible();
-    expect(screen.getByText("Initial settings section: extraction")).toBeVisible();
-    expect(screen.getByText("Settings target: paddleocr-local-engine")).toBeVisible();
+    expect(
+      screen.getByText("Initial settings section: extraction"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Settings target: paddleocr-local-engine"),
+    ).toBeVisible();
   });
 
   it("blocks in-app navigation away from unsaved settings", async () => {
@@ -830,8 +1042,11 @@ describe("App run options", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
-    await user.click(await screen.findByRole("button", { name: "Make settings dirty" }));
-    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Make settings dirty" }),
+    );
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "Review history" }));
 
     expect(confirmDialog).toHaveBeenCalledWith(
       "You have unsaved settings changes. Leave and discard them?",
@@ -841,19 +1056,44 @@ describe("App run options", () => {
     expect(screen.queryByText("History workspace")).not.toBeInTheDocument();
   });
 
+  it("blocks activity destinations without mutating them when settings are dirty", async () => {
+    const user = userEvent.setup();
+    confirmDialog.mockResolvedValueOnce(false);
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Make settings dirty" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Open activity project" }),
+    );
+
+    expect(confirmDialog).toHaveBeenCalledWith(
+      "You have unsaved settings changes. Leave and discard them?",
+      expect.anything(),
+    );
+    expect(screen.getByText("Settings workspace")).toBeVisible();
+    expect(localStorage.getItem("pipeline.workspace.workspaceId")).toBeNull();
+  });
+
   it("blocks native window close while workflow changes are unsaved", async () => {
     const user = userEvent.setup();
     confirmDialog.mockResolvedValueOnce(false);
     render(<App />);
 
     await waitFor(() => expect(onCloseRequested).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("button", { name: "Designer" }));
-    await user.click(await screen.findByRole("button", { name: "Make workflow dirty" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Make workflow dirty" }),
+    );
 
     const event = { preventDefault: vi.fn() };
-    const closeHandler = onCloseRequested.mock.calls[0][0] as (
-      closeEvent: { preventDefault: () => void },
-    ) => void;
+    const closeHandler = onCloseRequested.mock.calls[0][0] as (closeEvent: {
+      preventDefault: () => void;
+    }) => void;
     closeHandler(event);
 
     expect(confirmDialog).toHaveBeenCalledWith(
@@ -874,33 +1114,51 @@ describe("App run options", () => {
   });
   it("keeps collection edits on the page when a save fails, then allows a successful retry", async () => {
     const user = userEvent.setup();
-    render(<App/>);
-    await user.click(screen.getByRole("button", { name: "Run collections" }));
-    await user.click(await screen.findByRole("button", { name: "Edit collection" }));
+    render(<App />);
+    await openTools(user);
+    await user.click(
+      screen.getByRole("button", { name: "Review collections" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Edit collection" }),
+    );
     saveCollection.mockResolvedValue(false);
-    await user.click(screen.getByRole("button", { name: "History" }));
-    expect(screen.getByRole("button", { name: "Edit collection" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review history" }));
+    expect(
+      screen.getByRole("button", { name: "Edit collection" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("History workspace")).not.toBeInTheDocument();
     const event = { preventDefault: vi.fn() };
     await act(async () => onCloseRequested.mock.calls[0][0](event));
     expect(event.preventDefault).toHaveBeenCalled();
     saveCollection.mockResolvedValue(true);
-    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Review history" }));
     expect(await screen.findByText("History workspace")).toBeInTheDocument();
   });
 
   it("honors returning to the collection while navigation is waiting for its save", async () => {
     const user = userEvent.setup();
-    render(<App/>);
-    await user.click(screen.getByRole("button", { name: "Run collections" }));
+    render(<App />);
+    await openTools(user);
+    await user.click(
+      screen.getByRole("button", { name: "Review collections" }),
+    );
     await screen.findByRole("button", { name: "Edit collection" });
     let resolve!: (saved: boolean) => void;
-    saveCollection.mockImplementation(() => new Promise<boolean>(done => { resolve = done; }));
-    await user.click(screen.getByRole("button", { name: "History" }));
-    await user.click(screen.getByRole("button", { name: "Run collections" }));
+    saveCollection.mockImplementation(
+      () =>
+        new Promise<boolean>((done) => {
+          resolve = done;
+        }),
+    );
+    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await user.click(
+      screen.getByRole("button", { name: "Review collections" }),
+    );
     await act(async () => resolve(true));
-    expect(screen.getByRole("button", { name: "Edit collection" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Edit collection" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("History workspace")).not.toBeInTheDocument();
   });
-
 });

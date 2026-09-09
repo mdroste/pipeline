@@ -259,37 +259,9 @@ pub(super) async fn rerun_run_inner(
         .prefix("pipeline_run_inputs_")
         .tempdir()
         .map_err(|e| format!("Failed to create run input directory: {e}"))?;
-    let original_source = std::path::Path::new(&parent.input_path);
-    let scoped_source = if parent.input_mode != "none" && !original_source.exists() {
-        app.emit_event(
-            "pipeline:log",
-            serde_json::json!({
-                "line": "WARNING: the original source is no longer available; source selectors will be empty"
-            }),
-        )
-        .ok();
-        extract::ScopedSourceContext::default()
-    } else {
-        match extract::stage_selected_source(
-            original_source,
-            &parent.input_mode,
-            run_input_dir.path(),
-        ) {
-            Ok(context) => context,
-            Err(error) => {
-                app.emit_event(
-                    "pipeline:log",
-                    serde_json::json!({
-                        "line": format!(
-                            "WARNING: source context is unavailable to review steps: {error}"
-                        )
-                    }),
-                )
-                .ok();
-                extract::ScopedSourceContext::default()
-            }
-        }
-    };
+    let source_required = super::reuse_artifacts::requires_primary_source(&config);
+    let scoped_source =
+        super::reuse_artifacts::restore_source(&parent_dir, run_input_dir.path(), source_required)?;
     let scoped_source_path = scoped_source
         .source_path
         .as_deref()
@@ -363,6 +335,12 @@ pub(super) async fn rerun_run_inner(
     crate::pipeline_config::validate_runtime_config(&execution_config)?;
     crate::safety::validate_run_budget(&execution_config, &settings)?;
 
+    if scoped_source_path.is_empty()
+        && super::reuse_artifacts::requires_primary_source(&execution_config)
+    {
+        return Err("The expanded workflow requires source files that this run did not capture. Start a new run.".into());
+    }
+
     // Determine which steps to re-run vs. reuse.
     let enabled_ids: Vec<String> = execution_config
         .steps
@@ -405,7 +383,27 @@ pub(super) async fn rerun_run_inner(
     // Even when the user asks for a narrow partial re-run, never preload an
     // artifact produced under a different output mode or one that fails the
     // step's current schema. Its graph dependents are stale as well.
-    let incompatible = incompatible_reuse_ids(&execution_config, &parent_report.step_outputs);
+    let mut incompatible = incompatible_reuse_ids(&execution_config, &parent_report.step_outputs);
+    // Missing retained producer trees cannot satisfy a downstream file selector.
+    for step in execution_config.steps.iter().filter(|s| s.enabled) {
+        for selector in &step.context.include {
+            if let crate::pipeline_config::ArtifactSelector::Step {
+                step: producer,
+                parts,
+                ..
+            } = selector
+            {
+                if parts.contains(&crate::pipeline_config::StepArtifactPart::Files)
+                    && !parent_dir
+                        .join("artifacts/by-step")
+                        .join(executor::step_slug(producer))
+                        .is_dir()
+                {
+                    incompatible.insert(producer.clone());
+                }
+            }
+        }
+    }
     if !incompatible.is_empty() {
         rerun.extend(incompatible.iter().cloned());
         rerun.extend(crate::pipeline::executor::dependents_of(
@@ -449,7 +447,15 @@ pub(super) async fn rerun_run_inner(
         },
         None,
     )?;
+    if let Some(root) = artifact_write_dir.as_deref() {
+        super::reuse_artifacts::restore_producers(
+            &parent_dir,
+            std::path::Path::new(root),
+            preloaded.keys().cloned(),
+        )?;
+    }
     if let Some(writer) = run_writer.as_mut() {
+        super::reuse_artifacts::retain_source(&scoped_source, writer)?;
         writer
             .add_text(
                 "context/workflow.json",
@@ -534,7 +540,11 @@ pub(super) async fn rerun_run_inner(
                     }
                 }
             }
-        } else if let Ok(build) = crate::document_bundle::build(&resumed_extraction, w.dir()) {
+        } else if let Ok(build) = super::reuse_artifacts::build_bundle(
+            &resumed_extraction,
+            scoped_source.source_path.as_deref(),
+            w.dir(),
+        ) {
             for (rel_path, label, group) in &build.added_artifacts {
                 let _ = w.register_existing(rel_path, label, group);
             }
@@ -625,6 +635,7 @@ pub(super) async fn rerun_run_inner(
     // Rehydrate named inputs from the parent run's captured copies. Required
     // inputs from older runs that predate capture fail explicitly instead of
     // silently substituting an empty string into the prompt.
+    let mut runtime_extra_sources = std::collections::HashMap::new();
     let mut resolved_inputs = std::collections::HashMap::new();
     let mut persisted_inputs = std::collections::HashMap::new();
     let mut extra_tmps: Vec<tempfile::NamedTempFile> = Vec::new();
@@ -642,6 +653,18 @@ pub(super) async fn rerun_run_inner(
             }
             continue;
         };
+        let captured_source = super::reuse_artifacts::restore_named_source(
+            &parent_dir,
+            &slot.key,
+            run_input_dir.path(),
+            super::reuse_artifacts::requires_named_source(&execution_config, &slot.key),
+        )?;
+        if let Some(path) = captured_source.source_path.as_ref() {
+            runtime_extra_sources.insert(slot.key.clone(), path.to_string_lossy().into_owned());
+        }
+        if let Some(writer) = run_writer.as_mut() {
+            super::reuse_artifacts::retain_named_source(&slot.key, &captured_source, writer)?;
+        }
         let content = read_run_file(parent_run_id, parent_rel)
             .map_err(|e| format!("Cannot restore named input '{}': {e}", slot.key))?;
         let rel_path = extra_input_artifact_path(input_index, &slot.key);
@@ -689,7 +712,7 @@ pub(super) async fn rerun_run_inner(
         &survey_hint,
         &variables,
         &resolved_inputs,
-        &extra_input_sources,
+        &runtime_extra_sources,
         &preloaded,
         artifact_write_dir.as_deref(),
         &settings,

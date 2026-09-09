@@ -529,7 +529,7 @@ fn mission_migration_preserves_existing_tasks_and_keeps_a_v1_backup() {
             false,
         )
         .unwrap();
-    s.connection().unwrap().execute_batch("DROP TABLE mission_answers; DROP TABLE mission_events; DROP TABLE mission_children; DROP TABLE missions; PRAGMA user_version=1;").unwrap();
+    s.connection().unwrap().execute_batch("DROP TABLE discovery_selections; DROP TABLE discovery_events; DROP TABLE discovery_children; DROP TABLE discovery_records; DROP TABLE discovery_runs; DROP TABLE mission_answers; DROP TABLE mission_events; DROP TABLE mission_children; DROP TABLE missions; PRAGMA user_version=1;").unwrap();
     let migrated = Store::open(&s.root).unwrap();
     assert_eq!(migrated.get(&ordinary.id).unwrap().name, ordinary.name);
     assert!(storage::list(&migrated, None, 0).unwrap().is_empty());

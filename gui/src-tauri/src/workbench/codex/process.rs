@@ -49,7 +49,7 @@ pub(crate) fn write_runtime_config(codex_home: &Path, launcher: &Path) -> Result
             toml_basic_string(canonical_launcher),
         )
     };
-    let config = format!(
+    let mut config = format!(
         "cli_auth_credentials_store = \"file\"\n\
          default_permissions = \"workbench-inspect\"\n\
          \n\
@@ -90,6 +90,11 @@ pub(crate) fn write_runtime_config(codex_home: &Path, launcher: &Path) -> Result
          enabled = true\n",
         launcher_permissions, launcher_permissions, launcher_permissions, launcher_permissions,
     );
+    // Same confined filesystem rules as ordinary Workspace, with no network.
+    // Only host-created discovery role records can select these profiles.
+    for (profile, access) in [("discovery-inspect", "read"), ("discovery-edit", "write")] {
+        config.push_str(&format!("\n[permissions.{profile}]\ndescription = \"Bounded research automation\"\n[permissions.{profile}.filesystem]\n\":minimal\" = \"read\"\n{launcher_permissions}[permissions.{profile}.filesystem.\":workspace_roots\"]\n\".\" = \"{access}\"\n[permissions.{profile}.network]\nenabled = false\n"));
+    }
     std::fs::write(&pending, config)
         .map_err(|error| format!("Failed to create Workbench Codex config: {error}"))?;
     #[cfg(unix)]
