@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { taskClient, type SessionChoice } from "../../lib/taskClient";
 import {
@@ -32,7 +32,9 @@ export default function Builder({
   const [operation, setOperation] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const mounted = useRef(true);
   useEffect(() => {
+    mounted.current = true;
     let live = true;
     void Promise.all([
       taskClient.sessions(),
@@ -49,6 +51,7 @@ export default function Builder({
       });
     return () => {
       live = false;
+      mounted.current = false;
     };
   }, []);
   function patch(update: Partial<DiscoveryDefinition>) {
@@ -64,13 +67,16 @@ export default function Builder({
     setBusy(true);
     setError("");
     try {
-      onStarted(
-        await discoveryClient.start(definition, session || null, operation),
+      const result = await discoveryClient.start(
+        definition,
+        session || null,
+        operation,
       );
+      if (mounted.current) onStarted(result);
     } catch (e) {
-      setError(String(e));
+      if (mounted.current) setError(String(e));
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
   const number = (

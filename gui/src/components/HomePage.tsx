@@ -273,7 +273,7 @@ export default function HomePage({
               </div>
               <button
                 type="button"
-                onClick={() => onNavigate("workspace")}
+                onClick={() => onNavigate("project-index")}
                 className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
               >
                 View all

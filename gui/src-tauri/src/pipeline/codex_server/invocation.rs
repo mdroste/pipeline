@@ -1,6 +1,7 @@
 use super::connection::{connect, Connection, PROFILE};
 use super::tools::HostTools;
-use crate::agent_runtime::codex::session::private_write;
+use crate::agent_runtime::codex::invocation::{NativeThreadStart, TextTurnStart};
+use crate::agent_runtime::codex::session::{private_write, same_existing_path};
 use crate::agent_runtime::codex::{NormalizedEvent, DEFAULT_REQUEST_TIMEOUT};
 use crate::pipeline::{claude::LlmOverrides, logging};
 use serde_json::{json, Value};
@@ -18,6 +19,7 @@ const UNKNOWN: &str = "[codex-outcome-unknown]";
 struct Attempt {
     connection: Arc<Connection>,
     lease: Option<OwnedRwLockReadGuard<()>>,
+    account_lease: Option<OwnedRwLockReadGuard<()>>,
     path: PathBuf,
     record: Value,
     thread: Option<String>,
@@ -43,12 +45,14 @@ impl Drop for Attempt {
         let thread = self.thread.clone();
         let turn = self.turn.clone();
         let lease = self.lease.take();
+        let account_lease = self.account_lease.take();
         let path = self.path.clone();
         let mut record = self.record.clone();
         // A cleanup owner outlives the dropped call task. Native tools have no
         // artifact roots, and host tools stop polling with the call future.
         tokio::spawn(async move {
             let _lease = lease;
+            let _account_lease = account_lease;
             record["state"] = json!("outcome_unknown");
             let _ = private_write(
                 &path,
@@ -215,6 +219,15 @@ pub(super) async fn run_connected(
         .transpose()?
         .flatten();
     let lease = c.activity.clone().read_owned().await;
+    let account_lease = match &c.account {
+        Some(account) => Some(
+            account
+                .lease(&c.native.client)
+                .await
+                .map_err(|e| format!("[codex-auth] {e}"))?,
+        ),
+        None => None,
+    };
     if !c.recovery.lock().await.is_empty() {
         return Err("[codex-outcome-unknown] An earlier Workflow attempt requires review in Settings → API Keys → ChatGPT before another run".into());
     }
@@ -245,6 +258,7 @@ pub(super) async fn run_connected(
     let mut attempt = Attempt {
         connection: c.clone(),
         lease: Some(lease),
+        account_lease,
         path: c.attempts.join(format!("{id}.json")),
         record: json!({"schema_version":1,"id":id,"state":"prepared","state_before_drop":"prepared","pass":logging::current_pass(),"label":label,"backend":"codex_app_server","runtime_version":c.native.version,"epoch":c.native.client.epoch(),"model_requested":model,"effort":effort,"instructions":instructions,"instructions_sha256":hash(instructions.unwrap_or("")),"prompt_sha256":hash(&prompt),"prompt":prompt,"read_roots":roots,"write_root":overrides.write_dir,"allowed_tools":allowed_tools,"output_schema":overrides.output_schema,"native_schema":schema.is_some(),"native_context_reuse":false,"created_at":chrono::Utc::now().to_rfc3339()}),
         thread: None,
@@ -253,14 +267,20 @@ pub(super) async fn run_connected(
     };
     attempt.save()?;
     let mut events = c.native.client.subscribe();
-    let start = c.native.client.request("thread/start", json!({
-        "cwd":c.cwd,"runtimeWorkspaceRoots":[],"permissions":PROFILE,
-        "approvalPolicy":"never","approvalsReviewer":"user","modelProvider":"openai",
-        "model":model,"allowProviderModelFallback":false,"ephemeral":false,
-        "developerInstructions":instructions,"dynamicTools":tools.declarations(),
-        "config":{"web_search":if allowed_tools.contains(&"WebSearch") {"live"} else {"disabled"}},
-        "serviceName":"pipeline_workflows"
-    }), DEFAULT_REQUEST_TIMEOUT).await.map_err(|e| format!("[codex-capability] Cannot start Workflow thread: {e}"))?;
+    let start = c.native.client.start_native_thread(NativeThreadStart {
+        cwd: &c.cwd,
+        runtime_workspace_roots: &[],
+        permissions: PROFILE,
+        approval_policy: "never",
+        developer_instructions: instructions,
+        base_instructions: None,
+        dynamic_tools: &tools.declarations(),
+        model,
+        reasoning_effort: effort,
+        ephemeral: false,
+        service_name: "pipeline_workflows",
+        config: Some(json!({"web_search":if allowed_tools.contains(&"WebSearch") {"live"} else {"disabled"}})),
+    }).await.map_err(|e| format!("[codex-capability] Cannot start Workflow thread: {e}"))?;
     validate_thread(&start, &c.cwd, model)?;
     let thread = start["thread"]["id"]
         .as_str()
@@ -280,8 +300,23 @@ pub(super) async fn run_connected(
     attempt.save()?;
     logging::record_provider_attempt();
     logging::emit(app, format!("[App Server] {label}: {effective_model}; attempt {id}; selected context supplied in a fresh thread"));
-    let turn = match c.native.client.request("turn/start", json!({"threadId":thread,"input":[{"type":"text","text":prompt}],"effort":effort,"outputSchema":schema,"clientUserMessageId":id}), DEFAULT_REQUEST_TIMEOUT).await {
-        Ok(value) => value["turn"]["id"].as_str().map(str::to_string).ok_or_else(|| format!("{UNKNOWN} Missing turn identity after submission"))?,
+    let turn = match c
+        .native
+        .client
+        .start_text_turn(TextTurnStart {
+            thread_id: &thread,
+            text: &prompt,
+            client_user_message_id: Some(&id),
+            model: None,
+            effort,
+            output_schema: schema.as_ref(),
+        })
+        .await
+    {
+        Ok(value) => value["turn"]["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("{UNKNOWN} Missing turn identity after submission"))?,
         Err(error) if error.rpc_code.is_some() => {
             attempt.terminal = true;
             attempt.record["state"] = json!("rejected");
@@ -484,8 +519,7 @@ pub(super) fn validate_thread(
     let valid = value["modelProvider"] == "openai"
         && value["cwd"]
             .as_str()
-            .and_then(|p| std::fs::canonicalize(p).ok())
-            == std::fs::canonicalize(cwd).ok()
+            .is_some_and(|p| same_existing_path(std::path::Path::new(p), cwd))
         && value["runtimeWorkspaceRoots"]
             .as_array()
             .is_some_and(Vec::is_empty)

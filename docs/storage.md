@@ -16,7 +16,10 @@ registered folders. Manual exports retain their explicitly selected destinations
 App preferences, API keys, provider sign-ins and native session files, managed
 tools, and disposable extraction/model caches stay under the device's local
 `~/.pipeline/`. Workspace's native home remains
-`~/.pipeline/workbench/codex/` even with custom research storage.
+`~/.pipeline/workbench/codex/` even with custom research storage. The
+[shared ChatGPT account](chatgpt-account.md) remains local under
+`~/.pipeline/providers/chatgpt/`; neither execution runtime persists its
+supplied tokens. Research archives and transfers exclude these credentials.
 
 Changing folders does **not** move, merge, or delete existing data. Select the
 previous location to reopen it. Workspace archive/exchange tools remain the

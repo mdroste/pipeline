@@ -32,6 +32,12 @@ limits remain fixed. Child actions are inspected from the automation's Activity 
 pause, stop and recovery belong to the parent automation. See
 [Research missions](research-missions.md) for the full contract and walkthrough.
 
+The same Research area includes **Full self-discovery (supervised)** and
+**Full self-discovery (unsupervised)**. These develop a portfolio from a topic
+prompt through reviewed proposals, paper drafting and final ranking. Their
+typed portfolio state and child ownership live in `orchestration/discovery/`;
+see [Self-discovery](self-discovery.md) for the current contract and limits.
+
 ## Timing and input
 
 Choose **Now**, **Later**, an interval, or a calendar schedule. Calendar schedules
@@ -135,7 +141,10 @@ activation, occurrence uniqueness, consumed signal identities, and append-only
 events. At most four leaf actions execute concurrently, with the existing global
 one-Workspace-turn and one-Review-run limits retained. Database work uses bounded
 blocking pools. A completed response is written atomically to its action journal
-before the coordinator advances. Task history loads small previews; full outputs
+before the coordinator advances. `orchestration/durable.rs` publishes receipts
+and snapshots with file sync and Unix directory sync (including created parents);
+Windows uses write-through moves. Publication failures propagate before adoption.
+Task history loads small previews; full outputs
 are fetched on demand. The Tasks UI and Workspace task cards are separate lazy
 chunks, with debounced event-driven refreshes and paginated history.
 

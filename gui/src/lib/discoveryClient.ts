@@ -6,6 +6,25 @@ export const discoveryNames: Record<DiscoveryMode, string> = {
   supervised: "Full self-discovery (supervised)",
   unsupervised: "Full self-discovery (unsupervised)",
 };
+export const discoveryStatus = (state: string) =>
+  ({
+    awaitingSelection: "Awaiting your selection",
+    running: "Running",
+    paused: "Paused",
+    stopping: "Stopping",
+    completed: "Completed",
+    partial: "Partially completed",
+    exhausted: "Resource limit reached",
+    blocked: "Needs attention",
+    failed: "Failed",
+    cancelled: "Stopped",
+    complete: "Complete draft",
+    incomplete: "Incomplete draft",
+    researching: "Researching",
+    drafting: "Drafting",
+    reviewing: "Under review",
+    abandoned: "Investigation ended",
+  })[state] ?? state;
 export interface DiscoveryDefinition {
   schemaVersion: 1;
   mode: DiscoveryMode;

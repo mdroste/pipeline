@@ -21,6 +21,12 @@ stage; the [full plan](../refactoring-plan.md) tracks the broader work.
 - `components/WorkspaceResearchPanel.tsx` renders the research inspector;
   `components/research-panel/useResearchPanelController.ts` owns its scoped
   loading, drafts, and mutations.
+- `components/ProjectIndexPage.tsx`, `hooks/useProjectIndex.ts`, and
+  `lib/projectIndex.ts` own the Projects index. `project-surface/ProjectOverview`,
+  `ProjectNotes`, `ProjectSettings`, and `ProjectActionItems` split the project
+  home's presentation. `hooks/useWorkspaceEntry.ts` interprets external navigation
+  requests; `hooks/useRecentProjects.ts` loads suite navigation metadata. See
+  [Projects home](../workbench/projects-home.md).
 - `components/TasksPage.tsx` owns task navigation, selection, refresh, and events.
   `components/tasks/` contains `Builder.tsx`, `Detail.tsx`, `Timing.tsx`,
   `ScheduleCard.tsx`, and shared presentation helpers. All task IPC is routed
@@ -44,14 +50,32 @@ Under `gui/src-tauri/src/workbench/`:
 - `store.rs` retains shared records, store setup, migrations, and journal
   mechanics. `store/workspaces.rs`, `sessions.rs`, `runtime.rs`, and `views.rs`
   own workspace roots, conversations, binding/turn/event persistence, and
-  snapshots/preferences/root reconciliation respectively.
+  snapshots/preferences/root reconciliation respectively. `store/roots.rs` validates
+  registered directory identity; `store/history.rs` owns transcript paging and export
+  traversal. `project/task_pages.rs` filters open context before its limit and pages
+  the complete task history.
 - `research.rs` retains harness resolution and shared persistence helpers.
   `research/types.rs` owns the public harness DTOs and `catalog.rs` owns stock
   modules and presets. `research/{papers,sources,notes,ledger,tools}.rs` own the
   corresponding services; `execution.rs`, `execution_plan.rs`, and `jobs.rs`
   own local work.
+- `project/index.rs` and `project/index.sql` own the bounded, read-only project
+  metadata query used by `workbench_project_index`; it does not load project
+  artifacts, transcripts, or model runtimes.
 
 See the [Workspace guide](../workbench/README.md) for contracts and invariants.
+
+## Shared ChatGPT invocation
+
+Under `gui/src-tauri/src/agent_runtime/codex/`, `session.rs` owns the common
+native launcher, handshake, home verification, diagnostics, and shutdown;
+`invocation.rs` owns typed thread-start and text-turn submissions. Workspace's
+`codex/supervisor.rs` and Reviews' `pipeline/codex_server/` each own independent
+instances and retain their policy checks, persistence, and cancellation.
+`agent_runtime/codex/chatgpt/` owns the shared managed account, migration,
+refresh handling, and active-work leases; `ChatgptConnection.tsx` is the common
+account panel. See [ChatGPT account](../chatgpt-account.md).
+See [Workflow Codex](../workflow-codex.md) for the consolidation record.
 
 ## Workflow provider calls
 

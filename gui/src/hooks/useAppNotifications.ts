@@ -56,10 +56,14 @@ export function useAppNotifications(state: PipelineState) {
       listen<WorkbenchEvent>("workbench:event", ({ payload }) =>
         handle(workspaceNotice(payload)),
       ),
-      ...["tasks", "missions"].map((source) =>
-        listen<{ id: string; state: string; reason?: string | null }>(
-          `${source}:notice`,
-          ({ payload }) => handle(automationNotice(source, payload)),
+      ...["tasks", "missions", "discovery"].map((source) =>
+        listen<{
+          id: string;
+          state: string;
+          reason?: string | null;
+          revision?: number;
+        }>(`${source}:notice`, ({ payload }) =>
+          handle(automationNotice(source, payload)),
         ),
       ),
       listen<{ workspaceId: string; checkId: string }>(

@@ -95,3 +95,23 @@ it("requests system permission only from the explicit enable action", async () =
   mocks.requestPermission.mockResolvedValue("granted");
   expect(await requestDesktopNotifications()).toBe(true);
 });
+
+it("discovery follows attention preferences and provides an action to the affected portfolio", async () => {
+  const notice = automationNotice("discovery", {
+    id: "portfolio",
+    state: "awaitingSelection",
+    revision: 4,
+  })!;
+  saveAppPreferences({ notifyAttention: false });
+  await deliverNotice(notice, false);
+  expect(mocks.notify).not.toHaveBeenCalled();
+  saveAppPreferences({ notifyAttention: true });
+  await deliverNotice(notice, false);
+  const action = mocks.notify.mock.calls[0][2];
+  expect(action.label).toBe("Open portfolio");
+  const opened = vi.fn();
+  window.addEventListener("pipeline:open-discovery", opened);
+  action.run();
+  expect(opened.mock.calls[0][0].detail.id).toBe("portfolio");
+  window.removeEventListener("pipeline:open-discovery", opened);
+});

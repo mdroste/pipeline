@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   accountState: vi.fn(),
   listSessions: vi.fn(),
   conversationSnapshot: vi.fn(),
+  sessionSnapshot: vi.fn(),
   openConversationFile: vi.fn(),
   readConversationFile: vi.fn(),
   reconcileSession: vi.fn(),
@@ -111,6 +112,9 @@ beforeEach(() => {
     sessions: [snapshot.session],
   }));
   mocks.conversationSnapshot.mockImplementation(async () => snapshot);
+  mocks.sessionSnapshot.mockImplementation(async (id: string) =>
+    mocks.conversationSnapshot(id),
+  );
   mocks.openConversationFile.mockResolvedValue(undefined);
   mocks.readConversationFile.mockResolvedValue({
     path: "figure.png",
@@ -201,6 +205,60 @@ it("opens project tools with the keyboard while leaving a message draft untouche
     screen.getByRole("button", { name: "Find a project view" }),
   ).toHaveTextContent("Execution settings");
   expect(draft).toHaveValue("Keep my assumptions");
+  expect(mocks.sendTurn).not.toHaveBeenCalled();
+});
+
+it("explicit project entry reveals the project even when the saved view is conversation-only", async () => {
+  localStorage.setItem("pipeline.workspace.workspaceId", workspace.id);
+  localStorage.setItem("pipeline.workspace.sessionId", "conversation");
+  localStorage.setItem(`pipeline.workspace.view.${workspace.id}`, "assistant");
+  snapshot = {
+    ...snapshot,
+    workspace,
+    session: { ...snapshot.session, workspaceId: workspace.id },
+  };
+  render(
+    <WorkspacePage
+      entrySurface="project"
+      entryRequest={1}
+      onOpenSettings={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("region", { name: "Project working area" }),
+    ).toBeVisible(),
+  );
+  expect(mocks.sendTurn).not.toHaveBeenCalled();
+});
+
+it("saves the exact composer draft before allowing navigation back to the index", async () => {
+  localStorage.setItem("pipeline.workspace.sessionId", "conversation");
+  let save: (() => Promise<boolean>) | null = null;
+  render(
+    <WorkspacePage
+      onSaveHandlerChange={(handler) => {
+        save = handler;
+      }}
+      onOpenSettings={vi.fn()}
+    />,
+  );
+  const message = await screen.findByLabelText("Message");
+  await waitFor(() => expect(message).toBeEnabled());
+  fireEvent.change(message, {
+    target: { value: "Preserve this unfinished argument" },
+  });
+  let allowed = false;
+  await act(async () => {
+    allowed = await save!();
+  });
+  expect(allowed).toBe(true);
+  expect(mocks.updateSession).toHaveBeenCalledWith(
+    expect.objectContaining({
+      sessionId: "conversation",
+      draft: "Preserve this unfinished argument",
+    }),
+  );
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
 

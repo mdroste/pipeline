@@ -8,6 +8,7 @@ export interface AppNotice {
   kind: NoticeKind;
   title: string;
   body: string;
+  discoveryId?: string;
 }
 export function notificationsAllowed(
   kind: NoticeKind,
@@ -53,7 +54,12 @@ export function workspaceNotice(event: WorkbenchEvent): AppNotice | null {
 
 export function automationNotice(
   source: string,
-  value: { id: string; state: string; reason?: string | null },
+  value: {
+    id: string;
+    state: string;
+    reason?: string | null;
+    revision?: number;
+  },
 ): AppNotice | null {
   const kind: NoticeKind | null = [
     "completed",
@@ -64,14 +70,21 @@ export function automationNotice(
     ? "completion"
     : ["failed", "error"].includes(value.state)
       ? "failure"
-      : ["attention", "waiting", "running", "blocked", "exhausted"].includes(
-            value.state,
-          )
+      : [
+            "attention",
+            "waiting",
+            "running",
+            "blocked",
+            "exhausted",
+            "awaitingSelection",
+            "partial",
+          ].includes(value.state)
         ? "attention"
         : null;
   if (!kind) return null;
   return {
-    id: `${source}:${value.id}:${value.state}:${value.reason ?? ""}`,
+    id: `${source}:${value.id}:${value.state}:${value.revision ?? value.reason ?? ""}`,
+    ...(source === "discovery" ? { discoveryId: value.id } : {}),
     kind,
     title:
       kind === "completion"
@@ -118,14 +131,26 @@ export async function deliverNotice(
 ) {
   const p = readAppPreferences();
   if (!notificationsAllowed(notice.kind, p, focused)) return;
-  notify(
-    `${notice.title}. ${notice.body}`,
+  const message = `${notice.title}. ${notice.body}`;
+  const kind =
     notice.kind === "failure"
       ? "error"
       : notice.kind === "completion"
         ? "success"
-        : "info",
-  );
+        : "info";
+  if (notice.discoveryId) {
+    notify(message, kind, {
+      label: "Open portfolio",
+      run: () =>
+        window.dispatchEvent(
+          new CustomEvent("pipeline:open-discovery", {
+            detail: { id: notice.discoveryId },
+          }),
+        ),
+    });
+  } else {
+    notify(message, kind);
+  }
   if (p.notificationSound) void playNotificationSound().catch(() => {});
   if (p.desktopNotifications) {
     try {

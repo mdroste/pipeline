@@ -100,8 +100,8 @@ pub(super) async fn capture_response(
     attempt: u32,
     source: &str,
     text: &str,
-) -> Option<crate::pipeline::response_journal::CapturedAttempt> {
-    match crate::pipeline::response_journal::capture(
+) -> Result<Option<crate::pipeline::response_journal::CapturedAttempt>, String> {
+    crate::pipeline::response_journal::capture(
         request.run_artifact_dir,
         request.pass_key,
         attempt,
@@ -109,19 +109,12 @@ pub(super) async fn capture_response(
         text,
     )
     .await
-    {
-        Ok(capture) => capture,
-        Err(error) => {
-            let _ = request.app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!(
-                    "WARNING: could not preserve {} response attempt {}: {error}",
-                    request.log_label, attempt,
-                )}),
-            );
-            None
-        }
-    }
+    .map_err(|error| {
+        format!(
+            "{}: response could not be preserved; step stopped: {error}",
+            request.log_label
+        )
+    })
 }
 
 pub(super) async fn finish_response_capture(
@@ -129,19 +122,16 @@ pub(super) async fn finish_response_capture(
     capture: Option<crate::pipeline::response_journal::CapturedAttempt>,
     status: crate::pipeline::response_journal::AttemptStatus,
     reason: &str,
-) {
-    let Some(capture) = capture else {
-        return;
-    };
-    if let Err(error) = capture.finish(status, reason).await {
-        let _ = request.app.emit_event(
-            "pipeline:log",
-            serde_json::json!({ "line": format!(
-                "WARNING: could not classify a preserved response for {}: {error}",
-                request.log_label,
-            )}),
-        );
+) -> Result<(), String> {
+    if let Some(capture) = capture {
+        capture.finish(status, reason).await.map_err(|error| {
+            format!(
+                "{}: preserved response could not be classified; step stopped: {error}",
+                request.log_label
+            )
+        })?;
     }
+    Ok(())
 }
 
 /// Execute one logical step call, including retries, report-file handoff, and
@@ -239,12 +229,13 @@ pub(super) async fn execute_step_call(
         // envelope or schema can reject control-plane use without erasing the
         // report a reader may still want to inspect.
         let mut terminal_capture = match call.output.as_ref() {
-            Ok(stdout) => capture_response(&request, attempt_number, "terminal", stdout).await,
+            Ok(stdout) => capture_response(&request, attempt_number, "terminal", stdout).await?,
             Err(_) => None,
         };
         let mut file_capture = match compatibility_file.as_deref() {
             Some(report_file) => {
-                capture_response(&request, attempt_number, "compatibility-file", report_file).await
+                capture_response(&request, attempt_number, "compatibility-file", report_file)
+                    .await?
             }
             None => None,
         };
@@ -256,14 +247,14 @@ pub(super) async fn execute_step_call(
                 crate::pipeline::response_journal::AttemptStatus::Ignored,
                 &error,
             )
-            .await;
+            .await?;
             finish_response_capture(
                 &request,
                 file_capture.take(),
                 crate::pipeline::response_journal::AttemptStatus::Ignored,
                 &error,
             )
-            .await;
+            .await?;
             return Err(error);
         }
 
@@ -277,7 +268,7 @@ pub(super) async fn execute_step_call(
                             crate::pipeline::response_journal::AttemptStatus::Ignored,
                             "The validated terminal structured response was selected instead.",
                         )
-                        .await;
+                        .await?;
                         (canonical, terminal_capture.take())
                     }
                     Err(stdout_error) => {
@@ -287,7 +278,7 @@ pub(super) async fn execute_step_call(
                             crate::pipeline::response_journal::AttemptStatus::RejectedSchema,
                             &stdout_error,
                         )
-                        .await;
+                        .await?;
                         if let Some(report_file) = compatibility_file {
                             let file_artifact = crate::pipeline::structured::canonicalize(
                                 terminal_schema,
@@ -325,7 +316,7 @@ pub(super) async fn execute_step_call(
                                         crate::pipeline::response_journal::AttemptStatus::RejectedSchema,
                                         &file_error,
                                     )
-                                    .await;
+                                    .await?;
                                     last_error = format!(
                                         "invalid terminal structured output ({stdout_error}); compatibility artifact file was also invalid ({file_error})"
                                     );
@@ -348,7 +339,7 @@ pub(super) async fn execute_step_call(
                         crate::pipeline::response_journal::AttemptStatus::Ignored,
                         &error,
                     )
-                    .await;
+                    .await?;
                     return Err(error);
                 }
                 if let Some(report_file) = compatibility_file {
@@ -386,7 +377,7 @@ pub(super) async fn execute_step_call(
                                     crate::pipeline::response_journal::AttemptStatus::RejectedSchema,
                                     &file_error,
                                 )
-                                .await;
+                                .await?;
                                 last_error = format!(
                                     "{error}; compatibility report file did not contain a complete validated report ({file_error})"
                                 );
@@ -432,7 +423,7 @@ pub(super) async fn execute_step_call(
                         crate::pipeline::response_journal::AttemptStatus::RejectedSchema,
                         &reason,
                     )
-                    .await;
+                    .await?;
                     last_error = if attempt < max_retries {
                         format!("output did not satisfy schema: {reason}")
                     } else {
@@ -453,7 +444,7 @@ pub(super) async fn execute_step_call(
                         crate::pipeline::response_journal::AttemptStatus::RejectedContent,
                         &reason,
                     )
-                    .await;
+                    .await?;
                     last_error = if attempt < max_retries {
                         format!("text artifact was unusable: {reason}")
                     } else {
@@ -474,7 +465,7 @@ pub(super) async fn execute_step_call(
                 "Validated and extracted a schema-backed text artifact."
             },
         )
-        .await;
+        .await?;
 
         return Ok(StepCallResult {
             text,
@@ -497,3 +488,7 @@ pub(super) async fn execute_step_call(
         last_error
     })
 }
+
+#[cfg(test)]
+#[path = "tests/response_capture.rs"]
+mod response_capture_tests;

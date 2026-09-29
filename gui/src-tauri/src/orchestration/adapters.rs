@@ -5,10 +5,7 @@ use super::{
 };
 use crate::workbench::{commands::run_store, tasks};
 use serde_json::{json, Value};
-use std::{
-    io::{Read, Write},
-    path::Path,
-};
+use std::{io::Read, path::Path};
 
 pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> Result<Scope> {
     super::definition::validate(chain)?;
@@ -182,14 +179,7 @@ fn resolve(binding: &Binding, run: &TaskRun, ready: &Ready) -> Result<Value> {
         .ok_or_else(|| format!("{}: required output is unavailable", ready.step.label))
 }
 pub fn atomic_json(path: &Path, value: &Value) -> Result<()> {
-    let parent = path.parent().ok_or("Invalid artifact path")?;
-    std::fs::create_dir_all(parent).map_err(err)?;
-    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(err)?;
-    serde_json::to_writer(&mut file, value).map_err(err)?;
-    file.flush().map_err(err)?;
-    file.as_file().sync_all().map_err(err)?;
-    file.persist(path).map_err(err)?;
-    Ok(())
+    super::durable::publish(path, &serde_json::to_vec(value).map_err(err)?)
 }
 pub fn snapshot(store: &Store, scope: &Scope, input: Value, filename: &str) -> Result<Value> {
     if filename.is_empty() || filename.contains(['/', '\\']) || filename == "." || filename == ".."
@@ -226,14 +216,8 @@ pub fn snapshot(store: &Store, scope: &Scope, input: Value, filename: &str) -> R
     use sha2::{Digest, Sha256};
     let digest = format!("{:x}", Sha256::digest(&bytes));
     let dir = store.root.join("blobs").join(&digest);
-    std::fs::create_dir_all(&dir).map_err(err)?;
     let path = dir.join(filename);
-    if !path.exists() {
-        let mut temp = tempfile::NamedTempFile::new_in(&dir).map_err(err)?;
-        temp.write_all(&bytes).map_err(err)?;
-        temp.as_file().sync_all().map_err(err)?;
-        temp.persist(&path).map_err(err)?;
-    }
+    super::durable::publish(&path, &bytes)?;
     Ok(json!({"kind":"artifact","path":path,"hash":digest,"filename":filename,"bytes":bytes.len()}))
 }
 pub fn artifact_path(store: &Store, value: &Value) -> Result<String> {
@@ -299,6 +283,10 @@ pub async fn execute(
     }
     #[cfg(all(feature = "e2e", debug_assertions))]
     if matches!(ready.step.action, Action::Workspace { .. }) {
+        if let Some(result) = super::discovery::qualification::scripted(&store, &run)? {
+            atomic_json(&journal, &result)?;
+            return Ok(result);
+        }
         if let Some(result) = super::missions::qualification::scripted(&store, &run)? {
             atomic_json(&journal, &result)?;
             return Ok(result);
@@ -631,18 +619,15 @@ fn snapshot_tree(store: &Store, files: Vec<(String, Vec<u8>)>) -> Result<Value> 
     let manifest = tree_manifest(&files);
     let digest = hash(&manifest)?;
     let root = store.root.join("blobs");
-    std::fs::create_dir_all(&root).map_err(err)?;
+    super::durable::create_directories(&root)?;
     let destination = root.join(format!("tree-{digest}"));
     if !destination.exists() {
         let temp = tempfile::tempdir_in(&root).map_err(err)?;
         for (name, bytes) in &files {
             let path = temp.path().join(name);
-            std::fs::create_dir_all(path.parent().ok_or("Invalid snapshot name")?).map_err(err)?;
-            let mut file = std::fs::File::create(path).map_err(err)?;
-            file.write_all(bytes).map_err(err)?;
-            file.sync_all().map_err(err)?;
+            super::durable::publish(&path, bytes)?;
         }
-        std::fs::rename(temp.path(), &destination).map_err(err)?;
+        super::durable::rename(temp.path(), &destination)?;
     }
     Ok(
         json!({"kind":"artifactTree","path":destination,"hash":digest,"manifest":manifest,"filename":"paper-project","bytes":files.iter().map(|(_,b)|b.len()).sum::<usize>()}),

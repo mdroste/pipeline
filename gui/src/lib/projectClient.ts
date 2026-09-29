@@ -15,6 +15,14 @@ export interface ProjectRecord<T> {
   body: T;
   updatedAt: string;
 }
+export interface TaskCursor {
+  updatedAt: string;
+  id: string;
+}
+export interface TaskPage {
+  records: ProjectRecord<ResearchTask>[];
+  nextCursor: TaskCursor | null;
+}
 export interface HomeSettings {
   manuscriptRevisionId: string | null;
   baselineExecutionId: string | null;
@@ -102,6 +110,7 @@ export interface ProjectHome {
     createdAt: string;
   }>;
   tasks: ProjectRecord<ResearchTask>[];
+  tasksCursor?: TaskCursor | null;
   anchors: ProjectRecord<Annotation>[];
   papers: PaperWithRevision[];
   executions: ResearchExecution[];
@@ -186,6 +195,8 @@ export interface ProjectCapabilities {
   record: string;
 }
 export const projectClient = {
+  taskPage: (workspaceId: string, before: TaskCursor) =>
+    invoke<TaskPage>("workbench_project_tasks", { workspaceId, before }),
   capabilities: () =>
     invoke<ProjectCapabilities>("workbench_project_capabilities"),
   workingFile: (workspaceId: string, path: string) =>

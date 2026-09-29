@@ -137,6 +137,15 @@ export const workbenchClient = {
   sessionSnapshot(sessionId: string) {
     return invoke<SessionSnapshot>("workbench_session_snapshot", { sessionId });
   },
+  transcriptPage(
+    sessionId: string,
+    before: import("./workbenchTypes").TranscriptCursor,
+  ) {
+    return invoke<import("./workbenchTypes").TranscriptPage>(
+      "workbench_transcript_page",
+      { sessionId, before },
+    );
+  },
   conversationSnapshot(sessionId: string) {
     return invoke<ConversationSnapshot>("workbench_conversation_snapshot", {
       sessionId,

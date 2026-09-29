@@ -7,6 +7,7 @@ export type AppPage =
   | "home"
   | "main"
   | "workspace"
+  | "project-index"
   | "tasks"
   | "pipeline"
   | "settings"
@@ -321,10 +322,10 @@ export default function NavRail({
           onClick={() => onNavigate("home")}
         />
         <RailButton
-          active={activePage === "workspace"}
+          active={activePage === "workspace" || activePage === "project-index"}
           icon="projects"
           label="Projects"
-          onClick={() => onNavigate("workspace")}
+          onClick={() => onNavigate("project-index")}
           suffix={
             workspaceActive || workspaceAttention ? (
               <span

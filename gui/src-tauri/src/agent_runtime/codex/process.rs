@@ -16,6 +16,7 @@ pub(crate) const SECRET_ENVIRONMENT_KEYS: &[&str] = &[
     "GOOGLE_API_KEY",
     "GEMINI_API_KEY",
     "CODEX_API_KEY",
+    "CODEX_ACCESS_TOKEN",
 ];
 
 pub(crate) struct ProcessPipes {

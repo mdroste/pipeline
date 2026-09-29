@@ -9,7 +9,7 @@ import ConnectionStatus from "./ConnectionStatus";
 import { ReviewSaveFeedback } from "./SaveState";
 
 import WorkflowCodexConnection from "../WorkflowCodexConnection";
-import WorkspaceConnectionSettings from "../WorkspaceConnectionSettings";
+import ChatgptConnection from "../ChatgptConnection";
 
 import {
   SettingsCard,
@@ -280,7 +280,7 @@ export function ProvidersSection({
       <SettingsCard id="openai-provider">
         <ProviderHeader
           name="OpenAI"
-          description="Separate connections for conversations and structured reviews."
+          description="One ChatGPT account for conversations and structured reviews."
           badge="Conversations · Reviews"
         />
         <section
@@ -288,8 +288,11 @@ export function ProvidersSection({
           tabIndex={-1}
           className="settings-anchor settings-provider-scope"
         >
-          <h3>Conversations</h3>
-          <WorkspaceConnectionSettings embedded connectionOnly />
+          <h3>ChatGPT account</h3>
+          <ChatgptConnection
+            onAccountChange={onCodexAccountChange}
+            onStatusChange={onCodexStatusChange}
+          />
         </section>
         <section className="settings-provider-scope">
           <h3>Reviews</h3>
@@ -305,10 +308,7 @@ export function ProvidersSection({
               {settings.codex_backend === "legacy_cli" ? (
                 check("codex")
               ) : (
-                <WorkflowCodexConnection
-                  onAccountChange={onCodexAccountChange}
-                  onStatusChange={onCodexStatusChange}
-                />
+                <WorkflowCodexConnection onStatusChange={onCodexStatusChange} />
               )}
               <details className="settings-disclosure mt-4">
                 <summary>

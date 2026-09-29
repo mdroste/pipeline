@@ -1366,7 +1366,7 @@ fn followup_refresh_rejects_changed_roots_and_stale_queue_revisions() {
     fs::rename(&f.root, f.root.with_file_name("old-project")).unwrap();
     fs::create_dir(&f.root).unwrap();
     assert!(followups::refresh_context(&f.store, &f.session, id, 1, &review.fingerprint).is_err());
-    let review = followups::review_context(&f.store, &f.session, id, 1).unwrap();
+    assert!(followups::review_context(&f.store, &f.session, id, 1).is_err());
     followups::control(&f.store, &f.session, id, 1, "cancel").unwrap();
     assert!(followups::refresh_context(&f.store, &f.session, id, 1, &review.fingerprint).is_err());
 }

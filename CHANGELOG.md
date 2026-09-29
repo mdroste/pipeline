@@ -5,6 +5,17 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
+- Conversations and Reviews now share one ChatGPT sign-in, model catalog, and
+  account controls. Existing managed sign-ins migrate automatically when
+  unambiguous; conflicting accounts can be selected in Settings. Account changes
+  wait for active work in both modes while histories and permissions stay separate.
+
+- Projects now opens a searchable index with pins, recent research activity, and
+  direct conversation resume links. Project overviews show editable research
+  briefs, pending decisions, and recent work; setup controls move to Project
+  settings. New projects can begin with a conversation before adding a paper or
+  folder, and leaving Workspace saves the current conversation draft.
+
 - Removed the deprecated Antigravity CLI adapter, model discovery, authentication
   probes and installation hints. Google remains API-only and is labeled Google API
   in readiness checks; older provider IDs and saved settings still load.

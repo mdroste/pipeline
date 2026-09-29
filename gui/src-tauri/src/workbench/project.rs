@@ -17,15 +17,19 @@ use std::time::{Duration, Instant};
 mod documents;
 mod file_workspace;
 mod files;
+mod index;
+pub use index::{project_index, ProjectIndexItem};
 pub mod relations;
 pub use file_workspace::{
     read_conversation_file, read_workspace_file, snapshot_conversation_file, FilePreview,
     FileReadRequest,
 };
 mod studio;
+mod task_pages;
 mod tasks;
 pub use documents::*;
 pub use studio::*;
+pub use task_pages::{task_page, TaskCursor, TaskPage};
 pub use tasks::*;
 #[cfg(all(test, unix))]
 mod tests;
@@ -79,11 +83,7 @@ fn scope(store: &Store, workspace_id: &str) -> WorkbenchResult<()> {
 }
 fn root(store: &Store, workspace_id: &str) -> WorkbenchResult<PathBuf> {
     scope(store, workspace_id)?;
-    let registered = store
-        .workspace(workspace_id)?
-        .root
-        .ok_or_else(|| WorkbenchError::invalid("Register a project folder first"))?;
-    super::store::canonical_workspace_root(Path::new(&registered), store.root_path())
+    store.registered_root(&store.workspace(workspace_id)?)
 }
 fn lock(store: &Store, workspace_id: &str) -> WorkbenchResult<fs::File> {
     valid_id(workspace_id)?;
@@ -210,6 +210,7 @@ pub struct ProjectHome {
     pub notes: Vec<research::ResearchNote>,
     pub note_history: Vec<Value>,
     pub tasks: Vec<ProjectRecord>,
+    pub tasks_cursor: Option<TaskCursor>,
     pub anchors: Vec<ProjectRecord>,
     pub papers: Vec<research::PaperWithRevision>,
     pub executions: Vec<research::ResearchExecution>,
@@ -273,15 +274,13 @@ pub fn project_context(store: &Store, workspace_id: &str) -> WorkbenchResult<Str
     if notes.len() == 500 {
         text.push_str("\nNote context is limited to the 500 most recently ordered notes; older records may be omitted.\n");
     }
-    let tasks = records(store, workspace_id, "task")?;
-    if tasks.len() == 1000 {
-        text.push_str("\nTask context is limited to 1000 records; older records may be omitted.\n");
+    let tasks = task_pages::page(store, workspace_id, None, true)?;
+    if tasks.next_cursor.is_some() {
+        text.push_str("\nTask context is limited to the 500 most recently updated open tasks; older open tasks are omitted.\n");
     }
-    for task in tasks {
+    for task in tasks.records {
         let t: ResearchTask = decode(&task)?;
-        if !["completed", "rejected"].contains(&t.status.as_str()) {
-            text.push_str(&format!("\nOpen task {}: {}\n", task.id, t.objective));
-        }
+        text.push_str(&format!("\nOpen task {}: {}\n", task.id, t.objective));
     }
     text.push_str(&studio::rejected_approach_context(store, workspace_id)?);
     if text.len() > 24 * 1024 {
@@ -389,11 +388,13 @@ fn working_copy_status(store: &Store, ws: &str) -> WorkbenchResult<String> {
 
 pub fn home(store: &Store, workspace_id: &str) -> WorkbenchResult<ProjectHome> {
     scope(store, workspace_id)?;
+    let tasks = task_page(store, workspace_id, None)?;
     Ok(ProjectHome {
         settings: home_record(store, workspace_id)?,
         notes: research::list_notes(store, workspace_id, true)?,
         note_history: note_history(store, workspace_id)?,
-        tasks: records(store, workspace_id, "task")?,
+        tasks: tasks.records,
+        tasks_cursor: tasks.next_cursor,
         anchors: records(store, workspace_id, "anchor")?,
         papers: research::list_papers(store, workspace_id)?,
         executions: research::list_executions(store, workspace_id)?,

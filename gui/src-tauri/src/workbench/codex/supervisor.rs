@@ -1,11 +1,14 @@
 //! Lazy persistent App Server ownership and qualified thread operations.
 
-use super::compatibility::MINIMUM_CODEX_VERSION;
-use super::process::{
-    capture_stderr, prepare_isolated_command, write_runtime_config, OwnedProcess,
-};
-use super::transport::{AppServerClient, RequestError, DEFAULT_REQUEST_TIMEOUT};
-use super::wire::{InitializeResult, NormalizedEvent};
+use super::process::write_runtime_config;
+#[cfg(test)]
+use super::transport::AppServerClient;
+use super::transport::{RequestError, DEFAULT_REQUEST_TIMEOUT};
+#[cfg(test)]
+use super::wire::InitializeResult;
+use super::wire::NormalizedEvent;
+use crate::agent_runtime::codex::invocation::{NativeThreadStart, TextTurnStart};
+use crate::agent_runtime::codex::session::{same_existing_path as same_path, NativeSession};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -16,7 +19,6 @@ use std::time::Duration;
 use tokio::sync::{broadcast, Mutex};
 
 const MAX_TURN_TEXT_BYTES: usize = 2 * 1024 * 1024;
-const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_SIDE_TURN_TEXT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -95,11 +97,8 @@ pub struct ThreadConnection {
 
 pub struct AppServerSupervisor {
     epoch: u64,
-    client: AppServerClient,
-    process: Option<OwnedProcess>,
-    initialize: InitializeResult,
-    executable: Option<String>,
-    stderr_task: Mutex<Option<tokio::task::JoinHandle<Vec<String>>>>,
+    native: Arc<NativeSession>,
+    account: Option<Arc<crate::agent_runtime::codex::chatgpt::ChatgptAccount>>,
     projection_tasks: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     projection_enabled: bool,
     side_threads: StdMutex<HashSet<String>>,
@@ -110,55 +109,41 @@ impl AppServerSupervisor {
         let codex_home = crate::workbench::commands::run_store(|store| Ok(store.codex_home_path()))
             .await
             .map_err(|error| RequestError::unavailable(error.message))?;
-        Self::launch_with_codex_home(epoch, codex_home).await
+        let account = crate::agent_runtime::codex::chatgpt::connect()
+            .await
+            .map_err(RequestError::unavailable)?;
+        let mut supervisor = Self::launch_with_codex_home(epoch, codex_home).await?;
+        account
+            .attach(&supervisor.native.client)
+            .await
+            .map_err(RequestError::unavailable)?;
+        supervisor.account = Some(account);
+        Ok(supervisor)
     }
 
     async fn launch_with_codex_home(epoch: u64, codex_home: PathBuf) -> Result<Self, RequestError> {
         let resolved = crate::deps::resolve_command("codex").ok_or_else(|| {
             RequestError::unavailable("No launchable Codex CLI was found on PATH")
         })?;
-        let executable = resolved.discovered_path().display().to_string();
-        let version = super::probe::installed_version(&resolved)
-            .await
-            .map_err(RequestError::unavailable)?;
-        if !version.meets_minimum {
-            return Err(RequestError::unavailable(format!(
-                "Codex CLI {} is too old for Workspace; install {MINIMUM_CODEX_VERSION} or newer",
-                version.version
-            )));
-        }
         let launcher = resolved
             .canonical_program()
             .map_err(RequestError::unavailable)?;
         write_runtime_config(&codex_home, &launcher).map_err(RequestError::unavailable)?;
         let cwd = std::env::temp_dir();
-        let command = prepare_isolated_command(&resolved, &codex_home, &cwd)
-            .map_err(RequestError::unavailable)?;
-        let (process, pipes) = OwnedProcess::spawn(command).map_err(RequestError::unavailable)?;
-        let client = AppServerClient::from_io(epoch, pipes.stdout, pipes.stdin);
-        let stderr_task = tokio::spawn(capture_stderr(pipes.stderr));
-        let initialize = match client.initialize().await {
-            Ok(initialize) => initialize,
-            Err(error) => {
-                process.terminate().await;
-                stderr_task.abort();
-                return Err(error);
-            }
-        };
-        if !same_path(Path::new(&initialize.codex_home), &codex_home) {
-            process.terminate().await;
-            stderr_task.abort();
-            return Err(RequestError::unavailable(
-                "Codex App Server did not use Pipeline's isolated Workbench home",
-            ));
-        }
+        let native = NativeSession::launch_resolved(
+            &resolved,
+            &codex_home,
+            &cwd,
+            epoch,
+            "pipeline_workbench",
+            "Pipeline Workbench",
+        )
+        .await
+        .map_err(RequestError::unavailable)?;
         Ok(Self {
             epoch,
-            client,
-            process: Some(process),
-            initialize,
-            executable: Some(executable),
-            stderr_task: Mutex::new(Some(stderr_task)),
+            native: Arc::new(native),
+            account: None,
             projection_tasks: Mutex::new(HashMap::new()),
             projection_enabled: true,
             side_threads: StdMutex::new(HashSet::new()),
@@ -167,13 +152,12 @@ impl AppServerSupervisor {
 
     #[cfg(test)]
     fn from_test_client(epoch: u64, client: AppServerClient, initialize: InitializeResult) -> Self {
+        let mut native = NativeSession::simulated(client);
+        native.initialize = initialize;
         Self {
             epoch,
-            client,
-            process: None,
-            initialize,
-            executable: None,
-            stderr_task: Mutex::new(None),
+            native: Arc::new(native),
+            account: None,
             projection_tasks: Mutex::new(HashMap::new()),
             projection_enabled: false,
             side_threads: StdMutex::new(HashSet::new()),
@@ -182,39 +166,54 @@ impl AppServerSupervisor {
 
     pub fn status(&self) -> SupervisorStatus {
         SupervisorStatus {
-            connected: !self.client.is_closed(),
+            connected: !self.native.client.is_closed(),
             epoch: self.epoch,
-            pid: self.process.as_ref().map(OwnedProcess::pid),
-            executable: self.executable.clone(),
-            user_agent: Some(self.initialize.user_agent.clone()),
-            platform_family: Some(self.initialize.platform_family.clone()),
-            platform_os: Some(self.initialize.platform_os.clone()),
-            codex_home: Some(self.initialize.codex_home.clone()),
+            pid: self.native.pid(),
+            executable: self.native.executable.clone(),
+            user_agent: Some(self.native.initialize.user_agent.clone()),
+            platform_family: Some(self.native.initialize.platform_family.clone()),
+            platform_os: Some(self.native.initialize.platform_os.clone()),
+            codex_home: Some(self.native.initialize.codex_home.clone()),
         }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<NormalizedEvent> {
-        self.client.subscribe()
+        self.native.client.subscribe()
     }
 
     pub async fn account_state(&self, refresh_token: bool) -> Result<AccountState, RequestError> {
-        self.client.account_state(refresh_token).await
+        if let Some(account) = &self.account {
+            return account
+                .status(refresh_token)
+                .await
+                .map(|status| status.account)
+                .map_err(RequestError::unavailable);
+        }
+        self.native.client.account_state(refresh_token).await
     }
 
+    #[cfg(test)]
     pub async fn login_start(&self) -> Result<LoginStart, RequestError> {
-        self.client.login_start().await
+        self.native.client.login_start().await
     }
 
+    #[cfg(test)]
     pub async fn login_cancel(&self, login_id: &str) -> Result<bool, RequestError> {
-        self.client.login_cancel(login_id).await
+        self.native.client.login_cancel(login_id).await
     }
 
+    #[cfg(test)]
     pub async fn logout(&self) -> Result<(), RequestError> {
-        self.client.logout().await
+        self.native.client.logout().await
     }
 
     pub async fn model_catalog(&self) -> Result<ModelCatalog, RequestError> {
-        self.client.model_catalog().await
+        if self.account.is_some() {
+            return crate::agent_runtime::codex::chatgpt::chatgpt_model_catalog()
+                .await
+                .map_err(RequestError::unavailable);
+        }
+        self.native.client.model_catalog().await
     }
 
     pub async fn validate_model_selection(
@@ -222,11 +221,29 @@ impl AppServerSupervisor {
         model: &str,
         effort: Option<&str>,
     ) -> Result<WorkspaceModel, RequestError> {
-        self.client.validate_model_selection(model, effort).await
+        self.model_catalog().await?.validate_exact(model, effort)
     }
 
     pub async fn rate_limits(&self) -> Result<RateLimits, RequestError> {
-        self.client.rate_limits().await
+        if self.account.is_some() {
+            return crate::agent_runtime::codex::chatgpt::chatgpt_rate_limits()
+                .await
+                .map_err(RequestError::unavailable);
+        }
+        self.native.client.rate_limits().await
+    }
+
+    pub(crate) async fn account_lease(
+        &self,
+    ) -> Result<Option<tokio::sync::OwnedRwLockReadGuard<()>>, RequestError> {
+        match &self.account {
+            Some(account) => account
+                .lease(&self.native.client)
+                .await
+                .map(Some)
+                .map_err(RequestError::unavailable),
+            None => Ok(None),
+        }
     }
 
     pub async fn start_thread(
@@ -267,27 +284,22 @@ impl AppServerSupervisor {
         let expected_permissions = request.permissions.clone();
         let expected_model = request.model.clone();
         let result = self
+            .native
             .client
-            .request(
-                "thread/start",
-                json!({
-                    "approvalPolicy": approval_policy(&expected_permissions),
-                    "approvalsReviewer": "user",
-                    "cwd": request.cwd,
-                    "developerInstructions": request.developer_instructions,
-                    "baseInstructions": request.base_instructions,
-                    "dynamicTools": request.dynamic_tools,
-                    "ephemeral": ephemeral,
-                    "model": request.model,
-                    "modelProvider": "openai",
-                    "reasoningEffort": request.effort,
-                    "permissions": request.permissions,
-                    "runtimeWorkspaceRoots": request.runtime_workspace_roots,
-                    "allowProviderModelFallback": false,
-                    "serviceName": "pipeline_workbench"
-                }),
-                DEFAULT_REQUEST_TIMEOUT,
-            )
+            .start_native_thread(NativeThreadStart {
+                cwd: Path::new(&request.cwd),
+                runtime_workspace_roots: &request.runtime_workspace_roots,
+                permissions: &request.permissions,
+                approval_policy: approval_policy(&expected_permissions),
+                developer_instructions: Some(&request.developer_instructions),
+                base_instructions: request.base_instructions.as_deref(),
+                dynamic_tools: &request.dynamic_tools,
+                model: request.model.as_deref(),
+                reasoning_effort: request.effort.as_deref(),
+                ephemeral,
+                service_name: "pipeline_workbench",
+                config: None,
+            })
             .await?;
         let connection = parse_thread_connection(result)?;
         validate_thread_contract(
@@ -318,7 +330,13 @@ impl AppServerSupervisor {
                 "Side turn text must contain 1 to {MAX_SIDE_TURN_TEXT_BYTES} bytes"
             )));
         }
-        let mut events = self.client.subscribe();
+        let mut account_use = SideAccountUse {
+            permit: self.account_lease().await?,
+            native: self.native.clone(),
+            completed: false,
+            submitted: false,
+        };
+        let mut events = self.native.client.subscribe();
         let connection = self
             .start_thread_unbound(
                 StartThreadRequest {
@@ -337,18 +355,18 @@ impl AppServerSupervisor {
             .await?;
         let thread_id = connection.thread_id;
         let _registration = SideThreadRegistration::register(&self.side_threads, &thread_id);
+        account_use.submitted = true;
         let result = self
+            .native
             .client
-            .request(
-                "turn/start",
-                json!({
-                    "threadId": thread_id,
-                    "input": [{"type":"text", "text":request.text}],
-                    "model": request.model,
-                    "effort": request.effort
-                }),
-                DEFAULT_REQUEST_TIMEOUT,
-            )
+            .start_text_turn(TextTurnStart {
+                thread_id: &thread_id,
+                text: &request.text,
+                client_user_message_id: None,
+                model: request.model.as_deref(),
+                effort: request.effort.as_deref(),
+                output_schema: None,
+            })
             .await?;
         let turn_id = required_string(&result, &["turn", "id"], "turn/start response")?;
         let collected = tokio::time::timeout(
@@ -357,7 +375,11 @@ impl AppServerSupervisor {
         )
         .await;
         match collected {
-            Ok(result) => result,
+            Ok(Ok(text)) => {
+                account_use.completed = true;
+                Ok(text)
+            }
+            Ok(Err(error)) => Err(error),
             Err(_) => {
                 let _ = self.interrupt_turn(&thread_id, &turn_id).await;
                 Err(RequestError::unavailable(
@@ -387,6 +409,7 @@ impl AppServerSupervisor {
                     request_id, params, ..
                 }) if params.get("threadId").and_then(Value::as_str) == Some(thread_id) => {
                     let _ = self
+                        .native
                         .client
                         .respond_to_server_request(
                             request_id,
@@ -474,6 +497,7 @@ impl AppServerSupervisor {
         validate_roots(&runtime_workspace_roots)?;
         let expected_roots = runtime_workspace_roots.clone();
         let result = self
+            .native
             .client
             .request(
                 "thread/resume",
@@ -504,7 +528,8 @@ impl AppServerSupervisor {
 
     pub async fn read_thread(&self, thread_id: &str) -> Result<Value, RequestError> {
         validate_identifier("thread id", thread_id)?;
-        self.client
+        self.native
+            .client
             .request(
                 "thread/read",
                 json!({"threadId": thread_id, "includeTurns": true}),
@@ -552,18 +577,16 @@ impl AppServerSupervisor {
                 .await?;
         }
         let result = self
+            .native
             .client
-            .request(
-                "turn/start",
-                json!({
-                    "threadId": request.thread_id,
-                    "input": [{"type":"text", "text":request.text}],
-                    "clientUserMessageId": request.client_user_message_id,
-                    "model": request.model,
-                    "effort": request.effort
-                }),
-                DEFAULT_REQUEST_TIMEOUT,
-            )
+            .start_text_turn(TextTurnStart {
+                thread_id: &request.thread_id,
+                text: &request.text,
+                client_user_message_id: Some(&request.client_user_message_id),
+                model: request.model.as_deref(),
+                effort: request.effort.as_deref(),
+                output_schema: None,
+            })
             .await?;
         let turn_id = required_string(&result, &["turn", "id"], "turn/start response")?;
         // Publish ownership before a fallible projection write.
@@ -582,7 +605,8 @@ impl AppServerSupervisor {
     pub async fn interrupt_turn(&self, thread_id: &str, turn_id: &str) -> Result<(), RequestError> {
         validate_identifier("thread id", thread_id)?;
         validate_identifier("turn id", turn_id)?;
-        self.client
+        self.native
+            .client
             .request(
                 "turn/interrupt",
                 json!({"threadId":thread_id, "turnId":turn_id}),
@@ -597,7 +621,8 @@ impl AppServerSupervisor {
         request_id: Value,
         result: Result<Value, RequestError>,
     ) -> Result<(), RequestError> {
-        self.client
+        self.native
+            .client
             .respond_to_server_request(request_id, result)
             .await
     }
@@ -606,34 +631,7 @@ impl AppServerSupervisor {
         for (_, task) in self.projection_tasks.lock().await.drain() {
             task.abort();
         }
-        let _ = self.client.close_writer().await;
-        if let Some(process) = &self.process {
-            match tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, process.wait()).await {
-                Ok(Ok(status)) if status.success() => {}
-                Ok(Ok(status)) => self.client.fail(
-                    format!("Codex App Server exited with status {status}"),
-                    true,
-                ),
-                Ok(Err(error)) => self.client.fail(error, true),
-                Err(_) => {
-                    process.terminate().await;
-                    self.client.fail(
-                        "Codex App Server required forced process-tree cleanup",
-                        true,
-                    );
-                }
-            }
-        }
-        if let Some(mut task) = self.stderr_task.lock().await.take() {
-            if tokio::time::timeout(Duration::from_secs(1), &mut task)
-                .await
-                .is_err()
-            {
-                // The process tree is already stopped. A descendant that kept
-                // stderr open cannot retain an unbounded background task.
-                task.abort();
-            }
-        }
+        self.native.shutdown().await;
     }
 
     pub(crate) fn runtime_namespace(&self) -> String {
@@ -641,8 +639,8 @@ impl AppServerSupervisor {
     }
 
     async fn attach_projection(&self, thread_id: String, binding_id: String) {
-        let mut events = self.client.subscribe();
-        let client = self.client.clone();
+        let mut events = self.native.client.subscribe();
+        let client = self.native.client.clone();
         let projected_thread_id = thread_id.clone();
         let task = tokio::spawn(async move {
             loop {
@@ -1084,12 +1082,28 @@ fn string_array(value: &Value, key: &str) -> Result<Vec<String>, RequestError> {
         .collect()
 }
 
-fn same_path(left: &Path, right: &Path) -> bool {
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests;
+
+/// On dropped/failed background calls, stop the native connection before releasing
+/// the shared account lease. An unconfirmed turn must not outlive its account.
+struct SideAccountUse {
+    permit: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+    native: Arc<NativeSession>,
+    completed: bool,
+    submitted: bool,
+}
+impl Drop for SideAccountUse {
+    fn drop(&mut self) {
+        if self.completed || !self.submitted {
+            return;
+        }
+        if let Some(permit) = self.permit.take() {
+            let native = self.native.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                native.terminate().await;
+            });
+        }
+    }
+}

@@ -185,6 +185,8 @@ pub struct ConversationSnapshot {
     pub active_binding: Option<SessionBinding>,
     pub turns: Vec<ConversationTurn>,
     pub items: Vec<TranscriptItem>,
+    #[serde(default)]
+    pub older_cursor: Option<TranscriptCursor>,
     pub sequence: i64,
 }
 
@@ -747,69 +749,6 @@ fn resolve_optional_root(
     .unwrap_or(Ok((None, None)))
 }
 
-pub(crate) fn canonical_workspace_root(root: &Path, store_root: &Path) -> WorkbenchResult<PathBuf> {
-    if !root.is_absolute() {
-        return Err(WorkbenchError::invalid("Workspace root must be absolute"));
-    }
-    let canonical = root.canonicalize().map_err(|error| {
-        WorkbenchError::invalid(format!("Workspace root is unavailable: {error}"))
-    })?;
-    if !canonical.is_dir() {
-        return Err(WorkbenchError::invalid(
-            "Workspace root must be a directory",
-        ));
-    }
-    if canonical.parent().is_none() {
-        return Err(WorkbenchError::invalid(
-            "Filesystem root cannot be a workspace",
-        ));
-    }
-    let canonical_store = store_root.canonicalize().map_err(|error| {
-        WorkbenchError::storage("Failed to resolve Workbench storage root", error)
-    })?;
-    if canonical.starts_with(&canonical_store) || canonical_store.starts_with(&canonical) {
-        return Err(WorkbenchError::invalid(
-            "Workspace root cannot overlap Workbench-owned storage",
-        ));
-    }
-    // A custom research directory no longer encloses the local credential
-    // store. Keep that store protected when registering project folders.
-    if let Ok(local) =
-        crate::storage::local_root().and_then(|p| p.canonicalize().map_err(|e| e.to_string()))
-    {
-        if canonical.starts_with(&local) || local.starts_with(&canonical) {
-            return Err(WorkbenchError::invalid(
-                "Workspace root cannot overlap Pipeline's local settings and credentials",
-            ));
-        }
-    }
-    if let Some(home) = dirs::home_dir().and_then(|path| path.canonicalize().ok()) {
-        if canonical == home || home.starts_with(&canonical) {
-            return Err(WorkbenchError::invalid(
-                "Home directory or one of its ancestors is too broad for a workspace",
-            ));
-        }
-    }
-    Ok(canonical)
-}
-
-pub(crate) fn root_identity(root: &Path) -> WorkbenchResult<String> {
-    let metadata = std::fs::metadata(root).map_err(|error| {
-        WorkbenchError::invalid(format!("Cannot inspect workspace root: {error}"))
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        Ok(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let mut digest = Sha256::new();
-        digest.update(root.to_string_lossy().as_bytes());
-        Ok(format!("path-sha256:{:x}", digest.finalize()))
-    }
-}
-
 fn parse_json(value: String, column: usize) -> rusqlite::Result<Value> {
     serde_json::from_str(&value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -1108,3 +1047,9 @@ mod runtime;
 mod sessions;
 mod views;
 mod workspaces;
+
+mod roots;
+pub(crate) use roots::{canonical_workspace_root, root_identity};
+
+mod history;
+pub use history::{TranscriptCursor, TranscriptPage};

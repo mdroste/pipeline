@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   accountState: vi.fn(),
   listSessions: vi.fn(),
   conversationSnapshot: vi.fn(),
+  sessionSnapshot: vi.fn(),
   reconcileSession: vi.fn(),
   updateSession: vi.fn(),
   sendTurn: vi.fn(),
@@ -62,6 +63,7 @@ it.each(
     mocks.conversationSnapshot.mockImplementation(
       async (id: string) => snaps[id],
     );
+    mocks.sessionSnapshot.mockImplementation(async (id: string) => snaps[id]);
     mocks.reconcileSession.mockResolvedValue(false);
     const acknowledgement = {
       epoch: 1,
@@ -137,3 +139,150 @@ it.each(
     );
   },
 );
+
+async function draftFixture(initial: Record<string, unknown> = {}) {
+  vi.clearAllMocks();
+  mocks.listeners.length = 0;
+  localStorage.clear();
+  localStorage.setItem("pipeline.workspace.sessionId", "A");
+  let saved: any = {
+    workspace: null,
+    session: {
+      id: "A",
+      title: "A",
+      workspaceId: null,
+      paperId: null,
+      presetId: null,
+      overrides: {},
+      draft: "",
+      revision: 1,
+      archivedAt: null,
+      createdAt: "now",
+      updatedAt: "now",
+    },
+    sequence: 1,
+    activeBinding: null,
+    turns: [],
+    items: [],
+    ...initial,
+  };
+  mocks.listWorkspaces.mockResolvedValue({ workspaces: [] });
+  mocks.pendingRequests.mockResolvedValue([]);
+  mocks.connectCodex.mockResolvedValue({});
+  mocks.accountState.mockResolvedValue({ status: "signedOut" });
+  mocks.listSessions.mockImplementation(async () => ({
+    sessions: [saved.session],
+  }));
+  mocks.conversationSnapshot.mockImplementation(async () => saved);
+  mocks.sessionSnapshot.mockImplementation(async () => saved);
+  mocks.reconcileSession.mockResolvedValue(false);
+  mocks.updateSession.mockImplementation(async (r: any) => {
+    saved = {
+      ...saved,
+      session: { ...saved.session, ...r, revision: saved.session.revision + 1 },
+      sequence: saved.sequence + 1,
+    };
+    return { record: saved.session, sequence: saved.sequence };
+  });
+  const hook = renderHook(() => useWorkspacePageController({}));
+  await waitFor(() =>
+    expect(hook.result.current.snapshot?.session.id).toBe("A"),
+  );
+  return { ...hook, saved: () => saved };
+}
+it("preserves a newly saved draft when an older hydration returns, including the next save", async () => {
+  const { result, saved, unmount } = await draftFixture();
+  const old = saved();
+  let resolve!: (v: any) => void;
+  mocks.conversationSnapshot.mockImplementationOnce(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  );
+  let loading!: Promise<void>;
+  act(() => {
+    loading = result.current.hydrate();
+  });
+  act(() => result.current.editDraft("important fresh draft"));
+  await act(async () => {
+    await result.current.saveCurrentDraft();
+  });
+  expect(saved().session.draft).toBe("important fresh draft");
+  expect(localStorage.getItem("pipeline.pendingDraft.A")).toBeNull();
+  await act(async () => {
+    resolve(old);
+    await loading;
+  });
+  expect(result.current.draft).toBe("important fresh draft");
+  expect(result.current.snapshot?.session.revision).toBe(2);
+  await act(async () => {
+    await result.current.saveCurrentDraft();
+  });
+  expect(saved().session.draft).toBe("important fresh draft");
+  unmount();
+});
+it("ignores a superseded same-session hydration", async () => {
+  const { result, saved, unmount } = await draftFixture();
+  let first!: (v: any) => void;
+  let second!: (v: any) => void;
+  mocks.conversationSnapshot
+    .mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          first = r;
+        }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          second = r;
+        }),
+    );
+  let a!: Promise<void>;
+  let b!: Promise<void>;
+  act(() => {
+    a = result.current.hydrate();
+    b = result.current.hydrate();
+  });
+  const newer = {
+    ...saved(),
+    session: { ...saved().session, title: "new title", revision: 3 },
+    sequence: 3,
+  };
+  await act(async () => {
+    second(newer);
+    await b;
+  });
+  await act(async () => {
+    first(saved());
+    await a;
+  });
+  expect(result.current.snapshot?.session.title).toBe("new title");
+  unmount();
+});
+
+it("clears a restored active turn when reconciliation confirms it ended", async () => {
+  const { result, saved, unmount } = await draftFixture({
+    activeBinding: { providerThreadId: "thread" },
+    turns: [
+      {
+        id: "turn",
+        providerTurnId: "turn",
+        terminalAt: null,
+        state: "inProgress",
+      },
+    ],
+  });
+  await waitFor(() => expect(result.current.active?.turnId).toBe("turn"));
+  mocks.conversationSnapshot.mockResolvedValueOnce({
+    ...saved(),
+    turns: [{ ...saved().turns[0], terminalAt: "now", state: "completed" }],
+    sequence: 2,
+  });
+  await act(async () => {
+    await result.current.hydrate();
+  });
+  expect(result.current.active).toBeNull();
+  unmount();
+});

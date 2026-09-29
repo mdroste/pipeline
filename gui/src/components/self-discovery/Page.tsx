@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   discoveryClient,
   discoveryNames,
+  discoveryStatus,
   type DiscoveryMode,
   type DiscoveryRun,
   type DiscoverySummary,
@@ -12,11 +13,13 @@ import Detail from "./Detail";
 import "./discovery.css";
 
 export default function SelfDiscovery({
+  initialRunId,
   initialMode = "supervised",
   initialSessionId,
   onBack,
   onConversation,
 }: {
+  initialRunId?: string | null;
   initialMode?: DiscoveryMode;
   initialSessionId?: string | null;
   onBack: () => void;
@@ -24,10 +27,10 @@ export default function SelfDiscovery({
 }) {
   const [rows, setRows] = useState<DiscoverySummary[]>([]);
   const [run, setRun] = useState<DiscoveryRun | null>(null);
-  const [creating, setCreating] = useState(true);
+  const [creating, setCreating] = useState(!initialRunId);
   const [error, setError] = useState("");
   const [offset, setOffset] = useState(0);
-  const selected = useRef<string | null>(null);
+  const selected = useRef<string | null>(initialRunId ?? null);
   const generation = useRef(0);
   const refresh = useCallback(async () => {
     const version = ++generation.current;
@@ -70,7 +73,10 @@ export default function SelfDiscovery({
     void refresh();
   }
   return (
-    <section className="research-missions" aria-label="Full self-discovery">
+    <section
+      className="research-missions discovery-page"
+      aria-label="Full self-discovery"
+    >
       <div className="task-section-heading">
         <div>
           <button onClick={onBack}>← Research automations</button>
@@ -116,7 +122,7 @@ export default function SelfDiscovery({
                 <span>{discoveryNames[r.mode]}</span>
                 <small>{r.reason}</small>
               </div>
-              <span className="task-status">{r.state}</span>
+              <span className="task-status">{discoveryStatus(r.state)}</span>
             </button>
           ))}
           {!rows.length && (

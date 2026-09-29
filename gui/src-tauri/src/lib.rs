@@ -210,6 +210,7 @@ pub fn run() {
             workbench::commands::workbench_list_sessions,
             workbench::commands::workbench_session_snapshot,
             workbench::commands::workbench_conversation_snapshot,
+            workbench::commands::workbench_transcript_page,
             workbench::commands::workbench_harness_catalog,
             workbench::commands::workbench_native_prompt_catalog,
             workbench::commands::workbench_effective_harness,
@@ -223,6 +224,8 @@ pub fn run() {
             workbench::commands::workbench_import_paper,
             workbench::commands::workbench_list_papers,
             workbench::commands::workbench_project_home,
+            workbench::commands::workbench_project_tasks,
+            workbench::commands::workbench_project_index,
             workbench::commands::workbench_capture_execution_plan,
             workbench::commands::workbench_execution_plan_status,
             workbench::commands::workbench_authorize_execution_plan,
@@ -397,6 +400,13 @@ pub fn run() {
             pipeline::codex_server::connection::workflow_codex_login_cancel,
             pipeline::codex_server::connection::workflow_codex_logout,
             pipeline::codex_server::connection::workflow_codex_rate_limits,
+            agent_runtime::codex::chatgpt::chatgpt_account_status,
+            agent_runtime::codex::chatgpt::chatgpt_login_start,
+            agent_runtime::codex::chatgpt::chatgpt_login_cancel,
+            agent_runtime::codex::chatgpt::chatgpt_logout,
+            agent_runtime::codex::chatgpt::chatgpt_select_existing_account,
+            agent_runtime::codex::chatgpt::chatgpt_model_catalog,
+            agent_runtime::codex::chatgpt::chatgpt_rate_limits,
             mark_smoke_ready,
         ])
         .build(tauri::generate_context!())
@@ -406,6 +416,7 @@ pub fn run() {
                 tauri::async_runtime::block_on(orchestration::shutdown());
                 tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
                 tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
+                tauri::async_runtime::block_on(agent_runtime::codex::chatgpt::shutdown());
             }
         });
     commands::cleanup_print_export();

@@ -18,6 +18,7 @@ import { notify } from "./components/DialogService";
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const HomePage = lazy(() => import("./components/HomePage"));
 const TasksPage = lazy(() => import("./components/TasksPage"));
+const ProjectIndexPage = lazy(() => import("./components/ProjectIndexPage"));
 const WorkspacePage = lazy(() => import("./components/WorkspacePage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
 const ResearchActivity = lazy(() => import("./components/ResearchActivity"));
@@ -108,6 +109,8 @@ function App() {
     handleWorkspaceReviewHandoff,
     taskSessionId,
     taskId,
+    discoveryId,
+    discoveryRequest,
     closePipeline,
     setWorkflowDirty,
     openPaddleInstallSettings,
@@ -125,6 +128,7 @@ function App() {
     setHistorySourceSelection,
     openHistoryRun,
     registerProjectSave,
+    registerWorkspaceSave,
     setProjectsDirty,
     state,
     setActiveRunPlan,
@@ -359,8 +363,15 @@ function App() {
                   }
                   onNavigate={(next) => void handleNavigate(next)}
                 />
+              ) : page === "project-index" ? (
+                <ProjectIndexPage
+                  onOpenProject={openWorkspaceProject}
+                  onResumeConversation={openWorkspaceSession}
+                />
               ) : page === "workspace" ? (
                 <WorkspacePage
+                  onAllProjects={() => void handleNavigate("project-index")}
+                  onSaveHandlerChange={registerWorkspaceSave}
                   entryRequest={workspaceEntry.request}
                   entrySurface={workspaceEntry.surface}
                   newProjectRequest={newProjectRequest}
@@ -373,6 +384,8 @@ function App() {
                 />
               ) : page === "tasks" ? (
                 <TasksPage
+                  key={`${discoveryId ?? "tasks"}:${discoveryRequest}`}
+                  initialDiscoveryId={discoveryId}
                   initialSessionId={taskSessionId}
                   initialTaskId={taskId}
                   onConversation={async (id) => {

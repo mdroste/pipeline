@@ -6,10 +6,12 @@ import {
   type SetStateAction,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { mergeSessionSnapshot } from "../lib/workspaceSessionState";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   WorkbenchEvent,
   WorkspaceModel,
 } from "../lib/workbenchTypes";
@@ -32,10 +34,7 @@ interface WorkbenchEventBridge {
   completedTurnsRef: MutableRefObject<Map<string, string>>;
   hydrate: (sessionId?: string | null) => Promise<void>;
   submissionRef: MutableRefObject<PendingSubmission | null>;
-  persistDraft: (
-    sessionId: string,
-    draft: string,
-  ) => Promise<ConversationSnapshot>;
+  persistDraft: (sessionId: string, draft: string) => Promise<SessionSnapshot>;
   refreshSessionRecord: (sessionId: string) => Promise<void>;
   sessionRef: MutableRefObject<string | null>;
   setActive: Dispatch<SetStateAction<ActiveTurn | null>>;
@@ -78,6 +77,35 @@ export function useWorkbenchEvents({
   streamFlushRef,
   submittingRef,
 }: WorkbenchEventBridge) {
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen("chatgpt:account-changed", () => {
+      void workbenchClient
+        .accountState()
+        .then(async (account) => {
+          if (disposed) return;
+          if (account.status === "chatgpt") {
+            const catalog = await workbenchClient.modelCatalog();
+            if (!disposed) {
+              setModels(catalog.models);
+              setError(null);
+            }
+          } else {
+            setModels([]);
+          }
+        })
+        .catch(() => undefined);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [setModels, setError]);
+
   const finishSubmission = useCallback(
     (status: string) => {
       const owner = submissionRef.current;
@@ -97,7 +125,8 @@ export function useWorkbenchEvents({
         }
         void persistDraft(owner.sessionId, owner.text)
           .then((next) => {
-            if (sessionRef.current === owner.sessionId) setSnapshot(next);
+            if (sessionRef.current === owner.sessionId)
+              setSnapshot((old) => mergeSessionSnapshot(old, next));
           })
           .catch(() => undefined);
         if (selected) {
@@ -179,22 +208,6 @@ export function useWorkbenchEvents({
         );
       }
 
-      if (
-        payload.kind === "accountUpdated" ||
-        payload.kind === "accountLoginCompleted"
-      ) {
-        void workbenchClient
-          .accountState(true)
-          .then(async (account) => {
-            if (account.status === "chatgpt")
-              setModels((await workbenchClient.modelCatalog()).models);
-            else
-              setError(
-                "The project assistant is no longer signed in to ChatGPT. Your draft and conversation remain local.",
-              );
-          })
-          .catch((cause) => setError(workbenchErrorMessage(cause)));
-      }
       if (
         payload.kind === "sessionTitleUpdated" &&
         typeof payload.sessionId === "string"

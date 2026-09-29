@@ -5,6 +5,7 @@ import type {
   ProjectAction,
   ProjectHome,
   ProjectRecord,
+  ResearchTask,
 } from "../../lib/projectClient";
 import type {
   PaperWithRevision,
@@ -102,7 +103,7 @@ export interface SurfaceApi {
   openAnnotation: (annotation: ProjectRecord<Annotation>) => void;
   setTab: (tab: ProjectTab) => void;
   taskId: string;
-  setTaskId: (id: string) => void;
+  setTaskId: (id: string, selected?: ProjectRecord<ResearchTask>) => void;
 }
 
 export function Card({

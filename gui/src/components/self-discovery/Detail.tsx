@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   discoveryClient,
   discoveryNames,
+  discoveryStatus,
   discoveryTerminal,
   type Candidate,
   type DiscoveryPaper,
@@ -89,7 +90,7 @@ export default function Detail({
       </div>
       <p>{run.definition.prompt}</p>
       <p role="status">
-        <strong>{run.phaseLabel}</strong> · {run.state}
+        <strong>{run.phaseLabel}</strong> · {discoveryStatus(run.state)}
       </p>
       <p>{run.reason}</p>
       <p className="task-muted">
@@ -329,9 +330,9 @@ export default function Detail({
                     {p.title || `Project ${p.candidateId}`}
                   </h4>
                   <p>
-                    {p.state} · {p.rounds} investigations · {p.versions}{" "}
-                    manuscript versions · {p.reviewCount ?? 0} final-version
-                    reviews
+                    {discoveryStatus(p.state)} · {p.rounds} investigations ·{" "}
+                    {p.versions} manuscript versions · {p.reviewCount ?? 0}{" "}
+                    final-version reviews
                   </p>
                   <p>{rank?.reason || p.reason}</p>
                   {rank && <p className="task-muted">{rank.uncertainty}</p>}

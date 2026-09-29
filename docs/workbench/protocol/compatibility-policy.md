@@ -82,3 +82,26 @@ response, so duplicate clicks and uncertain writes cannot replay an approval.
 `SendTurnResult` also includes its originating epoch; transient conversation
 state uses that identity when matching native terminal events. These are
 app-owned IPC fields, not changes to the pinned native protocol schemas.
+
+## Autonomous discovery roles
+
+Workspace migration 15 identifies host-created self-discovery conversations.
+These alone select `discovery-inspect` or `discovery-edit`, with network disabled
+and native `approvalPolicy: never`. Start and resume validate the same returned
+scope and approval identity. The Workspace request bridge answers research
+questions without prompting and declines expanded authority for these roles.
+Ordinary conversations preserve their current policy. The no-model probe now
+exercises both production profiles; dated evidence and authenticated limitations
+live in [Self-discovery](../../self-discovery.md#qualification).
+
+## Shared ChatGPT account
+
+The managed account now belongs to `agent_runtime/codex/chatgpt/`, while the
+Workspace and Review execution homes use `cli_auth_credentials_store =
+"ephemeral"`. Both receive `account/login/start` with `chatgptAuthTokens` and
+answer `account/chatgptAuthTokens/refresh` through the account service. These
+experimental fields exist in the checked-in schema; current official docs
+expose the host-managed flow. Native admission is verified by a no-model probe
+against 0.153.4; unsupported runtimes fail explicitly rather than falling back
+to another sign-in. See [Shared account](../../chatgpt-account.md) for ownership,
+migration, token handling, validation, and remaining release gates.

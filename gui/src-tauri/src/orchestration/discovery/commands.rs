@@ -1,5 +1,4 @@
 use super::*;
-use crate::workbench::store::{CreateSessionRequest, CreateWorkspaceRequest};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -39,23 +38,7 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
         let session = if let Some(id) = selected {
             id
         } else {
-            let ws = s
-                .create_workspace(CreateWorkspaceRequest {
-                    name: format!("Self-discovery: {title}"),
-                    root: None,
-                    operation_id: format!("discovery-project-{operation}"),
-                })?
-                .record;
-            if acquire {
-                crate::workbench::acquisition::set_network(&s, &ws.id, true)?;
-            }
-            s.create_session(CreateSessionRequest {
-                workspace_id: Some(ws.id),
-                title: "Self-discovery research".into(),
-                operation_id: format!("discovery-source-{operation}"),
-            })?
-            .record
-            .id
+            workspace::source(&s, &operation, &title, acquire)?
         };
         let b = crate::workbench::tasks::binding(&s, &session)?;
         crate::workbench::tasks::validate_binding(&s, &b)?;
@@ -152,7 +135,7 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
     let copy = r.clone();
     c.db(move |s| storage::create(&s, &copy, &request.operation_id, &fp))
         .await?;
-    notify(&c, &r);
+    notify(&c, &r, &r.state);
     Ok(export::view(&Portfolio {
         run: r,
         candidates: Vec::new(),
@@ -223,7 +206,7 @@ pub async fn discovery_select(
             Ok(p)
         })
         .await?;
-    notify(&c, &p.run);
+    notify(&c, &p.run, &p.run.state);
     Ok(export::view(&p))
 }
 #[tauri::command]

@@ -1,6 +1,7 @@
 /** Presentation routes only. None of these preferences grants assistant access. */
 export const workspaceDestinations = {
-  overview: { label: "Project brief", section: "overview" },
+  overview: { label: "Project overview", section: "overview" },
+  "project-settings": { label: "Project settings", section: "overview" },
   decisions: { label: "Decisions & impact", section: "activity" },
   documents: { label: "Documents", section: "library" },
   files: { label: "Files", section: "library" },
@@ -36,7 +37,7 @@ export const workspaceSections = [
   {
     id: "overview",
     label: "Overview",
-    description: "Project brief and setup",
+    description: "Resume work, research brief, and next steps",
     destination: "overview",
     icon: "project",
   },

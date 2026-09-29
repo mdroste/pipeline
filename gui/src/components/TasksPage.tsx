@@ -26,12 +26,14 @@ export default function TasksPage({
   initialSessionId,
   onConversation,
   initialTaskId,
+  initialDiscoveryId,
 }: {
   initialSessionId?: string | null;
   onConversation?: (id: string) => void | Promise<void>;
   initialTaskId?: string | null;
+  initialDiscoveryId?: string | null;
 }) {
-  const [view, setView] = useState("active");
+  const [view, setView] = useState(initialDiscoveryId ? "missions" : "active");
   const views = ["active", "scheduled", "history", "missions"];
   const tabList = useTabList(
     views,
@@ -176,6 +178,7 @@ export default function TasksPage({
             }
           >
             <ResearchMissions
+              initialDiscoveryId={initialDiscoveryId}
               initialSessionId={initialSessionId}
               onConversation={onConversation}
               onTask={async (id) => {

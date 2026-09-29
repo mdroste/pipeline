@@ -53,7 +53,6 @@ impl Store {
 
     pub fn conversation_snapshot(&self, session_id: &str) -> WorkbenchResult<ConversationSnapshot> {
         const MAX_HYDRATED_TURNS: usize = 500;
-        const MAX_HYDRATED_ITEMS: usize = 2_000;
         validate_id("session id", session_id)?;
         let connection = self.connection()?;
         let session = load_session(&connection, session_id)?;
@@ -65,75 +64,38 @@ impl Store {
         let active_binding = load_active_binding(&connection, session_id)?;
         let mut turns_statement = connection
             .prepare(
-                "SELECT t.id, t.binding_id, t.client_submission_id, t.provider_turn_id, t.state, t.error_json, t.created_at, t.updated_at, t.terminal_at FROM turns t JOIN session_bindings b ON b.id = t.binding_id WHERE b.session_id = ?1 AND (t.provider_turn_id IS NULL OR NOT EXISTS (SELECT 1 FROM turns newer JOIN session_bindings nb ON nb.id = newer.binding_id WHERE nb.session_id = b.session_id AND newer.provider_turn_id = t.provider_turn_id AND nb.incarnation > b.incarnation)) ORDER BY t.created_at, t.id LIMIT ?2",
+                "SELECT t.id, t.binding_id, t.client_submission_id, t.provider_turn_id, t.state, t.error_json, t.created_at, t.updated_at, t.terminal_at FROM turns t JOIN session_bindings b ON b.id = t.binding_id WHERE b.session_id = ?1 AND (t.provider_turn_id IS NULL OR NOT EXISTS (SELECT 1 FROM turns newer JOIN session_bindings nb ON nb.id = newer.binding_id WHERE nb.session_id = b.session_id AND newer.provider_turn_id = t.provider_turn_id AND nb.incarnation > b.incarnation)) ORDER BY (t.terminal_at IS NULL) DESC, t.created_at DESC, t.id DESC LIMIT ?2",
             )
             .map_err(|error| WorkbenchError::storage("Failed to prepare conversation turns", error))?;
-        let turns = turns_statement
-            .query_map(
-                params![session_id, (MAX_HYDRATED_TURNS + 1) as i64],
-                |row| {
-                    let error: Option<String> = row.get(5)?;
-                    Ok(ConversationTurn {
-                        id: row.get(0)?,
-                        binding_id: row.get(1)?,
-                        client_submission_id: row.get(2)?,
-                        provider_turn_id: row.get(3)?,
-                        state: row.get(4)?,
-                        error: error.and_then(|value| serde_json::from_str(&value).ok()),
-                        created_at: row.get(6)?,
-                        updated_at: row.get(7)?,
-                        terminal_at: row.get(8)?,
-                    })
-                },
-            )
+        let mut turns = turns_statement
+            .query_map(params![session_id, MAX_HYDRATED_TURNS as i64], |row| {
+                let error: Option<String> = row.get(5)?;
+                Ok(ConversationTurn {
+                    id: row.get(0)?,
+                    binding_id: row.get(1)?,
+                    client_submission_id: row.get(2)?,
+                    provider_turn_id: row.get(3)?,
+                    state: row.get(4)?,
+                    error: error.and_then(|value| serde_json::from_str(&value).ok()),
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                    terminal_at: row.get(8)?,
+                })
+            })
             .map_err(|error| WorkbenchError::storage("Failed to load conversation turns", error))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| {
                 WorkbenchError::storage("Failed to decode conversation turns", error)
             })?;
-        if turns.len() > MAX_HYDRATED_TURNS {
-            return Err(WorkbenchError::invalid(
-                "Conversation turn history exceeds its hydration limit",
-            ));
-        }
-        let mut items_statement = connection
-            .prepare(
-                "SELECT i.id, i.turn_id, i.provider_item_id, i.item_kind, i.payload_json, i.is_final, i.created_at, i.updated_at FROM transcript_items i JOIN session_bindings b ON b.id = i.binding_id WHERE b.session_id = ?1 AND NOT EXISTS (SELECT 1 FROM transcript_items newer JOIN session_bindings nb ON nb.id = newer.binding_id WHERE nb.session_id = b.session_id AND newer.provider_item_id = i.provider_item_id AND nb.incarnation > b.incarnation) ORDER BY i.created_at, i.id LIMIT ?2",
-            )
-            .map_err(|error| WorkbenchError::storage("Failed to prepare conversation items", error))?;
-        let items = items_statement
-            .query_map(
-                params![session_id, (MAX_HYDRATED_ITEMS + 1) as i64],
-                |row| {
-                    let payload: String = row.get(4)?;
-                    Ok(TranscriptItem {
-                        id: row.get(0)?,
-                        turn_id: row.get(1)?,
-                        provider_item_id: row.get(2)?,
-                        item_kind: row.get(3)?,
-                        payload: serde_json::from_str(&payload).unwrap_or(Value::Null),
-                        is_final: row.get::<_, i64>(5)? != 0,
-                        created_at: row.get(6)?,
-                        updated_at: row.get(7)?,
-                    })
-                },
-            )
-            .map_err(|error| WorkbenchError::storage("Failed to load conversation items", error))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                WorkbenchError::storage("Failed to decode conversation items", error)
-            })?;
-        if items.len() > MAX_HYDRATED_ITEMS {
-            return Err(WorkbenchError::invalid(
-                "Conversation item history exceeds its hydration limit",
-            ));
-        }
+        turns.reverse();
+        let page = super::history::read_page(&connection, session_id, None, false)?;
         Ok(ConversationSnapshot {
             workspace,
             session,
             active_binding,
             turns,
-            items,
+            items: page.items,
+            older_cursor: page.next_cursor,
             sequence: current_sequence(&connection)?,
         })
     }
@@ -161,14 +123,11 @@ impl Store {
         ) {
             return crate::workbench::project::session_task_root(self, &workspace.id, checkpoint);
         }
-        if let Some(root) = snapshot.workspace.and_then(|workspace| workspace.root) {
-            let path = PathBuf::from(root);
-            if path.is_dir() {
-                return Ok(path);
-            }
-            return Err(WorkbenchError::invalid(
-                "The registered Workspace folder is unavailable",
-            ));
+        if let Some(workspace) = snapshot
+            .workspace
+            .filter(|workspace| workspace.root.is_some())
+        {
+            return self.registered_root(&workspace);
         }
         let root = self
             .root

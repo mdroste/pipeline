@@ -25,55 +25,39 @@ pub async fn workbench_codex_account_state(
     app: tauri::AppHandle,
     refresh_token: bool,
 ) -> Result<crate::workbench::codex::AccountState, crate::workbench::codex::RequestError> {
-    let supervisor = crate::workbench::codex::supervisor_manager()
-        .connect()
-        .await?;
-    ensure_event_bridge(app, supervisor.clone());
-    supervisor.account_state(refresh_token).await
+    crate::agent_runtime::codex::chatgpt::chatgpt_account_status(app, Some(refresh_token))
+        .await
+        .map(|status| status.account)
+        .map_err(crate::workbench::codex::RequestError::unavailable)
 }
 
 #[tauri::command]
 pub async fn workbench_codex_login_start(
     app: tauri::AppHandle,
 ) -> Result<crate::workbench::codex::LoginStart, crate::workbench::codex::RequestError> {
-    let supervisor = crate::workbench::codex::supervisor_manager()
-        .connect()
-        .await?;
-    ensure_event_bridge(app.clone(), supervisor.clone());
-    let login = supervisor.login_start().await?;
-    if !is_safe_auth_url(&login.auth_url) {
-        let _ = supervisor.login_cancel(&login.login_id).await;
-        return Err(crate::workbench::codex::RequestError::unavailable(
-            "Codex App Server returned an unsafe authentication URL",
-        ));
-    }
-    if let Err(error) = open_auth_url(&app, &login.auth_url) {
-        let _ = supervisor.login_cancel(&login.login_id).await;
-        return Err(crate::workbench::codex::RequestError::unavailable(format!(
-            "Could not open the ChatGPT sign-in page: {error}"
-        )));
-    }
-    Ok(login)
+    crate::agent_runtime::codex::chatgpt::begin_browser_login(app)
+        .await
+        .map(|(_, login)| login)
+        .map_err(crate::workbench::codex::RequestError::unavailable)
 }
 
 #[tauri::command]
 pub async fn workbench_codex_login_cancel(
     login_id: String,
 ) -> Result<bool, crate::workbench::codex::RequestError> {
-    crate::workbench::codex::supervisor_manager()
-        .connect()
-        .await?
-        .login_cancel(&login_id)
+    crate::agent_runtime::codex::chatgpt::connect()
         .await
+        .map_err(crate::workbench::codex::RequestError::unavailable)?
+        .cancel_login(&login_id, None)
+        .await
+        .map_err(crate::workbench::codex::RequestError::unavailable)
 }
 
 #[tauri::command]
 pub async fn workbench_codex_logout() -> Result<(), crate::workbench::codex::RequestError> {
-    crate::workbench::codex::supervisor_manager()
-        .connect()
-        .await?
-        .logout()
+    crate::agent_runtime::codex::chatgpt::chatgpt_logout()
         .await
+        .map_err(crate::workbench::codex::RequestError::unavailable)
 }
 
 #[tauri::command]
@@ -215,6 +199,8 @@ pub(crate) async fn submit_turn(
         let root = runtime_root.to_string_lossy().into_owned();
         let permission_profile = prepared.effective.permission_profile.as_str();
         let supervisor = crate::workbench::codex::supervisor_manager().connect().await?;
+        let account_lease = supervisor.account_lease().await?;
+        active_turn_state().lock().unwrap_or_else(|error| error.into_inner()).account_lease = account_lease;
         active_turn_state()
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -515,6 +501,7 @@ pub(super) fn ensure_event_bridge(
                 break;
             }
             if !recovery.status().connected {
+                recovery.shutdown().await;
                 close_active_connection(epoch);
                 break;
             }
@@ -645,6 +632,9 @@ pub(super) fn ensure_event_bridge(
                                 .lock()
                                 .unwrap_or_else(|error| error.into_inner())
                                 .clear();
+                            // Transport failure alone does not prove the native
+                            // process stopped. Reap it before releasing account use.
+                            supervisor.shutdown().await;
                             close_active_connection(*epoch);
                         }
                         crate::workbench::codex::NormalizedEvent::TurnCompleted {
@@ -676,6 +666,7 @@ pub(super) fn ensure_event_bridge(
                     );
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    supervisor.shutdown().await;
                     close_active_connection(epoch);
                     return;
                 }
@@ -828,14 +819,4 @@ pub(super) fn transcript_text(payload: &Value) -> Option<String> {
         }
     }
     None
-}
-
-use crate::agent_runtime::codex::account::is_safe_auth_url;
-
-// Pipeline already ships the shell plugin and grants only its URL-open
-// capability. Keep this deprecated call isolated until the application moves
-// all external URL handling to tauri-plugin-opener.
-#[allow(deprecated)]
-fn open_auth_url(app: &tauri::AppHandle, url: &str) -> Result<(), tauri_plugin_shell::Error> {
-    app.shell().open(url.to_string(), None)
 }

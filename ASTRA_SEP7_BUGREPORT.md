@@ -64,12 +64,12 @@ repository-wide formatting check still fails on existing files (issue 14).
 No authenticated model run, native GUI session, or packaged release was
 qualified by these checks.
 
-Validation logs: [frontend](/tmp/pipeline-astra-fixes-frontend.log),
-[web build](/tmp/pipeline-astra-fixes-build.log),
-[isolated Rust suite](/tmp/pipeline-astra-fixes-isolated-rust.log),
-[isolated Clippy](/tmp/pipeline-astra-fixes-isolated-clippy.log),
-[live Rust attempt](/tmp/pipeline-astra-fixes-rust.log), and
-[formatting](/tmp/pipeline-astra-fixes-fmt.log).
+Validation logs: frontend (historical temporary path: `/tmp/pipeline-astra-fixes-frontend.log`),
+web build (historical temporary path: `/tmp/pipeline-astra-fixes-build.log`),
+isolated Rust suite (historical temporary path: `/tmp/pipeline-astra-fixes-isolated-rust.log`),
+isolated Clippy (historical temporary path: `/tmp/pipeline-astra-fixes-isolated-clippy.log`),
+live Rust attempt (historical temporary path: `/tmp/pipeline-astra-fixes-rust.log`), and
+formatting (historical temporary path: `/tmp/pipeline-astra-fixes-fmt.log`).
 
 ## Implementation follow-up — issues 09–13
 
@@ -113,12 +113,12 @@ the remaining three DTO tests passed separately after copying their required
 fixture into the temporary checkout. This isolates the fixes from the concurrent
 UI changes; it does not certify the combined frontend checkout as passing.
 
-Validation logs: [Rust suite](/tmp/pipeline-astra-09-13-rust.log),
-[Clippy](/tmp/pipeline-astra-09-13-clippy.log),
-[web build](/tmp/pipeline-astra-09-13-build.log),
-[final live frontend run](/tmp/pipeline-astra-09-13-frontend-final.log),
-[isolated frontend suite](/tmp/pipeline-astra-09-13-frontend-isolated.log), and
-[isolated DTO rerun](/tmp/pipeline-astra-09-13-frontend-isolated-dto.log).
+Validation logs: Rust suite (historical temporary path: `/tmp/pipeline-astra-09-13-rust.log`),
+Clippy (historical temporary path: `/tmp/pipeline-astra-09-13-clippy.log`),
+web build (historical temporary path: `/tmp/pipeline-astra-09-13-build.log`),
+final live frontend run (historical temporary path: `/tmp/pipeline-astra-09-13-frontend-final.log`),
+isolated frontend suite (historical temporary path: `/tmp/pipeline-astra-09-13-frontend-isolated.log`), and
+isolated DTO rerun (historical temporary path: `/tmp/pipeline-astra-09-13-frontend-isolated-dto.log`).
 
 ## 01 — Reload overwrites edits made while the read is pending
 
@@ -404,10 +404,10 @@ Passing existing tests does not negate the targeted failures. The audit covers t
 
 Temporary evidence remains available on this machine:
 
-- [Rust service probe](/tmp/pipeline-astra-sep7-audit/probe.rs), [editor regression source](/tmp/pipeline-astra-sep7-audit/astra_sep7_audit.test.tsx), and [preview regression source](/tmp/pipeline-astra-sep7-audit/astra_sep7_preview_audit.test.tsx).
-- [Legacy schema fixture](/tmp/pipeline-astra-sep7-audit/schema12.pwrx) and [scheduler query evidence](/tmp/pipeline-astra-sep7-audit/starvation-query.txt).
-- [Service probe output](/tmp/pipeline-astra-sep7-probe.log), [editor failures](/tmp/pipeline-astra-sep7-ui-probe.log), and [preview failure](/tmp/pipeline-astra-sep7-preview-probe.log).
-- [Frontend baseline](/tmp/pipeline-astra-sep7-frontend.log), [Rust baseline](/tmp/pipeline-astra-sep7-rust.log), [build](/tmp/pipeline-astra-sep7-build.log), [Clippy](/tmp/pipeline-astra-sep7-clippy.log), [formatting diff](/tmp/pipeline-astra-sep7-fmt.log), and [successful release checks](/tmp/pipeline-astra-sep7-release-unsandboxed.log).
+- Rust service probe (historical temporary path: `/tmp/pipeline-astra-sep7-audit/probe.rs`), editor regression source (historical temporary path: `/tmp/pipeline-astra-sep7-audit/astra_sep7_audit.test.tsx`), and preview regression source (historical temporary path: `/tmp/pipeline-astra-sep7-audit/astra_sep7_preview_audit.test.tsx`).
+- Legacy schema fixture (historical temporary path: `/tmp/pipeline-astra-sep7-audit/schema12.pwrx`) and scheduler query evidence (historical temporary path: `/tmp/pipeline-astra-sep7-audit/starvation-query.txt`).
+- Service probe output (historical temporary path: `/tmp/pipeline-astra-sep7-probe.log`), editor failures (historical temporary path: `/tmp/pipeline-astra-sep7-ui-probe.log`), and preview failure (historical temporary path: `/tmp/pipeline-astra-sep7-preview-probe.log`).
+- Frontend baseline (historical temporary path: `/tmp/pipeline-astra-sep7-frontend.log`), Rust baseline (historical temporary path: `/tmp/pipeline-astra-sep7-rust.log`), build (historical temporary path: `/tmp/pipeline-astra-sep7-build.log`), Clippy (historical temporary path: `/tmp/pipeline-astra-sep7-clippy.log`), formatting diff (historical temporary path: `/tmp/pipeline-astra-sep7-fmt.log`), and successful release checks (historical temporary path: `/tmp/pipeline-astra-sep7-release-unsandboxed.log`).
 
 These are temporary local artifacts, not repository dependencies. To rerun the frontend probes, copy them back into `gui/src/test/` and run the corresponding Vitest file; they intentionally assert the desired behavior and fail until fixed. To rerun the Rust service probe, temporarily place `probe.rs` at `gui/src-tauri/examples/astra_sep7_audit.rs` and run `cargo run --locked --manifest-path gui/src-tauri/Cargo.toml --example astra_sep7_audit`. It creates new stores under the system temporary directory and expects the legacy archive fixture at the path used above. Its deferred-constraint trigger must only be used in a disposable store.
 

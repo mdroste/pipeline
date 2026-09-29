@@ -1,7 +1,8 @@
 # Full self-discovery: proposed product and implementation plan
 
-Status: proposal for discussion, September 9, 2026. This document does not describe
-implemented features. Numerical defaults below are initial product choices to
+Status: design record, September 9, 2026. The current implementation and its
+qualification limits are documented in [Self-discovery](self-discovery.md).
+This document includes proposed extensions beyond the implemented version. Numerical defaults below are initial product choices to
 calibrate through the evaluation program, not measured research success rates.
 
 ## 1. Recommendation
@@ -74,7 +75,7 @@ reported before spending on research. Starting a run pins the effective settings
 ### Supervised selection
 
 The checkpoint presents N substantial briefs, not N titles or optimistic pitches.
-Each brief includes the question, economic mechanism or identification argument,
+Each brief includes the question, mechanism, argument, interpretation, or research design,
 closest related work, proposed contribution, first decisive test, data/tool
 availability, expected effort, strongest objection, reply, and remaining doubt.
 
@@ -87,7 +88,7 @@ automatic selection on timeout; deadline expiry retains the shortlist.
 After selection, the system proceeds through research, drafting and review
 without routine interruptions. If a selected project fails, the default is to
 report that outcome. An explicitly chosen reserve list can authorize replacement.
-Changing to a different economic question is not an ordinary revision.
+Changing to a different research question is not an ordinary revision.
 
 ### Unsupervised decisions
 
@@ -132,7 +133,7 @@ the remit, selected tools, or ranking policy.
 
 ### B. Generate genuinely different proposals
 
-Use several proposal passes with different economic lenses: relaxing assumptions,
+Use several proposal passes with field-appropriate lenses: revisiting assumptions,
 connecting mechanisms, unexplained facts, measurement/identification, and policy
 or welfare implications, as appropriate to the brief. Give early passes the same
 brief and evidence without earlier proposals; later passes target coverage gaps.
@@ -161,7 +162,7 @@ For each, build a fuller research design and run two independent assessments:
 
 1. **Contribution referee:** strongest existing explanation, closest prior work,
    whether the claimed difference is substantive, and whether any possible outcome
-   would change economic understanding.
+   would change understanding in the relevant field.
 2. **Methods referee:** feasibility of the proof, identification or computation;
    exact inputs needed; assumptions doing the work; and the cheapest decisive test.
 
@@ -240,7 +241,7 @@ accepting a bounded negative finding, or abandoning the project.
 
 Model-written proof is an argument requiring assessment. Numerical checks establish
 the tested cases or provide counterexamples; they do not prove general results.
-Simulation output is not observed economic data. Unexecuted code is not a result.
+Simulation output is not observed data. Unexecuted code is not a result.
 
 Retain all empirical specifications, failures and exclusions. Where adaptive
 search affects inference, use an appropriate declared validation strategy such
@@ -322,7 +323,7 @@ persisted input order and a deterministic tie rule.
 
 Present substantive soundness/evidence status before the ordinal ranking. A
 paper with an unresolved fatal objection cannot outrank an eligible paper by
-having better prose. Within an eligible group, assess economic contribution,
+having better prose. Within an eligible group, assess substantive contribution,
 strength of support, originality relative to inspected literature, completeness,
 and clarity. Show ties or low-confidence orderings when reviewers disagree.
 There is no "top-five publication probability" or spurious decimal quality score.
@@ -480,7 +481,7 @@ For the full product, add a Workspace-owned autonomous execution capability:
 This is a distinct execution capability, not a weakening of existing exact-plan
 host grants. Qualified environments should be advertised explicitly. On this
 Mac, every host Stata action must continue through `oldstata`; a general portable
-Stata worker is separate work. Do not promise unrestricted economics toolchains
+Stata worker is separate work. Do not promise unrestricted academic toolchains
 in the first isolated worker.
 
 Also add model-accessible, bounded acquisition requests through Workspace's
@@ -563,7 +564,7 @@ execution is a subsequent deployment capability.
 | SD-1: durable proposal funnel            | Coordinator extension, per-candidate persistence, generation/deduplication/screens, shortlist, both selectors, scoped UI                       | Real 50/75/100-candidate runs survive restart and reach the correct selection behavior; frozen proposal exports are inspectable          |
 | SD-2: full paper path on bounded inputs  | Per-paper roots and mission ownership, research contracts, results dossiers, drafting, immutable Reviews, revision, ranking, TeX/PDF packaging | Both modes complete from prompt to packages using supplied/approved inputs; every ranked version matches its review                      |
 | SD-3: autonomous capabilities            | Isolated generated-code execution, bounded acquisition tools, supported dataset adapters, parent accounting and failure handling               | A fresh prompt produces executed research without per-script approval inside the saved scope; denial/escape and provenance fixtures pass |
-| SD-4: research and release qualification | Authenticated economics pilots, blind assessment, restart/timeout/cancel tests and native development UI validation                            | Evidence establishes each advertised research type and platform; unresolved limitations remain visible                                   |
+| SD-4: research and release qualification | Authenticated pilots across academic fields, blind assessment, restart/timeout/cancel tests and native development UI validation                            | Evidence establishes each advertised research type and platform; unresolved limitations remain visible                                   |
 
 SD-0–SD-2 should provide a narrow internal vertical slice, not be marketed as
 unrestricted autonomous empirical research. Prioritize a theory question and a
@@ -601,7 +602,7 @@ reserve a stale schema number or modify applied migrations.
 
 ### Scientific evaluation
 
-Create 12 fixed economics briefs: three each in theory, empirical work,
+Create a fixed cross-field pilot set covering formal theory, empirical work,
 quantitative macro, and literature/synthesis. Include known counterexamples,
 an infeasible dataset, a duplicate contribution under different terminology, a
 null result, sensitivity to an assumption, and a tempting invalid identification
@@ -613,7 +614,7 @@ evidence and spending limits. Run ablations for proposal breadth, adversarial
 review and revision; repeat stochastic runs instead of selecting a showcase.
 For supervised evaluation, record human selection effort separately.
 
-Independent economists should assess the final papers without knowing the
+Independent subject specialists should assess the final papers without knowing the
 generation method. Measure material error rates, citation entailment, executed
 result reproduction, distinctness of contributions, usefulness of the strongest
 paper, usefulness of the portfolio, referee detection of seeded flaws, and
@@ -636,7 +637,7 @@ The AI Scientist-v2 provides a relevant end-to-end example of ideation, experime
 search and manuscript generation. Its own documentation cautions that broader
 exploration can have lower success rates than a strong template. That supports
 retaining domain-specific research contracts and a staged funnel while allowing
-adaptive investigations. It does not establish effectiveness in economics.
+adaptive investigations. It does not establish effectiveness across academic fields.
 Source: [SakanaAI's implementation and documentation](https://github.com/SakanaAI/AI-Scientist-v2).
 
 An independent evaluation of the earlier AI Scientist reported novelty

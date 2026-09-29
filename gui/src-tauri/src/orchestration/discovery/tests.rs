@@ -55,55 +55,7 @@ fn fixture(mode: Mode, count: usize) -> Portfolio {
         papers: Vec::new(),
     }
 }
-fn assessment(id: u32) -> Value {
-    json!({"candidateId":id,"eligible":true,"contribution":4,"feasibility":4,"informationValue":3,"cluster":format!("cluster-{id}"),"duplicateOf":null,"strongestObjection":"The relation between sources remains uncertain","resolution":"Compare the preserved variants and provenance","uncertainty":"Incomplete archive coverage"})
-}
-fn response(p: &Portfolio) -> Value {
-    match p.run.phase {
-        Phase::Orient => {
-            json!({"fields":["History"],"subjectIds":[],"methodIds":[],"researchStandards":["Source criticism and provenance"],"contributionForms":["Interpretation supported by primary texts"],"proposalLenses":["Transmission","Attribution","Context"],"assumptions":[],"constraints":["Only available primary sources"],"literatureQueries":[]})
-        }
-        Phase::Generate => {
-            json!({"proposals":(0..BATCH.min(p.run.definition.candidate_count-p.candidates.len())).map(|i|json!({"title":format!("Project {}",p.candidates.len()+i+1),"question":"What explains the textual variant?","contribution":"An account of source transmission","method":"Historical source criticism","firstTest":"Compare independently dated witnesses","requiredEvidence":["Primary texts"],"relatedWork":[],"risks":["Missing witness"]})).collect::<Vec<_>>()})
-        }
-        Phase::Screen { offset } => {
-            json!({"assessments":p.candidates.iter().skip(offset).take(BATCH).map(|c|assessment(c.id)).collect::<Vec<_>>()})
-        }
-        Phase::Assess { index, .. } => {
-            json!({"assessments":[assessment(p.run.deep_candidates[index])]})
-        }
-        Phase::ReviseProposal { index } => json!(
-            p.candidates
-                .iter()
-                .find(|c| c.id == p.run.deep_candidates[index])
-                .unwrap()
-                .proposal
-        ),
-        Phase::Shortlist => {
-            json!({"shortlist":p.run.deep_candidates.iter().take(3).collect::<Vec<_>>(),"recommended":p.run.deep_candidates.iter().take(2).collect::<Vec<_>>(),"rationale":"Distinct source questions with feasible comparisons"})
-        }
-        Phase::Research { .. } => {
-            json!({"contract":"Assess transmission under explicit source limitations","summary":"The available witnesses support a bounded interpretation","claims":["The interpretation is provisional"],"limitations":["Missing witnesses prevent a definitive claim"],"sources":[],"files":[],"next":"draft","reason":"The bounded argument can be written with limitations"})
-        }
-        Phase::Challenge { .. } => {
-            json!({"assessment":"The bounded argument supports a draft","unresolved":["Source coverage"],"progress":true,"next":"draft"})
-        }
-        Phase::Draft { paper } => {
-            json!({"title":format!("Paper {}",p.papers[paper].candidate_id),"abstractText":"A bounded interpretation of source transmission","markdown":format!("# Paper {}\n\nA bounded argument. Version {}",p.papers[paper].candidate_id,p.papers[paper].versions.len()+1),"latex":"\\documentclass{article}\\begin{document}A bounded argument.\\end{document}","bibliography":"","evidenceIds":[],"limitations":["Source coverage"],"responseToReview":[],"files":[]})
-        }
-        Phase::Review { .. } => {
-            json!({"summary":"The central claim is appropriately bounded","findings":[],"strengths":["Explicit source criticism"],"limitations":["Coverage"]})
-        }
-        Phase::AssessPaper { .. } => {
-            json!({"summary":"A coherent bounded paper draft","sound":true,"contribution":"Useful interpretation","support":"Argument supported within the provided record","originality":"Uncertain beyond the inspected literature","completeness":"Complete bounded draft","remainingWork":["Broader archive access"]})
-        }
-        Phase::Rank => {
-            json!({"papers":p.papers.iter().enumerate().filter(|(_,p)|p.assessment.is_some()).map(|(i,p)|json!({"candidateId":p.candidate_id,"rank":i+1,"reason":"Stronger interpretive contribution","uncertainty":"A close comparison"})).collect::<Vec<_>>()})
-        }
-        Phase::Deliver => json!({"delivered":true}),
-        _ => panic!("No scripted response for {:?}", p.run.phase),
-    }
-}
+use super::qualification::response;
 fn adopt(p: &mut Portfolio) -> Result<()> {
     let output = json!({"finalText":response(p).to_string()});
     engine::consume(p, &output, BTreeMap::new(), BTreeMap::new())
@@ -203,7 +155,8 @@ fn boundaries_duplicate_links_and_full_batch_coverage_are_enforced() {
     p.run.definition.input_paths.clear();
     adopt(&mut p).unwrap();
     adopt(&mut p).unwrap();
-    let a: CandidateAssessment = serde_json::from_value(assessment(1)).unwrap();
+    let a: CandidateAssessment =
+        serde_json::from_value(super::qualification::assessment(1)).unwrap();
     assert!(validate::assessments(std::slice::from_ref(&a), &[1, 2], &p.candidates).is_err());
     let mut duplicate = a;
     duplicate.duplicate_of = Some(2);
@@ -373,4 +326,113 @@ fn prompts_adapt_to_orientation_and_referees_do_not_receive_proposal_scores() {
     assert!(!prompt.contains("eligibleCandidates"));
     assert!(!prompt.contains("informationValue"));
     assert!(!prompt.contains("selectedSourceContext"));
+}
+
+#[test]
+fn exports_verify_exact_bytes_and_keep_credentials_out_of_the_bundle() {
+    use std::io::Read;
+    let temp = tempfile::tempdir().unwrap();
+    let s = store::Store::open(temp.path()).unwrap();
+    let mut p = fixture(Mode::Unsupervised, 50);
+    for _ in 0..200 {
+        if p.run.terminal() {
+            break;
+        }
+        adopt(&mut p).unwrap();
+    }
+    let paper = &mut p.papers[0];
+    let v = paper.versions.last_mut().unwrap();
+    let artifact = adapters::snapshot(
+        &s,
+        &store::Scope::default(),
+        json!(v.manuscript.markdown),
+        "paper.md",
+    )
+    .unwrap();
+    v.artifacts.insert("paper.md".into(), artifact.clone());
+    p.run.input_artifacts.insert(
+        "input-1-source.txt".into(),
+        adapters::snapshot(
+            &s,
+            &store::Scope::default(),
+            json!("Original source bytes"),
+            "source.txt",
+        )
+        .unwrap(),
+    );
+    let bytes = export::bundle(&s, &p).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut markdown = String::new();
+    zip.by_name("project-1/paper.md")
+        .unwrap()
+        .read_to_string(&mut markdown)
+        .unwrap();
+    assert_eq!(
+        markdown,
+        p.papers[0].versions.last().unwrap().manuscript.markdown
+    );
+    assert!(zip.by_name("inputs/input-1-source.txt").is_ok());
+    let mut meta = String::new();
+    zip.by_name("portfolio.json")
+        .unwrap()
+        .read_to_string(&mut meta)
+        .unwrap();
+    assert!(!meta.contains("sourceAuthority"));
+    assert!(!meta.contains("runtimeRoot"));
+    let path = adapters::artifact_path(&s, &artifact).unwrap();
+    std::fs::write(path, "tampered").unwrap();
+    assert!(export::bundle(&s, &p).is_err());
+}
+
+#[test]
+fn proposal_versions_and_budget_reservations_remain_bounded() {
+    let mut p = fixture(Mode::Unsupervised, 50);
+    until_selection(&mut p);
+    for id in &p.run.deep_candidates {
+        let c = p.candidates.iter().find(|c| c.id == *id).unwrap();
+        assert_eq!(c.previous_versions.len(), 1);
+        assert_eq!(c.previous_versions[0].assessments.len(), 2);
+        assert_eq!(c.assessments.len(), 1);
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let s = store::Store::open(temp.path()).unwrap();
+    p.run.actions_reserved = p.run.definition.max_actions;
+    storage::create(&s, &p.run, "budget", "fingerprint").unwrap();
+    let chain = Chain {
+        schema_version: 1,
+        name: "Budget test".into(),
+        description: String::new(),
+        limits: Limits {
+            max_actions: 1,
+            deadline_hours: 1,
+            action_timeout_secs: 30,
+        },
+        steps: vec![Step {
+            id: "action".into(),
+            label: "No dispatch".into(),
+            action: Action::Workspace {
+                prompt: "Cannot spend".into(),
+                model: None,
+                effort: None,
+            },
+        }],
+    };
+    assert!(storage::admit(&s, &mut p, chain, store::Scope::default()).is_err());
+    assert!(storage::get(&s, &p.run.id).unwrap().active_child.is_none());
+}
+
+#[test]
+fn failed_record_adoption_rolls_back_to_the_last_durable_portfolio() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = store::Store::open(temp.path()).unwrap();
+    let mut p = fixture(Mode::Unsupervised, 50);
+    storage::create(&s, &p.run, "bounded", "fingerprint").unwrap();
+    until_selection(&mut p);
+    storage::save(&s, &mut p, "selected", None).unwrap();
+    let committed = p.run.revision;
+    p.papers[0].reason = "x".repeat(4 * 1024 * 1024 + 1);
+    assert!(storage::save(&s, &mut p, "oversized", None).is_err());
+    let restored = storage::load(&s, &p.run.id).unwrap();
+    assert_eq!(restored.run.revision, committed);
+    assert!(restored.papers[0].reason.is_empty());
 }

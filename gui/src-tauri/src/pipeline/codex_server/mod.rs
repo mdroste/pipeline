@@ -13,24 +13,12 @@ pub use connection::{
 pub use invocation::call_codex;
 
 pub async fn catalog() -> Result<crate::model_catalog::ModelCatalog, String> {
-    let c = connection::connect().await?;
-    let _lease = c.activity.read().await;
-    if c.native
-        .client
-        .account_state(false)
-        .await
-        .map_err(|e| e.to_string())?
-        .status
-        != crate::agent_runtime::codex::AccountStatus::Chatgpt
-    {
-        return Err("Workflow ChatGPT is not signed in. Open Settings → API Keys → ChatGPT → App Server connection.".into());
+    let account = crate::agent_runtime::codex::chatgpt::connect().await?;
+    let status = account.status(false).await?;
+    if status.account.status != crate::agent_runtime::codex::AccountStatus::Chatgpt {
+        return Err("Sign in to ChatGPT in Settings to use Conversations and Reviews".into());
     }
-    let native = c
-        .native
-        .client
-        .model_catalog()
-        .await
-        .map_err(|e| e.to_string())?;
+    let native = crate::agent_runtime::codex::chatgpt::chatgpt_model_catalog().await?;
     let default_model = native
         .models
         .iter()
@@ -40,7 +28,7 @@ pub async fn catalog() -> Result<crate::model_catalog::ModelCatalog, String> {
         provider: "codex".into(),
         transport: "cli".into(),
         source: "codex_app_server".into(),
-        source_version: c.native.version.clone(),
+        source_version: status.version,
         fetched_at: chrono::Utc::now().to_rfc3339(),
         default_model,
         models: native

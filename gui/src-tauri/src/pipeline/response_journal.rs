@@ -311,6 +311,32 @@ mod tests {
             });
     }
 
+    #[tokio::test]
+    async fn classification_failure_preserves_raw_capture() {
+        let t = tempfile::tempdir().unwrap();
+        let captured = capture(
+            Some(t.path().to_str().unwrap()),
+            "step",
+            1,
+            "terminal",
+            "raw evidence",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let pending = captured.pending_path.clone();
+        let final_path = captured.final_path.with_file_name(format!(
+            "{}-accepted.md",
+            captured.final_path.file_name().unwrap().to_str().unwrap()
+        ));
+        std::fs::create_dir(&final_path).unwrap();
+        assert!(captured
+            .finish(AttemptStatus::Accepted, "valid")
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_to_string(pending).unwrap(), "raw evidence");
+    }
+
     #[test]
     fn content_rejection_has_a_distinct_durable_status() {
         assert_eq!(AttemptStatus::RejectedContent.slug(), "rejected-content");

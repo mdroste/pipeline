@@ -4,6 +4,7 @@ use super::{
     invocation::validate_thread,
     tools::HostTools,
 };
+use crate::agent_runtime::codex::invocation::NativeThreadStart;
 use crate::agent_runtime::codex::{AccountStatus, DEFAULT_REQUEST_TIMEOUT};
 use serde_json::{json, Value};
 
@@ -30,18 +31,20 @@ async fn inspect(c: &Connection, root: &std::path::Path) -> Result<Value, String
     let thread = c
         .native
         .client
-        .request(
-            "thread/start",
-            json!({
-                "cwd":c.cwd,"runtimeWorkspaceRoots":[],"permissions":PROFILE,
-                "approvalPolicy":"never","approvalsReviewer":"user","modelProvider":"openai",
-                "allowProviderModelFallback":false,"ephemeral":false,
-                "developerInstructions":"Qualification fixture. No model response requested.",
-                "dynamicTools":tools.declarations(),"config":{"web_search":"disabled"},
-                "serviceName":"pipeline_workflows"
-            }),
-            DEFAULT_REQUEST_TIMEOUT,
-        )
+        .start_native_thread(NativeThreadStart {
+            cwd: &c.cwd,
+            runtime_workspace_roots: &[],
+            permissions: PROFILE,
+            approval_policy: "never",
+            developer_instructions: Some("Qualification fixture. No model response requested."),
+            base_instructions: None,
+            dynamic_tools: &tools.declarations(),
+            model: None,
+            reasoning_effort: None,
+            ephemeral: false,
+            service_name: "pipeline_workflows",
+            config: Some(json!({"web_search":"disabled"})),
+        })
         .await
         .map_err(|e| e.to_string())?;
     validate_thread(&thread, &c.cwd, None).map_err(|e| format!("{e}: {thread}"))?;

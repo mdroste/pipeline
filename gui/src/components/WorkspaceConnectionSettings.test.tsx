@@ -11,6 +11,13 @@ const mocks = vi.hoisted(() => ({
   saveTitlePreferences: vi.fn(),
   capabilities: vi.fn(),
 }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn().mockResolvedValue({
+    account: { status: "signedOut" },
+    epoch: 1,
+    loginInProgress: false,
+  }),
+}));
 vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
 vi.mock("../lib/projectClient", () => ({
   projectClient: { capabilities: mocks.capabilities },

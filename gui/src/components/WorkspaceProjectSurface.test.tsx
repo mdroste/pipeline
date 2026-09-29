@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectSurface from "./WorkspaceProjectSurface";
 import type { ProjectHome } from "../lib/projectClient";
+import type { WorkbenchSession } from "../lib/workbenchTypes";
 const mocks = vi.hoisted(() => ({
   home: vi.fn(),
   mutate: vi.fn(),
@@ -134,7 +135,7 @@ it("preserves legacy desk preferences without making the project content own ass
 it("opens signed-out project state without a model call or choosing reference results", async () => {
   const conversation = vi.fn();
   await mount(conversation);
-  fireEvent.click(screen.getByText("Project setup", { selector: "summary" }));
+  fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
   expect(screen.getByLabelText("Reference results run")).toHaveValue("");
   expect(screen.getByLabelText("Current version of the paper")).toHaveValue("");
   expect(screen.getByText("research")).toBeInTheDocument();
@@ -226,22 +227,16 @@ it("explains that a folder is needed before an edit can start", async () => {
 it("opens a research conversation only when explicitly requested", async () => {
   const conversation = vi.fn().mockResolvedValue(undefined);
   await mount(conversation);
-  fireEvent.click(
-    screen.getByRole("button", { name: "Continue in a conversation" }),
-  );
-  await waitFor(() =>
-    expect(conversation).toHaveBeenCalledWith(
-      "Continue from the project summary and open action items.",
-    ),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Start conversation →" }));
+  await waitFor(() => expect(conversation).toHaveBeenCalledWith(""));
 });
 
 it("keeps an unsaved project note when changing project destinations", async () => {
   await mount();
   expect(screen.getByLabelText("New note")).not.toBeVisible();
   expect(
-    screen.getByLabelText("Current version of the paper"),
-  ).not.toBeVisible();
+    screen.queryByLabelText("Current version of the paper"),
+  ).not.toBeInTheDocument();
   fireEvent.click(
     screen.getByText("Project notes", { selector: "summary", exact: false }),
   );
@@ -263,4 +258,74 @@ it("keeps an unsaved project note when changing project destinations", async () 
   expect(draft).toBeVisible();
   expect(draft).toHaveValue("Retain the aggregation assumptions");
   expect(mocks.mutate).not.toHaveBeenCalled();
+});
+
+it("resumes the latest active conversation in this project without generating a prompt", async () => {
+  const resume = vi.fn().mockResolvedValue(undefined);
+  const conversation = vi.fn();
+  const session = (
+    id: string,
+    updatedAt: string,
+    patch: Partial<WorkbenchSession> = {},
+  ): WorkbenchSession => ({
+    id,
+    workspaceId: "workspace",
+    title: id,
+    updatedAt,
+    createdAt: updatedAt,
+    paperId: null,
+    presetId: null,
+    overrides: {},
+    draft: "Saved draft",
+    revision: 1,
+    archivedAt: null,
+    ...patch,
+  });
+  render(
+    <WorkspaceProjectSurface
+      workspaceId="workspace"
+      onWorkspaceChanged={vi.fn()}
+      onConversation={conversation}
+      onResumeSession={resume}
+      sessions={[
+        session("old", "2026-09-01"),
+        session("resume-this", "2026-09-03"),
+        session("archived", "2026-09-05", { archivedAt: "2026-09-05" }),
+        session("other-project", "2026-09-06", { workspaceId: "other" }),
+      ]}
+    />,
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Resume conversation →" }),
+  );
+  await waitFor(() => expect(resume).toHaveBeenCalledWith("resume-this"));
+  expect(conversation).not.toHaveBeenCalled();
+});
+
+it("keeps proposed research questions out of the brief while showing their pending decision", async () => {
+  const data = home();
+  data.notes = [
+    {
+      id: "proposed",
+      workspaceId: "workspace",
+      paperId: null,
+      kind: "question",
+      body: "An unaccepted claim",
+      state: "proposed",
+      origin: "assistant",
+      pinned: true,
+      revision: 1,
+      createdAt: "2026-09-01",
+      updatedAt: "2026-09-01",
+    },
+  ];
+  data.settings.body.briefNoteIds = ["proposed"];
+  mocks.home.mockResolvedValue(data);
+  await mount();
+  expect(
+    screen.getByRole("region", { name: "Research brief" }),
+  ).not.toHaveTextContent("An unaccepted claim");
+  expect(
+    screen.getByRole("button", { name: "Review suggested notes →" }),
+  ).toBeVisible();
 });

@@ -143,10 +143,12 @@ export function shouldSendMessage(
 
 export function startupPage(
   storage: Pick<Storage, "getItem">,
-): "workspace" | "main" | "home" {
+): "workspace" | "main" | "home" | "project-index" {
   const preferences = parsePreferences(storage.getItem(PREFERENCES_KEY));
   if (preferences.startup === "home") return "home";
   // Preserve the existing startup behavior for users without preferences.
   const saved = storage.getItem("pipeline.ui.page");
-  return saved === "workspace" || saved === "main" ? saved : "home";
+  return saved === "workspace" || saved === "main" || saved === "project-index"
+    ? saved
+    : "home";
 }

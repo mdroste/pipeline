@@ -46,7 +46,7 @@ describe("NavRail", () => {
     expect(screen.getByRole("button", { name: "System ready" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Projects" }));
-    expect(props.onNavigate).toHaveBeenCalledWith("workspace");
+    expect(props.onNavigate).toHaveBeenCalledWith("project-index");
 
     await user.click(tools.getByRole("button", { name: "Tools" }));
     expect(tools.getByRole("button", { name: "Tools" })).toHaveAttribute(

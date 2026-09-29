@@ -43,6 +43,7 @@ struct ActiveTurnState {
     completion_during_setup: Option<(String, String)>,
     connection_closed_during_setup: bool,
     permit: Option<OwnedSemaphorePermit>,
+    account_lease: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
 }
 
 impl ActiveTurnState {
@@ -546,6 +547,14 @@ pub async fn workbench_conversation_snapshot(
     session_id: String,
 ) -> WorkbenchResult<ConversationSnapshot> {
     run_store(move |store| store.conversation_snapshot(&session_id)).await
+}
+
+#[tauri::command]
+pub async fn workbench_transcript_page(
+    session_id: String,
+    before: Option<super::store::TranscriptCursor>,
+) -> WorkbenchResult<super::store::TranscriptPage> {
+    run_store(move |store| store.transcript_page(&session_id, before.as_ref())).await
 }
 
 mod codex;

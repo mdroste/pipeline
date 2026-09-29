@@ -17,11 +17,7 @@ import {
   type PreparedLaunch,
   type RunProfileSnapshot,
 } from "../lib/appRunPreparation";
-import {
-  NAV_RAIL_WIDTH,
-  type AppPage,
-  type RecentProject,
-} from "../components/NavRail";
+import { NAV_RAIL_WIDTH, type AppPage } from "../components/NavRail";
 import { usePipeline } from "./usePipeline";
 import usePersistentPanelWidth from "./usePersistentPanelWidth";
 import {
@@ -44,6 +40,8 @@ import type { SettingsSection } from "../components/SettingsPage";
 import type { ReviewHandoff, WorkbenchEvent } from "../lib/workbenchTypes";
 import { startupPage } from "../lib/appPreferences";
 import { appClient } from "../lib/appClient";
+import useRecentProjects from "./useRecentProjects";
+import type { WorkspaceDestination } from "../lib/workspaceNavigation";
 
 export function useAppController() {
   const {
@@ -70,8 +68,17 @@ export function useAppController() {
   const [taskSessionId, setTaskSessionId] = useState<string | null>(null);
   const [tasksAttention, setTasksAttention] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
+  const [discoveryId, setDiscoveryId] = useState<string | null>(null);
+  const [discoveryRequest, setDiscoveryRequest] = useState(0);
   const [page, setPageState] = useState<AppPage>(() =>
     startupPage(localStorage),
+  );
+  const workspaceSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const registerWorkspaceSave = useCallback(
+    (save: (() => Promise<boolean>) | null) => {
+      workspaceSaveRef.current = save;
+    },
+    [],
   );
   const projectSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const [workflowDirty, setWorkflowDirty] = useState(false);
@@ -92,6 +99,10 @@ export function useAppController() {
     const sequence = ++navigationSequence.current;
     const currentPage = pageRef.current;
     if (nextPage === currentPage) return true;
+    if (currentPage === "workspace" && workspaceSaveRef.current) {
+      const saved = await workspaceSaveRef.current();
+      return saved && sequence === navigationSequence.current;
+    }
     if (currentPage === "projects" && projectSaveRef.current) {
       const saved = await projectSaveRef.current();
       return saved && sequence === navigationSequence.current;
@@ -136,6 +147,7 @@ export function useAppController() {
     const pending = [
       listen("tasks:notice", changed),
       listen("missions:notice", changed),
+      listen("discovery:notice", changed),
     ];
     return () => {
       for (const off of pending)
@@ -208,8 +220,7 @@ export function useAppController() {
   const [batchActive, setBatchActive] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>("general");
-  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
-  const [projectsLoading, setProjectsLoading] = useState(true);
+  const { recentProjects, projectsLoading } = useRecentProjects(page);
   const [workspaceEntry, setWorkspaceEntry] = useState<{
     surface: "chat" | "project";
     request: number;
@@ -223,37 +234,15 @@ export function useAppController() {
   const [newProjectRequest, setNewProjectRequest] = useState(0);
 
   useEffect(() => {
-    if (page === "workspace" || page === "home" || page === "main")
+    if (
+      page === "workspace" ||
+      page === "project-index" ||
+      page === "home" ||
+      page === "main"
+    )
       localStorage.setItem("pipeline.ui.page", page === "main" ? "home" : page);
   }, [page]);
 
-  useEffect(() => {
-    if (page !== "home" && page !== "workspace") return;
-    let live = true;
-    setProjectsLoading(true);
-    void import("../lib/workbenchClient")
-      .then(({ workbenchClient }) => workbenchClient.listWorkspaces(false))
-      .then((listed) => {
-        if (!live) return;
-        setRecentProjects(
-          [...listed.workspaces]
-            .filter((project) => !project.archivedAt)
-            .sort((left, right) =>
-              right.updatedAt.localeCompare(left.updatedAt),
-            )
-            .slice(0, 6),
-        );
-      })
-      .catch(() => {
-        // Project navigation remains usable inside the Projects workspace.
-      })
-      .finally(() => {
-        if (live) setProjectsLoading(false);
-      });
-    return () => {
-      live = false;
-    };
-  }, [page]);
   const [settingsTargetId, setSettingsTargetId] = useState<
     string | undefined
   >();
@@ -835,9 +824,18 @@ export function useAppController() {
     localStorage.setItem("pipeline.workspace.surface", surface);
   };
 
-  const openWorkspaceProject = async (projectId: string) => {
+  const openWorkspaceProject = async (
+    projectId: string,
+    destination: WorkspaceDestination = "overview",
+  ) => {
     const alreadyWorkspace = pageRef.current === "workspace";
     if (!(await handleNavigate("workspace"))) return;
+    saveDeskLayout(projectId, {
+      ...loadDeskLayout(projectId),
+      tab: destination,
+      object: null,
+      comparison: null,
+    });
     localStorage.setItem("pipeline.workspace.workspaceId", projectId);
     localStorage.setItem("pipeline.workspace.surface", "project");
     setWorkspaceEntry((entry) => ({
@@ -847,6 +845,11 @@ export function useAppController() {
     if (alreadyWorkspace) {
       window.dispatchEvent(
         new CustomEvent("pipeline:open-project", { detail: projectId }),
+      );
+      window.dispatchEvent(
+        new CustomEvent("pipeline:research-destination", {
+          detail: { workspaceId: projectId, tab: destination },
+        }),
       );
     }
   };
@@ -880,6 +883,10 @@ export function useAppController() {
       );
     else localStorage.removeItem("pipeline.workspace.workspaceId");
     localStorage.setItem("pipeline.workspace.surface", "chat");
+    setWorkspaceEntry((entry) => ({
+      surface: "chat",
+      request: entry.request + 1,
+    }));
     setShowActivity(false);
     window.dispatchEvent(
       new CustomEvent("pipeline:open-session", { detail: id }),
@@ -887,8 +894,25 @@ export function useAppController() {
     return true;
   };
 
+  useEffect(() => {
+    const open = (event: Event) => {
+      const id = (event as CustomEvent<{ id: string }>).detail?.id;
+      if (!id) return;
+      void confirmLeaveCurrentPage("tasks").then((allowed) => {
+        if (!allowed) return;
+        setDiscoveryId(id);
+        setDiscoveryRequest((request) => request + 1);
+        setTaskSessionId(null);
+        setTaskId(null);
+        setPageState("tasks");
+      });
+    };
+    window.addEventListener("pipeline:open-discovery", open);
+    return () => window.removeEventListener("pipeline:open-discovery", open);
+  }, [confirmLeaveCurrentPage]);
   const openTask = async (sessionId: string | null, id?: string) => {
     if (!(await handleNavigate("tasks"))) return;
+    setDiscoveryId(null);
     setTaskSessionId(sessionId);
     setTaskId(id ?? null);
   };
@@ -1053,6 +1077,8 @@ export function useAppController() {
     handleWorkspaceReviewHandoff,
     taskSessionId,
     taskId,
+    discoveryId,
+    discoveryRequest,
     closePipeline,
     setWorkflowDirty,
     openPaddleInstallSettings,
@@ -1070,6 +1096,7 @@ export function useAppController() {
     setHistorySourceSelection,
     openHistoryRun,
     registerProjectSave,
+    registerWorkspaceSave,
     setProjectsDirty,
     state,
     setActiveRunPlan,

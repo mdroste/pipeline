@@ -4,6 +4,7 @@ pub(crate) mod background;
 pub mod commands;
 pub mod definition;
 pub mod discovery;
+mod durable;
 pub mod missions;
 pub mod state;
 pub(crate) mod store;

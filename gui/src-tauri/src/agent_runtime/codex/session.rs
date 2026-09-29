@@ -2,7 +2,7 @@
 
 use super::compatibility::{detected_version, MINIMUM_CODEX_VERSION};
 use super::process::{capture_stderr, prepare_isolated_command, OwnedProcess};
-use super::AppServerClient;
+use super::{AppServerClient, InitializeResult};
 use std::path::Path;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -10,15 +10,23 @@ use tokio::sync::Mutex;
 pub(crate) struct NativeSession {
     pub client: AppServerClient,
     pub version: String,
+    pub initialize: InitializeResult,
+    pub executable: Option<String>,
     process: Option<OwnedProcess>,
     stderr: Mutex<Option<tokio::task::JoinHandle<Vec<String>>>>,
 }
 
 impl NativeSession {
-    /// The owner prepares and exclusively locks its home before launch.
-    pub async fn launch(home: &Path, cwd: &Path, epoch: u64, name: &str) -> Result<Self, String> {
-        let resolved = crate::deps::resolve_command("codex")
-            .ok_or("No launchable Codex CLI was found on PATH")?;
+    /// Configuration remains with the caller; launch the same resolved binary
+    /// used to prepare its permission profile.
+    pub async fn launch_resolved(
+        resolved: &crate::deps::ResolvedCommand,
+        home: &Path,
+        cwd: &Path,
+        epoch: u64,
+        name: &str,
+        title: &str,
+    ) -> Result<Self, String> {
         let mut version_command = resolved.command(["--version"]);
         version_command.current_dir(std::env::temp_dir());
         let version = tokio::task::spawn_blocking(move || {
@@ -40,11 +48,11 @@ impl NativeSession {
                 version.version
             ));
         }
-        let command = prepare_isolated_command(&resolved, home, cwd)?;
+        let command = prepare_isolated_command(resolved, home, cwd)?;
         let (process, pipes) = OwnedProcess::spawn(command)?;
         let client = AppServerClient::from_io(epoch, pipes.stdout, pipes.stdin);
         let stderr = tokio::spawn(capture_stderr(pipes.stderr));
-        let initialize = match client.initialize_as(name, "Pipeline").await {
+        let initialize = match client.initialize_as(name, title).await {
             Ok(value) => value,
             Err(error) => {
                 process.terminate().await;
@@ -64,7 +72,7 @@ impl NativeSession {
                 });
             }
         };
-        if std::fs::canonicalize(&initialize.codex_home).ok() != std::fs::canonicalize(home).ok() {
+        if !same_existing_path(Path::new(&initialize.codex_home), home) {
             process.terminate().await;
             stderr.abort();
             return Err("Codex did not use the requested private credential namespace".into());
@@ -72,6 +80,8 @@ impl NativeSession {
         Ok(Self {
             client,
             version: version.version,
+            initialize,
+            executable: Some(resolved.discovered_path().display().to_string()),
             process: Some(process),
             stderr: Mutex::new(Some(stderr)),
         })
@@ -82,24 +92,49 @@ impl NativeSession {
         Self {
             client,
             version: "simulated".into(),
+            initialize: InitializeResult {
+                user_agent: "simulated".into(),
+                platform_family: "simulated".into(),
+                platform_os: "simulated".into(),
+                codex_home: "simulated".into(),
+            },
+            executable: None,
             process: None,
             stderr: Mutex::new(None),
         }
     }
 
+    pub fn pid(&self) -> Option<u32> {
+        self.process.as_ref().map(OwnedProcess::pid)
+    }
+
     pub async fn shutdown(&self) {
         let _ = self.client.close_writer().await;
         if let Some(process) = &self.process {
-            if !matches!(
-                tokio::time::timeout(Duration::from_secs(3), process.wait()).await,
-                Ok(Ok(_))
-            ) {
-                process.terminate().await;
+            match tokio::time::timeout(Duration::from_secs(3), process.wait()).await {
+                Ok(Ok(status)) if status.success() => {}
+                Ok(Ok(status)) => self.client.fail(
+                    format!("Codex App Server exited with status {status}"),
+                    true,
+                ),
+                Ok(Err(error)) => self.client.fail(error, true),
+                Err(_) => {
+                    process.terminate().await;
+                    self.client.fail(
+                        "Codex App Server required forced process-tree cleanup",
+                        true,
+                    );
+                }
             }
         }
         self.client.fail("App Server stopped", false);
-        if let Some(task) = self.stderr.lock().await.take() {
-            task.abort();
+        if let Some(mut task) = self.stderr.lock().await.take() {
+            if tokio::time::timeout(Duration::from_secs(1), &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+            }
         }
     }
 
@@ -140,4 +175,12 @@ pub(crate) fn private_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     file.as_file().sync_all().map_err(|e| e.to_string())?;
     file.persist(path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Failure to resolve either path is never evidence that two namespaces match.
+pub(crate) fn same_existing_path(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }

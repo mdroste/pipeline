@@ -17,8 +17,8 @@ compatibility option.
 2. In **Settings → Providers → OpenAI → Review & workflows**, choose
    **Subscription**. Codex App Server is the default connection.
 3. Use **Sign in to ChatGPT**. Complete the native browser flow. Pipeline
-   checks account state through App Server; it never reads or copies OAuth
-   tokens. Account changes refresh the Workflow model catalog.
+   uses the [shared ChatGPT account](chatgpt-account.md) for both Conversations
+   and Reviews. Account changes refresh the model catalogs.
 4. Configure Workflow model/effort policies as before. Pinned models and
    efforts are checked against the signed-in account's live catalog. API mode
    continues to select the existing OpenAI API adapter.
@@ -49,8 +49,8 @@ use its live account, pending sign-in, and unresolved-attempt state. A live
 connection supersedes the standalone CLI version probe. The dependency badge
 refreshes after connection state changes and whenever its dialog is reopened;
 every provider required by the selected workflow must be ready, while unused
-providers remain optional. Workspace and legacy CLI sign-ins do not establish
-Workflow authentication. A connection held by another Pipeline process remains
+providers remain optional. The shared sign-in establishes authentication for both Conversations and
+Reviews; the explicitly selected legacy CLI continues to use its terminal account. A connection held by another Pipeline process remains
 unavailable and reports that conflict explicitly.
 
 ## Shared implementation and separate ownership
@@ -59,23 +59,31 @@ unavailable and reports that conflict explicitly.
 correlation, normalized events, protocol compatibility checks, process-tree
 ownership, isolated command construction, account login/logout/status,
 paginated model discovery, exact model/effort validation, and quota parsing.
-Workspace's supervisor delegates to these primitives while retaining its
-SQLite projection and conversation lifecycle.
+Both owners now use `session.rs` for executable/version admission, startup,
+handshake, isolated-home verification, diagnostics, and bounded shutdown.
+`invocation.rs` defines their common typed thread-start and text-turn requests,
+including provider/fallback defaults, model/effort selection, literal base and
+supplemental instructions, dynamic tools, and optional output schemas. Each
+owner supplies its own roots, approval policy, tools, and configuration, then
+validates the returned contract. Workspace's supervisor retains its SQLite
+projection and conversation lifecycle; Reviews retains its attempt journal and
+result collection. The shared methods never retry a submission.
 
 `gui/src-tauri/src/pipeline/codex_server/` owns the Workflow connection,
 invocation lifecycle, host tools, and recovery journal. It uses no Workspace
-database, harness state, conversation binding, or credentials. Storage is:
+database, harness state, or conversation binding. The shared account service
+supplies temporary in-memory authentication to the execution runtime. Storage is:
 
 ```text
 ~/.pipeline/providers/workflows/
   runtime.lock         exclusive Pipeline-process ownership
-  codex/               native credentials, config, and native thread history
+  codex/               config and native thread history; in-memory authentication
   empty/               working directory with no research artifacts
   attempts/<id>.json   private per-invocation request/outcome receipts
 ```
 
-Workspace retains `~/.pipeline/workbench/codex/`; legacy CLI retains its own
-normal Codex home. Unix directories/files use owner-only permissions. Windows
+Workspace retains `~/.pipeline/workbench/codex/`. The managed account is stored
+under `~/.pipeline/providers/chatgpt/`; legacy CLI retains its own normal home. Unix directories/files use owner-only permissions. Windows
 inherits the user profile's ACLs; Windows packaging and ACL qualification
 remain release gates.
 
@@ -87,9 +95,9 @@ research filesystem roots: all artifact authority is bound to each host tool
 handler. Workspace and Workflow processes remain independently owned and
 independently cancellable. Application exit shuts down the Workflow connection.
 
-An account write lease lasts through browser login completion/cancellation,
+A shared account write lease lasts through browser login completion/cancellation,
 not merely through `account/login/start`. Active calls hold read leases.
-Sign-out/account changes cannot race an active call. Login cancellation carries
+Sign-out/account changes cannot race an active Conversation or Review call. Login cancellation carries
 both login ID and connection epoch. Another Pipeline process cannot open the
 same managed Workflow connection concurrently.
 
@@ -209,8 +217,46 @@ cancellation, account switching, real model/effort choices, actual dynamic-tool
 invocation and images/PDFs, reviewer/schema outputs, enabled/disabled web search,
 token/quota limits, concurrent reviewers, cancellation during native work,
 restart recovery, and packaged macOS/Windows/Linux behavior. Run Workspace
-alongside Workflows to verify account and cancellation separation. These live
+alongside Reviews to verify the shared account and separate cancellation ownership. These live
 gates are **not** satisfied by simulator tests or this no-model probe. Claude
 SDK migration, native context reuse, instruction replacement modes, automatic
 history retention, and automatic recovery into old run artifacts remain outside
 this Codex preview.
+
+## Shared invocation consolidation — September 15, 2026
+
+Feasible without merging runtime ownership: both default subscription routes
+already used Codex App Server, while Workspace duplicated native startup and
+both owners assembled thread/turn payloads independently. They now call the
+same native-session launcher and typed submission methods. Workspace side turns
+also use this path. Review thread creation now supplies its selected reasoning
+effort at setup as well as turn submission. Review schemas and web-search
+configuration remain scoped to each call. Public commands, saved backend
+preferences, provider selection, credentials, and storage paths are unchanged.
+Explicit legacy CLI and direct API choices retain their existing dispatch.
+
+Both launchers use the exact resolved executable used to construct their native
+permission configuration. A shared existing-path comparison rejects unresolved
+paths, including the former Review edge case where two failed canonicalizations
+could compare equal. This check also protects the reported credential namespace.
+
+Validation on macOS arm64 with Codex 0.153.4:
+
+- The focused Codex suite passed 54 tests; the full Rust suite passed 947 library
+  tests and 14 CLI tests, with 10 opt-in tests ignored.
+- Both `workflow_codex_probe` and `workbench_probe` passed with temporary
+  signed-out homes and no model turns. These exercised the reported thread
+  contract, dynamic-tool declarations, native read/write denial, command
+  control, and process cleanup. The opt-in production Workspace supervisor
+  launch/shutdown test also passed through the shared `NativeSession`.
+- All-target/all-feature Clippy with warnings denied, Rust formatting, the
+  frontend build, and the source-size gate passed.
+- The first frontend suite run passed 715 tests and timed out in the existing
+  large-report search test. That entire 25-test file passed in isolation; a
+  subsequent full run passed all 716 frontend tests.
+- The Markdown link checker reports missing historical `/tmp` audit artifacts
+  in `ASTRA_SEP7_BUGREPORT.md`; none concern the new documentation links.
+
+These checks do not qualify authenticated model turns, browser sign-in, or
+packaged/cross-platform operation. The subsequent [shared-account change](chatgpt-account.md) supersedes this
+stage’s separate sign-ins while preserving execution ownership.

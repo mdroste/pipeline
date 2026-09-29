@@ -47,6 +47,20 @@ pub fn prompt(p: &Portfolio) -> Result<String> {
     let r = &p.run;
     let mut context = json!({"userPrompt":r.definition.prompt,"orientation":r.orientation,"rankingPriorities":r.definition.ranking_priorities,
         "literature":r.literature,"inputFiles":r.input_artifacts,"computationAvailable":r.definition.allow_computation,"remainingActions":r.definition.max_actions.saturating_sub(r.actions_reserved),"responseRepair":if r.repairs>0{Some(&r.reason)}else{None}});
+    if let Some(orientation) = &r.orientation {
+        let catalog = crate::auto_review::catalog();
+        context["selectedSpecialists"] = json!(catalog
+            .disciplines
+            .iter()
+            .chain(catalog.method_families.iter())
+            .flat_map(|g| &g.roles)
+            .filter(|role| orientation
+                .subject_ids
+                .iter()
+                .chain(&orientation.method_ids)
+                .any(|id| id == role.id))
+            .collect::<Vec<_>>());
+    }
     if !r.phase.reviewer() {
         context["selectedSourceContext"] = json!(short(&r.source_context, 18000));
     }
@@ -141,7 +155,7 @@ pub fn prompt(p: &Portfolio) -> Result<String> {
         _ => return Err("This phase does not make a model call".into()),
     };
     context["contextCoverage"]=json!("The three most recent research rounds and two recent challenges are shown. Long supporting fields may be marked as excerpts. Full captured files remain available in the isolated folder and export. Never treat an excerpt or metadata as inspected full text.");
-    for limit in [2000, 1000, 500, 256] {
+    for limit in [2000, 1000, 500, 256, 128, 64] {
         if context.to_string().len() < 225 * 1024 {
             break;
         }

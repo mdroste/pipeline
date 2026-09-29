@@ -35,7 +35,7 @@ it("listens at the shell, deduplicates repeated notices, and releases listeners"
     expect.objectContaining({ kind: "attention" }),
   );
   view.unmount();
-  await waitFor(() => expect(off).toHaveBeenCalledTimes(6));
+  await waitFor(() => expect(off).toHaveBeenCalledTimes(7));
 });
 it("classifies failed batches as failures and ignores cancelled batches", () => {
   renderHook(() => useAppNotifications({ kind: "idle" }));
@@ -64,4 +64,30 @@ it("notifies on a Review terminal transition without replaying old state", () =>
   );
   view.rerender({ state: { kind: "error", message: "failed call" } });
   expect(deliverNotice).toHaveBeenCalledTimes(1);
+});
+
+it("delivers discovery selection and completion while its page is unmounted", () => {
+  renderHook(() => useAppNotifications({ kind: "idle" }));
+  emit("discovery:notice", {
+    id: "portfolio",
+    state: "awaitingSelection",
+    revision: 4,
+  });
+  emit("discovery:notice", {
+    id: "portfolio",
+    state: "awaitingSelection",
+    revision: 4,
+  });
+  expect(deliverNotice).toHaveBeenCalledTimes(1);
+  expect(deliverNotice).toHaveBeenLastCalledWith(
+    expect.objectContaining({ kind: "attention", discoveryId: "portfolio" }),
+  );
+  emit("discovery:notice", {
+    id: "portfolio",
+    state: "completed",
+    revision: 8,
+  });
+  expect(deliverNotice).toHaveBeenLastCalledWith(
+    expect.objectContaining({ kind: "completion", discoveryId: "portfolio" }),
+  );
 });

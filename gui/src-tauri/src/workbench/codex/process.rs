@@ -1,7 +1,4 @@
 //! Workspace-specific native configuration.
-pub(crate) use crate::agent_runtime::codex::process::{
-    capture_stderr, prepare_isolated_command, OwnedProcess,
-};
 use std::path::Path;
 fn toml_basic_string(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len() + 2);
@@ -50,7 +47,7 @@ pub(crate) fn write_runtime_config(codex_home: &Path, launcher: &Path) -> Result
         )
     };
     let mut config = format!(
-        "cli_auth_credentials_store = \"file\"\n\
+        "cli_auth_credentials_store = \"ephemeral\"\n\
          default_permissions = \"workbench-inspect\"\n\
          \n\
          [permissions.workbench-inspect]\n\
@@ -110,8 +107,9 @@ pub(crate) fn write_runtime_config(codex_home: &Path, launcher: &Path) -> Result
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
-    use crate::agent_runtime::codex::process::SECRET_ENVIRONMENT_KEYS;
+    use crate::agent_runtime::codex::process::{
+        prepare_isolated_command, OwnedProcess, SECRET_ENVIRONMENT_KEYS,
+    };
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt as _, BufReader};
 

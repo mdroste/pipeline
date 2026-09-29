@@ -8,7 +8,7 @@ import { workspaceDestinations } from "../lib/workspaceNavigation";
 import WorkspaceDesk from "./WorkspaceDesk";
 import WorkspaceConversationView from "./WorkspaceConversationView";
 import WorkspaceContextTray from "./WorkspaceContextTray";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import "./WorkspaceConversation.css";
@@ -148,6 +148,8 @@ function RequestCard({
 }
 
 export default function WorkspacePage({
+  onAllProjects,
+  onSaveHandlerChange,
   entryRequest = 0,
   entrySurface,
   newProjectRequest = 0,
@@ -156,6 +158,8 @@ export default function WorkspacePage({
   onReviewHandoff,
   onTasks,
 }: {
+  onAllProjects?: () => void;
+  onSaveHandlerChange?: (save: (() => Promise<boolean>) | null) => void;
   entryRequest?: number;
   entrySurface?: "chat" | "project";
   newProjectRequest?: number;
@@ -254,6 +258,8 @@ export default function WorkspacePage({
     transcriptStart,
     transcriptEnd,
     setTranscriptPage,
+    loadEarlier,
+    loadingEarlier,
     followLatestRef,
     sessionRef,
     setSnapshot,
@@ -270,6 +276,29 @@ export default function WorkspacePage({
     newProjectRequest,
     onNewProjectRequestHandled,
   });
+
+  useEffect(() => {
+    onSaveHandlerChange?.(async () => {
+      if (contextBusy || harnessEditor) {
+        setError("Finish the open editor before leaving this project.");
+        return false;
+      }
+      try {
+        await saveCurrentDraft();
+        return true;
+      } catch (cause) {
+        setError(workbenchErrorMessage(cause));
+        return false;
+      }
+    });
+    return () => onSaveHandlerChange?.(null);
+  }, [
+    onSaveHandlerChange,
+    saveCurrentDraft,
+    contextBusy,
+    harnessEditor,
+    setError,
+  ]);
 
   const navigation = (
     <SidebarPanel
@@ -593,6 +622,14 @@ export default function WorkspacePage({
                       key={workspaceId}
                       workspaceId={workspaceId}
                       sessionId={sessionId}
+                      sessions={sessions.map((session) =>
+                        snapshot?.session.id === session.id
+                          ? snapshot.session
+                          : session,
+                      )}
+                      onResumeSession={selectSession}
+                      onStartConversation={createSession}
+                      onAllProjects={onAllProjects}
                       destination={destination}
                       onDestination={recordDestination}
                       navigationInSidebar
@@ -958,6 +995,8 @@ export default function WorkspacePage({
             snapshot={snapshot}
             renderedItems={renderedItems}
             totalItems={allRenderedItems.length}
+            hasEarlier={Boolean(snapshot?.olderCursor)}
+            loadingEarlier={loadingEarlier}
             pendingUser={pendingUser}
             stream={stream}
             selectedMessage={selectedMessage}
@@ -987,7 +1026,7 @@ export default function WorkspacePage({
                 );
             }}
             onLatest={latest}
-            onEarlier={() => setTranscriptPage((v) => v + 1)}
+            onEarlier={() => void loadEarlier()}
             onNewer={() => setTranscriptPage((v) => Math.max(0, v - 1))}
             onFollow={(value) => {
               followLatestRef.current = value;

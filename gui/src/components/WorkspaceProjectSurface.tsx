@@ -50,6 +50,9 @@ import type {
   ConversationSnapshot,
 } from "../lib/workbenchTypes";
 import ProjectOverview from "./project-surface/ProjectOverview";
+import ProjectSettings from "./project-surface/ProjectSettings";
+import ProjectActionItems from "./project-surface/ProjectActionItems";
+import type { WorkbenchSession } from "../lib/workbenchTypes";
 import ProjectEdits from "./project-surface/ProjectEdits";
 import ProjectDocuments, {
   type SelectionActionKind,
@@ -85,6 +88,10 @@ const PAPER_EXTENSIONS = [
 export default function WorkspaceProjectSurface({
   workspaceId,
   sessionId,
+  sessions = [],
+  onResumeSession,
+  onStartConversation,
+  onAllProjects,
   onConversation,
   onWorkspaceChanged,
   onReviewHandoff,
@@ -102,6 +109,10 @@ export default function WorkspaceProjectSurface({
   onSnapshot?: (snapshot: ConversationSnapshot) => void;
   workspaceId: string;
   sessionId?: string | null;
+  sessions?: WorkbenchSession[];
+  onResumeSession?: (id: string) => Promise<void>;
+  onStartConversation?: () => Promise<void>;
+  onAllProjects?: () => void;
   onConversation: (
     text: string,
     checkpoint?: string,
@@ -510,7 +521,17 @@ export default function WorkspaceProjectSurface({
     openAnnotation,
     setTab,
     taskId,
-    setTaskId,
+    setTaskId: (id, selected) => {
+      setTaskId(id);
+      if (selected)
+        setData(
+          (old) =>
+            old && {
+              ...old,
+              tasks: [selected, ...old.tasks.filter((task) => task.id !== id)],
+            },
+        );
+    },
   };
   const subtitle = workspace?.root
     ? folderName(workspace.root)
@@ -749,27 +770,48 @@ export default function WorkspaceProjectSurface({
             </div>
           </RetainedWorkspaceView>
         ))}
-        {(["overview", "tasks"] as const).map((view) => (
-          <RetainedWorkspaceView key={view} active={!object && tab === view}>
-            <div className="min-h-0 flex-1 overflow-auto p-6">
-              <ProjectOverview
-                {...api}
-                tasksOnly={view === "tasks"}
-                watch={watch}
-                setWatch={setWatch}
-                onContinue={() =>
-                  void run(() =>
-                    onConversation(
-                      "Continue from the project summary and open action items.",
-                    ),
-                  )
-                }
-                onImportPaper={(folder) => void importPaper(folder)}
-                onAttachFolder={() => void attachFolder()}
-              />
-            </div>
-          </RetainedWorkspaceView>
-        ))}
+        <RetainedWorkspaceView active={!object && tab === "overview"}>
+          <div className="min-h-0 flex-1 overflow-auto bg-white p-6 dark:bg-neutral-950">
+            <ProjectOverview
+              {...api}
+              sessions={sessions}
+              showProjectName={navigationInSidebar}
+              onResume={(id) =>
+                void run(() => onResumeSession?.(id) ?? Promise.resolve())
+              }
+              onStartConversation={() =>
+                void run(() =>
+                  onStartConversation
+                    ? onStartConversation()
+                    : onConversation(""),
+                )
+              }
+              onAllProjects={onAllProjects}
+              onOpenDocument={(id) => {
+                setRevisionId(id);
+                setTab("documents");
+              }}
+              onImportPaper={(folder) => void importPaper(folder)}
+              onAttachFolder={() => void attachFolder()}
+            />
+          </div>
+        </RetainedWorkspaceView>
+        <RetainedWorkspaceView active={!object && tab === "tasks"}>
+          <div className="min-h-0 flex-1 overflow-auto p-6">
+            <ProjectActionItems {...api} />
+          </div>
+        </RetainedWorkspaceView>
+        <RetainedWorkspaceView active={!object && tab === "project-settings"}>
+          <div className="min-h-0 flex-1 overflow-auto p-6">
+            <ProjectSettings
+              {...api}
+              watch={watch}
+              setWatch={setWatch}
+              onImportPaper={(folder) => void importPaper(folder)}
+              onAttachFolder={() => void attachFolder()}
+            />
+          </div>
+        </RetainedWorkspaceView>
         <RetainedWorkspaceView active={!object && tab === "files"}>
           <div className="min-h-0 flex-1 p-3">
             <Suspense fallback={<p>Loading files…</p>}>

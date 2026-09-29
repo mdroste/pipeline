@@ -19,10 +19,12 @@ const Detail = lazy(() => import("./research-missions/Detail"));
 const SelfDiscovery = lazy(() => import("./self-discovery/Page"));
 
 export default function ResearchMissions({
+  initialDiscoveryId,
   initialSessionId,
   onConversation,
   onTask,
 }: {
+  initialDiscoveryId?: string | null;
   initialSessionId?: string | null;
   onConversation?: (id: string) => void | Promise<void>;
   onTask?: (id: string) => void | Promise<void>;
@@ -30,7 +32,7 @@ export default function ResearchMissions({
   const [rows, setRows] = useState<MissionSummary[]>([]);
   const [discovery, setDiscovery] = useState<
     "supervised" | "unsupervised" | null
-  >(null);
+  >(initialDiscoveryId ? "supervised" : null);
   const [mission, setMission] = useState<Mission | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -109,6 +111,7 @@ export default function ResearchMissions({
         fallback={<p className="task-empty">Loading self-discovery…</p>}
       >
         <SelfDiscovery
+          initialRunId={initialDiscoveryId}
           initialMode={discovery}
           initialSessionId={initialSessionId}
           onBack={() => setDiscovery(null)}

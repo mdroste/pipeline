@@ -7,17 +7,19 @@ import {
   type PendingSubmission,
 } from "./useWorkbenchEvents";
 import useContainerWidth from "./useContainerWidth";
+import useWorkspaceEntry from "./useWorkspaceEntry";
+import {
+  mergeSessionSnapshot,
+  saveWorkspaceDraft,
+} from "../lib/workspaceSessionState";
+import useWorkspaceTranscript from "./useWorkspaceTranscript";
 import usePersistentPanelWidth from "./usePersistentPanelWidth";
 import { loadDeskLayout } from "../lib/deskLayout";
 import {
   isWorkspaceDestination,
   type WorkspaceDestination,
 } from "../lib/workspaceNavigation";
-import {
-  payloadText,
-  isMessage,
-  roleFor,
-} from "../components/WorkspaceConversationView";
+import { payloadText, roleFor } from "../components/WorkspaceConversationView";
 import { deskClient, type ContextItem } from "../lib/deskClient";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
@@ -28,8 +30,6 @@ import type {
   Workspace,
   WorkspaceModel,
 } from "../lib/workbenchTypes";
-
-const TRANSCRIPT_PAGE_SIZE = 200;
 
 function newOperation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -128,30 +128,21 @@ export function useWorkspacePageController({
         ? "project"
         : "chat"),
   );
-  useEffect(() => {
-    const open = (event: Event) => {
-      if (
-        (event as CustomEvent<{ workspaceId: string }>).detail.workspaceId ===
-        workspaceId
-      )
-        setSurface("project");
-    };
-    window.addEventListener("pipeline:open-file", open);
-    return () => window.removeEventListener("pipeline:open-file", open);
-  }, [workspaceId]);
   const [projectDialog, setProjectDialog] = useState(false);
-  useEffect(() => {
-    if (entryRequest > 0 && entrySurface) setSurface(entrySurface);
-  }, [entryRequest, entrySurface]);
-  useEffect(() => {
-    if (newProjectRequest <= 0) return;
-    setProjectDialog(true);
-    onNewProjectRequestHandled?.();
-  }, [newProjectRequest, onNewProjectRequestHandled]);
+  useWorkspaceEntry({
+    workspaceId,
+    entryRequest,
+    entrySurface,
+    newProjectRequest,
+    onNewProjectRequestHandled,
+    setSurface,
+    setProjectRequest,
+    setAssistantRequest,
+    setProjectDialog,
+  });
   const [moveTarget, setMoveTarget] = useState<WorkbenchSession | null>(null);
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
-  const [transcriptPage, setTranscriptPage] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const sessionRef = useRef(sessionId);
   const snapshotRef = useRef(snapshot);
@@ -169,50 +160,19 @@ export function useWorkspacePageController({
   snapshotRef.current = snapshot;
   activeRef.current = active;
 
+  const draftEditRevision = useRef(0);
+  const hydrationGeneration = useRef(0);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const persistDraft = useCallback((selectedSession: string, text: string) => {
     // Navigation can flush a draft while its debounce save is in flight.
     const pending = sessionWriteRef.current
       .catch(() => undefined)
-      .then(async () => {
-        const latest =
-          await workbenchClient.conversationSnapshot(selectedSession);
-        if (latest.session.draft === text) {
-          try {
-            if (
-              localStorage.getItem(
-                `pipeline.pendingDraft.${selectedSession}`,
-              ) === text
-            )
-              localStorage.removeItem(
-                `pipeline.pendingDraft.${selectedSession}`,
-              );
-          } catch {
-            /* Optional recovery cache. */
-          }
-          return latest;
-        }
-        const updated = await workbenchClient.updateSession({
-          sessionId: selectedSession,
-          expectedRevision: latest.session.revision,
-          operationId: newOperation("save-draft"),
-          draft: text,
-        });
-        try {
-          if (
-            localStorage.getItem(`pipeline.pendingDraft.${selectedSession}`) ===
-            text
-          )
-            localStorage.removeItem(`pipeline.pendingDraft.${selectedSession}`);
-        } catch {
-          /* Optional recovery cache. */
-        }
-        return {
-          ...latest,
-          session: updated.record,
-          sequence: updated.sequence,
-        };
+      .then(() => saveWorkspaceDraft(selectedSession, text))
+      .then((next) => {
+        if (sessionRef.current === selectedSession)
+          setSnapshot((old) => mergeSessionSnapshot(old, next));
+        return next;
       });
     draftSaveRef.current = pending;
     sessionWriteRef.current = pending;
@@ -220,6 +180,7 @@ export function useWorkspacePageController({
   }, []);
 
   const editDraft = (text: string) => {
+    draftEditRevision.current += 1;
     if (sessionId)
       try {
         localStorage.setItem(`pipeline.pendingDraft.${sessionId}`, text);
@@ -275,8 +236,36 @@ export function useWorkspacePageController({
       if (!sessionRef.current) setSnapshot(null);
       return;
     }
-    const next = await workbenchClient.conversationSnapshot(selectedSession);
-    if (sessionRef.current !== selectedSession) return;
+    const generation = ++hydrationGeneration.current;
+    const activeAtStart = activeRef.current;
+    const ownerAtStart = submissionRef.current;
+    const editRevision = draftEditRevision.current;
+    const initialize = snapshotRef.current?.session.id !== selectedSession;
+    let next: ConversationSnapshot;
+    try {
+      next = await workbenchClient.conversationSnapshot(selectedSession);
+    } catch (cause) {
+      if (
+        sessionRef.current === selectedSession &&
+        generation === hydrationGeneration.current
+      )
+        setError(workbenchErrorMessage(cause));
+      return;
+    }
+    if (
+      sessionRef.current !== selectedSession ||
+      generation !== hydrationGeneration.current ||
+      activeRef.current !== activeAtStart ||
+      submissionRef.current !== ownerAtStart
+    )
+      return;
+    const current = snapshotRef.current;
+    if (
+      current?.session.id === selectedSession &&
+      (current.sequence > next.sequence ||
+        current.session.revision > next.session.revision)
+    )
+      return;
     setSnapshot(next);
     let recoveredDraft: string | null = null;
     try {
@@ -290,18 +279,21 @@ export function useWorkspacePageController({
     const pendingHere = owner?.sessionId === selectedSession;
     setPendingUser(pendingHere ? owner.text : null);
     setSubmitting(pendingHere && !owner.turnId);
-    setStream("");
-    if (streamFlushRef.current !== null)
-      window.clearTimeout(streamFlushRef.current);
-    streamFlushRef.current = null;
-    streamBufferRef.current = "";
-    setDraft(pendingHere ? "" : (recoveredDraft ?? next.session.draft));
-    const overrides = next.session.overrides;
-    setModel(typeof overrides.model === "string" ? overrides.model : "");
-    setEffort(typeof overrides.effort === "string" ? overrides.effort : "");
     const inProgress = [...next.turns]
       .reverse()
       .find((turn) => !turn.terminalAt && turn.providerTurnId);
+    if (!activeRef.current || (!pendingHere && !inProgress)) {
+      setStream("");
+      if (streamFlushRef.current !== null)
+        window.clearTimeout(streamFlushRef.current);
+      streamFlushRef.current = null;
+      streamBufferRef.current = "";
+    }
+    if (initialize && draftEditRevision.current === editRevision)
+      setDraft(pendingHere ? "" : (recoveredDraft ?? next.session.draft));
+    const overrides = next.session.overrides;
+    setModel(typeof overrides.model === "string" ? overrides.model : "");
+    setEffort(typeof overrides.effort === "string" ? overrides.effort : "");
     if (pendingHere && owner.threadId && owner.turnId) {
       setActive({ threadId: owner.threadId, turnId: owner.turnId });
     } else if (inProgress && next.activeBinding) {
@@ -316,16 +308,12 @@ export function useWorkspacePageController({
 
   // Refresh records without replacing the composer draft.
   const refreshSessionRecord = useCallback(async (id: string) => {
-    const latest = await workbenchClient.conversationSnapshot(id);
+    const latest = await workbenchClient.sessionSnapshot(id);
     setSessions((old) =>
       old.map((session) => (session.id === id ? latest.session : session)),
     );
     if (sessionRef.current === id)
-      setSnapshot((old) =>
-        old && old.session.id === id
-          ? { ...old, session: latest.session, workspace: latest.workspace }
-          : old,
-      );
+      setSnapshot((old) => mergeSessionSnapshot(old, latest));
   }, []);
 
   useEffect(() => {
@@ -443,7 +431,8 @@ export function useWorkspacePageController({
     const timer = window.setTimeout(() => {
       void persistDraft(selectedSession, text)
         .then((next) => {
-          if (sessionRef.current === selectedSession) setSnapshot(next);
+          if (sessionRef.current === selectedSession)
+            setSnapshot((old) => mergeSessionSnapshot(old, next));
         })
         .catch((cause) =>
           setError(`Draft could not be saved: ${workbenchErrorMessage(cause)}`),
@@ -646,7 +635,7 @@ export function useWorkspacePageController({
   );
 
   const archiveSession = async (session: WorkbenchSession) => {
-    const latest = await workbenchClient.conversationSnapshot(session.id);
+    const latest = await workbenchClient.sessionSnapshot(session.id);
     await workbenchClient.updateSession({
       sessionId: session.id,
       expectedRevision: latest.session.revision,
@@ -663,7 +652,7 @@ export function useWorkspacePageController({
     if (answer === null) return;
     const title = answer.trim();
     if (!title || title === session.title) return;
-    const latest = await workbenchClient.conversationSnapshot(session.id);
+    const latest = await workbenchClient.sessionSnapshot(session.id);
     await workbenchClient.updateSession({
       sessionId: session.id,
       expectedRevision: latest.session.revision,
@@ -706,7 +695,7 @@ export function useWorkspacePageController({
     setMoveError(null);
     try {
       await saveCurrentDraft();
-      const latest = await workbenchClient.conversationSnapshot(session.id);
+      const latest = await workbenchClient.sessionSnapshot(session.id);
       await workbenchClient.moveSession({
         sessionId: session.id,
         expectedRevision: latest.session.revision,
@@ -749,8 +738,7 @@ export function useWorkspacePageController({
     const pending = sessionWriteRef.current
       .catch(() => undefined)
       .then(async () => {
-        const latest =
-          await workbenchClient.conversationSnapshot(selectedSession);
+        const latest = await workbenchClient.sessionSnapshot(selectedSession);
         const updated = await workbenchClient.updateSession({
           sessionId: latest.session.id,
           expectedRevision: latest.session.revision,
@@ -762,11 +750,13 @@ export function useWorkspacePageController({
           },
         });
         if (sessionRef.current === selectedSession) {
-          setSnapshot({
-            ...latest,
-            session: updated.record,
-            sequence: updated.sequence,
-          });
+          setSnapshot((old) =>
+            mergeSessionSnapshot(old, {
+              ...latest,
+              session: updated.record,
+              sequence: updated.sequence,
+            }),
+          );
         }
       });
     sessionWriteRef.current = pending;
@@ -780,6 +770,7 @@ export function useWorkspacePageController({
   };
 
   const send = async () => {
+    hydrationGeneration.current += 1;
     if (
       !sessionId ||
       snapshotRef.current?.session.id !== sessionId ||
@@ -899,26 +890,16 @@ export function useWorkspacePageController({
       .catch((cause) => setError(workbenchErrorMessage(cause)));
   };
 
-  const allRenderedItems = useMemo(
-    () => snapshot?.items.filter(isMessage) ?? [],
-    [snapshot],
-  );
-  const maximumTranscriptPage = Math.max(
-    0,
-    Math.ceil(allRenderedItems.length / TRANSCRIPT_PAGE_SIZE) - 1,
-  );
-  useEffect(() => {
-    setTranscriptPage((page) => Math.min(page, maximumTranscriptPage));
-  }, [maximumTranscriptPage]);
-  const transcriptEnd = Math.max(
-    0,
-    allRenderedItems.length - transcriptPage * TRANSCRIPT_PAGE_SIZE,
-  );
-  const transcriptStart = Math.max(0, transcriptEnd - TRANSCRIPT_PAGE_SIZE);
-  const renderedItems = useMemo(
-    () => allRenderedItems.slice(transcriptStart, transcriptEnd),
-    [allRenderedItems, transcriptEnd, transcriptStart],
-  );
+  const {
+    allRenderedItems,
+    renderedItems,
+    transcriptStart,
+    transcriptEnd,
+    transcriptPage,
+    setTranscriptPage,
+    loadEarlier,
+    loadingEarlier,
+  } = useWorkspaceTranscript(snapshot, setSnapshot, setError);
   const outlineEntries = useMemo(
     () =>
       allRenderedItems
@@ -934,9 +915,7 @@ export function useWorkspacePageController({
     const index = allRenderedItems.findIndex((item) => item.id === id);
     if (index < 0) return;
     followLatestRef.current = false;
-    setTranscriptPage(
-      Math.floor((allRenderedItems.length - 1 - index) / TRANSCRIPT_PAGE_SIZE),
-    );
+    setTranscriptPage(Math.floor((allRenderedItems.length - 1 - index) / 200));
     setSelectedMessage(id);
     setJumpTarget(id);
   };
@@ -1185,6 +1164,8 @@ export function useWorkspacePageController({
     transcriptStart,
     transcriptEnd,
     setTranscriptPage,
+    loadEarlier,
+    loadingEarlier,
     followLatestRef,
     sessionRef,
     setSnapshot,

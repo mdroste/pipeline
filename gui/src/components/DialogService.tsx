@@ -15,6 +15,7 @@ interface Toast {
   id: number;
   message: string;
   kind: "error" | "success" | "info";
+  action?: { label: string; run: () => void };
 }
 
 let confirmHandler: ((request: ConfirmRequest) => void) | null = null;
@@ -31,8 +32,12 @@ export function confirmDialog(
   );
 }
 
-export function notify(message: string, kind: Toast["kind"] = "error"): void {
-  toastHandler?.({ id: nextToastId++, message, kind });
+export function notify(
+  message: string,
+  kind: Toast["kind"] = "error",
+  action?: Toast["action"],
+): void {
+  toastHandler?.({ id: nextToastId++, message, kind, action });
 }
 
 export default function DialogService({
@@ -152,6 +157,15 @@ export default function DialogService({
               <span className="min-w-0 flex-1 whitespace-pre-line">
                 {toast.message}
               </span>
+              {toast.action && (
+                <button
+                  type="button"
+                  className="pointer-events-auto underline"
+                  onClick={toast.action.run}
+                >
+                  {toast.action.label}
+                </button>
+              )}
               <button
                 type="button"
                 aria-label="Dismiss notification"

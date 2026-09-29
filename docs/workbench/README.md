@@ -22,8 +22,8 @@ repository-wide architecture remains in [`../../CLAUDE.md`](../../CLAUDE.md).
 ## Product boundary
 
 The research directory defaults to `~/.pipeline/workbench/` and follows
-Settings → Data & Storage → Research data folder after restart. Native credentials and
-session files stay in local `~/.pipeline/workbench/codex/`. See
+Settings → Data & Storage → Research data folder after restart. Native session files stay in local `~/.pipeline/workbench/codex/`. Managed
+ChatGPT credentials belong to the [shared account service](../chatgpt-account.md). See
 [storage selection](../storage.md) for scope and transfer limitations.
 
 Workspace works without a Pipeline project, Workflow run, profile, provider
@@ -31,8 +31,9 @@ selection, or paper. It owns its SQLite store, blobs, Codex home, native
 process tree, cancellation, conversations, and research records under
 `~/.pipeline/workbench/`. Unfiled conversations are valid.
 
-Do not share Workflow credentials, settings, run state, PID registries, or
-writable artifact roots with Workspace. Shared use of the Tauri shell and
+Do not share Workflow API keys, settings, run state, PID registries, or
+writable artifact roots with Workspace. The application-owned ChatGPT account
+provides in-memory authentication to both isolated runtimes. Shared use of the Tauri shell and
 carefully selected low-level utilities does not merge the domains. The Review
 handoff and selected finding exchanges are explicit immutable copies. The
 finding bridge previews selected canonical findings and retains Workspace
@@ -47,8 +48,14 @@ primary destinations; recent projects appear directly in the suite rail, while
 lower-level Review and automation controls remain under Tools. This navigation
 layer does not merge the underlying Workspace, Review, or Tasks runtimes.
 
-Projects opens with a project working area and companion chat below one compact
-bar. The project-name button opens navigation as a bounded drawer;
+Projects opens a searchable index with local pins, recent activity, and direct
+conversation resume actions. Selecting a project opens its Overview, with a
+research brief, pending decisions, and recent work. Setup controls live in
+Project settings. See [Projects index and overview](projects-home.md) for
+behavior, ownership, and validation.
+
+Inside a project, the working area and companion chat share one compact bar.
+The project-name button opens navigation as a bounded drawer;
 Keep navigation open pins it when space permits. Navigation is closed by
 default. The current-view button opens a searchable picker, also available
 with Command/Ctrl K. It exposes specialized project views without making them
@@ -61,8 +68,9 @@ Model, Thinking and the Assistant settings gear are below the message.
 Settings opens preset, access, instructions, modules and recipes inside the
 assistant pane. The conversation menu opens Outline, Context and Activity &
 follow-ups in the same slot. Selected sources appear as a collapsed disclosure;
-an empty source list occupies no space. Project setup and project notes also
-start collapsed; Overview shows a brief and up to three open action items.
+an empty source list occupies no space. Project notes start collapsed; Overview
+shows resume, brief, attention, and recent-work sections. Project settings holds
+the setup controls.
 The full assistant editor
 uses the project area and adapts to a single section picker at narrow widths.
 Whole-store backups and retention are under Settings → Data & Storage;
@@ -178,7 +186,9 @@ and verification status.
 - `gui/src/components/WorkspacePage.tsx` composes the project and companion
   assistant. `gui/src/hooks/useWorkspacePageController.ts` owns project/session
   navigation, bounded transcripts, streaming, pending App Server requests,
-  and serialized composer saves. `WorkspaceDesk.tsx`
+  and serialized composer saves. `useWorkspaceTranscript.ts` owns on-demand
+  transcript pages; `lib/workspaceSessionState.ts` merges metadata acknowledgements
+  without replacing the draft or transcript. `WorkspaceDesk.tsx`
   owns the actual project/chat sizing; `WorkspaceProjectNavigation.tsx` and
   `lib/workspaceNavigation.ts` own named destinations and local pins.
   `WorkspaceToolPicker.tsx` provides searchable keyboard navigation and
@@ -189,8 +199,9 @@ and verification status.
   `WorkspaceMessageActions.tsx` handles Markdown copy; the paged
   `WorkspaceConversationOutline.tsx` searches prompts/responses and asks the
   page to mount and focus the target transcript window.
-- `WorkspaceConnectionSettings.tsx` owns isolated ChatGPT authentication,
-  visible models/reasoning effort, and quota display.
+- `ChatgptConnection.tsx` owns the common sign-in, account selection, model,
+  and quota panel. `WorkspaceConnectionSettings.tsx` composes it with
+  conversation-specific preferences.
 - `WorkspaceResearchPanel.tsx` supplies the embedded assistant settings and
   the project tools for sources, notes, evidence, results, execution, review
   and exchange; `research-panel/useResearchPanelController.ts` owns scoped
@@ -224,13 +235,17 @@ and verification status.
 - `store.rs` owns SQLite setup, migrations, shared records, and the journal;
   `store/{workspaces,sessions,runtime,views}.rs` implement roots, conversations,
   bindings/turns/event persistence, and snapshots/reconciliation with optimistic
-  revisions. `store/tests.rs` contains persistence and migration tests.
+  revisions. `store/roots.rs` revalidates registered folder authority at dispatch;
+  `store/history.rs` owns bounded transcript pages and full-history export traversal.
+  `store/tests.rs` contains persistence and migration tests.
 - `codex/` owns Workspace configuration, App Server supervision, native thread
   bindings, and durable event projection. Shared JSONL transport, compatibility,
+  native-session launch/shutdown, typed thread/turn submission,
   process ownership, account/model/quota operations, and simulation live in
   `gui/src-tauri/src/agent_runtime/codex/`. Sharing these primitives with the
-  [Workflow backend](../workflow-codex.md) does not share runtime state or
-  credentials. The development-only `workbench_probe` exercises the no-model
+  [Workflow backend](../workflow-codex.md) does not share writable execution state. Authentication is supplied by the
+  [shared account service](../chatgpt-account.md), with a lease spanning the
+  matching terminal event. The development-only `workbench_probe` exercises the no-model
   native boundary.
 - `research.rs` owns harness resolution and shared research record types;
   `research/{papers,sources,notes,ledger,tools}.rs` own immutable revisions,

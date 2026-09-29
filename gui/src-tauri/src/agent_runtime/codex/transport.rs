@@ -84,7 +84,16 @@ enum Outbound {
     Close(oneshot::Sender<()>),
 }
 
+pub(crate) trait AuthRefresh: Send + Sync {
+    fn refresh(
+        &self,
+        params: Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, RequestError>> + Send + '_>>;
+}
+
 struct Shared {
+    auth_refresh: Mutex<Option<Arc<dyn AuthRefresh>>>,
+    auth_requests: Arc<tokio::sync::Semaphore>,
     epoch: u64,
     pending: Mutex<HashMap<u64, PendingReply>>,
     events: broadcast::Sender<NormalizedEvent>,
@@ -150,6 +159,8 @@ impl AppServerClient {
         let (close_signal, _) = watch::channel(None);
         let shared = Arc::new(Shared {
             epoch,
+            auth_refresh: Mutex::new(None),
+            auth_requests: Arc::new(tokio::sync::Semaphore::new(1)),
             pending: Mutex::new(HashMap::new()),
             events,
             closed: AtomicBool::new(false),
@@ -160,6 +171,7 @@ impl AppServerClient {
         tokio::spawn(reader_loop(
             BufReader::new(reader),
             shared.clone(),
+            outbound.clone(),
             frame_limit,
         ));
         Self {
@@ -168,6 +180,18 @@ impl AppServerClient {
             outbound,
             shared,
         }
+    }
+
+    pub(crate) fn same_connection(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.shared, &other.shared)
+    }
+
+    pub(crate) fn set_auth_refresh(&self, handler: Option<Arc<dyn AuthRefresh>>) {
+        *self
+            .shared
+            .auth_refresh
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = handler;
     }
 
     pub fn epoch(&self) -> u64 {
@@ -371,6 +395,58 @@ impl AppServerClient {
     }
 }
 
+fn handle_auth_refresh(
+    shared: &Arc<Shared>,
+    outbound: &mpsc::Sender<Outbound>,
+    id: Value,
+    params: Value,
+) {
+    let permit = shared.auth_requests.clone().try_acquire_owned();
+    let handler = shared
+        .auth_refresh
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let outbound = outbound.clone();
+    let shared = shared.clone();
+    // A broken server cannot create an unbounded number of refresh tasks.
+    let Ok(permit) = permit else {
+        shared.close(RequestError::transport(
+            "Overlapping ChatGPT token refresh requests",
+            false,
+        ));
+        return;
+    };
+    tokio::spawn(async move {
+        let _permit = permit;
+        let result = match handler {
+            Some(handler) => tokio::time::timeout(Duration::from_secs(8), handler.refresh(params))
+                .await
+                .ok()
+                .and_then(Result::ok),
+            None => None,
+        };
+        let frame = match result {
+            Some(tokens) => json!({"id":id,"result":tokens}),
+            None => {
+                json!({"id":id,"error":{"code":-32000,"message":"ChatGPT sign-in needs attention; reconnect in Settings"}})
+            }
+        };
+        if let Ok(bytes) = encode_frame(&frame) {
+            if !matches!(
+                tokio::time::timeout(WRITE_QUEUE_TIMEOUT, outbound.send(Outbound::Frame(bytes)))
+                    .await,
+                Ok(Ok(()))
+            ) {
+                shared.close(RequestError::transport(
+                    "Could not answer ChatGPT token refresh",
+                    false,
+                ));
+            }
+        }
+    });
+}
+
 fn validate_method(method: &str) -> Result<(), RequestError> {
     if method.is_empty()
         || method.len() > 160
@@ -435,8 +511,12 @@ where
     let _ = writer.shutdown().await;
 }
 
-async fn reader_loop<R>(mut reader: BufReader<R>, shared: Arc<Shared>, frame_limit: usize)
-where
+async fn reader_loop<R>(
+    mut reader: BufReader<R>,
+    shared: Arc<Shared>,
+    outbound: mpsc::Sender<Outbound>,
+    frame_limit: usize,
+) where
     R: AsyncRead + Unpin,
 {
     loop {
@@ -509,6 +589,10 @@ where
                 }
             }
             Ok(IncomingFrame::ServerRequest { id, method, params }) => {
+                if method == "account/chatgptAuthTokens/refresh" {
+                    handle_auth_refresh(&shared, &outbound, id, params);
+                    continue;
+                }
                 shared.emit(NormalizedEvent::ServerRequest {
                     epoch: shared.epoch,
                     request_id: id,
@@ -574,6 +658,46 @@ mod tests {
             .await
             .unwrap();
         writer.flush().await.unwrap();
+    }
+
+    struct FixtureAuth;
+    impl AuthRefresh for FixtureAuth {
+        fn refresh(
+            &self,
+            params: Value,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Value, RequestError>> + Send + '_>,
+        > {
+            Box::pin(async move {
+                assert_eq!(params["previousAccountId"], "fixture-account");
+                Ok(json!({"accessToken":"fixture-secret","chatgptAccountId":"fixture-account"}))
+            })
+        }
+    }
+
+    #[test]
+    fn token_refresh_is_answered_privately_without_reaching_product_events() {
+        runtime().block_on(async {
+            let (client_io, server_io) = tokio::io::duplex(4096);
+            let (read, write) = tokio::io::split(client_io);
+            let client = AppServerClient::from_io(7, read, write);
+            client.set_auth_refresh(Some(Arc::new(FixtureAuth)));
+            let mut events = client.subscribe();
+            let (read, mut write) = tokio::io::split(server_io);
+            let mut read = BufReader::new(read);
+            write_json(&mut write, json!({"id":"refresh-1","method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized","previousAccountId":"fixture-account"}})).await;
+            let response = read_json(&mut read).await;
+            assert_eq!(response["id"], "refresh-1");
+            assert_eq!(response["result"]["accessToken"], "fixture-secret");
+            assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+            client.set_auth_refresh(None);
+            write_json(&mut write, json!({"id":42,"method":"account/chatgptAuthTokens/refresh","params":{"reason":"unauthorized"}})).await;
+            let rejected = read_json(&mut read).await;
+            assert_eq!(rejected["id"], 42);
+            assert!(rejected.get("error").is_some());
+            assert!(!rejected.to_string().contains("fixture-secret"));
+            assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+        });
     }
 
     #[test]

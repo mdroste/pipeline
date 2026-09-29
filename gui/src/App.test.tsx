@@ -399,6 +399,27 @@ describe("App run options", () => {
     expect(checks).toBe(2);
   });
 
+  it("opens Projects as an index even when a project was previously selected", async () => {
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args: unknown) =>
+      command === "workbench_project_index"
+        ? Promise.resolve([])
+        : original(command, args),
+    );
+    localStorage.setItem("pipeline.workspace.workspaceId", "previous-project");
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Projects" }));
+    expect(
+      await screen.findByRole("button", { name: "Create your first project" }),
+    ).toBeVisible();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "workbench_project_home",
+      expect.anything(),
+    );
+    expect(localStorage.getItem("pipeline.ui.page")).toBe("project-index");
+  });
+
   it("supports light, dark, and live system appearance preferences", async () => {
     systemIsDark = true;
     const user = userEvent.setup();

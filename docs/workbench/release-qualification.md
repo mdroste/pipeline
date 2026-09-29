@@ -6,7 +6,7 @@ requires a release run.
 
 ## Implemented deterministic gates
 
-- Migrations through 10 are transactional and backed by the existing pre-migration SQLite online backup. Migration 10 adds the app-owned `preferences` table (automatic conversation titles). Migration 9 adds exchange import/conflict journals and the storage trash journal. Migration 7 adds Research Studio records/history and local-job ownership/adoption journals; migration 8 adds theory, check and direction record kinds and re-creates the unchanged history trigger.
+- Migrations through 15 are transactional and backed by the existing pre-migration SQLite online backup. Migrations 11–15 add the research desk, task exchanges, research programs, base prompts and self-discovery records. Migration 10 adds the app-owned `preferences` table (automatic conversation titles). Migration 9 adds exchange import/conflict journals and the storage trash journal. Migration 7 adds Research Studio records/history and local-job ownership/adoption journals; migration 8 adds theory, check and direction record kinds and re-creates the unchanged history trigger.
 - All production Workspace database access, including supervisor projection and reconciliation, crosses the shared bounded worker/gate boundary. Whole-store archive work is exclusive, and restore is rejected during turn setup or an active turn.
 - A single process-global turn permit spans setup through the matching terminal event. Connection epoch, native thread, and turn identity prevent stale or very fast events from corrupting the next submission.
 - `.pwrx` export uses SQLite's backup API, includes the validated database, immutable blobs, and Markdown/JSON transcripts, and excludes the isolated Codex home and credentials.
@@ -103,3 +103,16 @@ Stata result-export qualification until the required wrapper can be run again.
 | PI-12 (authoring) | Draft validates through the portable workflow parser, adds a consolidation step, excludes incomplete steps, and lists execution/build steps as unsupported prerequisites. | Import of a saved draft through the Workflows page in the native GUI and a fixture run reproducing a selected supported process |
 | PI-12 (concurrency) | Not implemented; the one-active-turn invariant is unchanged. | Requires a separate protocol/lifecycle design, compatibility-record update, and live qualification before any change |
 
+
+## September 20 audit remediation
+
+The [September 20 audit](../../PIPELINE_CODE_AUDIT_ASTRA_SEP20.md#implementation-follow-up--september-20-2026)
+records the scoped fixes and their validation. Registered project roots are checked
+again before native dispatch. Existing Windows registrations using pathname-only
+identities require explicit folder re-registration; the new identity uses the
+volume and file index. Transcript reads now use 200-item / 8 MiB payload pages;
+rendering retains its 200-message window, and export traverses all pages under
+its separate 64 MiB budget. Draft acknowledgements merge session metadata without
+replacing conversation history, and background hydration preserves the composer.
+These deterministic changes do not qualify power-loss recovery, authenticated
+model calls, installers, or another platform.

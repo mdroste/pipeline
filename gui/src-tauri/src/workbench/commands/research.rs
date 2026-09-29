@@ -497,27 +497,28 @@ pub async fn workbench_export_conversation(
                 "Conversation exports require an absolute .md path",
             ));
         }
-        let snapshot = store.conversation_snapshot(&session_id)?;
+        let snapshot = store.session_snapshot(&session_id)?;
         let mut markdown = format!("# {}\n\n", snapshot.session.title);
-        for item in snapshot.items {
+        store.export_transcript(&session_id, |item| {
             if !item.item_kind.to_ascii_lowercase().contains("message") {
-                continue;
+                return Ok(());
             }
             let Some(text) = transcript_text(&item.payload) else {
-                continue;
+                return Ok(());
             };
             let role = if item.item_kind.to_ascii_lowercase().contains("user") {
                 "You"
             } else {
                 "ChatGPT"
             };
+            if markdown.len() + text.len() + 32 > 64 * 1024 * 1024 {
+                return Err(WorkbenchError::invalid(
+                    "Conversation export exceeds 64 MiB",
+                ));
+            }
             markdown.push_str(&format!("## {role}\n\n{text}\n\n"));
-        }
-        if markdown.len() > 64 * 1024 * 1024 {
-            return Err(WorkbenchError::invalid(
-                "Conversation export exceeds 64 MiB",
-            ));
-        }
+            Ok(())
+        })?;
         std::fs::write(&target, markdown).map_err(|error| {
             WorkbenchError::storage("Failed to write conversation export", error)
         })?;

@@ -91,7 +91,17 @@ export interface TranscriptItem {
   updatedAt: string;
 }
 
+export interface TranscriptCursor {
+  createdAt: string;
+  id: string;
+}
+export interface TranscriptPage {
+  items: TranscriptItem[];
+  nextCursor: TranscriptCursor | null;
+}
+
 export interface ConversationSnapshot extends SessionSnapshot {
+  olderCursor?: TranscriptCursor | null;
   activeBinding: SessionBinding | null;
   turns: ConversationTurn[];
   items: TranscriptItem[];

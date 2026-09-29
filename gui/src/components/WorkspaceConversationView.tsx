@@ -64,6 +64,8 @@ interface Props {
   snapshot: ConversationSnapshot | null;
   renderedItems: TranscriptItem[];
   totalItems: number;
+  hasEarlier?: boolean;
+  loadingEarlier?: boolean;
   pendingUser: string | null;
   stream: string;
   selectedMessage: string | null;
@@ -98,6 +100,8 @@ export default function WorkspaceConversationView({
   snapshot,
   renderedItems,
   totalItems,
+  hasEarlier = false,
+  loadingEarlier = false,
   pendingUser,
   stream,
   selectedMessage,
@@ -213,16 +217,19 @@ export default function WorkspaceConversationView({
               </p>
             </div>
           )}
-          {transcriptStart > 0 && (
+          {(transcriptStart > 0 || hasEarlier) && (
             <button
               type="button"
               onClick={() => {
                 onFollow(false);
                 onEarlier();
               }}
+              disabled={loadingEarlier}
               className="mx-auto block rounded border px-3 py-2 text-xs text-gray-600"
             >
-              Show 200 earlier messages
+              {loadingEarlier
+                ? "Loading earlier messages…"
+                : "Show earlier messages"}
             </button>
           )}
           {renderedItems.map((item) => {

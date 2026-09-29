@@ -290,6 +290,7 @@ mod tests {
 
     fn snapshot(items: Vec<TranscriptItem>) -> ConversationSnapshot {
         ConversationSnapshot {
+            older_cursor: None,
             workspace: None,
             session: WorkbenchSession {
                 id: "session".to_string(),

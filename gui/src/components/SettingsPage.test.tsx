@@ -40,7 +40,7 @@ function mockLoad(
       return Promise.resolve({ status: "signedOut" });
     if (cmd === "save_settings") return Promise.resolve();
     if (cmd === "list_engines") return Promise.resolve(engines);
-    if (cmd === "workflow_codex_status")
+    if (cmd === "workflow_codex_status" || cmd === "chatgpt_account_status")
       return Promise.resolve({
         account: { status: "signedOut", email: null, planType: null },
         version: "0.153.4",
@@ -85,8 +85,8 @@ describe("SettingsPage", () => {
     expect(selector).toBeVisible();
     await user.selectOptions(selector, "legacy_cli");
     expect(
-      screen.queryByRole("group", { name: "Reviews ChatGPT connection" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("group", { name: "ChatGPT account" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("codex login")).toBeVisible();
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
@@ -99,7 +99,7 @@ describe("SettingsPage", () => {
 
     await user.selectOptions(selector, "app_server");
     expect(
-      await screen.findByRole("group", { name: "Reviews ChatGPT connection" }),
+      await screen.findByRole("group", { name: "ChatGPT account" }),
     ).toBeVisible();
     expect(screen.queryByText("codex login")).not.toBeInTheDocument();
     await waitFor(() =>
@@ -222,7 +222,7 @@ describe("SettingsPage", () => {
     mockLoad(settings);
     const load = invoke.getMockImplementation()!;
     invoke.mockImplementation((cmd: string, args: unknown) => {
-      if (cmd === "workflow_codex_status")
+      if (cmd === "workflow_codex_status" || cmd === "chatgpt_account_status")
         return Promise.resolve({
           account: {
             status: signedIn ? "chatgpt" : "signedOut",
@@ -252,7 +252,7 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(onSystemChange).toHaveBeenCalledTimes(1));
     signedIn = true;
     const connection = screen.getByRole("group", {
-      name: "Reviews ChatGPT connection",
+      name: "ChatGPT account",
     });
     await user.click(
       within(connection).getByRole("button", { name: "Refresh" }),
@@ -266,7 +266,7 @@ describe("SettingsPage", () => {
     ).toBe(false);
   });
 
-  it("shows separate conversation and Review sign-ins on Connections", async () => {
+  it("shows one ChatGPT sign-in for Conversations and Reviews", async () => {
     mockLoad(makeSettings());
     render(
       <SettingsPage
@@ -278,11 +278,14 @@ describe("SettingsPage", () => {
     );
     await screen.findByRole("heading", { name: "Connections" });
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("workbench_codex_connect"),
+      expect(invoke).toHaveBeenCalledWith("chatgpt_account_status"),
     );
     expect(
-      screen.getByRole("button", { name: "Sign in with ChatGPT" }),
-    ).toBeVisible();
+      screen.getAllByRole("button", { name: "Sign in to ChatGPT" }),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "Sign in with ChatGPT" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Sign in to ChatGPT" }),
     ).toBeVisible();
@@ -307,7 +310,7 @@ describe("SettingsPage", () => {
       expect(document.getElementById("workspace-provider")).toBeVisible(),
     );
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("workbench_codex_connect"),
+      expect(invoke).toHaveBeenCalledWith("chatgpt_account_status"),
     );
     expect(screen.getByRole("button", { name: "Connections" })).toHaveAttribute(
       "aria-current",

@@ -3,10 +3,26 @@
 use super::*;
 
 #[tauri::command]
+pub async fn workbench_project_index(
+) -> WorkbenchResult<Vec<crate::workbench::project::ProjectIndexItem>> {
+    run_store(move |store| crate::workbench::project::project_index(&store)).await
+}
+
+#[tauri::command]
 pub async fn workbench_project_home(
     workspace_id: String,
 ) -> WorkbenchResult<crate::workbench::project::ProjectHome> {
     run_store(move |store| crate::workbench::project::home(&store, &workspace_id)).await
+}
+#[tauri::command]
+pub async fn workbench_project_tasks(
+    workspace_id: String,
+    before: Option<crate::workbench::project::TaskCursor>,
+) -> WorkbenchResult<crate::workbench::project::TaskPage> {
+    run_store(move |store| {
+        crate::workbench::project::task_page(&store, &workspace_id, before.as_ref())
+    })
+    .await
 }
 #[tauri::command]
 pub async fn workbench_project_mutate(
