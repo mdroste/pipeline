@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PipelineConfig, ProfileSummary } from "../lib/types";
+import { router } from "../lib/router";
 import {
   cloneGalleryConfig,
   WORKFLOW_GALLERY,
@@ -121,10 +122,18 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
         {installed && (
           <div
             role="status"
-            className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300"
+            className="mt-6 flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300"
           >
-            Installed and activated. Open Reviews → Designer to review or
-            customize it.
+            <span className="min-w-0 flex-1">
+              Installed and activated as your current review workflow.
+            </span>
+            <button
+              type="button"
+              onClick={() => void router.navigate({ page: "pipeline" })}
+              className="shrink-0 rounded-md border border-emerald-300 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 dark:border-emerald-800 dark:hover:bg-emerald-900/40"
+            >
+              Open in the designer
+            </button>
           </div>
         )}
 

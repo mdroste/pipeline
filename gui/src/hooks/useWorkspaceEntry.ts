@@ -1,4 +1,5 @@
 import { useEffect, type Dispatch, type SetStateAction } from "react";
+import { appEvents } from "../lib/appEvents";
 
 /** External navigation requests reveal the requested pane without submitting work. */
 export default function useWorkspaceEntry({
@@ -23,15 +24,9 @@ export default function useWorkspaceEntry({
   setProjectDialog: Dispatch<SetStateAction<boolean>>;
 }) {
   useEffect(() => {
-    const open = (event: Event) => {
-      if (
-        (event as CustomEvent<{ workspaceId: string }>).detail.workspaceId ===
-        workspaceId
-      )
-        setSurface("project");
-    };
-    window.addEventListener("pipeline:open-file", open);
-    return () => window.removeEventListener("pipeline:open-file", open);
+    return appEvents.on("open-file", (detail) => {
+      if (detail.workspaceId === workspaceId) setSurface("project");
+    });
   }, [workspaceId, setSurface]);
   useEffect(() => {
     if (entryRequest <= 0 || !entrySurface) return;

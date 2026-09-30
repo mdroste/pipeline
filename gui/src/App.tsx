@@ -11,8 +11,10 @@ import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
 import NavRail from "./components/NavRail";
 import RunSetupPanel from "./components/RunSetupPanel";
+import RunPlanPreview from "./components/RunPlanPreview";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { isMac } from "./lib/platform";
+import { router } from "./lib/router";
 import { notify } from "./components/DialogService";
 
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
@@ -38,11 +40,6 @@ function App() {
     showDeps,
     depsReport,
     setShowDeps,
-    confirmLeaveCurrentPage,
-    setSettingsInitialSection,
-    setSettingsTargetId,
-    setSettingsNavigationKey,
-    setPageState,
     pendingRun,
     setPendingRun,
     launch,
@@ -54,8 +51,6 @@ function App() {
     researchNotice,
     inspectResearchAttention,
     setResearchNotice,
-    showActivity,
-    setShowActivity,
     openWorkspaceSession,
     openActivityProject,
     openActivityTask,
@@ -110,6 +105,7 @@ function App() {
     taskSessionId,
     taskId,
     discoveryId,
+    automatePath,
     discoveryRequest,
     closePipeline,
     setWorkflowDirty,
@@ -123,7 +119,6 @@ function App() {
     settingsTargetId,
     settingsNavigationKey,
     historyRunId,
-    setHistoryRunId,
     historySourceSelection,
     setHistorySourceSelection,
     openHistoryRun,
@@ -154,14 +149,15 @@ function App() {
           report={depsReport}
           onDismiss={() => setShowDeps(false)}
           onOpenPdfSettings={() =>
-            void (async () => {
-              if (!(await confirmLeaveCurrentPage("settings"))) return;
-              setShowDeps(false);
-              setSettingsInitialSection("extraction");
-              setSettingsTargetId("paddleocr-local-engine");
-              setSettingsNavigationKey((key) => key + 1);
-              setPageState("settings");
-            })()
+            void router
+              .navigate({
+                page: "settings",
+                section: "extraction",
+                targetId: "paddleocr-local-engine",
+              })
+              .then((allowed) => {
+                if (allowed) setShowDeps(false);
+              })
           }
         />
       )}
@@ -240,20 +236,9 @@ function App() {
           </button>
         </div>
       )}
-      {showActivity && (
-        <Suspense fallback={null}>
-          <ResearchActivity
-            onClose={() => setShowActivity(false)}
-            onSession={(id) => void openWorkspaceSession(id)}
-            onProject={(id) => void openActivityProject(id)}
-            onTasks={(id) => void openActivityTask(id)}
-            onReview={(id) => void openActivityReview(id)}
-          />
-        </Suspense>
-      )}
       <div className="flex min-h-0 flex-1">
         <NavRail
-          onActivity={() => setShowActivity(true)}
+          onActivity={() => void handleNavigate("activity")}
           tasksAttention={tasksAttention}
           activePage={page}
           hasCurrentRun={hasCurrentRun}
@@ -328,13 +313,11 @@ function App() {
             <ProviderLimitBanner
               notices={providerLimitNotices}
               onOpenSettings={() =>
-                void (async () => {
-                  if (!(await confirmLeaveCurrentPage("settings"))) return;
-                  setSettingsInitialSection("workflow");
-                  setSettingsTargetId("usage-limit-fallback");
-                  setSettingsNavigationKey((key) => key + 1);
-                  setPageState("settings");
-                })()
+                void router.navigate({
+                  page: "settings",
+                  section: "workflow",
+                  targetId: "usage-limit-fallback",
+                })
               }
             />
           )}
@@ -388,6 +371,7 @@ function App() {
                   initialDiscoveryId={discoveryId}
                   initialSessionId={taskSessionId}
                   initialTaskId={taskId}
+                  initialAutomatePath={automatePath}
                   onConversation={async (id) => {
                     await openWorkspaceSession(id);
                   }}
@@ -456,14 +440,22 @@ function App() {
                 />
               ) : page === "gallery" ? (
                 <WorkflowGalleryPage onInstalled={handleProfileChange} />
+              ) : page === "activity" ? (
+                <ResearchActivity
+                  asPage
+                  onClose={() => setPage("home")}
+                  onSession={(id) => void openWorkspaceSession(id)}
+                  onProject={(id) => void openActivityProject(id)}
+                  onTasks={(id) => void openActivityTask(id)}
+                  onReview={(id) => void openActivityReview(id)}
+                />
               ) : page === "batch" ? (
                 <BatchPanel
                   onClose={() => setPage("main")}
                   showClose={false}
                   onOpenRun={(runId) => {
-                    setHistoryRunId(runId);
                     setHistorySourceSelection(null);
-                    setPage("history");
+                    void router.navigate({ page: "history", runId });
                   }}
                 />
               ) : state.kind === "done" ? (
@@ -481,47 +473,12 @@ function App() {
                   />
                 </ErrorBoundary>
               ) : state.kind === "idle" ? (
-                <div className="flex items-center justify-center min-h-full px-8 py-16">
-                  <div className="w-full max-w-3xl">
-                    <ol className="grid grid-cols-1 border-y border-gray-200 dark:border-neutral-800 sm:grid-cols-3">
-                      <li className="py-5 sm:pr-5">
-                        <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-neutral-400">
-                          01
-                        </span>
-                        <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-neutral-200">
-                          {inputMode === "none" ? "Start" : "Choose an input"}
-                        </p>
-                        <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-neutral-400">
-                          {inputMode === "none"
-                            ? "No source file is required for this workflow."
-                            : "Select a document or folder."}
-                        </p>
-                      </li>
-                      <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:px-5 dark:border-neutral-800">
-                        <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-neutral-400">
-                          02
-                        </span>
-                        <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-neutral-200">
-                          Select a workflow
-                        </p>
-                        <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-neutral-400">
-                          Choose from built-in workflows or customize your own.
-                        </p>
-                      </li>
-                      <li className="border-t border-gray-200 py-5 sm:border-l sm:border-t-0 sm:pl-5 dark:border-neutral-800">
-                        <span className="text-xs font-medium tabular-nums text-gray-500 dark:text-neutral-400">
-                          03
-                        </span>
-                        <p className="mt-2 text-sm font-semibold text-gray-800 dark:text-neutral-200">
-                          Review
-                        </p>
-                        <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-neutral-400">
-                          Read and save report(s).
-                        </p>
-                      </li>
-                    </ol>
-                  </div>
-                </div>
+                <RunPlanPreview
+                  refreshKey={configVersion}
+                  inputMode={inputMode}
+                  hasInput={!!paperPath}
+                  onOpenDesigner={() => void handleNavigate("pipeline")}
+                />
               ) : (
                 <div className="flex h-full items-center justify-center px-8 py-12">
                   <div className="w-full max-w-sm">
@@ -576,7 +533,8 @@ function App() {
             </Suspense>
           </div>
 
-          {logs.length > 0 && (
+          {/* The log dock belongs to the run view, not to every destination. */}
+          {page === "main" && logs.length > 0 && (
             <Console logs={logs} usage={usage} active={isRunning} />
           )}
         </main>

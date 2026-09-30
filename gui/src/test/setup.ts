@@ -35,4 +35,7 @@ import { cleanup } from "@testing-library/react";
 
 afterEach(() => {
   cleanup();
+  // The router reflects routes into the window hash; a leftover hash must not
+  // leak a location into the next test's app mount.
+  window.history.replaceState(null, "", "#");
 });

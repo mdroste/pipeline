@@ -147,7 +147,6 @@ function renderPanel(
   return render(
     <WorkflowPanel
       disabled={false}
-      editorOpen={false}
       onConfigure={() => {}}
       onProfileChange={() => {}}
       refreshKey={0}
@@ -175,31 +174,15 @@ describe("WorkflowPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("lists enabled steps grouped by phase, hiding disabled steps", async () => {
+  it("summarizes the workflow without duplicating the plan", async () => {
     mockLoad(makeConfig());
     renderPanel();
 
-    expect(await screen.findByText("Contribution")).toBeInTheDocument();
-    expect(screen.getByText("Consolidate Issues")).toBeInTheDocument();
-    expect(screen.getByText("Validate Feedback")).toBeInTheDocument();
-    expect(screen.getByText("Parallel")).toBeInTheDocument();
-    expect(screen.getAllByText("Sequential")).toHaveLength(1);
-    // Disabled steps are summarized, not listed
-    expect(screen.queryByText("Technical")).not.toBeInTheDocument();
-    expect(screen.getByText("+1 disabled step")).toBeInTheDocument();
-  });
-
-  it("renders concatenated agent initials next to multi-agent steps", async () => {
-    mockLoad(makeConfig());
-    renderPanel();
-    expect(await screen.findByText("C+A")).toBeInTheDocument();
-  });
-
-  it("has no per-step toggles", async () => {
-    mockLoad(makeConfig());
-    renderPanel();
-    await screen.findByText("Contribution");
-    // The only buttons are Edit workflow (and none per step)
+    expect(
+      await screen.findByText(/3 steps · 1 disabled — the full plan/),
+    ).toBeInTheDocument();
+    // No per-step rows or toggles: the plan preview owns that.
+    expect(screen.queryByText("Contribution")).not.toBeInTheDocument();
     const buttons = screen.getAllByRole("button");
     expect(buttons).toHaveLength(1);
     expect(buttons[0]).toHaveTextContent(/edit workflow/i);
@@ -218,14 +201,6 @@ describe("WorkflowPanel", () => {
       expect(onProfileChange).toHaveBeenCalledTimes(1);
     });
     expect(select).toHaveValue("quick");
-  });
-
-  it("disables the profile selector while the editor is open", async () => {
-    mockLoad(makeConfig());
-    renderPanel({ editorOpen: true });
-
-    const select = await screen.findByRole("combobox");
-    expect(select).toBeDisabled();
   });
 
   it("calls onConfigure when Edit workflow is clicked", async () => {
@@ -249,9 +224,6 @@ describe("WorkflowPanel", () => {
     mockLoad(autoConfig, "auto-review");
     renderPanel();
 
-    expect(await screen.findByText("Adaptive agents")).toHaveClass(
-      "text-blue-700",
-    );
     expect(
       await screen.findByText(
         "Adaptive agents: 2–6 additional subject and method reviewers tailored to each document.",
@@ -301,9 +273,8 @@ describe("WorkflowPanel", () => {
     mockLoad(quickConfig, "auto-review-quick");
     renderPanel();
 
-    expect(await screen.findByText("2–4")).toBeInTheDocument();
     expect(
-      screen.getByText(
+      await screen.findByText(
         /Adaptive agents: 2–4 additional subject and method reviewers/,
       ),
     ).toBeInTheDocument();

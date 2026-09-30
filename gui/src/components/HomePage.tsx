@@ -1,109 +1,5 @@
 import type { AppPage, RecentProject } from "./NavRail";
-
-type HomeIcon =
-  | "assistant"
-  | "review"
-  | "plan"
-  | "project"
-  | "history"
-  | "designer"
-  | "arrow";
-
-function Icon({
-  name,
-  className = "h-5 w-5",
-}: {
-  name: HomeIcon;
-  className?: string;
-}) {
-  const common = {
-    className,
-    fill: "none",
-    viewBox: "0 0 24 24",
-    stroke: "currentColor",
-    strokeWidth: 1.65,
-    "aria-hidden": true as const,
-  };
-  if (name === "assistant")
-    return (
-      <svg {...common}>
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M5 18.5 3.5 21V5A2 2 0 0 1 5.5 3h13a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7l-2 1.5Z"
-        />
-        <path strokeLinecap="round" d="M7.5 8h9M7.5 12h6" />
-      </svg>
-    );
-  if (name === "review")
-    return (
-      <svg {...common}>
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M14 3.5H6A1.5 1.5 0 0 0 4.5 5v14A1.5 1.5 0 0 0 6 20.5h12a1.5 1.5 0 0 0 1.5-1.5V9L14 3.5ZM14 3.5V9h5.5M8 14l2.5 2.5L16 11"
-        />
-      </svg>
-    );
-  if (name === "plan")
-    return (
-      <svg {...common}>
-        <rect x="4" y="4" width="16" height="16" rx="3" />
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="m8 12 2.5 2.5L16 9"
-        />
-      </svg>
-    );
-  if (name === "project")
-    return (
-      <svg {...common}>
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M3.75 7.25h6l1.5 2h9v8.5a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2V7.25Z"
-        />
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M5.75 7.25V5.5A1.5 1.5 0 0 1 7.25 4h4.25l1.5 2h4.75a1.5 1.5 0 0 1 1.5 1.5v1.75"
-        />
-      </svg>
-    );
-  if (name === "history")
-    return (
-      <svg {...common}>
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M3.5 4.5v5h5M3.8 9a8.25 8.25 0 1 1 .3 6M12 7.5V12l3 2"
-        />
-      </svg>
-    );
-  if (name === "designer")
-    return (
-      <svg {...common}>
-        <circle cx="6" cy="6" r="2.25" />
-        <circle cx="18" cy="12" r="2.25" />
-        <circle cx="6" cy="18" r="2.25" />
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M8.25 6h2.25A3.5 3.5 0 0 1 14 9.5 2.5 2.5 0 0 0 16.5 12M8.25 18h2.25A3.5 3.5 0 0 0 14 14.5 2.5 2.5 0 0 1 16.5 12"
-        />
-      </svg>
-    );
-  return (
-    <svg {...common}>
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M5 12h14m-5-5 5 5-5 5"
-      />
-    </svg>
-  );
-}
+import { Icon } from "../ui/icons";
 
 function projectLocation(project: RecentProject) {
   if (project.missingRootAt) return "Folder unavailable";
@@ -165,7 +61,7 @@ export default function HomePage({
       description:
         "Continue research, reviews, waits, and decisions on a schedule or over several rounds.",
       label: "Open automations",
-      icon: "plan" as const,
+      icon: "tasks" as const,
       accent:
         "from-emerald-500/15 via-emerald-500/5 to-transparent text-emerald-700 dark:text-emerald-300",
       onClick: () => onNavigate("tasks"),
@@ -260,7 +156,7 @@ export default function HomePage({
           </div>
         </section>
 
-        <div className="mt-12 grid gap-8 lg:grid-cols-[minmax(0,1.45fr)_minmax(260px,0.75fr)]">
+        <div className="mt-12 max-w-3xl">
           <section aria-labelledby="projects-heading">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -333,61 +229,6 @@ export default function HomePage({
               </span>{" "}
               New project
             </button>
-          </section>
-
-          <section aria-labelledby="tools-heading">
-            <h2 id="tools-heading" className="text-base font-semibold">
-              Tools and history
-            </h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-              Direct access for repeatable and advanced work.
-            </p>
-            <div className="mt-4 rounded-2xl border border-gray-200 p-2 dark:border-neutral-800">
-              {[
-                [
-                  "Review history",
-                  "Completed and interrupted runs",
-                  "history",
-                  "history",
-                ],
-                [
-                  "Review collections",
-                  "Related reports and issue ledgers",
-                  "project",
-                  "projects",
-                ],
-                [
-                  "Review designer",
-                  "Review steps, prompts, and output schemas",
-                  "designer",
-                  "pipeline",
-                ],
-              ].map(([title, description, icon, page]) => (
-                <button
-                  key={title}
-                  type="button"
-                  onClick={() => onNavigate(page as AppPage)}
-                  className="group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:bg-neutral-900"
-                >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-300">
-                    <Icon
-                      name={icon as HomeIcon}
-                      className="h-[18px] w-[18px]"
-                    />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium">{title}</span>
-                    <span className="mt-0.5 block truncate text-xs text-gray-500 dark:text-neutral-500">
-                      {description}
-                    </span>
-                  </span>
-                  <Icon
-                    name="arrow"
-                    className="h-3.5 w-3.5 text-gray-300 transition group-hover:translate-x-0.5 dark:text-neutral-700"
-                  />
-                </button>
-              ))}
-            </div>
           </section>
         </div>
       </div>

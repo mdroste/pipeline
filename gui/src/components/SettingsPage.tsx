@@ -460,7 +460,7 @@ export default function SettingsPage({
                     <StorageSettings onSavingChange={setStorageSaving} />
                     <SettingsCard id="workflow-history">
                       <SectionHeader
-                        title="Report history"
+                        title="Review history"
                         description="Retention applies to completed Reviews and their artifacts."
                       />
                       <RunRetention

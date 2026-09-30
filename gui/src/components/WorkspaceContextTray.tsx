@@ -5,17 +5,13 @@ import {
   type ContextSelection,
   type OpenResearchObject,
 } from "../lib/deskClient";
+import { appEvents } from "../lib/appEvents";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 
 export const addContextObject = (
   workspaceId: string,
   object: OpenResearchObject,
-) =>
-  window.dispatchEvent(
-    new CustomEvent("pipeline-context-add", {
-      detail: { workspaceId, object },
-    }),
-  );
+) => appEvents.emit("context-add", { workspaceId, object });
 const key = (o: OpenResearchObject) =>
   `${o.kind}:${o.id}:${o.revision}:${o.start ?? ""}:${o.end ?? ""}`;
 const roles: ContextItem["role"][] = [
@@ -126,13 +122,7 @@ export default function WorkspaceContextTray({
     [disabled, loadedSession, sessionId, selection, onError],
   );
   useEffect(() => {
-    const add = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          workspaceId: string;
-          object: OpenResearchObject;
-        }>
-      ).detail;
+    return appEvents.on("context-add", (detail) => {
       if (detail.workspaceId !== workspaceId) return;
       if (disabled || loadedSession !== sessionId || saving.current) {
         onError(
@@ -156,9 +146,7 @@ export default function WorkspaceContextTray({
           object: detail.object,
         },
       ]);
-    };
-    window.addEventListener("pipeline-context-add", add);
-    return () => window.removeEventListener("pipeline-context-add", add);
+    });
   }, [
     workspaceId,
     sessionId,

@@ -84,7 +84,7 @@ export default function RunSetupPanel({
       onResize={onResize}
       resizeLabel="Resize report setup"
     >
-      <SidebarHeader title="New run" heading="h1" />
+      <SidebarHeader title="New review" heading="h1" />
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-6 pt-1">
         <div className="space-y-5">
           {inputMode === "none" ? (
@@ -103,7 +103,6 @@ export default function RunSetupPanel({
 
           <WorkflowPanel
             disabled={configLoading || preparingRun}
-            editorOpen={false}
             onConfigure={onConfigureWorkflow}
             onProfileChange={onProfileChange}
             refreshKey={configVersion}
@@ -206,7 +205,7 @@ export default function RunSetupPanel({
                 ? "Loading workflow…"
                 : !listenersReady
                   ? "Preparing event stream…"
-                  : "Review report"}
+                  : "Start review"}
             {!configLoading && !preparingRun && listenersReady && (
               <svg
                 aria-hidden="true"

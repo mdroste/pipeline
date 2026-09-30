@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -38,7 +39,8 @@ import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
 import { confirmDialog } from "../components/DialogService";
 import type { SettingsSection } from "../components/SettingsPage";
 import type { ReviewHandoff, WorkbenchEvent } from "../lib/workbenchTypes";
-import { startupPage } from "../lib/appPreferences";
+import { startupRoute } from "../lib/appPreferences";
+import { router, type AppRoute } from "../lib/router";
 import { appClient } from "../lib/appClient";
 import useRecentProjects from "./useRecentProjects";
 import type { WorkspaceDestination } from "../lib/workspaceNavigation";
@@ -65,14 +67,33 @@ export function useAppController() {
   const [depsReport, setDepsReport] = useState<DepsReport | null>(null);
   const [depsLoading, setDepsLoading] = useState(true);
   const [depsError, setDepsError] = useState<string | null>(null);
-  const [taskSessionId, setTaskSessionId] = useState<string | null>(null);
   const [tasksAttention, setTasksAttention] = useState(false);
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [discoveryId, setDiscoveryId] = useState<string | null>(null);
-  const [discoveryRequest, setDiscoveryRequest] = useState(0);
-  const [page, setPageState] = useState<AppPage>(() =>
-    startupPage(localStorage),
+  // The router owns the current location. Initialize it once per app mount
+  // from the persisted route (any destination restores, not just four pages).
+  const routerInitialized = useRef(false);
+  if (!routerInitialized.current) {
+    routerInitialized.current = true;
+    router.init(startupRoute(localStorage));
+  }
+  const routerSnapshot = useSyncExternalStore(
+    router.subscribe,
+    router.getSnapshot,
   );
+  const route = routerSnapshot.route;
+  const page = route.page;
+  const setPageState = useCallback(
+    (next: AppPage) => router.apply({ page: next } as AppRoute),
+    [],
+  );
+  // Route-derived destination parameters.
+  const taskSessionId =
+    route.page === "tasks" ? (route.taskSessionId ?? null) : null;
+  const taskId = route.page === "tasks" ? (route.taskId ?? null) : null;
+  const discoveryId =
+    route.page === "tasks" ? (route.discoveryId ?? null) : null;
+  const automatePath =
+    route.page === "tasks" ? (route.automatePath ?? null) : null;
+  const [discoveryRequest, setDiscoveryRequest] = useState(0);
   const workspaceSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const registerWorkspaceSave = useCallback(
     (save: (() => Promise<boolean>) | null) => {
@@ -130,16 +151,19 @@ export function useAppController() {
     }
     return true;
   }, []);
-  // Even simple close/back callbacks pass through the same guard. Callers that
-  // need to mutate destination state use handleNavigate and wait for approval.
-  const setPage = useCallback(
-    (next: AppPage) => {
-      void confirmLeaveCurrentPage(next).then((allowed) => {
-        if (allowed) setPageState(next);
-      });
-    },
-    [confirmLeaveCurrentPage],
-  );
+  // Every navigation channel — rail clicks, close/back callbacks, hash
+  // back/forward, notification deep links — runs the same leave guard, which
+  // the router applies before committing a route.
+  useEffect(() => {
+    router.setGuard((next) => confirmLeaveCurrentPage(next.page));
+    return () => router.setGuard(null);
+  }, [confirmLeaveCurrentPage]);
+  useEffect(() => {
+    router.installHashSync();
+  }, []);
+  const setPage = useCallback((next: AppPage) => {
+    void router.navigate({ page: next } as AppRoute);
+  }, []);
   useEffect(() => {
     const changed = () => {
       if (page !== "tasks") setTasksAttention(true);
@@ -156,7 +180,6 @@ export function useAppController() {
   }, [page]);
   const [workspaceActive, setWorkspaceActive] = useState(false);
   const [workspaceAttention, setWorkspaceAttention] = useState(false);
-  const [showActivity, setShowActivity] = useState(false);
   const [researchNotice, setResearchNotice] = useState<{
     workspaceId: string;
     checkId: string;
@@ -218,8 +241,14 @@ export function useAppController() {
     };
   }, []);
   const [batchActive, setBatchActive] = useState(false);
-  const [settingsInitialSection, setSettingsInitialSection] =
-    useState<SettingsSection>("general");
+  const settingsInitialSection: SettingsSection =
+    route.page === "settings" && route.section
+      ? (route.section as SettingsSection)
+      : "general";
+  const settingsTargetId =
+    route.page === "settings" ? route.targetId : undefined;
+  const helpInitialSection = route.page === "help" ? route.section : undefined;
+  const historyRunId = route.page === "history" ? (route.runId ?? null) : null;
   const { recentProjects, projectsLoading } = useRecentProjects(page);
   const [workspaceEntry, setWorkspaceEntry] = useState<{
     surface: "chat" | "project";
@@ -234,6 +263,8 @@ export function useAppController() {
   const [newProjectRequest, setNewProjectRequest] = useState(0);
 
   useEffect(() => {
+    // Legacy key kept for older builds that only remembered four pages; the
+    // router persists the complete route separately.
     if (
       page === "workspace" ||
       page === "project-index" ||
@@ -243,13 +274,7 @@ export function useAppController() {
       localStorage.setItem("pipeline.ui.page", page === "main" ? "home" : page);
   }, [page]);
 
-  const [settingsTargetId, setSettingsTargetId] = useState<
-    string | undefined
-  >();
   const [settingsNavigationKey, setSettingsNavigationKey] = useState(0);
-  const [helpInitialSection, setHelpInitialSection] = useState<
-    "privacy" | undefined
-  >();
   const [configVersion, setConfigVersion] = useState(0);
   const [selectionKey, setSelectionKey] = useState(0);
   const [closeProtectionUnavailable, setCloseProtectionUnavailable] =
@@ -291,8 +316,8 @@ export function useAppController() {
   selectedInputRef.current = { inputMode, paperPath, inputSelection };
   const parallelOverridesRef = useRef(parallelOverrides);
   parallelOverridesRef.current = parallelOverrides;
-  // A run id to open in History (e.g. from a batch job's "Open" link).
-  const [historyRunId, setHistoryRunId] = useState<string | null>(null);
+  // Rich artifact target accompanying a history run route (not serialized;
+  // restored relaunches open the run without a preselected source).
   const [historySourceSelection, setHistorySourceSelection] =
     useState<ArtifactSelectionTarget | null>(null);
   const [theme, setTheme] = useState<ThemePreference>(() =>
@@ -510,6 +535,54 @@ export function useAppController() {
         if (request === dependencyRequest.current) setDepsLoading(false);
       }
     }, []);
+
+  // Route-commit side effects. Registered as a plain router subscription (not
+  // an effect on the snapshot) so storage preparation runs synchronously
+  // before React renders the destination — pages read these keys on mount.
+  const previousRouteRef = useRef<AppRoute>(route);
+  useEffect(() => {
+    return router.subscribe(({ route: next }) => {
+      const previous = previousRouteRef.current;
+      previousRouteRef.current = next;
+      if (next.page === "tasks") {
+        setTasksAttention(false);
+        if (next.discoveryId) setDiscoveryRequest((request) => request + 1);
+      }
+      if (previous.page === "settings" && next.page !== "settings")
+        void checkDependencies();
+      if (next.page === "settings") setSettingsNavigationKey((key) => key + 1);
+      if (next.page === "history" && !next.runId)
+        setHistorySourceSelection(null);
+      if (next.page === "workspace") {
+        if (next.projectId) {
+          saveDeskLayout(next.projectId, {
+            ...loadDeskLayout(next.projectId),
+            tab: (next.destination ?? "overview") as WorkspaceDestination,
+            object: null,
+            comparison: null,
+          });
+          localStorage.setItem(
+            "pipeline.workspace.workspaceId",
+            next.projectId,
+          );
+        } else if (next.sessionId) {
+          localStorage.removeItem("pipeline.workspace.workspaceId");
+        }
+        if (next.sessionId)
+          localStorage.setItem("pipeline.workspace.sessionId", next.sessionId);
+        const surface =
+          next.surface ??
+          (localStorage.getItem("pipeline.workspace.surface") === "chat"
+            ? "chat"
+            : "project");
+        localStorage.setItem("pipeline.workspace.surface", surface);
+        setWorkspaceEntry((entry) => ({
+          surface,
+          request: entry.request + 1,
+        }));
+      }
+    });
+  }, [checkDependencies]);
 
   useEffect(() => {
     void loadRunSetup();
@@ -776,219 +849,128 @@ export function useAppController() {
   };
 
   const handleNewRun = async () => {
-    if (!(await confirmLeaveCurrentPage("main"))) return;
-    if (isRunning) {
-      setPageState("main");
-      return;
-    }
+    if (!(await router.navigate({ page: "main" }))) return;
+    if (isRunning) return;
     reset();
     setPaperPath(null);
     setInputSelection(null);
     setRunPreview(null);
-    setHistoryRunId(null);
     setHistorySourceSelection(null);
     setPendingRun(null);
     setParallelOverrides(null);
     setActiveRunPlan(null);
     setSelectionKey((key) => key + 1);
-    setPageState("main");
   };
 
   const handleNavigate = async (nextPage: AppPage) => {
-    if (!(await confirmLeaveCurrentPage(nextPage))) return false;
-    if (nextPage === "tasks") setTasksAttention(false);
-    if (page === "settings") void checkDependencies();
-    if (nextPage === "settings" && page !== "settings") {
-      setSettingsInitialSection("general");
-      setSettingsTargetId(undefined);
-      setSettingsNavigationKey((key) => key + 1);
-    }
-    if (nextPage === "history") {
-      setHistoryRunId(null);
-      setHistorySourceSelection(null);
-    }
-    if (nextPage === "help") setHelpInitialSection(undefined);
-    setPageState(nextPage);
-    return true;
+    return router.navigate({ page: nextPage } as AppRoute);
   };
 
   const openHelp = async (section?: "privacy") => {
-    if (!(await confirmLeaveCurrentPage("help"))) return;
-    setHelpInitialSection(section);
-    setPageState("help");
+    await router.navigate({ page: "help", section });
   };
 
   const openWorkspace = async (surface: "chat" | "project") => {
-    if (!(await handleNavigate("workspace"))) return;
-    setWorkspaceEntry((entry) => ({ surface, request: entry.request + 1 }));
-    localStorage.setItem("pipeline.workspace.surface", surface);
+    await router.navigate({ page: "workspace", surface });
   };
 
   const openWorkspaceProject = async (
     projectId: string,
     destination: WorkspaceDestination = "overview",
   ) => {
-    const alreadyWorkspace = pageRef.current === "workspace";
-    if (!(await handleNavigate("workspace"))) return;
-    saveDeskLayout(projectId, {
-      ...loadDeskLayout(projectId),
-      tab: destination,
-      object: null,
-      comparison: null,
-    });
-    localStorage.setItem("pipeline.workspace.workspaceId", projectId);
-    localStorage.setItem("pipeline.workspace.surface", "project");
-    setWorkspaceEntry((entry) => ({
+    await router.navigate({
+      page: "workspace",
+      projectId,
       surface: "project",
-      request: entry.request + 1,
-    }));
-    if (alreadyWorkspace) {
-      window.dispatchEvent(
-        new CustomEvent("pipeline:open-project", { detail: projectId }),
-      );
-      window.dispatchEvent(
-        new CustomEvent("pipeline:research-destination", {
-          detail: { workspaceId: projectId, tab: destination },
-        }),
-      );
-    }
+      destination,
+    });
   };
 
   const createWorkspaceProject = async () => {
-    if (!(await handleNavigate("workspace"))) return;
-    setWorkspaceEntry((entry) => ({
-      surface: "project",
-      request: entry.request + 1,
-    }));
+    if (!(await router.navigate({ page: "workspace", surface: "project" })))
+      return;
     setNewProjectRequest((request) => request + 1);
   };
 
   const openPaddleInstallSettings = async () => {
-    if (!(await confirmLeaveCurrentPage("settings"))) return;
-    setSettingsInitialSection("extraction");
-    setSettingsTargetId("paddleocr-local-engine");
-    setSettingsNavigationKey((key) => key + 1);
-    setPageState("settings");
+    await router.navigate({
+      page: "settings",
+      section: "extraction",
+      targetId: "paddleocr-local-engine",
+    });
   };
 
   const openWorkspaceSession = async (id: string) => {
     const { workbenchClient } = await import("../lib/workbenchClient");
     const snapshot = await workbenchClient.sessionSnapshot(id);
-    if (!(await handleNavigate("workspace"))) return false;
-    localStorage.setItem("pipeline.workspace.sessionId", id);
-    if (snapshot.session.workspaceId)
-      localStorage.setItem(
-        "pipeline.workspace.workspaceId",
-        snapshot.session.workspaceId,
-      );
-    else localStorage.removeItem("pipeline.workspace.workspaceId");
-    localStorage.setItem("pipeline.workspace.surface", "chat");
-    setWorkspaceEntry((entry) => ({
+    const allowed = await router.navigate({
+      page: "workspace",
+      sessionId: id,
+      projectId: snapshot.session.workspaceId ?? undefined,
       surface: "chat",
-      request: entry.request + 1,
-    }));
-    setShowActivity(false);
-    window.dispatchEvent(
-      new CustomEvent("pipeline:open-session", { detail: id }),
-    );
+    });
+    if (!allowed) return false;
     return true;
   };
 
-  useEffect(() => {
-    const open = (event: Event) => {
-      const id = (event as CustomEvent<{ id: string }>).detail?.id;
-      if (!id) return;
-      void confirmLeaveCurrentPage("tasks").then((allowed) => {
-        if (!allowed) return;
-        setDiscoveryId(id);
-        setDiscoveryRequest((request) => request + 1);
-        setTaskSessionId(null);
-        setTaskId(null);
-        setPageState("tasks");
-      });
-    };
-    window.addEventListener("pipeline:open-discovery", open);
-    return () => window.removeEventListener("pipeline:open-discovery", open);
-  }, [confirmLeaveCurrentPage]);
   const openTask = async (sessionId: string | null, id?: string) => {
-    if (!(await handleNavigate("tasks"))) return;
-    setDiscoveryId(null);
-    setTaskSessionId(sessionId);
-    setTaskId(id ?? null);
+    await router.navigate({
+      page: "tasks",
+      taskSessionId: sessionId ?? undefined,
+      taskId: id,
+    });
   };
 
   const openWorkspaceSettings = async () => {
-    if (!(await confirmLeaveCurrentPage("settings"))) return;
-    setSettingsInitialSection("workspace");
-    setSettingsTargetId(undefined);
-    setSettingsNavigationKey((key) => key + 1);
-    setPageState("settings");
+    await router.navigate({ page: "settings", section: "workspace" });
   };
 
   const openHistoryRun = async (
     runId: string,
     source: ArtifactSelectionTarget | null,
   ) => {
-    if (!(await handleNavigate("history"))) return;
-    setHistoryRunId(runId);
+    if (!(await router.navigate({ page: "history", runId }))) return;
     setHistorySourceSelection(source);
   };
 
   const closePipeline = async () => {
-    if (!(await confirmLeaveCurrentPage("main"))) return;
+    if (!(await router.navigate({ page: "main" }))) return;
     setWorkflowDirty(false);
-    setPageState("main");
     setConfigVersion((version) => version + 1);
   };
 
   const inspectResearchAttention = async () => {
     const notice = researchNotice;
-    if (!notice || !(await handleNavigate("workspace"))) return;
-    const id = notice.workspaceId;
-    saveDeskLayout(id, { ...loadDeskLayout(id), tab: "checks" });
-    localStorage.setItem("pipeline.workspace.workspaceId", id);
-    localStorage.setItem("pipeline.workspace.surface", "project");
-    setResearchNotice(null);
-    window.dispatchEvent(
-      new CustomEvent("pipeline:open-project", { detail: id }),
-    );
-    window.dispatchEvent(
-      new CustomEvent("pipeline:research-destination", {
-        detail: { workspaceId: id, tab: "checks" },
-      }),
-    );
+    if (!notice) return;
+    const allowed = await router.navigate({
+      page: "workspace",
+      projectId: notice.workspaceId,
+      surface: "project",
+      destination: "checks",
+    });
+    if (allowed) setResearchNotice(null);
   };
 
   const openActivityProject = async (id: string) => {
-    if (!(await handleNavigate("workspace"))) return;
-    saveDeskLayout(id, { ...loadDeskLayout(id), tab: "plans" });
-    localStorage.setItem("pipeline.workspace.workspaceId", id);
-    localStorage.setItem("pipeline.workspace.surface", "project");
-    setShowActivity(false);
-    window.dispatchEvent(
-      new CustomEvent("pipeline:open-project", { detail: id }),
-    );
-    window.dispatchEvent(
-      new CustomEvent("pipeline:research-destination", {
-        detail: { workspaceId: id, tab: "plans" },
-      }),
-    );
+    await router.navigate({
+      page: "workspace",
+      projectId: id,
+      surface: "project",
+      destination: "plans",
+    });
   };
 
   const openActivityTask = async (id: string) => {
-    if (!(await handleNavigate("tasks"))) return;
-    setTaskId(id);
-    setShowActivity(false);
+    await router.navigate({ page: "tasks", taskId: id });
   };
 
   const openActivityReview = async (id: string) => {
     const current = "runId" in state && state.runId === id;
-    if (!(await handleNavigate(current ? "main" : "history"))) return;
-    if (!current) {
-      setHistoryRunId(id);
-      setHistorySourceSelection(null);
-    }
-    setShowActivity(false);
+    const allowed = await router.navigate(
+      current ? { page: "main" } : { page: "history", runId: id },
+    );
+    if (!allowed) return;
+    if (!current) setHistorySourceSelection(null);
   };
 
   const [showDeps, setShowDeps] = useState(false);
@@ -1007,9 +989,6 @@ export function useAppController() {
     depsReport,
     setShowDeps,
     confirmLeaveCurrentPage,
-    setSettingsInitialSection,
-    setSettingsTargetId,
-    setSettingsNavigationKey,
     setPageState,
     pendingRun,
     setPendingRun,
@@ -1022,8 +1001,6 @@ export function useAppController() {
     researchNotice,
     inspectResearchAttention,
     setResearchNotice,
-    showActivity,
-    setShowActivity,
     openWorkspaceSession,
     openActivityProject,
     openActivityTask,
@@ -1078,6 +1055,7 @@ export function useAppController() {
     taskSessionId,
     taskId,
     discoveryId,
+    automatePath,
     discoveryRequest,
     closePipeline,
     setWorkflowDirty,
@@ -1091,7 +1069,6 @@ export function useAppController() {
     settingsTargetId,
     settingsNavigationKey,
     historyRunId,
-    setHistoryRunId,
     historySourceSelection,
     setHistorySourceSelection,
     openHistoryRun,

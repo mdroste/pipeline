@@ -24,6 +24,7 @@ import {
 } from "../lib/autoReview";
 
 import SchemaEditorPanel from "./pipeline-editor/SchemaEditorPanel";
+import WaveDiagram from "./WaveDiagram";
 
 interface Props {
   onClose: () => void;
@@ -75,6 +76,7 @@ export default function PipelinePage({
     conditionStepIds,
     setConfig,
     setDirty,
+    setEditing,
     setSchemaDraftValid,
   } = editor;
   const { promptResetRequestRef } = editor.identity;
@@ -288,11 +290,21 @@ export default function PipelinePage({
             onOutputRoleChange={updateOutputRole}
           />
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
-            <div className="text-center">
-              <p className="text-lg">Select a step to edit</p>
-              <p className="text-sm mt-1">
-                Click a step on the left to view and edit its prompt
+          // Nothing selected: show the workflow itself, not an instruction.
+          <div className="h-full overflow-y-auto px-8 py-6">
+            <div className="mx-auto w-full max-w-2xl">
+              <WaveDiagram
+                steps={config.steps}
+                merge={config.merge}
+                adaptiveReview={autoReview}
+                adaptiveAgentCount={adaptiveAgentCount}
+                adaptiveAgentRange={adaptiveAgentRange}
+                selectedId={editing}
+                onSelect={(id) => setEditing(id)}
+              />
+              <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
+                Select any stage to edit its prompt, inputs, conditions, and
+                models.
               </p>
             </div>
           </div>

@@ -152,23 +152,6 @@ export const PipelineSettingsEditorPanel = memo(
             </div>
           </div>
 
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">
-              Required
-            </span>
-            <div>
-              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                Build orientation map
-              </span>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                One LLM call surveys the input into structured JSON before every
-                workflow runs. It keeps steps grounded in what the input
-                actually contains — e.g. it stops a review step criticizing
-                something covered elsewhere in the document.
-              </p>
-            </div>
-          </div>
-
           <VariablesEditor
             variables={config.variables ?? []}
             onChange={onVariablesChange}
@@ -264,16 +247,17 @@ export const StepEditorPanel = memo(function StepEditorPanel({
       ? [
           ["prompt", "Prompt"],
           ["inputs", "Inputs & dependencies"],
-          ["execution", "Execution rules"],
+          ["execution", "When it runs"],
           ["model", "Model & agents"],
         ]
       : [
           ["prompt", "Prompt"],
           ["inputs", "Inputs"],
+          ["execution", "When it runs"],
         ];
 
   useEffect(() => {
-    if (!advanced && (activeTab === "execution" || activeTab === "model")) {
+    if (!advanced && activeTab === "model") {
       setActiveTab("prompt");
     }
   }, [activeTab, advanced]);
@@ -428,10 +412,10 @@ export const StepEditorPanel = memo(function StepEditorPanel({
       >
         <div className="mb-5">
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-            Execution rules
+            When it runs
           </h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Control timing, conditions, publication, and file-by-file fan-out.
+            Timing, run conditions, published results, and file-by-file fan-out.
             Output contracts live in the Schemas tab.
           </p>
         </div>
@@ -507,10 +491,11 @@ export const StepEditorPanel = memo(function StepEditorPanel({
               }
             />
             <span>
-              Publish findings to Projects
+              Track findings in the project ledger
               <span className="block text-[10px] text-gray-500 dark:text-gray-400">
-                Pipeline adds an issues contract automatically; review it in the
-                Schemas tab.
+                This step's structured findings feed the issue ledger that
+                follows your document across runs. Pipeline adds an issues
+                contract automatically; review it in the Schemas tab.
               </span>
             </span>
           </label>

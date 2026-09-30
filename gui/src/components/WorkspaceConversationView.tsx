@@ -3,6 +3,7 @@ import { isMac } from "../lib/platform";
 import { useEffect, useMemo, useState } from "react";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
 import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
+import { appEvents } from "../lib/appEvents";
 import { workbenchClient } from "../lib/workbenchClient";
 import type { ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
@@ -140,11 +141,7 @@ export default function WorkspaceConversationView({
           `pipeline.openFile.${workspaceId}`,
           JSON.stringify(location),
         );
-        window.dispatchEvent(
-          new CustomEvent("pipeline:open-file", {
-            detail: { workspaceId, location },
-          }),
-        );
+        appEvents.emit("open-file", { workspaceId, location });
       },
       openAbsolute: (path: string) =>
         workbenchClient.openConversationFile(sessionId, path),

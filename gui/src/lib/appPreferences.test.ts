@@ -6,7 +6,7 @@ import {
   readAppPreferences,
   saveAppPreferences,
   shouldSendMessage,
-  startupPage,
+  startupRoute,
 } from "./appPreferences";
 
 beforeEach(() => localStorage.clear());
@@ -14,9 +14,16 @@ it("preserves old startup behavior and supplies defaults for missing or corrupt 
   for (const raw of [null, "broken", "null", "[]"])
     expect(parsePreferences(raw)).toEqual(DEFAULT_PREFERENCES);
   localStorage.setItem("pipeline.ui.page", "workspace");
-  expect(startupPage(localStorage)).toBe("workspace");
+  expect(startupRoute(localStorage)).toEqual({ page: "workspace" });
+  localStorage.setItem("pipeline.ui.route", "#/reviews/history?run=run-7");
+  expect(startupRoute(localStorage)).toEqual({
+    page: "history",
+    runId: "run-7",
+  });
+  localStorage.setItem("pipeline.ui.route", "#/nowhere");
+  expect(startupRoute(localStorage)).toEqual({ page: "workspace" });
   saveAppPreferences({ startup: "home" });
-  expect(startupPage(localStorage)).toBe("home");
+  expect(startupRoute(localStorage)).toEqual({ page: "home" });
   expect(localStorage.getItem("pipeline.workspace.workspaceId")).toBeNull();
 });
 it("bounds malformed values and retains unrelated preferences when saving", () => {

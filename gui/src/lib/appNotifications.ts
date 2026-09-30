@@ -1,5 +1,6 @@
 import { readAppPreferences, type AppPreferences } from "./appPreferences";
 import type { WorkbenchEvent } from "./workbenchTypes";
+import { router } from "./router";
 import { notify } from "../components/DialogService";
 
 export type NoticeKind = "completion" | "failure" | "attention";
@@ -142,11 +143,10 @@ export async function deliverNotice(
     notify(message, kind, {
       label: "Open portfolio",
       run: () =>
-        window.dispatchEvent(
-          new CustomEvent("pipeline:open-discovery", {
-            detail: { id: notice.discoveryId },
-          }),
-        ),
+        void router.navigate({
+          page: "tasks",
+          discoveryId: notice.discoveryId,
+        }),
     });
   } else {
     notify(message, kind);

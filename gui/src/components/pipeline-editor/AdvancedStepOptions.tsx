@@ -34,6 +34,21 @@ function AdvancedStepOptions({
 
   const cond = step.run_if ?? null;
   const condKind = cond?.kind ?? "none";
+  // "Contains the text" writes an escaped pattern so conditions are
+  // authorable without regular expressions; patterns stay available.
+  const escapeRegex = (text: string) =>
+    text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const unescapeRegex = (pattern: string) =>
+    pattern.replace(/\\([.*+?^${}()|[\]\\])/g, "$1");
+  const isPlainPattern = (pattern: string) =>
+    escapeRegex(unescapeRegex(pattern)) === pattern;
+  const [forcedPatternFor, setForcedPatternFor] = useState<string | null>(null);
+  const textMode =
+    cond?.kind === "output_matches" &&
+    forcedPatternFor !== step.id &&
+    isPlainPattern(cond.pattern);
+  const stepLabel = (id: string) =>
+    otherSteps.find((candidate) => candidate.id === id)?.label ?? id;
 
   const setCondKind = (kind: string) => {
     if (kind === "none") return onChange({ run_if: null });
@@ -188,6 +203,16 @@ function AdvancedStepOptions({
                 </select>
                 {cond?.kind === "output_matches" && (
                   <div className="mt-1.5 space-y-1.5">
+                    <p className="text-[11px] italic text-gray-600 dark:text-gray-400">
+                      Runs only when the report from “{stepLabel(cond.step)}”{" "}
+                      {cond.negate ? "does not " : ""}
+                      {textMode
+                        ? cond.pattern
+                          ? `contain${cond.negate ? "" : "s"} “${unescapeRegex(cond.pattern)}”`
+                          : "contains the text below"
+                        : `match${cond.negate ? "" : "es"} the pattern /${cond.pattern}/`}
+                      .
+                    </p>
                     <select
                       aria-label="Condition source step"
                       value={cond.step}
@@ -198,27 +223,69 @@ function AdvancedStepOptions({
                     >
                       {!conditionStepIds.includes(cond.step) && cond.step && (
                         <option value={cond.step} disabled>
-                          {cond.step} (not upstream)
+                          {stepLabel(cond.step)} (not upstream)
                         </option>
                       )}
                       {conditionStepIds.map((id) => (
                         <option key={id} value={id}>
-                          {id}
+                          {stepLabel(id)}
                         </option>
                       ))}
                     </select>
-                    <input
-                      type="text"
-                      aria-label="Condition regular expression"
-                      value={cond.pattern}
-                      onChange={(e) =>
-                        onChange({
-                          run_if: { ...cond, pattern: e.target.value },
-                        })
-                      }
-                      placeholder="regular expression, e.g. SEVERITY:\s*high"
-                      className={inputClass}
-                    />
+                    <div className="flex gap-1.5">
+                      <select
+                        aria-label="Condition match mode"
+                        value={textMode ? "text" : "pattern"}
+                        onChange={(e) => {
+                          if (e.target.value === "pattern") {
+                            setForcedPatternFor(step.id);
+                          } else {
+                            setForcedPatternFor(null);
+                            onChange({
+                              run_if: {
+                                ...cond,
+                                pattern: escapeRegex(
+                                  unescapeRegex(cond.pattern),
+                                ),
+                              },
+                            });
+                          }
+                        }}
+                        className={`${inputClass} !w-auto`}
+                      >
+                        <option value="text">contains the text</option>
+                        <option value="pattern">
+                          matches the pattern (regex)
+                        </option>
+                      </select>
+                      <input
+                        type="text"
+                        aria-label={
+                          textMode
+                            ? "Condition text"
+                            : "Condition regular expression"
+                        }
+                        value={
+                          textMode ? unescapeRegex(cond.pattern) : cond.pattern
+                        }
+                        onChange={(e) =>
+                          onChange({
+                            run_if: {
+                              ...cond,
+                              pattern: textMode
+                                ? escapeRegex(e.target.value)
+                                : e.target.value,
+                            },
+                          })
+                        }
+                        placeholder={
+                          textMode
+                            ? "e.g. major revision"
+                            : "regular expression, e.g. major revision|reject"
+                        }
+                        className={inputClass}
+                      />
+                    </div>
                     <label className="flex items-center gap-1.5 text-[10px] text-gray-500">
                       <input
                         type="checkbox"

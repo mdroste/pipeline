@@ -46,7 +46,6 @@ interface WorkbenchEventBridge {
   setSnapshot: Dispatch<SetStateAction<ConversationSnapshot | null>>;
   setStream: Dispatch<SetStateAction<string>>;
   setSubmitting: Dispatch<SetStateAction<boolean>>;
-  setTasksEnabled: Dispatch<SetStateAction<boolean>>;
   snapshotRef: MutableRefObject<ConversationSnapshot | null>;
   streamBufferRef: MutableRefObject<string>;
   streamFlushRef: MutableRefObject<number | null>;
@@ -71,7 +70,6 @@ export function useWorkbenchEvents({
   setSnapshot,
   setStream,
   setSubmitting,
-  setTasksEnabled,
   snapshotRef,
   streamBufferRef,
   streamFlushRef,
@@ -223,14 +221,6 @@ export function useWorkbenchEvents({
 
       if (
         payload.kind === "serverRequest" &&
-        String(payload.params?.tool ?? "").startsWith("workbench_task_") &&
-        matchesThread(payload.params?.threadId)
-      ) {
-        localStorage.setItem("pipeline.tasks.enabled", "true");
-        setTasksEnabled(true);
-      }
-      if (
-        payload.kind === "serverRequest" &&
         matchesThread(payload.params?.threadId)
       )
         setRequests((old) =>
@@ -325,7 +315,6 @@ export function useWorkbenchEvents({
     setSnapshot,
     setStream,
     setSubmitting,
-    setTasksEnabled,
     snapshotRef,
     streamBufferRef,
     streamFlushRef,

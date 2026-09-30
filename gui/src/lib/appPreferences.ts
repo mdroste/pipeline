@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { restoreRoute, type AppRoute } from "./router";
 
 /** Device presentation preferences. Never part of a Review or conversation runtime. */
 export interface AppPreferences {
@@ -141,14 +142,8 @@ export function shouldSendMessage(
   );
 }
 
-export function startupPage(
-  storage: Pick<Storage, "getItem">,
-): "workspace" | "main" | "home" | "project-index" {
+export function startupRoute(storage: Pick<Storage, "getItem">): AppRoute {
   const preferences = parsePreferences(storage.getItem(PREFERENCES_KEY));
-  if (preferences.startup === "home") return "home";
-  // Preserve the existing startup behavior for users without preferences.
-  const saved = storage.getItem("pipeline.ui.page");
-  return saved === "workspace" || saved === "main" || saved === "project-index"
-    ? saved
-    : "home";
+  if (preferences.startup === "home") return { page: "home" };
+  return restoreRoute(storage) ?? { page: "home" };
 }

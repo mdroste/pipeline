@@ -21,6 +21,8 @@ import {
 } from "../lib/workspaceNavigation";
 import { payloadText, roleFor } from "../components/WorkspaceConversationView";
 import { deskClient, type ContextItem } from "../lib/deskClient";
+import { appEvents } from "../lib/appEvents";
+import { router } from "../lib/router";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
@@ -74,9 +76,8 @@ export function useWorkspacePageController({
   const [submitting, setSubmitting] = useState(false);
   const [requests, setRequests] = useState<WorkbenchEvent[]>([]);
   const [showArchived, setShowArchived] = useState(false);
-  const [tasksEnabled, setTasksEnabled] = useState(
-    () => localStorage.getItem("pipeline.tasks.enabled") === "true",
-  );
+  // Automations are a first-class capability; no discovery gate hides them.
+  const tasksEnabled = true;
   const [inspector, setInspector] = useState<
     "settings" | "outline" | "context" | "activity" | null
   >(null);
@@ -467,7 +468,6 @@ export function useWorkspacePageController({
     setSnapshot,
     setStream,
     setSubmitting,
-    setTasksEnabled,
     snapshotRef,
     streamBufferRef,
     streamFlushRef,
@@ -593,13 +593,7 @@ export function useWorkspacePageController({
     [loadSessions, workspaceId, sessionId, draft, active, persistDraft],
   );
   useEffect(() => {
-    const add = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          workspaceId: string;
-          object: ContextItem["object"];
-        }>
-      ).detail;
+    return appEvents.on("context-add", (detail) => {
       if (
         sessionId ||
         !workspaceId ||
@@ -624,9 +618,7 @@ export function useWorkspacePageController({
           contextBusyRef.current = false;
           setContextBusy(false);
         });
-    };
-    window.addEventListener("pipeline-context-add", add);
-    return () => window.removeEventListener("pipeline-context-add", add);
+    });
   }, [sessionId, workspaceId, openResearchConversation]);
   const updateProjectWorkspace = useCallback(
     (next: Workspace) =>
@@ -946,10 +938,15 @@ export function useWorkspacePageController({
       request.params?.threadId === snapshot?.activeBinding?.providerThreadId ||
       request.params?.threadId === active?.threadId,
   );
+  // While the workspace is mounted, later commits of a workspace route (from
+  // the shell, activity, or notifications) switch conversation or project in
+  // place. The commit that first mounted the page is handled by the entry
+  // props, not this subscription.
   useEffect(() => {
-    const open = (e: Event) => {
-      const id = (e as CustomEvent<string>).detail;
-      if (id)
+    return router.subscribe(({ route }) => {
+      if (route.page !== "workspace") return;
+      if (route.sessionId) {
+        const id = route.sessionId;
         void workbenchClient
           .sessionSnapshot(id)
           .then(async (snapshot) => {
@@ -959,22 +956,26 @@ export function useWorkspacePageController({
             setSurface("chat");
           })
           .catch((cause) => setError(workbenchErrorMessage(cause)));
-    };
-    const project = (e: Event) => {
-      const id = (e as CustomEvent<string>).detail;
-      if (id)
-        void selectProject(id).catch((cause) =>
-          setError(
-            `Could not switch projects: ${workbenchErrorMessage(cause)}`,
-          ),
-        );
-    };
-    window.addEventListener("pipeline:open-session", open);
-    window.addEventListener("pipeline:open-project", project);
-    return () => {
-      window.removeEventListener("pipeline:open-session", open);
-      window.removeEventListener("pipeline:open-project", project);
-    };
+        return;
+      }
+      if (route.projectId) {
+        const id = route.projectId;
+        const tab = route.destination;
+        void selectProject(id)
+          .then(() => {
+            if (tab)
+              appEvents.emit("workspace-destination", {
+                workspaceId: id,
+                tab,
+              });
+          })
+          .catch((cause) =>
+            setError(
+              `Could not switch projects: ${workbenchErrorMessage(cause)}`,
+            ),
+          );
+      }
+    });
   }, [loadSessions, selectProject, selectSession]);
   const recordDestination = useCallback(
     (tab: WorkspaceDestination) => {
@@ -987,11 +988,8 @@ export function useWorkspacePageController({
     setSurface("project");
     setNavigationOpen(false);
     // Re-selecting the current destination also leaves an opened object view.
-    window.dispatchEvent(
-      new CustomEvent("pipeline:research-destination", {
-        detail: { workspaceId, tab },
-      }),
-    );
+    if (workspaceId)
+      appEvents.emit("workspace-destination", { workspaceId, tab });
     setProjectRequest((value) => value + 1);
   };
   const acceptSnapshot = useCallback((next: ConversationSnapshot) => {
@@ -1092,7 +1090,6 @@ export function useWorkspacePageController({
     showArchived,
     setShowArchived,
     tasksEnabled,
-    setTasksEnabled,
     inspector,
     projectRequest,
     resetRequest,

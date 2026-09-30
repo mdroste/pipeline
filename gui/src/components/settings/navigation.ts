@@ -80,17 +80,13 @@ export const WORKFLOW_LINKS = [
   { id: "workflow-history", label: "Reports & history" },
 ];
 
+// Every navigable target now lives in the section its caller declares (the
+// search index and jump links name their sections explicitly), so resolving
+// a destination needs no per-target exception table.
 export function sectionForTarget(
   section: SettingsSection,
-  target?: string,
+  _target?: string,
 ): Section {
-  if (
-    target === "general-storage" ||
-    target === "workspace-research-data" ||
-    target === "workflow-history" ||
-    target === "storage-cache"
-  )
-    return "storage";
   return resolveSection(section);
 }
 

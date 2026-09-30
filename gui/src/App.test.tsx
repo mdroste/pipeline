@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
+import { router } from "./lib/router";
 
 const saveCollection = vi.hoisted(() => vi.fn());
 const invoke = vi.hoisted(() => vi.fn());
@@ -40,14 +41,11 @@ function runSetup(
   };
 }
 
-async function openTools(user: {
+// The rail is flat: every destination is always visible, so "opening tools"
+// is a no-op kept only so navigation call sites read as user journeys.
+async function openTools(_user: {
   click: (element: Element) => Promise<unknown>;
-}) {
-  const disclosure = screen.getByRole("button", { name: "Tools" });
-  if (disclosure.getAttribute("aria-expanded") !== "true") {
-    await user.click(disclosure);
-  }
-}
+}) {}
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
@@ -351,10 +349,9 @@ describe("App run options", () => {
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("button", { name: "Tools" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    expect(
+      screen.getByRole("button", { name: "Review designer" }),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: /Review a paper/ }));
     expect(await screen.findByTestId("run-setup-panel")).toBeVisible();
@@ -462,7 +459,7 @@ describe("App run options", () => {
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Choose test paper" }));
-    await user.click(screen.getByRole("button", { name: "Review report" }));
+    await user.click(screen.getByRole("button", { name: "Start review" }));
     expect(
       await screen.findByRole("dialog", { name: "Review the execution plan" }),
     ).toBeVisible();
@@ -492,7 +489,7 @@ describe("App run options", () => {
   it("keeps batch selection in New run instead of the left navigation", async () => {
     render(<App />);
 
-    await screen.findByRole("button", { name: "Review report" });
+    await screen.findByRole("button", { name: "Start review" });
     expect(
       screen.queryByRole("button", { name: "Batch" }),
     ).not.toBeInTheDocument();
@@ -502,7 +499,7 @@ describe("App run options", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByRole("button", { name: "Review report" });
+    await screen.findByRole("button", { name: "Start review" });
     expect(
       screen.queryByRole("button", { name: "Gallery" }),
     ).not.toBeInTheDocument();
@@ -526,7 +523,7 @@ describe("App run options", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Review report" }),
+        screen.getByRole("button", { name: "Start review" }),
       ).toBeEnabled(),
     );
     await waitFor(() =>
@@ -540,7 +537,7 @@ describe("App run options", () => {
       screen.getByRole("button", { name: "Change report agents" }),
     );
 
-    expect(screen.getByRole("button", { name: "Review report" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start review" })).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: "Loading workflow…" }),
     ).not.toBeInTheDocument();
@@ -556,7 +553,7 @@ describe("App run options", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose two papers" }),
     );
-    await user.click(screen.getByRole("button", { name: "Review report" }));
+    await user.click(screen.getByRole("button", { name: "Start review" }));
     expect(await screen.findByText(/2 documents · document/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Generate report" }));
 
@@ -628,7 +625,7 @@ describe("App run options", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Review report" }),
+        screen.getByRole("button", { name: "Start review" }),
       ).toBeEnabled(),
     );
     expect(
@@ -643,7 +640,7 @@ describe("App run options", () => {
       screen.queryByRole("button", { name: "Refresh" }),
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
-    await user.click(screen.getByRole("button", { name: "Review report" }));
+    await user.click(screen.getByRole("button", { name: "Start review" }));
     expect(
       await screen.findByRole("dialog", { name: "Review the execution plan" }),
     ).toBeVisible();
@@ -691,7 +688,7 @@ describe("App run options", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Review report" }),
+        screen.getByRole("button", { name: "Start review" }),
       ).toBeEnabled(),
     );
     expect(
@@ -725,9 +722,7 @@ describe("App run options", () => {
     );
 
     expect(await screen.findByText("Primary mode: folder")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Review report" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start review" })).toBeDisabled();
     expect(invoke).toHaveBeenCalledWith("get_run_setup");
     expect(
       invoke.mock.calls.filter(
@@ -741,7 +736,7 @@ describe("App run options", () => {
   it("reloads the new settings snapshot without comparing it to the old fingerprint", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole("button", { name: "Review report" });
+    await screen.findByRole("button", { name: "Start review" });
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(
@@ -932,7 +927,7 @@ describe("App run options", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
-    await user.click(screen.getByRole("button", { name: "Review report" }));
+    await user.click(screen.getByRole("button", { name: "Start review" }));
 
     expect(
       await screen.findByRole("dialog", { name: "Dependencies" }),
@@ -977,7 +972,7 @@ describe("App run options", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
-    await user.click(screen.getByRole("button", { name: "Review report" }));
+    await user.click(screen.getByRole("button", { name: "Start review" }));
 
     expect(
       (await screen.findAllByText(/active profile changed/)).length,
@@ -1018,7 +1013,7 @@ describe("App run options", () => {
     expect(
       screen.queryByRole("note", { name: "Data and privacy" }),
     ).not.toBeInTheDocument();
-    await screen.findByRole("button", { name: "Review report" });
+    await screen.findByRole("button", { name: "Start review" });
 
     firstRender.unmount();
     render(<App />);
@@ -1086,10 +1081,8 @@ describe("App run options", () => {
     await user.click(
       await screen.findByRole("button", { name: "Make settings dirty" }),
     );
+    // Activity is a destination now; the leave guard runs before it opens.
     await user.click(screen.getByRole("button", { name: "Activity" }));
-    await user.click(
-      await screen.findByRole("button", { name: "Open activity project" }),
-    );
 
     expect(confirmDialog).toHaveBeenCalledWith(
       "You have unsaved settings changes. Leave and discard them?",
@@ -1136,10 +1129,11 @@ describe("App run options", () => {
   it("keeps collection edits on the page when a save fails, then allows a successful retry", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await openTools(user);
-    await user.click(
-      screen.getByRole("button", { name: "Review collections" }),
-    );
+    // Collections is no longer a rail destination; reach it by route (the
+    // in-app paths are History → Collections and a project's Reviews view).
+    await act(async () => {
+      await router.navigate({ page: "projects" });
+    });
     await user.click(
       await screen.findByRole("button", { name: "Edit collection" }),
     );
@@ -1160,10 +1154,9 @@ describe("App run options", () => {
   it("honors returning to the collection while navigation is waiting for its save", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await openTools(user);
-    await user.click(
-      screen.getByRole("button", { name: "Review collections" }),
-    );
+    await act(async () => {
+      await router.navigate({ page: "projects" });
+    });
     await screen.findByRole("button", { name: "Edit collection" });
     let resolve!: (saved: boolean) => void;
     saveCollection.mockImplementation(
@@ -1173,10 +1166,11 @@ describe("App run options", () => {
         }),
     );
     await user.click(screen.getByRole("button", { name: "Review history" }));
-    await user.click(
-      screen.getByRole("button", { name: "Review collections" }),
-    );
+    const returning = router.navigate({ page: "projects" });
     await act(async () => resolve(true));
+    await act(async () => {
+      await returning;
+    });
     expect(
       screen.getByRole("button", { name: "Edit collection" }),
     ).toBeInTheDocument();

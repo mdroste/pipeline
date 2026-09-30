@@ -463,7 +463,7 @@ describe("PipelinePage", () => {
       screen.getByRole("tab", { name: "Inputs & dependencies" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "Execution rules" }),
+      screen.getByRole("tab", { name: "When it runs" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("tab", { name: "Model & agents" }),
@@ -506,12 +506,14 @@ describe("PipelinePage", () => {
     await user.click(
       screen.getAllByRole("button", { name: "Consolidate Issues" })[0],
     );
-    await user.click(screen.getByRole("tab", { name: "Execution rules" }));
+    await user.click(screen.getByRole("tab", { name: "When it runs" }));
     await user.click(
       screen.getByRole("checkbox", { name: /Use as the primary report/ }),
     );
     await user.click(
-      screen.getByRole("checkbox", { name: /Publish findings to Projects/ }),
+      screen.getByRole("checkbox", {
+        name: /Track findings in the project ledger/,
+      }),
     );
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -673,7 +675,7 @@ describe("PipelinePage", () => {
     await user.click(
       screen.getAllByRole("button", { name: "Consolidate Issues" })[0],
     );
-    await user.click(screen.getByRole("tab", { name: "Execution rules" }));
+    await user.click(screen.getByRole("tab", { name: "When it runs" }));
     await user.click(
       screen.getByRole("button", { name: "Independently (parallel)" }),
     );
@@ -980,16 +982,25 @@ describe("PipelinePage", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers an overview without duplicating it in the primary step list", async () => {
+  it("opens on the workflow overview and swaps it for the selected step", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
+    // No selection: the right pane shows the overview, never an instruction.
+    expect(screen.getByText("Workflow overview")).toBeInTheDocument();
+    expect(screen.queryByText("Select a step to edit")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Extract" })).toBeInTheDocument();
+
+    // Selecting a stage from the overview opens its editor in place.
+    await user.click(screen.getAllByText("Technical")[0]);
+    expect(await screen.findByLabelText("Step label")).toHaveValue("Technical");
     expect(screen.queryByText("Workflow overview")).not.toBeInTheDocument();
+
+    // The navigator's own Overview tab still works.
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     expect(screen.getByText("Workflow overview")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Extract" })).toBeInTheDocument();
   });
 
   it("keeps effective artifact schemas visible in a dedicated low-clutter view", async () => {
@@ -1113,7 +1124,7 @@ describe("PipelinePage", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
     await user.click(screen.getByRole("tab", { name: "Steps" }));
-    await user.click(screen.getByRole("tab", { name: "Execution rules" }));
+    await user.click(screen.getByRole("tab", { name: "When it runs" }));
     expect(
       screen.queryByRole("textbox", { name: "Output JSON schema" }),
     ).not.toBeInTheDocument();

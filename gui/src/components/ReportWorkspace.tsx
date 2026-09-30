@@ -26,6 +26,7 @@ import {
   type RunSummary,
 } from "../lib/types";
 import { REPORT_WORKSPACE_TABS } from "../lib/productMetadata";
+import { router } from "../lib/router";
 import type {
   ArtifactSelectionRequest,
   ArtifactSelectionTarget,
@@ -843,14 +844,31 @@ export default function ReportWorkspace({
             </p>
           </div>
           {report && provenance && (
-            <ExportControls
-              runId={runId}
-              markdown={markdown}
-              pdfMarkdown={pdfMarkdown}
-              provenanceMarkdown={renderProvenanceMarkdown(provenance)}
-              report={report}
-              extractedText={extractedText}
-            />
+            <div className="flex shrink-0 items-center gap-2">
+              {runManifest?.input_path && (
+                <button
+                  type="button"
+                  title="Chain this review into an automation — for example, address the findings and review again"
+                  onClick={() =>
+                    void router.navigate({
+                      page: "tasks",
+                      automatePath: runManifest.input_path,
+                    })
+                  }
+                  className="rounded-md border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800"
+                >
+                  Automate follow-up
+                </button>
+              )}
+              <ExportControls
+                runId={runId}
+                markdown={markdown}
+                pdfMarkdown={pdfMarkdown}
+                provenanceMarkdown={renderProvenanceMarkdown(provenance)}
+                report={report}
+                extractedText={extractedText}
+              />
+            </div>
           )}
         </div>
       </header>

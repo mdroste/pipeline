@@ -96,7 +96,7 @@ export function RunRetention({
       setPurgeError(
         `${
           purgeStarted
-            ? "Report history could not be moved to Trash"
+            ? "Review history could not be moved to Trash"
             : "The retention preview could not be loaded; no reports were moved"
         }: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -109,9 +109,9 @@ export function RunRetention({
     <div>
       <div className="mb-1.5 flex items-center gap-1.5">
         <span className="text-sm font-medium text-gray-700 dark:text-neutral-300">
-          Report history retention
+          Review history retention
         </span>
-        <InfoButton label="Report history retention">
+        <InfoButton label="Review history retention">
           Past reports and their artifacts are stored in your active research
           data folder. After each report, Pipeline moves to Trash the oldest
           completed reports until both limits hold. Set a limit to 0 to disable
@@ -135,7 +135,7 @@ export function RunRetention({
         />
         <span className="text-xs text-gray-500">reports and</span>
         <ValidatedNumber
-          label="Report history size limit in GB"
+          label="Review history size limit in GB"
           value={
             (settings.max_saved_run_bytes ?? 5_000_000_000) / 1_000_000_000
           }

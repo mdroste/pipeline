@@ -7,6 +7,7 @@ import WorkspaceProjectNavigation from "./WorkspaceProjectNavigation";
 import { workspaceDestinations } from "../lib/workspaceNavigation";
 import WorkspaceDesk from "./WorkspaceDesk";
 import WorkspaceConversationView from "./WorkspaceConversationView";
+import WorkspaceContextInspector from "./WorkspaceContextInspector";
 import WorkspaceContextTray from "./WorkspaceContextTray";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { workbenchClient } from "../lib/workbenchClient";
@@ -189,7 +190,6 @@ export default function WorkspacePage({
     showArchived,
     setShowArchived,
     tasksEnabled,
-    setTasksEnabled,
     inspector,
     projectRequest,
     resetRequest,
@@ -910,50 +910,12 @@ export default function WorkspacePage({
                     onClose={() => closeInspector()}
                   />
                 ) : inspector === "context" ? (
-                  <section
-                    className="workspace-simple-inspector"
-                    aria-label="Conversation context"
-                  >
-                    <div className="workspace-inspector-heading">
-                      <h2>Conversation context</h2>
-                      <button
-                        type="button"
-                        onClick={() => closeInspector()}
-                        aria-label="Close inspector"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <p>{snapshot?.workspace?.name ?? "Unfiled conversation"}</p>
-                    <p className="text-xs text-gray-500">
-                      Expand Sources above your message to see selected material
-                      and its roles. Opening a file does not add it to chat.
-                    </p>
-                    {workspaceId ? (
-                      <button
-                        type="button"
-                        onClick={() => navigateProject("documents")}
-                      >
-                        Browse project documents
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNavigationOpen(false);
-                          setProjectDialog(true);
-                        }}
-                      >
-                        New project
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setInspector("settings")}
-                    >
-                      Instructions and tools
-                    </button>
-                  </section>
+                  <WorkspaceContextInspector
+                    sessionId={sessionId}
+                    workspaceName={snapshot?.workspace?.name ?? null}
+                    onClose={() => closeInspector()}
+                    onOpenSettings={() => setInspector("settings")}
+                  />
                 ) : null}
               </>
             }
@@ -1083,13 +1045,7 @@ export default function WorkspacePage({
                   setInspector("settings");
                 }}
                 onTasks={
-                  sessionId && onTasks
-                    ? () => {
-                        localStorage.setItem("pipeline.tasks.enabled", "true");
-                        setTasksEnabled(true);
-                        onTasks(sessionId);
-                      }
-                    : undefined
+                  sessionId && onTasks ? () => onTasks(sessionId) : undefined
                 }
                 onDictation={() => messageRef.current?.focus()}
               />

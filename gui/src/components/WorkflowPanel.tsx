@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { PipelineConfig, ProfileSummary, StepConfig } from "../lib/types";
-import { computeWaves } from "../lib/pipelineHelpers";
+import type { PipelineConfig, ProfileSummary } from "../lib/types";
 import {
   adaptiveAgentCount,
   adaptiveAgentCountLabel,
@@ -12,8 +11,6 @@ import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 
 interface Props {
   disabled: boolean;
-  /** The pipeline editor manages profiles while open — the switcher defers to it. */
-  editorOpen: boolean;
   onConfigure: () => void;
   onProfileChange: (config?: PipelineConfig) => void;
   refreshKey: number;
@@ -21,7 +18,6 @@ interface Props {
 
 export default function WorkflowPanel({
   disabled,
-  editorOpen,
   onConfigure,
   onProfileChange,
   refreshKey,
@@ -115,22 +111,6 @@ export default function WorkflowPanel({
   const configuredAdaptiveCount = adaptiveAgentCount(config);
   const configuredAdaptiveRange = adaptiveAgentRange(config);
 
-  const groups = computeWaves(config.steps).reduce<
-    { phase: StepConfig["phase"]; steps: StepConfig[] }[]
-  >((result, wave) => {
-    const group =
-      wave.kind === "parallel"
-        ? { phase: "parallel" as const, steps: wave.steps }
-        : { phase: "sequential" as const, steps: [wave.step] };
-    const previous = result[result.length - 1];
-    if (group.phase === "sequential" && previous?.phase === "sequential") {
-      previous.steps.push(...group.steps);
-    } else {
-      result.push(group);
-    }
-    return result;
-  }, []);
-
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
@@ -139,14 +119,8 @@ export default function WorkflowPanel({
       <select
         value={activeId}
         onChange={(e) => handleSwitch(e.target.value)}
-        disabled={disabled || editorOpen || switching}
-        title={
-          editorOpen
-            ? "The pipeline editor is open — switch profiles there"
-            : switching
-              ? "Switching workflow"
-              : undefined
-        }
+        disabled={disabled || switching}
+        title={switching ? "Switching workflow" : undefined}
         className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
                    text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
                    focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent
@@ -167,112 +141,30 @@ export default function WorkflowPanel({
         </p>
       )}
 
-      {/* Read-only summary — steps are managed in the pipeline editor */}
-      <div className="mt-3">
-        {groups.map((group, gi) => (
-          <div key={gi} className={gi > 0 ? "mt-2.5" : ""}>
-            <p className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">
-              {group.phase === "parallel" ? "Parallel" : "Sequential"}
-            </p>
-            {group.steps
-              .filter((step) => !step.run_if)
-              .map((step) => (
-                <div key={step.id} className="flex items-center gap-2 py-0.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
-                  <span className="text-xs text-gray-600 dark:text-gray-400 truncate">
-                    {step.label}
-                  </span>
-                  {step.agents?.length > 1 && (
-                    <span className="text-[10px] text-gray-500 dark:text-gray-400 shrink-0">
-                      {step.agents
-                        .map((a) => a.charAt(0).toUpperCase())
-                        .join("+")}
-                    </span>
-                  )}
-                </div>
-              ))}
-            {autoReview &&
-              group.phase === "parallel" &&
-              gi ===
-                groups.findIndex(
-                  (candidate) => candidate.phase === "parallel",
-                ) && (
-                <button
-                  type="button"
-                  onClick={() => setCatalogOpen(true)}
-                  className="flex w-full items-center gap-2 py-0.5 text-left"
-                  title="Browse the adaptive-agent catalog"
-                >
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400 dark:bg-blue-500" />
-                  <span className="truncate text-xs font-medium text-blue-700 dark:text-blue-300">
-                    Adaptive agents
-                  </span>
-                  <span className="ml-auto shrink-0 text-[10px] text-blue-600/80 dark:text-blue-300/80">
-                    {adaptiveAgentCountLabel(
-                      configuredAdaptiveCount,
-                      configuredAdaptiveRange,
-                    )}
-                  </span>
-                </button>
-              )}
-            {!autoReview &&
-              (() => {
-                const conditional = group.steps.filter((step) => !!step.run_if);
-                if (conditional.length === 0) return null;
-                return (
-                  <details className="mt-1 rounded-md border border-gray-200 px-2 py-1 dark:border-gray-700">
-                    <summary className="cursor-pointer text-[11px] text-gray-600 dark:text-gray-400">
-                      {conditional.length} conditional specialist
-                      {conditional.length === 1 ? "" : "s"}
-                    </summary>
-                    <div className="mt-1 border-t border-gray-100 pt-1 dark:border-gray-800">
-                      {conditional.map((step) => (
-                        <div
-                          key={step.id}
-                          className="flex items-center gap-2 py-0.5"
-                        >
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300 dark:bg-gray-600" />
-                          <span className="truncate text-xs text-gray-600 dark:text-gray-400">
-                            {step.label}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                );
-              })()}
-          </div>
-        ))}
-        {enabledSteps.length === 0 && (
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            No steps enabled.
+      {autoReview && (
+        <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 dark:border-blue-900/70 dark:bg-blue-950/25">
+          <p className="text-[11px] leading-4 text-blue-900 dark:text-blue-200">
+            Adaptive agents:{" "}
+            {adaptiveAgentCountLabel(
+              configuredAdaptiveCount,
+              configuredAdaptiveRange,
+            )}{" "}
+            additional subject and method reviewers tailored to each document.
           </p>
-        )}
-        {autoReview && (
-          <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 dark:border-blue-900/70 dark:bg-blue-950/25">
-            <p className="text-[11px] leading-4 text-blue-900 dark:text-blue-200">
-              Adaptive agents:{" "}
-              {adaptiveAgentCountLabel(
-                configuredAdaptiveCount,
-                configuredAdaptiveRange,
-              )}{" "}
-              additional subject and method reviewers tailored to each document.
-            </p>
-            <button
-              type="button"
-              onClick={() => setCatalogOpen(true)}
-              className="mt-1 text-[11px] font-medium text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
-            >
-              Browse specialist catalog
-            </button>
-          </div>
-        )}
-        {disabledCount > 0 && (
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5">
-            +{disabledCount} disabled step{disabledCount === 1 ? "" : "s"}
-          </p>
-        )}
-      </div>
+          <button
+            type="button"
+            onClick={() => setCatalogOpen(true)}
+            className="mt-1 text-[11px] font-medium text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
+          >
+            Browse specialist catalog
+          </button>
+        </div>
+      )}
+      <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+        {enabledSteps.length} step{enabledSteps.length === 1 ? "" : "s"}
+        {disabledCount > 0 ? ` · ${disabledCount} disabled` : ""} — the full
+        plan is shown beside this panel.
+      </p>
 
       <button
         onClick={onConfigure}

@@ -19,6 +19,7 @@ export const workspaceDestinations = {
   theory: { label: "Theory", section: "analyze" },
   symbols: { label: "Symbols & assumptions", section: "analyze" },
   writing: { label: "Manuscript", section: "write" },
+  reviews: { label: "Reviews & findings", section: "write" },
   responses: { label: "Responses", section: "write" },
   edits: { label: "Edits & acceptance", section: "write" },
   assets: { label: "Tables & figures", section: "write" },

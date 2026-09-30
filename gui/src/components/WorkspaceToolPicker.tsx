@@ -7,6 +7,38 @@ import {
   workspaceSections,
   type WorkspaceDestination,
 } from "../lib/workspaceNavigation";
+import { router } from "../lib/router";
+
+// App-level verbs surfaced beside project views, so the palette can start
+// work, not only navigate. Each runs through the guarded router.
+const PICKER_ACTIONS = [
+  {
+    id: "action:review",
+    label: "Start a review…",
+    hint: "Reviews",
+    run: () => void router.navigate({ page: "main" }),
+  },
+  {
+    id: "action:automation",
+    label: "New automation…",
+    hint: "Automations",
+    run: () => void router.navigate({ page: "tasks" }),
+  },
+] as const;
+type PickerEntry = WorkspaceDestination | (typeof PICKER_ACTIONS)[number]["id"];
+const isAction = (
+  id: PickerEntry,
+): id is (typeof PICKER_ACTIONS)[number]["id"] => id.startsWith("action:");
+const entryLabel = (id: PickerEntry) =>
+  isAction(id)
+    ? PICKER_ACTIONS.find((action) => action.id === id)!.label
+    : workspaceDestinations[id].label;
+const entryHint = (id: PickerEntry) =>
+  isAction(id)
+    ? PICKER_ACTIONS.find((action) => action.id === id)!.hint
+    : workspaceSections.find(
+        (section) => section.id === workspaceDestinations[id].section,
+      )!.label;
 
 export default function WorkspaceToolPicker({
   workspaceId,
@@ -24,9 +56,9 @@ export default function WorkspaceToolPicker({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const pins = useMemo(() => loadWorkspacePins(workspaceId), [workspaceId]);
-  const matches = useMemo(() => {
+  const matches = useMemo<PickerEntry[]>(() => {
     const terms = query.toLowerCase().trim().split(/\s+/);
-    return (Object.keys(workspaceDestinations) as WorkspaceDestination[])
+    const views = (Object.keys(workspaceDestinations) as WorkspaceDestination[])
       .filter((id) => {
         const item = workspaceDestinations[id];
         const section = workspaceSections.find(
@@ -41,6 +73,12 @@ export default function WorkspaceToolPicker({
           pins.includes(id) ? pins.indexOf(id) : pins.length;
         return rank(a) - rank(b);
       });
+    const actions = PICKER_ACTIONS.filter((action) =>
+      terms.every((term) =>
+        `${action.label} ${action.hint}`.toLowerCase().includes(term),
+      ),
+    ).map((action) => action.id);
+    return [...views, ...actions];
   }, [query, pins]);
   const selected = Math.min(index, matches.length - 1);
   useEffect(() => {
@@ -48,8 +86,12 @@ export default function WorkspaceToolPicker({
       ?.querySelector<HTMLElement>('[data-highlighted="true"]')
       ?.scrollIntoView?.({ block: "nearest" });
   }, [selected]);
-  const choose = (tool: WorkspaceDestination) => {
-    onChoose(tool);
+  const choose = (tool: PickerEntry) => {
+    if (isAction(tool)) {
+      PICKER_ACTIONS.find((action) => action.id === tool)!.run();
+    } else {
+      onChoose(tool);
+    }
     onClose();
   };
   return createPortal(
@@ -131,15 +173,8 @@ export default function WorkspaceToolPicker({
               aria-current={current === id ? "page" : undefined}
               onClick={() => choose(id)}
             >
-              <span>{workspaceDestinations[id].label}</span>
-              <small>
-                {
-                  workspaceSections.find(
-                    (section) =>
-                      section.id === workspaceDestinations[id].section,
-                  )!.label
-                }
-              </small>
+              <span>{entryLabel(id)}</span>
+              <small>{entryHint(id)}</small>
             </button>
           ))}
           {!matches.length && <p>No matching project views.</p>}

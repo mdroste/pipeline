@@ -4,11 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { ProjectHome } from "../../lib/projectClient";
 import type { ReviewHandoff } from "../../lib/workbenchTypes";
-export const button =
-  "rounded-md border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
-export const input =
-  "w-full rounded border bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700";
-export const panel = "space-y-3 rounded-lg border p-4 dark:border-neutral-800";
+import { button, input, panel } from "../../ui/classes";
+export { button, input, panel };
 export interface StudioProps {
   workspaceId: string;
   data: ProjectHome;

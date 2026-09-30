@@ -7,6 +7,7 @@ import {
   workspaceNotice,
 } from "./appNotifications";
 import { DEFAULT_PREFERENCES, saveAppPreferences } from "./appPreferences";
+import { router } from "./router";
 const mocks = vi.hoisted(() => ({
   notify: vi.fn(),
   sendNotification: vi.fn(),
@@ -109,9 +110,9 @@ it("discovery follows attention preferences and provides an action to the affect
   await deliverNotice(notice, false);
   const action = mocks.notify.mock.calls[0][2];
   expect(action.label).toBe("Open portfolio");
-  const opened = vi.fn();
-  window.addEventListener("pipeline:open-discovery", opened);
+  router.init({ page: "home" });
   action.run();
-  expect(opened.mock.calls[0][0].detail.id).toBe("portfolio");
-  window.removeEventListener("pipeline:open-discovery", opened);
+  await vi.waitFor(() =>
+    expect(router.route).toEqual({ page: "tasks", discoveryId: "portfolio" }),
+  );
 });

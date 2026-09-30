@@ -17,19 +17,16 @@ import type {
 export type ProjectTab =
   import("../../lib/workspaceNavigation").WorkspaceDestination;
 
-export const button =
-  "rounded-md border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
-export const primaryButton =
-  "rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300";
-export const linkButton =
-  "text-xs underline decoration-gray-400 underline-offset-2 hover:decoration-current disabled:opacity-40";
-export const input =
-  "w-full rounded-md border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-neutral-700";
-export const card =
-  "rounded-xl border border-gray-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950";
-export const muted = "text-xs text-gray-500 dark:text-neutral-400";
-export const notice =
-  "rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200";
+import {
+  button,
+  primaryButton,
+  linkButton,
+  input,
+  card,
+  muted,
+  notice,
+} from "../../ui/classes";
+export { button, primaryButton, linkButton, input, card, muted, notice };
 
 export const op = () => `project-${crypto.randomUUID()}`;
 

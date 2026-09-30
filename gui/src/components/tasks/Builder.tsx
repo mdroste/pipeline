@@ -9,34 +9,58 @@ import {
   type TaskRun,
   type Trigger,
 } from "../../lib/taskClient";
-import { Outline } from "./shared";
+import OutlineEditor from "./OutlineEditor";
 import { Timing } from "./Timing";
+
+const LIMITS = { maxActions: 64, deadlineHours: 168, actionTimeoutSecs: 7200 };
+
+type TemplateKind = "review" | "prompt" | "input" | "blank";
 
 export default function Builder({
   initialSessionId,
+  initialPath,
   onPrepared,
   onClose,
 }: {
   initialSessionId?: string | null;
+  /** Prefill the review-and-revise template with this input file. */
+  initialPath?: string | null;
   onPrepared: (run: TaskRun) => void;
   onClose: () => void;
 }) {
-  const [kind, setKind] = useState<"review" | "prompt" | "input">("review");
+  const [kind, setKind] = useState<TemplateKind>("review");
   const [prompt, setPrompt] = useState("");
   const [profile, setProfile] = useState("");
   const [rounds, setRounds] = useState(3);
-  const [path, setPath] = useState("");
+  const [path, setPath] = useState(initialPath ?? "");
+  // While pristine, the outline regenerates from the quick fields above it;
+  // the first structural edit takes ownership of the chain.
+  const [pristine, setPristine] = useState(true);
+  const [editedChain, setEditedChain] = useState<Chain | null>(null);
   const [profiles, setProfiles] = useState<{ id: string; name: string }[]>([]);
   const [sessions, setSessions] = useState<SessionChoice[]>([]);
   const [session, setSession] = useState(initialSessionId ?? "");
   const [trigger, setTrigger] = useState<Trigger>({ kind: "now" });
   const [saved, setSaved] = useState<{ id: string; chain: Chain }[]>([]);
-  const [advanced, setAdvanced] = useState<string | null>(null);
   const [inputs, setInputs] = useState("{}");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const operation = useRef(crypto.randomUUID());
-  const generated = template(kind, prompt, profile, rounds, path);
+  const blank: Chain = {
+    schemaVersion: 1,
+    name: "New automation",
+    description: "",
+    steps: [],
+    limits: LIMITS,
+  };
+  const chain =
+    editedChain ??
+    (kind === "blank" ? blank : template(kind, prompt, profile, rounds, path));
+  const setChain = (next: Chain) => {
+    setEditedChain(next);
+    setPristine(false);
+  };
   useEffect(() => {
     let alive = true;
     void Promise.all([
@@ -66,14 +90,12 @@ export default function Builder({
     setBusy(true);
     setError("");
     try {
-      const chain = await taskClient.validate(
-        advanced ?? JSON.stringify(generated),
-      );
+      const validated = await taskClient.validate(JSON.stringify(chain));
       const parsed: unknown = JSON.parse(inputs);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
         throw new Error("Inputs must be a JSON object");
       const run = await taskClient.prepare(
-        chain,
+        validated,
         session || null,
         parsed as Record<string, Json>,
         trigger,
@@ -86,13 +108,26 @@ export default function Builder({
       setBusy(false);
     }
   }
+  async function saveAsTemplate() {
+    setError("");
+    setNotice("");
+    try {
+      const validated = await taskClient.validate(JSON.stringify(chain));
+      await taskClient.saveChain(validated);
+      setSaved(await taskClient.chains());
+      setNotice("Saved. It is available under Saved automations.");
+    } catch (e) {
+      setError(String(e));
+    }
+  }
   return (
     <section className="task-builder" aria-label="New automation">
       <div className="task-section-heading">
         <div>
           <h2>New automation</h2>
           <p className="task-muted">
-            Review and revise a paper, schedule a follow-up, or wait for input.
+            Chain assistant work, reviews, waits, and decisions. Start from a
+            template or compose the steps yourself.
           </p>
         </div>
         <button
@@ -109,7 +144,7 @@ export default function Builder({
             [
               "review",
               "Review and revise",
-              "Review a paper and revise it up to a set limit.",
+              "Draft, review, and revise up to a set limit.",
             ],
             ["prompt", "Follow up", "Continue a conversation now or later."],
             [
@@ -117,16 +152,18 @@ export default function Builder({
               "Wait for input",
               "Pick up when the missing input arrives.",
             ],
+            ["blank", "Start empty", "Compose the steps yourself."],
           ] as const
         ).map(([id, title, subtitle]) => (
           <button
             key={id}
             type="button"
             aria-label={title}
-            aria-pressed={kind === id && advanced === null}
+            aria-pressed={kind === id && editedChain === null}
             onClick={() => {
               setKind(id);
-              setAdvanced(null);
+              setEditedChain(null);
+              setPristine(true);
             }}
           >
             <strong>{title}</strong>
@@ -146,7 +183,7 @@ export default function Builder({
           ))}
         </select>
       </label>
-      {advanced === null ? (
+      {pristine && kind !== "blank" && (
         <>
           <label>
             {kind === "review"
@@ -167,7 +204,7 @@ export default function Builder({
             <>
               <div className="task-form-row">
                 <label>
-                  Review profile
+                  Review workflow
                   <select
                     value={profile}
                     onChange={(e) => setProfile(e.target.value)}
@@ -186,7 +223,11 @@ export default function Builder({
                     min={1}
                     max={32}
                     value={rounds}
-                    onChange={(e) => setRounds(Number(e.target.value))}
+                    onChange={(e) =>
+                      setRounds(
+                        Math.min(32, Math.max(1, Number(e.target.value) || 1)),
+                      )
+                    }
                   />
                 </label>
               </div>
@@ -207,91 +248,137 @@ export default function Builder({
               </details>
             </>
           )}
-          <Outline steps={generated.steps} />
-        </>
-      ) : (
-        <>
-          <label>
-            Automation definition
-            <textarea
-              className="task-code"
-              spellCheck={false}
-              rows={19}
-              value={advanced}
-              onChange={(e) => setAdvanced(e.target.value)}
-            />
-          </label>
-          <label>
-            Named inputs
-            <textarea
-              className="task-code"
-              spellCheck={false}
-              rows={3}
-              value={inputs}
-              onChange={(e) => setInputs(e.target.value)}
-            />
-          </label>
-          <p className="task-muted">
-            Supports conversation, snapshot, review, check, delivery, delay,
-            input, if, repeat, parallel, forEach, and embedded automation steps.
-            Bind outputs with a step ID and JSON pointer.
-          </p>
         </>
       )}
-      <div className="task-actions">
-        <button
-          type="button"
-          onClick={() =>
-            setAdvanced(
-              advanced === null ? JSON.stringify(generated, null, 2) : null,
-            )
-          }
-        >
-          {advanced === null ? "Edit definition" : "Use template"}
-        </button>
-        <label className="task-import">
-          Import automation
+      {!pristine && (
+        <label>
+          Automation name
           <input
-            type="file"
-            accept=".json,application/json"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              if (file.size > 262144) {
-                setError("Chain exceeds 256 KiB");
-                return;
-              }
-              void file
-                .text()
-                .then(taskClient.validate)
-                .then((c) => setAdvanced(JSON.stringify(c, null, 2)))
-                .catch((e) => setError(String(e)));
-              e.target.value = "";
-            }}
+            value={chain.name}
+            onChange={(e) => setChain({ ...chain, name: e.target.value })}
           />
         </label>
-        {saved.length > 0 && (
-          <select
-            aria-label="Use a saved automation"
-            value=""
-            onChange={(e) => {
-              const c = saved.find((v) => v.id === e.target.value);
-              if (c) setAdvanced(JSON.stringify(c.chain, null, 2));
-            }}
+      )}
+      <OutlineEditor chain={chain} onChange={setChain} profiles={profiles} />
+      <details className="task-advanced">
+        <summary>Definition (advanced)</summary>
+        <pre className="task-code" aria-label="Automation definition">
+          {JSON.stringify(chain, null, 2)}
+        </pre>
+        <div className="task-actions">
+          <button
+            type="button"
+            onClick={() =>
+              void navigator.clipboard
+                ?.writeText(JSON.stringify(chain, null, 2))
+                .then(() => setNotice("Definition copied."))
+                .catch(() => setError("Could not copy the definition."))
+            }
           >
-            <option value="">Saved automations…</option>
-            {saved.map((c) => (
-              <option value={c.id} key={c.id}>
-                {c.chain.name}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+            Copy definition
+          </button>
+          <label className="task-import">
+            Import automation
+            <input
+              type="file"
+              accept=".json,application/json"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (file.size > 262144) {
+                  setError("Chain exceeds 256 KiB");
+                  return;
+                }
+                void file
+                  .text()
+                  .then(taskClient.validate)
+                  .then((c) => setChain(c))
+                  .catch((err) => setError(String(err)));
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {saved.length > 0 && (
+            <select
+              aria-label="Use a saved automation"
+              value=""
+              onChange={(e) => {
+                const c = saved.find((v) => v.id === e.target.value);
+                if (c) setChain(structuredClone(c.chain));
+              }}
+            >
+              <option value="">Saved automations…</option>
+              {saved.map((c) => (
+                <option value={c.id} key={c.id}>
+                  {c.chain.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <button type="button" onClick={() => void saveAsTemplate()}>
+            Save as template
+          </button>
+        </div>
+        <label>
+          Named inputs
+          <textarea
+            className="task-code"
+            spellCheck={false}
+            rows={3}
+            value={inputs}
+            onChange={(e) => setInputs(e.target.value)}
+          />
+        </label>
+        <div className="task-form-row">
+          <label>
+            Action limit
+            <input
+              type="number"
+              min={1}
+              max={64}
+              value={chain.limits.maxActions}
+              onChange={(e) =>
+                setChain({
+                  ...chain,
+                  limits: {
+                    ...chain.limits,
+                    maxActions: Math.min(
+                      64,
+                      Math.max(1, Number(e.target.value)),
+                    ),
+                  },
+                })
+              }
+            />
+          </label>
+          <label>
+            Deadline (hours)
+            <input
+              type="number"
+              min={1}
+              value={chain.limits.deadlineHours}
+              onChange={(e) =>
+                setChain({
+                  ...chain,
+                  limits: {
+                    ...chain.limits,
+                    deadlineHours: Math.max(1, Number(e.target.value)),
+                  },
+                })
+              }
+            />
+          </label>
+        </div>
+      </details>
       <Timing value={trigger} onChange={setTrigger} />
       {error && (
         <p className="task-error" role="alert">
           {error}
+        </p>
+      )}
+      {notice && (
+        <p className="task-muted" role="status">
+          {notice}
         </p>
       )}
       <div className="task-footer">
@@ -302,7 +389,9 @@ export default function Builder({
           className="task-primary"
           disabled={
             busy ||
-            (advanced === null &&
+            chain.steps.length === 0 ||
+            (pristine &&
+              kind !== "blank" &&
               (!session ||
                 (kind === "review" && !profile) ||
                 (!prompt.trim() && !path)))

@@ -27,11 +27,14 @@ export default function TasksPage({
   onConversation,
   initialTaskId,
   initialDiscoveryId,
+  initialAutomatePath,
 }: {
   initialSessionId?: string | null;
   onConversation?: (id: string) => void | Promise<void>;
   initialTaskId?: string | null;
   initialDiscoveryId?: string | null;
+  /** Open the builder prefilled to automate this input file. */
+  initialAutomatePath?: string | null;
 }) {
   const [view, setView] = useState(initialDiscoveryId ? "missions" : "active");
   const views = ["active", "scheduled", "history", "missions"];
@@ -49,7 +52,7 @@ export default function TasksPage({
   const [selected, setSelected] = useState<TaskRun | null>(null);
   const selectedRef = useRef<string | null>(initialTaskId ?? null);
   const [creating, setCreating] = useState(
-    Boolean(initialSessionId && !initialTaskId),
+    Boolean((initialSessionId || initialAutomatePath) && !initialTaskId),
   );
   const [error, setError] = useState("");
   const [background, setBackground] = useState(false);
@@ -100,7 +103,6 @@ export default function TasksPage({
     };
   }, [refresh]);
   useEffect(() => {
-    localStorage.setItem("pipeline.tasks.enabled", "true");
     void taskClient
       .background()
       .then(setBackground)
@@ -286,6 +288,7 @@ export default function TasksPage({
             {creating ? (
               <Builder
                 initialSessionId={initialSessionId}
+                initialPath={initialAutomatePath}
                 onPrepared={select}
                 onClose={() => setCreating(false)}
               />

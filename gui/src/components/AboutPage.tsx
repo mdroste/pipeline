@@ -381,9 +381,9 @@ function HelpContent({
         <Collapsible title="Batch reports">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
             To review several documents with the same workflow, select multiple
-            files on New run, or choose a folder and set its meaning to Batch of
-            documents. Each document becomes an independent report and the queue
-            appears under Current batch.
+            files on New review, or choose a folder and set its meaning to Batch
+            of documents. Each document becomes an independent report and the
+            queue appears under Current batch.
           </p>
         </Collapsible>
 

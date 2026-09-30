@@ -8,6 +8,8 @@ import {
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
+import { appEvents } from "../lib/appEvents";
+import { router } from "../lib/router";
 import WorkspacePage from "./WorkspacePage";
 import type {
   ConversationSnapshot,
@@ -287,7 +289,7 @@ it("makes absolute generated PDF and source paths clickable inside the project",
     ],
   };
   const opened = vi.fn();
-  window.addEventListener("pipeline:open-file", opened);
+  const off = appEvents.on("open-file", opened);
 
   await mount();
 
@@ -297,15 +299,11 @@ it("makes absolute generated PDF and source paths clickable inside the project",
     "/Users/example/research/source.tex#L8",
   );
   fireEvent.click(pdf);
-  expect(opened).toHaveBeenCalledWith(
-    expect.objectContaining({
-      detail: {
-        workspaceId: workspace.id,
-        location: { path: "output.pdf" },
-      },
-    }),
-  );
-  window.removeEventListener("pipeline:open-file", opened);
+  expect(opened).toHaveBeenCalledWith({
+    workspaceId: workspace.id,
+    location: { path: "output.pdf" },
+  });
+  off();
 });
 
 it("renders generated images in an unfiled conversation", async () => {
@@ -341,9 +339,11 @@ it("flushes and clears the old conversation when a sidebar project event switche
   });
 
   act(() => {
-    window.dispatchEvent(
-      new CustomEvent("pipeline:open-project", { detail: workspace.id }),
-    );
+    router.apply({
+      page: "workspace",
+      projectId: workspace.id,
+      surface: "project",
+    });
   });
 
   await waitFor(() =>

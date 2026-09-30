@@ -6,6 +6,7 @@ import {
 } from "../lib/workspaceNavigation";
 import RetainedWorkspaceView from "./RetainedWorkspaceView";
 import { loadDeskLayout, saveDeskLayout } from "../lib/deskLayout";
+import { appEvents } from "../lib/appEvents";
 import { type ContextItem, type OpenResearchObject } from "../lib/deskClient";
 import ResearchReaderBoundary from "./ResearchReaderBoundary";
 import ObjectPane from "./research-desk/ObjectPane";
@@ -52,6 +53,7 @@ import type {
 import ProjectOverview from "./project-surface/ProjectOverview";
 import ProjectSettings from "./project-surface/ProjectSettings";
 import ProjectActionItems from "./project-surface/ProjectActionItems";
+import ProjectReviews from "./project-surface/ProjectReviews";
 import type { WorkbenchSession } from "../lib/workbenchTypes";
 import ProjectEdits from "./project-surface/ProjectEdits";
 import ProjectDocuments, {
@@ -137,17 +139,12 @@ export default function WorkspaceProjectSurface({
     layout.object,
   );
   useEffect(() => {
-    const open = (event: Event) => {
-      const d = (event as CustomEvent<{ workspaceId: string; tab: string }>)
-        .detail;
+    return appEvents.on("workspace-destination", (d) => {
       if (d.workspaceId === workspaceId && isWorkspaceDestination(d.tab)) {
         setObject(null);
         setTab(d.tab as ProjectTab);
       }
-    };
-    window.addEventListener("pipeline:research-destination", open);
-    return () =>
-      window.removeEventListener("pipeline:research-destination", open);
+    });
   }, [workspaceId]);
   useEffect(() => {
     if (destination && destination !== tab) {
@@ -167,20 +164,13 @@ export default function WorkspaceProjectSurface({
     }
   });
   useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          workspaceId: string;
-          location: import("../lib/fileLinks").FileLocation;
-        }>
-      ).detail;
+    const off = appEvents.on("open-file", (detail) => {
       if (detail.workspaceId === workspaceId) {
         setFileLocation(detail.location);
         setObject(null);
         setTab("files");
       }
-    };
-    window.addEventListener("pipeline:open-file", open);
+    });
     try {
       if (sessionStorage.getItem(`pipeline.openFile.${workspaceId}`)) {
         setObject(null);
@@ -190,7 +180,7 @@ export default function WorkspaceProjectSurface({
     } catch {
       /* Navigation storage is optional. */
     }
-    return () => window.removeEventListener("pipeline:open-file", open);
+    return off;
   }, [workspaceId]);
   const [comparison, setComparison] = useState<OpenResearchObject | null>(
     layout.comparison,
@@ -541,77 +531,59 @@ export default function WorkspaceProjectSurface({
       ref={deskRoot}
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-gray-50 dark:bg-neutral-900"
     >
+      {/* Standalone chrome for direct-rendered surfaces (fixtures, tests).
+          Inside the app, WorkspacePage owns navigation in its sidebar. */}
       {!navigationInSidebar && (
-        <>
-          <header className="flex flex-wrap items-center gap-4 border-b border-gray-200 bg-white px-6 py-4 dark:border-neutral-800 dark:bg-neutral-950">
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-lg font-semibold">
-                {workspace?.name ?? "Project"}
-              </h1>
-              <p
-                className={`truncate ${muted}`}
-                title={workspace?.root ?? undefined}
-              >
-                {subtitle}
-              </p>
-            </div>
-            {!navigationInSidebar && (
-              <nav
-                aria-label="Project sections"
-                className="flex flex-wrap gap-2"
-              >
-                {workspaceSections.map((section) => (
-                  <button
-                    key={section.id}
-                    type="button"
-                    className={button}
-                    aria-current={
-                      workspaceDestinations[tab].section === section.id
-                        ? "page"
-                        : undefined
-                    }
-                    onClick={() => {
-                      setObject(null);
-                      setTab(section.destination);
-                    }}
-                  >
-                    {section.label}
-                  </button>
-                ))}
-              </nav>
-            )}
-          </header>
-          <div className="workspace-project-tool-bar">
-            <label>
-              View
-              <select
-                aria-label="Project view"
-                value={tab}
-                onChange={(event) => {
+        <header className="flex flex-wrap items-center gap-4 border-b border-gray-200 bg-white px-6 py-4 dark:border-neutral-800 dark:bg-neutral-950">
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-lg font-semibold">
+              {workspace?.name ?? "Project"}
+            </h1>
+            <p
+              className={`truncate ${muted}`}
+              title={workspace?.root ?? undefined}
+            >
+              {subtitle}
+            </p>
+          </div>
+          <nav aria-label="Project sections" className="flex flex-wrap gap-2">
+            {workspaceSections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                className={button}
+                aria-current={
+                  workspaceDestinations[tab].section === section.id
+                    ? "page"
+                    : undefined
+                }
+                onClick={() => {
                   setObject(null);
-                  setTab(event.target.value as ProjectTab);
+                  setTab(section.destination);
                 }}
               >
-                {destinationsInSection(tab).map((id) => (
-                  <option key={id} value={id}>
-                    {workspaceDestinations[id].label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <span className="flex-1" />
-            <button
-              type="button"
-              className={button}
-              onClick={() => {
+                {section.label}
+              </button>
+            ))}
+          </nav>
+          <label className={muted}>
+            Project view{" "}
+            <select
+              aria-label="Project view"
+              value={tab}
+              onChange={(event) => {
                 setObject(null);
-                setTab("exchange");
+                setTab(event.target.value as ProjectTab);
               }}
             >
-              Share project
-            </button>
-          </div>
-        </>
+              {destinationsInSection(tab).map((id) => (
+                <option key={id} value={id}>
+                  {workspaceDestinations[id].label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </header>
       )}
       {error && (
         <div
@@ -621,6 +593,32 @@ export default function WorkspaceProjectSurface({
           {error}
         </div>
       )}
+      {/* Section subnav: every destination in the current section is one
+          click away, so the palette is an accelerator, not the only map. */}
+      {!object &&
+        workspaceDestinations[tab].section !== "overview" &&
+        destinationsInSection(tab).length > 1 && (
+          <nav
+            aria-label={`${workspaceDestinations[tab].section} destinations`}
+            className="flex shrink-0 flex-wrap gap-1 border-b border-gray-200 bg-white px-4 py-1.5 dark:border-neutral-800 dark:bg-neutral-950"
+          >
+            {destinationsInSection(tab).map((sibling) => (
+              <button
+                key={sibling}
+                type="button"
+                aria-current={sibling === tab ? "page" : undefined}
+                onClick={() => setTab(sibling)}
+                className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                  sibling === tab
+                    ? "bg-gray-100 text-gray-900 dark:bg-neutral-800 dark:text-neutral-100"
+                    : "text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-200"
+                }`}
+              >
+                {workspaceDestinations[sibling].label}
+              </button>
+            ))}
+          </nav>
+        )}
       <fieldset disabled={busy} className="contents">
         {object && (
           <div className="flex min-h-0 flex-1 gap-3 p-4">
@@ -799,6 +797,13 @@ export default function WorkspaceProjectSurface({
         <RetainedWorkspaceView active={!object && tab === "tasks"}>
           <div className="min-h-0 flex-1 overflow-auto p-6">
             <ProjectActionItems {...api} />
+          </div>
+        </RetainedWorkspaceView>
+        <RetainedWorkspaceView active={!object && tab === "reviews"}>
+          <div className="min-h-0 flex-1 overflow-auto bg-white p-6 dark:bg-neutral-950">
+            {tab === "reviews" && (
+              <ProjectReviews workspaceRoot={workspace?.root ?? null} />
+            )}
           </div>
         </RetainedWorkspaceView>
         <RetainedWorkspaceView active={!object && tab === "project-settings"}>

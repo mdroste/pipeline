@@ -24,44 +24,33 @@ function renderRail(overrides: Partial<ComponentProps<typeof NavRail>> = {}) {
 }
 
 describe("NavRail", () => {
-  it("makes Home and Projects the primary destinations and progressively discloses tools", async () => {
+  it("keeps every destination visible in one flat rail", async () => {
     const user = userEvent.setup();
     const props = renderRail();
-    const tools = within(screen.getByRole("group", { name: "Tools" }));
+    const reviews = within(screen.getByRole("region", { name: "Reviews" }));
 
     expect(screen.getByRole("button", { name: "Home" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(tools.getByRole("button", { name: "Tools" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(
-      tools.queryByRole("button", { name: "Automations" }),
-    ).not.toBeInTheDocument();
-    expect(
-      tools.queryByRole("button", { name: "New review" }),
-    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "System ready" })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Tools/ }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Projects" }));
     expect(props.onNavigate).toHaveBeenCalledWith("project-index");
-
-    await user.click(tools.getByRole("button", { name: "Tools" }));
-    expect(tools.getByRole("button", { name: "Tools" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    await user.click(tools.getByRole("button", { name: "Automations" }));
+    await user.click(screen.getByRole("button", { name: "Automations" }));
     expect(props.onNavigate).toHaveBeenCalledWith("tasks");
-    await user.click(tools.getByRole("button", { name: "Review history" }));
+    await user.click(reviews.getByRole("button", { name: "Review history" }));
     expect(props.onNavigate).toHaveBeenCalledWith("history");
-    await user.click(tools.getByRole("button", { name: "Review collections" }));
-    expect(props.onNavigate).toHaveBeenCalledWith("projects");
-    await user.click(tools.getByRole("button", { name: "Review designer" }));
+    // Collections live inside history and project Reviews, not the rail.
+    expect(
+      reviews.queryByRole("button", { name: "Review collections" }),
+    ).not.toBeInTheDocument();
+    await user.click(reviews.getByRole("button", { name: "Review designer" }));
     expect(props.onNavigate).toHaveBeenCalledWith("pipeline");
-    await user.click(tools.getByRole("button", { name: "New review" }));
+    await user.click(reviews.getByRole("button", { name: "New review" }));
     expect(props.onNewRun).toHaveBeenCalledOnce();
   });
 
@@ -109,13 +98,9 @@ describe("NavRail", () => {
     expect(screen.getByLabelText("needs attention")).toBeVisible();
   });
 
-  it("keeps the active advanced destination visible", () => {
+  it("marks the gallery as part of the designer destination", () => {
     renderRail({ activePage: "gallery" });
 
-    expect(screen.getByRole("button", { name: "Tools" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
     expect(
       screen.getByRole("button", { name: "Review designer" }),
     ).toHaveAttribute("aria-current", "page");
@@ -128,27 +113,25 @@ describe("NavRail", () => {
       runInProgress: true,
     });
 
-    expect(screen.getByRole("button", { name: "Tools" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
     expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Review history" }),
+    ).toHaveAttribute("aria-current", "page");
     expect(
       screen.queryByRole("button", { name: /Current run/ }),
     ).not.toBeInTheDocument();
   });
 
-  it("keeps tools available for a batch without adding a batch destination", () => {
+  it("marks history active for a batch without adding a batch destination", () => {
     renderRail({
       activePage: "batch",
       runInProgress: true,
     });
 
-    expect(screen.getByRole("button", { name: "Tools" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
     expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Review history" }),
+    ).toHaveAttribute("aria-current", "page");
     expect(
       screen.queryByRole("button", { name: /Current batch/ }),
     ).not.toBeInTheDocument();
