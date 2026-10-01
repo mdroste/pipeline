@@ -26,7 +26,7 @@ it("offers outcome-first entry points without exposing runtime terminology", asy
   const props = renderHome();
 
   expect(
-    screen.getByRole("heading", { name: "Move your research forward." }),
+    screen.getByRole("heading", { name: "What would you like to do?" }),
   ).toBeVisible();
   await user.click(
     screen.getByRole("button", { name: /Work with the assistant/ }),

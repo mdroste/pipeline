@@ -6,19 +6,12 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Project, ProjectsResponse, RunSummary } from "../../lib/types";
 import { router } from "../../lib/router";
+import { underRoot } from "../../lib/projectOverview";
 import ProjectIssueLedgerPanel from "../ProjectIssueLedgerPanel";
 import EmptyState from "../../ui/EmptyState";
 import Spinner from "../../ui/Spinner";
 import Button from "../../ui/Button";
 import { button, muted } from "../../ui/classes";
-
-function underRoot(path: string, root: string) {
-  const normalize = (value: string) => value.replace(/[\\/]+$/, "");
-  const base = normalize(root);
-  return (
-    path === base || path.startsWith(`${base}/`) || path.startsWith(`${base}\\`)
-  );
-}
 
 export default function ProjectReviews({
   workspaceRoot,

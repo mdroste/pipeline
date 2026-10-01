@@ -136,10 +136,6 @@ export function AppearanceSettings({
         </select>
         {feedback.key === "density" && <SaveFeedback {...feedback} />}
       </SettingRow>
-      <div className="settings-reading-preview" aria-label="Reading preview">
-        <strong>A comfortable place to work</strong>
-        <p>Read a paper, review the evidence, and return to your writing.</p>
-      </div>
     </>
   );
 }
@@ -148,10 +144,7 @@ export function EditorSettings() {
   const { preferences: p, update, feedback } = usePreferenceEditor();
   return (
     <>
-      <SectionHeader
-        title="Editor"
-        description="Defaults for source files and manuscript editors."
-      />
+      <SectionHeader title="Editor" />
       <SettingRow
         id="editor-font"
         label="Editor font size"

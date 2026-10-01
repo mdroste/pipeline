@@ -23,11 +23,9 @@ export function SettingsCard({
 export function ProviderHeader({
   name,
   description,
-  badge,
 }: {
   name: string;
-  description: string;
-  badge: string;
+  description?: string;
 }) {
   return (
     <header className="settings-provider-header">
@@ -36,10 +34,11 @@ export function ProviderHeader({
       </div>
       <div className="min-w-0 flex-1">
         <h2 className="text-base font-semibold">{name}</h2>
-        <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
-          {description}
-        </p>
-        <span className="settings-scope">{badge}</span>
+        {description && (
+          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
+            {description}
+          </p>
+        )}
       </div>
     </header>
   );

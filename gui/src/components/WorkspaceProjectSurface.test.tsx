@@ -329,3 +329,67 @@ it("keeps proposed research questions out of the brief while showing their pendi
     screen.getByRole("button", { name: "Review suggested notes →" }),
   ).toBeVisible();
 });
+
+it("asks for the conversation first only when a project has nothing but conversations", async () => {
+  const thread = {
+    id: "thread",
+    workspaceId: "workspace",
+    title: "Idea",
+    updatedAt: "2026-09-03",
+    createdAt: "2026-09-03",
+    paperId: null,
+    presetId: null,
+    overrides: {},
+    draft: "",
+    revision: 1,
+    archivedAt: null,
+  } satisfies WorkbenchSession;
+  const first = vi.fn();
+  const brief = vi.fn();
+  const surface = (key: string) => (
+    <WorkspaceProjectSurface
+      key={key}
+      workspaceId="workspace"
+      onConversation={vi.fn()}
+      onWorkspaceChanged={vi.fn()}
+      onConversationFirst={first}
+      onProjectBrief={brief}
+      sessions={[thread]}
+    />
+  );
+  // A folder is attached: the overview has state to show.
+  const view = render(surface("with-folder"));
+  await screen.findByRole("heading", { name: "Local research" });
+  expect(first).not.toHaveBeenCalled();
+
+  const data = home();
+  data.inventory = null;
+  data.notes = [
+    {
+      id: "question",
+      workspaceId: "workspace",
+      paperId: null,
+      kind: "question",
+      body: "Do minimum wages reduce teen employment?",
+      state: "accepted",
+      origin: "user",
+      pinned: true,
+      revision: 1,
+      createdAt: "2026-09-01",
+      updatedAt: "2026-09-01",
+    },
+  ];
+  mocks.home.mockResolvedValue(data);
+  mocks.getWorkspace.mockResolvedValue({
+    id: "workspace",
+    name: "Idea notebook",
+    root: null,
+    revision: 1,
+  });
+  view.rerender(surface("conversation-only"));
+  await screen.findByRole("heading", { name: "Idea notebook" });
+  await waitFor(() => expect(first).toHaveBeenCalledOnce());
+  expect(brief).toHaveBeenLastCalledWith(
+    "Do minimum wages reduce teen employment?",
+  );
+});

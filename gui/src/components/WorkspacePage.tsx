@@ -276,6 +276,8 @@ export default function WorkspacePage({
     newProjectRequest,
     onNewProjectRequestHandled,
   });
+  const [conversationFirst, setConversationFirst] = useState(0);
+  const [projectBrief, setProjectBrief] = useState<string | null>(null);
 
   useEffect(() => {
     onSaveHandlerChange?.(async () => {
@@ -606,6 +608,7 @@ export default function WorkspacePage({
         assistantRequest={assistantRequest}
         projectRequest={projectRequest}
         resetRequest={resetRequest}
+        conversationFirstRequest={conversationFirst}
         project={
           workspaceId || (harnessEditor && snapshot) ? (
             <>
@@ -636,6 +639,10 @@ export default function WorkspacePage({
                       snapshot={snapshot}
                       onSnapshot={acceptSnapshot}
                       onConversation={openResearchConversation}
+                      onConversationFirst={() =>
+                        setConversationFirst((request) => request + 1)
+                      }
+                      onProjectBrief={setProjectBrief}
                       onWorkspaceChanged={updateProjectWorkspace}
                       onReviewHandoff={onReviewHandoff}
                     />
@@ -691,6 +698,16 @@ export default function WorkspacePage({
               </h1>
               {(active || submitting) && (
                 <p role="status">ChatGPT is working…</p>
+              )}
+              {/* The brief heads the conversation only when the chat stands
+                  alone; beside the overview it would repeat what is on screen. */}
+              {workspaceId && projectBrief && (
+                <p
+                  className="hidden max-w-[720px] truncate [[data-layout=assistant]_&]:block"
+                  title={projectBrief}
+                >
+                  {projectBrief}
+                </p>
               )}
             </div>
             {workspaceId && (

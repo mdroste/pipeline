@@ -162,12 +162,88 @@ const effectiveHarness = {
   diagnostics: [], developerInstructions: preset.instructions, contextPreview: "", contextTruncated: false,
   dynamicTools: [], fingerprint: "fixture", valueSources: {},
 };
-const projectHome = {
-  settings: { id: "home", workspaceId: workspace.id, kind: "home", revision: 1, updatedAt: now, body: { manuscriptRevisionId: null, baselineExecutionId: null, briefNoteIds: [], excludedNoteIds: [], ignoredPaths: [], layout: "reading" } },
-  notes: [], noteHistory: [], tasks: [], anchors: [], papers: [], executions: [],
-  ledger: { claims: [], evidence: [], staleClaims: [], unsupportedAcceptedClaims: [] },
-  inventory: null, changes: [], applications: [], workingCopyStatus: "Folder attached", fileAcceptance: false, contextPreview: "",
+// `?project=thin` shows a project with nothing but conversations; `?project=bare`
+// shows the folder-only project this fixture used before the overview derived state.
+const projectKind = params.get("project") ?? "rich";
+if (projectKind === "thin") workspace.root = null as unknown as string;
+const note = (id: string, kind: string, body: string, state = "accepted") => ({
+  id, workspaceId: workspace.id, paperId: null, kind, body, state, origin: state === "proposed" ? "assistant" : "user",
+  pinned: kind === "question", revision: 1, createdAt: "2026-09-28T09:00:00Z", updatedAt: "2026-09-28T09:00:00Z",
+});
+const record = (id: string, kind: string, body: unknown, updatedAt = now) => ({ id, workspaceId: workspace.id, kind, revision: 1, body, updatedAt });
+const file = (path: string, hash: string) => ({ path, hash, size: 2048, status: "current", executable: false });
+const manuscript = {
+  paper: { id: "paper-minwage", workspaceId: workspace.id, title: "Minimum wages and county-pair employment", role: "manuscript", currentRevisionId: "rev-v8", createdAt: "2026-08-30T12:00:00Z", updatedAt: "2026-09-29T15:00:00Z" },
+  revision: { id: "rev-v8", paperId: "paper-minwage", inputKind: "source_tree", entrypoint: "/Users/mike/Papers/minwage/paper", dependencyManifest: {}, contentHash: "hash-v8", textReference: null, compiledArtifactId: null, extraction: {}, captureComplete: true, capturedAt: "2026-09-29T15:00:00Z" },
 };
+const emptyHome = {
+  settings: { id: "home", workspaceId: workspace.id, kind: "home", revision: 1, updatedAt: now, body: { manuscriptRevisionId: null, baselineExecutionId: null, briefNoteIds: [], excludedNoteIds: [], ignoredPaths: [], layout: "reading" } },
+  notes: [] as unknown[], noteHistory: [], tasks: [] as unknown[], anchors: [], papers: [] as unknown[], executions: [] as unknown[],
+  ledger: { claims: [], evidence: [], staleClaims: [] as string[], unsupportedAcceptedClaims: [] as string[] },
+  inventory: null as unknown, changes: [], applications: [], workingCopyStatus: "Folder attached", workingCopyChanged: 0, fileAcceptance: false, contextPreview: "",
+};
+const projectHome =
+  projectKind === "bare"
+    ? emptyHome
+    : projectKind === "thin"
+      ? { ...emptyHome, notes: [note("q1", "question", "Do county-pair minimum wage comparisons identify employment effects under spillovers?")] }
+      : {
+          ...emptyHome,
+          settings: { ...emptyHome.settings, body: { ...emptyHome.settings.body, manuscriptRevisionId: "rev-v8", targetDate: "2026-11-15", targetLabel: "AEJ: Applied resubmission" } },
+          notes: [
+            note("q1", "question", "Do county-pair minimum wage comparisons identify employment effects under spillovers?"),
+            note("n1", "next_step", "Re-estimate Table 4 with commuting-zone clusters before answering Referee 2."),
+            note("p1", "assumption", "No anticipation in the two quarters before treatment.", "proposed"),
+            note("p2", "decision", "Report the border-pair estimate as the headline number.", "proposed"),
+          ],
+          tasks: [record("task-1", "task", { objective: "Add the commuting-zone robustness table to the appendix", anchorId: null, expectedOutputs: [], expectedChecks: [], status: "open" })],
+          papers: [manuscript],
+          executions: [
+            { id: "exec-1", workspaceId: workspace.id, sessionId: session.id, outcome: "completed", adapter: "stata", createdAt: "2026-09-29T16:00:00Z", startedAt: "2026-09-29T16:00:00Z", endedAt: "2026-09-29T16:20:00Z" },
+            { id: "exec-2", workspaceId: workspace.id, sessionId: session.id, outcome: "failed", adapter: "stata", createdAt: "2026-09-29T16:30:00Z", startedAt: "2026-09-29T16:30:00Z", endedAt: "2026-09-29T16:31:00Z" },
+          ],
+          ledger: { claims: [], evidence: [], staleClaims: ["claim-1", "claim-2"], unsupportedAcceptedClaims: [] },
+          inventory: record("inventory", "inventory", {
+            rootIdentity: "root", capturedAt: now, complete: true, warnings: [],
+            files: [file("paper/main.tex", "a2aaaaaaaaaa"), file("analysis/event_study.do", "b2bbbbbbbbbb"), file("analysis/tables.do", "cccccccccccc"), file("output/table4.tex", "dddddddddddd"), file("data/county_pairs.dta", "eeeeeeeeeeee")],
+          }),
+          workingCopyChanged: 2,
+        };
+if (projectKind === "rich")
+  localStorage.setItem(
+    `pipeline.project.visit.${workspace.id}`,
+    JSON.stringify({
+      version: 1, since: null, baseline: null, lastActive: "2026-09-28T18:00:00Z",
+      latest: { "paper/main.tex": "aaaaaaaaaaaa", "analysis/event_study.do": "bbbbbbbbbbbb", "analysis/tables.do": "cccccccccccc", "data/county_pairs.dta": "eeeeeeeeeeee" },
+    }),
+  );
+else localStorage.removeItem(`pipeline.project.visit.${workspace.id}`);
+const response = (number: string, disposition: string, draft = "", resolvingCheck = "") =>
+  record(`resp-${number}`, "response", {
+    source: { kind: "report", revisionId: "rev-v7" }, flags: [],
+    decision: { number, category: "identification", severity: "medium", disposition, intendedResponse: "", taskId: null, manuscriptRevisionId: null, applicationId: null, executionId: null, evidenceAnchorIds: [], draft, rationale: "", disputedPremise: "", counterargument: "", resolvingCheck, reportsAnalysisAdded: false },
+  });
+const studioRecords: Record<string, unknown[]> = {
+  build: [
+    record("build-receipt", "build", {
+      recordType: "receipt", executionId: "exec-build", outcome: "failed",
+      diagnostics: [
+        { severity: "error", message: "Undefined control sequence \\tnote in output/table4.tex", path: "output/table4.tex", line: 18 },
+        { severity: "warning", message: "Reference `tab:cz' undefined", path: "paper/main.tex", line: 412 },
+      ],
+      pdf: null, mappingArtifactId: null, pageInspection: "", synchronization: "", sourceManifest: null,
+    }, "2026-09-29T15:40:00Z"),
+  ],
+  response: [
+    response("R1.1", "addressed", "We now report the event-study leads."),
+    response("R1.2", "addressed", "Clustering is at the commuting-zone level."),
+    response("R1.3", "investigating", "We agree and are re-estimating.", "Re-run Table 4 with commuting-zone clusters"),
+    response("R2.1", "open"),
+    response("R2.2", "open"),
+    response("R2.3", "deferred", "Outside the scope of this revision."),
+  ],
+};
+const coverage = (printed: string, state: string, reasons: string[]) => ({ record: record(`bind-${printed}`, "binding", { printed }), state, reasons, numericPassed: state === "current", expected: null, dependency: { state }, result: null, anchor: {} });
 
 const workspaceModelCatalog = {
   models: [
@@ -265,6 +341,7 @@ const commandData: Record<string, unknown> = {
     },
   ],
   workbench_project_tasks: [],
+  workbench_project_mutate: {},
   workbench_project_capabilities: { fileAcceptance: false, hostExecution: false },
   workbench_list_papers: [],
   workbench_list_sources: [],
@@ -303,7 +380,47 @@ const commandData: Record<string, unknown> = {
     ],
   },
   workbench_context_selection: { revision: 0, items: [] },
-  task_list: [],
+  ...(projectKind === "rich"
+    ? {
+        workbench_studio_records: (args: { kind: string }) => studioRecords[args.kind] ?? [],
+        workbench_binding_coverage: [
+          coverage("-0.042", "stale", ["Declared execution inputs changed"]),
+          coverage("0.118", "stale", ["Printed value or sign disagrees at the declared precision"]),
+          coverage("1,204", "current", []),
+          coverage("0.31", "unknown", ["Proposed link requires explicit confirmation"]),
+        ],
+        workbench_change_impact: {
+          impacts: [
+            { object: { kind: "execution", id: "exec-1", revision: "1" }, status: "input_changed", reason: "Declared input analysis/event_study.do changed since this execution", path: [{}] },
+            { object: { kind: "result", id: "res-1", revision: "1" }, status: "review_needed", reason: "Input changed via Result adopted from this execution", path: [{}, {}] },
+            { object: { kind: "record", id: "bind-1", revision: "1" }, status: "review_needed", reason: "Input changed via Result binding execution", path: [{}, {}, {}] },
+          ],
+          relations: [], complete: true, limitations: [],
+        },
+        workbench_repository_status: {
+          branch: "main", head: "4f8fb37c0de", upstream: "origin/main", ahead: 1, behind: 2,
+          fetchedAt: "2026-09-29T09:00:00Z", changed: 3, untracked: 1, conflicts: 0,
+          changedPaths: ["paper/main.tex", "analysis/event_study.do", "output/table4.tex", "notes/scratch.md"],
+          remote: { name: "origin", host: "github.com", owner: "mdroste", repo: "minwage", webUrl: "https://github.com/mdroste/minwage" },
+          commits: [
+            { sha: "4f8fb37c0de", author: "Michael Droste", date: "2026-09-29T14:10:00Z", subject: "Re-estimate Table 4 with commuting-zone clusters" },
+            { sha: "46b4ae9", author: "Jane Doe", date: "2026-09-29T08:30:00Z", subject: "Rewrite the identification section" },
+            { sha: "481e17a", author: "Michael Droste", date: "2026-09-20T12:00:00Z", subject: "Add event-study figure" },
+          ],
+          incoming: [
+            { sha: "aaa1111", author: "Jane Doe", date: "2026-09-29T08:50:00Z", subject: "Respond to Referee 2 on spillovers" },
+            { sha: "bbb2222", author: "Sam Lee", date: "2026-09-29T08:40:00Z", subject: "Update county-pair sample" },
+          ],
+        },
+        workbench_program: (args: { action: { action: string } }) =>
+          args.action.action === "monitors"
+            ? { checks: [], lifecycle: "running", attention: [{ id: "att-1", body: { title: "FRED series CES7072200001 was revised", outcome: null }, createdAt: "2026-09-29T08:00:00Z", acknowledgedAt: null }] }
+            : null,
+      }
+    : {}),
+  task_list: projectKind === "rich"
+    ? [{ id: "task-rr", revision: 2, name: "Re-review after Table 4 changes", state: "finished", reason: null, createdAt: 1790000000, updatedAt: Date.parse("2026-09-29T11:00:00Z") / 1000, dueAt: null, sessionId: session.id, scheduleId: null }]
+    : [],
   task_schedules: [],
   task_saved_chains: [],
   task_proposals: [],
@@ -323,7 +440,10 @@ let callbackId = 1;
   invoke: async (command: string, _args?: unknown) => {
     if (command.startsWith("plugin:event|")) return callbackId++;
     if (command.startsWith("plugin:")) return null;
-    if (command in commandData) return structuredClone(commandData[command]);
+    if (command in commandData) {
+      const value = commandData[command];
+      return structuredClone(typeof value === "function" ? value(_args) : value);
+    }
     if (!misses.has(command)) {
       misses.add(command);
       console.warn(`FIXTURE-MISS ${command}`);

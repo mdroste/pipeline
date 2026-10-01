@@ -108,7 +108,12 @@ Pipeline can also make these non-document network requests:
   that discovery locally; signed, bundled policy metadata supplies role,
   pricing, and deprecation labels without a remote policy fetch;
 - download the optional managed PaddleOCR-VL runtime and model weights after
-  the user chooses Install.
+  the user chooses Install;
+- contact a project folder's Git remote when the user chooses Check GitHub (or
+  Check *host*) in that project. This runs `git fetch` with the user's own Git
+  credentials and transfers repository data to the local clone; Pipeline sends
+  no project content and never commits, merges, or pushes. Repository status
+  is otherwise read from the local clone without a network request.
 
 The basic bundled Poppler extractor does not require a network request.
 

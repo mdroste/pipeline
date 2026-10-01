@@ -30,6 +30,9 @@ export interface HomeSettings {
   excludedNoteIds: string[];
   ignoredPaths: string[];
   layout: string;
+  /** One optional milestone as YYYY-MM-DD; absent on records saved before it existed. */
+  targetDate?: string | null;
+  targetLabel?: string;
 }
 export interface FileEntry {
   path: string;
@@ -120,6 +123,8 @@ export interface ProjectHome {
   applications: ProjectRecord<Application>[];
   contextPreview: string;
   workingCopyStatus: string;
+  /** Files the current paper version depends on that changed or went missing. */
+  workingCopyChanged?: number;
   fileAcceptance: boolean;
 }
 export type ProjectAction =

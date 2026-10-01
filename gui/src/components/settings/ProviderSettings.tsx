@@ -246,11 +246,7 @@ export function ProvidersSection({
   return (
     <>
       <SettingsCard id="anthropic-provider">
-        <ProviderHeader
-          name="Anthropic"
-          description="Claude through a subscription or the Anthropic API."
-          badge="Reviews"
-        />
+        <ProviderHeader name="Anthropic" />
         {check("claude")}
         <AccessModeSelector
           provider="Claude"
@@ -268,21 +264,16 @@ export function ProvidersSection({
             }
           />
         ) : (
-          <p className="settings-row-description mt-3">
-            Uses the account signed in through Claude.{" "}
-            {settings.anthropic_api_key
-              ? "A saved API key is inactive in subscription mode."
-              : ""}
-          </p>
+          settings.anthropic_api_key && (
+            <p className="settings-row-description mt-3">
+              A saved API key is inactive in subscription mode.
+            </p>
+          )
         )}
         <ReviewSaveFeedback />
       </SettingsCard>
       <SettingsCard id="openai-provider">
-        <ProviderHeader
-          name="OpenAI"
-          description="One ChatGPT account for conversations and structured reviews."
-          badge="Conversations · Reviews"
-        />
+        <ProviderHeader name="OpenAI" />
         <section
           id="workspace-provider"
           tabIndex={-1}
@@ -368,11 +359,7 @@ export function ProvidersSection({
         </section>
       </SettingsCard>
       <SettingsCard id="google-provider">
-        <ProviderHeader
-          name="Google"
-          description="Gemini models through the Google API."
-          badge="Reviews"
-        />
+        <ProviderHeader name="Google" />
         {check("antigravity")}
         <AccessModeSelector
           provider="Gemini"

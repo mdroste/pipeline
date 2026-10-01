@@ -940,11 +940,7 @@ describe("SettingsPage", () => {
     expect(
       screen.queryByRole("button", { name: "Save" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Preferences save automatically. API keys have a Save button.",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText("Preferences save automatically.")).toBeVisible();
     await user.selectOptions(
       screen.getByLabelText("Preferred Provider"),
       "codex",

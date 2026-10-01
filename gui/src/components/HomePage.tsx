@@ -71,24 +71,11 @@ export default function HomePage({
   return (
     <div className="min-h-full bg-white text-gray-950 dark:bg-neutral-950 dark:text-neutral-50">
       <div className="mx-auto w-full max-w-6xl px-6 py-10 sm:px-10 lg:px-14 lg:py-14">
-        <header className="max-w-3xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-400 dark:text-neutral-500">
-            Research home
-          </p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
-            Move your research forward.
-          </h1>
-          <p className="mt-3 max-w-2xl text-[15px] leading-7 text-gray-500 dark:text-neutral-400">
-            Work in a project, ask the assistant, run a rigorous review, or
-            continue a research automation.
-          </p>
-        </header>
-
         {hasCurrentReview && (
           <button
             type="button"
             onClick={onContinueReview}
-            className="mt-8 flex w-full items-center gap-4 rounded-2xl border border-blue-200/80 bg-blue-50/70 px-5 py-4 text-left transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-blue-900/80 dark:bg-blue-950/25 dark:hover:border-blue-800 dark:hover:bg-blue-950/40"
+            className="flex w-full items-center gap-4 rounded-2xl border border-blue-200/80 bg-blue-50/70 px-5 py-4 text-left transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-blue-900/80 dark:bg-blue-950/25 dark:hover:border-blue-800 dark:hover:bg-blue-950/40"
           >
             <span
               className={`h-2.5 w-2.5 shrink-0 rounded-full ${reviewRunning ? "animate-pulse bg-blue-500" : "bg-emerald-500"}`}
@@ -110,17 +97,13 @@ export default function HomePage({
           </button>
         )}
 
-        <section aria-labelledby="start-heading" className="mt-10">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h2 id="start-heading" className="text-base font-semibold">
-                What would you like to do?
-              </h2>
-              <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-                Start with the outcome; Pipeline will open the right place.
-              </p>
-            </div>
-          </div>
+        <section
+          aria-labelledby="start-heading"
+          className={hasCurrentReview ? "mt-10" : undefined}
+        >
+          <h1 id="start-heading" className="text-base font-semibold">
+            What would you like to do?
+          </h1>
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             {actions.map((action) => (
               <button

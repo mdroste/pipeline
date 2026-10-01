@@ -226,6 +226,8 @@ pub fn run() {
             workbench::commands::workbench_project_home,
             workbench::commands::workbench_project_tasks,
             workbench::commands::workbench_project_index,
+            workbench::commands::workbench_repository_status,
+            workbench::commands::workbench_repository_fetch,
             workbench::commands::workbench_capture_execution_plan,
             workbench::commands::workbench_execution_plan_status,
             workbench::commands::workbench_authorize_execution_plan,

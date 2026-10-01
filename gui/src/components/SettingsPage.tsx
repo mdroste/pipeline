@@ -230,7 +230,7 @@ export default function SettingsPage({
               ) : savePending ? (
                 "Changes pending…"
               ) : (
-                "Preferences save automatically. API keys have a Save button."
+                "Preferences save automatically."
               )
             }
           />
@@ -383,7 +383,6 @@ export default function SettingsPage({
                       <ProviderHeader
                         name="OpenAI-compatible"
                         description="Ollama, LM Studio, llama.cpp, or another compatible server."
-                        badge="Reviews"
                       />
                       <ConnectionStatus
                         provider="local"
@@ -499,7 +498,6 @@ export default function SettingsPage({
                   <AdvancedSettings
                     settings={settings}
                     setSettings={setSettings}
-                    onSavingChange={setResearchDataSaving}
                   />
                 )}
               </div>

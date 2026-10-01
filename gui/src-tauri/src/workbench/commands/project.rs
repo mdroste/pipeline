@@ -14,6 +14,38 @@ pub async fn workbench_project_home(
 ) -> WorkbenchResult<crate::workbench::project::ProjectHome> {
     run_store(move |store| crate::workbench::project::home(&store, &workspace_id)).await
 }
+/// Git runs outside the database workers: a slow repository or remote must not
+/// hold one of them.
+async fn run_git<T, F>(operation: F) -> WorkbenchResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> WorkbenchResult<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| WorkbenchError::worker(format!("Git worker stopped: {error}"), true))?
+}
+#[tauri::command]
+pub async fn workbench_repository_status(
+    workspace_id: String,
+) -> WorkbenchResult<Option<crate::workbench::project::repository::RepositoryStatus>> {
+    use crate::workbench::project::repository;
+    let root = run_store(move |store| repository::repository_root(&store, &workspace_id)).await?;
+    match root {
+        Some(root) => run_git(move || Ok(repository::inspect(&root))).await,
+        None => Ok(None),
+    }
+}
+#[tauri::command]
+pub async fn workbench_repository_fetch(
+    workspace_id: String,
+) -> WorkbenchResult<crate::workbench::project::repository::RepositoryStatus> {
+    use crate::workbench::project::repository;
+    let root = run_store(move |store| repository::repository_root(&store, &workspace_id))
+        .await?
+        .ok_or_else(|| WorkbenchError::invalid("Attach a folder to this project first"))?;
+    run_git(move || repository::fetch(&root)).await
+}
 #[tauri::command]
 pub async fn workbench_project_tasks(
     workspace_id: String,

@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  remoteLabel,
+  repositoryClient,
+  type RepositoryStatus,
+} from "../../lib/repositoryClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import {
   Card,
   button,
   input,
@@ -17,6 +23,8 @@ export default function ProjectSettings({
   workspace,
   act,
   saveSettings,
+  workspaceId,
+  reportError,
   watch,
   setWatch,
   onImportPaper,
@@ -38,6 +46,37 @@ export default function ProjectSettings({
     }
   }, [data.settings.body.ignoredPaths]);
 
+  const [targetLabel, setTargetLabel] = useState(
+    () => data.settings.body.targetLabel ?? "",
+  );
+  // Local Git state of the attached folder; null when it is not a repository.
+  const [repository, setRepository] = useState<RepositoryStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const root = workspace?.root ?? null;
+  useEffect(() => {
+    let stale = false;
+    setRepository(null);
+    if (root)
+      void Promise.resolve()
+        .then(() => repositoryClient.status(workspaceId))
+        .then((status) => {
+          if (!stale) setRepository(status);
+        })
+        .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [workspaceId, root]);
+  const checkRemote = async () => {
+    setChecking(true);
+    try {
+      setRepository(await repositoryClient.fetch(workspaceId));
+    } catch (cause) {
+      reportError(workbenchErrorMessage(cause));
+    } finally {
+      setChecking(false);
+    }
+  };
   const versions = data.papers.filter((p) => p.revision);
   const earlier = earlierVersions(data);
   const completedRuns = data.executions.filter(
@@ -127,6 +166,83 @@ export default function ProjectSettings({
                   : `${data.ledger.staleClaims.length} claims rest on evidence that is out of date.`}
               </p>
             )}
+          </Card>
+
+          {repository && (
+            <Card
+              title="Repository"
+              action={
+                repository.remote && (
+                  <button
+                    className={button}
+                    disabled={checking}
+                    onClick={() => void checkRemote()}
+                  >
+                    {checking
+                      ? "Checking…"
+                      : `Check ${remoteLabel(repository.remote)} now`}
+                  </button>
+                )
+              }
+            >
+              <p className="text-sm">
+                {repository.remote
+                  ? `${repository.remote.owner ? `${repository.remote.owner}/` : ""}${repository.remote.repo} on ${remoteLabel(repository.remote)}`
+                  : "Local Git repository with no remote"}
+                {repository.branch ? ` · branch ${repository.branch}` : ""}
+              </p>
+              <p className={muted}>
+                {repository.upstream
+                  ? `${repository.ahead} to push, ${repository.behind} to pull, as of ${repository.fetchedAt ? formatDate(repository.fetchedAt) : "a check that has not happened yet"}.`
+                  : "This branch does not track a remote branch."}{" "}
+                {repository.changed + repository.untracked > 0 &&
+                  `${repository.changed} uncommitted and ${repository.untracked} untracked files.`}
+              </p>
+              <p className={muted}>
+                The overview reads this from the folder&rsquo;s own Git data.
+                Checking the remote runs <code>git fetch</code> with your Git
+                credentials and happens only when you ask; nothing is committed,
+                pushed, or merged.
+              </p>
+            </Card>
+          )}
+
+          <Card title="Target date">
+            <p className={muted}>
+              One optional date to keep in view, such as a submission or
+              resubmission deadline. It appears at the top of the project
+              overview.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs">
+                Date
+                <input
+                  type="date"
+                  aria-label="Target date"
+                  className={`${input} mt-1`}
+                  value={data.settings.body.targetDate ?? ""}
+                  onChange={(e) =>
+                    void saveSettings({ targetDate: e.target.value || null })
+                  }
+                />
+              </label>
+              <label className="block text-xs">
+                What it is
+                <input
+                  type="text"
+                  aria-label="Target label"
+                  className={`${input} mt-1`}
+                  value={targetLabel}
+                  maxLength={80}
+                  placeholder="Submission"
+                  onChange={(e) => setTargetLabel(e.target.value)}
+                  onBlur={() => {
+                    if (targetLabel !== (data.settings.body.targetLabel ?? ""))
+                      void saveSettings({ targetLabel: targetLabel.trim() });
+                  }}
+                />
+              </label>
+            </div>
           </Card>
 
           <Card

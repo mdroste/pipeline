@@ -50,6 +50,11 @@ import type {
   ReviewHandoff,
   ConversationSnapshot,
 } from "../lib/workbenchTypes";
+import {
+  briefNotes,
+  isThinProject,
+  projectSessions,
+} from "../lib/projectOverview";
 import ProjectOverview from "./project-surface/ProjectOverview";
 import ProjectSettings from "./project-surface/ProjectSettings";
 import ProjectActionItems from "./project-surface/ProjectActionItems";
@@ -102,7 +107,13 @@ export default function WorkspaceProjectSurface({
   navigationInSidebar = false,
   snapshot = null,
   onSnapshot,
+  onConversationFirst,
+  onProjectBrief,
 }: {
+  /** Called once when a project with nothing but conversations is opened on its overview. */
+  onConversationFirst?: () => void;
+  /** The brief of a conversation-only project, for display beside its conversation. */
+  onProjectBrief?: (brief: string | null) => void;
   onReviewHandoff?: (handoff: ReviewHandoff) => void;
   destination?: ProjectTab;
   onDestination?: (tab: ProjectTab) => void;
@@ -473,6 +484,23 @@ export default function WorkspaceProjectSurface({
       setSelectionAction(null);
     });
 
+  // A project with no folder or paper has nothing to derive, so it opens on
+  // its latest conversation rather than on an overview with nothing to say.
+  const thin = data ? isThinProject(data, workspace) : false;
+  const hasConversation = projectSessions(sessions, workspaceId).length > 0;
+  const entryTab = useRef(tab);
+  const conversationFirst = useRef(false);
+  useEffect(() => {
+    if (conversationFirst.current || !thin || !hasConversation) return;
+    conversationFirst.current = true;
+    if (entryTab.current === "overview" && tab === "overview")
+      onConversationFirst?.();
+  }, [thin, hasConversation]);
+  const thinBrief = data && thin ? (briefNotes(data)[0]?.body ?? null) : null;
+  useEffect(() => {
+    onProjectBrief?.(thinBrief);
+  }, [thinBrief]);
+
   const openObject = useCallback((value: OpenResearchObject) => {
     if (value.kind === "paper") {
       setObject(null);
@@ -773,6 +801,15 @@ export default function WorkspaceProjectSurface({
             <ProjectOverview
               {...api}
               sessions={sessions}
+              active={!object && tab === "overview"}
+              transcript={
+                snapshot
+                  ? { sessionId: snapshot.session.id, items: snapshot.items }
+                  : null
+              }
+              onAsk={(prompt, context) =>
+                void run(() => onConversation(prompt, undefined, context))
+              }
               showProjectName={navigationInSidebar}
               onResume={(id) =>
                 void run(() => onResumeSession?.(id) ?? Promise.resolve())

@@ -5,6 +5,27 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
+- Project overviews now report the state of the paper instead of listing
+  conversations and notes: the current version, last build, outstanding and
+  regressed review findings, numbers and claims that no longer match their
+  results, progress through review comments, and what changed since your last
+  visit. Sections with nothing to report are hidden and every row has one
+  action. The resume card recalls your last request and any unsent draft, a
+  brief can be drafted from the paper, and Project settings has one optional
+  target date. Projects with only conversations open directly on the latest
+  conversation.
+
+- Projects whose folder is a Git repository show its branch, uncommitted work,
+  recent commits, and commits waiting on the remote, with links for GitHub
+  repositories. Checking the remote runs `git fetch` with your own Git
+  credentials only when you ask; Pipeline never commits, merges, or pushes.
+
+- Home now starts directly with its action cards and current review, with
+  introductory headings and helper copy removed.
+
+- Settings connection cards now omit redundant provider descriptions, account
+  explanations, and scope badges, and the save-status note is shorter.
+
 - Conversations and Reviews now share one ChatGPT sign-in, model catalog, and
   account controls. Existing managed sign-ins migrate automatically when
   unambiguous; conflicting accounts can be selected in Settings. Account changes

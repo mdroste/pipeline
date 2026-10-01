@@ -142,3 +142,34 @@ it("clamps the split to actual space and restores each project's saved width and
     "380",
   );
 });
+
+it("opens a conversation-only project on its chat unless a layout was chosen", () => {
+  const desk = (id: string, conversationFirstRequest: number) => (
+    <WorkspaceDesk
+      key={id}
+      workspaceId={id}
+      conversationFirstRequest={conversationFirstRequest}
+      project={<p>Overview</p>}
+      navigationHidden
+      onNavigation={vi.fn()}
+    >
+      <p>Chat content</p>
+    </WorkspaceDesk>
+  );
+  const view = render(desk("thin", 0));
+  resize(1200);
+  expect(screen.getByText("Overview")).toBeVisible();
+  view.rerender(desk("thin", 1));
+  expect(screen.getByText("Overview")).not.toBeVisible();
+  expect(screen.getByText("Chat content")).toBeVisible();
+  // The default is not saved: a project that later gains a paper opens split.
+  expect(localStorage.getItem("pipeline.workspace.view.thin")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Back to project" }));
+  expect(localStorage.getItem("pipeline.workspace.view.thin")).toBe("project");
+
+  localStorage.setItem("pipeline.workspace.view.chosen", "split");
+  view.rerender(desk("chosen", 1));
+  resize(1200);
+  view.rerender(desk("chosen", 2));
+  expect(screen.getByText("Overview")).toBeVisible();
+});

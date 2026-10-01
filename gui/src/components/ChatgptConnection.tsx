@@ -108,10 +108,6 @@ export default function ChatgptConnection({
             ? "Not signed in to ChatGPT."
             : "Checking ChatGPT account…"}
       </p>
-      <p className="text-xs text-gray-500">
-        One ChatGPT account for Conversations and Reviews. Signing out affects
-        both.
-      </p>
       {!!status?.existingAccounts?.length && (
         <div className="space-y-2 text-sm">
           <p>

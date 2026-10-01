@@ -20,6 +20,7 @@ mod files;
 mod index;
 pub use index::{project_index, ProjectIndexItem};
 pub mod relations;
+pub mod repository;
 pub use file_workspace::{
     read_conversation_file, read_workspace_file, snapshot_conversation_file, FilePreview,
     FileReadRequest,
@@ -33,6 +34,8 @@ pub use task_pages::{task_page, TaskCursor, TaskPage};
 pub use tasks::*;
 #[cfg(all(test, unix))]
 mod tests;
+#[cfg(test)]
+mod home_tests;
 
 const MAX_FILE: u64 = 32 * 1024 * 1024;
 const MAX_CAPTURE: u64 = 256 * 1024 * 1024;
@@ -202,6 +205,11 @@ pub struct ProjectHomeSettings {
     pub ignored_paths: Vec<String>,
     #[serde(default)]
     pub layout: String,
+    /// One optional milestone (for example a submission deadline) as YYYY-MM-DD.
+    #[serde(default)]
+    pub target_date: Option<String>,
+    #[serde(default)]
+    pub target_label: String,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -220,6 +228,8 @@ pub struct ProjectHome {
     pub applications: Vec<ProjectRecord>,
     pub context_preview: String,
     pub working_copy_status: String,
+    /// Files the current paper version depends on that changed or went missing.
+    pub working_copy_changed: usize,
     pub file_acceptance: bool,
 }
 pub(super) fn home_record(store: &Store, workspace_id: &str) -> WorkbenchResult<ProjectRecord> {
@@ -319,23 +329,28 @@ pub fn capabilities() -> Value {
     json!({"platform":std::env::consts::OS,"fileAcceptance":cfg!(unix),"git":tool("git"),"latex":tool("pdflatex").or_else(||tool("latexmk")),"pdfPages":tool("pdftoppm"),"stataPolicy":if cfg!(target_os="macos") {"Configure /bin/zsh -lic with oldstata. A profile test verifies the local wrapper; executable discovery alone does not."} else {"Stata host execution is not qualified on this platform."},"qualification":"Project reading is local and needs no model. Native model turns require ChatGPT sign-in. Research commands require explicit host authorization. Packaged builds and other platforms remain release qualification gates.","record":"docs/workbench/release-qualification.md"})
 }
 
-fn working_copy_status(store: &Store, ws: &str) -> WorkbenchResult<String> {
+fn working_copy_status(store: &Store, ws: &str) -> WorkbenchResult<(String, usize)> {
     let Some(selected) = selected_manuscript(store, ws)? else {
-        return Ok(
+        return Ok((
             "Choose the current version of the paper to compare it with the files in this folder."
                 .into(),
-        );
+            0,
+        ));
     };
     let revision = documents::revision(store, ws, &selected)?;
     let Some(saved) = records(store, ws, "inventory")?.into_iter().next() else {
-        return Ok(
+        return Ok((
             "Refresh the file list to compare the folder with the current version of the paper."
                 .into(),
-        );
+            0,
+        ));
     };
     let inventory: Inventory = decode(&saved)?;
     let Some(project_root) = store.workspace(ws)?.root else {
-        return Ok("No folder is attached. The imported paper is still readable.".into());
+        return Ok((
+            "No folder is attached. The imported paper is still readable.".into(),
+            0,
+        ));
     };
     let mut changed = 0;
     let mut unknown = 0;
@@ -383,12 +398,13 @@ fn working_copy_status(store: &Store, ws: &str) -> WorkbenchResult<String> {
         " Only files the paper depends on are compared; last checked {}.",
         inventory.captured_at
     ));
-    Ok(status)
+    Ok((status, changed))
 }
 
 pub fn home(store: &Store, workspace_id: &str) -> WorkbenchResult<ProjectHome> {
     scope(store, workspace_id)?;
     let tasks = task_page(store, workspace_id, None)?;
+    let (working_copy_status, working_copy_changed) = working_copy_status(store, workspace_id)?;
     Ok(ProjectHome {
         settings: home_record(store, workspace_id)?,
         notes: research::list_notes(store, workspace_id, true)?,
@@ -405,7 +421,8 @@ pub fn home(store: &Store, workspace_id: &str) -> WorkbenchResult<ProjectHome> {
         changes: records(store, workspace_id, "checkpoint")?,
         applications: records(store, workspace_id, "application")?,
         context_preview: project_context(store, workspace_id)?,
-        working_copy_status: working_copy_status(store, workspace_id)?,
+        working_copy_status,
+        working_copy_changed,
         file_acceptance: cfg!(unix),
     })
 }
@@ -421,6 +438,16 @@ fn save_home(
         || settings.ignored_paths.len() > 100
     {
         return Err(WorkbenchError::invalid("Invalid project preferences"));
+    }
+    if settings.target_label.chars().count() > 80
+        || settings
+            .target_date
+            .as_deref()
+            .is_some_and(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err())
+    {
+        return Err(WorkbenchError::invalid(
+            "The target date must be a calendar date with a label of at most 80 characters",
+        ));
     }
     if let Some(id) = &settings.manuscript_revision_id {
         documents::revision(store, workspace_id, id)?;

@@ -14,14 +14,15 @@ import WorkspaceMenu from "./WorkspaceMenu";
 import WorkspaceIcon from "./WorkspaceIcon";
 
 type DeskView = "project" | "assistant" | "split";
-function loadView(key: string): DeskView {
+function loadView(key: string): DeskView | null {
   try {
     const value = localStorage.getItem(key);
-    if (value === "project" || value === "assistant") return value;
+    if (value === "project" || value === "assistant" || value === "split")
+      return value;
   } catch {
     /* Optional device preference. */
   }
-  return "split";
+  return null;
 }
 
 export default function WorkspaceDesk({
@@ -34,6 +35,7 @@ export default function WorkspaceDesk({
   assistantRequest = 0,
   projectRequest = 0,
   resetRequest = 0,
+  conversationFirstRequest = 0,
   attentionCount = 0,
   active = false,
   onStop,
@@ -54,6 +56,9 @@ export default function WorkspaceDesk({
   assistantRequest?: number;
   projectRequest?: number;
   resetRequest?: number;
+  /** Bumped for a project with nothing but conversations: show the chat alone
+      unless the researcher already chose a layout for this project. */
+  conversationFirstRequest?: number;
   attentionCount?: number;
   active?: boolean;
   onStop?: () => void;
@@ -67,9 +72,16 @@ export default function WorkspaceDesk({
 }) {
   const [root, width] = useContainerWidth<HTMLDivElement>();
   const preferenceKey = `pipeline.workspace.view.${workspaceId ?? "unfiled"}`;
-  const [preferred, setPreferred] = useState<DeskView>(() =>
-    loadView(preferenceKey),
+  const [preferred, setPreferred] = useState<DeskView>(
+    () => loadView(preferenceKey) ?? "split",
   );
+  // A layout counts as chosen once one was saved for this project or the
+  // researcher changed it here. Only an unchosen layout follows the
+  // conversation-first default, and that default is never saved, so a project
+  // that later gains a paper opens on the split view again.
+  const [hadPreference] = useState(() => loadView(preferenceKey) !== null);
+  const chosen = useRef(hadPreference);
+  const automatic = useRef(false);
   const [assistantWidth, setAssistantWidth] = usePersistentPanelWidth(
     `pipeline.workspace.assistantWidth.${workspaceId ?? "unfiled"}`,
     380,
@@ -79,7 +91,12 @@ export default function WorkspaceDesk({
   const [lastPane, setLastPane] = useState<"project" | "assistant">("project");
   // Request counters belong to the page. A newly selected project must not
   // replay another project's old requests over its saved layout preference.
-  const requests = useRef({ assistantRequest, projectRequest, resetRequest });
+  const requests = useRef({
+    assistantRequest,
+    projectRequest,
+    resetRequest,
+    conversationFirstRequest,
+  });
   const projectRef = useRef<HTMLDivElement>(null);
   const assistantRef = useRef<HTMLDivElement>(null);
   const projectButton = useRef<HTMLButtonElement>(null);
@@ -94,12 +111,30 @@ export default function WorkspaceDesk({
         ? lastPane
         : preferred;
   useEffect(() => {
+    if (automatic.current) {
+      automatic.current = false;
+      return;
+    }
+    if (!chosen.current && preferred === "split") return;
+    chosen.current = true;
     try {
       localStorage.setItem(preferenceKey, preferred);
     } catch {
       /* Optional preference. */
     }
   }, [preferenceKey, preferred]);
+  useEffect(() => {
+    if (
+      conversationFirstRequest !== requests.current.conversationFirstRequest &&
+      !chosen.current &&
+      preferred === "split"
+    ) {
+      automatic.current = true;
+      setLastPane("assistant");
+      setPreferred("assistant");
+    }
+    requests.current.conversationFirstRequest = conversationFirstRequest;
+  }, [conversationFirstRequest]);
   useLayoutEffect(() => {
     if (
       effective === "project" &&
@@ -130,8 +165,18 @@ export default function WorkspaceDesk({
     }
     requests.current.projectRequest = projectRequest;
   }, [projectRequest]);
-  const reset = () => {
+  const split = () => {
+    // Choosing the default explicitly still counts as a choice.
+    chosen.current = true;
+    try {
+      localStorage.setItem(preferenceKey, "split");
+    } catch {
+      /* Optional preference. */
+    }
     setPreferred("split");
+  };
+  const reset = () => {
+    split();
     setAssistantWidth(380);
   };
   useEffect(() => {
@@ -211,7 +256,7 @@ export default function WorkspaceDesk({
                 Chat only
               </button>
               {fits && (
-                <button type="button" onClick={() => setPreferred("split")}>
+                <button type="button" onClick={split}>
                   Project + chat
                 </button>
               )}

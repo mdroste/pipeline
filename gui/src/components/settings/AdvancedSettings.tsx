@@ -8,17 +8,14 @@ import {
   type ProjectCapabilities,
 } from "../../lib/projectClient";
 import { SectionHeader, SettingsCard, Toggle } from "./controls";
-import WorkspaceResearchDataSettings from "../WorkspaceResearchDataSettings";
 import { ReviewSaveFeedback } from "./SaveState";
 
 export default function AdvancedSettings({
   settings,
   setSettings,
-  onSavingChange,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
-  onSavingChange: (value: boolean) => void;
 }) {
   const [version, setVersion] = useState("");
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
@@ -88,11 +85,6 @@ export default function AdvancedSettings({
             Capability information is unavailable.
           </p>
         )}
-        <WorkspaceResearchDataSettings
-          mode="diagnostics"
-          expanded
-          onSavingChange={onSavingChange}
-        />
       </SettingsCard>
       <SettingsCard id="app-version">
         <SectionHeader

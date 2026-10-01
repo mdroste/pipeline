@@ -75,9 +75,6 @@
 .settings-provider-mark {
   @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-lg font-semibold dark:border-neutral-700 dark:bg-neutral-800;
 }
-.settings-scope {
-  @apply mt-2 inline-block rounded bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-neutral-800 dark:text-neutral-400;
-}
 .settings-disclosure {
   @apply border-t border-gray-200 pt-4 dark:border-neutral-700;
 }

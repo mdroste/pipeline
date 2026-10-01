@@ -342,7 +342,7 @@ describe("App run options", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Move your research forward.",
+        name: "What would you like to do?",
       }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Home" })).toHaveAttribute(
@@ -1020,7 +1020,7 @@ describe("App run options", () => {
     expect(
       screen.queryByRole("note", { name: "Data and privacy" }),
     ).not.toBeInTheDocument();
-    await screen.findByRole("heading", { name: "Move your research forward." });
+    await screen.findByRole("heading", { name: "What would you like to do?" });
   });
 
   it("links the first-run notice to the detailed privacy explanation", async () => {
