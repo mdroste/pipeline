@@ -80,7 +80,7 @@ reproducible builds.
 
 ## Review and publish
 
-Maintain [the candidate evidence manifest](docs/releases/1.0.0-qualification.json)
+Maintain [the candidate evidence manifest](docs/releases/1.0.1-qualification.json)
 with the exact final commit, tool/provider versions, expected/observed outcomes,
 platforms, and SHA-256-bound evidence and installer files. Keep sanitized evidence
 and installers beside a completed copy of that manifest, then run:

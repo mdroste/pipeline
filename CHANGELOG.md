@@ -3,10 +3,14 @@
 This file records user-visible and release-integrity changes. Development before
 the first public release was not maintained as a stable release series.
 
-## 1.0.0 — 2026-10-07
+## 1.0.1 — 2026-10-07
 
 First stable release. Installers are published for macOS (Apple Silicon and
-Intel), Windows x86-64, and Linux x86-64.
+Intel), Windows x86-64, and Linux x86-64. The `v1.0.0` tag was never released:
+its installers could not be packaged.
+
+- On Windows, conversations can now read project files, and research backups
+  written on Windows pass their own integrity check.
 
 - Patch rustls and affected frontend test-tool dependency versions. Remaining
   upstream WebdriverIO advisories and release qualification gaps are tracked in
