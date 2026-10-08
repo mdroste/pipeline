@@ -264,10 +264,11 @@ it("ignores a superseded same-session hydration", async () => {
 
 it("clears a restored active turn when reconciliation confirms it ended", async () => {
   const { result, saved, unmount } = await draftFixture({
-    activeBinding: { providerThreadId: "thread" },
+    activeBinding: { id: "binding", providerThreadId: "thread" },
     turns: [
       {
         id: "turn",
+        bindingId: "binding",
         providerTurnId: "turn",
         terminalAt: null,
         state: "inProgress",
@@ -282,6 +283,30 @@ it("clears a restored active turn when reconciliation confirms it ended", async 
   });
   await act(async () => {
     await result.current.hydrate();
+  });
+  expect(result.current.active).toBeNull();
+  unmount();
+});
+
+it("never pairs an unfinished historical turn with a successor binding", async () => {
+  const { result, unmount } = await draftFixture({
+    activeBinding: { id: "new-binding", providerThreadId: "new-thread" },
+    turns: [
+      {
+        id: "old",
+        bindingId: "old-binding",
+        providerTurnId: "old-turn",
+        terminalAt: null,
+        state: "inProgress",
+      },
+      {
+        id: "new",
+        bindingId: "new-binding",
+        providerTurnId: "new-turn",
+        terminalAt: "now",
+        state: "completed",
+      },
+    ],
   });
   expect(result.current.active).toBeNull();
   unmount();

@@ -26,6 +26,58 @@ export default {
       colors: {
         gray: colors.neutral,
         blue: adaptiveAccent,
+        // Semantic tokens from App.css. Theme switching happens in the
+        // variables, so these need no dark: variant.
+        surface: "var(--ui-surface)",
+        raised: "var(--ui-raised)",
+        sunken: "var(--ui-sunken)",
+        line: "var(--ui-border)",
+        "line-strong": "var(--ui-border-strong)",
+        ink: "var(--ui-text)",
+        "ink-muted": "var(--ui-muted)",
+        accent: "var(--ui-accent)",
+        "accent-soft": "var(--ui-accent-soft)",
+        inverse: "var(--ui-inverse)",
+        "on-inverse": "var(--ui-on-inverse)",
+        danger: "var(--ui-danger)",
+        warning: "var(--ui-warning)",
+        "warning-soft": "var(--ui-warning-soft)",
+        scrim: "var(--ui-scrim)",
+      },
+      borderRadius: {
+        "ui-sm": "var(--ui-radius-sm)",
+        "ui-md": "var(--ui-radius-md)",
+        "ui-lg": "var(--ui-radius-lg)",
+      },
+      boxShadow: {
+        "ui-1": "var(--ui-shadow-1)",
+        "ui-2": "var(--ui-shadow-2)",
+        "ui-3": "var(--ui-shadow-3)",
+      },
+      fontSize: {
+        "ui-meta": ["var(--ui-text-meta)", "16px"],
+        "ui-label": ["var(--ui-text-label)", "18px"],
+        "ui-body": ["var(--ui-text-body)", "22px"],
+        "ui-title": ["var(--ui-text-title)", "24px"],
+      },
+      keyframes: {
+        "ui-pop": {
+          from: { opacity: "0", transform: "scale(0.97)" },
+          to: { opacity: "1", transform: "scale(1)" },
+        },
+        "ui-sheet": {
+          from: { opacity: "0", transform: "translateX(16px)" },
+          to: { opacity: "1", transform: "translateX(0)" },
+        },
+        "ui-shimmer": {
+          from: { backgroundPosition: "200% 0" },
+          to: { backgroundPosition: "-200% 0" },
+        },
+      },
+      animation: {
+        "ui-pop": "ui-pop 120ms ease-out",
+        "ui-sheet": "ui-sheet 160ms ease-out",
+        "ui-shimmer": "ui-shimmer 1.6s linear infinite",
       },
       fontFamily: {
         sans: ['"Inter"', "system-ui", "sans-serif"],

@@ -10,7 +10,9 @@ import type { ProjectIndexItem } from "../src/lib/projectIndex";
 import type { WorkbenchSession, Workspace } from "../src/lib/workbenchTypes";
 import type { WorkspaceDestination } from "../src/lib/workspaceNavigation";
 import "../src/App.css";
-import "../src/components/WorkspaceConversation.css";
+import "../src/components/WorkspaceDesk.css";
+import "../src/components/WorkspaceNavigation.css";
+import "../src/components/WorkspaceInspector.css";
 
 const time = "2026-09-13T15:00:00Z";
 const workspace: Workspace = {

@@ -633,6 +633,40 @@ fn snapshot_tree(store: &Store, files: Vec<(String, Vec<u8>)>) -> Result<Value> 
         json!({"kind":"artifactTree","path":destination,"hash":digest,"manifest":manifest,"filename":"paper-project","bytes":files.iter().map(|(_,b)|b.len()).sum::<usize>()}),
     )
 }
+/// Reconstruct abandonment from durable stop/retry records, including a crash
+/// after Task state committed but before its Review pin was released.
+pub fn reconcile_abandoned_reviews(store: &Store) -> Result<()> {
+    for operation in store.abandoned_operations()? {
+        if operation.len() != 32 || !operation.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Invalid abandoned Task operation".into());
+        }
+        let path = store
+            .root
+            .join("actions")
+            .join(&operation)
+            .join("review-run.json");
+        if !path.try_exists().map_err(err)? {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        crate::safety::open_regular_file(&path)?
+            .take(4097)
+            .read_to_end(&mut bytes)
+            .map_err(err)?;
+        if bytes.len() > 4096 {
+            return Err("Review ownership journal exceeds its limit".into());
+        }
+        let metadata: Value = serde_json::from_slice(&bytes).map_err(err)?;
+        crate::commands::orchestration::release_abandoned_pin(
+            metadata["runId"]
+                .as_str()
+                .ok_or("Review ownership journal omitted its run")?,
+            &operation,
+        )?;
+    }
+    Ok(())
+}
+
 pub fn recover_review(store: &Store, operation: &str) -> Result<Option<Value>> {
     let root = store.root.join("actions").join(operation);
     let input = root.join("review-input.json");

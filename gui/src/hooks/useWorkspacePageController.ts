@@ -22,7 +22,11 @@ import {
 import { payloadText, roleFor } from "../components/WorkspaceConversationView";
 import { deskClient, type ContextItem } from "../lib/deskClient";
 import { appEvents } from "../lib/appEvents";
-import { router } from "../lib/router";
+import { asContextItems } from "../lib/workspaceAttachments";
+import {
+  useWorkspaceRouteEntry,
+  type WorkspaceEntryTarget,
+} from "./useWorkspaceRouteEntry";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
@@ -38,11 +42,13 @@ function newOperation(prefix: string) {
 }
 
 export function useWorkspacePageController({
+  entryTarget,
   entryRequest = 0,
   entrySurface,
   newProjectRequest = 0,
   onNewProjectRequestHandled,
 }: {
+  entryTarget?: WorkspaceEntryTarget;
   entryRequest?: number;
   entrySurface?: "chat" | "project";
   newProjectRequest?: number;
@@ -55,12 +61,18 @@ export function useWorkspacePageController({
     440,
   );
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<string | null>(() =>
-    localStorage.getItem("pipeline.workspace.workspaceId"),
+  const [workspaceId, setWorkspaceId] = useState<string | null>(
+    () =>
+      entryTarget?.projectId ??
+      (entryTarget?.sessionId
+        ? null
+        : localStorage.getItem("pipeline.workspace.workspaceId")),
   );
   const [sessions, setSessions] = useState<WorkbenchSession[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(() =>
-    localStorage.getItem("pipeline.workspace.sessionId"),
+    entryTarget?.sessionId || entryTarget?.projectId
+      ? null
+      : localStorage.getItem("pipeline.workspace.sessionId"),
   );
   const [snapshot, setSnapshot] = useState<ConversationSnapshot | null>(null);
   const [models, setModels] = useState<WorkspaceModel[]>([]);
@@ -282,7 +294,12 @@ export function useWorkspacePageController({
     setSubmitting(pendingHere && !owner.turnId);
     const inProgress = [...next.turns]
       .reverse()
-      .find((turn) => !turn.terminalAt && turn.providerTurnId);
+      .find(
+        (turn) =>
+          !turn.terminalAt &&
+          turn.providerTurnId &&
+          turn.bindingId === next.activeBinding?.id,
+      );
     if (!activeRef.current || (!pendingHere && !inProgress)) {
       setStream("");
       if (streamFlushRef.current !== null)
@@ -476,9 +493,15 @@ export function useWorkspacePageController({
 
   const saveCurrentDraft = useCallback(async () => {
     await selectionSaveRef.current;
-    if (sessionId && !active && !submittingRef.current)
-      await persistDraft(sessionId, draft);
-  }, [active, draft, persistDraft, sessionId]);
+    const id = sessionRef.current;
+    if (
+      id &&
+      snapshotRef.current?.session.id === id &&
+      !activeRef.current &&
+      !submittingRef.current
+    )
+      await persistDraft(id, draftRef.current);
+  }, [persistDraft]);
 
   const selectProject = useCallback(
     async (id: string | null) => {
@@ -598,6 +621,7 @@ export function useWorkspacePageController({
         sessionId ||
         !workspaceId ||
         detail.workspaceId !== workspaceId ||
+        !detail.objects.length ||
         contextBusyRef.current
       )
         return;
@@ -606,12 +630,7 @@ export function useWorkspacePageController({
       void openResearchConversation(
         "Work with this exact research source.",
         undefined,
-        [
-          {
-            role: detail.object.kind === "dataset" ? "data_dictionary" : "main",
-            object: detail.object,
-          },
-        ],
+        asContextItems(detail.objects),
       )
         .catch((cause) => setError(workbenchErrorMessage(cause)))
         .finally(() => {
@@ -938,45 +957,46 @@ export function useWorkspacePageController({
       request.params?.threadId === snapshot?.activeBinding?.providerThreadId ||
       request.params?.threadId === active?.threadId,
   );
-  // While the workspace is mounted, later commits of a workspace route (from
-  // the shell, activity, or notifications) switch conversation or project in
-  // place. The commit that first mounted the page is handled by the entry
-  // props, not this subscription.
-  useEffect(() => {
-    return router.subscribe(({ route }) => {
-      if (route.page !== "workspace") return;
-      if (route.sessionId) {
-        const id = route.sessionId;
-        void workbenchClient
-          .sessionSnapshot(id)
-          .then(async (snapshot) => {
-            setWorkspaceId(snapshot.session.workspaceId);
-            await loadSessions(snapshot.session.workspaceId);
-            await selectSession(id);
-            setSurface("chat");
-          })
-          .catch((cause) => setError(workbenchErrorMessage(cause)));
-        return;
+  useWorkspaceRouteEntry(
+    entryRequest,
+    entryTarget,
+    async (target, current) => {
+      await saveCurrentDraft();
+      const selected = target.sessionId
+        ? await workbenchClient.sessionSnapshot(target.sessionId)
+        : null;
+      if (!current()) return;
+      const project = selected
+        ? selected.session.workspaceId
+        : target.projectId;
+      if (
+        project !== undefined &&
+        (project !== workspaceId ||
+          (target.sessionId !== undefined &&
+            target.sessionId !== sessionRef.current))
+      ) {
+        hydrationGeneration.current++;
+        sessionListSequence.current++;
+        setWorkspaceId(project);
+        setSnapshot(null);
+        snapshotRef.current = null;
+        setDraft("");
+        sessionRef.current = target.sessionId ?? null;
+        setSessionId(target.sessionId ?? null);
+        if (project !== workspaceId) setSessions([]);
+        if (target.sessionId) void hydrate(target.sessionId);
       }
-      if (route.projectId) {
-        const id = route.projectId;
-        const tab = route.destination;
-        void selectProject(id)
-          .then(() => {
-            if (tab)
-              appEvents.emit("workspace-destination", {
-                workspaceId: id,
-                tab,
-              });
-          })
-          .catch((cause) =>
-            setError(
-              `Could not switch projects: ${workbenchErrorMessage(cause)}`,
-            ),
-          );
-      }
-    });
-  }, [loadSessions, selectProject, selectSession]);
+      if (target.destination && isWorkspaceDestination(target.destination))
+        setDestinationState({
+          workspaceId: project ?? workspaceId,
+          tab: target.destination,
+        });
+      setSurface(target.surface ?? (target.sessionId ? "chat" : "project"));
+      setNavigationOpen(false);
+      setInspector(null);
+    },
+    (cause) => setError(workbenchErrorMessage(cause)),
+  );
   const recordDestination = useCallback(
     (tab: WorkspaceDestination) => {
       setDestinationState({ workspaceId, tab });

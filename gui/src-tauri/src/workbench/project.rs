@@ -32,10 +32,10 @@ pub use documents::*;
 pub use studio::*;
 pub use task_pages::{task_page, TaskCursor, TaskPage};
 pub use tasks::*;
-#[cfg(all(test, unix))]
-mod tests;
 #[cfg(test)]
 mod home_tests;
+#[cfg(all(test, unix))]
+mod tests;
 
 const MAX_FILE: u64 = 32 * 1024 * 1024;
 const MAX_CAPTURE: u64 = 256 * 1024 * 1024;

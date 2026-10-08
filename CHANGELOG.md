@@ -3,7 +3,40 @@
 This file records user-visible and release-integrity changes. Development before
 the first public release was not maintained as a stable release series.
 
-## Unreleased
+## 1.0.0 — 2026-10-07
+
+First stable release. Installers are published for macOS (Apple Silicon and
+Intel), Windows x86-64, and Linux x86-64.
+
+- Patch rustls and affected frontend test-tool dependency versions. Remaining
+  upstream WebdriverIO advisories and release qualification gaps are tracked in
+  [the October 2 audit](ASTRA_PIPELINE_OCT2.md).
+
+- Research backups now include app-owned conversation working files in `.pwrx`
+  format 2. This build can still restore format-1 backups; older builds cannot
+  read format 2. External project folders, Review/Automation stores, Trash and
+  credentials are excluded. Imported trash journals are discarded and unfinished
+  conversation turns are retained as interrupted history.
+- Background conversation titles use their own native process. Workflow drafts
+  survive recovery-cache failures, and same-page project/automation navigation
+  saves or guards unsaved work and rejects superseded loads. Malformed route
+  encoding and unreadable saved navigation fall back without breaking startup.
+- Automation control evaluation and retained context are bounded independently
+  of model actions. Settled failed/cancelled Review pins are reconciled. Host
+  writes finish before their invocation releases ownership.
+- Local macOS source builds may be unsigned. Official builds still require
+  signing; bundled Poppler inventories and candidate qualification checks make
+  release evidence explicit.
+
+- The conversation composer is rebuilt. Model and thinking are one picker that
+  shows your ChatGPT account, remaining usage, what each model is for, and the
+  thinking levels it supports. The message field grows as you type, and Send
+  and Stop are one button. The "+" menu now only adds things to a message:
+  files, a project document, or an automation. Files can be dropped onto the
+  conversation. Attached sources appear as chips with plain-language roles
+  such as "Main paper" and "Referee report". Menus, the project switcher, and
+  tooltips share one themed style, and dark mode uses one background across
+  the project and chat panes.
 
 - Project overviews now report the state of the paper instead of listing
   conversations and notes: the current version, last build, outstanding and

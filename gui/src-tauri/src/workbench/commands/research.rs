@@ -349,7 +349,7 @@ pub async fn workbench_link_review_handoff(
 pub async fn workbench_export_research_archive(
     request: crate::workbench::release::ExportArchiveRequest,
 ) -> WorkbenchResult<crate::workbench::release::ArchiveReport> {
-    run_store_exclusive(move |store| {
+    run_storage_maintenance(move |store| {
         if crate::workbench::research::jobs::has_active() {
             return Err(WorkbenchError::invalid(
                 "Stop local jobs before exporting a consistent archive",

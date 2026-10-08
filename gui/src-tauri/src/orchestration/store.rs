@@ -250,6 +250,12 @@ impl Store {
         serde_json::from_str(&body).map_err(err)
     }
     pub fn save(&self, run: &mut TaskRun, kind: &str, detail: &str) -> Result<()> {
+        if !super::state::context_within_budget(&run.progress) {
+            return Err(
+                "Task context budget reached; reconcile durable action results before continuing"
+                    .into(),
+            );
+        }
         let mut c = self.connection()?;
         let tx = c
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -384,6 +390,16 @@ impl Store {
     }
     pub fn next_due(&self) -> Result<Option<i64>> {
         self.connection()?.query_row("SELECT MIN(t) FROM (SELECT due_at t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM missions WHERE state IN ('queued','running','waiting','paused','stopping') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM missions WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT deadline_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT next_due_at t FROM schedules s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')))",[],|r|r.get(0)).map_err(err)
+    }
+    pub fn abandoned_operations(&self) -> Result<Vec<String>> {
+        let c = self.connection()?;
+        let mut q = c.prepare("SELECT DISTINCT json_extract(j.value,'$.operation') FROM runs r, json_each(r.body,'$.progress.receipts') j WHERE r.state='cancelled' UNION SELECT DISTINCT json_extract(j.value,'$.operation') FROM events e, json_each(CASE WHEN json_valid(e.detail) THEN e.detail ELSE '{}' END,'$.attempts') j WHERE e.kind='retry'").map_err(err)?;
+        let operations = q
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err);
+        operations
     }
     pub fn events(&self, id: &str, after: i64) -> Result<Vec<Event>> {
         let c = self.connection()?;

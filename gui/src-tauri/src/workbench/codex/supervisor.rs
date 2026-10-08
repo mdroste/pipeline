@@ -325,6 +325,27 @@ impl AppServerSupervisor {
     /// final assistant text. Server requests are declined and the turn is
     /// interrupted, so a side call can never wait on the user.
     pub async fn run_side_turn(&self, request: SideTurnRequest) -> Result<String, RequestError> {
+        // Side calls own a separate process. Their teardown must never interrupt
+        // the foreground conversation, even on an ambiguous acknowledgement.
+        let account = self.account.as_ref().ok_or_else(|| {
+            RequestError::unavailable("A managed account is required for a side turn")
+        })?;
+        let home = tempfile::tempdir().map_err(|e| RequestError::unavailable(e.to_string()))?;
+        let mut side = Self::launch_with_codex_home(self.epoch, home.path().join("codex")).await?;
+        account
+            .attach(&side.native.client)
+            .await
+            .map_err(RequestError::unavailable)?;
+        side.account = Some(account.clone());
+        side.projection_enabled = false;
+        side.run_owned_side_turn(request, Some(home)).await
+    }
+
+    async fn run_owned_side_turn(
+        &self,
+        request: SideTurnRequest,
+        home: Option<tempfile::TempDir>,
+    ) -> Result<String, RequestError> {
         if request.text.is_empty() || request.text.len() > MAX_SIDE_TURN_TEXT_BYTES {
             return Err(RequestError::invalid(format!(
                 "Side turn text must contain 1 to {MAX_SIDE_TURN_TEXT_BYTES} bytes"
@@ -335,6 +356,7 @@ impl AppServerSupervisor {
             native: self.native.clone(),
             completed: false,
             submitted: false,
+            home,
         };
         let mut events = self.native.client.subscribe();
         let connection = self
@@ -1092,18 +1114,22 @@ struct SideAccountUse {
     native: Arc<NativeSession>,
     completed: bool,
     submitted: bool,
+    home: Option<tempfile::TempDir>,
 }
 impl Drop for SideAccountUse {
     fn drop(&mut self) {
-        if self.completed || !self.submitted {
-            return;
-        }
-        if let Some(permit) = self.permit.take() {
+        if self.home.is_some() || (!self.completed && self.submitted) {
+            let permit = self.permit.take();
+            let home = self.home.take();
             let native = self.native.clone();
             tokio::spawn(async move {
                 let _permit = permit;
+                let _home = home;
                 native.terminate().await;
             });
         }
     }
 }
+
+#[cfg(test)]
+mod side_ownership_tests;

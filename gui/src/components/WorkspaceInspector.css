@@ -1,0 +1,135 @@
+/* Views that open inside the chat pane: assistant settings, context,
+   outline, and activity. */
+.workspace-assistant-inspector {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.workspace-assistant-inspector[hidden] {
+  display: none !important;
+}
+.workspace-assistant-inspector > aside {
+  width: 100%;
+}
+.workspace-assistant-inspector aside > header {
+  padding: 8px 16px;
+}
+.workspace-assistant-inspector aside > header h2 {
+  font-size: var(--ui-text-title);
+}
+.workspace-assistant-inspector aside > header p {
+  margin-top: 2px;
+}
+.workspace-assistant-inspector .workspace-research-tabs {
+  padding: 0 16px 8px;
+}
+.workspace-research-content {
+  overflow-wrap: anywhere;
+}
+.workspace-research-content input,
+.workspace-research-content select,
+.workspace-research-content textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workspace-simple-inspector {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  font-size: var(--ui-text-label);
+}
+.workspace-inspector-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.workspace-inspector-heading h2 {
+  font-size: var(--ui-text-title);
+  font-weight: 600;
+}
+.workspace-inspector-heading button {
+  padding: 4px 10px;
+}
+.workspace-simple-inspector p {
+  margin-bottom: 12px;
+}
+.workspace-simple-inspector > button {
+  display: block;
+  margin: 12px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-text-meta);
+}
+.workspace-activity-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--ui-border);
+  overflow-wrap: anywhere;
+}
+.workspace-activity-row span {
+  display: block;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+
+.workspace-quick-settings {
+  padding-top: 12px;
+  border-top: 1px solid var(--ui-border);
+}
+.workspace-quick-settings > summary {
+  cursor: pointer;
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+}
+.workspace-quick-settings fieldset > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: var(--ui-text-meta);
+}
+.workspace-quick-settings textarea,
+.workspace-quick-settings input:not([type="checkbox"]) {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+}
+.workspace-quick-settings p {
+  margin: 12px 0;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+.workspace-quick-settings fieldset > button {
+  padding: 7px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-text-meta);
+}
+.workspace-module-choices {
+  margin-top: 14px;
+}
+.workspace-module-choices label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: var(--ui-text-meta);
+}
+.workspace-module-choices input {
+  margin-top: 3px;
+}
+.workspace-module-choices small {
+  display: block;
+  margin-top: 3px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}

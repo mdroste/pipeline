@@ -69,7 +69,12 @@ export function useProfileOperations(
         const normalized = normalizeConfig(c);
         const draftKey = `pipeline.workflowDraft.${a}`;
         let restored = normalized;
-        const savedDraft = window.localStorage.getItem(draftKey);
+        let savedDraft: string | null = null;
+        try {
+          savedDraft = window.localStorage.getItem(draftKey);
+        } catch {
+          editor.disableRecoveryCache();
+        }
         if (savedDraft) {
           try {
             const candidate = normalizeConfig(
@@ -89,7 +94,11 @@ export function useProfileOperations(
               setDirty(true);
             }
           } catch {
-            window.localStorage.removeItem(draftKey);
+            try {
+              window.localStorage.removeItem(draftKey);
+            } catch {
+              editor.disableRecoveryCache();
+            }
           }
         }
         if (!live) return;

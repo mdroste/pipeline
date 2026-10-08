@@ -299,7 +299,7 @@ fn side_turns_run_ephemeral_tool_free_threads_and_return_the_final_message() {
             },
         );
         let text = supervisor
-            .run_side_turn(side_turn_request(&workspace))
+            .run_owned_side_turn(side_turn_request(&workspace), None)
             .await
             .unwrap();
         assert_eq!(text, "Identification in panels");
@@ -348,7 +348,7 @@ fn side_turns_decline_server_requests_and_stop() {
             },
         );
         let error = supervisor
-            .run_side_turn(side_turn_request(&workspace))
+            .run_owned_side_turn(side_turn_request(&workspace), None)
             .await
             .unwrap_err();
         assert!(

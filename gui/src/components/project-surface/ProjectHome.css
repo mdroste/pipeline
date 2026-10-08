@@ -333,3 +333,23 @@
     font-size: 25px;
   }
 }
+
+/* Collapsible sections shared by the overview and project settings. */
+.workspace-overview-details {
+  border-top: 1px solid var(--ui-border);
+}
+.workspace-overview-details > summary {
+  cursor: pointer;
+  padding: 15px 0;
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+}
+.workspace-overview-details > summary > span {
+  margin-left: 12px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  font-weight: 400;
+}
+.workspace-overview-details-body {
+  padding: 4px 0 20px;
+}

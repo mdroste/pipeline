@@ -62,7 +62,10 @@ draft and fails completeness until the other platforms have been built.
 The Poppler packaging policy is unchanged. macOS copies the available Homebrew
 Poppler and its dylib closure; Linux copies the runner's installed APT utilities
 and selected native libraries. Windows downloads the locked provider archive
-and verifies its archive hash. Platform caches may reuse that bundled tree.
+and verifies its archive hash. Platform caches may reuse that bundled tree only after `BUNDLE_INVENTORY.json`
+hashes match every file. Cache keys include the bundler, lock and inventory
+code; no partial-key fallback is used. Notices preparation regenerates the
+observed version and file inventory after macOS signing.
 The build prepares the three configured notice files and packages them alongside
 Poppler resources. See [bundle-poppler.sh](scripts/release/bundle-poppler.sh) and
 [Tauri configuration](gui/src-tauri/tauri.conf.json) for the actual inputs.
@@ -76,6 +79,21 @@ package sources and signing services also prevent a claim of bit-for-bit
 reproducible builds.
 
 ## Review and publish
+
+Maintain [the candidate evidence manifest](docs/releases/1.0.0-qualification.json)
+with the exact final commit, tool/provider versions, expected/observed outcomes,
+platforms, and SHA-256-bound evidence and installer files. Keep sanitized evidence
+and installers beside a completed copy of that manifest, then run:
+
+```bash
+node scripts/release/qualify-release.mjs /absolute/path/evidence.json <candidate-commit>
+```
+
+The command fails on missing/pending scenarios, a different commit, or changed
+files. This is a required pre-publication check; the draft build does not certify
+human observations. The checked-in manifest intentionally remains pending until
+those observations exist. Its current matrix requires all four advertised
+platforms; narrowing scope requires an explicit product and gate change.
 
 Before manually publishing the draft, verify its tag/commit, quality and
 completeness conclusions, installer checksums, release notes, and intended
@@ -102,3 +120,12 @@ reviewing the upstream change and rerunning release-contract tests. Changes to
 Poppler packaging require explicit review of the active bundling script and
 applicable locked inputs; do not assume unused provenance utilities constrain
 that script.
+
+## Local unsigned macOS builds
+
+The pre-bundle CLI signing hook skips signing when `APPLE_SIGNING_IDENTITY` is
+unset for a local source build. Official CI sets `PIPELINE_OFFICIAL_RELEASE=1`
+and requires that identity. Signed builds select the explicit
+`PIPELINE_CLI_BINARY`, the configured target triple, or the default
+`target/release/pipeline-cli`; `CARGO_TARGET_DIR` is respected. A missing selected
+binary fails instead of signing unrelated stale target directories.

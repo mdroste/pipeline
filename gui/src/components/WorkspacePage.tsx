@@ -1,7 +1,10 @@
+import type { AppRoute } from "../lib/router";
 import { useWorkspacePageController } from "../hooks/useWorkspacePageController";
 import WorkspaceMenu from "./WorkspaceMenu";
 import WorkspaceToolPicker from "./WorkspaceToolPicker";
-import WorkspaceComposerControls from "./WorkspaceComposerControls";
+import WorkspaceComposerControls, {
+  loadAccountSummary,
+} from "./WorkspaceComposerControls";
 import RetainedWorkspaceView from "./RetainedWorkspaceView";
 import WorkspaceProjectNavigation from "./WorkspaceProjectNavigation";
 import { workspaceDestinations } from "../lib/workspaceNavigation";
@@ -9,10 +12,17 @@ import WorkspaceDesk from "./WorkspaceDesk";
 import WorkspaceConversationView from "./WorkspaceConversationView";
 import WorkspaceContextInspector from "./WorkspaceContextInspector";
 import WorkspaceContextTray from "./WorkspaceContextTray";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import "./WorkspaceConversation.css";
+import "./WorkspaceNavigation.css";
+import "./WorkspaceInspector.css";
+import RequestCard from "./WorkspaceRequestCard";
+import useComposerFileDrop from "../hooks/useComposerFileDrop";
+import IconButton from "../ui/IconButton";
+import Select from "../ui/Select";
+import { MenuItem, MenuLabel, MenuSeparator } from "../ui/Menu";
+import { Icon } from "../ui/icons";
 import WorkspaceIcon from "./WorkspaceIcon";
 import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkspaceComposerMenu from "./WorkspaceComposerMenu";
@@ -21,7 +31,7 @@ import {
   ConversationMenu,
   MoveConversationDialog,
 } from "./WorkspaceConversationActions";
-import type { WorkbenchEvent, ReviewHandoff } from "../lib/workbenchTypes";
+import type { ReviewHandoff } from "../lib/workbenchTypes";
 
 const WorkspaceProjectSurface = lazy(() => import("./WorkspaceProjectSurface"));
 const WorkspaceProjectDialog = lazy(() => import("./WorkspaceProjectDialog"));
@@ -32,125 +42,10 @@ const WorkspaceHarnessEditor = lazy(() => import("./WorkspaceHarnessEditor"));
 /** Placeholder title until the first exchange is auto-titled or the user renames. */
 const DEFAULT_TITLE = "New conversation";
 
-function RequestCard({
-  event,
-  onResolve,
-}: {
-  event: WorkbenchEvent;
-  onResolve: (event: WorkbenchEvent, result?: Record<string, unknown>) => void;
-}) {
-  const params = event.params ?? {};
-  const questions = Array.isArray(params.questions)
-    ? (params.questions as Array<Record<string, unknown>>)
-    : [];
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const isQuestion = event.method === "item/tool/requestUserInput";
-  const isPermission = event.method === "item/permissions/requestApproval";
-  return (
-    <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
-      <div className="font-semibold text-amber-950 dark:text-amber-100">
-        {isQuestion
-          ? "ChatGPT has a question"
-          : isPermission
-            ? "Permission requested"
-            : "Approval requested"}
-      </div>
-      {!isQuestion && (
-        <p className="mt-2 whitespace-pre-wrap text-amber-900 dark:text-amber-200">
-          {String(
-            params.reason ??
-              params.command ??
-              "Review this request before continuing.",
-          )}
-        </p>
-      )}
-      {questions.map((question) => {
-        const id = String(question.id ?? "question");
-        const options = Array.isArray(question.options)
-          ? (question.options as Array<Record<string, unknown>>)
-          : [];
-        return (
-          <label key={id} className="mt-3 block">
-            <span className="block font-medium">
-              {String(question.question ?? "Response")}
-            </span>
-            {options.length ? (
-              <select
-                value={answers[id] ?? ""}
-                onChange={(e) =>
-                  setAnswers((old) => ({ ...old, [id]: e.target.value }))
-                }
-                className="mt-1 w-full rounded border bg-white p-2 dark:bg-neutral-900"
-              >
-                <option value="">Choose…</option>
-                {options.map((option) => (
-                  <option
-                    key={String(option.label)}
-                    value={String(option.label)}
-                  >
-                    {String(option.label)}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type={question.isSecret ? "password" : "text"}
-                value={answers[id] ?? ""}
-                onChange={(e) =>
-                  setAnswers((old) => ({ ...old, [id]: e.target.value }))
-                }
-                className="mt-1 w-full rounded border bg-white p-2 dark:bg-neutral-900"
-              />
-            )}
-          </label>
-        );
-      })}
-      <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            if (isQuestion) {
-              onResolve(event, {
-                answers: Object.fromEntries(
-                  Object.entries(answers).map(([id, answer]) => [
-                    id,
-                    { answers: [answer] },
-                  ]),
-                ),
-              });
-            } else if (isPermission) {
-              onResolve(event, {
-                permissions: params.permissions as Record<string, unknown>,
-                scope: "turn",
-              });
-            } else {
-              onResolve(event, { decision: "accept" });
-            }
-          }}
-          className="rounded bg-amber-900 px-3 py-1.5 font-medium text-white dark:bg-amber-100 dark:text-amber-950"
-        >
-          {isQuestion ? "Submit" : "Allow once"}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            if (isQuestion) onResolve(event);
-            else if (isPermission)
-              onResolve(event, { permissions: {}, scope: "turn" });
-            else onResolve(event, { decision: "decline" });
-          }}
-          className="rounded border border-amber-400 px-3 py-1.5"
-        >
-          Decline
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function WorkspacePage({
   onAllProjects,
   onSaveHandlerChange,
+  entryTarget,
   entryRequest = 0,
   entrySurface,
   newProjectRequest = 0,
@@ -161,6 +56,7 @@ export default function WorkspacePage({
 }: {
   onAllProjects?: () => void;
   onSaveHandlerChange?: (save: (() => Promise<boolean>) | null) => void;
+  entryTarget?: Extract<AppRoute, { page: "workspace" }>;
   entryRequest?: number;
   entrySurface?: "chat" | "project";
   newProjectRequest?: number;
@@ -229,7 +125,6 @@ export default function WorkspacePage({
     selectProject,
     selectSession,
     createSession,
-    openProject,
     projectCreated,
     openResearchConversation,
     updateProjectWorkspace,
@@ -271,12 +166,29 @@ export default function WorkspacePage({
     projectFolder,
     setProjectRequest,
   } = useWorkspacePageController({
+    entryTarget,
     entryRequest,
     entrySurface,
     newProjectRequest,
     onNewProjectRequestHandled,
   });
   const [conversationFirst, setConversationFirst] = useState(0);
+  const projectLabel = useId();
+  const assistantPane = useRef<HTMLElement>(null);
+  const setComposerBusy = (value: boolean) => {
+    contextBusyRef.current = value;
+    setContextBusy(value);
+    if (value) setInspector(null);
+  };
+  const dropState = useComposerFileDrop({
+    targetRef: assistantPane,
+    workspaceId:
+      snapshot?.session.id === sessionId ? snapshot?.session.workspaceId : null,
+    sessionId,
+    blocked: submitting || Boolean(active) || contextBusy || harnessEditor,
+    onBusy: setComposerBusy,
+    onError: setError,
+  });
   const [projectBrief, setProjectBrief] = useState<string | null>(null);
 
   useEffect(() => {
@@ -346,12 +258,12 @@ export default function WorkspacePage({
         <div className="space-y-5 px-5 pb-5 pt-1">
           <div>
             <div className="mb-2 flex items-center justify-between gap-2">
-              <label
-                htmlFor="workspace-project"
-                className="text-xs font-medium text-gray-600 dark:text-gray-400"
+              <span
+                id={projectLabel}
+                className="text-ui-meta font-medium text-ink-muted"
               >
                 Project
-              </label>
+              </span>
               <button
                 type="button"
                 title="New project"
@@ -367,27 +279,23 @@ export default function WorkspacePage({
                 New project
               </button>
             </div>
-            <select
-              id="workspace-project"
+            <Select
+              className="w-full"
+              labelledBy={projectLabel}
               disabled={contextBusy || harnessEditor}
-              aria-label="Project"
               value={workspaceId ?? ""}
-              onChange={(event) => {
-                void selectProject(event.target.value || null).catch((cause) =>
+              onChange={(value) => {
+                void selectProject(value || null).catch((cause) =>
                   setError(workbenchErrorMessage(cause)),
                 );
               }}
-              className="w-full min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-            >
-              <option value="">Unfiled conversations</option>
-              {workspaces
-                .filter((item) => !item.archivedAt)
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-            </select>
+              options={[
+                { value: "", label: "Unfiled conversations" },
+                ...workspaces
+                  .filter((item) => !item.archivedAt)
+                  .map((item) => ({ value: item.id, label: item.name })),
+              ]}
+            />
             {currentWorkspace && (
               <p
                 className="mt-2 truncate text-xs text-gray-500"
@@ -679,6 +587,7 @@ export default function WorkspacePage({
         }
       >
         <section
+          ref={assistantPane}
           className="workspace-assistant relative flex min-h-0 min-w-0 flex-1 flex-col"
           onKeyDown={(event) => {
             if (
@@ -711,20 +620,18 @@ export default function WorkspacePage({
               )}
             </div>
             {workspaceId && (
-              <button
-                type="button"
-                className="workspace-sidebar-icon-button"
+              <IconButton
+                label="New chat"
+                tooltipSide="bottom"
                 disabled={contextBusy || harnessEditor}
-                aria-label="New chat"
-                title="New chat"
                 onClick={() =>
                   void createSession().catch((cause) =>
                     setError(workbenchErrorMessage(cause)),
                   )
                 }
               >
-                <WorkspaceIcon name="plus" />
-              </button>
+                <Icon name="plus" />
+              </IconButton>
             )}
             <WorkspaceMenu
               label="Conversation menu"
@@ -732,29 +639,28 @@ export default function WorkspacePage({
               disabled={!snapshot || contextBusy || harnessEditor}
             >
               {sessions.length > 1 && (
-                <label>
-                  Conversation
-                  <select
-                    aria-label="Assistant conversation"
-                    value={sessionId ?? ""}
-                    onChange={(event) =>
-                      void selectSession(event.target.value).catch((cause) =>
-                        setError(workbenchErrorMessage(cause)),
-                      )
-                    }
-                  >
-                    {sessions.map((session) => (
-                      <option key={session.id} value={session.id}>
-                        {session.title}
-                        {session.archivedAt ? " · Archived" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <>
+                  <MenuLabel>Conversations</MenuLabel>
+                  {sessions.map((session) => (
+                    <MenuItem
+                      key={session.id}
+                      checked={session.id === sessionId}
+                      description={session.archivedAt ? "Archived" : undefined}
+                      onSelect={() => {
+                        if (session.id !== sessionId)
+                          void selectSession(session.id).catch((cause) =>
+                            setError(workbenchErrorMessage(cause)),
+                          );
+                      }}
+                    >
+                      {session.title}
+                    </MenuItem>
+                  ))}
+                  <MenuSeparator />
+                </>
               )}
-              <button
-                type="button"
-                onClick={() =>
+              <MenuItem
+                onSelect={() =>
                   openInspector(
                     "outline",
                     conversationMenuRef.current ?? undefined,
@@ -762,10 +668,9 @@ export default function WorkspacePage({
                 }
               >
                 Outline
-              </button>
-              <button
-                type="button"
-                onClick={() =>
+              </MenuItem>
+              <MenuItem
+                onSelect={() =>
                   openInspector(
                     "context",
                     conversationMenuRef.current ?? undefined,
@@ -773,10 +678,9 @@ export default function WorkspacePage({
                 }
               >
                 Context
-              </button>
-              <button
-                type="button"
-                onClick={() =>
+              </MenuItem>
+              <MenuItem
+                onSelect={() =>
                   openInspector(
                     "activity",
                     conversationMenuRef.current ?? undefined,
@@ -784,14 +688,14 @@ export default function WorkspacePage({
                 }
               >
                 Activity & follow-ups
-              </button>
-              <button type="button" onClick={() => void exportCurrent()}>
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem onSelect={() => void exportCurrent()}>
                 Export conversation
-              </button>
+              </MenuItem>
               {snapshot && (
-                <button
-                  type="button"
-                  onClick={() =>
+                <MenuItem
+                  onSelect={() =>
                     void archiveSession(snapshot.session).catch((cause) =>
                       setError(workbenchErrorMessage(cause)),
                     )
@@ -800,12 +704,13 @@ export default function WorkspacePage({
                   {snapshot.session.archivedAt
                     ? "Restore conversation"
                     : "Archive conversation"}
-                </button>
+                </MenuItem>
               )}
             </WorkspaceMenu>
           </header>
           <WorkspaceConversationView
             header={null}
+            dropState={dropState}
             inspectorOpen={Boolean(inspector)}
             inspector={
               <>
@@ -944,6 +849,7 @@ export default function WorkspacePage({
                 disabled={
                   !snapshot || contextBusy || Boolean(active) || submitting
                 }
+                loadAccount={loadAccountSummary}
                 onChange={(nextModel, nextEffort) => {
                   setModel(nextModel);
                   setEffort(nextEffort);
@@ -953,11 +859,9 @@ export default function WorkspacePage({
             }
             composerSetup={
               snapshot && (
-                <button
-                  type="button"
-                  className="workspace-assistant-setup"
-                  aria-label="Assistant settings"
-                  title={
+                <IconButton
+                  label="Assistant settings"
+                  tooltip={
                     typeof snapshot.session.overrides.mode === "string"
                       ? `Assistant settings · ${snapshot.session.overrides.mode === "inspect" ? "Read only" : "Allow edits"}`
                       : "Assistant settings"
@@ -967,8 +871,8 @@ export default function WorkspacePage({
                     openInspector("settings", event.currentTarget)
                   }
                 >
-                  <WorkspaceIcon name="settings" />
-                </button>
+                  <WorkspaceIcon name="settings" size={18} />
+                </IconButton>
               )
             }
             snapshot={snapshot}
@@ -1045,26 +949,17 @@ export default function WorkspacePage({
               <WorkspaceComposerMenu
                 key={sessionId ?? "empty"}
                 snapshot={snapshot}
-                workspaces={workspaces}
                 disabled={submitting || Boolean(active) || contextBusy}
-                onProject={selectProject}
-                onCreateProject={() => setProjectDialog(true)}
-                onOpenProject={workspaceId ? openProject : undefined}
                 onSnapshot={(next) => {
                   if (sessionRef.current === next.session.id) setSnapshot(next);
                 }}
-                onBusy={(value) => {
-                  contextBusyRef.current = value;
-                  setContextBusy(value);
-                  if (value) setInspector(null);
-                }}
-                onResearch={() => {
-                  setInspector("settings");
+                onBusy={setComposerBusy}
+                onBrowseProjects={() => {
+                  if (navigationCollapsed) setNavigationOpen(true);
                 }}
                 onTasks={
                   sessionId && onTasks ? () => onTasks(sessionId) : undefined
                 }
-                onDictation={() => messageRef.current?.focus()}
               />
             }
           />

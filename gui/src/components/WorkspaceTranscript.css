@@ -1,0 +1,257 @@
+/* Chat header, transcript, and messages. The chat pane is a size container,
+   so spacing follows the pane's width, not the window's. */
+.workspace-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 52px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.workspace-chat-heading {
+  flex: 1;
+  min-width: 0;
+}
+.workspace-chat-heading h1 {
+  font-size: var(--ui-text-body);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.workspace-chat-heading p {
+  margin-top: 2px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+
+.workspace-transcript {
+  padding: 32px 40px 24px;
+  scrollbar-gutter: stable;
+}
+.workspace-transcript[hidden] {
+  display: none !important;
+}
+.workspace-transcript-content {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.workspace-latest-control {
+  display: flex;
+  justify-content: flex-end;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin-bottom: 8px;
+}
+.workspace-latest-control button {
+  background: var(--ui-surface);
+}
+
+.workspace-message {
+  min-width: 0;
+  scroll-margin-top: 24px;
+  border-radius: var(--ui-radius-lg);
+}
+.workspace-message--user {
+  width: fit-content;
+  max-width: 86%;
+  margin-left: auto;
+  padding: 14px 18px;
+  border-radius: var(--ui-radius-lg) var(--ui-radius-lg) var(--ui-radius-sm)
+    var(--ui-radius-lg);
+  background: var(--ui-sunken);
+}
+.workspace-message--assistant {
+  width: 100%;
+  padding: 4px 0;
+}
+.workspace-message-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  font-weight: 600;
+}
+.workspace-message--user .workspace-message-author {
+  margin-bottom: 8px;
+}
+.workspace-assistant-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.workspace-message-body {
+  font-size: 15px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.workspace-message-body > :first-child {
+  margin-top: 0;
+}
+.workspace-message-body > :last-child {
+  margin-bottom: 0;
+}
+.workspace-message-body p {
+  margin: 0 0 1em;
+}
+.workspace-message-body h1,
+.workspace-message-body h2,
+.workspace-message-body h3,
+.workspace-message-body h4 {
+  margin: 1.5em 0 0.65em;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.workspace-message-body h1 {
+  font-size: 1.5em;
+}
+.workspace-message-body h2 {
+  font-size: 1.3em;
+}
+.workspace-message-body h3 {
+  font-size: 1.12em;
+}
+.workspace-message-body ul {
+  list-style: disc;
+}
+.workspace-message-body ol {
+  list-style: decimal;
+}
+.workspace-message-body ul,
+.workspace-message-body ol {
+  margin: 0.75em 0 1em;
+  padding-left: 1.6em;
+}
+.workspace-message-body li {
+  margin: 0.35em 0;
+  padding-left: 0.2em;
+}
+.workspace-message-body li > p {
+  margin: 0.3em 0;
+}
+.workspace-message-body a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.workspace-message-body blockquote {
+  margin: 1em 0;
+  border-left: 3px solid var(--ui-border);
+  padding: 0.2em 0 0.2em 1em;
+  color: var(--ui-muted);
+}
+.workspace-message-body pre {
+  overflow-x: auto;
+  margin: 1.2em 0;
+  padding: 16px 18px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-sunken);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.workspace-message-body :not(pre) > code {
+  border-radius: 4px;
+  padding: 0.15em 0.35em;
+  background: var(--ui-sunken);
+  font-size: 0.87em;
+}
+.workspace-message--user :not(pre) > code {
+  background: var(--ui-surface);
+}
+.workspace-message-body .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5em 0;
+}
+.workspace-message-body hr {
+  margin: 1.5em 0;
+  border-color: var(--ui-border);
+}
+
+.workspace-copy-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.workspace-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 74px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-1);
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  font-weight: 500;
+  line-height: 18px;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+.workspace-copy-button:hover {
+  border-color: var(--ui-muted);
+  background: var(--ui-sunken);
+  color: var(--ui-text);
+}
+
+.workspace-chat-empty {
+  margin: auto;
+  padding: 64px 16px;
+  text-align: center;
+  color: var(--ui-muted);
+}
+.workspace-chat-empty h2 {
+  margin: 16px 0 8px;
+  color: var(--ui-text);
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+.workspace-chat-empty p {
+  max-width: 360px;
+  margin: 0 auto;
+  font-size: var(--ui-text-body);
+  line-height: 1.7;
+}
+
+.workspace-conversation-notices {
+  flex-shrink: 0;
+  max-height: 38%;
+  overflow: auto;
+}
+.workspace-conversation-notices:has(> div) {
+  padding: 10px 14px;
+}
+
+@container (max-width: 540px) {
+  .workspace-transcript {
+    padding: 20px 16px;
+  }
+}
+@container (max-width: 460px) {
+  .workspace-transcript {
+    padding: 16px;
+  }
+  .workspace-message-body {
+    font-size: 14px;
+    line-height: 1.7;
+  }
+}

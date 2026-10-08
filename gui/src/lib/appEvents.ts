@@ -10,8 +10,16 @@ export interface AppEventMap {
   "workspace-destination": { workspaceId: string; tab: string };
   /** Open a project file at a location (from conversation file links). */
   "open-file": { workspaceId: string; location: FileLocation };
-  /** Add a research object to the conversation context tray. */
-  "context-add": { workspaceId: string; object: OpenResearchObject };
+  /**
+   * Add research objects to the conversation's sources. `whenReady` holds
+   * them until the conversation can accept changes, for adds that follow an
+   * import; without it an add made at the wrong moment is refused.
+   */
+  "context-add": {
+    workspaceId: string;
+    objects: OpenResearchObject[];
+    whenReady?: boolean;
+  };
 }
 
 type Listener<K extends keyof AppEventMap> = (payload: AppEventMap[K]) => void;

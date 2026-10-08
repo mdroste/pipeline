@@ -75,7 +75,7 @@ impl Storage {
         }
         if !root.is_absolute() || !root.is_dir() {
             return Err(format!(
-                "Research data folder is unavailable: {}. Reconnect it or choose a folder in Settings → General, then restart Pipeline.",
+                "Research data folder is unavailable: {}. Reconnect it or choose a folder in Settings → Data & Storage, then restart Pipeline.",
                 root.display()
             ));
         }

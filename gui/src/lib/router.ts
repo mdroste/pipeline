@@ -127,7 +127,7 @@ export function serializeRoute(route: AppRoute): string {
   return `#${path}${suffix ? `?${suffix}` : ""}`;
 }
 
-/** Parse a serialized route ("#/reviews/history?run=…"). Unknown → null. */
+/** Parse a serialized route ("#/reviews/history?run=…"). Unknown or malformed → null. */
 export function parseRoute(
   serialized: string | null | undefined,
 ): AppRoute | null {
@@ -142,7 +142,12 @@ export function parseRoute(
     const candidate = `/${segments.slice(0, take).join("/")}`;
     const page = PATH_TO_PAGE.get(candidate);
     if (!page) continue;
-    const rest = segments.slice(take).map(decodeURIComponent);
+    let rest: string[];
+    try {
+      rest = segments.slice(take).map(decodeURIComponent);
+    } catch {
+      return null;
+    }
     switch (page) {
       case "workspace":
         return {
@@ -311,10 +316,18 @@ export const router = new Router();
 export function restoreRoute(
   storage: Pick<Storage, "getItem">,
 ): AppRoute | null {
-  const parsed = parseRoute(storage.getItem(ROUTE_STORAGE_KEY));
+  const read = (key: string): string | null => {
+    try {
+      return storage.getItem(key);
+    } catch {
+      // A blocked preference store must not prevent startup.
+      return null;
+    }
+  };
+  const parsed = parseRoute(read(ROUTE_STORAGE_KEY));
   if (parsed) return parsed;
   // Legacy key from builds that only remembered four pages.
-  const legacy = storage.getItem("pipeline.ui.page");
+  const legacy = read("pipeline.ui.page");
   if (legacy === "workspace" || legacy === "project-index" || legacy === "home")
     return { page: legacy };
   if (legacy === "main") return { page: "main" };

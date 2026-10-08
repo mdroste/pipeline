@@ -12,6 +12,9 @@ import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import ResizeHandle from "./ResizeHandle";
 import WorkspaceMenu from "./WorkspaceMenu";
 import WorkspaceIcon from "./WorkspaceIcon";
+import { MenuItem } from "../ui/Menu";
+import { Icon } from "../ui/icons";
+import "./WorkspaceDesk.css";
 
 type DeskView = "project" | "assistant" | "split";
 function loadView(key: string): DeskView | null {
@@ -197,7 +200,7 @@ export default function WorkspaceDesk({
           onClick={onNavigation}
           aria-label="Browse projects"
           aria-expanded={navigationOpen || !navigationHidden}
-          className="workspace-browse-button"
+          className="workspace-desk-button workspace-browse-button"
         >
           <WorkspaceIcon name="outline" />
           <span>{projectName ?? "Unfiled conversations"}</span>
@@ -209,10 +212,10 @@ export default function WorkspaceDesk({
             onClick={onTools}
             aria-label="Find a project view"
             title="Go to a project view (⌘/Ctrl K)"
-            className="workspace-tool-trigger"
+            className="workspace-desk-button workspace-tool-trigger"
           >
             <span>{toolLabel ?? "Project views"}</span>
-            <span aria-hidden="true">⌄</span>
+            <Icon name="chevron-down" className="h-3.5 w-3.5 shrink-0" />
           </button>
         )}
         <span className="flex-1" />
@@ -222,6 +225,7 @@ export default function WorkspaceDesk({
               <button
                 ref={projectButton}
                 type="button"
+                className="workspace-desk-button"
                 onClick={() => choose("project")}
               >
                 Back to project
@@ -230,6 +234,7 @@ export default function WorkspaceDesk({
             <button
               ref={assistantButton}
               type="button"
+              className="workspace-desk-button"
               aria-controls={`${id}-assistant`}
               aria-pressed={effective !== "project"}
               aria-label={effective === "project" ? "Show chat" : "Hide chat"}
@@ -249,23 +254,31 @@ export default function WorkspaceDesk({
                   : ""}
             </button>
             <WorkspaceMenu label="Project layout">
-              <button type="button" onClick={() => choose("project")}>
+              <MenuItem
+                checked={effective === "project"}
+                onSelect={() => choose("project")}
+              >
                 Project only
-              </button>
-              <button type="button" onClick={() => choose("assistant")}>
+              </MenuItem>
+              <MenuItem
+                checked={effective === "assistant"}
+                onSelect={() => choose("assistant")}
+              >
                 Chat only
-              </button>
+              </MenuItem>
               {fits && (
-                <button type="button" onClick={split}>
+                <MenuItem checked={effective === "split"} onSelect={split}>
                   Project + chat
-                </button>
+                </MenuItem>
               )}
-              <button type="button" onClick={reset}>
-                Reset layout
-              </button>
+              <MenuItem onSelect={reset}>Reset layout</MenuItem>
             </WorkspaceMenu>
             {active && onStop && effective === "project" && (
-              <button type="button" onClick={onStop}>
+              <button
+                type="button"
+                className="workspace-desk-button"
+                onClick={onStop}
+              >
                 Stop response
               </button>
             )}

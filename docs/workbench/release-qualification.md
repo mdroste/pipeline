@@ -9,7 +9,7 @@ requires a release run.
 - Migrations through 15 are transactional and backed by the existing pre-migration SQLite online backup. Migrations 11–15 add the research desk, task exchanges, research programs, base prompts and self-discovery records. Migration 10 adds the app-owned `preferences` table (automatic conversation titles). Migration 9 adds exchange import/conflict journals and the storage trash journal. Migration 7 adds Research Studio records/history and local-job ownership/adoption journals; migration 8 adds theory, check and direction record kinds and re-creates the unchanged history trigger.
 - All production Workspace database access, including supervisor projection and reconciliation, crosses the shared bounded worker/gate boundary. Whole-store archive work is exclusive, and restore is rejected during turn setup or an active turn.
 - A single process-global turn permit spans setup through the matching terminal event. Connection epoch, native thread, and turn identity prevent stale or very fast events from corrupting the next submission.
-- `.pwrx` export uses SQLite's backup API, includes the validated database, immutable blobs, and Markdown/JSON transcripts, and excludes the isolated Codex home and credentials.
+- `.pwrx` export uses SQLite's backup API, includes the validated database, immutable blobs, app-owned conversation working files, and Markdown/JSON transcripts, and excludes the isolated Codex home and credentials.
 - Archive inspection presents every archived root before import. Import requires an explicit remap-or-detach choice for each root and rejects traversal paths, directory and symlink entries, duplicate or unmanifested entries, expanded-size and entry-count excesses, newer schemas, corrupt databases, broken foreign keys, missing or hash-mismatched blobs, unsafe root remaps, and existing-store ID collisions.
 - Restored active native bindings are retired. A later send creates a successor native thread from reviewed Workspace context; the UI does not promise cross-machine native resume.
 - Evidence and artifacts are represented in `retained_blobs`; no Workspace blob collector may delete a listed reference.
@@ -116,3 +116,10 @@ its separate 64 MiB budget. Draft acknowledgements merge session metadata withou
 replacing conversation history, and background hydration preserves the composer.
 These deterministic changes do not qualify power-loss recovery, authenticated
 model calls, installers, or another platform.
+
+## October 2 release-fix candidate
+
+The candidate evidence manifest is [1.0.0-qualification.json](../releases/1.0.0-qualification.json).
+Its live and packaged rows remain pending. Run the validator described in
+[RELEASING.md](../../RELEASING.md) against the final candidate commit and actual
+installer bytes. Passing source tests does not fill these rows.

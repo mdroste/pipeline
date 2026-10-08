@@ -181,6 +181,9 @@ pub async fn task_control(
             let next = m
                 .db(move |s| {
                     s.retry(&mut run)?;
+                    if let Err(error) = adapters::reconcile_abandoned_reviews(&s) {
+                        eprintln!("Abandoned Review retention needs attention: {error}");
+                    }
                     Ok(run)
                 })
                 .await?;

@@ -45,7 +45,7 @@ it("adapts to its container while retaining drafts and restoring the requested s
   expect(message).toHaveFocus();
   expect(notes).not.toBeVisible();
   expect(
-    screen.queryByRole("button", { name: "Project + chat" }),
+    screen.queryByRole("menuitemradio", { name: "Project + chat" }),
   ).not.toBeInTheDocument();
   resize(1000);
   expect(message).toBeVisible();
@@ -136,7 +136,7 @@ it("clamps the split to actual space and restores each project's saved width and
     "assistant",
   );
   fireEvent.click(screen.getByRole("button", { name: "Project layout" }));
-  fireEvent.click(screen.getByRole("button", { name: "Reset layout" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reset layout" }));
   expect(screen.getByText("Beta")).toBeVisible();
   expect(localStorage.getItem("pipeline.workspace.assistantWidth.beta")).toBe(
     "380",

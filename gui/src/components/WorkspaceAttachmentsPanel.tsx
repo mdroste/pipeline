@@ -2,24 +2,42 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import {
+  importResearchFiles,
+  isReadable,
+  paperSource,
+  RESEARCH_FILE_EXTENSIONS,
+} from "../lib/workspaceAttachments";
+import { addContextObject } from "./WorkspaceContextTray";
+import Button from "../ui/Button";
+import Skeleton from "../ui/Skeleton";
 import type {
   ConversationSnapshot,
   EffectiveHarness,
   PaperWithRevision,
 } from "../lib/workbenchTypes";
 
+/**
+ * The two ways to bring a document into a conversation. "import" adds files
+ * from the computer and lists what was just added; "documents" lists what the
+ * project already holds. Either way a document can become the one the
+ * assistant reads from, or be attached as an exact source.
+ */
 export default function WorkspaceAttachmentsPanel({
+  mode,
   snapshot,
   onSnapshot,
   onBusy,
   onClose,
 }: {
+  mode: "import" | "documents";
   snapshot: ConversationSnapshot;
   onSnapshot: (next: ConversationSnapshot) => void;
   onBusy: (busy: boolean) => void;
   onClose: () => void;
 }) {
   const [papers, setPapers] = useState<PaperWithRevision[]>([]);
+  const [loading, setLoading] = useState(mode === "documents");
   const [harness, setHarness] = useState<EffectiveHarness | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +47,9 @@ export default function WorkspaceAttachmentsPanel({
     let disposed = false;
     if (workspaceId)
       void Promise.all([
-        workbenchClient.listPapers(workspaceId),
+        mode === "documents"
+          ? workbenchClient.listPapers(workspaceId)
+          : Promise.resolve([]),
         workbenchClient.effectiveHarness(snapshot.session.id),
       ])
         .then(([nextPapers, nextHarness]) => {
@@ -40,11 +60,14 @@ export default function WorkspaceAttachmentsPanel({
         })
         .catch((cause) => {
           if (!disposed) setError(workbenchErrorMessage(cause));
+        })
+        .finally(() => {
+          if (!disposed) setLoading(false);
         });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, snapshot.session.id]);
+  }, [mode, workspaceId, snapshot.session.id]);
 
   const act = async (fn: () => Promise<void>) => {
     if (busyRef.current) return;
@@ -73,46 +96,21 @@ export default function WorkspaceAttachmentsPanel({
               filters: [
                 {
                   name: "Research files",
-                  extensions: [
-                    "pdf",
-                    "docx",
-                    "tex",
-                    "md",
-                    "txt",
-                    "bib",
-                    "py",
-                    "r",
-                    "jl",
-                    "do",
-                    "json",
-                    "csv",
-                    "tsv",
-                  ],
+                  extensions: RESEARCH_FILE_EXTENSIONS,
                 },
               ],
             },
       );
       if (!paths) return;
-      const failures: string[] = [];
-      for (const path of typeof paths === "string" ? [paths] : paths) {
-        const name = path.split(/[\\/]/).pop() || "Document";
-        try {
-          const imported = await workbenchClient.importPaper({
-            workspaceId,
-            paperId: null,
-            title: name,
-            role: "other",
-            path,
-            operationId: `composer-import-${crypto.randomUUID()}`,
-          });
+      const { failures } = await importResearchFiles(
+        workspaceId,
+        typeof paths === "string" ? [paths] : paths,
+        (imported) =>
           setPapers((old) => [
             imported,
             ...old.filter((item) => item.paper.id !== imported.paper.id),
-          ]);
-        } catch (cause) {
-          failures.push(`${name}: ${workbenchErrorMessage(cause)}`);
-        }
-      }
+          ]),
+      );
       if (failures.length) setError(failures.join("\n"));
     });
   const selectPaper = (paperId: string | null) =>
@@ -142,93 +140,110 @@ export default function WorkspaceAttachmentsPanel({
     });
   return (
     <div className="space-y-3">
-      <p className="text-xs text-gray-500">
-        Import files into this project, then choose one active document for this
-        conversation. Files remain saved when you change the selection.
+      <p className="text-ui-meta text-ink-muted">
+        {mode === "import"
+          ? "Files you add are saved in this project. You can also drop files onto the message box."
+          : "Documents saved in this project."}{" "}
+        <strong className="font-medium">Use in conversation</strong> sets the
+        one document the assistant reads from;{" "}
+        <strong className="font-medium">Add as source</strong> attaches this
+        exact version.
       </p>
       {harness && !harness.enabledModules.includes("paper_context") && (
-        <p className="rounded-lg bg-blue-50 p-2 text-xs text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
-          Selecting a document enables the Research assistant preset so ChatGPT
-          can read it. You can customize this in Research.
+        <p className="rounded-ui-sm bg-sunken p-2 text-ui-meta">
+          Using a document in the conversation switches to the Research
+          assistant profile so ChatGPT can read it.
           {snapshot.activeBinding &&
             " This changes the model context for your next message; the saved transcript remains here."}
         </p>
       )}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void importFiles(false)}
-          className="rounded-lg bg-gray-900 px-3 py-2 text-xs text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
-        >
-          {busy ? "Working…" : "Choose files…"}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void importFiles(true)}
-          className="rounded-lg border px-3 py-2 text-xs disabled:opacity-40"
-        >
-          Add source folder…
-        </button>
-      </div>
+      {mode === "import" && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={() => void importFiles(false)}
+          >
+            {busy ? "Working…" : "Choose files…"}
+          </Button>
+          <Button disabled={busy} onClick={() => void importFiles(true)}>
+            Add source folder…
+          </Button>
+        </div>
+      )}
       {error && (
         <p
           role="alert"
-          className="whitespace-pre-wrap text-xs text-red-600 dark:text-red-400"
+          className="whitespace-pre-wrap text-ui-meta text-danger"
         >
           {error}
         </p>
       )}
-      <div className="max-h-60 space-y-2 overflow-auto">
-        {papers.map((item) => (
-          <div
-            key={item.paper.id}
-            className="rounded-lg border p-3 dark:border-neutral-700"
-          >
-            <p
-              className="truncate text-xs font-medium"
-              title={item.paper.title}
-            >
-              {item.paper.title}
+      {loading ? (
+        <Skeleton label="Loading documents" lines={3} />
+      ) : (
+        <div className="max-h-60 space-y-2 overflow-auto">
+          {papers.map((item) => {
+            const source = paperSource(item);
+            return (
+              <div
+                key={item.paper.id}
+                className="rounded-ui-sm border border-line p-2.5"
+              >
+                <p
+                  className="truncate text-ui-label font-medium"
+                  title={item.paper.title}
+                >
+                  {item.paper.title}
+                </p>
+                {item.revision?.extraction.status === "failed" && (
+                  <p className="mt-1 text-ui-meta text-danger">
+                    Text unavailable:{" "}
+                    {String(
+                      item.revision.extraction.error ?? "Extraction failed",
+                    )}
+                  </p>
+                )}
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                  <Button
+                    variant="link"
+                    disabled={busy || !harness || !isReadable(item)}
+                    onClick={() => void selectPaper(item.paper.id)}
+                  >
+                    {snapshot.session.paperId === item.paper.id
+                      ? "Selected · use in conversation"
+                      : "Use in conversation"}
+                  </Button>
+                  <Button
+                    variant="link"
+                    disabled={busy || !source}
+                    onClick={() => {
+                      if (!workspaceId || !source) return;
+                      addContextObject(workspaceId, source);
+                      onClose();
+                    }}
+                  >
+                    Add as source
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+          {!papers.length && mode === "documents" && (
+            <p className="py-3 text-ui-meta text-ink-muted">
+              No documents in this project yet. Add files to get started.
             </p>
-            {item.revision?.extraction.status === "failed" && (
-              <p className="mt-1 text-xs text-red-600">
-                Text unavailable:{" "}
-                {String(item.revision.extraction.error ?? "Extraction failed")}
-              </p>
-            )}
-            <button
-              type="button"
-              disabled={
-                busy ||
-                !harness ||
-                item.revision?.extraction.status !== "complete"
-              }
-              onClick={() => void selectPaper(item.paper.id)}
-              className="mt-2 text-xs text-blue-600 underline disabled:text-gray-400 dark:text-blue-400"
-            >
-              {snapshot.session.paperId === item.paper.id
-                ? "Selected · use in conversation"
-                : "Use in conversation"}
-            </button>
-          </div>
-        ))}
-        {!papers.length && (
-          <p className="py-3 text-xs text-gray-500">
-            No files yet. Add a document, dataset, or research code.
-          </p>
-        )}
-      </div>
+          )}
+        </div>
+      )}
       {snapshot.session.paperId && (
-        <button
-          type="button"
+        <Button
+          variant="link"
           disabled={busy}
           onClick={() => void selectPaper(null)}
-          className="text-xs text-gray-500 underline"
         >
           Use project default document
-        </button>
+        </Button>
       )}
     </div>
   );

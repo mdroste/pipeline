@@ -9,7 +9,6 @@ import {
 import { beforeEach, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import { appEvents } from "../lib/appEvents";
-import { router } from "../lib/router";
 import WorkspacePage from "./WorkspacePage";
 import type {
   ConversationSnapshot,
@@ -147,8 +146,9 @@ beforeEach(() => {
   });
 });
 const mount = async () => {
-  render(<WorkspacePage onOpenSettings={vi.fn()} />);
+  const view = render(<WorkspacePage onOpenSettings={vi.fn()} />);
   await screen.findByRole("heading", { name: "Policy discussion" });
+  return view;
 };
 
 it("starts with navigation closed and preserves the draft while opening, pinning and closing it", async () => {
@@ -332,19 +332,23 @@ it("renders generated images in an unfiled conversation", async () => {
   );
 });
 
-it("flushes and clears the old conversation when a sidebar project event switches projects", async () => {
-  await mount();
+it("flushes and clears the old conversation when a sidebar entry switches projects", async () => {
+  const view = await mount();
   fireEvent.change(screen.getByLabelText("Message"), {
     target: { value: "Keep this draft before switching" },
   });
 
-  act(() => {
-    router.apply({
-      page: "workspace",
-      projectId: workspace.id,
-      surface: "project",
-    });
-  });
+  view.rerender(
+    <WorkspacePage
+      onOpenSettings={vi.fn()}
+      entryRequest={1}
+      entryTarget={{
+        page: "workspace",
+        projectId: workspace.id,
+        surface: "project",
+      }}
+    />,
+  );
 
   await waitFor(() =>
     expect(mocks.updateSession).toHaveBeenCalledWith(
@@ -421,21 +425,23 @@ it("restores the sidebar width, persists resizing, and resets without loading re
   expect(mocks.effectiveHarness).not.toHaveBeenCalled();
 });
 
-it("opens composer tools lazily and explains voice availability", async () => {
+it("opens the attach menu lazily and offers only things added to a message", async () => {
   await mount();
   expect(mocks.listPapers).not.toHaveBeenCalled();
   expect(mocks.effectiveHarness).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Add files and tools" }));
-  fireEvent.click(screen.getByRole("button", { name: /Voice input/ }));
+  const attach = screen.getByRole("button", { name: "Add to message" });
+  fireEvent.click(attach);
+  expect(screen.getByRole("menuitem", { name: /^Add files/ })).toHaveFocus();
   expect(
-    screen.getByText(
-      "Live voice conversations are not available in Workspace yet.",
-    ),
+    screen.getByRole("menuitem", { name: /^Add a project document/ }),
   ).toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Focus message for dictation" }),
-  );
-  expect(screen.getByRole("textbox", { name: "Message" })).toHaveFocus();
+  // Navigation, settings, and unavailable features are not attachments.
+  for (const name of [/Voice input/, /^Projects/, /Assistant settings/])
+    expect(screen.queryByRole("menuitem", { name })).not.toBeInTheDocument();
+  expect(mocks.listPapers).not.toHaveBeenCalled();
+  fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  expect(attach).toHaveFocus();
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
 
@@ -444,10 +450,13 @@ it("requires a project before importing and preserves a draft when switching", a
   fireEvent.change(screen.getByLabelText("Message"), {
     target: { value: "Keep this unsent question" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Add files and tools" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Add filesDocuments/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Add files/ }));
   fireEvent.click(screen.getByRole("button", { name: "Choose a project" }));
-  fireEvent.click(screen.getByRole("button", { name: "Monetary policy" }));
+  // Choosing a project happens in project navigation, which opens for it.
+  expect(screen.getByRole("dialog", { name: "Browse projects" })).toBeVisible();
+  fireEvent.click(screen.getByRole("combobox", { name: "Project" }));
+  fireEvent.click(screen.getByRole("option", { name: "Monetary policy" }));
   await waitFor(() =>
     expect(mocks.updateSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -483,7 +492,7 @@ it("jumps to an older response through search while keeping at most 200 transcri
   expect(screen.getAllByRole("article")).toHaveLength(200);
   expect(document.getElementById("workspace-message-message-1")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Conversation menu" }));
-  fireEvent.click(screen.getByRole("button", { name: "Outline" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Outline" }));
   fireEvent.change(screen.getByLabelText("Search prompts and responses"), {
     target: { value: "identification" },
   });
@@ -542,8 +551,8 @@ it("imports several files, reports failed extraction, and explicitly selects rea
     },
   }));
   await mount();
-  fireEvent.click(screen.getByRole("button", { name: "Add files and tools" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Add filesDocuments/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Add files/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Choose files…" }));
   await screen.findByText("paper.md");
   await screen.findByText("Text unavailable: No readable text");
@@ -587,13 +596,13 @@ it("blocks sending while files are being imported", async () => {
       }),
   );
   await mount();
-  fireEvent.click(screen.getByRole("button", { name: "Add files and tools" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Add filesDocuments/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /^Add files/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Choose files…" }));
-  expect(screen.getByRole("button", { name: "Send ↑" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   expect(screen.getByLabelText("Project")).toBeDisabled();
   await act(async () => release(null));
-  expect(screen.getByRole("button", { name: "Send ↑" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
 });
 
 const openMenu = () => {
@@ -686,7 +695,7 @@ it("moves an unfiled conversation into a project and follows it there", async ()
   await waitFor(() =>
     expect(mocks.listSessions).toHaveBeenCalledWith("project", false),
   );
-  expect(screen.getByLabelText("Project")).toHaveValue("project");
+  expect(screen.getByLabelText("Project")).toHaveTextContent("Monetary policy");
   expect(localStorage.getItem("pipeline.workspace.workspaceId")).toBe(
     "project",
   );
@@ -777,16 +786,15 @@ it("recovers an immediate mode-exit draft even if its database save fails", asyn
 it("preserves the draft and blocks Send if the bottom model selector fails to save", async () => {
   mocks.accountState.mockResolvedValue({ status: "chatgpt" });
   await mount();
-  await screen.findByRole("option", { name: "Test model" });
+  fireEvent.click(screen.getByRole("button", { name: /^Model and thinking/ }));
+  const option = await screen.findByRole("option", { name: /Test model/ });
   fireEvent.change(screen.getByLabelText("Message"), {
     target: { value: "Keep this question" },
   });
   mocks.updateSession.mockRejectedValue(new Error("Store unavailable"));
-  fireEvent.change(screen.getByLabelText("Model"), {
-    target: { value: "test-model" },
-  });
+  fireEvent.click(option);
   await screen.findByText(/Model selection could not be saved/);
-  fireEvent.click(screen.getByRole("button", { name: "Send ↑" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
   await act(async () => {});
   await screen.findByText(
     /Message not sent because its settings or draft could not be saved/,
@@ -811,14 +819,12 @@ it("waits for model selection to save before sending with the selected model", a
   });
   mocks.sendTurn.mockResolvedValue({ threadId: "thread", turnId: "turn" });
   await mount();
-  await screen.findByRole("option", { name: "Test model" });
-  fireEvent.change(screen.getByLabelText("Model"), {
-    target: { value: "test-model" },
-  });
+  fireEvent.click(screen.getByRole("button", { name: /^Model and thinking/ }));
+  fireEvent.click(await screen.findByRole("option", { name: /Test model/ }));
   fireEvent.change(screen.getByLabelText("Message"), {
     target: { value: "Use the selected model" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Send ↑" }));
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
   expect(mocks.sendTurn).not.toHaveBeenCalled();
   await act(async () => release());
   await waitFor(() =>
@@ -871,7 +877,7 @@ it("retains unsaved assistant instructions and the message across inspector swit
     target: { value: "Keep these exact assumptions" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Conversation menu" }));
-  fireEvent.click(screen.getByRole("button", { name: "Outline" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Outline" }));
   expect(instructions).not.toBeVisible();
   fireEvent.click(
     within(
@@ -884,4 +890,35 @@ it("retains unsaved assistant instructions and the message across inspector swit
   expect(
     screen.queryByRole("separator", { name: "Resize research workspace" }),
   ).not.toBeInTheDocument();
+});
+
+it("loads an initial conversation deep link without blanking its saved draft", async () => {
+  snapshot = {
+    ...snapshot,
+    workspace,
+    session: {
+      ...snapshot.session,
+      workspaceId: workspace.id,
+      draft: "Keep my unsent question",
+    },
+  };
+  render(
+    <WorkspacePage
+      entryRequest={1}
+      entryTarget={{
+        page: "workspace",
+        sessionId: "conversation",
+        surface: "chat",
+      }}
+      onOpenSettings={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("Message")).toHaveValue(
+      "Keep my unsent question",
+    ),
+  );
+  expect(mocks.updateSession).not.toHaveBeenCalledWith(
+    expect.objectContaining({ sessionId: "conversation", draft: "" }),
+  );
 });

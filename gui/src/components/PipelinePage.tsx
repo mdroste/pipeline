@@ -140,6 +140,14 @@ export default function PipelinePage({
 
   return (
     <div className="flex h-full relative">
+      {editor.recoveryWarning && (
+        <div
+          role="alert"
+          className="absolute z-20 top-0 inset-x-0 bg-amber-100 p-3 text-amber-950"
+        >
+          {editor.recoveryWarning}
+        </div>
+      )}
       {/* Prompt dialog */}
       {promptDialog && (
         <PromptDialog

@@ -128,8 +128,10 @@ export default function WorkspaceReleasePanel({
             Research backup
           </h3>
           <p className="mt-1 text-xs text-gray-500">
-            Back up projects, research files, and conversations, including
-            transcripts in Markdown and JSON. Sign-in details are excluded.
+            Back up project records, retained research files, conversation
+            working files, and transcripts in Markdown and JSON. External
+            project folders, Review and Automation stores, Trash, and sign-in
+            details are excluded. Back up external folders separately.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
@@ -138,7 +140,7 @@ export default function WorkspaceReleasePanel({
               onClick={() => onAction(exportArchive)}
               className="rounded border px-3 py-2 text-xs"
             >
-              Export all research data
+              Export research backup
             </button>
             <button
               type="button"

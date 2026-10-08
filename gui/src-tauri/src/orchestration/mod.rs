@@ -61,6 +61,12 @@ pub(crate) async fn manager(app: tauri::AppHandle) -> Result<Arc<Coordinator>> {
         })?;
         let store = Store::open(&root)?;
         store.recover()?;
+        if let Err(error) = adapters::reconcile_abandoned_reviews(&store) {
+            eprintln!("Abandoned Review retention needs attention: {error}");
+        }
+        if let Err(error) = crate::commands::orchestration::reconcile_failed_pins() {
+            eprintln!("Review retention reconciliation needs attention: {error}");
+        }
         Ok::<_, String>((store, lock))
     })
     .await
@@ -377,6 +383,9 @@ impl Coordinator {
                             .min();
                         self.save(&mut run, "stepStarted", &label).await?;
                         changed = false;
+                        if run.state == "attention" {
+                            break;
+                        }
                         if !control {
                             let (stop, receiver) = watch::channel(false);
                             let key = format!("{}/{}", run.id, pending.address);
@@ -441,18 +450,46 @@ impl Coordinator {
         let detail = detail.to_string();
         let (stored, mission_owned) = self
             .db(move |s| {
+                if !state::context_within_budget(&copy.progress) {
+                    // Full action results already live in their immutable journals.
+                    // Preserve the last bounded state and require reconciliation.
+                    copy.progress = s.get(&copy.id)?.progress;
+                    copy.state = "attention".into();
+                    copy.due_at = None;
+                    copy.reason =
+                        Some("Task context budget reached; inspect durable action results".into());
+                    for receipt in copy
+                        .progress
+                        .receipts
+                        .values_mut()
+                        .filter(|r| r.state == "running")
+                    {
+                        receipt.state = "unknown".into();
+                        receipt.error = copy.reason.clone();
+                    }
+                }
                 s.save(&mut copy, &stored_kind, &detail)?;
+                if copy.state == "cancelled" {
+                    if let Err(error) = adapters::reconcile_abandoned_reviews(&s) {
+                        eprintln!("Abandoned Review retention needs attention: {error}");
+                    }
+                }
                 let owned = missions::storage::wake_owner(&s, &copy.id)?
                     || discovery::storage::wake_owner(&s, &copy.id)?;
                 Ok((copy, owned))
             })
             .await?;
         *run = stored;
+        if run.state == "attention" {
+            self.stop_children(&run.id);
+        }
         self.notify();
         let needs_input =
             kind == "stepStarted" && run.progress.receipts.values().any(|r| r.state == "input");
         if !mission_owned
-            && (matches!(kind, "finished" | "attention" | "deadline" | "budget") || needs_input)
+            && (matches!(kind, "finished" | "attention" | "deadline" | "budget")
+                || run.state == "attention"
+                || needs_input)
         {
             if let Some(app) = &self.app {
                 let _ = app.emit(

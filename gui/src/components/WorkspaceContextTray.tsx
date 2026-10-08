@@ -7,22 +7,115 @@ import {
 } from "../lib/deskClient";
 import { appEvents } from "../lib/appEvents";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import useContainerWidth from "../hooks/useContainerWidth";
+import { asContextItems } from "../lib/workspaceAttachments";
+import Popover from "../ui/Popover";
+import Tooltip from "../ui/Tooltip";
+import { Menu, MenuItem, MenuLabel } from "../ui/Menu";
+import { Icon, type IconName } from "../ui/icons";
 
 export const addContextObject = (
   workspaceId: string,
   object: OpenResearchObject,
-) => appEvents.emit("context-add", { workspaceId, object });
+) => appEvents.emit("context-add", { workspaceId, objects: [object] });
+/** Add several sources at once, as soon as the conversation can take them. */
+export const addContextObjectsWhenReady = (
+  workspaceId: string,
+  objects: OpenResearchObject[],
+) => appEvents.emit("context-add", { workspaceId, objects, whenReady: true });
+
 const key = (o: OpenResearchObject) =>
   `${o.kind}:${o.id}:${o.revision}:${o.start ?? ""}:${o.end ?? ""}`;
-const roles: ContextItem["role"][] = [
-  "main",
-  "source",
-  "data_dictionary",
-  "prior_draft",
-  "referee_report",
-  "result",
-  "supporting",
-];
+/** How a source is used, in the words a researcher would use. */
+export const sourceRoleLabels: Record<ContextItem["role"], string> = {
+  main: "Main paper",
+  source: "Source",
+  data_dictionary: "Data dictionary",
+  prior_draft: "Earlier draft",
+  referee_report: "Referee report",
+  result: "Result",
+  supporting: "Supporting material",
+};
+const roles = Object.keys(sourceRoleLabels) as ContextItem["role"][];
+const kindIcon = (kind: string): IconName =>
+  kind === "dataset" ? "data" : kind === "result" ? "result" : "file";
+/** Chips shown in the row before measuring; the rest sit behind "+N more". */
+const DEFAULT_VISIBLE = 3;
+/** Each visible chip keeps room for a readable name beside the overflow button. */
+const visibleFor = (width: number | null) =>
+  width === null
+    ? DEFAULT_VISIBLE
+    : Math.max(1, Math.min(4, Math.floor((width - 70) / 126)));
+
+function SourceChip({
+  name,
+  item,
+  disabled,
+  onRole,
+  onRemove,
+}: {
+  name: string;
+  item: ContextItem;
+  disabled: boolean;
+  onRole: (role: ContextItem["role"]) => void;
+  onRemove: () => void;
+}) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const role = sourceRoleLabels[item.role] ?? item.role;
+  return (
+    <span className="workspace-source-chip">
+      <Tooltip label={`${name} · ${role}`}>
+        <button
+          ref={trigger}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={`${name}, used as ${role}. Change how it is used`}
+          disabled={disabled}
+          onClick={() => setOpen((value) => !value)}
+          className="workspace-source-chip-main"
+        >
+          <Icon
+            name={kindIcon(item.object.kind)}
+            className="h-3.5 w-3.5 shrink-0 text-ink-muted"
+          />
+          <span>{name}</span>
+        </button>
+      </Tooltip>
+      <button
+        type="button"
+        aria-label={`Remove ${name} from context`}
+        disabled={disabled}
+        onClick={onRemove}
+        className="workspace-source-chip-remove"
+      >
+        <Icon name="close" className="h-3 w-3" />
+      </button>
+      <Menu
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={trigger}
+        label={`Role for ${name}`}
+        side="top"
+        align="start"
+      >
+        <MenuLabel>Use as</MenuLabel>
+        {roles.map((value) => (
+          <MenuItem
+            key={value}
+            checked={item.role === value}
+            onSelect={() => {
+              if (item.role !== value) onRole(value);
+            }}
+          >
+            {sourceRoleLabels[value]}
+          </MenuItem>
+        ))}
+      </Menu>
+    </span>
+  );
+}
 
 export default function WorkspaceContextTray({
   workspaceId,
@@ -42,6 +135,10 @@ export default function WorkspaceContextTray({
   const [busy, setBusy] = useState(false);
   const [loadedSession, setLoadedSession] = useState<string | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState<OpenResearchObject[]>([]);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const more = useRef<HTMLButtonElement>(null);
+  const [row, rowWidth] = useContainerWidth<HTMLDivElement>();
   const scope = useRef(0);
   const saving = useRef(false);
   useEffect(() => {
@@ -50,6 +147,8 @@ export default function WorkspaceContextTray({
     setLoadedSession(null);
     setSelection({ revision: 0, items: [] });
     setNames({});
+    setPending([]);
+    setMoreOpen(false);
     setBusy(false);
     void deskClient
       .context(sessionId)
@@ -121,110 +220,110 @@ export default function WorkspaceContextTray({
     },
     [disabled, loadedSession, sessionId, selection, onError],
   );
+  const ready = !disabled && !busy && loadedSession === sessionId;
+  const add = useCallback(
+    (objects: OpenResearchObject[]) => {
+      const fresh = objects.filter(
+        (object, index) =>
+          objects.findIndex((other) => key(other) === key(object)) === index &&
+          !selection.items.some((item) => key(item.object) === key(object)),
+      );
+      if (!fresh.length) return;
+      void save([
+        ...selection.items,
+        ...asContextItems(fresh, selection.items.length),
+      ]);
+    },
+    [save, selection],
+  );
   useEffect(() => {
     return appEvents.on("context-add", (detail) => {
       if (detail.workspaceId !== workspaceId) return;
       if (disabled || loadedSession !== sessionId || saving.current) {
-        onError(
-          "Wait for the conversation and its sources to finish updating.",
-        );
+        if (detail.whenReady)
+          setPending((current) => [...current, ...detail.objects]);
+        else
+          onError(
+            "Wait for the conversation and its sources to finish updating.",
+          );
         return;
       }
-      if (
-        selection.items.some((item) => key(item.object) === key(detail.object))
-      )
-        return;
-      void save([
-        ...selection.items,
-        {
-          role:
-            detail.object.kind === "dataset"
-              ? "data_dictionary"
-              : selection.items.length
-                ? "supporting"
-                : "main",
-          object: detail.object,
-        },
-      ]);
+      add(detail.objects);
     });
-  }, [
-    workspaceId,
-    sessionId,
-    loadedSession,
-    disabled,
-    onError,
-    save,
-    selection,
-  ]);
+  }, [workspaceId, sessionId, loadedSession, disabled, onError, add]);
+  // Sources held back during an import are added once changes are possible.
+  useEffect(() => {
+    if (!ready || !pending.length || saving.current) return;
+    setPending([]);
+    add(pending);
+  }, [ready, pending, add]);
+
+  // Show every source when all fit; otherwise leave room for "+N more".
+  const fits = visibleFor(rowWidth);
+  const visible =
+    selection.items.length <= fits ? selection.items.length : fits;
+  const hidden = selection.items.length - visible;
+  useEffect(() => {
+    if (hidden <= 0) setMoreOpen(false);
+  }, [hidden]);
+
+  // An empty or still-loading source list takes no space.
+  const empty = loadedSession !== sessionId || !selection.items.length;
+  const locked = disabled || busy;
+  const chip = (item: ContextItem, index: number) => (
+    <SourceChip
+      key={key(item.object)}
+      name={names[key(item.object)] ?? item.object.kind}
+      item={item}
+      disabled={locked}
+      onRole={(role) =>
+        void save(
+          selection.items.map((value, n) =>
+            n === index ? { ...value, role } : value,
+          ),
+        )
+      }
+      onRemove={() => void save(selection.items.filter((_, n) => n !== index))}
+    />
+  );
   return (
-    <details
+    <div
+      ref={row}
+      hidden={empty}
+      role="group"
       aria-label="Conversation sources"
-      className="workspace-context-summary"
-      hidden={loadedSession === sessionId && !selection.items.length}
+      className="workspace-source-row"
     >
-      <summary>
-        {selection.items.length
-          ? `Sources · ${selection.items.length}`
-          : "Loading sources…"}
-      </summary>
-      <div className="flex flex-wrap gap-2 py-2 text-xs">
-        {loadedSession === sessionId &&
-          selection.items.map((item, index) => {
-            const name = names[key(item.object)] ?? item.object.kind;
-            return (
-              <div
-                key={key(item.object)}
-                className="flex max-w-full items-center gap-1 rounded border bg-blue-50 px-2 py-1 dark:bg-blue-950/30"
-              >
-                <span
-                  className="max-w-40 truncate"
-                  title={`${item.object.id} · ${item.object.revision}`}
-                >
-                  {name}
-                </span>
-                <select
-                  aria-label={`Role for ${name}`}
-                  disabled={disabled || busy}
-                  className="max-w-28 bg-transparent"
-                  value={item.role}
-                  onChange={(e) =>
-                    void save(
-                      selection.items.map((value, n) =>
-                        n === index
-                          ? {
-                              ...value,
-                              role: e.target.value as ContextItem["role"],
-                            }
-                          : value,
-                      ),
-                    )
-                  }
-                >
-                  {roles.map((role) => (
-                    <option key={role}>{role}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  disabled={disabled || busy}
-                  aria-label={`Remove ${name} from context`}
-                  onClick={() =>
-                    void save(selection.items.filter((_, n) => n !== index))
-                  }
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
-        {!selection.items.length && (
-          <span className="text-gray-500">
-            {loadedSession === sessionId
-              ? "Add exact sources from the research desk."
-              : "Loading conversation sources…"}
-          </span>
-        )}
-      </div>
-    </details>
+      {selection.items.slice(0, visible).map(chip)}
+      {hidden > 0 && (
+        <>
+          <button
+            ref={more}
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((value) => !value)}
+            className="workspace-source-more"
+          >
+            +{hidden} more
+          </button>
+          <Popover
+            open={moreOpen}
+            onClose={() => setMoreOpen(false)}
+            anchorRef={more}
+            label="More sources"
+            side="top"
+            align="end"
+            width={280}
+          >
+            <div className="workspace-source-overflow">
+              {selection.items
+                .slice(visible)
+                .map((item, index) => chip(item, index + visible))}
+            </div>
+          </Popover>
+        </>
+      )}
+    </div>
   );
 }

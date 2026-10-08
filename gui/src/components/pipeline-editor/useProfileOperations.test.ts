@@ -61,3 +61,37 @@ it("resets per-profile history and invalidates launch setup after bundle changes
   expect(result.current.editor.activeProfile).toBe("B");
   expect(result.current.editor.config?.steps[0].prompt).toBe("B prompt");
 });
+
+it("loads the saved workflow when recovery reads fail without deleting unread recovery data", async () => {
+  const config = {
+    steps: [],
+    merge: { enabled: false, prompt: "saved", agents: [] },
+  };
+  mocks.invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === "get_pipeline_config") return config;
+    if (cmd === "get_active_profile") return "saved";
+    if (cmd === "list_profiles") return [];
+    throw new Error(cmd);
+  });
+  const read = vi
+    .spyOn(window.localStorage, "getItem")
+    .mockImplementation(() => {
+      throw new DOMException("Denied", "SecurityError");
+    });
+  const remove = vi.spyOn(window.localStorage, "removeItem");
+  const { result, unmount } = renderHook(() => {
+    const editor = useWorkflowEditor();
+    return { editor, ops: useProfileOperations(editor, null) };
+  });
+  try {
+    await waitFor(() => expect(result.current.ops.loading).toBe(false));
+    expect(result.current.ops.loadError).toBeNull();
+    expect(result.current.editor.config?.merge.prompt).toBe("saved");
+    expect(result.current.editor.recoveryWarning).toContain("save or export");
+    expect(remove).not.toHaveBeenCalled();
+  } finally {
+    unmount();
+    read.mockRestore();
+    remove.mockRestore();
+  }
+});

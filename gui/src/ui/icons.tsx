@@ -13,7 +13,21 @@ export type IconName =
   | "designer"
   | "help"
   | "settings"
-  | "arrow";
+  | "arrow"
+  | "plus"
+  | "chevron-down"
+  | "check"
+  | "close"
+  | "more"
+  | "attach"
+  | "file"
+  | "folder"
+  | "data"
+  | "result"
+  | "import"
+  | "stop"
+  | "arrow-up"
+  | "warning";
 
 export function Icon({
   name,
@@ -48,6 +62,7 @@ export function Icon({
         </svg>
       );
     case "new":
+    case "plus":
       return (
         <svg {...common}>
           <path
@@ -156,6 +171,136 @@ export function Icon({
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M19 13.25v-2.5l-2.05-.52a5.7 5.7 0 0 0-.55-1.32l1.08-1.82-1.77-1.77-1.82 1.08a5.7 5.7 0 0 0-1.32-.55L12.05 3h-2.5l-.52 2.05a5.7 5.7 0 0 0-1.32.55L5.9 4.52 4.12 6.29 5.2 8.11a5.7 5.7 0 0 0-.55 1.32L2.6 9.95v2.5l2.05.52c.13.46.31.9.55 1.32l-1.08 1.82 1.77 1.77 1.82-1.08c.42.24.86.42 1.32.55l.52 2.05h2.5l.52-2.05c.46-.13.9-.31 1.32-.55l1.82 1.08 1.77-1.77-1.08-1.82c.24-.42.42-.86.55-1.32L19 13.25Z"
+          />
+        </svg>
+      );
+    case "chevron-down":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
+        </svg>
+      );
+    case "check":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m5 12 4 4L19 6"
+          />
+        </svg>
+      );
+    case "close":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m6 6 12 12M6 18 18 6"
+          />
+        </svg>
+      );
+    case "more":
+      return (
+        <svg {...common}>
+          <g fill="currentColor" stroke="none">
+            <circle cx="5.5" cy="12" r="1.5" />
+            <circle cx="12" cy="12" r="1.5" />
+            <circle cx="18.5" cy="12" r="1.5" />
+          </g>
+        </svg>
+      );
+    case "attach":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M20 11.5 12.4 19a4.6 4.6 0 0 1-6.5-6.5l7.8-7.8a3.1 3.1 0 0 1 4.4 4.4l-7.7 7.7a1.6 1.6 0 0 1-2.3-2.3l7-7"
+          />
+        </svg>
+      );
+    case "file":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5ZM14 3.5V8h4.5M8.5 12.5h7M8.5 16h5"
+          />
+        </svg>
+      );
+    case "folder":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3.75 7.25h6l1.5 2h9v8.5a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2V7.25Z"
+          />
+        </svg>
+      );
+    case "data":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M5 6.5C5 5.1 8.1 4 12 4s7 1.1 7 2.5S15.9 9 12 9 5 7.9 5 6.5ZM5 6.5V12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6.5M5 12v5.5c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V12"
+          />
+        </svg>
+      );
+    case "result":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M5 19V5M5 19h14M9 15v-4M13 15V8M17 15v-6"
+          />
+        </svg>
+      );
+    case "import":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 15V4m-4 4 4-4 4 4M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"
+          />
+        </svg>
+      );
+    case "stop":
+      return (
+        <svg {...common}>
+          <rect
+            x="7"
+            y="7"
+            width="10"
+            height="10"
+            rx="2"
+            fill="currentColor"
+            stroke="none"
+          />
+        </svg>
+      );
+    case "arrow-up":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 19V5m-6 6 6-6 6 6"
+          />
+        </svg>
+      );
+    case "warning":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 4.5 3.5 19h17L12 4.5ZM12 10v4.5M12 17h.01"
           />
         </svg>
       );

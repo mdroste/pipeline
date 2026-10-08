@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pipeline-gui-vite",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "gui", "run", "dev"],
+      "port": 1420
+    }
+  ]
+}

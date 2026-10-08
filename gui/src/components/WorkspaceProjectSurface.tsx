@@ -557,7 +557,7 @@ export default function WorkspaceProjectSurface({
   return (
     <section
       ref={deskRoot}
-      className="flex min-h-0 min-w-0 flex-1 flex-col bg-gray-50 dark:bg-neutral-900"
+      className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface"
     >
       {/* Standalone chrome for direct-rendered surfaces (fixtures, tests).
           Inside the app, WorkspacePage owns navigation in its sidebar. */}

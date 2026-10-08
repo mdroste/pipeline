@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "commit": "",
+  "note": "Pending: fill only from observations on the final candidate and actual installer bytes. Prior audit revision 0705a6c489ae9ce09445c6bc49e0d1dd9e82a90e is not a qualified release.",
+  "scenarios": {
+    "shared-account": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": []
+    },
+    "workspace-native-tools": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": []
+    },
+    "review-providers": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": []
+    },
+    "automations": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": []
+    },
+    "research-tools": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": []
+    },
+    "crash-storage": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": []
+    },
+    "performance-accessibility": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": []
+    },
+    "dependencies-notices": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": []
+    }
+  },
+  "platforms": {
+    "macos-arm64": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": [],
+      "installer": "",
+      "installerSha256": ""
+    },
+    "macos-x64": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": [],
+      "installer": "",
+      "installerSha256": ""
+    },
+    "windows": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": [],
+      "installer": "",
+      "installerSha256": ""
+    },
+    "linux": {
+      "status": "pending",
+      "environment": "",
+      "versions": "",
+      "expected": "",
+      "observed": "",
+      "evidence": [],
+      "installer": "",
+      "installerSha256": ""
+    }
+  }
+}

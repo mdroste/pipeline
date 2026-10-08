@@ -4,9 +4,9 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
-
-const menuItem =
-  "block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-neutral-800";
+import IconButton from "../ui/IconButton";
+import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
+import { Icon } from "../ui/icons";
 
 export function ConversationMenu({
   session,
@@ -26,62 +26,39 @@ export function ConversationMenu({
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const container = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (event: MouseEvent) => {
-      if (!container.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  const item = (label: string, action: () => void, danger = false) => (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={() => {
-        setOpen(false);
-        action();
-      }}
-      className={`${menuItem}${danger ? " text-red-600 dark:text-red-400" : ""}`}
-    >
-      {label}
-    </button>
-  );
+  const trigger = useRef<HTMLButtonElement>(null);
   return (
-    <div ref={container} className="relative shrink-0">
-      <button
-        type="button"
+    <>
+      <IconButton
+        ref={trigger}
+        size="sm"
+        label={`Conversation actions for ${session.title}`}
+        tooltip="Conversation actions"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Conversation actions for ${session.title}`}
         disabled={disabled}
         onClick={() => setOpen((value) => !value)}
-        className="rounded px-2 py-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-neutral-700 dark:hover:text-neutral-200"
       >
-        ⋯
-      </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label={`Actions for ${session.title}`}
-          className="absolute right-0 z-20 mt-1 w-44 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
-        >
-          {item("Rename…", onRename)}
-          {item("Generate title", onGenerateTitle)}
-          {item("Move to project…", onMove)}
-          {item(session.archivedAt ? "Restore" : "Archive", onArchive)}
-          {item("Delete…", onDelete, true)}
-        </div>
-      )}
-    </div>
+        <Icon name="more" className="h-4 w-4" />
+      </IconButton>
+      <Menu
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={trigger}
+        label={`Actions for ${session.title}`}
+      >
+        <MenuItem onSelect={onRename}>Rename…</MenuItem>
+        <MenuItem onSelect={onGenerateTitle}>Generate title</MenuItem>
+        <MenuItem onSelect={onMove}>Move to project…</MenuItem>
+        <MenuItem onSelect={onArchive}>
+          {session.archivedAt ? "Restore" : "Archive"}
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem danger onSelect={onDelete}>
+          Delete…
+        </MenuItem>
+      </Menu>
+    </>
   );
 }
 

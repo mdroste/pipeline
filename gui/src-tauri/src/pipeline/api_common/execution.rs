@@ -656,7 +656,9 @@ pub(super) async fn execute_tool(
                 .or_else(|| input.get("path"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let Some(content) = input.get("content").and_then(|v| v.as_str()) else {
+                return ToolResult::Error("Write requires string content".into());
+            };
             verbose_log(
                 app,
                 format!(
@@ -665,14 +667,9 @@ pub(super) async fn execute_tool(
                     content.len()
                 ),
             );
-            let owned_path = path.to_string();
-            let owned_content = content.to_string();
-            let access = access.clone();
-            match run_blocking_tool(move || {
-                write_file_for_tool(&access, &owned_path, &owned_content)
-            })
-            .await
-            {
+            // The bounded atomic write must settle before this future can be dropped.
+            // A detached blocking task could otherwise commit after run finalization.
+            match write_file_for_tool(access, path, content) {
                 Ok(msg) => ToolResult::Text(msg),
                 Err(e) => ToolResult::Error(e),
             }
@@ -772,3 +769,6 @@ pub(crate) async fn execute_native_tool(
     )
     .await
 }
+
+#[cfg(test)]
+mod write_ownership_tests;

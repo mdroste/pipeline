@@ -69,19 +69,22 @@ test("WebdriverIO CLI and project configuration remain loadable", async () => {
 test("audited override versions stay locked", () => {
   const lock = JSON.parse(fs.readFileSync(path.join(GUI, "package-lock.json"), "utf8"));
   const expected = {
-    "node_modules/brace-expansion": "5.0.9",
+    "node_modules/vitest": "4.1.11",
+    "node_modules/@vitest/mocker": "4.1.11",
+    "node_modules/jsdom/node_modules/undici": "8.10.2",
+    "node_modules/brace-expansion": "5.0.12",
     "node_modules/diff": "8.0.4",
     "node_modules/esbuild": "0.28.1",
-    "node_modules/ip-address": "10.4.0",
-    "node_modules/js-yaml": "4.3.1",
+    "node_modules/ip-address": "10.7.3",
+    "node_modules/js-yaml": "4.3.2",
     "node_modules/minimatch": "10.2.6",
     "node_modules/mocha": "11.7.6",
     "node_modules/nanoid": "3.3.18",
     "node_modules/serialize-javascript": "7.0.7",
-    "node_modules/undici": "7.29.0",
-    "node_modules/@wdio/cli/node_modules/undici": "6.28.0",
-    "node_modules/@wdio/runner/node_modules/undici": "6.28.0",
-    "node_modules/webdriver/node_modules/undici": "6.28.0",
+    "node_modules/undici": "7.29.1",
+    "node_modules/@wdio/cli/node_modules/undici": "6.28.1",
+    "node_modules/@wdio/runner/node_modules/undici": "6.28.1",
+    "node_modules/webdriver/node_modules/undici": "6.28.1",
   };
 
   for (const [packagePath, version] of Object.entries(expected)) {

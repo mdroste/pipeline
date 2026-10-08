@@ -26,6 +26,7 @@ it("serializes and parses every destination round-trip", () => {
       destination: "checks",
     },
     { page: "workspace", sessionId: "sess-1", surface: "chat" },
+    { page: "workspace", projectId: "研究/α%?#" },
     { page: "tasks" },
     { page: "tasks", taskId: "t1", taskSessionId: "s1" },
     { page: "tasks", discoveryId: "d1" },
@@ -37,6 +38,7 @@ it("serializes and parses every destination round-trip", () => {
     { page: "history", runId: "run-9" },
     { page: "settings" },
     { page: "settings", section: "workflow", targetId: "usage-limit-fallback" },
+    { page: "settings", section: "偏好/α%?#" },
     { page: "help" },
     { page: "help", section: "privacy" },
   ];
@@ -48,6 +50,41 @@ it("serializes and parses every destination round-trip", () => {
   expect(parseRoute("#/nowhere")).toBeNull();
   expect(parseRoute("")).toBeNull();
   expect(parseRoute("#/help?section=bogus")).toEqual({ page: "help" });
+});
+
+it.each([
+  "#/project/%",
+  "#/project/%2",
+  "#/project/%GG",
+  "#/settings/%E0%A4%A",
+  "#/settings/%FF",
+  "#/project/%ED%A0%80",
+  "#/project/valid/%",
+])("rejects malformed encoded segments in %s", (route) => {
+  expect(parseRoute(route)).toBeNull();
+});
+
+it("falls back from a corrupted saved route to the legacy page or default", () => {
+  localStorage.setItem("pipeline.ui.route", "#/project/%");
+  localStorage.setItem("pipeline.ui.page", "home");
+  expect(restoreRoute(localStorage)).toEqual({ page: "home" });
+  localStorage.removeItem("pipeline.ui.page");
+  expect(restoreRoute(localStorage)).toBeNull();
+});
+
+it("treats unreadable saved navigation as optional", () => {
+  const storage = {
+    getItem: vi.fn((key: string) => {
+      if (key === "pipeline.ui.route")
+        throw new DOMException("Blocked", "SecurityError");
+      return "project-index";
+    }),
+  };
+  expect(restoreRoute(storage)).toEqual({ page: "project-index" });
+  storage.getItem.mockImplementation(() => {
+    throw new DOMException("Blocked", "SecurityError");
+  });
+  expect(restoreRoute(storage)).toBeNull();
 });
 
 it("persists committed routes and restores them, ignoring junk", () => {
@@ -87,10 +124,19 @@ it("notifies subscribers with an increasing revision, even for equal routes", ()
   expect(seen.length).toBe(2);
 });
 
-it("reflects routes into the hash and follows hash-driven back navigation", async () => {
+it("recovers from malformed initial and changed hashes and still follows valid navigation", async () => {
+  window.history.replaceState(null, "", "#/settings/%E0%A4%A");
   router.installHashSync();
+  expect(router.route).toEqual({ page: "home" });
+  expect(window.location.hash).toBe("#/home");
   router.apply({ page: "history", runId: "r1" });
   expect(window.location.hash).toBe("#/reviews/history?run=r1");
+  await Promise.resolve();
+  window.history.replaceState(null, "", "#/project/%");
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+  expect(router.route).toEqual({ page: "history", runId: "r1" });
+  expect(window.location.hash).toBe("#/reviews/history?run=r1");
+  await Promise.resolve();
   // Simulate external (back/forward) hash change.
   window.location.hash = "#/automations";
   window.dispatchEvent(new HashChangeEvent("hashchange"));

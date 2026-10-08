@@ -115,14 +115,15 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: gui/src-tauri/resources/poppler
-          key: poppler-simple-v1-${{ matrix.id }}-${{ hashFiles('scripts/release/bundle-poppler.sh', 'scripts/release/poppler-lock.json') }}
-          restore-keys: |
-            poppler-simple-v1-${{ matrix.id }}-
+          key: poppler-inventory-v2-${{ matrix.id }}-${{ hashFiles('scripts/release/bundle-poppler.sh', 'scripts/release/poppler-lock.json', 'scripts/release/poppler-inventory.mjs') }}
 
       - name: Bundle Poppler when not cached
         if: steps.poppler-cache.outputs.cache-hit != 'true'
         shell: bash
         run: bash scripts/release/bundle-poppler.sh "${{ matrix.id }}"
+
+      - name: Verify bundled Poppler inventory (including cache hits)
+        run: node scripts/release/poppler-inventory.mjs --verify
 
       - name: Import Apple signing certificate
         if: startsWith(matrix.id, 'macos-')
@@ -149,6 +150,9 @@ jobs:
         if: startsWith(matrix.id, 'macos-')
         working-directory: gui
         env:
+          PIPELINE_OFFICIAL_RELEASE: "1"
+          PIPELINE_BUNDLE_PLATFORM: ${{ matrix.id }}
+          PIPELINE_CLI_BINARY: target/${{ matrix.rust_target }}/release/pipeline-cli
           MACOSX_DEPLOYMENT_TARGET: "15.0"
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -160,6 +164,8 @@ jobs:
         if: ${{ !startsWith(matrix.id, 'macos-') }}
         working-directory: gui
         env:
+          PIPELINE_OFFICIAL_RELEASE: "1"
+          PIPELINE_BUNDLE_PLATFORM: ${{ matrix.id }}
           NO_STRIP: ${{ matrix.id == 'linux' && '1' || '' }}
         run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} -- --locked
 

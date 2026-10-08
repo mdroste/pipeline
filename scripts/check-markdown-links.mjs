@@ -23,7 +23,11 @@ const discovered = execFileSync(
 )
   .split(/\r?\n/)
   .filter(Boolean);
-const files = explicit.length ? explicit : [...discovered, "CLAUDE.md", "AGENTS.md"];
+// The agent guides are local-only (gitignored), so they are absent from a clean checkout.
+const localGuides = ["CLAUDE.md", "AGENTS.md"];
+const files = explicit.length
+  ? explicit
+  : [...discovered, ...localGuides.filter((file) => existsSync(resolve(repository, file)))];
 const failures = [];
 
 for (const file of new Set(files)) {
@@ -49,6 +53,7 @@ for (const file of new Set(files)) {
     // Codex file links may carry a one-based line suffix.
     target = target.replace(/:\d+$/, "");
     const resolved = resolve(dirname(absolute), target);
+    if (localGuides.includes(relative(repository, resolved))) continue;
     if (!existsSync(resolved)) {
       failures.push(`${file}:${line}: missing ${match[1]}`);
     }

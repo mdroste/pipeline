@@ -1,7 +1,7 @@
 {
   "name": "pipeline-gui",
   "private": true,
-  "version": "0.9.5",
+  "version": "1.0.0",
   "description": "Desktop agent orchestration suite for academic research and review",
   "homepage": "https://github.com/mdroste/pipeline",
   "repository": {
@@ -18,17 +18,18 @@
     "@wdio/tauri-service": {
       "@wdio/native-utils": "2.5.0"
     },
-    "brace-expansion": "5.0.9",
+    "brace-expansion": "5.0.12",
     "diff": "8.0.4",
     "esbuild": "0.28.1",
-    "ip-address": "10.4.0",
-    "js-yaml@^4.0.0": "4.3.1",
+    "ip-address": "10.7.3",
+    "js-yaml@^4.0.0": "4.3.2",
     "minimatch": "10.2.6",
     "mocha": "11.7.6",
     "nanoid@^3.0.0": "3.3.18",
     "serialize-javascript": "7.0.7",
-    "undici@^6.0.0": "6.28.0",
-    "undici@^7.0.0": "7.29.0"
+    "undici@^6.0.0": "6.28.1",
+    "undici@^7.0.0": "7.29.1",
+    "undici@^8.0.0": "8.10.2"
   },
   "scripts": {
     "dev": "vite",
@@ -93,6 +94,6 @@
     "tailwindcss": "^3.4.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.11"
   }
 }

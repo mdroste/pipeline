@@ -4,6 +4,7 @@ import {
   repositoryClient,
   type RepositoryStatus,
 } from "../../lib/repositoryClient";
+import "./ProjectHome.css";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import {
   Card,

@@ -521,7 +521,7 @@ Line anchors refer to the audited working tree and may move during implementatio
 | S04 | [ProjectsPage.tsx:170](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/ProjectsPage.tsx:170) — saveProject and selectProject failure path; autosave at line 107 |
 | S05 | [App.tsx:249](/Users/Mike/Documents/GitHub/pipeline/gui/src/App.tsx:249) — route persistence, dirty guard, conditional route composition |
 | S06 | [WorkspaceProjectSurface.tsx:30](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/WorkspaceProjectSurface.tsx:30) — destination hierarchy, desk persistence and assistant slider |
-| S07 | [WorkspaceConversation.css:138](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/WorkspaceConversation.css:138) — assistant width and stacked minimum-height behavior |
+| S07 | `WorkspaceConversation.css:138`, since split; see [WorkspaceDesk.css](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/WorkspaceDesk.css) — assistant width and stacked minimum-height behavior |
 | S08 | [App.css:144](/Users/Mike/Documents/GitHub/pipeline/gui/src/App.css:144) — report contents secondary-link colors |
 | S09 | [files.css:104](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/file-workspace/files.css:104) — fixed equal-width file split |
 | S10 | [ResizeHandle.tsx:31](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/ResizeHandle.tsx:31) — pointer path, bounds, keyboard behavior and separator markup |
@@ -533,7 +533,7 @@ Line anchors refer to the audited working tree and may move during implementatio
 | S16 | [usePersistentPanelWidth.ts:14](/Users/Mike/Documents/GitHub/pipeline/gui/src/hooks/usePersistentPanelWidth.ts:14) — uncaught optional storage access |
 | S17 | [TasksPage.css](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/TasksPage.css) — independent semantic palette and layout scale |
 | S18 | [SettingsPage.tsx:108](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/SettingsPage.tsx:108) and [SettingsPage.css](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/SettingsPage.css) — settings controller and presentation |
-| S19 | [tailwind.config.js](/Users/Mike/Documents/GitHub/pipeline/gui/tailwind.config.js) and [WorkspaceConversation.css](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/WorkspaceConversation.css) — typography, neutral mapping and chat tokens |
+| S19 | [tailwind.config.js](/Users/Mike/Documents/GitHub/pipeline/gui/tailwind.config.js) and `WorkspaceConversation.css`, since split; tokens now live in [App.css](/Users/Mike/Documents/GitHub/pipeline/gui/src/App.css) — typography, neutral mapping and chat tokens |
 | S20 | [PipelinePage.tsx](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/PipelinePage.tsx) and [RunSetupPanel.tsx](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/RunSetupPanel.tsx) — designer/controller and setup composition |
 | S21 | [ObjectPane.tsx:11](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/research-desk/ObjectPane.tsx:11) — generic record rendering |
 | S22 | [research-programs/shared.tsx:345](/Users/Mike/Documents/GitHub/pipeline/gui/src/components/research-programs/shared.tsx:345) — manual expected-hash entry; shared inspection and async behavior |

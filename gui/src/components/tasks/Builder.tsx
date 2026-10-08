@@ -20,14 +20,17 @@ export default function Builder({
   initialSessionId,
   initialPath,
   onPrepared,
+  onDirtyChange,
   onClose,
 }: {
   initialSessionId?: string | null;
   /** Prefill the review-and-revise template with this input file. */
   initialPath?: string | null;
   onPrepared: (run: TaskRun) => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onClose: () => void;
 }) {
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const [kind, setKind] = useState<TemplateKind>("review");
   const [prompt, setPrompt] = useState("");
   const [profile, setProfile] = useState("");
@@ -58,6 +61,7 @@ export default function Builder({
     editedChain ??
     (kind === "blank" ? blank : template(kind, prompt, profile, rounds, path));
   const setChain = (next: Chain) => {
+    onDirtyChange?.(true);
     setEditedChain(next);
     setPristine(false);
   };
@@ -101,6 +105,7 @@ export default function Builder({
         trigger,
         operation.current,
       );
+      onDirtyChange?.(false);
       onPrepared(run);
     } catch (e) {
       setError(String(e));
@@ -121,7 +126,11 @@ export default function Builder({
     }
   }
   return (
-    <section className="task-builder" aria-label="New automation">
+    <section
+      className="task-builder"
+      aria-label="New automation"
+      onChangeCapture={() => onDirtyChange?.(true)}
+    >
       <div className="task-section-heading">
         <div>
           <h2>New automation</h2>
@@ -161,6 +170,7 @@ export default function Builder({
             aria-label={title}
             aria-pressed={kind === id && editedChain === null}
             onClick={() => {
+              onDirtyChange?.(true);
               setKind(id);
               setEditedChain(null);
               setPristine(true);
@@ -370,7 +380,13 @@ export default function Builder({
           </label>
         </div>
       </details>
-      <Timing value={trigger} onChange={setTrigger} />
+      <Timing
+        value={trigger}
+        onChange={(next) => {
+          onDirtyChange?.(true);
+          setTrigger(next);
+        }}
+      />
       {error && (
         <p className="task-error" role="alert">
           {error}

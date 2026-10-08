@@ -64,10 +64,18 @@ Write, Automate, and Activity.
 The Chat toggle hides/reopens chat, and the layout menu provides focus and
 reset controls.
 
-Model, Thinking and the Assistant settings gear are below the message.
+Below the message sit the attach button, one model-and-thinking chip, and the
+Assistant settings gear, with a single Send control that becomes Stop while a
+response runs. The chip opens a picker with the connected account, remaining
+usage, each model's description, and the thinking levels that model supports;
+a saved choice that is no longer offered stays visible as a warning. The
+message field grows with its text. The attach menu adds files, a project
+document, or an automation; files dropped on the conversation follow the same
+import path.
 Settings opens preset, access, instructions, modules and recipes inside the
 assistant pane. The conversation menu opens Outline, Context and Activity &
-follow-ups in the same slot. Selected sources appear as a collapsed disclosure;
+follow-ups in the same slot. Selected sources appear as a row of chips above the message, each with a
+readable role and a remove button, with the overflow behind "+N more";
 an empty source list occupies no space. Project notes start collapsed; Overview
 shows resume, brief, attention, and recent-work sections. Project settings holds
 the setup controls.
@@ -192,10 +200,22 @@ and verification status.
   owns the actual project/chat sizing; `WorkspaceProjectNavigation.tsx` and
   `lib/workspaceNavigation.ts` own named destinations and local pins.
   `WorkspaceToolPicker.tsx` provides searchable keyboard navigation and
-  `WorkspaceMenu.tsx` provides viewport-bounded action popovers.
-  `WorkspaceComposerControls.tsx` renders catalog-backed model/effort choices.
-- `WorkspaceComposerMenu.tsx` exposes project navigation, dictation guidance,
-  and the lazy `WorkspaceAttachmentsPanel.tsx` document importer/selector.
+  `WorkspaceMenu.tsx` is the "more" button over the shared `ui/Menu`.
+  `WorkspaceComposerControls.tsx` renders the catalog-backed model and
+  thinking picker.
+- Floating layers, list boxes, segmented choices, tooltips, sheets, and
+  skeletons come from `gui/src/ui/`; `ui/anchoredPosition.ts` is the one
+  positioning routine. Colors, radii, elevation, and type sizes are the
+  `--ui-*` tokens in `gui/src/App.css`, mapped into Tailwind in
+  `tailwind.config.js`. Workspace styles are split by owner:
+  `WorkspaceDesk.css`, `WorkspaceTranscript.css`, `WorkspaceComposer.css`,
+  `WorkspaceNavigation.css`, and `WorkspaceInspector.css`.
+- `WorkspaceComposerMenu.tsx` is the attach menu; it opens the lazy
+  `WorkspaceAttachmentsPanel.tsx` to import files or choose a project
+  document. `lib/workspaceAttachments.ts` owns the import path and default
+  source roles, shared with `hooks/useComposerFileDrop.ts`, which receives
+  native file drops through `lib/fileDrop.ts`. `WorkspaceContextTray.tsx`
+  renders attached sources as chips.
   `WorkspaceMessageActions.tsx` handles Markdown copy; the paged
   `WorkspaceConversationOutline.tsx` searches prompts/responses and asks the
   page to mount and focus the target transcript window.
@@ -321,13 +341,19 @@ older/newer paging. Preserve these boundaries when adding modules.
 
 ## Archive and release rules
 
-`.pwrx` export snapshots SQLite through the online backup API and includes only
-the validated database, referenced immutable blobs, and Markdown/JSON
-transcripts. It excludes the isolated Codex home and credentials. Import uses a
+`.pwrx` format 2 snapshots SQLite through the online backup API and includes
+the validated database, immutable blobs, app-owned conversation working files,
+and Markdown/JSON transcripts. Conversation payloads are bounded, staged and
+checksummed; export requires idle native turns and local jobs. Format 1 remains
+readable but contains no conversation working files. External project folders,
+Review/Automation stores, Trash, the isolated Codex home and credentials are
+excluded; back up those external folders separately. Import uses a
 bounded inspection and exact manifest allowlist, rejects unsafe or inconsistent
 archives, requires an empty destination store, and requires an explicit
 remap-or-detach choice for every archived root. Imported native bindings are
-retired and imported tools never run.
+retired, unfinished turns become interrupted history, and imported tools never run.
+Trash journals are stripped on export and import; their machine-local paths
+never authorize file operations in the restored store.
 
 Protocol support is capability-gated rather than exact-version-pinned. Read
 [`protocol/compatibility-policy.md`](protocol/compatibility-policy.md) and the

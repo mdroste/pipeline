@@ -207,3 +207,23 @@ feature. Release binaries cannot enable it. Authenticated Review/revision loops,
 real host tools, packaged close/reopen behavior, and Windows/Linux runtime
 qualification remain governed by the existing
 [release qualification policy](workbench/release-qualification.md).
+
+### Control evaluation and retained Review failures
+
+Control-only branches and loops have a separate ceiling of 4,096 durable
+control decisions and 32,768 interpreter visits per advance. Progress must stay
+below 8 MiB before every save. Exhaustion requires attention; it does not dispatch
+another action or silently replay an uncertain result. Full action evidence
+remains in the adapter's durable journals when the bounded context cannot adopt it.
+
+A task-owned Review keeps its retention pin until the result has been adopted.
+An authoritatively failed or cancelled Review has no result to adopt: after its
+execution owner settles, its matching pin is removed. Startup reconciles these
+settled failures as well. Running, successful-but-unadopted, and uncertain runs
+remain protected. Pin ownership must match the run's operation journal.
+
+Explicit Stop and Retry also record abandonment durably. Once the Review runtime
+is idle, matching settled pins (including recovered interrupted runs) can be
+released without discarding their artifacts or receipt history. Startup replays
+this reconciliation after a crash between the Task decision and pin cleanup.
+A still-running Review is never unpinned by abandonment.

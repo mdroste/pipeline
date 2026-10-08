@@ -174,7 +174,7 @@ const record = (id: string, kind: string, body: unknown, updatedAt = now) => ({ 
 const file = (path: string, hash: string) => ({ path, hash, size: 2048, status: "current", executable: false });
 const manuscript = {
   paper: { id: "paper-minwage", workspaceId: workspace.id, title: "Minimum wages and county-pair employment", role: "manuscript", currentRevisionId: "rev-v8", createdAt: "2026-08-30T12:00:00Z", updatedAt: "2026-09-29T15:00:00Z" },
-  revision: { id: "rev-v8", paperId: "paper-minwage", inputKind: "source_tree", entrypoint: "/Users/mike/Papers/minwage/paper", dependencyManifest: {}, contentHash: "hash-v8", textReference: null, compiledArtifactId: null, extraction: {}, captureComplete: true, capturedAt: "2026-09-29T15:00:00Z" },
+  revision: { id: "rev-v8", paperId: "paper-minwage", inputKind: "source_tree", entrypoint: "/Users/mike/Papers/minwage/paper", dependencyManifest: {}, contentHash: "hash-v8", textReference: null, compiledArtifactId: null, extraction: { status: "complete" }, captureComplete: true, capturedAt: "2026-09-29T15:00:00Z" },
 };
 const emptyHome = {
   settings: { id: "home", workspaceId: workspace.id, kind: "home", revision: 1, updatedAt: now, body: { manuscriptRevisionId: null, baselineExecutionId: null, briefNoteIds: [], excludedNoteIds: [], ignoredPaths: [], layout: "reading" } },
@@ -245,11 +245,38 @@ const studioRecords: Record<string, unknown[]> = {
 };
 const coverage = (printed: string, state: string, reasons: string[]) => ({ record: record(`bind-${printed}`, "binding", { printed }), state, reasons, numericPassed: state === "current", expected: null, dependency: { state }, result: null, anchor: {} });
 
+const efforts = (...levels: string[]) =>
+  levels.map((reasoningEffort) => ({
+    reasoningEffort,
+    description:
+      { low: "Fastest replies for simple questions", medium: "Balances speed and depth for everyday work", high: "Works through hard problems more carefully", xhigh: "Longest deliberation for the hardest problems" }[reasoningEffort] ?? reasoningEffort,
+  }));
 const workspaceModelCatalog = {
   models: [
-    { id: "gpt-5-codex", model: "gpt-5-codex", displayName: "GPT-5 Codex", description: "Default agent model", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low" }, { reasoningEffort: "medium", description: "Medium" }, { reasoningEffort: "high", description: "High" }] },
+    { id: "gpt-5-codex", model: "gpt-5-codex", displayName: "GPT-5 Codex", description: "Best for analysis, code, and long research tasks", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: efforts("low", "medium", "high", "xhigh") },
+    { id: "gpt-5", model: "gpt-5", displayName: "GPT-5", description: "General reasoning and writing", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: efforts("low", "medium", "high") },
+    { id: "gpt-5-mini", model: "gpt-5-mini", displayName: "GPT-5 mini", description: "Quick answers at lower usage", isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: efforts("low", "medium") },
   ],
 };
+// `?sources=N` attaches N sources to the conversation; `?model=` and
+// `?effort=` preselect a saved model choice (use an unknown id to see the
+// unavailable state).
+const sourceTitles: Record<string, string> = {
+  "rev-v8": "Minimum wages and county-pair employment",
+  "rev-ref2": "Referee 2 report.pdf",
+  "ds-qcew": "QCEW county panel 2001-2019",
+  "rev-v7": "minwage_draft_v7.pdf",
+  "res-t4": "Table 4 event study",
+};
+const sourceItems = [
+  { role: "main", object: { kind: "paper", id: "rev-v8", revision: "hash-v8" } },
+  { role: "referee_report", object: { kind: "paper", id: "rev-ref2", revision: "hash-r2" } },
+  { role: "data_dictionary", object: { kind: "dataset", id: "ds-qcew", revision: "hash-q" } },
+  { role: "prior_draft", object: { kind: "paper", id: "rev-v7", revision: "hash-v7" } },
+  { role: "result", object: { kind: "result", id: "res-t4", revision: "hash-t4" } },
+].slice(0, Number(params.get("sources") ?? 0));
+let contextSelection = { revision: 1, items: sourceItems as unknown[] };
+if (params.get("model")) Object.assign(session.overrides, { model: params.get("model"), effort: params.get("effort") ?? null });
 
 const modelCatalog = {
   provider: "claude", transport: "cli", source: "bundled", source_version: "2026-09-01",
@@ -297,7 +324,7 @@ const commandData: Record<string, unknown> = {
   get_execution_plan: executionPlan,
   get_settings: settings,
   save_settings: true,
-  check_for_update: { current: "0.9.5", latest: "0.9.5", update_available: false, release_url: "", release_name: "", published_at: null },
+  check_for_update: { current: "1.0.0", latest: "1.0.0", update_available: false, release_url: "", release_name: "", published_at: null },
   get_batch_status: [],
   get_run_setup: { profileId: "auto_paper_review", profileConfigSnapshotId: "snap-1", inputMode: "document", variables: pipelineConfig.variables, inputSlots: [] },
   get_pipeline_config: pipelineConfig,
@@ -320,7 +347,8 @@ const commandData: Record<string, unknown> = {
   workbench_session_snapshot: snapshot,
   workbench_harness_catalog: harnessCatalog,
   workbench_effective_harness: effectiveHarness,
-  workbench_codex_account_state: { status: "chatgpt" },
+  workbench_codex_account_state: { status: "chatgpt", email: "mike@example.edu", planType: "plus", unsupportedAccountType: null, requiresOpenaiAuth: false },
+  workbench_codex_rate_limits: { source: "perBucket", buckets: [{ limitId: "codex", limitName: null, planType: "plus", primary: { usedPercent: 38, remainingPercent: 62, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600 }, secondary: null }] },
   workbench_codex_pending_requests: [],
   workbench_codex_connect: {},
   workbench_codex_model_catalog: workspaceModelCatalog,
@@ -343,7 +371,11 @@ const commandData: Record<string, unknown> = {
   workbench_project_tasks: [],
   workbench_project_mutate: {},
   workbench_project_capabilities: { fileAcceptance: false, hostExecution: false },
-  workbench_list_papers: [],
+  workbench_list_papers: projectKind === "rich" ? [
+    manuscript,
+    { paper: { ...manuscript.paper, id: "paper-ref2", title: "Referee 2 report.pdf", role: "other" }, revision: { ...manuscript.revision, id: "rev-ref2", paperId: "paper-ref2", contentHash: "hash-r2" } },
+    { paper: { ...manuscript.paper, id: "paper-scan", title: "Scanned appendix.pdf", role: "other" }, revision: { ...manuscript.revision, id: "rev-scan", paperId: "paper-scan", contentHash: "hash-s", extraction: { status: "failed", error: "No readable text" } } },
+  ] : [],
   workbench_list_sources: [],
   workbench_list_notes: [],
   workbench_list_executions: [],
@@ -379,7 +411,18 @@ const commandData: Record<string, unknown> = {
       },
     ],
   },
-  workbench_context_selection: { revision: 0, items: [] },
+  workbench_update_session: (args: { request: { overrides?: Record<string, unknown> } }) => {
+    if (args.request.overrides) session.overrides = args.request.overrides;
+    session.revision += 1;
+    return { record: session, sequence: ++snapshot.sequence };
+  },
+  workbench_import_paper: (args: { request: { title: string } }) => ({
+    paper: { ...manuscript.paper, id: `paper-${args.request.title}`, title: args.request.title, role: "other" },
+    revision: { ...manuscript.revision, id: `rev-${args.request.title}`, contentHash: `hash-${args.request.title}` },
+  }),
+  workbench_context_selection: () => contextSelection,
+  workbench_save_context_selection: (args: { items: unknown[] }) => (contextSelection = { revision: contextSelection.revision + 1, items: args.items }),
+  workbench_research_object: (args: { object: { id: string; kind: string } }) => ({ object: args.object, title: sourceTitles[args.object.id] ?? args.object.id, text: "", provenance: "", access: "", completeness: "", truncated: false }),
   ...(projectKind === "rich"
     ? {
         workbench_studio_records: (args: { kind: string }) => studioRecords[args.kind] ?? [],

@@ -31,6 +31,65 @@
   --color-accent-950: 38 38 38;
 }
 
+/* Semantic interface tokens. New and touched surfaces draw from these rather
+   than literal colors, radii, shadows, or type sizes. One surface per theme:
+   panes share --ui-surface; --ui-raised floats above it (menus, popovers);
+   --ui-sunken sits below it (wells, hover, the researcher's own messages). */
+:root {
+  --ui-surface: #ffffff;
+  --ui-raised: #ffffff;
+  --ui-sunken: #f5f5f5;
+  --ui-border: #e5e5e5;
+  --ui-border-strong: #d4d4d4;
+  --ui-text: #262626;
+  --ui-muted: #737373;
+  --ui-accent: rgb(var(--color-accent-500));
+  --ui-accent-soft: rgb(var(--color-accent-500) / 0.16);
+  --ui-inverse: #171717;
+  --ui-on-inverse: #ffffff;
+  --ui-danger: #b91c1c;
+  --ui-warning: #92400e;
+  --ui-warning-soft: #fffbeb;
+  --ui-scrim: rgb(0 0 0 / 0.16);
+
+  /* Three radii: controls, floating containers, large containers. */
+  --ui-radius-sm: 6px;
+  --ui-radius-md: 10px;
+  --ui-radius-lg: 16px;
+
+  /* One elevation scale: resting, raised, floating. */
+  --ui-shadow-1: 0 1px 2px rgb(0 0 0 / 0.05);
+  --ui-shadow-2: 0 4px 24px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.04);
+  --ui-shadow-3: 0 12px 40px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.06);
+
+  /* Type ramp. Interactive labels never go below --ui-text-label; only
+     metadata uses --ui-text-meta. */
+  --ui-text-meta: 12px;
+  --ui-text-label: 13px;
+  --ui-text-body: 14px;
+  --ui-text-title: 16px;
+  --ui-text-display: 20px;
+}
+
+.dark {
+  --ui-surface: #0a0a0a;
+  --ui-raised: #1c1c1c;
+  --ui-sunken: #202020;
+  --ui-border: #333333;
+  --ui-border-strong: #454545;
+  --ui-text: #e5e5e5;
+  --ui-muted: #a3a3a3;
+  --ui-inverse: #f5f5f5;
+  --ui-on-inverse: #171717;
+  --ui-danger: #f87171;
+  --ui-warning: #fcd34d;
+  --ui-warning-soft: rgb(120 53 15 / 0.25);
+  --ui-scrim: rgb(0 0 0 / 0.5);
+  --ui-shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --ui-shadow-2: 0 4px 24px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
+  --ui-shadow-3: 0 12px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+}
+
 /* Smooth dark/light mode transition — applied temporarily during toggle */
 html.theme-transitioning,
 html.theme-transitioning *,

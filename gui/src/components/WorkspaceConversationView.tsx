@@ -1,6 +1,6 @@
 import { useAppPreferences, shouldSendMessage } from "../lib/appPreferences";
 import { isMac } from "../lib/platform";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
 import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
 import { appEvents } from "../lib/appEvents";
@@ -13,6 +13,11 @@ import { fileMarkdownComponents } from "./file-workspace/markdownComponents";
 import rehypeKatex from "rehype-katex";
 import WorkspaceMessageActions from "./WorkspaceMessageActions";
 import WorkspaceIcon from "./WorkspaceIcon";
+import Tooltip from "../ui/Tooltip";
+import { Icon } from "../ui/icons";
+import type { FileDropState } from "../hooks/useComposerFileDrop";
+import "./WorkspaceTranscript.css";
+import "./WorkspaceComposer.css";
 import type {
   ConversationSnapshot,
   TranscriptItem,
@@ -58,6 +63,8 @@ interface Props {
   inspectorOpen?: boolean;
   composerControls?: ReactNode;
   composerSetup?: ReactNode;
+  /** A file drag is over the conversation, or dropped files are importing. */
+  dropState?: FileDropState;
   header: ReactNode;
   requests: ReactNode;
   composerMenu: ReactNode;
@@ -94,6 +101,7 @@ export default function WorkspaceConversationView({
   inspectorOpen = Boolean(inspector),
   composerControls,
   composerSetup,
+  dropState = "idle",
   header,
   requests,
   composerMenu,
@@ -160,6 +168,28 @@ export default function WorkspaceConversationView({
     snapshot?.workspace?.root,
   ]);
   const { sendShortcut } = useAppPreferences();
+  const shortcut =
+    sendShortcut === "enter" ? "Enter" : `${isMac ? "⌘" : "Ctrl+"}Enter`;
+  // The field grows with its content; CSS caps the height and scrolls past it.
+  useLayoutEffect(() => {
+    const field = messageRef.current;
+    if (!field) return;
+    const fit = () => {
+      field.style.height = "auto";
+      // A hidden pane measures zero; leave the stylesheet's minimum in charge.
+      field.style.height = field.scrollHeight ? `${field.scrollHeight}px` : "";
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    let width = field.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (field.clientWidth === width) return;
+      width = field.clientWidth;
+      fit();
+    });
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, [draft, messageRef]);
   return (
     <FileNavigationContext.Provider value={fileNavigation}>
       {header}
@@ -317,7 +347,18 @@ export default function WorkspaceConversationView({
       </div>
       <div className="workspace-composer-dock" aria-busy={contextBusy}>
         <div className="mx-auto max-w-3xl">
-          <div className="workspace-composer">
+          <div
+            className="workspace-composer"
+            data-drop={dropState === "idle" ? undefined : dropState}
+          >
+            {dropState !== "idle" && (
+              <div className="workspace-composer-drop" role="status">
+                <Icon name="import" />
+                {dropState === "over"
+                  ? "Drop to add these files to the conversation"
+                  : "Adding files…"}
+              </div>
+            )}
             {contextTray}
             <textarea
               ref={messageRef}
@@ -347,52 +388,41 @@ export default function WorkspaceConversationView({
                   onSend();
                 }
               }}
-              placeholder="Ask ChatGPT…"
-              rows={2}
-              className="max-h-52 min-h-20 w-full resize-y border-0 bg-transparent p-2 text-sm outline-none disabled:opacity-50"
+              placeholder={`Ask ChatGPT… ${shortcut} to send`}
+              rows={1}
+              className="workspace-composer-input"
             />
-            <div className="workspace-composer-action-row">
+            <div className="workspace-composer-actions">
               <div className="workspace-composer-leading">
                 {composerMenu}
-                {composerSetup}
                 {composerControls}
+                {composerSetup}
               </div>
-              <div className="workspace-composer-trailing">
-                {active ? (
-                  <button
-                    type="button"
-                    onClick={() => onStop()}
-                    className="rounded-xl border border-red-300 px-4 py-2 text-sm text-red-600"
-                  >
-                    Stop
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={disabled || !draft.trim()}
-                    onClick={() => onSend()}
-                    className="workspace-send-button"
-                    aria-label={submitting ? "Sending…" : "Send ↑"}
-                  >
-                    {submitting ? (
-                      "Sending…"
-                    ) : (
-                      <>
-                        Send
-                        <WorkspaceIcon name="arrow-up" size={17} />
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
+              {/* One control in one place: Send when idle, Stop while working. */}
+              <Tooltip
+                label={
+                  active
+                    ? "Stop the response"
+                    : `Send · ${shortcut}. Shift+Enter adds a line.`
+                }
+              >
+                <button
+                  type="button"
+                  disabled={!active && (disabled || !draft.trim())}
+                  onClick={() => (active ? onStop() : onSend())}
+                  className="workspace-send-button"
+                  aria-label={
+                    active ? "Stop response" : submitting ? "Sending…" : "Send"
+                  }
+                >
+                  <Icon
+                    name={active ? "stop" : "arrow-up"}
+                    className="h-[18px] w-[18px]"
+                  />
+                </button>
+              </Tooltip>
             </div>
           </div>
-          <p className="mt-2 text-center text-[11px] text-gray-400">
-            {sendShortcut === "enter"
-              ? "Enter"
-              : `${isMac ? "Command" : "Ctrl"}+Enter`}{" "}
-            to send · Shift+Enter for a new line
-          </p>
         </div>
       </div>
     </FileNavigationContext.Provider>

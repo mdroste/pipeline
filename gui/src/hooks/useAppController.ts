@@ -93,7 +93,7 @@ export function useAppController() {
     route.page === "tasks" ? (route.discoveryId ?? null) : null;
   const automatePath =
     route.page === "tasks" ? (route.automatePath ?? null) : null;
-  const [discoveryRequest, setDiscoveryRequest] = useState(0);
+  const [taskEntryRequest, setTaskEntryRequest] = useState(0);
   const workspaceSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const registerWorkspaceSave = useCallback(
     (save: (() => Promise<boolean>) | null) => {
@@ -102,11 +102,24 @@ export function useAppController() {
     [],
   );
   const projectSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const [tasksDirty, setTasksDirty] = useState(false);
+  const tasksDirtyRef = useRef(false);
+  tasksDirtyRef.current = tasksDirty;
   const [workflowDirty, setWorkflowDirty] = useState(false);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [projectsDirty, setProjectsDirty] = useState(false);
-  const unsavedRef = useRef({ workflowDirty, settingsDirty, projectsDirty });
-  unsavedRef.current = { workflowDirty, settingsDirty, projectsDirty };
+  const unsavedRef = useRef({
+    workflowDirty,
+    settingsDirty,
+    projectsDirty,
+    tasksDirty,
+  });
+  unsavedRef.current = {
+    workflowDirty,
+    settingsDirty,
+    projectsDirty,
+    tasksDirty,
+  };
   const pageRef = useRef(page);
   pageRef.current = page;
   const navigationSequence = useRef(0);
@@ -119,7 +132,14 @@ export function useAppController() {
   const confirmLeaveCurrentPage = useCallback(async (nextPage: AppPage) => {
     const sequence = ++navigationSequence.current;
     const currentPage = pageRef.current;
-    if (nextPage === currentPage) return true;
+    if (currentPage === "tasks" && tasksDirtyRef.current) {
+      const allowed = await confirmDialog(
+        "You have unsaved automation changes. Leave and discard them?",
+        { confirmLabel: "Discard and leave", destructive: true },
+      );
+      return allowed && sequence === navigationSequence.current;
+    }
+    if (nextPage === currentPage && currentPage !== "workspace") return true;
     if (currentPage === "workspace" && workspaceSaveRef.current) {
       const saved = await workspaceSaveRef.current();
       return saved && sequence === navigationSequence.current;
@@ -252,8 +272,10 @@ export function useAppController() {
   const { recentProjects, projectsLoading } = useRecentProjects(page);
   const [workspaceEntry, setWorkspaceEntry] = useState<{
     surface: "chat" | "project";
+    target?: Extract<AppRoute, { page: "workspace" }>;
     request: number;
   }>({
+    target: route.page === "workspace" ? route : undefined,
     surface:
       localStorage.getItem("pipeline.workspace.surface") === "chat"
         ? "chat"
@@ -271,7 +293,14 @@ export function useAppController() {
       page === "home" ||
       page === "main"
     )
-      localStorage.setItem("pipeline.ui.page", page === "main" ? "home" : page);
+      try {
+        localStorage.setItem(
+          "pipeline.ui.page",
+          page === "main" ? "home" : page,
+        );
+      } catch {
+        /* Optional navigation preference. */
+      }
   }, [page]);
 
   const [settingsNavigationKey, setSettingsNavigationKey] = useState(0);
@@ -390,7 +419,8 @@ export function useAppController() {
         if (
           !unsaved.workflowDirty &&
           !unsaved.settingsDirty &&
-          !unsaved.projectsDirty
+          !unsaved.projectsDirty &&
+          !unsaved.tasksDirty
         )
           return;
         event.preventDefault();
@@ -546,7 +576,7 @@ export function useAppController() {
       previousRouteRef.current = next;
       if (next.page === "tasks") {
         setTasksAttention(false);
-        if (next.discoveryId) setDiscoveryRequest((request) => request + 1);
+        setTaskEntryRequest((request) => request + 1);
       }
       if (previous.page === "settings" && next.page !== "settings")
         void checkDependencies();
@@ -554,30 +584,34 @@ export function useAppController() {
       if (next.page === "history" && !next.runId)
         setHistorySourceSelection(null);
       if (next.page === "workspace") {
-        if (next.projectId) {
-          saveDeskLayout(next.projectId, {
-            ...loadDeskLayout(next.projectId),
-            tab: (next.destination ?? "overview") as WorkspaceDestination,
-            object: null,
-            comparison: null,
-          });
-          localStorage.setItem(
-            "pipeline.workspace.workspaceId",
-            next.projectId,
-          );
-        } else if (next.sessionId) {
-          localStorage.removeItem("pipeline.workspace.workspaceId");
+        try {
+          if (next.projectId) {
+            saveDeskLayout(next.projectId, {
+              ...loadDeskLayout(next.projectId),
+              tab: (next.destination ?? "overview") as WorkspaceDestination,
+              object: null,
+              comparison: null,
+            });
+            localStorage.setItem(
+              "pipeline.workspace.workspaceId",
+              next.projectId,
+            );
+          } else if (next.sessionId) {
+            localStorage.removeItem("pipeline.workspace.workspaceId");
+          }
+          if (next.sessionId)
+            localStorage.setItem(
+              "pipeline.workspace.sessionId",
+              next.sessionId,
+            );
+          if (next.surface)
+            localStorage.setItem("pipeline.workspace.surface", next.surface);
+        } catch {
+          /* Entry identity must not depend on optional preference storage. */
         }
-        if (next.sessionId)
-          localStorage.setItem("pipeline.workspace.sessionId", next.sessionId);
-        const surface =
-          next.surface ??
-          (localStorage.getItem("pipeline.workspace.surface") === "chat"
-            ? "chat"
-            : "project");
-        localStorage.setItem("pipeline.workspace.surface", surface);
         setWorkspaceEntry((entry) => ({
-          surface,
+          surface: next.surface ?? entry.surface,
+          target: next,
           request: entry.request + 1,
         }));
       }
@@ -901,8 +935,10 @@ export function useAppController() {
   };
 
   const openWorkspaceSession = async (id: string) => {
+    const sequence = ++navigationSequence.current;
     const { workbenchClient } = await import("../lib/workbenchClient");
     const snapshot = await workbenchClient.sessionSnapshot(id);
+    if (sequence !== navigationSequence.current) return false;
     const allowed = await router.navigate({
       page: "workspace",
       sessionId: id,
@@ -1056,8 +1092,9 @@ export function useAppController() {
     taskId,
     discoveryId,
     automatePath,
-    discoveryRequest,
+    taskEntryRequest,
     closePipeline,
+    setTasksDirty,
     setWorkflowDirty,
     openPaddleInstallSettings,
     helpInitialSection,

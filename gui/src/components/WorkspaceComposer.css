@@ -1,0 +1,224 @@
+/* The composer: source chips, the message field, and one row of controls. */
+.workspace-composer-dock {
+  flex-shrink: 0;
+  max-height: 60%;
+  overflow-y: auto;
+  padding: 8px 14px 12px;
+  background: var(--ui-surface);
+}
+.workspace-composer {
+  position: relative;
+  padding: 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-2);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.workspace-composer:focus-within {
+  border-color: var(--ui-accent);
+  box-shadow:
+    0 0 0 3px var(--ui-accent-soft),
+    var(--ui-shadow-2);
+}
+.workspace-composer[data-drop="over"] {
+  border-color: var(--ui-accent);
+  border-style: dashed;
+  box-shadow: 0 0 0 3px var(--ui-accent-soft);
+}
+.workspace-composer-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: inherit;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* The field grows with its content up to about eight lines, then scrolls. */
+.workspace-composer-input {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  max-height: 196px;
+  padding: 8px 8px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: var(--ui-text-body);
+  line-height: 1.6;
+  outline: none;
+  overflow-y: auto;
+  resize: none;
+}
+.workspace-composer-input::placeholder {
+  color: var(--ui-muted);
+}
+.workspace-composer-input:disabled {
+  opacity: 0.5;
+}
+
+.workspace-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-composer-leading {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Send and Stop are one control in one place, so the row never shifts. */
+.workspace-send-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--ui-inverse);
+  color: var(--ui-on-inverse);
+  transition: opacity 0.15s;
+}
+.workspace-send-button:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.workspace-send-button:disabled {
+  opacity: 0.3;
+}
+
+/* Model and thinking: one chip that sizes to its text and never stretches. */
+.workspace-model-chip {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-muted);
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+.workspace-model-chip:hover,
+.workspace-model-chip[aria-expanded="true"] {
+  background: var(--ui-sunken);
+  color: var(--ui-text);
+}
+.workspace-model-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-model-chip[data-warning="true"] {
+  color: var(--ui-warning);
+}
+
+/* Attached sources: one row of chips above the field. */
+.workspace-source-row[hidden] {
+  display: none;
+}
+.workspace-source-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 2px 6px;
+}
+.workspace-source-chip {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  height: 28px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-sunken);
+  color: var(--ui-text);
+  font-size: var(--ui-text-meta);
+}
+.workspace-source-chip-main {
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 4px 0 8px;
+  border-radius: inherit;
+}
+.workspace-source-chip-main > span {
+  /* Bounding the name, not the chip, keeps neighbours shrinking evenly. */
+  max-width: 20ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-source-chip-remove {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 100%;
+  border-radius: inherit;
+  color: var(--ui-muted);
+}
+.workspace-source-chip-main:hover,
+.workspace-source-chip-remove:hover {
+  color: var(--ui-text);
+  background: var(--ui-border);
+}
+.workspace-source-chip button:disabled {
+  opacity: 0.5;
+}
+.workspace-source-more {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.workspace-source-more:hover,
+.workspace-source-more[aria-expanded="true"] {
+  background: var(--ui-sunken);
+  color: var(--ui-text);
+}
+.workspace-source-overflow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+.workspace-source-overflow .workspace-source-chip-main > span {
+  max-width: none;
+}
+
+@media (max-height: 800px) {
+  .workspace-composer-dock {
+    padding-top: 6px;
+    padding-bottom: 8px;
+  }
+}

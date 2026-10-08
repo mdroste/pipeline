@@ -256,3 +256,49 @@ it("roves tabs without loading until activation and associates every panel", asy
       document.getElementById(tab.getAttribute("aria-controls")!),
     ).toHaveAttribute("aria-labelledby", tab.id);
 });
+
+it("loads a replacement task while Automations stays mounted", async () => {
+  const { rerender } = render(<TasksPage initialTaskId="A" />);
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("task_get", { id: "A" }),
+  );
+  rerender(<TasksPage initialTaskId="B" />);
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("task_get", { id: "B" }),
+  );
+});
+
+it("reloads repeated task links and reports unsaved builder edits", async () => {
+  const dirty = vi.fn();
+  const { rerender } = render(
+    <TasksPage
+      initialSessionId="session"
+      onDirtyChange={dirty}
+      entryRequest={1}
+    />,
+  );
+  await screen.findByRole("option", { name: "Research idea" });
+  fireEvent.click(screen.getByRole("button", { name: "Follow up" }));
+  fireEvent.change(screen.getByLabelText("What should happen next?"), {
+    target: { value: "Keep this draft" },
+  });
+  expect(dirty).toHaveBeenCalledWith(true);
+  rerender(
+    <TasksPage initialTaskId="A" entryRequest={2} onDirtyChange={dirty} />,
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("task_get", { id: "A" }),
+  );
+  const count = mocks.invoke.mock.calls.filter(
+    ([name]) => name === "task_get",
+  ).length;
+  rerender(
+    <TasksPage initialTaskId="A" entryRequest={3} onDirtyChange={dirty} />,
+  );
+  await waitFor(() =>
+    expect(
+      mocks.invoke.mock.calls.filter(([name]) => name === "task_get").length,
+    ).toBeGreaterThan(count),
+  );
+  expect(dirty).toHaveBeenLastCalledWith(false);
+});

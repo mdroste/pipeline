@@ -18,6 +18,17 @@ stage; the [full plan](../refactoring-plan.md) tracks the broader work.
   pending requests, and serialized composer saves. `hooks/useWorkbenchEvents.ts`
   isolates the live event subscription, coalesced streams, and terminal-turn
   cleanup.
+- `ui/` is the shared interaction kit: `Popover`, `Menu`, `Select`,
+  `SegmentedControl`, `Tooltip`, `IconButton`, `Sheet`, `Skeleton`, and the
+  icon set, positioned by `ui/anchoredPosition.ts`. Semantic `--ui-*` tokens
+  live in `App.css`. Workspace styles are per owner (`WorkspaceDesk.css`,
+  `WorkspaceTranscript.css`, `WorkspaceComposer.css`,
+  `WorkspaceNavigation.css`, `WorkspaceInspector.css`).
+- `components/WorkspaceComposerControls.tsx` (model and thinking picker),
+  `WorkspaceComposerMenu.tsx` (attach menu), and `WorkspaceContextTray.tsx`
+  (source chips) are the composer's controls. `lib/workspaceAttachments.ts`
+  owns file import and default source roles; `hooks/useComposerFileDrop.ts`
+  and `lib/fileDrop.ts` own native file drops.
 - `components/WorkspaceResearchPanel.tsx` renders the research inspector;
   `components/research-panel/useResearchPanelController.ts` owns its scoped
   loading, drafts, and mutations.
@@ -202,3 +213,11 @@ Google Review calls and model discovery use the Gemini API under the existing
 `antigravity` provider ID. The retired CLI adapter and probe mechanics have been
 removed; only saved-settings compatibility fields remain. `deps/checks.rs` owns
 the API-key readiness record labeled Google API.
+
+## October release fixes
+
+- `workbench/release/retention/paths.rs` validates local trash journal paths before filesystem actions.
+- `workbench/release/archive/conversation_files.rs` stages and restores bounded version-2 conversation payloads; archive migration and regression tests have separate modules.
+- `commands/orchestration/pins.rs` reconciles settled failed Review pins against operation ownership.
+- `hooks/useWorkspaceRouteEntry.ts` invalidates superseded navigation loads while the controller owns draft persistence and selection.
+- `scripts/release/poppler-inventory.mjs` records actual bundled file hashes; `qualify-release.mjs` validates candidate-specific release evidence.

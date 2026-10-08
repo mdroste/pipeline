@@ -106,8 +106,9 @@ function App() {
     taskId,
     discoveryId,
     automatePath,
-    discoveryRequest,
+    taskEntryRequest,
     closePipeline,
+    setTasksDirty,
     setWorkflowDirty,
     openPaddleInstallSettings,
     helpInitialSection,
@@ -355,6 +356,7 @@ function App() {
                 <WorkspacePage
                   onAllProjects={() => void handleNavigate("project-index")}
                   onSaveHandlerChange={registerWorkspaceSave}
+                  entryTarget={workspaceEntry.target}
                   entryRequest={workspaceEntry.request}
                   entrySurface={workspaceEntry.surface}
                   newProjectRequest={newProjectRequest}
@@ -367,10 +369,14 @@ function App() {
                 />
               ) : page === "tasks" ? (
                 <TasksPage
-                  key={`${discoveryId ?? "tasks"}:${discoveryRequest}`}
+                  key={
+                    discoveryId ? `${discoveryId}:${taskEntryRequest}` : "tasks"
+                  }
+                  entryRequest={taskEntryRequest}
                   initialDiscoveryId={discoveryId}
                   initialSessionId={taskSessionId}
                   initialTaskId={taskId}
+                  onDirtyChange={setTasksDirty}
                   initialAutomatePath={automatePath}
                   onConversation={async (id) => {
                     await openWorkspaceSession(id);

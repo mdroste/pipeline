@@ -11,3 +11,5 @@ import "./npm-overrides.test.mjs";
 import "./paddle-parser-lock.test.mjs";
 
 import "./draft-release.test.mjs";
+
+import "./release-fixes.test.mjs";

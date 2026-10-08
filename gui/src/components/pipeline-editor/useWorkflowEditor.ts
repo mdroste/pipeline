@@ -7,8 +7,16 @@ import { type WaveSelection } from "../WaveDiagram";
 import { conditionUpstreamIds } from "./utils";
 
 type EditingMode = WaveSelection | null;
+const RECOVERY_WARNING =
+  "Draft recovery storage is unavailable. Your edits remain open; save or export this workflow before leaving.";
 export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
   const [config, setConfig] = useState<PipelineConfig | null>(null);
+  const [recoveryWarning, setRecoveryWarning] = useState("");
+  const recoveryDisabled = useRef(false);
+  const disableRecoveryCache = () => {
+    recoveryDisabled.current = true;
+    setRecoveryWarning(RECOVERY_WARNING);
+  };
   const [dirty, setDirty] = useState(false);
   const [schemaDraftValid, setSchemaDraftValid] = useState(true);
   const [schemaEditorEpoch, setSchemaEditorEpoch] = useState(0);
@@ -50,11 +58,14 @@ export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
   useEffect(() => {
     // Loading must inspect recovery storage before any save/discard effect.
     if (!config) return;
+    if (recoveryDisabled.current) return;
     const key = `pipeline.workflowDraft.${activeProfile}`;
-    if (dirty && config) {
-      window.localStorage.setItem(key, JSON.stringify(config));
-    } else {
-      window.localStorage.removeItem(key);
+    try {
+      if (dirty) window.localStorage.setItem(key, JSON.stringify(config));
+      else window.localStorage.removeItem(key);
+      setRecoveryWarning("");
+    } catch {
+      setRecoveryWarning(RECOVERY_WARNING);
     }
   }, [activeProfile, config, dirty]);
 
@@ -130,6 +141,8 @@ export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
   };
   return {
     config,
+    recoveryWarning,
+    disableRecoveryCache,
     activeProfile,
     dirty,
     schemaDraftValid,

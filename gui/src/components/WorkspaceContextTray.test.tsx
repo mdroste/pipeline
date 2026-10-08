@@ -6,7 +6,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import WorkspaceContextTray, { addContextObject } from "./WorkspaceContextTray";
+import WorkspaceContextTray, {
+  addContextObject,
+  addContextObjectsWhenReady,
+} from "./WorkspaceContextTray";
 import type { ContextSelection, OpenResearchObject } from "../lib/deskClient";
 const mocks = vi.hoisted(() => ({
   context: vi.fn(),
@@ -21,7 +24,28 @@ const object: OpenResearchObject = {
   start: 20,
   end: 80,
 };
+const paper = (id: string): OpenResearchObject => ({
+  kind: "paper",
+  id,
+  revision: "hash",
+});
 const onError = vi.fn();
+const tray = (sessionId = "a", disabled = false) => (
+  <WorkspaceContextTray
+    workspaceId="w"
+    sessionId={sessionId}
+    disabled={disabled}
+    onError={onError}
+  />
+);
+const loaded = async (sessionId = "a") => {
+  await waitFor(() =>
+    expect(mocks.context).toHaveBeenLastCalledWith(sessionId),
+  );
+  await act(async () => {});
+};
+const sources = () =>
+  screen.queryByRole("group", { name: "Conversation sources" });
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.context.mockResolvedValue({ revision: 0, items: [] });
@@ -34,29 +58,30 @@ beforeEach(() => {
   }));
 });
 it("persists an exact passage and its role without replacing it with the current document", async () => {
-  render(
-    <WorkspaceContextTray
-      workspaceId="w"
-      sessionId="a"
-      disabled={false}
-      onError={onError}
-    />,
-  );
-  await screen.findByText("Add exact sources from the research desk.");
-  expect(screen.getByLabelText("Conversation sources")).not.toBeVisible();
+  render(tray());
+  await loaded();
+  // An empty source list takes no space.
+  expect(sources()).not.toBeInTheDocument();
   act(() => addContextObject("w", object));
-  await screen.findByText("Source revision-one");
-  expect(screen.getByText("Source revision-one")).not.toBeVisible();
-  fireEvent.click(screen.getByText(/Sources · 1/, { selector: "summary" }));
-  expect(screen.getByLabelText("Role for Source revision-one")).toBeVisible();
+  expect(await screen.findByText("Source revision-one")).toBeVisible();
   expect(mocks.saveContext).toHaveBeenCalledWith(
     "a",
     { revision: 0, items: [] },
     [{ role: "main", object }],
   );
-  fireEvent.change(screen.getByLabelText("Role for Source revision-one"), {
-    target: { value: "referee_report" },
-  });
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Source revision-one, used as Main paper. Change how it is used",
+    }),
+  );
+  expect(
+    screen.getByRole("menuitemradio", { name: "Main paper" }),
+  ).toBeChecked();
+  // Roles read as a researcher would say them, not as stored identifiers.
+  expect(screen.queryByText("referee_report")).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("menuitemradio", { name: "Referee report" }),
+  );
   await waitFor(() =>
     expect(mocks.saveContext).toHaveBeenLastCalledWith(
       "a",
@@ -64,10 +89,13 @@ it("persists an exact passage and its role without replacing it with the current
       [{ role: "referee_report", object }],
     ),
   );
+  await screen.findByRole("button", {
+    name: /Source revision-one, used as Referee report/,
+  });
   fireEvent.click(
     screen.getByLabelText("Remove Source revision-one from context"),
   );
-  await screen.findByText("Add exact sources from the research desk.");
+  await waitFor(() => expect(sources()).not.toBeInTheDocument());
   expect(mocks.saveContext).toHaveBeenLastCalledWith(
     "a",
     expect.objectContaining({ revision: 2 }),
@@ -75,18 +103,58 @@ it("persists an exact passage and its role without replacing it with the current
   );
 });
 it("refuses source changes while a turn is active", async () => {
-  render(
-    <WorkspaceContextTray
-      workspaceId="w"
-      sessionId="a"
-      disabled
-      onError={onError}
-    />,
-  );
-  await screen.findByText("Add exact sources from the research desk.");
+  render(tray("a", true));
+  await loaded();
   act(() => addContextObject("w", object));
   expect(mocks.saveContext).not.toHaveBeenCalled();
   expect(onError).toHaveBeenCalled();
+});
+it("holds sources that follow an import until the conversation can take them", async () => {
+  const view = render(tray("a", true));
+  await loaded();
+  act(() =>
+    addContextObjectsWhenReady("w", [paper("one"), paper("two"), paper("one")]),
+  );
+  expect(mocks.saveContext).not.toHaveBeenCalled();
+  expect(onError).not.toHaveBeenCalled();
+  view.rerender(tray("a", false));
+  await waitFor(() =>
+    expect(mocks.saveContext).toHaveBeenCalledWith(
+      "a",
+      { revision: 0, items: [] },
+      [
+        { role: "main", object: paper("one") },
+        { role: "supporting", object: paper("two") },
+      ],
+    ),
+  );
+  expect(mocks.saveContext).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText("Source two")).toBeVisible();
+});
+it("keeps the row to a few chips and lists the rest on request", async () => {
+  mocks.context.mockResolvedValue({
+    revision: 4,
+    items: ["one", "two", "three", "four", "five"].map((id) => ({
+      role: "supporting",
+      object: paper(id),
+    })),
+  });
+  render(tray());
+  await screen.findByText("Source three");
+  expect(screen.queryByText("Source four")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "+2 more" }));
+  expect(screen.getByText("Source four")).toBeVisible();
+  fireEvent.click(screen.getByLabelText("Remove Source five from context"));
+  await waitFor(() =>
+    expect(mocks.saveContext).toHaveBeenCalledWith(
+      "a",
+      expect.objectContaining({ revision: 4 }),
+      expect.not.arrayContaining([
+        { role: "supporting", object: paper("five") },
+      ]),
+    ),
+  );
+  expect(await screen.findByRole("button", { name: "+1 more" })).toBeVisible();
 });
 it("ignores a completed source save belonging to the conversation just left", async () => {
   let finish!: (value: ContextSelection) => void;
@@ -96,26 +164,12 @@ it("ignores a completed source save belonging to the conversation just left", as
         finish = resolve;
       }),
   );
-  const view = render(
-    <WorkspaceContextTray
-      workspaceId="w"
-      sessionId="a"
-      disabled={false}
-      onError={onError}
-    />,
-  );
-  await screen.findByText("Add exact sources from the research desk.");
+  const view = render(tray());
+  await loaded();
   act(() => addContextObject("w", object));
   await waitFor(() => expect(mocks.saveContext).toHaveBeenCalled());
-  view.rerender(
-    <WorkspaceContextTray
-      workspaceId="w"
-      sessionId="b"
-      disabled={false}
-      onError={onError}
-    />,
-  );
-  await screen.findByText("Add exact sources from the research desk.");
+  view.rerender(tray("b"));
+  await loaded("b");
   await act(async () =>
     finish({ revision: 1, items: [{ role: "main", object }] }),
   );
@@ -124,15 +178,8 @@ it("ignores a completed source save belonging to the conversation just left", as
 });
 it("reloads authoritative selection after a concurrent edit conflict", async () => {
   mocks.saveContext.mockRejectedValue({ message: "Sources changed; refresh" });
-  render(
-    <WorkspaceContextTray
-      workspaceId="w"
-      sessionId="a"
-      disabled={false}
-      onError={onError}
-    />,
-  );
-  await screen.findByText("Add exact sources from the research desk.");
+  render(tray());
+  await loaded();
   mocks.context.mockResolvedValue({
     revision: 7,
     items: [{ role: "source", object }],
@@ -140,7 +187,9 @@ it("reloads authoritative selection after a concurrent edit conflict", async () 
   act(() => addContextObject("w", object));
   await screen.findByText("Source revision-one");
   expect(onError).toHaveBeenCalled();
-  expect(screen.getByLabelText("Role for Source revision-one")).toHaveValue(
-    "source",
-  );
+  expect(
+    screen.getByRole("button", {
+      name: /Source revision-one, used as Source\./,
+    }),
+  ).toBeInTheDocument();
 });

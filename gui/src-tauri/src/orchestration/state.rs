@@ -55,7 +55,8 @@ pub fn advance(chain: &Chain, progress: &mut Progress, inputs: &Value) -> Advanc
     if progress.receipts.len() >= MAX_INSTANCES {
         return Advance::Attention("Task instance limit reached".into());
     }
-    match walk(&chain.steps, "", progress, inputs) {
+    let mut budget = WalkBudget::new(progress);
+    match walk(&chain.steps, "", progress, inputs, &mut budget) {
         Ok((true, _)) => Advance::Finished,
         Ok((false, ready)) if ready.is_empty() => Advance::Waiting,
         Ok((false, ready)) => Advance::Ready(ready),
@@ -67,8 +68,10 @@ fn walk(
     prefix: &str,
     p: &mut Progress,
     inputs: &Value,
+    budget: &mut WalkBudget,
 ) -> Result<(bool, Vec<Ready>), String> {
     for step in steps {
+        budget.tick()?;
         let address = format!("{prefix}{}", step.id);
         if p.decisions.contains_key(&format!("{address}/done")) {
             continue;
@@ -92,7 +95,7 @@ fn walk(
                             ))
                         }
                     };
-                    p.decisions.insert(address.clone(), json!(choice));
+                    budget.record(p, address.clone(), json!(choice))?;
                     choice
                 };
                 let result = walk(
@@ -100,11 +103,12 @@ fn walk(
                     &format!("{address}/"),
                     p,
                     inputs,
+                    budget,
                 )?;
                 if !result.0 {
                     return Ok(result);
                 }
-                p.decisions.insert(format!("{address}/done"), json!(true));
+                budget.record(p, format!("{address}/done"), json!(true))?;
             }
             Action::Repeat {
                 max_iterations,
@@ -120,7 +124,7 @@ fn walk(
                             continue;
                         }
                     }
-                    let result = walk(steps, &format!("{key}/"), p, inputs)?;
+                    let result = walk(steps, &format!("{key}/"), p, inputs, budget)?;
                     if !result.0 {
                         return Ok(result);
                     }
@@ -131,7 +135,7 @@ fn walk(
                             return Err(format!("{}: stop condition is unknown", step.label))
                         }
                     };
-                    p.decisions.insert(key, json!(stop));
+                    budget.record(p, key, json!(stop))?;
                     if stop {
                         break;
                     }
@@ -139,20 +143,21 @@ fn walk(
                         p.limit_reached = true;
                     }
                 }
-                p.decisions.insert(format!("{address}/done"), json!(true));
+                budget.record(p, format!("{address}/done"), json!(true))?;
             }
             Action::Parallel { branches } => {
                 let mut complete = true;
                 let mut ready = Vec::new();
                 for (i, branch) in branches.iter().enumerate() {
-                    let (done, mut pending) = walk(branch, &format!("{address}/{i}/"), p, inputs)?;
+                    let (done, mut pending) =
+                        walk(branch, &format!("{address}/{i}/"), p, inputs, budget)?;
                     complete &= done;
                     ready.append(&mut pending);
                 }
                 if !complete {
                     return Ok((false, ready));
                 }
-                p.decisions.insert(format!("{address}/done"), json!(true));
+                budget.record(p, format!("{address}/done"), json!(true))?;
             }
             Action::While {
                 max_iterations,
@@ -171,13 +176,13 @@ fn walk(
                                 return Err(format!("{}: while condition is unknown", step.label))
                             }
                         };
-                        p.decisions.insert(key, json!(enter));
+                        budget.record(p, key, json!(enter))?;
                         enter
                     };
                     if !enter {
                         break;
                     }
-                    let result = walk(steps, &format!("{address}/{i}/"), p, inputs)?;
+                    let result = walk(steps, &format!("{address}/{i}/"), p, inputs, budget)?;
                     if !result.0 {
                         return Ok(result);
                     }
@@ -185,7 +190,7 @@ fn walk(
                         p.limit_reached = true;
                     }
                 }
-                p.decisions.insert(format!("{address}/done"), json!(true));
+                budget.record(p, format!("{address}/done"), json!(true))?;
             }
             Action::ForEach {
                 input,
@@ -202,7 +207,7 @@ fn walk(
                     if items.len() > *max_items as usize {
                         return Err("For each input exceeds its item limit".into());
                     }
-                    p.decisions.insert(address.clone(), value.clone());
+                    budget.record(p, address.clone(), value.clone())?;
                     value
                 };
                 for (i, item) in items
@@ -214,19 +219,19 @@ fn walk(
                     let mut local = inputs.clone();
                     local["item"] = item.clone();
                     local["index"] = json!(i);
-                    let result = walk(steps, &format!("{address}/{i}/"), p, &local)?;
+                    let result = walk(steps, &format!("{address}/{i}/"), p, &local, budget)?;
                     if !result.0 {
                         return Ok(result);
                     }
                 }
-                p.decisions.insert(format!("{address}/done"), json!(true));
+                budget.record(p, format!("{address}/done"), json!(true))?;
             }
             Action::Chain { chain } => {
-                let result = walk(&chain.steps, &format!("{address}/"), p, inputs)?;
+                let result = walk(&chain.steps, &format!("{address}/"), p, inputs, budget)?;
                 if !result.0 {
                     return Ok(result);
                 }
-                p.decisions.insert(format!("{address}/done"), json!(true));
+                budget.record(p, format!("{address}/done"), json!(true))?;
             }
             _ => match p.receipts.get(&address) {
                 Some(r) if r.state == "completed" => {}
@@ -251,4 +256,71 @@ fn walk(
         }
     }
     Ok((true, Vec::new()))
+}
+
+// Bound synchronous control evaluation independently of dispatched actions. This
+// also applies to all-control chains, including nested empty branches.
+const MAX_CONTROL_DECISIONS: usize = 4096;
+pub(super) const MAX_PROGRESS_BYTES: usize = 8 * 1024 * 1024;
+struct WalkBudget {
+    remaining: usize,
+    bytes: usize,
+}
+impl WalkBudget {
+    fn new(progress: &Progress) -> Self {
+        Self {
+            remaining: 32768,
+            bytes: serde_json::to_vec(progress).map_or(usize::MAX, |v| v.len()),
+        }
+    }
+    fn tick(&mut self) -> Result<(), String> {
+        if self.remaining == 0 || self.bytes >= MAX_PROGRESS_BYTES {
+            return Err("Task control evaluation or context budget reached".into());
+        }
+        self.remaining -= 1;
+        Ok(())
+    }
+    fn record(&mut self, p: &mut Progress, key: String, value: Value) -> Result<(), String> {
+        self.tick()?;
+        let bytes = serde_json::to_vec(&(&key, &value))
+            .map_err(|e| e.to_string())?
+            .len();
+        if p.decisions.len() >= MAX_CONTROL_DECISIONS
+            || bytes >= MAX_PROGRESS_BYTES.saturating_sub(self.bytes)
+        {
+            return Err("Task control decision or context budget reached".into());
+        }
+        self.bytes += bytes;
+        p.decisions.insert(key, value);
+        Ok(())
+    }
+}
+
+pub(super) fn context_within_budget(progress: &Progress) -> bool {
+    serde_json::to_vec(progress).is_ok_and(|bytes| bytes.len() < MAX_PROGRESS_BYTES)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn empty_nested_controls_are_bounded_without_dispatch() {
+        let mut step = json!({"id":"skip","label":"skip","kind":"if","condition":{"op":"equals","left":{"kind":"literal","value":true},"right":false},"thenSteps":[],"elseSteps":[]});
+        // Use the normal deserializer for a real portable control chain.
+        let false_condition = step["condition"].clone();
+        for n in 0..4 {
+            step = json!({"id":format!("repeat{n}"),"label":"repeat","kind":"repeat","maxIterations":20,"until":false_condition,"steps":[step]});
+        }
+        let chain: Chain =
+            serde_json::from_value(json!({"schemaVersion":1,"name":"bounded","steps":[step]}))
+                .unwrap();
+        let mut p = Progress::default();
+        assert!(matches!(
+            advance(&chain, &mut p, &json!({})),
+            Advance::Attention(_)
+        ));
+        assert!(p.decisions.len() <= MAX_CONTROL_DECISIONS);
+        assert_eq!(p.actions, 0);
+        assert!(serde_json::to_vec(&p).unwrap().len() < MAX_PROGRESS_BYTES);
+    }
 }

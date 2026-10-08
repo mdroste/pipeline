@@ -1,0 +1,125 @@
+/* Workspace shell and desk: the bar, the project pane, and the chat pane.
+   Panes receive space from the desk, never from their own content. */
+.workspace-chat-shell {
+  position: relative;
+  overflow: hidden;
+  color: var(--ui-text);
+  color-scheme: light;
+}
+.dark .workspace-chat-shell {
+  color-scheme: dark;
+}
+.workspace-chat-shell button:focus-visible,
+.workspace-chat-shell select:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 3px;
+}
+
+.workspace-desk-area {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.workspace-desk-area[hidden],
+.workspace-desk-panes > [hidden] {
+  display: none !important;
+}
+.workspace-desk-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 48px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+  font-size: var(--ui-text-label);
+}
+.workspace-desk-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: var(--ui-radius-sm);
+}
+.workspace-desk-button:hover,
+.workspace-desk-button[aria-pressed="true"] {
+  background: var(--ui-sunken);
+  color: var(--ui-text);
+}
+.workspace-desk-toolbar > [role="status"] {
+  flex-basis: 100%;
+  padding: 0 8px 4px;
+  color: var(--ui-text);
+  font-size: var(--ui-text-meta);
+}
+.workspace-browse-button {
+  min-width: 0;
+  max-width: 36%;
+  color: var(--ui-text);
+  font-weight: 600;
+}
+.workspace-browse-button > span,
+.workspace-tool-trigger > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-tool-trigger {
+  min-width: 0;
+  max-width: 34%;
+  border-left: 1px solid var(--ui-border);
+  border-radius: 0;
+  color: var(--ui-muted);
+}
+
+.workspace-desk-panes {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.workspace-desk-project,
+.workspace-desk-assistant {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.workspace-desk-assistant {
+  position: relative;
+  container-type: inline-size;
+}
+.workspace-desk-panes[data-layout="split"] > .workspace-desk-assistant {
+  flex: 0 0 auto;
+  border-left: 1px solid var(--ui-border);
+}
+.workspace-assistant {
+  overflow: hidden;
+}
+.workspace-retained-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.workspace-retained-view[hidden] {
+  display: none !important;
+}
+.workspace-panel-loading {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 24px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-label);
+}

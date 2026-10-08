@@ -415,7 +415,7 @@ fn archive_round_trip_is_consistent_and_retires_native_bindings() {
         path: archive.to_string_lossy().into_owned(),
     })
     .unwrap();
-    assert_eq!(inspection.format_version, 1);
+    assert_eq!(inspection.format_version, 2);
     assert!(inspection.workspace_roots.is_empty());
     let mut zip = zip::ZipArchive::new(File::open(&archive).unwrap()).unwrap();
     let mut manifest_text = String::new();

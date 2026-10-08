@@ -1,5 +1,7 @@
 //! Workflow-owned adapter for durable cross-mode tasks. No Workspace runtime state.
 use super::*;
+mod pins;
+pub use pins::{reconcile_failed_pins, release_abandoned_pin};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
@@ -86,6 +88,7 @@ pub(super) fn mark_run(dir: &std::path::Path) -> Result<(), String> {
 pub fn recovered_result(run_id: &str) -> Result<Option<Value>, String> {
     let manifest = crate::runs::load_manifest(run_id)?;
     if !["done", "degraded"].contains(&manifest.status.as_str()) {
+        pins::release_settled_failure(run_id)?;
         return Ok(None);
     }
     Ok(Some(
@@ -179,7 +182,7 @@ pub async fn execute(
     PipelineTask::spawn_future(async move {
         let _guard = guard;
         let _owned = owned;
-        OPERATION
+        let result = OPERATION
             .scope(
                 operation,
                 run_pipeline_inner_with_snapshot(
@@ -193,7 +196,14 @@ pub async fn execute(
                     epoch,
                 ),
             )
-            .await
+            .await;
+        drop(_owned);
+        if result.is_err() {
+            if let Err(error) = reconcile_failed_pins() {
+                eprintln!("Review retention reconciliation needs attention: {error}");
+            }
+        }
+        result
     })
     .join()
     .await

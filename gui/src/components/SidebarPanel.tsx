@@ -32,9 +32,9 @@ export default function SidebarPanel({
     <aside
       {...props}
       style={{ ...style, width: fill ? undefined : width }}
-      className={`relative flex min-h-0 min-w-0 shrink-0 flex-col border-gray-200/80 bg-white
-                  text-gray-900 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100
-                  ${fill ? "flex-1 overflow-hidden" : side === "left" ? "border-r" : "border-l"} ${className}`}
+      className={`relative flex min-h-0 min-w-0 shrink-0 flex-col border-gray-200/80
+                  text-gray-900 dark:border-gray-800 dark:text-gray-100
+                  ${fill ? "flex-1 overflow-hidden bg-surface" : `bg-white dark:bg-gray-900 ${side === "left" ? "border-r" : "border-l"}`} ${className}`}
     >
       {children}
       {!fill && (

@@ -2,6 +2,7 @@
 //! Workspace store. Disposable build/cache material is separated from
 //! evidence-linked immutable blobs; pruning moves files into a private trash
 //! with a journal, and only an explicit second action deletes them.
+mod paths;
 use super::now;
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use rusqlite::{params, TransactionBehavior};
@@ -19,7 +20,7 @@ pub const DISPOSABLE: [&str; 4] = [
     "migration_backups",
 ];
 
-fn err(e: impl std::fmt::Display) -> WorkbenchError {
+pub(super) fn err(e: impl std::fmt::Display) -> WorkbenchError {
     WorkbenchError::storage("Storage operation failed", e)
 }
 fn random_id(prefix: &str) -> WorkbenchResult<String> {
@@ -216,6 +217,7 @@ pub fn list_trash(store: &Store) -> WorkbenchResult<Vec<TrashEntry>> {
         rows
     };
     for (id, original, trash) in pending {
+        paths::checked_paths(store, &id, Path::new(&original), Path::new(&trash))?;
         if !Path::new(&trash).try_exists().map_err(err)?
             && Path::new(&original).try_exists().map_err(err)?
         {
@@ -440,6 +442,7 @@ pub fn prune_storage(store: &Store, mut request: PruneRequest) -> WorkbenchResul
             .strip_prefix(store.root_path())
             .map_err(|_| WorkbenchError::invalid("Path escaped private storage"))?;
         let destination = trash_root.join(&id).join(relative);
+        paths::checked_paths(store, &id, &path, &destination)?;
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).map_err(err)?;
         }
@@ -474,6 +477,8 @@ pub fn restore_trash(store: &Store, trash_id: &str) -> WorkbenchResult<TrashEntr
         )
         .map_err(err)?;
     let original = PathBuf::from(&entry.original_path);
+    let (directory, trash_path) =
+        paths::checked_paths(store, trash_id, &original, Path::new(&trash_path))?;
     if original.exists() {
         return Err(WorkbenchError::conflict(
             "The original path exists again; resolve it before restoring",
@@ -490,7 +495,7 @@ pub fn restore_trash(store: &Store, trash_id: &str) -> WorkbenchResult<TrashEntr
             params![trash_id, now()],
         )
         .map_err(err)?;
-    let _ = fs::remove_dir_all(store.root_path().join("trash").join(trash_id));
+    let _ = fs::remove_dir_all(directory);
     Ok(TrashEntry {
         state: "restored".into(),
         ..entry
@@ -498,11 +503,23 @@ pub fn restore_trash(store: &Store, trash_id: &str) -> WorkbenchResult<TrashEntr
 }
 pub fn empty_trash(store: &Store) -> WorkbenchResult<usize> {
     let entries = list_trash(store)?;
-    let trash_root = store.root_path().join("trash");
     let mut removed = 0;
     for entry in entries {
-        let dir = trash_root.join(&entry.id);
-        if dir.starts_with(&trash_root) && dir.exists() {
+        let recorded: String = store
+            .connection()?
+            .query_row(
+                "SELECT trash_path FROM storage_trash WHERE id=?1",
+                [&entry.id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        let (dir, _) = paths::checked_paths(
+            store,
+            &entry.id,
+            Path::new(&entry.original_path),
+            Path::new(&recorded),
+        )?;
+        if dir.exists() {
             fs::remove_dir_all(&dir).map_err(err)?;
         }
         store

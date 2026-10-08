@@ -137,3 +137,8 @@ Synthetic credentials establish native protocol admission and local account
 coordination, not provider authentication. Browser completion, real provider
 token renewal, authenticated model turns, packaged apps, and other operating
 systems remain separate release qualification gates.
+
+Automatic conversation titles run in a separate, temporary native process with
+its own account-use lease. Failure, timeout, cancellation and successful cleanup
+terminate only that side process; its temporary home and account lease remain
+owned until cleanup settles. Foreground conversation process ownership is unchanged.

@@ -23,13 +23,17 @@ import "./TasksPage.css";
 const ResearchMissions = lazy(() => import("./ResearchMissions"));
 
 export default function TasksPage({
+  entryRequest = 0,
   initialSessionId,
+  onDirtyChange,
   onConversation,
   initialTaskId,
   initialDiscoveryId,
   initialAutomatePath,
 }: {
+  entryRequest?: number;
   initialSessionId?: string | null;
+  onDirtyChange?: (dirty: boolean) => void;
   onConversation?: (id: string) => void | Promise<void>;
   initialTaskId?: string | null;
   initialDiscoveryId?: string | null;
@@ -81,6 +85,26 @@ export default function TasksPage({
       if (version === refreshVersion.current) setLoading(false);
     }
   }, [view, offset]);
+  useEffect(() => {
+    refreshVersion.current++;
+    selectedRef.current = initialTaskId ?? null;
+    setSelected(null);
+    setCreating(
+      Boolean((initialSessionId || initialAutomatePath) && !initialTaskId),
+    );
+    setView(initialDiscoveryId ? "missions" : "active");
+    setOffset(0);
+    void refresh();
+    // Only new entry identities replace local selection; refresh is kept current
+    // by the subscription effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    entryRequest,
+    initialTaskId,
+    initialSessionId,
+    initialAutomatePath,
+    initialDiscoveryId,
+  ]);
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -287,6 +311,8 @@ export default function TasksPage({
             </section>
             {creating ? (
               <Builder
+                key={`${entryRequest}:${initialSessionId ?? ""}:${initialAutomatePath ?? ""}`}
+                onDirtyChange={onDirtyChange}
                 initialSessionId={initialSessionId}
                 initialPath={initialAutomatePath}
                 onPrepared={select}

@@ -92,3 +92,5 @@ case "$platform" in
   windows) "$destination/pdftotext.exe" -v ;;
   *) "$destination/pdftotext" -v ;;
 esac
+
+node "$repo_root/scripts/release/poppler-inventory.mjs" "$platform"
