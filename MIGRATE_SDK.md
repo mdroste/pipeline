@@ -860,7 +860,7 @@ cd src-tauri
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
-cargo run --locked --bin workbench_probe
+cargo run --locked --example workbench_probe
 ```
 
 Add sidecar build/unit/contract checks to the documented scripts and manual CI

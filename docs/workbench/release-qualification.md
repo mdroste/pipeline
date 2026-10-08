@@ -119,7 +119,7 @@ model calls, installers, or another platform.
 
 ## October 2 release-fix candidate
 
-The candidate evidence manifest is [1.0.1-qualification.json](../releases/1.0.1-qualification.json).
+The candidate evidence manifest is [1.0.2-qualification.json](../releases/1.0.2-qualification.json).
 Its live and packaged rows remain pending. Run the validator described in
 [RELEASING.md](../../RELEASING.md) against the final candidate commit and actual
 installer bytes. Passing source tests does not fill these rows.

@@ -324,7 +324,7 @@ const commandData: Record<string, unknown> = {
   get_execution_plan: executionPlan,
   get_settings: settings,
   save_settings: true,
-  check_for_update: { current: "1.0.1", latest: "1.0.1", update_available: false, release_url: "", release_name: "", published_at: null },
+  check_for_update: { current: "1.0.2", latest: "1.0.2", update_available: false, release_url: "", release_name: "", published_at: null },
   get_batch_status: [],
   get_run_setup: { profileId: "auto_paper_review", profileConfigSnapshotId: "snap-1", inputMode: "document", variables: pipelineConfig.variables, inputSlots: [] },
   get_pipeline_config: pipelineConfig,

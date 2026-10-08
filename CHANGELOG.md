@@ -3,11 +3,14 @@
 This file records user-visible and release-integrity changes. Development before
 the first public release was not maintained as a stable release series.
 
-## 1.0.1 — 2026-10-07
+## 1.0.2 — 2026-10-08
 
 First stable release. Installers are published for macOS (Apple Silicon and
-Intel), Windows x86-64, and Linux x86-64. The `v1.0.0` tag was never released:
-its installers could not be packaged.
+Intel), Windows x86-64, and Linux x86-64. The `v1.0.0` and `v1.0.1` tags were
+never released: a complete set of installers could not be packaged from them.
+
+- The development-only protocol probes are Cargo examples and are no longer
+  packaged with the application.
 
 - On Windows, conversations can now read project files, and research backups
   written on Windows pass their own integrity check.

@@ -194,7 +194,7 @@ The development-only probe is:
 
 ```bash
 cd gui/src-tauri
-cargo run --locked --bin workflow_codex_probe
+cargo run --locked --example workflow_codex_probe
 ```
 
 It creates a temporary isolated home, verifies signed-out account state,

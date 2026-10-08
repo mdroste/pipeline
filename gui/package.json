@@ -1,7 +1,7 @@
 {
   "name": "pipeline-gui",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Desktop agent orchestration suite for academic research and review",
   "homepage": "https://github.com/mdroste/pipeline",
   "repository": {

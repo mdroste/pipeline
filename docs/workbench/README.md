@@ -375,7 +375,7 @@ cd src-tauri
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets
-cargo run --locked --bin workbench_probe  # opt-in; no model turn
+cargo run --locked --example workbench_probe  # opt-in; no model turn
 ```
 
 The probe needs a compatible native Codex CLI. Authenticated model/tool tests,
