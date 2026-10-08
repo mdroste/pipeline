@@ -199,8 +199,9 @@ confidential or restricted material, including manuscripts under review.
 ## Command line
 
 `pipeline-cli` runs reviews without the desktop interface, using the same
-settings, definitions, and run store. It is built from source and is not
-included in the installers.
+settings, definitions, and run store. The installers place the binary beside
+the application executable (on macOS, `Pipeline.app/Contents/MacOS/pipeline-cli`)
+without adding it to your `PATH`. From a source checkout:
 
 ```bash
 cd gui/src-tauri

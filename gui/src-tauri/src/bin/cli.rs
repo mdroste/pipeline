@@ -1506,5 +1506,6 @@ async fn install_engine_with_interrupt(bus: EventBus, id: &str) -> Result<(), St
 }
 
 #[cfg(test)]
-#[path = "cli/tests.rs"]
+// Kept outside src/bin: the Tauri bundler treats src/bin/<dir> as a binary.
+#[path = "../cli_tests.rs"]
 mod tests;

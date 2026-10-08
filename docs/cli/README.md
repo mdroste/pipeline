@@ -2,8 +2,9 @@
 
 `pipeline-cli` runs Pipeline workflows without opening the desktop interface.
 It uses the same local settings, profiles, dependency checks, execution engine,
-and run store as the app. The CLI is currently available from source builds;
-it is not included in Pipeline's desktop installers.
+and run store as the app. The desktop installers place the binary beside the
+application executable without adding it to `PATH`; it can also be built from
+source.
 
 ## Build and help
 
