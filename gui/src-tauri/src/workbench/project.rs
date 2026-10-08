@@ -35,6 +35,8 @@ pub use tasks::*;
 #[cfg(test)]
 mod home_tests;
 #[cfg(all(test, unix))]
+// Qualification helpers are used only by the macOS-gated tests.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod tests;
 
 const MAX_FILE: u64 = 32 * 1024 * 1024;

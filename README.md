@@ -174,6 +174,9 @@ research agendas, including the self-discovery modes, are documented in
 - Reviews are the most thoroughly tested part of Pipeline. Conversations,
   project research tools, and Automations are newer and have been exercised
   mainly on macOS.
+- On Windows, the assistant can read project files but cannot yet apply edits
+  to them, and isolated working copies for tasks are unavailable. Reviews are
+  unaffected.
 - Each model call must fit within the provider's context window. A long paper,
   the selected material, tool results, and the response all count.
 - PDF extraction is imperfect. Use LaTeX source when you have it, and inspect
