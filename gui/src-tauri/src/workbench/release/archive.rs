@@ -407,6 +407,15 @@ pub fn export_archive(
             .map_err(|error| {
                 WorkbenchError::storage("Failed to make archive blob references portable", error)
             })?;
+        // Windows stores native separators; the manifest and importers use '/'.
+        snapshot
+            .execute(
+                &format!("UPDATE {table} SET {column}=replace({column},'\\','/') WHERE {column} IS NOT NULL AND substr({column},1,length(?1))=?1"),
+                params![logical_blob_root],
+            )
+            .map_err(|error| {
+                WorkbenchError::storage("Failed to make archive blob references portable", error)
+            })?;
     }
     snapshot
         .execute("UPDATE context_snapshots SET body_reference=NULL", [])

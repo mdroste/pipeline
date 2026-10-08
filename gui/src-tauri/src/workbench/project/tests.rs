@@ -615,12 +615,14 @@ fn qualify_run(f: &Fixture, profile: &research::ExecutionProfile) -> research::R
     )
     .unwrap()
 }
+#[cfg(target_os = "macos")]
 fn qualification_file(f: &Fixture, name: &str) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../docs/workbench/fixtures/project-surface")
         .join(name);
     fs::copy(fixture, f.root.join(name)).unwrap();
 }
+#[cfg(target_os = "macos")]
 fn qualification_receipt(name: &str, result: &research::ResearchExecution) {
     let folder = Path::new("/private/tmp/pipeline-pi-qualification");
     fs::create_dir_all(folder).unwrap();

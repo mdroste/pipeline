@@ -588,6 +588,7 @@ mod tests {
             cursor = next;
         }
     }
+    #[cfg(unix)] // Unix tools or journalled project writes
     #[test]
     fn authorized_parameter_variants_run_from_the_capture_after_live_script_changes() {
         let (temp, s, ws, _session) = fixture();

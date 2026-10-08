@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn isolated_roles_are_idempotent_private_and_revocable() {
     let temporary = tempfile::tempdir().unwrap();

@@ -315,6 +315,7 @@ fn source_tree_identity_tracks_included_files_without_following_symlinks() {
     );
 }
 
+#[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn execution_profiles_require_oldstata_and_tests_before_runs() {
     let fixture = fixture();

@@ -51,8 +51,21 @@ impl SafeRoot {
         }
         #[cfg(not(unix))]
         {
+            // Windows opens a directory handle only with backup semantics.
+            #[cfg(windows)]
+            let directory = {
+                use std::os::windows::fs::OpenOptionsExt;
+                const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+                fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                    .open(root)
+                    .map_err(err)?
+            };
+            #[cfg(not(windows))]
+            let directory = fs::File::open(root).map_err(err)?;
             Ok(Self {
-                directory: fs::File::open(root).map_err(err)?,
+                directory,
                 path: root.to_owned(),
             })
         }

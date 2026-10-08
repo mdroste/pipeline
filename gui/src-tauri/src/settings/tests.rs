@@ -632,7 +632,9 @@ fn codex_app_server_is_default_and_rejects_unknown_backends() {
 
 #[test]
 fn old_codex_defaults_migrate_once_and_advanced_legacy_choice_survives_reload() {
-    let temp = tempfile::NamedTempFile::new().unwrap();
+    // A path, not an open handle: Windows cannot replace a file that is open.
+    let directory = tempfile::tempdir().unwrap();
+    let temp = directory.path().join("settings.json");
     for backend in [None, Some("legacy_cli"), Some("app_server")] {
         for mode in ["api", "subscription"] {
             let mut raw = serde_json::json!({
@@ -643,8 +645,8 @@ fn old_codex_defaults_migrate_once_and_advanced_legacy_choice_survives_reload() 
             if let Some(backend) = backend {
                 raw["codex_backend"] = backend.into();
             }
-            std::fs::write(temp.path(), serde_json::to_vec(&raw).unwrap()).unwrap();
-            let mut settings = load_raw_settings_required(temp.path()).unwrap();
+            std::fs::write(&temp, serde_json::to_vec(&raw).unwrap()).unwrap();
+            let mut settings = load_raw_settings_required(&temp).unwrap();
             assert_eq!(settings.codex_backend, "app_server");
             assert_eq!(settings.codex_backend_preference_version, 1);
             assert_eq!(settings.codex_access_mode, mode);
@@ -657,10 +659,8 @@ fn old_codex_defaults_migrate_once_and_advanced_legacy_choice_survives_reload() 
             );
 
             settings.codex_backend = "legacy_cli".into();
-            save_raw_unlocked(temp.path(), &settings).unwrap();
-            let reloaded = load_raw_settings_required(temp.path())
-                .unwrap()
-                .normalized();
+            save_raw_unlocked(&temp, &settings).unwrap();
+            let reloaded = load_raw_settings_required(&temp).unwrap().normalized();
             assert_eq!(reloaded.codex_backend, "legacy_cli");
             assert_eq!(reloaded.codex_backend_preference_version, 1);
             assert_eq!(reloaded.codex_access_mode, mode);

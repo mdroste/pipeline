@@ -249,6 +249,7 @@ fn deliverable_regeneration_keeps_old_draft_and_exact_sources() {
     );
     assert_eq!(b.body["sources"].as_array().unwrap().len(), 1);
 }
+#[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn checked_artifacts_and_task_staging_refuse_cross_project_and_external_changes() {
     let f = fixture(true);
@@ -343,6 +344,7 @@ fn grid_request(f: &Fixture, plan: &DeskRecord) -> experiments::Prepare {
         operation_id: "grid".into(),
     }
 }
+#[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn grid_budget_is_checked_before_creating_any_derived_plan() {
     let f = fixture(true);
@@ -358,6 +360,7 @@ fn grid_budget_is_checked_before_creating_any_derived_plan() {
         1
     );
 }
+#[cfg(unix)] // Unix tools or journalled project writes
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grid_producer_retains_success_failure_timeout_exclusion_and_does_not_repeat() {
     let f = fixture(true);
@@ -638,6 +641,7 @@ fn capsule_request(f: &Fixture, plan: &DeskRecord, include: bool) -> capsule::Ex
         }],
     }
 }
+#[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn replication_capsule_two_stores_rebinds_inert_inputs_and_checks_real_output() {
     let f = fixture(true);
@@ -720,6 +724,7 @@ fn replication_capsule_two_stores_rebinds_inert_inputs_and_checks_real_output() 
         .unwrap()
         .contains("json.dump"));
 }
+#[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn missing_capsule_input_is_incomplete_and_creates_no_profile() {
     let f = fixture(true);
@@ -1098,6 +1103,7 @@ fn publication_reuses_existing_adopted_artifact_identity() {
         b"retained content"
     );
 }
+#[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn capsule_reports_environment_mismatch_before_creating_execution_material() {
     let f = fixture(true);

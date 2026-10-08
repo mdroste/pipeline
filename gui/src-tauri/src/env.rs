@@ -227,6 +227,7 @@ mod tests {
         assert_eq!(merge_paths("/a:/b", "/b:/c:"), "/a:/b:/c".to_string());
     }
 
+    #[cfg(unix)] // Unix tools or journalled project writes
     #[test]
     fn system_opt_entries_do_not_count_as_user_configured() {
         // Linux desktops commonly add /opt/<vendor> via /etc/profile.d while
