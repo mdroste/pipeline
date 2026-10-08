@@ -34,7 +34,7 @@ case "$platform" in
     mkdir -p "$destination/lib" "$destination/share" "$destination/licenses/poppler"
     cp "$work/pdftoppm" "$work/pdftotext" "$destination/"
     cp "$work/lib/"*.dylib "$destination/lib/"
-    cp -R "$poppler_prefix/share/poppler" "$destination/share/poppler"
+    cp -RL "$poppler_prefix/share/poppler" "$destination/share/poppler"
     cp "$poppler_prefix/COPYING" "$destination/licenses/poppler/"
     ;;
 
@@ -55,7 +55,7 @@ case "$platform" in
     while IFS= read -r library; do
       file "$library" | grep -q ELF && patchelf --set-rpath '$ORIGIN' "$library"
     done < <(find "$destination/lib" -type f | sort)
-    cp -R /usr/share/poppler "$destination/share/poppler"
+    cp -RL /usr/share/poppler "$destination/share/poppler"
     cp /usr/share/common-licenses/GPL-2 "$destination/licenses/poppler/GPL-2.txt"
     ;;
 

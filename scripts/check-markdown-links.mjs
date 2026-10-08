@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -52,6 +52,8 @@ for (const file of new Set(files)) {
     }
     // Codex file links may carry a one-based line suffix.
     target = target.replace(/:\d+$/, "");
+    // Absolute filesystem paths name one machine, not a location in the repository.
+    if (isAbsolute(target)) continue;
     const resolved = resolve(dirname(absolute), target);
     if (localGuides.includes(relative(repository, resolved))) continue;
     if (!existsSync(resolved)) {

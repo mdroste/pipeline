@@ -377,8 +377,25 @@ fn main() {
   </application>
 </assembly>
 "#;
-    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(
-        tauri_build::WindowsAttributes::new().app_manifest(WINDOWS_APP_MANIFEST),
-    ))
-    .expect("failed to run tauri-build");
+    // Tauri embeds the manifest only in binaries, so library test executables
+    // on Windows fail to load Common-Controls v6 (STATUS_ENTRYPOINT_NOT_FOUND).
+    // Test jobs set PIPELINE_LINK_TEST_MANIFEST=1 to have the linker embed the
+    // same manifest in every target instead. Packaged builds leave it unset.
+    println!("cargo:rerun-if-env-changed=PIPELINE_LINK_TEST_MANIFEST");
+    let link_manifest = std::env::var_os("PIPELINE_LINK_TEST_MANIFEST").is_some_and(|v| v == "1")
+        && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    let windows = if link_manifest {
+        let path = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set"))
+            .join("windows-app-manifest.xml");
+        std::fs::write(&path, WINDOWS_APP_MANIFEST)
+            .unwrap_or_else(|error| panic!("failed to write '{}': {error}", path.display()));
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", path.display());
+        tauri_build::WindowsAttributes::new_without_app_manifest()
+    } else {
+        tauri_build::WindowsAttributes::new().app_manifest(WINDOWS_APP_MANIFEST)
+    };
+    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
+        .expect("failed to run tauri-build");
 }

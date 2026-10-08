@@ -452,7 +452,7 @@ fn parser_sidecar_refresh_reuses_only_a_verified_pinned_runtime() {
 
     assert!(parser_runtime_reusable_for_sidecar_refresh(root.path()));
     assert!(refresh_paddle_parser_sidecar_locked(root.path()).unwrap());
-    assert!(paddle_full_parser_paths_at(root.path()).is_some());
+    assert!(verified_parser_sidecar_at(root.path()).is_some());
     assert!(!refresh_paddle_parser_sidecar_locked(root.path()).unwrap());
     std::fs::write(version_root.join("packages.txt"), b"changed").unwrap();
     assert!(!parser_runtime_reusable_for_sidecar_refresh(root.path()));

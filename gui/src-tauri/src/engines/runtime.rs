@@ -306,10 +306,13 @@ pub(super) fn verified_parser_runtime_at(root: &Path) -> Option<VerifiedParserRu
     })
 }
 
-pub(super) fn paddle_full_parser_paths_at(root: &Path) -> Option<PaddleFullParserPaths> {
+/// Verify the runtime and its sidecar without requiring the separately
+/// installed recognition component.
+pub(super) fn verified_parser_sidecar_at(
+    root: &Path,
+) -> Option<(VerifiedParserRuntime, PathBuf, String)> {
     let verified = verified_parser_runtime_at(root)?;
-    let version_root = verified.version_root;
-    let script = version_root.join("paddle_parser_sidecar.py");
+    let script = verified.version_root.join("paddle_parser_sidecar.py");
     if !script.is_file() || std::fs::metadata(&script).ok()?.len() > 2 * 1024 * 1024 {
         return None;
     }
@@ -334,6 +337,12 @@ pub(super) fn paddle_full_parser_paths_at(root: &Path) -> Option<PaddleFullParse
     {
         return None;
     }
+    Some((verified, script, script_digest))
+}
+
+pub(super) fn paddle_full_parser_paths_at(root: &Path) -> Option<PaddleFullParserPaths> {
+    let (verified, script, script_digest) = verified_parser_sidecar_at(root)?;
+    let version_root = verified.version_root;
     Some(PaddleFullParserPaths {
         python: venv_python(&version_root.join("venv")),
         script,
@@ -412,7 +421,7 @@ pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<bool, 
         &serde_json::to_vec_pretty(&manifest)
             .map_err(|error| format!("Failed to serialize parser manifest: {error}"))?,
     )?;
-    if paddle_full_parser_paths_at(root).is_none() {
+    if verified_parser_sidecar_at(root).is_none() {
         return Err("The refreshed parser sidecar failed its integrity check".to_string());
     }
     Ok(true)

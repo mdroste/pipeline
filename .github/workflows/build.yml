@@ -127,4 +127,6 @@ jobs:
         run: npm run prepare:release-resources
       - name: Native lifecycle and CLI tests
         working-directory: gui/src-tauri
+        env:
+          PIPELINE_LINK_TEST_MANIFEST: "1"
         run: cargo test --locked --all-targets

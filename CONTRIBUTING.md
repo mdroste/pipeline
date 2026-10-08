@@ -46,6 +46,10 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
+On Windows, set `PIPELINE_LINK_TEST_MANIFEST=1` before `cargo test`. Tauri
+embeds the application manifest only in binaries, and the library's test
+executable cannot start without it.
+
 Changes to packaged behavior, release metadata, signing, native dependencies,
 or workflows must also follow [RELEASING.md](RELEASING.md). Do not weaken a
 fail-closed release check merely to make CI pass.
