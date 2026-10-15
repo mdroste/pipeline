@@ -83,14 +83,45 @@ pub fn is_role(store: &Store, session: &str) -> WorkbenchResult<bool> {
         .map_err(error)
 }
 pub fn revoke(store: &Store, run: &str) -> WorkbenchResult<()> {
-    store
-        .connection()?
-        .execute(
-            "UPDATE discovery_roles SET enabled=0 WHERE run_key=?1",
-            [run],
-        )
+    let conn = store.connection()?;
+    conn.execute(
+        "UPDATE discovery_roles SET enabled=0 WHERE run_key=?1",
+        [run],
+    )
+    .map_err(error)?;
+    // Read-only role roots hold full copies of the inputs and nothing can
+    // use them once the role is disabled; reclaim them. Writer roots keep
+    // their paper work for export.
+    let keys = conn
+        .prepare("SELECT root_key FROM discovery_roles WHERE run_key=?1 AND writable=0")
+        .map_err(error)?
+        .query_map([run], |r| r.get::<_, String>(0))
+        .map_err(error)?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(error)?;
+    for key in keys {
+        if let Some(dir) = existing_directory(store, &key)? {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
     Ok(())
+}
+
+/// The role folder for `folder`, only when it is a real directory inside the
+/// store's discovery area; never creates it.
+fn existing_directory(store: &Store, folder: &str) -> WorkbenchResult<Option<PathBuf>> {
+    if folder.len() != 64 || !folder.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(WorkbenchError::invalid("Invalid discovery folder identity"));
+    }
+    let path = store.root_path().join("discovery").join(folder);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => Err(
+            WorkbenchError::invalid("Discovery folders must be real directories"),
+        ),
+        Ok(_) => Ok(Some(path)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(error(e)),
+    }
 }
 fn existing(store: &Store, operation: &str, entity: &str) -> WorkbenchResult<Option<String>> {
     store
