@@ -289,7 +289,10 @@ impl Coordinator {
                     }
                 }
                 Advance::Ready(ready) => {
+                    let was_queued = run.state == "queued"
+                        && run.reason.as_deref() == Some("Waiting for an execution slot");
                     let mut queued_due = None;
+                    let mut blocked = false;
                     for pending in ready {
                         let control = matches!(
                             pending.step.action,
@@ -314,7 +317,7 @@ impl Coordinator {
                                 run.state = "queued".into();
                             }
                             run.reason = Some("Waiting for an execution slot".into());
-                            changed = true;
+                            blocked = true;
                             continue;
                         }
                         if run.progress.actions >= run.chain.limits.max_actions
@@ -435,9 +438,15 @@ impl Coordinator {
                             });
                         }
                     }
-                    if changed {
+                    if changed || (blocked && !was_queued) {
                         self.save(&mut run, "queued", "Waiting for an execution slot")
                             .await?;
+                    } else if blocked {
+                        // Already recorded as waiting: keep the durable due time
+                        // fresh for restart recovery without rewriting the body
+                        // or appending an identical event every poll.
+                        let id = run.id.clone();
+                        self.db(move |s| s.touch_due(&id, queued_due)).await?;
                     }
                 }
             }

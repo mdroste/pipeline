@@ -276,6 +276,14 @@ impl Store {
         tx.commit().map_err(err)?;
         Ok(())
     }
+    /// Refresh only the poll time of a run that is already recorded as
+    /// waiting; no body rewrite, no event row.
+    pub fn touch_due(&self, id: &str, due: Option<i64>) -> Result<()> {
+        self.connection()?
+            .execute("UPDATE runs SET due_at=?2 WHERE id=?1", params![id, due])
+            .map_err(err)?;
+        Ok(())
+    }
     pub fn retry(&self, run: &mut TaskRun) -> Result<()> {
         if run.state != "attention" {
             return Err("Only a task needing attention can be retried".into());
