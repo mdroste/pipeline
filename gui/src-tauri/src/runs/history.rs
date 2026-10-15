@@ -324,17 +324,18 @@ pub(super) fn recover_resumable_run_dir(
 /// Completed step checkpoints become a partial `report.json`, allowing the
 /// normal re-run path to reuse them.
 pub fn recover_resumable_runs() -> Result<usize, String> {
+    // This process may itself hold the guard (the OS lock is per file, not per
+    // process); never rewrite the run it is executing.
+    if crate::commands::pipeline_is_running() {
+        return Ok(0);
+    }
+    recover_resumable_runs_at(&runs_dir()?, &super::run_lock_path()?)
+}
+
+/// Recovery over an explicit runs directory and lock file.
+pub(super) fn recover_resumable_runs_at(root: &Path, lock_path: &Path) -> Result<usize, String> {
     use fs2::FileExt as _;
-    let root = runs_dir()?;
-    let pipeline_dir = root
-        .parent()
-        .ok_or("Cannot resolve Pipeline data directory")?;
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(pipeline_dir.join("run.lock"))
+    let lock = super::open_run_lock(lock_path)
         .map_err(|error| format!("Failed to open Pipeline recovery lock: {error}"))?;
     if lock.try_lock_exclusive().is_err() {
         return Ok(0);
@@ -342,7 +343,7 @@ pub fn recover_resumable_runs() -> Result<usize, String> {
 
     let mut recovered = 0usize;
     let mut walk = crate::safety::WalkBudget::new("Incomplete-run recovery");
-    for entry in fs::read_dir(&root)
+    for entry in fs::read_dir(root)
         .map_err(|error| format!("Failed to list runs for recovery: {error}"))?
         .flatten()
     {

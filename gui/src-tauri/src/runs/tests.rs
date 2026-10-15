@@ -933,3 +933,33 @@ fn recovery_requires_logical_receipts_and_atomically_overlays_final_waves() {
         assert!(checkpoints.join("0000_unit.json").exists());
     }
 }
+
+#[test]
+fn recovery_yields_to_the_run_lock_held_by_the_pipeline_guard() {
+    use fs2::FileExt as _;
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let lock_path = temp.path().join("run.lock");
+    fs::create_dir_all(&runs).unwrap();
+    let mut writer = RunWriter::create_in(&runs, "abc123_live").unwrap();
+    writer
+        .add_text(DOCUMENT_TEXT_PATH, "Readable document", "document", "paper")
+        .unwrap();
+    let run_dir = writer.dir().to_path_buf();
+    std::mem::forget(writer);
+
+    // The same lock file the pipeline guard takes, held as the guard holds it.
+    let guard = open_run_lock(&lock_path).unwrap();
+    guard.try_lock_exclusive().unwrap();
+    assert_eq!(recover_resumable_runs_at(&runs, &lock_path).unwrap(), 0);
+    let manifest: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest.status, "running");
+    assert!(!run_dir.join("report.json").exists());
+
+    fs2::FileExt::unlock(&guard).unwrap();
+    assert_eq!(recover_resumable_runs_at(&runs, &lock_path).unwrap(), 1);
+    let manifest: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest.status, "interrupted");
+}

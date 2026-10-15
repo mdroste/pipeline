@@ -29,6 +29,41 @@ const MAX_DOCUMENT_BUNDLE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 10_000_000;
 const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_MANIFEST_ARTIFACTS: usize = 5_000;
+
+/// Limits for registering files that landed in a run directory without
+/// passing through `add_text`.
+struct UnlistedPolicy {
+    max_files: usize,
+    max_file_bytes: u64,
+    max_total_bytes: u64,
+    /// Model-written output: delete what exceeds a limit (an unindexed disk
+    /// leak). Captured inputs never use this; they fail instead.
+    delete_excess: bool,
+}
+
+impl UnlistedPolicy {
+    fn model_output(group: &str) -> Self {
+        Self {
+            max_files: if group == "agent_response" {
+                2_000
+            } else {
+                500
+            },
+            max_file_bytes: 50_000_000,
+            max_total_bytes: 250_000_000,
+            delete_excess: true,
+        }
+    }
+
+    fn captured_input() -> Self {
+        Self {
+            max_files: crate::safety::MAX_WALK_ENTRIES,
+            max_file_bytes: crate::safety::MAX_RUN_OUTPUT_BYTES as u64,
+            max_total_bytes: crate::safety::MAX_RUN_OUTPUT_BYTES as u64,
+            delete_excess: false,
+        }
+    }
+}
 const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ANNOTATION_BYTES: usize = 1_000_000;
 const MAX_SOURCE_EVIDENCE_FILES: usize = 200;
@@ -466,6 +501,28 @@ pub fn runs_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// The one OS-level lock shared by the pipeline guard, incomplete-run
+/// recovery, and pin release. It lives next to the active `runs/` directory so
+/// a custom data folder never splits the lock between two files.
+pub fn run_lock_path() -> Result<PathBuf, String> {
+    Ok(crate::storage::data_root()?.join("run.lock"))
+}
+
+/// Open (creating if needed) the shared run lock without locking it.
+pub fn open_run_lock(path: &Path) -> Result<fs::File, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create Pipeline data directory: {e}"))?;
+    }
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("Failed to open the Pipeline run lock: {e}"))
+}
+
 /// Run ids are `{hash}_{timestamp}` — same alphabet as validated paper hashes.
 pub fn validate_run_id(id: &str) -> Result<(), String> {
     if id.is_empty() || id.len() > 96 {
@@ -623,7 +680,7 @@ impl RunWriter {
         Err("Could not allocate a unique run id".to_string())
     }
 
-    fn create_in(base: &Path, run_id: &str) -> Result<Self, String> {
+    pub(crate) fn create_in(base: &Path, run_id: &str) -> Result<Self, String> {
         validate_run_id(run_id)?;
         let dir = base.join(run_id);
         fs::create_dir(&dir).map_err(|e| format!("Failed to create run dir: {e}"))?;
@@ -896,40 +953,62 @@ impl RunWriter {
     /// Register files under `subdir` (relative to the run dir) that aren't
     /// already in the artifact index. Model-written supporting files land
     /// on disk without going through `add_text`; this picks them up at the
-    /// end of the run. Symlinks are skipped, oversized files are skipped,
+    /// end of the run. Symlinks are skipped, oversized files are deleted,
     /// and the walk is capped defensively. Returns how many were added.
     pub fn register_unlisted(&mut self, subdir: &str, group: &str) -> usize {
-        const MAX_UNLISTED: usize = 500;
-        const MAX_AGENT_RESPONSES: usize = 2_000;
-        const MAX_UNLISTED_BYTES: u64 = 50_000_000;
-        const MAX_TOTAL_UNLISTED_BYTES: u64 = 250_000_000;
+        self.register_tree(subdir, group, UnlistedPolicy::model_output(group))
+            .unwrap_or_else(|added| added)
+    }
+
+    /// Register a tree that `copy_tree` already bounded (256 MiB total, no
+    /// symlinks) such as a captured source snapshot. Never deletes anything:
+    /// a captured input must stay complete so reruns can verify it. Returns
+    /// an error instead of truncating when a limit is hit.
+    pub fn register_captured_tree(&mut self, subdir: &str, group: &str) -> Result<usize, String> {
+        self.register_tree(subdir, group, UnlistedPolicy::captured_input())
+            .map_err(|_| format!("Captured {group} tree could not be fully registered"))
+    }
+
+    /// Shared walker. `Err(added)` reports a limit or registration failure
+    /// under a non-destructive policy (destructive policies never fail).
+    fn register_tree(
+        &mut self,
+        subdir: &str,
+        group: &str,
+        policy: UnlistedPolicy,
+    ) -> Result<usize, usize> {
         let known: std::collections::HashSet<String> =
             self.artifacts.iter().map(|a| a.rel_path.clone()).collect();
         let mut added = 0usize;
-        let max_unlisted = if group == "agent_response" {
-            MAX_AGENT_RESPONSES
-        } else {
-            MAX_UNLISTED
-        };
         let mut total_bytes = 0u64;
         let mut stack = vec![self.dir.join(subdir)];
         let mut walk = crate::safety::WalkBudget::new("Run artifact discovery");
+        let stop = |added: usize| {
+            if policy.delete_excess {
+                Ok(added)
+            } else {
+                Err(added)
+            }
+        };
         while let Some(d) = stack.pop() {
             let Ok(entries) = fs::read_dir(&d) else {
                 continue;
             };
             for entry in entries.flatten() {
                 if walk.entry().is_err() {
-                    return added;
+                    return stop(added);
                 }
                 let path = entry.path();
                 let Ok(ft) = entry.file_type() else { continue };
                 if ft.is_symlink() {
+                    if !policy.delete_excess {
+                        return Err(added);
+                    }
                     continue;
                 }
                 if ft.is_dir() {
                     if walk.directory().is_err() {
-                        return added;
+                        return stop(added);
                     }
                     stack.push(path);
                     continue;
@@ -938,6 +1017,9 @@ impl RunWriter {
                     // A CLI model can create FIFOs/sockets on Unix. Never open
                     // them during finalization; remove them from the run so a
                     // later artifact read cannot block either.
+                    if !policy.delete_excess {
+                        return Err(added);
+                    }
                     let _ = fs::remove_file(&path);
                     continue;
                 }
@@ -948,13 +1030,19 @@ impl RunWriter {
                 {
                     use std::os::unix::fs::MetadataExt as _;
                     if metadata.nlink() > 1 {
+                        if !policy.delete_excess {
+                            return Err(added);
+                        }
                         let _ = fs::remove_file(&path);
                         continue;
                     }
                 }
-                if metadata.len() > MAX_UNLISTED_BYTES
-                    || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_UNLISTED_BYTES
+                if metadata.len() > policy.max_file_bytes
+                    || total_bytes.saturating_add(metadata.len()) > policy.max_total_bytes
                 {
+                    if !policy.delete_excess {
+                        return Err(added);
+                    }
                     // These files were produced inside Pipeline's per-run
                     // model sandbox. Remove runaway output rather than leave
                     // an unindexed, unbounded disk leak behind.
@@ -968,7 +1056,10 @@ impl RunWriter {
                 if known.contains(&rel_str) {
                     continue;
                 }
-                if added >= max_unlisted {
+                if added >= policy.max_files {
+                    if !policy.delete_excess {
+                        return Err(added);
+                    }
                     // Keep walking after the registration cap. Otherwise a
                     // model can place unlimited unindexed files after the
                     // first 500 and evade every byte quota.
@@ -983,13 +1074,17 @@ impl RunWriter {
                 } else {
                     relative_label.to_string()
                 };
-                if self.register_existing(&rel_str, &label, group).is_ok() {
-                    added += 1;
-                    total_bytes += metadata.len();
+                match self.register_existing(&rel_str, &label, group) {
+                    Ok(()) => {
+                        added += 1;
+                        total_bytes += metadata.len();
+                    }
+                    Err(_) if policy.delete_excess => {}
+                    Err(_) => return Err(added),
                 }
             }
         }
-        added
+        Ok(added)
     }
 
     /// Replace homogeneous per-page manifest entries with one compact index.
@@ -1196,7 +1291,10 @@ use history::manifest_is_foreign_but_valid;
 #[cfg(test)]
 use history::DELETE_TOMBSTONE;
 #[cfg(test)]
-use history::{recover_orphan_manifest, recover_resumable_run_dir, run_has_resume_files};
+use history::{
+    recover_orphan_manifest, recover_resumable_run_dir, recover_resumable_runs_at,
+    run_has_resume_files,
+};
 #[cfg(test)]
 use retention::{retention_plan_from_state, validate_annotation_content};
 

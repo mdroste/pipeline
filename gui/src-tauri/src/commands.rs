@@ -42,6 +42,7 @@ pub use run_entry::{
     HeadlessRunOptions, HeadlessWorkflow,
 };
 
+pub use guard::pipeline_is_running;
 use guard::*;
 use lifecycle::*;
 use profile_import::*;

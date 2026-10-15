@@ -73,17 +73,7 @@ pub fn release_abandoned_pin(id: &str, operation: &str) -> Result<(), String> {
     use fs2::FileExt as _;
     crate::runs::validate_run_id(id)?;
     let root = crate::runs::runs_dir()?;
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(
-            root.parent()
-                .ok_or("Missing Review store parent")?
-                .join("run.lock"),
-        )
-        .map_err(|e| e.to_string())?;
+    let lock = crate::runs::open_run_lock(&crate::runs::run_lock_path()?)?;
     if lock.try_lock_exclusive().is_err() {
         return Ok(());
     }
